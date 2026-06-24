@@ -260,8 +260,25 @@ def main() -> int:
             require((global_second_payload.get("preview") or {}).get("gate_id") == "evidence_remediation", f"global second preview should continue with evidence remediation: {global_second_payload}", failures)
             require(str((global_second_payload.get("preview") or {}).get("action_command") or "").startswith("agentops operator remediate-evidence-gap --run-id "), f"remediation preview command missing: {global_second_payload}", failures)
             require(((global_second_payload.get("preview") or {}).get("action_policy") or {}).get("allowed") is True, f"remediation preview should be allowlisted: {global_second_payload}", failures)
+            remediation_command_center = run_cli(["operator", "command-center", "--limit", "10"], base_url, outputs)
+            remediation_command_center_payload = load_json(remediation_command_center.stdout)
+            remediation_lane = remediation_command_center_payload.get("evidence_remediation") or {}
+            remediation_lane_summary = remediation_lane.get("summary") or {}
+            remediation_actions = [
+                item for item in remediation_command_center_payload.get("next_actions") or []
+                if str(item.get("source") or "").startswith("evidence_remediation:")
+            ]
+            require(remediation_command_center.returncode == 0, f"remediation command-center readback failed: {remediation_command_center.stderr or remediation_command_center.stdout}", failures)
+            require(int(remediation_lane_summary.get("items") or 0) >= 1, f"command-center remediation lane missing items: {remediation_command_center_payload}", failures)
+            require(remediation_actions, f"command-center remediation next action missing: {remediation_command_center_payload}", failures)
+            require("advance-loop --source evidence_remediation" in str(((remediation_actions[0].get("evidence") or {}).get("advance_command")) or ""), f"command-center remediation advance source missing: {remediation_command_center_payload}", failures)
+            remediation_source_preview = run_cli(["operator", "advance-loop", "--source", "evidence_remediation", "--limit", "10"], base_url, outputs)
+            remediation_source_payload = load_json(remediation_source_preview.stdout)
+            require(remediation_source_preview.returncode == 0, f"remediation source preview failed: {remediation_source_preview.stderr or remediation_source_preview.stdout}", failures)
+            require((remediation_source_payload.get("preview") or {}).get("gate_id") == "evidence_remediation", f"remediation source preview wrong gate: {remediation_source_payload}", failures)
+            require(((remediation_source_payload.get("preview") or {}).get("action_policy") or {}).get("allowed") is True, f"remediation source preview should be allowlisted: {remediation_source_payload}", failures)
             remediation_before_receipts = receipt_count_for_source(db_path, "handoff.evidence_remediation")
-            remediation_advanced = run_cli(["operator", "advance-loop", "--limit", "10", "--confirm-advance"], base_url, outputs)
+            remediation_advanced = run_cli(["operator", "advance-loop", "--source", "evidence_remediation", "--limit", "10", "--confirm-advance"], base_url, outputs)
             remediation_advanced_payload = load_json(remediation_advanced.stdout)
             remediation_after_receipts = receipt_count_for_source(db_path, "handoff.evidence_remediation")
             require(remediation_advanced.returncode == 0, f"remediation advance confirm failed: {remediation_advanced.stderr or remediation_advanced.stdout}", failures)

@@ -197,6 +197,29 @@ def assert_command_center(payload: dict, failures: list[str]) -> None:
             require(action.get("control_readback_required") is True, f"bounded action control readback missing: {action}", failures)
             require((action.get("evidence") or {}).get("policy_id") == "advance_loop_local_bounded_v1", f"bounded action policy evidence missing: {action}", failures)
             require((action.get("evidence") or {}).get("server_executes_shell") is False, f"bounded action shell proof missing: {action}", failures)
+    evidence_remediation = payload.get("evidence_remediation") or {}
+    remediation_summary = evidence_remediation.get("summary") or {}
+    remediation_items = evidence_remediation.get("items") or []
+    remediation_safety = evidence_remediation.get("safety") or {}
+    require(evidence_remediation.get("operation") == "operator_command_center_evidence_remediation", f"evidence remediation lane missing: {payload}", failures)
+    require((remediation_safety.get("read_only") is True), f"evidence remediation lane must be read-only: {evidence_remediation}", failures)
+    require((remediation_safety.get("server_shell_execution") is False), f"evidence remediation lane cannot execute shell: {evidence_remediation}", failures)
+    require("advance-loop --source evidence_remediation" in str((evidence_remediation.get("commands") or {}).get("advance_missing") or ""), f"evidence remediation source advance command missing: {evidence_remediation}", failures)
+    if int(remediation_summary.get("items") or 0) > 0:
+        require(remediation_items, f"evidence remediation items missing despite summary: {evidence_remediation}", failures)
+        remediation_actions = [
+            item for item in payload.get("next_actions") or []
+            if str(item.get("source") or "").startswith("evidence_remediation:")
+        ]
+        require(remediation_actions, f"evidence remediation next action missing: {payload.get('next_actions')}", failures)
+        for action in remediation_actions:
+            evidence = action.get("evidence") or {}
+            require("operator remediate-evidence-gap" in str(action.get("command") or ""), f"remediation action command missing: {action}", failures)
+            require(evidence.get("receipt_source") == "handoff.evidence_remediation", f"remediation receipt source missing: {action}", failures)
+            require("advance-loop --source evidence_remediation" in str(evidence.get("advance_command") or ""), f"remediation source advance command missing: {action}", failures)
+            require(action.get("receipt_required") is True, f"remediation action receipt required missing: {action}", failures)
+            require(action.get("control_readback_required") is True, f"remediation action control readback missing: {action}", failures)
+            require(evidence.get("server_executes_shell") is False, f"remediation action shell proof missing: {action}", failures)
     require(((payload.get("commander") or {}).get("raw_source_omitted") is True), f"raw source omission missing: {payload}", failures)
     require(((payload.get("commander") or {}).get("raw_patch_omitted") is True), f"raw patch omission missing: {payload}", failures)
     for item in payload.get("next_actions") or []:

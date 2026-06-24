@@ -27273,6 +27273,95 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
         },
         "token_omitted": True,
     }
+    handoff_evidence_work_order = ((operator_handoff_payload.get("work_order") or {}).get("evidence_report") or {})
+    handoff_remediation_chain = handoff_evidence_work_order.get("remediation_chain") or {}
+    evidence_remediation_items: list[dict] = []
+    for raw_item in (handoff_remediation_chain.get("items") or [])[:limit]:
+        if not isinstance(raw_item, dict):
+            continue
+        receipt_state = raw_item.get("receipt_state") if isinstance(raw_item.get("receipt_state"), dict) else {}
+        next_step = raw_item.get("next_workflow_step") if isinstance(raw_item.get("next_workflow_step"), dict) else {}
+        safety = raw_item.get("safety") if isinstance(raw_item.get("safety"), dict) else {}
+        evidence_remediation_items.append({
+            "operation": raw_item.get("operation") or "evidence_remediation_work_item",
+            "package_id": raw_item.get("package_id"),
+            "action_id": raw_item.get("action_id"),
+            "action_signature": raw_item.get("action_signature") or receipt_state.get("action_signature"),
+            "run_id": raw_item.get("run_id"),
+            "task_id": raw_item.get("task_id"),
+            "status": raw_item.get("status"),
+            "severity": raw_item.get("severity"),
+            "failed_check_ids": raw_item.get("failed_check_ids") or [],
+            "gap_types": raw_item.get("gap_types") or [],
+            "missing_evidence": raw_item.get("missing_evidence") or [],
+            "preview_command": redact_text(raw_item.get("preview_command"), 500),
+            "verify_command": redact_text(raw_item.get("verify_command"), 500),
+            "receipt_record_command": redact_text(raw_item.get("receipt_record_command"), 900),
+            "receipt_verify_record_command": redact_text(raw_item.get("receipt_verify_record_command"), 900),
+            "receipt_source": raw_item.get("receipt_source") or "handoff.evidence_remediation",
+            "receipt_state": {
+                "status": receipt_state.get("status") or "missing",
+                "receipt_id": receipt_state.get("receipt_id"),
+                "receipt_hash": receipt_state.get("receipt_hash"),
+                "evaluation_pass_fail": receipt_state.get("evaluation_pass_fail"),
+                "evaluation_score": receipt_state.get("evaluation_score"),
+                "verified": receipt_state.get("verified") is True,
+                "current": receipt_state.get("current") is True,
+                "action_signature": receipt_state.get("action_signature") or raw_item.get("action_signature"),
+                "token_omitted": True,
+            },
+            "next_workflow_step": {
+                "step_id": next_step.get("step_id") or next_step.get("id"),
+                "label": next_step.get("label"),
+                "status": next_step.get("status"),
+                "command": redact_text(next_step.get("command"), 500),
+                "verify_command": redact_text(next_step.get("verify_command"), 500),
+                "receipt_required": ((next_step.get("receipt_state") or {}) if isinstance(next_step.get("receipt_state"), dict) else {}).get("required") is True,
+                "token_omitted": True,
+            } if next_step else None,
+            "advance_command": f"agentops operator advance-loop --source evidence_remediation --limit {handoff_limit} --confirm-advance",
+            "server_executes_shell": safety.get("server_executes_shell") is True,
+            "live_execution_performed": safety.get("live_execution_performed") is True,
+            "token_omitted": True,
+        })
+    evidence_remediation_summary = {
+        "items": len(evidence_remediation_items),
+        "receipt_verified": sum(1 for item in evidence_remediation_items if (item.get("receipt_state") or {}).get("verified")),
+        "receipt_missing": sum(1 for item in evidence_remediation_items if not (item.get("receipt_state") or {}).get("verified")),
+        "workflow_ready_steps": int((handoff_remediation_chain.get("summary") or {}).get("workflow_ready_steps") or 0),
+        "workflow_blocked_steps": int((handoff_remediation_chain.get("summary") or {}).get("workflow_blocked_steps") or 0),
+        "workflow_receipt_missing": int((handoff_remediation_chain.get("summary") or {}).get("workflow_receipt_missing") or 0),
+        "selected_run_id": next((item.get("run_id") for item in evidence_remediation_items if not (item.get("receipt_state") or {}).get("verified")), None),
+        "selected_gate": "evidence_remediation" if evidence_remediation_items else None,
+        "source_operation": handoff_remediation_chain.get("operation") or "evidence_remediation_chain",
+    }
+    evidence_remediation = {
+        "operation": "operator_command_center_evidence_remediation",
+        "status": "attention" if evidence_remediation_summary["receipt_missing"] else "ready" if evidence_remediation_items else "empty",
+        "summary": evidence_remediation_summary,
+        "items": evidence_remediation_items[:limit],
+        "source_operation": handoff_remediation_chain.get("operation") or "evidence_remediation_chain",
+        "next_actions": [
+            item.get("preview_command")
+            for item in evidence_remediation_items
+            if not (item.get("receipt_state") or {}).get("verified") and item.get("preview_command")
+        ][:limit],
+        "commands": {
+            "preview_advance_missing": f"agentops operator advance-loop --source evidence_remediation --limit {handoff_limit}",
+            "advance_missing": f"agentops operator advance-loop --source evidence_remediation --limit {handoff_limit} --confirm-advance",
+            "verify": "agentops operator command-center --limit 8",
+        },
+        "contract": "read-only command-center projection of handoff evidence remediation; bounded advance may run only the allowlisted preview command, while create/dispatch/close remain explicit operator steps",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_shell_execution": False,
+            "mutating_steps_are_not_auto_run": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
     worker = worker_status(conn)
     worker_health = worker.get("fleet_health") or {}
     review = human_review_queue(conn, limit=max(limit, 12))
@@ -27459,6 +27548,40 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             "token_omitted": True,
         })
 
+    for item in evidence_remediation_items[:limit]:
+        receipt_state = item.get("receipt_state") or {}
+        if receipt_state.get("verified"):
+            continue
+        run_id = item.get("run_id") or "unknown"
+        add_next_action(
+            f"evidence_remediation:{run_id}",
+            item.get("preview_command"),
+            title=f"Evidence remediation preview for {run_id}",
+            priority=125,
+            verify_command=item.get("verify_command"),
+            evidence={
+                "run_id": run_id,
+                "task_id": item.get("task_id"),
+                "selected_gate": "evidence_remediation",
+                "receipt_source": item.get("receipt_source") or "handoff.evidence_remediation",
+                "receipt_status": receipt_state.get("status"),
+                "receipt_verified": receipt_state.get("verified") is True,
+                "next_workflow_step": item.get("next_workflow_step") or {},
+                "advance_command": f"agentops operator advance-loop --source evidence_remediation --limit {handoff_limit} --confirm-advance",
+                "server_executes_shell": item.get("server_executes_shell") is True,
+                "live_execution_performed": item.get("live_execution_performed") is True,
+                "control_readback_required": True,
+            },
+            action_signature=item.get("action_signature") or receipt_state.get("action_signature"),
+            receipt_required=True,
+            receipt_status=receipt_state.get("status") or "missing",
+            receipt_verified=receipt_state.get("verified") is True,
+            receipt_hash=receipt_state.get("receipt_hash"),
+            receipt_record_command=item.get("receipt_record_command"),
+            receipt_verify_record_command=item.get("receipt_verify_record_command"),
+            control_readback_required=True,
+            control_readback_attached=False,
+        )
     for item in action_plan_actions[:limit]:
         add_next_action(
             f"operator_action_plan:{item.get('lane') or 'general'}",
@@ -27614,6 +27737,8 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             "research_lab_consumed": research_consumption_summary["consumed"],
             "research_lab_consumption_missing": research_consumption_summary["missing"],
             "bounded_advance_safe_to_confirm": 1 if handoff_advance_safe_to_confirm else 0,
+            "evidence_remediation_items": evidence_remediation_summary["items"],
+            "evidence_remediation_receipt_missing": evidence_remediation_summary["receipt_missing"],
             "next_actions": len(next_actions),
         },
         "projects": project_rows,
@@ -27677,9 +27802,10 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             },
             "token_omitted": True,
         },
+        "evidence_remediation": evidence_remediation,
         "bounded_advance": bounded_advance,
         "next_actions": next_actions,
-        "contract": "read-only command-center BFF for operator UI/CLI; aggregates projects, blocked runs, approvals, deliveries, stale workers, Commander coding gates, Research Lab consumption, bounded advance-loop, and next actions without executing commands or mutating ledgers",
+        "contract": "read-only command-center BFF for operator UI/CLI; aggregates projects, blocked runs, approvals, deliveries, stale workers, Commander coding gates, Research Lab consumption, evidence remediation, bounded advance-loop, and next actions without executing commands or mutating ledgers",
         "safety": {
             "read_only": True,
             "ledger_mutated": False,

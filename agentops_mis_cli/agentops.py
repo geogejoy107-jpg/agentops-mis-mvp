@@ -3391,18 +3391,19 @@ def select_command_center_advance_item(command_center: dict, source_filter: str)
         policy = advance_loop_command_policy(command, phase="action")
         if not policy.get("allowed"):
             continue
+        evidence_payload = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
         return {
             "package_id": f"operator_command_center:{source}",
             "action_id": item.get("action_id"),
             "action_signature": item.get("action_signature") or item.get("action_id"),
-            "gate_id": source_filter.replace(":", "_"),
+            "gate_id": evidence_payload.get("selected_gate") or source_filter.replace(":", "_"),
             "gate_label": item.get("title") or source,
             "gate_status": item.get("receipt_status") or "missing",
             "source": "operator_command_center",
             "action_command": command,
             "verify_command": item.get("verify_command") or "agentops operator command-center --limit 12",
             "receipt_verify_record_command": item.get("receipt_verify_record_command"),
-            "receipt_source": source,
+            "receipt_source": evidence_payload.get("receipt_source") or source,
             "evidence": {
                 "command_center_source": source,
                 "title": item.get("title"),
@@ -3410,7 +3411,7 @@ def select_command_center_advance_item(command_center: dict, source_filter: str)
                 "receipt_status": item.get("receipt_status"),
                 "receipt_verified": item.get("receipt_verified"),
                 "control_readback_required": item.get("control_readback_required"),
-                "evidence": item.get("evidence") if isinstance(item.get("evidence"), dict) else {},
+                "evidence": evidence_payload,
                 "operation": command_center.get("operation"),
                 "status": command_center.get("status"),
                 "token_omitted": True,
