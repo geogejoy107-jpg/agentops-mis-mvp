@@ -161,6 +161,73 @@ def token_like_leaked(payload: object) -> bool:
     return bool(re.search(r"(Authorization:|Bearer |agtok_[A-Za-z0-9_-]{16,}|agtsess_[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9_-]{16,}|ntn_[A-Za-z0-9_-]{16,})", json.dumps(payload, ensure_ascii=False)))
 
 
+def record_loopback_service_closure(base_url: str, failures: list[str]) -> dict:
+    action_command = "agentops worker service-control --manager launchd --action restart --adapter hermes --agent-id agt_worker_daemon_hermes"
+    verify_command = "agentops worker service-check --manager launchd --adapter hermes --agent-id agt_worker_daemon_hermes"
+    receipt_status, receipt_payload = http_json(
+        "POST",
+        base_url,
+        "/api/operator/action-receipts",
+        {
+            "workspace_id": "local-demo",
+            "actor_id": "usr_retry_gateway_smoke",
+            "action_command": action_command,
+            "verify_command": verify_command,
+            "action_id": "local_readiness.service_control_preview.hermes",
+            "source": "local_readiness.service_control_preview.hermes",
+            "status": "verified",
+            "result_summary": "Hermes retry loopback service-control preview inspected and service-check readback recorded.",
+        },
+        timeout=30,
+    )
+    receipt = receipt_payload.get("receipt") or {}
+    receipt_id = receipt.get("receipt_id")
+    require(receipt_status == 201 and bool(receipt_id), f"service closure receipt failed: {receipt_status} {receipt_payload}", failures)
+    if not receipt_id:
+        return {"receipt": receipt_payload}
+    readback_status, readback_payload = http_json(
+        "POST",
+        base_url,
+        "/api/operator/action-receipts/control-readback",
+        {
+            "workspace_id": "local-demo",
+            "actor_id": "usr_retry_gateway_smoke",
+            "receipt_id": receipt_id,
+            "source": "local_readiness.service_control_preview.hermes.control_readback",
+            "control_readback": {
+                "before": {
+                    "step_id": "preview_worker_service_control",
+                    "status": "preview",
+                    "adapter": "hermes",
+                    "service_control_preview": True,
+                },
+                "after": {
+                    "verify_command": verify_command,
+                    "service_check_expected": True,
+                    "service_check_ok": True,
+                    "service_file_exists": True,
+                    "service_loaded": True,
+                    "confirm_gate_ok": True,
+                    "relaunch_policy_ok": True,
+                    "confirmed_os_mutation": False,
+                    "loopback_fixture": True,
+                },
+                "self_check": {
+                    "copy_only": True,
+                    "server_executes_shell": False,
+                    "writes_ledger_for_service_control": False,
+                    "live_execution_performed": False,
+                    "token_omitted": True,
+                },
+                "token_omitted": True,
+            },
+        },
+        timeout=30,
+    )
+    require(readback_status == 201, f"service closure readback failed: {readback_status} {readback_payload}", failures)
+    return {"receipt": receipt_payload, "readback": readback_payload}
+
+
 def run_smoke() -> dict:
     failures: list[str] = []
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f")
@@ -191,6 +258,7 @@ def run_smoke() -> dict:
         )
         try:
             wait_for_server(base_url, proc)
+            service_closure = record_loopback_service_closure(base_url, failures)
             task_id = f"tsk_customer_worker_hermes_retry_{stamp}"
             status, result = http_json(
                 "POST",
@@ -238,6 +306,7 @@ def run_smoke() -> dict:
                 "run_id": run_id,
                 "artifact_id": result.get("artifact_id"),
                 "approval_id": result.get("approval_id"),
+                "service_closure_receipt_id": ((service_closure.get("receipt") or {}).get("receipt") or {}).get("receipt_id"),
                 "attempt_count": args.get("attempt_count"),
                 "retry_history": history,
                 "fake_hermes_request_count": TransientHermesHandler.request_count,

@@ -113,7 +113,7 @@ TEST_COMMANDS = [
     {
         "id": "customer_worker_hermes_retry_gateway",
         "command": "python3 scripts/customer_worker_hermes_retry_gateway_smoke.py",
-        "summary": "Deterministic loopback Hermes-compatible gateway smoke proving customer-worker retry metadata is wired through the real adapter path; not live product-readiness proof.",
+        "summary": "Deterministic loopback Hermes-compatible gateway smoke proving customer-worker retry metadata is wired through the real adapter path after a local service receipt/readback fixture; not live product-readiness proof.",
         "ci_step": "Offline safety smokes",
     },
     {
@@ -353,7 +353,7 @@ TEST_COMMANDS = [
     {
         "id": "operator_loop_supervision_consumption",
         "command": "python3 scripts/operator_loop_supervision_consumption_smoke.py",
-        "summary": "Customer-worker and installable worker live Hermes/OpenClaw entry points consume loop-supervision before runtime execution, audit the gate, and block when bounded confirm is not ready or Agent Plan quality attention requires record-first closure.",
+        "summary": "Customer-worker and installable worker live Hermes/OpenClaw entry points consume loop-supervision before runtime execution, audit the gate, and block when bounded confirm is not ready or Agent Plan quality attention requires record-first closure; installable workers also stop before live adapter execution when service-managed receipt/readback closure is the required record-first action.",
         "ci_step": "Offline safety smokes",
     },
     {
