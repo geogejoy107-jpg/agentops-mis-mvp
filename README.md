@@ -24,6 +24,15 @@ customer-facing descriptions.
 - Notion External Base dry-run connector
 - Template + Base switching preview
 
+## Open Source Base Index
+
+`docs/research/OPEN_SOURCE_BASE_INDEX_V1_1.md` and
+`docs/research/OPEN_SOURCE_BASE_REGISTRY_V1_1.yaml` preserve the governed
+open-source experiment base index. The index is decision support for adapters,
+retrieval, evaluation, CI, security scanning and runtime experiments; it does
+not replace AgentOps MIS authority objects such as tasks, runs, approvals,
+artifacts, evaluations, reviewed memories or audit logs.
+
 ## 为什么不是 Next.js 版？
 
 用户指定 Next.js + TypeScript + Tailwind 为优先技术栈。本沙盒环境无法稳定安装 npm 依赖，因此这个包提供一个 **零依赖 Python + SQLite + HTML/JS/CSS 的可运行参考实现**，用于验证 MIS 数据模型、流程和页面信息架构。`docs/CODEX_NEXTJS_HANDOFF_PROMPT.md` 是给本地 Codex/Pro 的 Next.js 版本实现提示词。
