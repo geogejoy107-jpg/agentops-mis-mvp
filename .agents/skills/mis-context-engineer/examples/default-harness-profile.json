@@ -1,0 +1,78 @@
+{
+  "schema_version": "0.2",
+  "name": "agentops-mis-context-default",
+  "version": "0.2.0",
+  "description": "Local-first, authority-aware and token-efficient context Harness.",
+  "authority": {
+    "source_order": [
+      "git_fact",
+      "mis_execution_fact",
+      "approved_project_state",
+      "approved_memory",
+      "candidate_memory",
+      "external_research",
+      "chat_source"
+    ],
+    "candidate_memory_mode": "supporting_only",
+    "require_exact_git_for_code": true
+  },
+  "scope": {
+    "workspace_id": "local-demo",
+    "project_id": "agentops-mis",
+    "task_id": null,
+    "access_tags": ["local-demo"],
+    "enforce_before_ranking": true
+  },
+  "retrieval": {
+    "mandatory_sources": [
+      "docs/project/PROJECT_STATE.md",
+      "docs/project/DECISIONS.md",
+      "docs/project/BACKLOG.md",
+      "docs/project/HANDOFF.md",
+      "AGENTS.md",
+      "PROJECT_SPEC.md",
+      "AGENT_WORKFLOW.md",
+      "BASE_INDEX.md"
+    ],
+    "retrievers": ["project_docs", "github", "mis_ledger", "approved_memory", "fts5", "repo_map", "candidate_memory", "external_research"],
+    "escalation_order": ["mandatory", "lexical", "repo_map", "rerank", "semantic", "entity_graph"],
+    "lexical_first": true,
+    "max_parallel_retrievers": 4
+  },
+  "cache": {
+    "enabled": true,
+    "stable_prefix": true,
+    "content_addressed": true,
+    "reuse_previous_manifest": true,
+    "cache_namespace": "mis-context-engineer-v0.2"
+  },
+  "tokens": {
+    "total_budget": 8000,
+    "reserved_output": 1200,
+    "min_item_tokens": 16,
+    "tier_budgets": {
+      "stable_prefix": 900,
+      "mandatory_authority": 1600,
+      "task_and_acceptance": 1000,
+      "implementation_evidence": 1800,
+      "approved_memory": 700,
+      "optional_support": 800
+    }
+  },
+  "observability": {
+    "record_iteration_trace": true,
+    "record_latency": true,
+    "record_token_metrics": true,
+    "record_cache_metrics": true
+  },
+  "verification": {
+    "require_manifest_schema": true,
+    "require_eval_summary": true,
+    "deterministic_hash": true
+  },
+  "writeback": {
+    "mode": "candidate_only",
+    "auto_promote": false,
+    "require_human_review": true
+  }
+}

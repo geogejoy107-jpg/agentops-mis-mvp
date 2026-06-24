@@ -1,0 +1,305 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentops-mis.local/schemas/memory-write-proposal.v0.1.schema.json",
+  "title": "AgentOps MIS Memory Write Proposal v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "created_at",
+    "workspace_id",
+    "project_id",
+    "task_id",
+    "agent_id",
+    "status",
+    "canonical",
+    "scope",
+    "memory_type",
+    "proposed_text",
+    "source_type",
+    "source_refs",
+    "source_versions",
+    "relationship",
+    "confidence",
+    "access_tags",
+    "review",
+    "redaction",
+    "safety"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "proposal_id": {
+      "type": "string",
+      "pattern": "^mwp_[A-Za-z0-9._:-]+$"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "workspace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "task_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "agent_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "const": "candidate"
+    },
+    "canonical": {
+      "const": false
+    },
+    "scope": {
+      "enum": [
+        "task",
+        "project",
+        "org"
+      ]
+    },
+    "memory_type": {
+      "enum": [
+        "policy",
+        "sop",
+        "decision",
+        "commitment",
+        "risk",
+        "failure_case",
+        "project_context",
+        "customer_preference",
+        "agent_lesson",
+        "artifact_summary"
+      ]
+    },
+    "proposed_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "source_type": {
+      "enum": [
+        "chat",
+        "email",
+        "meeting",
+        "github",
+        "notion",
+        "run_log",
+        "manual",
+        "project_doc",
+        "external_research"
+      ]
+    },
+    "source_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      }
+    },
+    "source_versions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "target_memory_ids",
+        "reason"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "new",
+            "duplicate_of",
+            "updates",
+            "supersedes",
+            "conflicts_with",
+            "derived_from"
+          ]
+        },
+        "target_memory_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "access_tags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "valid_from": {
+      "oneOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "valid_to": {
+      "oneOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "ttl_review_due_at": {
+      "oneOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "status",
+        "eligible_for_auto_promotion",
+        "required_reviewer_role"
+      ],
+      "properties": {
+        "required": {
+          "const": true
+        },
+        "status": {
+          "const": "pending"
+        },
+        "eligible_for_auto_promotion": {
+          "const": false
+        },
+        "required_reviewer_role": {
+          "enum": [
+            "human",
+            "project_owner",
+            "admin"
+          ]
+        }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "applied",
+        "redacted_fields",
+        "raw_content_retained"
+      ],
+      "properties": {
+        "applied": {
+          "const": true
+        },
+        "redacted_fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "raw_content_retained": {
+          "const": false
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope_checked",
+        "source_verified",
+        "duplicate_checked",
+        "conflict_checked",
+        "raw_prompts_omitted",
+        "raw_responses_omitted",
+        "secrets_omitted",
+        "chain_of_thought_omitted"
+      ],
+      "properties": {
+        "scope_checked": {
+          "const": true
+        },
+        "source_verified": {
+          "const": true
+        },
+        "duplicate_checked": {
+          "const": true
+        },
+        "conflict_checked": {
+          "const": true
+        },
+        "raw_prompts_omitted": {
+          "const": true
+        },
+        "raw_responses_omitted": {
+          "const": true
+        },
+        "secrets_omitted": {
+          "const": true
+        },
+        "chain_of_thought_omitted": {
+          "const": true
+        }
+      }
+    }
+  }
+}

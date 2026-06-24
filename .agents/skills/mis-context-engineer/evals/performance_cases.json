@@ -1,0 +1,64 @@
+{
+  "schema_version": "0.2",
+  "suite": "mis-context-engineer-performance-v0.2",
+  "cases": [
+    {
+      "id": "deterministic_build",
+      "repeat": 2,
+      "request": {
+        "objective": "Review code and tests for the context skill.",
+        "project_context": {"repository": "geogejoy107-jpg/agentops-mis-mvp", "branch": "codex/mis-context-engineer-v0", "commit": "8273ec14d87df31d92cbd106cfbe1b06b319cb35", "workspace_id": "local-demo", "project_id": "agentops-mis", "task_id": "issue-9", "agent_id": "benchmark"},
+        "harness_profile": "default-harness-profile.json",
+        "loop_policy": "default-loop-policy.json",
+        "candidates": [
+          {"source_ref": "PROJECT_SPEC.md", "source_version": "cce739415c2e795e824b46ef072ebc9ec6cc36bc", "authority_class": "approved_project_state", "workspace_id": "local-demo", "project_id": "agentops-mis", "access_tags": ["local-demo"], "summary": "MIS records bounded evidence and reviewed memory.", "mandatory": true, "tier": "mandatory_authority", "task_relevance": 0.9},
+          {"source_ref": ".agents/skills/mis-context-engineer/SKILL.md", "source_version": "8273ec14d87df31d92cbd106cfbe1b06b319cb35", "authority_class": "git_fact", "workspace_id": "local-demo", "project_id": "agentops-mis", "access_tags": ["local-demo"], "summary": "Harness and Loop context contract.", "mandatory": true, "tier": "implementation_evidence", "task_relevance": 1.0}
+        ]
+      },
+      "expect": {"stop_reason": "success", "deterministic_hash": true}
+    },
+    {
+      "id": "delta_context_reuse",
+      "repeat": 2,
+      "chain_previous": true,
+      "request": {
+        "objective": "Reuse unchanged project context for a parallel Codex conversation.",
+        "project_context": {"repository": "geogejoy107-jpg/agentops-mis-mvp", "branch": "codex/mis-context-engineer-v0", "commit": "8273ec14d87df31d92cbd106cfbe1b06b319cb35", "workspace_id": "local-demo", "project_id": "agentops-mis", "task_id": "issue-9", "agent_id": "benchmark"},
+        "harness_profile": "default-harness-profile.json",
+        "loop_policy": "default-loop-policy.json",
+        "candidates": [
+          {"source_ref": "docs/project/PROJECT_STATE.md", "source_version": "cce739415c2e795e824b46ef072ebc9ec6cc36bc", "authority_class": "approved_project_state", "workspace_id": "local-demo", "project_id": "agentops-mis", "access_tags": ["local-demo"], "summary": "Current milestone and release gates.", "mandatory": true, "tier": "mandatory_authority", "task_relevance": 1.0},
+          {"source_ref": "docs/project/DECISIONS.md", "source_version": "cce739415c2e795e824b46ef072ebc9ec6cc36bc", "authority_class": "approved_project_state", "workspace_id": "local-demo", "project_id": "agentops-mis", "access_tags": ["local-demo"], "summary": "Authority and candidate-memory decisions.", "mandatory": true, "tier": "mandatory_authority", "task_relevance": 0.9}
+        ]
+      },
+      "expect": {"stop_reason": "success", "reuse_required": true}
+    },
+    {
+      "id": "scope_gate_before_packing",
+      "request": {
+        "objective": "Retrieve only visible project context.",
+        "project_context": {"repository": "geogejoy107-jpg/agentops-mis-mvp", "branch": "codex/mis-context-engineer-v0", "commit": "8273ec14d87df31d92cbd106cfbe1b06b319cb35", "workspace_id": "local-demo", "project_id": "agentops-mis", "task_id": null, "agent_id": "benchmark"},
+        "harness_profile": "default-harness-profile.json",
+        "loop_policy": "default-loop-policy.json",
+        "candidates": [
+          {"source_ref": "docs/project/PROJECT_STATE.md", "source_version": "cce739415c2e795e824b46ef072ebc9ec6cc36bc", "authority_class": "approved_project_state", "workspace_id": "local-demo", "project_id": "agentops-mis", "access_tags": ["local-demo"], "summary": "Visible current state.", "mandatory": true, "tier": "mandatory_authority", "task_relevance": 1.0},
+          {"source_ref": "memory:private", "source_version": "private-v1", "authority_class": "approved_memory", "workspace_id": "customer-b", "project_id": "customer-b", "access_tags": ["customer-b"], "summary": "Invisible private context.", "mandatory": false, "tier": "optional_support", "task_relevance": 1.0}
+        ]
+      },
+      "expect": {"stop_reason": "success"}
+    },
+    {
+      "id": "missing_git_context",
+      "request": {
+        "objective": "Describe the exact current code implementation.",
+        "project_context": {"repository": "geogejoy107-jpg/agentops-mis-mvp", "branch": "codex/mis-context-engineer-v0", "commit": "Unknown", "workspace_id": "local-demo", "project_id": "agentops-mis", "task_id": null, "agent_id": "benchmark"},
+        "harness_profile": "default-harness-profile.json",
+        "loop_policy": "default-loop-policy.json",
+        "candidates": [
+          {"source_ref": "chat:guess", "source_version": "guess-v1", "authority_class": "chat_source", "workspace_id": "local-demo", "project_id": "agentops-mis", "access_tags": ["local-demo"], "summary": "Unverified code description.", "mandatory": false, "tier": "optional_support", "task_relevance": 1.0}
+        ]
+      },
+      "expect": {"stop_reason": "missing_git_context"}
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentOps MIS Loop Policy v0.2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name", "max_iterations", "max_input_tokens", "max_wall_time_ms", "minimum_coverage", "min_marginal_gain"],
+  "properties": {
+    "schema_version": {"const": "0.2"},
+    "name": {"type": "string", "minLength": 1},
+    "max_iterations": {"type": "integer", "minimum": 1, "maximum": 10},
+    "max_input_tokens": {"type": "integer", "minimum": 256},
+    "max_wall_time_ms": {"type": "integer", "minimum": 1},
+    "minimum_coverage": {"type": "number", "minimum": 0, "maximum": 1},
+    "min_marginal_gain": {"type": "number", "minimum": 0, "maximum": 1}
+  }
+}
