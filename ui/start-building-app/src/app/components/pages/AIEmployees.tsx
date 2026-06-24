@@ -4960,12 +4960,52 @@ export function AIEmployees() {
                           const managedExecutionRecommended = managedExecutionPath?.recommended_before_dispatch || "missing";
                           const managedExecutionReady = managedExecutionPath?.service_managed_loop_ready === true;
                           const managedExecutionLivePerformed = managedExecutionPath?.safety?.live_execution_performed === true;
+                          const serviceManagedShell = serviceManagedLoop?.safety?.server_executes_shell === true;
+                          const serviceManagedLivePerformed = serviceManagedLoop?.live_execution_performed === true || serviceManagedLoop?.safety?.live_execution_performed === true;
                           const managedExecutionLaneCounts = `${managedExecutionPath?.first_safe_commands?.length || 0}/${managedExecutionPath?.confirm_required_commands?.length || 0}/${managedExecutionPath?.verify_commands?.length || 0}`;
                           const managedExecutionCommandGroups = [
                             { label: "First safe", color: "var(--mis-cyan)", commands: managedExecutionPath?.first_safe_commands || [] },
                             { label: "Confirm", color: "var(--mis-green)", commands: managedExecutionPath?.confirm_required_commands || [] },
                             { label: "Verify", color: "var(--mis-primary)", commands: managedExecutionPath?.verify_commands || [] },
                           ].filter((group) => group.commands.length > 0);
+                          const managedExecutionTimeline = [
+                            {
+                              label: "Service check",
+                              status: serviceManagedLoop?.service_check_available ? "pass" : "attention",
+                              detail: serviceManagedLoop?.checked_status || "missing",
+                              command: serviceManagedCommands.service_check,
+                            },
+                            {
+                              label: "Receipt",
+                              status: serviceManagedLoop?.receipt_verified ? "pass" : serviceManagedLoop?.receipt_required ? "attention" : "pass",
+                              detail: serviceManagedLoop?.receipt_verified ? (serviceManagedLoop.receipt_id || "verified") : serviceManagedLoop?.receipt_required ? "required" : "not required",
+                              command: serviceManagedCommands.record_verified_receipt,
+                            },
+                            {
+                              label: "Control readback",
+                              status: serviceManagedLoop?.control_readback_attached ? "pass" : serviceManagedLoop?.control_readback_required ? "attention" : "pass",
+                              detail: serviceManagedLoop?.control_readback_attached ? (serviceManagedLoop.control_readback_id || "attached") : serviceManagedLoop?.control_readback_required ? "required" : "not required",
+                              command: serviceManagedCommands.record_control_readback,
+                            },
+                            {
+                              label: "Dispatch",
+                              status: managedExecutionReady ? "approval_required" : "attention",
+                              detail: managedExecutionReady ? "confirm required" : managedExecutionRecommended,
+                              command: managedExecutionCommands.customer_worker_dispatch || managedExecutionPath?.confirm_required_commands?.[0],
+                            },
+                            {
+                              label: "Evidence",
+                              status: managedExecutionCommands.evidence_report || managedExecutionPath?.verify_commands?.[0] ? "attention" : "unknown",
+                              detail: "evidence-report",
+                              command: managedExecutionCommands.evidence_report || managedExecutionPath?.verify_commands?.[0],
+                            },
+                            {
+                              label: "Review",
+                              status: item.should_record_before_execute ? "attention" : "pass",
+                              detail: item.should_record_before_execute ? "record first" : "ready",
+                              command: managedExecutionCommands.review_queue || item.commands.record_review || managedExecutionPath?.verify_commands?.find((command) => command.includes("review queue")),
+                            },
+                          ];
                           const serviceManagedCommandButtons = [
                             { label: "service-check", command: serviceManagedCommands.service_check },
                             { label: "record-receipt", command: serviceManagedCommands.record_verified_receipt },
@@ -4984,6 +5024,8 @@ export function AIEmployees() {
                             && recommendedAdapter === item.adapter
                             && serviceManagedAdapter === item.adapter
                             && managedExecutionAdapter === item.adapter
+                            && !serviceManagedShell
+                            && !serviceManagedLivePerformed
                             && !managedExecutionLivePerformed
                             && !localDeploymentServerShell;
                           return (
@@ -5076,6 +5118,29 @@ export function AIEmployees() {
                                   ))}
                                 </div>
                               )}
+                              <div data-testid="operator-loop-supervision-managed-execution-timeline" className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-1 mt-1">
+                                {managedExecutionTimeline.map((step, stepIndex) => (
+                                  <div key={`${item.adapter}:managed-execution-timeline:${step.label}`} className="rounded px-1.5 py-1 min-w-0" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                                    <div className="flex items-center justify-between gap-1">
+                                      <span className="text-[8px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{stepIndex + 1}. {step.label}</span>
+                                      <StatusBadge status={step.status} />
+                                    </div>
+                                    <div className="text-[8px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }} title={step.detail}>{step.detail}</div>
+                                    {step.command && (
+                                      <button
+                                        type="button"
+                                        onClick={() => void copyIntakeCommand(String(step.command))}
+                                        className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full mt-1"
+                                        style={{ color: "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                                        title={String(step.command)}
+                                      >
+                                        <Copy size={8} />
+                                        <span className="truncate max-w-[150px]">{copiedIntakeCommand === step.command ? copy.copiedCommand : step.command}</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
                               {managedExecutionCommandGroups.length > 0 && (
                                 <div data-testid="operator-loop-supervision-managed-execution-command-groups" className="grid grid-cols-1 gap-1 mt-1">
                                   {managedExecutionCommandGroups.map((group) => (
@@ -5152,6 +5217,48 @@ export function AIEmployees() {
                                     </div>
                                   ))}
                                 </div>
+                                {item.run_start_admission.receipt_projection && (
+                                  <div data-testid="operator-loop-supervision-run-start-receipt-projection" className="grid grid-cols-2 gap-1 mt-1">
+                                    {[
+                                      { label: "Receipt source", value: item.run_start_admission.receipt_projection?.source || "missing", status: item.run_start_admission.receipt_projection?.source ? "pass" : "attention" },
+                                      { label: "Action id", value: item.run_start_admission.receipt_projection?.action_id || "missing", status: item.run_start_admission.receipt_projection?.action_id ? "pass" : "attention" },
+                                      { label: "Signature", value: item.run_start_admission.receipt_projection?.action_signature || "missing", status: item.run_start_admission.receipt_projection?.action_signature ? "pass" : "attention" },
+                                      { label: "Readback source", value: item.run_start_admission.receipt_projection?.control_readback_source || "missing", status: item.run_start_admission.receipt_projection?.control_readback_required ? "attention" : "pass" },
+                                    ].map((metric) => (
+                                      <div key={`${item.adapter}:run-start-receipt:${metric.label}`} className="rounded px-1.5 py-0.5 min-w-0" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                                        <div className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{metric.label}</div>
+                                        <div className="flex items-center justify-between gap-1 mt-0.5">
+                                          <span className="text-[8px] font-semibold truncate" style={{ color: "var(--mis-text)" }} title={metric.value}>{metric.value}</span>
+                                          <StatusBadge status={metric.status} />
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {item.run_start_admission.receipt_projection?.action_command && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void copyIntakeCommand(String(item.run_start_admission?.receipt_projection?.action_command || ""))}
+                                    className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full mt-1"
+                                    style={{ color: "var(--mis-green)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                                    title={String(item.run_start_admission.receipt_projection.action_command)}
+                                  >
+                                    <Copy size={8} />
+                                    <span className="truncate max-w-[180px]">{copiedIntakeCommand === item.run_start_admission.receipt_projection.action_command ? copy.copiedCommand : item.run_start_admission.receipt_projection.action_command}</span>
+                                  </button>
+                                )}
+                                {item.run_start_admission.receipt_projection?.verify_command && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void copyIntakeCommand(String(item.run_start_admission?.receipt_projection?.verify_command || ""))}
+                                    className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full mt-1 ml-1"
+                                    style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                                    title={String(item.run_start_admission.receipt_projection.verify_command)}
+                                  >
+                                    <Copy size={8} />
+                                    <span className="truncate max-w-[180px]">{copiedIntakeCommand === item.run_start_admission.receipt_projection.verify_command ? copy.copiedCommand : item.run_start_admission.receipt_projection.verify_command}</span>
+                                  </button>
+                                )}
                                 {item.run_start_admission.recommended_next && (
                                   <button
                                     type="button"

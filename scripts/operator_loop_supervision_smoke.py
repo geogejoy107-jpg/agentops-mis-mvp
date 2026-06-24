@@ -175,6 +175,12 @@ def validate(payload: dict, failures: list[str]) -> None:
         require(local_run_path.get("recommended_adapter") == adapter, f"{adapter} local run path adapter mismatch: {local_run_path}", failures)
         require((local_run_path.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} local run path shell proof missing: {local_run_path}", failures)
         require(service_managed.get("adapter") == adapter, f"{adapter} service-managed adapter mismatch: {service_managed}", failures)
+        require(service_managed.get("receipt_required") is True, f"{adapter} service receipt requirement missing: {service_managed}", failures)
+        require(service_managed.get("receipt_verified") in {True, False}, f"{adapter} service receipt verification state missing: {service_managed}", failures)
+        require(service_managed.get("control_readback_required") is True, f"{adapter} control readback requirement missing: {service_managed}", failures)
+        require(service_managed.get("control_readback_attached") in {True, False}, f"{adapter} control readback state missing: {service_managed}", failures)
+        require((service_managed.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} service-managed shell proof missing: {service_managed}", failures)
+        require(service_managed.get("live_execution_performed") is False, f"{adapter} service-managed live execution proof missing: {service_managed}", failures)
         for key in ["service_check", "service_control_preview", "record_verified_receipt", "record_control_readback"]:
             require_adapter_command(service_commands.get(key), adapter, f"{adapter} service-managed {key}", failures)
         require(managed_execution.get("operation") == "operator_service_managed_execution_path", f"{adapter} managed execution path missing: {managed_execution}", failures)
@@ -205,9 +211,11 @@ def validate(payload: dict, failures: list[str]) -> None:
         receipt_projection = run_start_admission.get("receipt_projection") or {}
         require(receipt_projection.get("source") == f"operator_loop_supervision.run_start_gate:{adapter}", f"{adapter} receipt projection source missing: {receipt_projection}", failures)
         require(receipt_projection.get("action_id") == f"run_start_supervision:{adapter}", f"{adapter} receipt projection action id missing: {receipt_projection}", failures)
+        require(receipt_projection.get("action_signature"), f"{adapter} receipt projection action signature missing: {receipt_projection}", failures)
         require(str(receipt_projection.get("action_command") or "").startswith(f"agentops operator loop-supervision --adapter {adapter}"), f"{adapter} receipt projection action command missing: {receipt_projection}", failures)
         require(str(receipt_projection.get("verify_command") or "").startswith("agentops operator loop-audit"), f"{adapter} receipt projection verify command missing: {receipt_projection}", failures)
         require(receipt_projection.get("control_readback_required") is True, f"{adapter} receipt projection control readback missing: {receipt_projection}", failures)
+        require(receipt_projection.get("control_readback_source") == f"operator_loop_supervision.run_start_gate:{adapter}.control_readback", f"{adapter} receipt projection control readback source missing: {receipt_projection}", failures)
         require(receipt_projection.get("token_omitted") is True, f"{adapter} receipt projection token omission missing: {receipt_projection}", failures)
         run_start_safety = run_start_admission.get("safety") or {}
         require(run_start_safety.get("read_only") is True, f"{adapter} run_start admission read-only proof missing: {run_start_safety}", failures)

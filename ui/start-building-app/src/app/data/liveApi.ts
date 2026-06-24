@@ -2426,6 +2426,16 @@ export interface OperatorAgentLoopHandoffConsumerPayload {
     recommended_next?: string | null;
     status: string;
     contract?: string;
+    receipt_projection?: {
+      source?: string;
+      action_id?: string;
+      action_signature?: string;
+      action_command?: string;
+      verify_command?: string;
+      control_readback_required?: boolean;
+      control_readback_source?: string;
+      token_omitted?: boolean;
+    };
     safety?: {
       read_only?: boolean;
       ledger_mutated?: boolean;
@@ -2532,9 +2542,26 @@ export interface OperatorLoopSupervisionItemPayload {
     service_managed_loop?: {
       operation?: string;
       adapter?: string | null;
+      manager?: string | null;
       service_managed_loop_ready?: boolean;
       status?: string;
+      checked_status?: string;
+      installed_status?: string;
+      service_check_available?: boolean;
+      service_control_preview_available?: boolean;
+      receipt_required?: boolean;
+      receipt_verified?: boolean;
+      receipt_id?: string | null;
+      control_readback_required?: boolean;
+      control_readback_attached?: boolean;
+      control_readback_id?: string | null;
+      live_execution_performed?: boolean;
       commands?: Record<string, string | null | undefined>;
+      safety?: {
+        server_executes_shell?: boolean;
+        live_execution_performed?: boolean;
+        token_omitted?: boolean;
+      };
       token_omitted?: boolean;
     };
     managed_execution_path?: {
@@ -7287,11 +7314,13 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
       const localRunSafetyRaw = typeof localRunPathRaw.safety === "object" && localRunPathRaw.safety !== null ? localRunPathRaw.safety as Record<string, unknown> : {};
       const serviceManagedRaw = typeof localDeploymentRaw.service_managed_loop === "object" && localDeploymentRaw.service_managed_loop !== null ? localDeploymentRaw.service_managed_loop as Record<string, unknown> : {};
       const serviceManagedCommandsRaw = typeof serviceManagedRaw.commands === "object" && serviceManagedRaw.commands !== null ? serviceManagedRaw.commands as Record<string, unknown> : {};
+      const serviceManagedSafetyRaw = typeof serviceManagedRaw.safety === "object" && serviceManagedRaw.safety !== null ? serviceManagedRaw.safety as Record<string, unknown> : {};
       const managedExecutionRaw = typeof localDeploymentRaw.managed_execution_path === "object" && localDeploymentRaw.managed_execution_path !== null ? localDeploymentRaw.managed_execution_path as Record<string, unknown> : {};
       const managedExecutionCommandsRaw = typeof managedExecutionRaw.commands === "object" && managedExecutionRaw.commands !== null ? managedExecutionRaw.commands as Record<string, unknown> : {};
       const managedExecutionSafetyRaw = typeof managedExecutionRaw.safety === "object" && managedExecutionRaw.safety !== null ? managedExecutionRaw.safety as Record<string, unknown> : {};
       const runStartAdmissionRaw = typeof item.run_start_admission === "object" && item.run_start_admission !== null ? item.run_start_admission as Record<string, unknown> : {};
       const runStartSafetyRaw = typeof runStartAdmissionRaw.safety === "object" && runStartAdmissionRaw.safety !== null ? runStartAdmissionRaw.safety as Record<string, unknown> : {};
+      const runStartReceiptProjectionRaw = typeof runStartAdmissionRaw.receipt_projection === "object" && runStartAdmissionRaw.receipt_projection !== null ? runStartAdmissionRaw.receipt_projection as Record<string, unknown> : {};
       return {
         operation: String(item.operation || "operator_loop_supervision_item"),
         adapter: String(item.adapter || "mock"),
@@ -7326,9 +7355,26 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
           service_managed_loop: Object.keys(serviceManagedRaw).length ? {
             operation: serviceManagedRaw.operation === undefined || serviceManagedRaw.operation === null ? undefined : String(serviceManagedRaw.operation),
             adapter: serviceManagedRaw.adapter === undefined || serviceManagedRaw.adapter === null ? null : String(serviceManagedRaw.adapter),
+            manager: serviceManagedRaw.manager === undefined || serviceManagedRaw.manager === null ? null : String(serviceManagedRaw.manager),
             service_managed_loop_ready: serviceManagedRaw.service_managed_loop_ready === undefined ? undefined : boolValue(serviceManagedRaw.service_managed_loop_ready),
             status: serviceManagedRaw.status === undefined || serviceManagedRaw.status === null ? undefined : String(serviceManagedRaw.status),
+            checked_status: serviceManagedRaw.checked_status === undefined || serviceManagedRaw.checked_status === null ? undefined : String(serviceManagedRaw.checked_status),
+            installed_status: serviceManagedRaw.installed_status === undefined || serviceManagedRaw.installed_status === null ? undefined : String(serviceManagedRaw.installed_status),
+            service_check_available: serviceManagedRaw.service_check_available === undefined ? undefined : boolValue(serviceManagedRaw.service_check_available),
+            service_control_preview_available: serviceManagedRaw.service_control_preview_available === undefined ? undefined : boolValue(serviceManagedRaw.service_control_preview_available),
+            receipt_required: serviceManagedRaw.receipt_required === undefined ? undefined : boolValue(serviceManagedRaw.receipt_required),
+            receipt_verified: serviceManagedRaw.receipt_verified === undefined ? undefined : boolValue(serviceManagedRaw.receipt_verified),
+            receipt_id: serviceManagedRaw.receipt_id === undefined || serviceManagedRaw.receipt_id === null ? null : String(serviceManagedRaw.receipt_id),
+            control_readback_required: serviceManagedRaw.control_readback_required === undefined ? undefined : boolValue(serviceManagedRaw.control_readback_required),
+            control_readback_attached: serviceManagedRaw.control_readback_attached === undefined ? undefined : boolValue(serviceManagedRaw.control_readback_attached),
+            control_readback_id: serviceManagedRaw.control_readback_id === undefined || serviceManagedRaw.control_readback_id === null ? null : String(serviceManagedRaw.control_readback_id),
+            live_execution_performed: serviceManagedRaw.live_execution_performed === undefined ? undefined : boolValue(serviceManagedRaw.live_execution_performed),
             commands: Object.fromEntries(Object.entries(serviceManagedCommandsRaw).map(([key, value]) => [key, value === undefined || value === null ? null : String(value)])),
+            safety: {
+              server_executes_shell: serviceManagedSafetyRaw.server_executes_shell === undefined ? undefined : boolValue(serviceManagedSafetyRaw.server_executes_shell),
+              live_execution_performed: serviceManagedSafetyRaw.live_execution_performed === undefined ? undefined : boolValue(serviceManagedSafetyRaw.live_execution_performed),
+              token_omitted: serviceManagedSafetyRaw.token_omitted === undefined ? undefined : boolValue(serviceManagedSafetyRaw.token_omitted),
+            },
             token_omitted: serviceManagedRaw.token_omitted === undefined ? undefined : boolValue(serviceManagedRaw.token_omitted),
           } : undefined,
           managed_execution_path: Object.keys(managedExecutionRaw).length ? {
@@ -7380,6 +7426,16 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
           recommended_next: runStartAdmissionRaw.recommended_next === undefined || runStartAdmissionRaw.recommended_next === null ? null : String(runStartAdmissionRaw.recommended_next),
           status: String(runStartAdmissionRaw.status || (runStartAdmissionRaw.would_allow_run_start ? "pass" : "blocked")),
           contract: runStartAdmissionRaw.contract === undefined || runStartAdmissionRaw.contract === null ? undefined : String(runStartAdmissionRaw.contract),
+          receipt_projection: Object.keys(runStartReceiptProjectionRaw).length ? {
+            source: runStartReceiptProjectionRaw.source === undefined || runStartReceiptProjectionRaw.source === null ? undefined : String(runStartReceiptProjectionRaw.source),
+            action_id: runStartReceiptProjectionRaw.action_id === undefined || runStartReceiptProjectionRaw.action_id === null ? undefined : String(runStartReceiptProjectionRaw.action_id),
+            action_signature: runStartReceiptProjectionRaw.action_signature === undefined || runStartReceiptProjectionRaw.action_signature === null ? undefined : String(runStartReceiptProjectionRaw.action_signature),
+            action_command: runStartReceiptProjectionRaw.action_command === undefined || runStartReceiptProjectionRaw.action_command === null ? undefined : String(runStartReceiptProjectionRaw.action_command),
+            verify_command: runStartReceiptProjectionRaw.verify_command === undefined || runStartReceiptProjectionRaw.verify_command === null ? undefined : String(runStartReceiptProjectionRaw.verify_command),
+            control_readback_required: runStartReceiptProjectionRaw.control_readback_required === undefined ? undefined : boolValue(runStartReceiptProjectionRaw.control_readback_required),
+            control_readback_source: runStartReceiptProjectionRaw.control_readback_source === undefined || runStartReceiptProjectionRaw.control_readback_source === null ? undefined : String(runStartReceiptProjectionRaw.control_readback_source),
+            token_omitted: runStartReceiptProjectionRaw.token_omitted === undefined ? undefined : boolValue(runStartReceiptProjectionRaw.token_omitted),
+          } : undefined,
           safety: {
             read_only: runStartSafetyRaw.read_only === undefined ? true : boolValue(runStartSafetyRaw.read_only),
             ledger_mutated: boolValue(runStartSafetyRaw.ledger_mutated),
