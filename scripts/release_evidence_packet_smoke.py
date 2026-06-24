@@ -375,6 +375,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "operator_service_closure_fast",
+        "command": "python3 scripts/operator_service_closure_fast_smoke.py",
+        "summary": "Fast service-closure records canonical service-check receipt/readback without a loop-supervision pre-read, then proves the existing loop-supervision surface recognizes the receipt while preserving no-shell/no-live boundaries.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "run_start_loop_supervision_gate",
         "command": "python3 scripts/run_start_loop_supervision_gate_smoke.py",
         "summary": "Agent Gateway run_start consumes loop-supervision before Hermes/OpenClaw/Codex run creation, blocks unsafe live starts, and attaches safe gate hashes when allowed.",
