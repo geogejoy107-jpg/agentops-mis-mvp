@@ -304,6 +304,13 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   proofs, all three fixed write routes, and the non-fixed runtime write block;
   it also confirms the Next proxy cannot mutate read-only ledger tables while
   rendering the deployment page.
+- `deployment_readiness_postgres_runtime_write_fixture_v1` passed against a
+  temporary Postgres-backed MIS API in `experimental_write_http` mode. The
+  backend fixture proves `GET /api/deployment/readiness` and
+  `agentops deployment readiness` expose the active fixed runtime write gate,
+  all three fixed write routes, exact-resume and row-gated approval proofs,
+  non-allowlisted writes blocked at `503`, token omission, no SQLite fallback,
+  and unchanged Postgres ledger counts.
 - `postgres_cli_write_parity_v1`,
   `postgres_cli_gateway_task_write_v1`,
   `postgres_cli_gateway_execution_start_write_v1`,

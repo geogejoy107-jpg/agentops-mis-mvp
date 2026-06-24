@@ -615,6 +615,14 @@ Must be true:
   probe, Hermes run-task, row-gated approval approve, exact-resume proof, and
   non-fixed runtime writes blocked at the proxy. Verify with
   `python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture`.
+- `deployment_readiness_postgres_runtime_write_fixture_v1` proves the same
+  fixed-runtime Postgres write gate through backend API and CLI, not only the
+  browser: it starts a temporary Postgres `experimental_write_http` MIS server,
+  verifies `GET /api/deployment/readiness` and `agentops deployment readiness`
+  expose `storage.runtime_write_gate=active`, checks the three fixed runtime
+  routes, keeps non-allowlisted writes blocked at `503`, and confirms readiness
+  reads do not mutate Postgres ledger counts. Verify with
+  `python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture`.
 - `byoc_deployment_acceptance_v1` runs a local isolated recovery and audit
   export drill: backup create/verify/restore, restore confirmation guard,
   overwrite safety copy, signed audit export with a customer key, raw metadata

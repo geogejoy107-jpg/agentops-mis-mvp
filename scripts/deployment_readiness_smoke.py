@@ -14,14 +14,30 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
 CLI = ROOT / "scripts" / "agentops"
+BUNDLED_PYTHON = Path("/Users/wuji/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3")
 SECRET_MARKERS = ["AGENTOPS_API_KEY=", "Authorization:", "Bearer ", "agtok_", "agtsess_", "sk-", "ntn_"]
 RAW_HOLD_MARKERS = ["Highly confidential subject", "Raw legal hold reason"]
 RAW_ENTERPRISE_MARKERS = ["raw-sso-client-secret", "PRIVATE KEY", "raw-private-connector-token", "internal-admin-endpoint.local"]
+POSTGRES_LEDGER_TABLES = [
+    "tasks",
+    "runs",
+    "tool_calls",
+    "approvals",
+    "memories",
+    "evaluations",
+    "artifacts",
+    "audit_logs",
+    "agent_plans",
+    "plan_evidence_manifests",
+]
 
 
 def require(condition: bool, message: str) -> None:
@@ -51,6 +67,55 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def run_cmd(cmd: list[str], *, timeout: int = 60, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def reexec_postgres_fixture_with_stable_python_if_needed(*, install_driver: bool) -> None:
+    if not install_driver or os.environ.get("AGENTOPS_DEPLOYMENT_PG_FIXTURE_REEXEC") == "1":
+        return
+    try:
+        import psycopg  # noqa: F401
+        return
+    except ModuleNotFoundError:
+        pass
+
+    candidates = []
+    if os.environ.get("AGENTOPS_DEPLOYMENT_PG_FIXTURE_PYTHON"):
+        candidates.append(Path(os.environ["AGENTOPS_DEPLOYMENT_PG_FIXTURE_PYTHON"]))
+    candidates.extend([BUNDLED_PYTHON, Path("/opt/homebrew/bin/python3.12"), Path("/opt/homebrew/bin/python3.11")])
+    current = Path(sys.executable).resolve()
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            if candidate.resolve() == current:
+                continue
+        except OSError:
+            continue
+        parse_check = run_cmd(
+            [
+                str(candidate),
+                "-c",
+                "import ast, pathlib, xml.parsers.expat; ast.parse(pathlib.Path('server.py').read_text())",
+            ],
+            timeout=15,
+        )
+        pip_check = run_cmd([str(candidate), "-m", "pip", "--version"], timeout=15)
+        if parse_check.returncode == 0 and pip_check.returncode == 0:
+            os.environ["AGENTOPS_DEPLOYMENT_PG_FIXTURE_REEXEC"] = "1"
+            os.execv(str(candidate), [str(candidate), str(Path(__file__).resolve()), *sys.argv[1:]])
+
+
 def wait_ready(base_url: str, proc: subprocess.Popen[str], timeout_sec: int = 25) -> None:
     deadline = time.time() + timeout_sec
     last_error = ""
@@ -69,7 +134,6 @@ def wait_ready(base_url: str, proc: subprocess.Popen[str], timeout_sec: int = 25
 
 
 def prepare_minimal_sqlite_db(path: Path) -> None:
-    sys.path.insert(0, str(ROOT))
     import server  # noqa: PLC0415
 
     with sqlite3.connect(path) as conn:
@@ -102,6 +166,49 @@ def prepare_minimal_sqlite_db(path: Path) -> None:
         conn.commit()
 
 
+def seed_minimal_postgres_db(adapter) -> None:
+    now = "2026-06-23T00:00:00+00:00"
+    adapter.execute(
+        "INSERT INTO users(user_id,name,email,role,created_at) VALUES(:user_id,:name,:email,:role,:created_at)",
+        {
+            "user_id": "usr_deployment_pg",
+            "name": "Deployment Postgres",
+            "email": "deployment-postgres@example.local",
+            "role": "admin",
+            "created_at": now,
+        },
+    )
+    adapter.execute(
+        """INSERT INTO agents(agent_id,name,role,description,runtime_type,model_provider,model_name,status,permission_level,allowed_tools,budget_limit_usd,owner_user_id,created_at,updated_at)
+        VALUES(:agent_id,:name,:role,:description,:runtime_type,:model_provider,:model_name,:status,:permission_level,:allowed_tools,:budget_limit_usd,:owner_user_id,:created_at,:updated_at)""",
+        {
+            "agent_id": "agt_deployment_pg",
+            "name": "Deployment Postgres Agent",
+            "role": "Auditor",
+            "description": "Minimal Postgres fixture agent for backend deployment readiness runtime write-gate smoke.",
+            "runtime_type": "mock",
+            "model_provider": "mock",
+            "model_name": "mock-model",
+            "status": "idle",
+            "permission_level": "standard",
+            "allowed_tools": "[]",
+            "budget_limit_usd": 0,
+            "owner_user_id": "usr_deployment_pg",
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+    adapter.commit()
+
+
+def postgres_ledger_counts(adapter) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for table in POSTGRES_LEDGER_TABLES:
+        row = adapter.fetchone(f"SELECT COUNT(*) AS c FROM {table}")
+        counts[table] = int((row or {}).get("c") or 0)
+    return counts
+
+
 def http_json(base_url: str, path: str = "/api/deployment/readiness") -> tuple[int, dict]:
     req = urllib.request.Request(base_url.rstrip("/") + path, headers={"Accept": "application/json"}, method="GET")
     try:
@@ -113,6 +220,26 @@ def http_json(base_url: str, path: str = "/api/deployment/readiness") -> tuple[i
         except Exception:
             body = {"error": exc.reason}
         return exc.code, body
+
+
+def http_json_request(base_url: str, method: str, path: str, payload: dict | None = None) -> tuple[int, dict]:
+    body = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(
+        base_url.rstrip("/") + path,
+        data=body,
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            raw = resp.read().decode("utf-8")
+            return resp.status, json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        try:
+            error_body = json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            error_body = {"error": exc.reason}
+        return exc.code, error_body
 
 
 def run_cli(base_url: str) -> subprocess.CompletedProcess[str]:
@@ -336,6 +463,60 @@ def validate_configured_enterprise(payload: dict, label: str) -> None:
     require("enterprise_byoc_controls_v1" in set(payload.get("contracts") or []), f"{label} enterprise controls contract list missing")
 
 
+def runtime_route_keys(gate: dict) -> set[str]:
+    return {
+        f"{route.get('method')} {route.get('path')}"
+        for route in gate.get("allowlisted_routes") or []
+        if isinstance(route, dict)
+    }
+
+
+def validate_postgres_write_readiness(payload: dict, label: str) -> None:
+    validate(payload, label)
+    require(payload.get("edition") == "enterprise_byoc", f"{label} should use enterprise_byoc edition: {payload}")
+    storage = payload.get("storage") or {}
+    require(storage.get("status") == "active", f"{label} Postgres storage should be active: {storage}")
+    require(storage.get("selected_backend") == "postgres", f"{label} selected backend mismatch: {storage}")
+    require(storage.get("active_backend") == "postgres", f"{label} active backend mismatch: {storage}")
+    require(storage.get("mode") == "experimental_write_http", f"{label} storage mode mismatch: {storage}")
+    require(storage.get("writes_allowed") is True, f"{label} writes_allowed missing: {storage}")
+    require(storage.get("fallback_performed") is False, f"{label} fallback should not be performed: {storage}")
+    runtime_gate = storage.get("runtime_write_gate") or {}
+    contracts = set(runtime_gate.get("contracts") or [])
+    action_types = {
+        (item.get("provider"), item.get("action_type"))
+        for item in runtime_gate.get("required_action_types") or []
+        if isinstance(item, dict)
+    }
+    require(runtime_gate.get("status") == "active", f"{label} runtime write gate should be active: {runtime_gate}")
+    require(runtime_gate.get("required_backend") == "postgres", f"{label} runtime gate backend mismatch: {runtime_gate}")
+    require("postgres_http_runtime_prepared_action_write_v1" in contracts, f"{label} prepared-action contract missing: {runtime_gate}")
+    require("postgres_http_runtime_approval_decision_write_v1" in contracts, f"{label} approval-decision contract missing: {runtime_gate}")
+    require(runtime_route_keys(runtime_gate) == {
+        "POST /api/approvals/:approval_id/approve",
+        "POST /api/integrations/hermes/run-task",
+        "POST /api/integrations/openclaw/probe",
+    }, f"{label} fixed runtime routes mismatch: {runtime_gate}")
+    require(("hermes", "runtime.hermes_run_task") in action_types, f"{label} Hermes action type missing: {runtime_gate}")
+    require(("openclaw", "runtime.openclaw_probe") in action_types, f"{label} OpenClaw action type missing: {runtime_gate}")
+    require(runtime_gate.get("exact_resume_required") is True, f"{label} exact resume proof missing: {runtime_gate}")
+    require(runtime_gate.get("approval_decision") == "row_gated_prepared_action_only", f"{label} approval row gate missing: {runtime_gate}")
+    require(runtime_gate.get("non_fixed_runtime_writes") == "blocked", f"{label} non-fixed runtime block missing: {runtime_gate}")
+    require(runtime_gate.get("live_execution_performed") is False, f"{label} runtime gate should not execute live work: {runtime_gate}")
+    gates = {
+        gate.get("id"): gate
+        for gate in (payload.get("gates") or [])
+        if isinstance(gate, dict) and gate.get("id")
+    }
+    storage_gate = gates.get("storage_backend") or {}
+    require(storage_gate.get("status") == "ready", f"{label} storage gate should be ready: {storage_gate}")
+    require(storage_gate.get("ok") is True, f"{label} storage gate should be ok: {storage_gate}")
+    enterprise = payload.get("enterprise_byoc") or {}
+    require(enterprise.get("postgres_adapter") is True, f"{label} Postgres entitlement missing: {enterprise}")
+    local = payload.get("local") or {}
+    require(isinstance(local.get("closed_loop_runs"), int), f"{label} local readiness count should be typed: {local}")
+
+
 def validate_enterprise_controls(payload: dict, label: str) -> None:
     require(payload.get("provider") == "agentops-deployment", f"{label} wrong provider: {payload}")
     require(payload.get("operation") == "enterprise_byoc_controls", f"{label} wrong operation: {payload}")
@@ -522,16 +703,200 @@ def run_configured_enterprise_fixture() -> dict:
                     proc.wait(timeout=5)
 
 
+def run_postgres_write_fixture(*, image: str, skip_if_unavailable: bool, install_driver: bool) -> dict:
+    reexec_postgres_fixture_with_stable_python_if_needed(install_driver=install_driver)
+
+    import server  # noqa: PLC0415
+    import storage_postgres_container_smoke as container_smoke  # noqa: PLC0415
+    import storage_postgres_contract_smoke as pg_contract  # noqa: PLC0415
+    from agentops_mis_storage.postgres import PostgresAdapter  # noqa: PLC0415
+    from storage_postgres_optional_adapter_smoke import ensure_psycopg, mapped_port  # noqa: PLC0415
+
+    docker = run_cmd(["docker", "info", "--format", "{{json .ServerVersion}}"], timeout=15)
+    if docker.returncode != 0:
+        reason = (docker.stderr or docker.stdout or "docker info failed").strip()
+        if skip_if_unavailable:
+            return {"skipped": True, "reason": f"Docker daemon unavailable: {reason}", "contract": "deployment_readiness_postgres_runtime_write_fixture_v1"}
+        raise RuntimeError(f"Docker daemon unavailable: {reason}")
+    inspect = run_cmd(["docker", "image", "inspect", image], timeout=20)
+    if inspect.returncode != 0:
+        pull = run_cmd(["docker", "pull", image], timeout=240)
+        if pull.returncode != 0:
+            reason = (pull.stderr or pull.stdout or f"docker pull {image} failed").strip()
+            if skip_if_unavailable:
+                return {"skipped": True, "reason": f"Postgres image unavailable: {reason}", "contract": "deployment_readiness_postgres_runtime_write_fixture_v1"}
+            raise RuntimeError(f"Postgres image unavailable: {reason}")
+
+    proc: subprocess.Popen[str] | None = None
+    container = ""
+    adapter = None
+    port = free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    with tempfile.TemporaryDirectory(prefix="agentops-deployment-postgres-write-") as tmp:
+        tmp_path = Path(tmp)
+        driver_ok, driver_status = ensure_psycopg(tmp_path, install=install_driver)
+        if not driver_ok:
+            if skip_if_unavailable:
+                return {
+                    "skipped": True,
+                    "reason": f"Optional psycopg driver unavailable: {driver_status}",
+                    "contract": "deployment_readiness_postgres_runtime_write_fixture_v1",
+                }
+            raise RuntimeError(f"Optional psycopg driver unavailable: {driver_status}")
+
+        try:
+            container = f"agentops-deployment-pg-write-{uuid.uuid4().hex[:12]}"
+            pg_auth = uuid.uuid4().hex
+            started = container_smoke.run(
+                [
+                    "docker",
+                    "run",
+                    "-d",
+                    "--rm",
+                    "--name",
+                    container,
+                    "-p",
+                    "127.0.0.1::5432",
+                    "-e",
+                    "POSTGRES_USER=agentops",
+                    "-e",
+                    "POSTGRES_DB=agentops",
+                    "-e",
+                    f"POSTGRES_PASSWORD={pg_auth}",
+                    image,
+                ],
+                timeout=60,
+            )
+            if started.returncode != 0:
+                if skip_if_unavailable:
+                    return {
+                        "skipped": True,
+                        "reason": (started.stderr or started.stdout or "Postgres container failed to start").strip(),
+                        "contract": "deployment_readiness_postgres_runtime_write_fixture_v1",
+                    }
+                raise RuntimeError((started.stderr or started.stdout or "Postgres container failed to start").strip())
+            require(container_smoke.wait_for_postgres(container), "Postgres container did not become ready before timeout")
+            pg_port = mapped_port(container)
+            dsn = f"postgresql://agentops:{pg_auth}@127.0.0.1:{pg_port}/agentops"
+            adapter = PostgresAdapter.connect(dsn)
+            adapter.executescript(pg_contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
+            seed_minimal_postgres_db(adapter)
+            before_counts = postgres_ledger_counts(adapter)
+
+            package_target = tmp_path / "python-packages"
+            pythonpath_parts = [str(ROOT)]
+            if package_target.exists():
+                pythonpath_parts.insert(0, str(package_target))
+            if os.environ.get("PYTHONPATH"):
+                pythonpath_parts.append(os.environ["PYTHONPATH"])
+
+            env = os.environ.copy()
+            env.update({
+                "AGENTOPS_STORAGE_BACKEND": "postgres",
+                "AGENTOPS_EDITION": "enterprise_byoc",
+                "AGENTOPS_POSTGRES_DSN": dsn,
+                "AGENTOPS_ENABLE_POSTGRES_STORAGE": "1",
+                "AGENTOPS_POSTGRES_READ_ONLY_HTTP": "1",
+                "AGENTOPS_POSTGRES_WRITE_HTTP": "1",
+                "AGENTOPS_BASE_URL": base_url,
+                "PYTHONPATH": os.pathsep.join(pythonpath_parts),
+                "PYTHONDONTWRITEBYTECODE": "1",
+            })
+            for key in {
+                "AGENTOPS_DB_PATH",
+                "AGENTOPS_API_KEY",
+                "AGENTOPS_ENTITLEMENTS_PATH",
+                "AGENTOPS_RETENTION_CONTROLS_PATH",
+                "AGENTOPS_ENTERPRISE_CONTROLS_PATH",
+            }:
+                env.pop(key, None)
+            proc = subprocess.Popen(
+                [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port)],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            wait_ready(base_url, proc, timeout_sec=45)
+
+            status, api_payload = http_json(base_url)
+            require(status == 200, f"Postgres deployment readiness API failed: {status} {api_payload}")
+            validate_postgres_write_readiness(api_payload, "postgres-api")
+            proc_cli = run_cli(base_url)
+            require(proc_cli.returncode == 0, f"Postgres deployment readiness CLI failed: {proc_cli.stderr or proc_cli.stdout}")
+            cli_payload = json.loads(proc_cli.stdout)
+            validate_postgres_write_readiness(cli_payload, "postgres-cli")
+            blocked_status, blocked_payload = http_json_request(
+                base_url,
+                "POST",
+                "/api/agents",
+                {"agent_id": "agt_deployment_pg_blocked", "name": "Blocked Postgres deployment agent"},
+            )
+            require(blocked_status == 503, f"Postgres non-allowlisted write should be blocked: {blocked_status} {blocked_payload}")
+            require(blocked_payload.get("error") == "postgres_read_only_backend", f"Unexpected non-allowlisted block payload: {blocked_payload}")
+            after_counts = postgres_ledger_counts(adapter)
+            require(before_counts == after_counts, f"Postgres deployment readiness mutated ledger tables: before={before_counts} after={after_counts}")
+            output_text = "\n".join([
+                json.dumps(api_payload, ensure_ascii=False, sort_keys=True),
+                proc_cli.stdout,
+                proc_cli.stderr,
+                json.dumps(blocked_payload, ensure_ascii=False, sort_keys=True),
+            ])
+            require(not leaked_secret(output_text), "Postgres deployment readiness leaked token-like material")
+            storage = api_payload.get("storage") or {}
+            runtime_gate = storage.get("runtime_write_gate") or {}
+            return {
+                "contract": "deployment_readiness_postgres_runtime_write_fixture_v1",
+                "status": api_payload.get("status"),
+                "deployment_ready": api_payload.get("deployment_ready"),
+                "edition": api_payload.get("edition"),
+                "storage_mode": storage.get("mode"),
+                "storage_status": storage.get("status"),
+                "runtime_write_gate_status": runtime_gate.get("status"),
+                "runtime_contracts": sorted(runtime_gate.get("contracts") or []),
+                "runtime_routes": sorted(runtime_route_keys(runtime_gate)),
+                "non_allowlisted_write_status": blocked_status,
+                "postgres_counts_unchanged": True,
+                "driver_status": driver_status,
+                "skipped": False,
+            }
+        finally:
+            if proc and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=10)
+            if adapter is not None:
+                try:
+                    adapter.close()
+                except Exception:
+                    pass
+            if container:
+                container_smoke.run(["docker", "rm", "-f", container], timeout=30)
+            run_cmd(["bash", "-lc", f"lsof -tiTCP:{port} -sTCP:LISTEN | xargs -r kill"], timeout=10)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify deployment readiness API and CLI.")
     parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL"))
     parser.add_argument("--db-path", default=os.environ.get("AGENTOPS_DB_PATH"), help="Optional SQLite DB path used to assert read-only behavior.")
     parser.add_argument("--configured-retention-fixture", action="store_true", help="Also start an isolated pro_workspace server with configured legal-hold retention controls and verify deployment aggregation.")
     parser.add_argument("--configured-enterprise-fixture", action="store_true", help="Also start an isolated enterprise_byoc server and verify SSO/private connector and signed-export gates through API and CLI.")
+    parser.add_argument("--postgres-write-fixture", action="store_true", help="Also start an isolated Postgres write-mode server and verify deployment readiness runtime write-gate aggregation.")
+    parser.add_argument("--postgres-image", default=os.environ.get("AGENTOPS_POSTGRES_IMAGE", "postgres:16-alpine"), help="Postgres Docker image to use for --postgres-write-fixture.")
+    parser.add_argument("--skip-postgres-if-unavailable", action="store_true", help="Return success with skipped=true when Docker/Postgres/psycopg is unavailable for --postgres-write-fixture.")
+    parser.add_argument("--no-install-postgres-driver", action="store_true", help="Do not install psycopg into a temporary target for --postgres-write-fixture.")
     args = parser.parse_args()
     outputs: list[str] = []
     try:
-        base_url = args.base_url or (None if (args.configured_retention_fixture or args.configured_enterprise_fixture) else "http://127.0.0.1:8787")
+        base_url = args.base_url or (
+            None
+            if (args.configured_retention_fixture or args.configured_enterprise_fixture or args.postgres_write_fixture)
+            else "http://127.0.0.1:8787"
+        )
         api_payload: dict = {}
         cli_payload: dict = {}
         read_only_hash_checked = False
@@ -554,6 +919,11 @@ def main() -> int:
 
         configured = run_configured_retention_fixture() if args.configured_retention_fixture else None
         enterprise = run_configured_enterprise_fixture() if args.configured_enterprise_fixture else None
+        postgres = run_postgres_write_fixture(
+            image=args.postgres_image,
+            skip_if_unavailable=args.skip_postgres_if_unavailable,
+            install_driver=not args.no_install_postgres_driver,
+        ) if args.postgres_write_fixture else None
         require(not leaked_secret("\n".join(outputs)), "deployment readiness leaked token-like material")
         print(json.dumps({
             "ok": True,
@@ -564,9 +934,11 @@ def main() -> int:
             "retention_status": (api_payload.get("retention") or {}).get("status"),
             "configured_retention_fixture": configured,
             "configured_enterprise_fixture": enterprise,
+            "postgres_write_fixture": postgres,
             "read_only_hash_checked": read_only_hash_checked
             or bool(configured and configured.get("read_only_hash_checked"))
-            or bool(enterprise and enterprise.get("read_only_hash_checked")),
+            or bool(enterprise and enterprise.get("read_only_hash_checked"))
+            or bool(postgres and postgres.get("postgres_counts_unchanged")),
             "secret_leaked": False,
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0

@@ -966,6 +966,15 @@ def main() -> int:
             and file_contains("scripts/deployment_readiness_smoke.py", "audit_retention_controls_v1")
             and file_contains("scripts/deployment_readiness_smoke.py", "--configured-retention-fixture")
             and file_contains("scripts/deployment_readiness_smoke.py", "--configured-enterprise-fixture")
+            and file_contains("scripts/deployment_readiness_smoke.py", "--postgres-write-fixture")
+            and file_contains("scripts/deployment_readiness_smoke.py", "deployment_readiness_postgres_runtime_write_fixture_v1")
+            and file_contains("scripts/deployment_readiness_smoke.py", "validate_postgres_write_readiness")
+            and file_contains("scripts/deployment_readiness_smoke.py", "runtime_write_gate")
+            and file_contains("scripts/deployment_readiness_smoke.py", "POST /api/integrations/openclaw/probe")
+            and file_contains("scripts/deployment_readiness_smoke.py", "POST /api/integrations/hermes/run-task")
+            and file_contains("scripts/deployment_readiness_smoke.py", "POST /api/approvals/:approval_id/approve")
+            and file_contains("docs/CUSTOMER_LOCAL_DEPLOYMENT_RUNBOOK.md", "deployment_readiness_smoke.py --postgres-write-fixture")
+            and file_contains("ui/next-app/README.md", "fixed Postgres runtime write-gate readiness")
             and file_contains("scripts/deployment_readiness_smoke.py", "validate_configured_retention")
             and file_contains("scripts/deployment_readiness_smoke.py", "validate_configured_enterprise")
             and file_contains("scripts/deployment_readiness_smoke.py", "AGENTOPS_RETENTION_CONTROLS_PATH")
@@ -1144,6 +1153,7 @@ def main() -> int:
                 "python3 scripts/audit_retention_policy_smoke.py",
                 "python3 scripts/audit_retention_controls_smoke.py --configured-fixture",
                 "python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture",
+                "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py --configured-retention-fixture",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
                 "python3 scripts/byoc_deployment_acceptance_smoke.py",
