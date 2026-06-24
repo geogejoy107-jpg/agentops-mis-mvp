@@ -34,6 +34,7 @@ import {
   loadOperatorHandoff,
   loadOperatorHealth,
   loadOperatorLoopControl,
+  loadOperatorLoopBootstrap,
   loadOperatorLoopDriverPackets,
   loadOperatorLoopLaunchPacket,
   loadOperatorLoopSupervision,
@@ -90,6 +91,7 @@ import {
   type OperatorHandoffPayload,
   type OperatorHealthPayload,
   type OperatorLoopControlPayload,
+  type OperatorLoopBootstrapPayload,
   type OperatorLoopDriverPacketsPayload,
   type OperatorLoopLaunchPacketPayload,
   type OperatorLoopSupervisionPayload,
@@ -186,6 +188,7 @@ type AIEmployeesLiveData = {
   operatorCommandCenter?: OperatorCommandCenterPayload;
   operatorExecutionMode?: OperatorExecutionModePayload;
   operatorLoopControl?: OperatorLoopControlPayload;
+  operatorLoopBootstrap?: OperatorLoopBootstrapPayload;
   operatorLoopDriverPackets?: OperatorLoopDriverPacketsPayload;
   operatorLoopSupervision?: OperatorLoopSupervisionPayload;
   operatorAgentLoopHandoff?: OperatorAgentLoopHandoffPayload;
@@ -229,6 +232,7 @@ const AI_EMPLOYEES_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
   { id: "operator_runtime_doctor", load: async () => ({ operatorRuntimeDoctor: await loadOperatorRuntimeDoctor(8) }) },
   { id: "operator_execution_mode", load: async (context) => ({ operatorExecutionMode: await loadOperatorExecutionMode(context.executionModeAdapter || "mock", Boolean(context.executionModeConfirmRun), 8) }) },
   { id: "operator_loop_control", load: async () => ({ operatorLoopControl: await loadOperatorLoopControl(8) }) },
+  { id: "operator_loop_bootstrap", load: async () => ({ operatorLoopBootstrap: await loadOperatorLoopBootstrap(8) }) },
   { id: "operator_agent_loop_handoff", load: async () => ({ operatorAgentLoopHandoff: await loadOperatorAgentLoopHandoff(8) }) },
   { id: "operator_loop_supervision", load: async () => ({ operatorLoopSupervision: await loadOperatorLoopSupervision(8) }) },
   { id: "operator_loop_driver_packets", load: async () => ({ operatorLoopDriverPackets: await loadOperatorLoopDriverPackets(8) }) },
@@ -565,6 +569,7 @@ export function AIEmployees() {
   const operatorExecutionMode = data?.operatorExecutionMode as OperatorExecutionModePayload | undefined;
   const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
   const operatorLoopDriverPackets = data?.operatorLoopDriverPackets as OperatorLoopDriverPacketsPayload | undefined;
+  const operatorLoopBootstrap = data?.operatorLoopBootstrap as OperatorLoopBootstrapPayload | undefined;
   const operatorLoopSupervision = data?.operatorLoopSupervision as OperatorLoopSupervisionPayload | undefined;
   const operatorAgentLoopHandoff = data?.operatorAgentLoopHandoff as OperatorAgentLoopHandoffPayload | undefined;
   const operatorHandoff = data?.operatorHandoff as OperatorHandoffPayload | undefined;
@@ -846,6 +851,11 @@ export function AIEmployees() {
       loopDriverSummary: "Copy the bounded local loop wrapper: preview is read-only; confirm advances allowlisted steps with receipts and control readback.",
       agentLoopHandoffTitle: "Agent loop handoff",
       agentLoopHandoffSummary: "Compact shared handoff for Hermes, OpenClaw, and Codex: current-code proof, fresh live evidence, Method gates, and copyable next commands.",
+      loopBootstrapTitle: "Local loop bootstrap",
+      loopBootstrapSummary: "Ordered startup packet for local Hermes/OpenClaw services: install preview, service-check, service closure, activation confirm, and bounded loop-driver.",
+      loopBootstrapStep: "Bootstrap step",
+      serviceClosure: "Service closure",
+      serviceActive: "Service active",
       loopSupervisionTitle: "Loop supervision",
       loopSupervisionSummary: "Pre-confirm gate for Hermes/OpenClaw: record pressure, bounded confirm readiness, and the next copy-only command.",
       localDeploymentGate: "Local deployment",
@@ -1461,6 +1471,11 @@ export function AIEmployees() {
       loopDriverSummary: "复制受限本地 loop wrapper：预览只读；确认后只推进 allowlist 步骤，并写入收据和控制回读。",
       agentLoopHandoffTitle: "Agent Loop 交接矩阵",
       agentLoopHandoffSummary: "Hermes、OpenClaw、Codex 共享的紧凑交接包：current-code 证明、fresh live 证据、Method gate 和下一条可复制命令。",
+      loopBootstrapTitle: "本地 Loop 启动包",
+      loopBootstrapSummary: "给本地 Hermes/OpenClaw 服务的有序启动包：安装预览、service-check、服务闭环、激活确认和受限 loop-driver。",
+      loopBootstrapStep: "启动步骤",
+      serviceClosure: "服务闭环",
+      serviceActive: "服务活跃",
       loopSupervisionTitle: "Loop 监管",
       loopSupervisionSummary: "Hermes/OpenClaw 确认执行前的 gate：RECORD 压力、bounded confirm 状态和下一条 copy-only 命令。",
       localDeploymentGate: "本地部署 Gate",
@@ -2395,6 +2410,20 @@ export function AIEmployees() {
       { label: `${item.adapter} ${copy.recordFirst}`, command: item.commands.record_review || "", color: "var(--mis-success)" },
     ]),
   ].filter(item => item.command).slice(0, 7);
+  const operatorLoopBootstrapItems = operatorLoopBootstrap?.items || [];
+  const loopBootstrapCommands = [
+    ...(operatorLoopBootstrap?.next_actions || []).map((command, index) => ({
+      label: `${copy.loopBootstrapTitle} ${index + 1}`,
+      command,
+      color: "var(--mis-cyan)",
+    })),
+    ...operatorLoopBootstrapItems.flatMap((item) => [
+      { label: `${item.adapter} bootstrap`, command: item.commands.loop_bootstrap_cli || "", color: "var(--mis-cyan)" },
+      { label: `${item.adapter} service-check`, command: item.commands.loop_bootstrap_cli_with_service_check || item.commands.service_check || "", color: "var(--mis-primary)" },
+      { label: `${item.adapter} closure`, command: item.commands.service_closure_record || "", color: "var(--mis-success)" },
+      { label: `${item.adapter} loop-driver`, command: item.commands.loop_driver_auto_service_closure || "", color: "var(--mis-warning)" },
+    ]),
+  ].filter(item => item.command).slice(0, 8);
   const advanceLoopSelectedGate = String(advanceLoopSummaryRaw.selected_gate || "—");
   const advanceLoopSelectedStatus = String(advanceLoopSummaryRaw.selected_status || advanceLoopRaw.status || "unknown");
   const advanceLoopServerShell = Boolean(advanceLoopPolicyRaw.server_executes_shell);
@@ -4904,6 +4933,111 @@ export function AIEmployees() {
                             </div>
                           </div>
                         ))}
+                      </div>
+                    </div>
+                  )}
+                  {operatorLoopBootstrap && (
+                    <div data-testid="operator-loop-bootstrap-panel" className="mt-2 pt-2" style={{ borderTop: "1px solid var(--mis-border)" }}>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <div className="text-[8px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopBootstrapTitle}</div>
+                        <StatusBadge status={operatorLoopBootstrap.status} />
+                        <StatusBadge status={operatorLoopBootstrap.safety.read_only ? "pass" : "blocked"} label={operatorLoopBootstrap.safety.read_only ? "read-only" : "mutating"} />
+                        <StatusBadge status={operatorLoopBootstrap.safety.server_executes_shell ? "blocked" : "pass"} label={operatorLoopBootstrap.safety.server_executes_shell ? "server shell" : "no server shell"} />
+                        <StatusBadge status={operatorLoopBootstrap.safety.local_cli_service_check_performed ? "attention" : "pass"} label={operatorLoopBootstrap.safety.local_cli_service_check_performed ? "service-check ran" : "copy-only"} />
+                        {panelStatusBadge("operator_loop_bootstrap")}
+                        {panelRefreshButton("operator_loop_bootstrap")}
+                        {panelDiagnosticsButton("operator_loop_bootstrap")}
+                        {panelReceiptButton("operator_loop_bootstrap")}
+                      </div>
+                      <div className="text-[8px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>{copy.loopBootstrapSummary}</div>
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {loopBootstrapCommands.map((item) => (
+                          <button
+                            key={`loop-bootstrap-command:${item.label}:${item.command}`}
+                            type="button"
+                            onClick={() => void copyIntakeCommand(String(item.command))}
+                            className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                            style={{ color: item.color, background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                            title={String(item.command)}
+                          >
+                            <Copy size={8} />
+                            <span className="truncate max-w-[150px]">{copiedIntakeCommand === item.command ? copy.copiedCommand : item.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-1.5 mt-1.5">
+                        {operatorLoopBootstrapItems.map((item) => {
+                          const closureRequired = item.summary.service_closure_required;
+                          const activeReady = item.summary.service_active_loop_ready;
+                          const visibleSteps = item.bootstrap_steps.slice(0, 8);
+                          return (
+                            <div key={`loop-bootstrap-item:${item.adapter}`} data-testid="operator-loop-bootstrap-item" className="rounded p-1.5 min-w-0" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                              <div className="flex flex-wrap items-center justify-between gap-1">
+                                <div className="text-[8px] font-semibold uppercase" style={{ color: "var(--mis-text)" }}>{item.adapter}</div>
+                                <div className="flex flex-wrap gap-1">
+                                  <StatusBadge status={item.status} />
+                                  <StatusBadge status={item.summary.current_code_ok ? "pass" : "blocked"} label="current-code" />
+                                  <StatusBadge status={closureRequired ? "attention" : "pass"} label={`${copy.serviceClosure}: ${String(closureRequired)}`} />
+                                  <StatusBadge status={activeReady ? "pass" : "attention"} label={`${copy.serviceActive}: ${String(activeReady)}`} />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-1 mt-1">
+                                {[
+                                  { label: "Start-check", value: item.summary.start_check_status || "unknown", status: item.summary.current_code_ok ? "pass" : "blocked" },
+                                  { label: "Supervision", value: item.summary.supervision_status || "unknown", status: item.summary.supervision_status || "unknown" },
+                                  { label: "Managed loop", value: String(item.summary.service_managed_loop_ready), status: item.summary.service_managed_loop_ready ? "pass" : "attention" },
+                                  { label: "Bounded loop", value: String(item.summary.can_confirm_bounded_loop), status: item.summary.can_confirm_bounded_loop ? "pass" : "attention" },
+                                ].map((metric) => (
+                                  <div key={`${item.adapter}:bootstrap-metric:${metric.label}`} className="rounded px-1.5 py-0.5 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                                    <div className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{metric.label}</div>
+                                    <div className="flex items-center justify-between gap-1 mt-0.5">
+                                      <span className="text-[8px] font-semibold truncate" style={{ color: "var(--mis-text)" }} title={metric.value}>{metric.value}</span>
+                                      <StatusBadge status={metric.status} />
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                              <div data-testid="operator-loop-bootstrap-steps" className="grid grid-cols-1 sm:grid-cols-2 gap-1 mt-1">
+                                {visibleSteps.map((step, index) => (
+                                  <div key={`${item.adapter}:bootstrap-step:${step.id}`} className="rounded px-1.5 py-1 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                                    <div className="flex items-center justify-between gap-1">
+                                      <span className="text-[8px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{index + 1}. {step.id}</span>
+                                      <StatusBadge status={step.status || "unknown"} />
+                                    </div>
+                                    <div className="flex flex-wrap gap-1 mt-0.5">
+                                      <StatusBadge status={step.confirm_required ? "approval_required" : "pass"} label={step.confirm_required ? copy.confirmRequired : "copy-only"} />
+                                      <StatusBadge status={step.server_executes_shell ? "blocked" : "pass"} label={step.server_executes_shell ? "server shell" : "no server shell"} />
+                                    </div>
+                                    {step.command && (
+                                      <button
+                                        type="button"
+                                        onClick={() => void copyIntakeCommand(String(step.command))}
+                                        className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full mt-1"
+                                        style={{ color: step.confirm_required ? "var(--mis-warning)" : "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                                        title={String(step.command)}
+                                      >
+                                        <Copy size={8} />
+                                        <span className="truncate max-w-[170px]">{copiedIntakeCommand === step.command ? copy.copiedCommand : step.command}</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                              {item.next_action && (
+                                <button
+                                  type="button"
+                                  onClick={() => void copyIntakeCommand(String(item.next_action || ""))}
+                                  className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full mt-1"
+                                  style={{ color: "var(--mis-green)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                                  title={String(item.next_action)}
+                                >
+                                  <Copy size={8} />
+                                  <span className="truncate max-w-[220px]">{copiedIntakeCommand === item.next_action ? copy.copiedCommand : item.next_action}</span>
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}

@@ -2653,6 +2653,89 @@ export interface OperatorLoopSupervisionPayload {
   live_execution_performed?: boolean;
 }
 
+export interface OperatorLoopBootstrapItemPayload {
+  operation: string;
+  status: string;
+  adapter: string;
+  manager: string;
+  next_action?: string | null;
+  summary: {
+    start_check_status?: string | null;
+    supervision_status?: string | null;
+    current_code_ok: boolean;
+    service_closure_required: boolean;
+    service_closure_step?: string | null;
+    service_managed_loop_ready: boolean;
+    service_active_loop_ready: boolean;
+    service_loaded: boolean;
+    local_cli_service_check_performed: boolean;
+    can_confirm_bounded_loop: boolean;
+  };
+  bootstrap_steps: {
+    id: string;
+    phase: string;
+    status?: string | null;
+    command?: string | null;
+    confirm_required?: boolean;
+    server_executes_shell?: boolean;
+    token_omitted?: boolean;
+  }[];
+  commands: Record<string, string | null | undefined>;
+  service_check?: Record<string, unknown>;
+  service_closure?: Record<string, unknown>;
+  supervision?: {
+    status?: string | null;
+    primary_next_action?: Record<string, unknown>;
+    service_closure?: Record<string, unknown>;
+    token_omitted?: boolean;
+  };
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    server_executes_shell: boolean;
+    local_cli_service_check_performed?: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
+export interface OperatorLoopBootstrapPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  adapters: string[];
+  summary: {
+    items: number;
+    ready: number;
+    attention: number;
+    blocked: number;
+    service_closure_required: number;
+    service_active_loop_ready: number;
+    current_code_ok: boolean;
+    local_cli_service_check_performed: boolean;
+  };
+  items: OperatorLoopBootstrapItemPayload[];
+  next_actions: string[];
+  supervision_summary?: Record<string, unknown>;
+  contract?: string;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    server_executes_shell: boolean;
+    local_cli_service_check_performed?: boolean;
+    raw_prompt_omitted?: boolean;
+    raw_response_omitted?: boolean;
+    raw_content_omitted?: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
 export interface OperatorLoopControlPayload {
   provider: string;
   operation: string;
@@ -7487,6 +7570,133 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),
       live_execution_performed: boolValue(safetyRaw.live_execution_performed),
       server_executes_shell: boolValue(safetyRaw.server_executes_shell),
+      raw_prompt_omitted: safetyRaw.raw_prompt_omitted === undefined ? true : boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: safetyRaw.raw_response_omitted === undefined ? true : boolValue(safetyRaw.raw_response_omitted),
+      raw_content_omitted: safetyRaw.raw_content_omitted === undefined ? true : boolValue(safetyRaw.raw_content_omitted),
+      token_omitted: safetyRaw.token_omitted === undefined ? true : boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+    live_execution_performed: raw.live_execution_performed === undefined ? undefined : boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function loadOperatorLoopBootstrap(limit = 8): Promise<OperatorLoopBootstrapPayload> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/loop-bootstrap?${params.toString()}`, {
+    provider: "agentops-operator",
+    operation: "operator_loop_bootstrap",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    adapters: ["hermes", "openclaw"],
+    summary: {
+      items: 0,
+      ready: 0,
+      attention: 0,
+      blocked: 0,
+      service_closure_required: 0,
+      service_active_loop_ready: 0,
+      current_code_ok: false,
+      local_cli_service_check_performed: false,
+    },
+    items: [],
+    next_actions: [
+      `agentops operator loop-bootstrap --adapter hermes --limit ${limit}`,
+      `agentops operator loop-bootstrap --adapter openclaw --limit ${limit}`,
+    ],
+    contract: "read-only API bootstrap packet fallback",
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      server_executes_shell: false,
+      local_cli_service_check_performed: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      raw_content_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-operator"),
+    operation: String(raw.operation || "operator_loop_bootstrap"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    adapters: asArray<unknown>(raw.adapters).map(String).filter(Boolean),
+    summary: {
+      items: numberValue(summaryRaw.items, 0),
+      ready: numberValue(summaryRaw.ready, 0),
+      attention: numberValue(summaryRaw.attention, 0),
+      blocked: numberValue(summaryRaw.blocked, 0),
+      service_closure_required: numberValue(summaryRaw.service_closure_required, 0),
+      service_active_loop_ready: numberValue(summaryRaw.service_active_loop_ready, 0),
+      current_code_ok: boolValue(summaryRaw.current_code_ok),
+      local_cli_service_check_performed: boolValue(summaryRaw.local_cli_service_check_performed),
+    },
+    items: asArray<Record<string, unknown>>(raw.items).map((item) => {
+      const itemSummary = typeof item.summary === "object" && item.summary !== null ? item.summary as Record<string, unknown> : {};
+      const itemSafety = typeof item.safety === "object" && item.safety !== null ? item.safety as Record<string, unknown> : {};
+      const supervisionRaw = typeof item.supervision === "object" && item.supervision !== null ? item.supervision as Record<string, unknown> : {};
+      return {
+        operation: String(item.operation || "operator_loop_bootstrap_item"),
+        status: String(item.status || "unknown"),
+        adapter: String(item.adapter || "unknown"),
+        manager: String(item.manager || "launchd"),
+        next_action: item.next_action === undefined || item.next_action === null ? null : String(item.next_action),
+        summary: {
+          start_check_status: itemSummary.start_check_status === undefined || itemSummary.start_check_status === null ? null : String(itemSummary.start_check_status),
+          supervision_status: itemSummary.supervision_status === undefined || itemSummary.supervision_status === null ? null : String(itemSummary.supervision_status),
+          current_code_ok: boolValue(itemSummary.current_code_ok),
+          service_closure_required: boolValue(itemSummary.service_closure_required),
+          service_closure_step: itemSummary.service_closure_step === undefined || itemSummary.service_closure_step === null ? null : String(itemSummary.service_closure_step),
+          service_managed_loop_ready: boolValue(itemSummary.service_managed_loop_ready),
+          service_active_loop_ready: boolValue(itemSummary.service_active_loop_ready),
+          service_loaded: boolValue(itemSummary.service_loaded),
+          local_cli_service_check_performed: boolValue(itemSummary.local_cli_service_check_performed),
+          can_confirm_bounded_loop: boolValue(itemSummary.can_confirm_bounded_loop),
+        },
+        bootstrap_steps: asArray<Record<string, unknown>>(item.bootstrap_steps).map((step) => ({
+          id: String(step.id || ""),
+          phase: String(step.phase || ""),
+          status: step.status === undefined || step.status === null ? null : String(step.status),
+          command: step.command === undefined || step.command === null ? null : String(step.command),
+          confirm_required: step.confirm_required === undefined ? undefined : boolValue(step.confirm_required),
+          server_executes_shell: step.server_executes_shell === undefined ? undefined : boolValue(step.server_executes_shell),
+          token_omitted: step.token_omitted === undefined ? undefined : boolValue(step.token_omitted),
+        })).filter((step) => step.id),
+        commands: typeof item.commands === "object" && item.commands !== null ? item.commands as Record<string, string | null | undefined> : {},
+        service_check: typeof item.service_check === "object" && item.service_check !== null ? item.service_check as Record<string, unknown> : undefined,
+        service_closure: typeof item.service_closure === "object" && item.service_closure !== null ? item.service_closure as Record<string, unknown> : undefined,
+        supervision: Object.keys(supervisionRaw).length ? {
+          status: supervisionRaw.status === undefined || supervisionRaw.status === null ? null : String(supervisionRaw.status),
+          primary_next_action: typeof supervisionRaw.primary_next_action === "object" && supervisionRaw.primary_next_action !== null ? supervisionRaw.primary_next_action as Record<string, unknown> : undefined,
+          service_closure: typeof supervisionRaw.service_closure === "object" && supervisionRaw.service_closure !== null ? supervisionRaw.service_closure as Record<string, unknown> : undefined,
+          token_omitted: supervisionRaw.token_omitted === undefined ? undefined : boolValue(supervisionRaw.token_omitted),
+        } : undefined,
+        safety: {
+          read_only: itemSafety.read_only === undefined ? true : boolValue(itemSafety.read_only),
+          ledger_mutated: boolValue(itemSafety.ledger_mutated),
+          live_execution_performed: boolValue(itemSafety.live_execution_performed),
+          server_executes_shell: boolValue(itemSafety.server_executes_shell),
+          local_cli_service_check_performed: itemSafety.local_cli_service_check_performed === undefined ? undefined : boolValue(itemSafety.local_cli_service_check_performed),
+          token_omitted: itemSafety.token_omitted === undefined ? true : boolValue(itemSafety.token_omitted),
+        },
+        token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
+        live_execution_performed: item.live_execution_performed === undefined ? undefined : boolValue(item.live_execution_performed),
+      };
+    }),
+    next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
+    supervision_summary: typeof raw.supervision_summary === "object" && raw.supervision_summary !== null ? raw.supervision_summary as Record<string, unknown> : undefined,
+    contract: raw.contract ? String(raw.contract) : undefined,
+    safety: {
+      read_only: safetyRaw.read_only === undefined ? true : boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      server_executes_shell: boolValue(safetyRaw.server_executes_shell),
+      local_cli_service_check_performed: safetyRaw.local_cli_service_check_performed === undefined ? undefined : boolValue(safetyRaw.local_cli_service_check_performed),
       raw_prompt_omitted: safetyRaw.raw_prompt_omitted === undefined ? true : boolValue(safetyRaw.raw_prompt_omitted),
       raw_response_omitted: safetyRaw.raw_response_omitted === undefined ? true : boolValue(safetyRaw.raw_response_omitted),
       raw_content_omitted: safetyRaw.raw_content_omitted === undefined ? true : boolValue(safetyRaw.raw_content_omitted),

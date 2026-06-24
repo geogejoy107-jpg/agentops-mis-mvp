@@ -2159,6 +2159,10 @@ service-closure record, optional service-control load confirmation, and
 `loop-driver --confirm-loop --auto-service-closure`. It is read-only by default;
 `--run-service-check` performs only local worker service-check and still does
 not mutate ledgers, load services, execute server shell, or run live adapters.
+`GET /api/operator/loop-bootstrap` exposes the same read-only startup packet to
+the local MIS and AI Employees console. The API never performs service-check or
+service-control itself; operators copy the returned CLI commands and run them
+locally when the packet says confirmation is required.
 `operator handoff` exposes the same `work_order.advance_loop` preview/confirm
 commands, and `/workspace/agents` renders copy buttons for those local CLI
 commands without letting the browser or server execute shell.

@@ -179,6 +179,12 @@ service-activation confirm, and bounded loop-driver commands. With
 `service-check` in the CLI process; it does not write receipts, load services,
 execute server shell, or run a live adapter.
 
+The same packet is available inside the local MIS through
+`GET /api/operator/loop-bootstrap?limit=8` and the AI Employees page. That API
+surface is copy-only: it reads start-check plus loop-supervision, renders the
+Hermes/OpenClaw startup sequence, and never runs service-check, service-control,
+server shell, live adapters, or ledger writes.
+
 `loop-driver` is the local copy-only wrapper for repeated loop progress. Without
 `--confirm-loop` it returns a compact `acceptance_gate` from
 `operator start-check`, an `agent_loop_packet` with the READ/PLAN/RETRIEVE/

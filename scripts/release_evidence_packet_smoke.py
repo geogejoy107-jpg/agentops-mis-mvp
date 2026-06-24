@@ -333,6 +333,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "operator_loop_bootstrap_api_ui",
+        "command": "python3 scripts/operator_loop_bootstrap_api_ui_smoke.py",
+        "summary": "Read-only loop-bootstrap API plus AI Employees panel exposes Hermes/OpenClaw startup packets without mutating ledgers, running service-check, loading services, executing server shell, or leaking tokens.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "operator_loop_driver",
         "command": "python3 scripts/operator_loop_driver_smoke.py",
         "summary": "Hermes/OpenClaw/Codex loop driver consumes start-check acceptance gates, returns machine-readable agent loop packets, previews compact launch briefs, can explicitly auto-close local service readback receipts before bounded advance, and confirms bounded multi-step advance-loop receipts without live execution.",

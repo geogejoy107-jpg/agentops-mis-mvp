@@ -25757,6 +25757,366 @@ def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_c
     }
 
 
+def operator_loop_bootstrap_append_option(command: str, name: str, value: str | None) -> str:
+    command = str(command or "").strip()
+    if not command or not value or name in command:
+        return command
+    return f"{command} {name} {shlex.quote(str(value))}"
+
+
+def operator_loop_bootstrap_with_manager(command: str, manager: str) -> str:
+    command = str(command or "").strip()
+    if manager in {"launchd", "systemd"} and command:
+        command = command.replace("--manager launchd", f"--manager {manager}")
+        command = command.replace("--manager=launchd", f"--manager={manager}")
+    return command
+
+
+def operator_loop_bootstrap_command_map(
+    start_check: dict,
+    supervision_item: dict,
+    *,
+    adapter: str,
+    manager: str,
+    max_steps: int,
+    limit: int,
+    service_path: str = "",
+    service_label: str = "",
+) -> dict:
+    admission = start_check.get("local_loop_admission_packet") if isinstance(start_check.get("local_loop_admission_packet"), dict) else {}
+    deployment = admission.get("local_deployment") if isinstance(admission.get("local_deployment"), dict) else {}
+    service_install = deployment.get("service_install") if isinstance(deployment.get("service_install"), dict) else {}
+    manager_options = service_install.get("manager_options") if isinstance(service_install.get("manager_options"), dict) else {}
+    manager_install = manager_options.get(manager) if isinstance(manager_options.get(manager), dict) else {}
+    service_managed_loop = deployment.get("service_managed_loop") if isinstance(deployment.get("service_managed_loop"), dict) else {}
+    managed_execution = deployment.get("managed_execution_path") if isinstance(deployment.get("managed_execution_path"), dict) else {}
+    admission_commands = admission.get("commands") if isinstance(admission.get("commands"), dict) else {}
+    managed_commands = managed_execution.get("commands") if isinstance(managed_execution.get("commands"), dict) else {}
+    loop_driver_entry = start_check.get("loop_driver_entry") if isinstance(start_check.get("loop_driver_entry"), dict) else {}
+    loop_commands = loop_driver_entry.get("commands") if isinstance(loop_driver_entry.get("commands"), dict) else {}
+    service_closure = supervision_item.get("service_closure") if isinstance(supervision_item.get("service_closure"), dict) else {}
+    service_loop_commands = service_managed_loop.get("commands") if isinstance(service_managed_loop.get("commands"), dict) else {}
+    service_check = (
+        admission_commands.get("service_check")
+        or managed_commands.get("service_check")
+        or service_loop_commands.get("service_check")
+        or f"agentops worker service-check --manager {manager} --adapter {adapter} --agent-id agt_worker_daemon_{adapter}"
+    )
+    service_install_preview = (
+        manager_install.get("preview_command")
+        or service_install.get("preview_command")
+        or admission_commands.get("service_install_preview")
+        or f"agentops worker service-install --manager {manager} --adapter {adapter} --agent-id agt_worker_daemon_{adapter}"
+    )
+    service_install_confirm = (
+        manager_install.get("confirm_command")
+        or service_install.get("confirm_command")
+        or admission_commands.get("service_install_confirm")
+        or f"{service_install_preview} --confirm-install"
+    )
+    service_control_load = (
+        managed_commands.get("service_control_load_confirm")
+        or service_loop_commands.get("service_control_load_confirm")
+        or f"agentops worker service-control --manager {manager} --action load --adapter {adapter} --agent-id agt_worker_daemon_{adapter} --confirm-control"
+    )
+    service_closure_record = " ".join(shlex.quote(str(part)) for part in [
+        "agentops",
+        "operator",
+        "service-closure",
+        "--adapter",
+        adapter,
+        "--run-service-check",
+        "--confirm-record",
+    ])
+    loop_confirm = loop_commands.get("confirm_loop") or f"agentops operator loop-driver --adapter {adapter} --max-steps {max_steps} --limit {limit} --confirm-loop"
+    if "--auto-service-closure" not in loop_confirm:
+        loop_confirm = f"{loop_confirm} --auto-service-closure"
+    service_check = operator_loop_bootstrap_with_manager(service_check, manager)
+    service_install_preview = operator_loop_bootstrap_with_manager(service_install_preview, manager)
+    service_install_confirm = operator_loop_bootstrap_with_manager(service_install_confirm, manager)
+    service_control_load = operator_loop_bootstrap_with_manager(service_control_load, manager)
+    if service_path:
+        service_check = operator_loop_bootstrap_append_option(service_check, "--service-path", service_path)
+        service_install_preview = operator_loop_bootstrap_append_option(service_install_preview, "--service-path", service_path)
+        service_install_confirm = operator_loop_bootstrap_append_option(service_install_confirm, "--service-path", service_path)
+        service_control_load = operator_loop_bootstrap_append_option(service_control_load, "--service-path", service_path)
+        service_closure_record = operator_loop_bootstrap_append_option(service_closure_record, "--service-path", service_path)
+        loop_confirm = operator_loop_bootstrap_append_option(loop_confirm, "--service-path", service_path)
+    if service_label:
+        service_check = operator_loop_bootstrap_append_option(service_check, "--label", service_label)
+        service_install_preview = operator_loop_bootstrap_append_option(service_install_preview, "--label", service_label)
+        service_install_confirm = operator_loop_bootstrap_append_option(service_install_confirm, "--label", service_label)
+        service_control_load = operator_loop_bootstrap_append_option(service_control_load, "--label", service_label)
+        service_closure_record = operator_loop_bootstrap_append_option(service_closure_record, "--service-label", service_label)
+        loop_confirm = operator_loop_bootstrap_append_option(loop_confirm, "--service-label", service_label)
+    return {
+        "start_check": f"agentops operator start-check --adapter {adapter} --limit {limit}",
+        "current_code_check": admission_commands.get("current_code_check") or "agentops local readiness --require-current-code",
+        "service_install_preview": service_install_preview,
+        "service_install_confirm": service_install_confirm,
+        "service_check": service_check,
+        "service_closure_record": service_closure_record,
+        "service_control_load_confirm": service_control_load,
+        "loop_driver_auto_service_closure": loop_confirm,
+        "action_receipts": "agentops operator action-receipts --limit 20",
+        "loop_supervision": f"agentops operator loop-supervision --adapter {adapter} --limit {limit} --no-codex",
+        "loop_bootstrap_cli": f"agentops operator loop-bootstrap --adapter {adapter} --limit {limit}",
+        "loop_bootstrap_cli_with_service_check": f"agentops operator loop-bootstrap --adapter {adapter} --limit {limit} --run-service-check",
+        "service_closure_recommended": service_closure.get("command"),
+    }
+
+
+def operator_loop_bootstrap_item(
+    start_check: dict,
+    supervision_item: dict,
+    *,
+    adapter: str,
+    manager: str,
+    max_steps: int,
+    limit: int,
+    service_path: str = "",
+    service_label: str = "",
+) -> dict:
+    admission = start_check.get("local_loop_admission_packet") if isinstance(start_check.get("local_loop_admission_packet"), dict) else {}
+    admission_state = admission.get("admission") if isinstance(admission.get("admission"), dict) else {}
+    deployment = admission.get("local_deployment") if isinstance(admission.get("local_deployment"), dict) else {}
+    service_managed_loop = deployment.get("service_managed_loop") if isinstance(deployment.get("service_managed_loop"), dict) else {}
+    service_closure = supervision_item.get("service_closure") if isinstance(supervision_item.get("service_closure"), dict) else {}
+    commands = operator_loop_bootstrap_command_map(
+        start_check,
+        supervision_item,
+        adapter=adapter,
+        manager=manager,
+        max_steps=max_steps,
+        limit=limit,
+        service_path=service_path,
+        service_label=service_label,
+    )
+    current_code_ok = admission_state.get("current_code_ok") is True
+    service_closure_required = service_closure.get("required") is True
+    service_loaded = service_managed_loop.get("service_loaded") is True
+    service_active_loop_ready = service_managed_loop.get("service_active_loop_ready") is True
+    if start_check.get("status") == "blocked" or not current_code_ok:
+        status = "blocked"
+        next_action = commands["current_code_check"]
+    elif service_closure_required:
+        status = "attention"
+        next_action = commands["service_closure_record"]
+    elif service_active_loop_ready is not True and not service_loaded:
+        status = "attention"
+        next_action = commands["service_check"]
+    else:
+        status = "ready"
+        next_action = commands["loop_driver_auto_service_closure"]
+    bootstrap_steps = [
+        {
+            "id": "read_start_check",
+            "phase": "READ",
+            "status": start_check.get("status"),
+            "command": commands["start_check"],
+            "confirm_required": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "verify_current_code",
+            "phase": "READ",
+            "status": "pass" if current_code_ok else "blocked",
+            "command": commands["current_code_check"],
+            "confirm_required": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "preview_service_install",
+            "phase": "PREFLIGHT",
+            "status": "ready",
+            "command": commands["service_install_preview"],
+            "confirm_required": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "confirm_service_install",
+            "phase": "PREFLIGHT",
+            "status": "manual_confirm_required",
+            "command": commands["service_install_confirm"],
+            "confirm_required": True,
+            "loads_service": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "run_service_check",
+            "phase": "VERIFY",
+            "status": "ready",
+            "command": commands["service_check"],
+            "confirm_required": False,
+            "local_cli_service_check_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "record_service_closure",
+            "phase": "RECORD",
+            "status": "attention" if service_closure_required else "ready",
+            "command": commands["service_closure_record"],
+            "confirm_required": True,
+            "service_closure_step": service_closure.get("step"),
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "confirm_service_activation",
+            "phase": "PREFLIGHT",
+            "status": "manual_confirm_required" if service_closure.get("step") == "confirm_service_control_load" else "not_required",
+            "command": commands["service_control_load_confirm"],
+            "confirm_required": True,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "confirm_bounded_loop",
+            "phase": "EXECUTE",
+            "status": "ready" if status == "ready" else "waiting",
+            "command": commands["loop_driver_auto_service_closure"],
+            "confirm_required": True,
+            "uses_auto_service_closure": True,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+    ]
+    return {
+        "operation": "operator_loop_bootstrap_item",
+        "status": status,
+        "adapter": adapter,
+        "manager": manager,
+        "next_action": next_action,
+        "summary": {
+            "start_check_status": start_check.get("status"),
+            "supervision_status": supervision_item.get("status"),
+            "current_code_ok": current_code_ok,
+            "service_closure_required": service_closure_required,
+            "service_closure_step": service_closure.get("step"),
+            "service_managed_loop_ready": service_managed_loop.get("service_managed_loop_ready") is True,
+            "service_active_loop_ready": service_active_loop_ready,
+            "service_loaded": service_loaded,
+            "local_cli_service_check_performed": False,
+            "can_confirm_bounded_loop": ((start_check.get("acceptance_packet") or {}).get("decision") or {}).get("can_confirm_bounded_loop") is True,
+        },
+        "bootstrap_steps": bootstrap_steps,
+        "commands": commands,
+        "service_check": {
+            "performed": False,
+            "manager": manager,
+            "service_file_exists": None,
+            "service_loaded": None,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "service_closure": service_closure,
+        "local_loop_admission_packet": admission,
+        "supervision": {
+            "status": supervision_item.get("status"),
+            "primary_next_action": supervision_item.get("primary_next_action"),
+            "service_closure": service_closure,
+            "token_omitted": True,
+        },
+        "contract": "read-only local loop bootstrap API item for Hermes/OpenClaw; it orders service install/check/closure/activation and bounded loop-driver commands, but never mutates ledgers, runs service-check, loads services, executes server shell, or runs live adapters",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "local_cli_service_check_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
+def operator_loop_bootstrap(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    requested_adapters = qs.get("adapter") or []
+    adapters = list(dict.fromkeys([
+        coerce_choice(str(adapter), {"hermes", "openclaw"}, "hermes")
+        for adapter in requested_adapters
+        if str(adapter or "").strip()
+    ] or ["hermes", "openclaw"]))
+    manager = coerce_choice((qs.get("manager") or ["launchd"])[0], {"launchd", "systemd"}, "launchd")
+    max_steps = bounded_int((qs.get("max_steps") or qs.get("max-steps") or ["3"])[0], 3, 1, 5)
+    limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
+    service_path = redact_text((qs.get("service_path") or qs.get("service-path") or [""])[0], 500)
+    service_label = redact_text((qs.get("service_label") or qs.get("service-label") or [""])[0], 200)
+    base_query = {
+        "limit": [str(limit)],
+        "loop_id": qs.get("loop_id") or [],
+        "task_id": qs.get("task_id") or [],
+        "agent_id": qs.get("agent_id") or [],
+        "q": qs.get("q") or qs.get("query") or ["READ PLAN RETRIEVE COMPARE VERIFY RECORD"],
+        "handoff_mode": qs.get("handoff_mode") or ["lightweight"],
+        "full_handoff": qs.get("full_handoff") or [],
+        "freshness_hours": qs.get("freshness_hours") or ["72"],
+        "include_codex": ["false"],
+    }
+    supervision = operator_loop_supervision(conn, headers, {**base_query, "adapter": adapters}, auth_ctx)
+    supervision_items = supervision.get("items") if isinstance(supervision.get("items"), list) else []
+    items = []
+    for adapter in adapters:
+        start_check = operator_start_check(conn, headers, {**base_query, "adapter": [adapter]}, auth_ctx)
+        supervision_item = next((row for row in supervision_items if isinstance(row, dict) and row.get("adapter") == adapter), {})
+        items.append(operator_loop_bootstrap_item(
+            start_check,
+            supervision_item,
+            adapter=adapter,
+            manager=manager,
+            max_steps=max_steps,
+            limit=limit,
+            service_path=service_path,
+            service_label=service_label,
+        ))
+    status_order = {"blocked": 3, "attention": 2, "ready": 1, "pass": 0}
+    worst_status = max((item.get("status") for item in items), key=lambda value: status_order.get(str(value), 2), default="attention")
+    next_actions = []
+    for item in items:
+        command = item.get("next_action")
+        if command and command not in next_actions:
+            next_actions.append(command)
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_loop_bootstrap",
+        "status": worst_status,
+        "workspace_id": supervision.get("workspace_id") or "local-demo",
+        "adapters": adapters,
+        "summary": {
+            "items": len(items),
+            "ready": sum(1 for item in items if item.get("status") == "ready"),
+            "attention": sum(1 for item in items if item.get("status") == "attention"),
+            "blocked": sum(1 for item in items if item.get("status") == "blocked"),
+            "service_closure_required": sum(1 for item in items if ((item.get("summary") or {}).get("service_closure_required") is True)),
+            "service_active_loop_ready": sum(1 for item in items if ((item.get("summary") or {}).get("service_active_loop_ready") is True)),
+            "current_code_ok": all(((item.get("summary") or {}).get("current_code_ok") is True) for item in items) if items else False,
+            "local_cli_service_check_performed": False,
+        },
+        "items": items,
+        "next_actions": next_actions[:8],
+        "supervision_summary": supervision.get("summary") if isinstance(supervision.get("summary"), dict) else {},
+        "contract": "read-only API bootstrap packet for local Hermes/OpenClaw loop deployment; copy commands locally, run service-check only through the CLI, and require explicit human confirmation before service install/load or bounded loop execution",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "local_cli_service_check_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def operator_execution_mode(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     adapter = coerce_choice((qs.get("adapter") or ["mock"])[0], {"mock", "hermes", "openclaw"}, "mock")
@@ -27997,6 +28357,25 @@ class Handler(BaseHTTPRequestHandler):
                     qs,
                     self.headers,
                     lambda: operator_loop_supervision(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
+                )
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/loop-bootstrap":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = cached_read_model(
+                    "operator_loop_bootstrap",
+                    qs,
+                    self.headers,
+                    lambda: operator_loop_bootstrap(conn, self.headers, qs, auth_ctx),
                     auth_ctx,
                 )
                 conn.rollback()
