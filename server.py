@@ -25780,6 +25780,7 @@ def operator_loop_bootstrap_command_map(
     manager: str,
     max_steps: int,
     limit: int,
+    fast: bool = False,
     service_path: str = "",
     service_label: str = "",
 ) -> dict:
@@ -25825,6 +25826,7 @@ def operator_loop_bootstrap_command_map(
         "service-closure",
         "--adapter",
         adapter,
+        *(["--fast"] if fast else []),
         "--run-service-check",
         "--confirm-record",
     ])
@@ -25889,6 +25891,7 @@ def operator_loop_bootstrap_item(
         manager=manager,
         max_steps=max_steps,
         limit=limit,
+        fast=start_check.get("mode") == "fast" or ((start_check.get("summary") or {}).get("mode") == "fast_bootstrap_minimal"),
         service_path=service_path,
         service_label=service_label,
     )

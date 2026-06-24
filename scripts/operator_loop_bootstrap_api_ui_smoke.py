@@ -151,6 +151,8 @@ def validate_payload(payload: dict, failures: list[str], *, expected_adapters: s
             require(step_id in step_ids, f"{item.get('adapter')} missing step {step_id}: {item}", failures)
         require("--confirm-install" in str(commands.get("service_install_confirm")), f"{item.get('adapter')} install confirm missing", failures)
         require("--run-service-check" in str(commands.get("service_closure_record")), f"{item.get('adapter')} closure auto-check missing", failures)
+        if payload.get("mode") == "fast":
+            require("--fast" in str(commands.get("service_closure_record")), f"{item.get('adapter')} fast closure command missing --fast", failures)
         require("--auto-service-closure" in str(commands.get("loop_driver_auto_service_closure")), f"{item.get('adapter')} loop auto service closure missing", failures)
         item_safety = item.get("safety") or {}
         require(item_safety.get("read_only") is True, f"{item.get('adapter')} item read-only proof missing", failures)
@@ -212,6 +214,15 @@ def main() -> int:
             item = (single.get("items") or [{}])[0]
             require(item.get("manager") == "systemd", f"manager rewrite missing: {item}", failures)
             require("--manager systemd" in str((item.get("commands") or {}).get("service_check")), f"systemd service-check command missing: {item}", failures)
+
+            before_fast = fingerprint(db_path)
+            fast_status, fast = http_json(base_url, "/api/operator/loop-bootstrap?adapter=hermes&fast=1&limit=5")
+            outputs.append(json.dumps(fast, ensure_ascii=False))
+            after_fast = fingerprint(db_path)
+            require(fast_status == 200, f"fast API status {fast_status}: {fast}", failures)
+            validate_payload(fast, failures, expected_adapters={"hermes"})
+            require(fast.get("mode") == "fast", f"fast API mode missing: {fast}", failures)
+            require(before_fast == after_fast, f"fast API mutated ledger: {before_fast} -> {after_fast}", failures)
         finally:
             stop_server(proc)
     combined = "\n".join(outputs)
