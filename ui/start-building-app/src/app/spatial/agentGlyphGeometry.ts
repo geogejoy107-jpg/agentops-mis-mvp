@@ -22,16 +22,16 @@ export function agentGlyphRects(identity: SpatialAgentVisualIdentity): readonly 
   const rects: AgentGlyphRect[] = [];
   rows.forEach((row, y) => {
     let start = -1;
-    let token = ".";
+    let token = "0";
     const flush = (x: number) => {
       if (start < 0) return;
-      rects.push({ x: start, y, width: x - start, height: 1, ...(token === "+" ? { layer: "secondary" as const } : {}) });
+      rects.push({ x: start, y, width: x - start, height: 1, ...(token === "2" ? { layer: "secondary" as const } : {}) });
       start = -1;
     };
     for (let x = 0; x <= row.length; x += 1) {
-      const next = row[x] || ".";
+      const next = row[x] || "0";
       if (next !== token) flush(x);
-      if (next !== "." && start < 0) start = x;
+      if (next !== "0" && start < 0) start = x;
       token = next;
     }
   });
