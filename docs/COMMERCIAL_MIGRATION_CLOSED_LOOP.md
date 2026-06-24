@@ -647,6 +647,15 @@ Must be true:
   readiness uses
   `python3 scripts/commercial_release_promotion_packet.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence --require-promotion-packet-ready`
   and must remain blocked until every release-grade condition is true.
+- `commercial_release_grade_receipt_plan_v1` is the preview-only plan after the
+  promotion packet. It reports each Gate 1-5 receipt head, missing commands,
+  rerun commands, and global release blockers so operators can see which local
+  receipts must be rerun before any release-grade receipt update. Verify with
+  `python3 scripts/commercial_release_grade_receipt_plan_smoke.py`; strict plan
+  readiness uses
+  `python3 scripts/commercial_release_grade_receipt_plan.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence --require-plan-ready`
+  and must remain blocked until receipt heads, exact-head CI, clean worktree,
+  handoff, merge readiness, and real-runtime evidence are all current.
 - `release_freeze_protocol_v1` keeps commercial handoff in
   `freeze_active_not_release_complete`, and `merge_readiness_status_v1` keeps
   merge status at `blocked_release_evidence_required` until release evidence,

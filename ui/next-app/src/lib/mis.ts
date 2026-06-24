@@ -1003,6 +1003,16 @@ export type CommercialReleaseStatusPayload = {
     required_commands?: string[];
     must_not_use?: string[];
   };
+  release_grade_receipt_plan?: {
+    contract_id?: string;
+    status?: string;
+    ci_safe?: boolean;
+    read_only?: boolean;
+    plan_requires?: Record<string, boolean | string | number | null>;
+    source_contracts?: string[];
+    required_commands?: string[];
+    must_not_use?: string[];
+  };
   current_evidence_status?: {
     contract_id?: string;
     status?: string;
@@ -1054,6 +1064,8 @@ export type CommercialReleaseStatusPayload = {
     exact_head_ci?: string;
     promotion_packet?: string;
     strict_promotion_packet?: string;
+    release_grade_receipt_plan?: string;
+    strict_release_grade_receipt_plan?: string;
     release_status_external_ci_api?: string;
   };
   blockers?: string[];

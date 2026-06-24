@@ -41,6 +41,7 @@ export function CommercialParityPage({
   const release = releaseStatus || {};
   const preflight = release.promotion_preflight || {};
   const promotionPacket = release.promotion_packet || {};
+  const receiptPlan = release.release_grade_receipt_plan || {};
   const currentEvidence = release.current_evidence_status || {};
   const exactHead = release.external_exact_head_ci || {};
   const blockers = release.blockers?.length ? release.blockers : preflight.known_blockers || [];
@@ -208,6 +209,32 @@ export function CommercialParityPage({
                 <span className="status statusGood">ready</span>
               </div>
             )}
+          </div>
+        </div>
+      </section>
+
+      <section className="grid">
+        <div className="panel" data-smoke="commercial-release-grade-receipt-plan">
+          <div className="panelHeader">
+            <h2><ClipboardCheck size={14} /> Receipt promotion plan</h2>
+            <span>{compactStatus(receiptPlan.status)}</span>
+          </div>
+          <div className="proofStrip">
+            <span>{receiptPlan.contract_id || "commercial_release_grade_receipt_plan_v1"}</span>
+            <span>read only {boolText(receiptPlan.read_only)}</span>
+            <span>CI safe {boolText(receiptPlan.ci_safe)}</span>
+          </div>
+          <p className="subtle"><code>{release.commands?.release_grade_receipt_plan || "python3 scripts/commercial_release_grade_receipt_plan.py --include-external-ci-evidence"}</code></p>
+          <div className="list compactList">
+            {displayList(Object.keys(receiptPlan.plan_requires || {}), 4).map((requirement) => (
+              <div className="row" key={requirement}>
+                <div>
+                  <strong>{titleize(requirement)}</strong>
+                  <span>receipt plan requirement</span>
+                </div>
+                <span className="status statusWarn">required</span>
+              </div>
+            ))}
           </div>
         </div>
       </section>

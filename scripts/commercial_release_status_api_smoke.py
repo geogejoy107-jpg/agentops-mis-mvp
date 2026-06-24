@@ -33,6 +33,10 @@ def main() -> int:
     require(packet.get("contract_id") == "commercial_release_promotion_packet_v1", "promotion packet contract missing from release status")
     require(packet.get("read_only") is True, "promotion packet must be read-only")
     require("python3 scripts/commercial_release_promotion_packet.py --include-external-ci-evidence" in set(default_payload.get("commands", {}).values()), "promotion packet command missing")
+    receipt_plan = default_payload.get("release_grade_receipt_plan") or {}
+    require(receipt_plan.get("contract_id") == "commercial_release_grade_receipt_plan_v1", "release-grade receipt plan contract missing from release status")
+    require(receipt_plan.get("read_only") is True, "release-grade receipt plan must be read-only")
+    require("python3 scripts/commercial_release_grade_receipt_plan.py --include-external-ci-evidence" in set(default_payload.get("commands", {}).values()), "release-grade receipt plan command missing")
 
     original = server.commercial_release_external_ci_evidence
 
