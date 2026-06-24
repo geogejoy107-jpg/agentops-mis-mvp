@@ -257,7 +257,7 @@ TEST_COMMANDS = [
     {
         "id": "operator_command_center",
         "command": "python3 scripts/operator_command_center_smoke.py",
-        "summary": "Unified operator command-center BFF covers projects, blockers, approvals, deliveries, stale workers, Commander coding gates, and prioritized next actions.",
+        "summary": "Unified operator command-center BFF covers projects, blockers, approvals, deliveries, stale workers, Commander coding gates, Research Lab consumption, and prioritized next actions.",
         "ci_step": "Offline safety smokes",
     },
     {

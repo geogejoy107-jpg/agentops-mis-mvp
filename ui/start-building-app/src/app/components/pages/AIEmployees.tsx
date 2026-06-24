@@ -584,6 +584,18 @@ export function AIEmployees() {
   const operatorLoopSelfCheck = data?.operatorLoopSelfCheck as OperatorLoopSelfCheckPayload | undefined;
   const operatorCommandCenterSummary = operatorCommandCenter?.summary;
   const operatorCommandCenterActions = operatorCommandCenter?.next_actions || [];
+  const operatorCommandCenterResearchConsumption = operatorCommandCenter?.research_lab_consumption;
+  const operatorCommandCenterResearchSummary = operatorCommandCenterResearchConsumption?.summary || {};
+  const operatorCommandCenterResearchMissing = Number(
+    operatorCommandCenterResearchSummary.missing ??
+    operatorCommandCenterSummary?.research_lab_consumption_missing ??
+    0
+  );
+  const operatorCommandCenterResearchConsumed = Number(
+    operatorCommandCenterResearchSummary.consumed ??
+    operatorCommandCenterSummary?.research_lab_consumed ??
+    0
+  );
   const operatorCommandCenterCommanderSummary = operatorCommandCenter?.commander?.summary || {};
   const operatorCommandCenterCodingEvidence = typeof operatorCommandCenterCommanderSummary.coding_evidence === "object" && operatorCommandCenterCommanderSummary.coding_evidence !== null
     ? operatorCommandCenterCommanderSummary.coding_evidence as Record<string, unknown>
@@ -767,6 +779,7 @@ export function AIEmployees() {
       operatorCommandCenterTitle: "Operator command center",
       operatorCommandCenterSummary: "Unified supervisor read model for projects, blocked runs, approvals, deliveries, stale workers, coding evidence gates, and next actions.",
       commandCenterActions: "BFF actions",
+      researchLabConsumption: "Research Lab consumption",
       commandCenterProjects: "Projects",
       commandCenterCodingGaps: "Coding gaps",
       blockedRuns: "Blocked runs",
@@ -1395,6 +1408,7 @@ export function AIEmployees() {
       operatorCommandCenterTitle: "Operator 指挥中心",
       operatorCommandCenterSummary: "统一汇总项目、阻塞 run、审批、交付、过期 worker、编码证据 Gate 和下一步动作的只读监督视图。",
       commandCenterActions: "BFF 动作",
+      researchLabConsumption: "Research Lab 消费",
       commandCenterProjects: "项目",
       commandCenterCodingGaps: "编码缺口",
       blockedRuns: "阻塞 Run",
@@ -4728,7 +4742,7 @@ export function AIEmployees() {
             <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.commandCenterSummary}</p>
             {operatorCommandCenter && (
               <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
-                {copy.operatorCommandCenterSummary} · {copy.commandCenterActions}: {operatorCommandCenterSummary?.next_actions ?? operatorCommandCenterActions.length} · {copy.blockedRuns}: {operatorCommandCenterSummary?.blocked_runs ?? 0} · {copy.pendingApprovals}: {operatorCommandCenterSummary?.pending_approvals ?? 0}
+                {copy.operatorCommandCenterSummary} · {copy.commandCenterActions}: {operatorCommandCenterSummary?.next_actions ?? operatorCommandCenterActions.length} · {copy.blockedRuns}: {operatorCommandCenterSummary?.blocked_runs ?? 0} · {copy.pendingApprovals}: {operatorCommandCenterSummary?.pending_approvals ?? 0} · {copy.researchLabConsumption}: {operatorCommandCenterResearchConsumed}/{operatorCommandCenterResearchConsumed + operatorCommandCenterResearchMissing}
               </p>
             )}
             {panelEvidenceLine("operator_command_center")}
@@ -4773,9 +4787,10 @@ export function AIEmployees() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-9 gap-3 mt-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-11 gap-3 mt-4">
           {[
             { label: copy.operatorCommandCenterTitle, value: operatorCommandCenterSummary?.next_actions ?? operatorCommandCenterActions.length, status: operatorCommandCenter?.status || "unknown" },
+            { label: copy.researchLabConsumption, value: operatorCommandCenterResearchMissing, status: operatorCommandCenterResearchMissing > 0 ? "attention" : "pass" },
             { label: copy.loopControlTitle, value: loopControlSelectedGate, status: operatorLoopControl?.status || loopControlGateStatus },
             { label: copy.runtimeDoctorTitle, value: runtimeDoctorSummary?.evidence_chain_status || operatorRuntimeDoctor?.status || "—", status: operatorRuntimeDoctor?.status || "unknown" },
             { label: copy.operatorHealthTitle, value: `${operatorHealth?.score ?? 0}/100`, status: operatorHealth?.status || "unknown" },

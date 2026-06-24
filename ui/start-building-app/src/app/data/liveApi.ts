@@ -1490,6 +1490,25 @@ export interface OperatorCommandCenterNextAction {
   token_omitted?: boolean;
 }
 
+export interface OperatorCommandCenterResearchConsumptionItem {
+  adapter: string;
+  status: string;
+  consumed: boolean;
+  packet_hash?: string | null;
+  receipt_id?: string | null;
+  receipt_verified?: boolean;
+  evaluation_pass?: boolean;
+  memory_recorded?: boolean;
+  memory_review_status?: string | null;
+  preview_command?: string | null;
+  record_command?: string | null;
+  verify_command?: string | null;
+  hard_run_start_gate?: boolean;
+  server_executes_shell?: boolean;
+  live_execution_performed?: boolean;
+  token_omitted?: boolean;
+}
+
 export interface OperatorCommandCenterPayload {
   provider: string;
   operation: string;
@@ -1531,6 +1550,14 @@ export interface OperatorCommandCenterPayload {
     summary?: Record<string, unknown>;
     actions?: OperatorActionPlanItem[];
     receipt_coverage?: Record<string, unknown>;
+  };
+  research_lab_consumption?: {
+    summary?: Record<string, unknown>;
+    items?: OperatorCommandCenterResearchConsumptionItem[];
+    source_operation?: string;
+    next_actions?: string[];
+    safety?: Record<string, unknown>;
+    token_omitted?: boolean;
   };
   next_actions: OperatorCommandCenterNextAction[];
   contract?: string;
@@ -5951,6 +5978,22 @@ export async function loadOperatorCommandCenter(limit = 12, projectId = ""): Pro
     deliveries: { summary: {}, items: [], next_actions: [] },
     workers: { stale_refs: [], next_actions: [] },
     operator_action_plan: { status: "unavailable", summary: {}, actions: [] },
+    research_lab_consumption: {
+      summary: {},
+      items: [],
+      source_operation: "operator_loop_supervision",
+      next_actions: [],
+      safety: {
+        read_only: true,
+        ledger_mutated: false,
+        live_execution_performed: false,
+        server_shell_execution: false,
+        raw_prompt_omitted: true,
+        raw_response_omitted: true,
+        token_omitted: true,
+      },
+      token_omitted: true,
+    },
     next_actions: [],
     contract: "read-only command-center BFF unavailable fallback",
     safety: {
@@ -5976,6 +6019,7 @@ export async function loadOperatorCommandCenter(limit = 12, projectId = ""): Pro
   const deliveriesRaw = typeof raw.deliveries === "object" && raw.deliveries !== null ? raw.deliveries as Record<string, unknown> : {};
   const workersRaw = typeof raw.workers === "object" && raw.workers !== null ? raw.workers as Record<string, unknown> : {};
   const operatorPlanRaw = typeof raw.operator_action_plan === "object" && raw.operator_action_plan !== null ? raw.operator_action_plan as Record<string, unknown> : {};
+  const researchConsumptionRaw = typeof raw.research_lab_consumption === "object" && raw.research_lab_consumption !== null ? raw.research_lab_consumption as Record<string, unknown> : {};
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
   return {
     provider: String(raw.provider || "agentops-operator"),
@@ -6018,6 +6062,31 @@ export async function loadOperatorCommandCenter(limit = 12, projectId = ""): Pro
       summary: typeof operatorPlanRaw.summary === "object" && operatorPlanRaw.summary !== null ? operatorPlanRaw.summary as Record<string, unknown> : {},
       actions: asArray<OperatorActionPlanItem>(operatorPlanRaw.actions),
       receipt_coverage: typeof operatorPlanRaw.receipt_coverage === "object" && operatorPlanRaw.receipt_coverage !== null ? operatorPlanRaw.receipt_coverage as Record<string, unknown> : undefined,
+    },
+    research_lab_consumption: {
+      summary: typeof researchConsumptionRaw.summary === "object" && researchConsumptionRaw.summary !== null ? researchConsumptionRaw.summary as Record<string, unknown> : {},
+      items: asArray<Record<string, unknown>>(researchConsumptionRaw.items).map((item) => ({
+        adapter: String(item.adapter || "unknown"),
+        status: String(item.status || "missing"),
+        consumed: boolValue(item.consumed),
+        packet_hash: item.packet_hash ? String(item.packet_hash) : null,
+        receipt_id: item.receipt_id ? String(item.receipt_id) : null,
+        receipt_verified: boolValue(item.receipt_verified),
+        evaluation_pass: boolValue(item.evaluation_pass),
+        memory_recorded: boolValue(item.memory_recorded),
+        memory_review_status: item.memory_review_status ? String(item.memory_review_status) : null,
+        preview_command: item.preview_command ? String(item.preview_command) : null,
+        record_command: item.record_command ? String(item.record_command) : null,
+        verify_command: item.verify_command ? String(item.verify_command) : null,
+        hard_run_start_gate: boolValue(item.hard_run_start_gate),
+        server_executes_shell: boolValue(item.server_executes_shell),
+        live_execution_performed: boolValue(item.live_execution_performed),
+        token_omitted: item.token_omitted === undefined ? true : boolValue(item.token_omitted),
+      })),
+      source_operation: researchConsumptionRaw.source_operation ? String(researchConsumptionRaw.source_operation) : undefined,
+      next_actions: asArray<unknown>(researchConsumptionRaw.next_actions).map(String).filter(Boolean),
+      safety: typeof researchConsumptionRaw.safety === "object" && researchConsumptionRaw.safety !== null ? researchConsumptionRaw.safety as Record<string, unknown> : undefined,
+      token_omitted: researchConsumptionRaw.token_omitted === undefined ? true : boolValue(researchConsumptionRaw.token_omitted),
     },
     next_actions: asArray<Record<string, unknown>>(raw.next_actions).map((item) => ({
       action_id: String(item.action_id || item.command || ""),

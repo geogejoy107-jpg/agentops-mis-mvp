@@ -27205,6 +27205,57 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
     commander = commander_work_packages_readback(conn, commander_qs, effective_headers)
     commander_summary = commander.get("summary") or {}
     commander_packages = commander.get("work_packages") or []
+    loop_supervision = operator_loop_supervision(
+        conn,
+        effective_headers,
+        {
+            "limit": [str(min(limit, 8))],
+            "adapter": ["hermes", "openclaw"],
+            "include_codex": ["false"],
+            "handoff_mode": ["lightweight"],
+        },
+        auth_ctx,
+    )
+    loop_supervision_summary = loop_supervision.get("summary") if isinstance(loop_supervision.get("summary"), dict) else {}
+    research_consumption_items = []
+    for item in loop_supervision.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        adapter = commander_safe_text(item.get("adapter") or "unknown", 80)
+        consumption = item.get("research_lab_consumption") if isinstance(item.get("research_lab_consumption"), dict) else {}
+        contract = ((item.get("agent_work_packet") or {}).get("evidence_contract") or {}) if isinstance(item.get("agent_work_packet"), dict) else {}
+        contract_consumption = contract.get("research_lab_consumption") if isinstance(contract.get("research_lab_consumption"), dict) else {}
+        consumption = {**contract_consumption, **consumption}
+        if not consumption:
+            continue
+        research_consumption_items.append({
+            "adapter": adapter,
+            "status": commander_safe_text(consumption.get("status") or "missing", 80),
+            "consumed": consumption.get("consumed") is True,
+            "packet_hash": commander_safe_text(consumption.get("packet_hash") or "", 160),
+            "receipt_id": commander_safe_text(consumption.get("receipt_id") or "", 160) or None,
+            "receipt_verified": consumption.get("receipt_verified") is True,
+            "evaluation_pass": consumption.get("evaluation_pass") is True,
+            "memory_recorded": consumption.get("memory_recorded") is True,
+            "memory_review_status": commander_safe_text(consumption.get("memory_review_status") or "", 80) or None,
+            "preview_command": redact_text(consumption.get("preview_command") or f"agentops operator research-lab-consumption --adapter {adapter} --limit {min(limit, 8)}", 500),
+            "record_command": redact_text(consumption.get("record_command") or f"agentops operator research-lab-consumption --adapter {adapter} --limit {min(limit, 8)} --confirm-record", 500),
+            "verify_command": redact_text(consumption.get("verify_command") or f"agentops operator loop-supervision --adapter {adapter} --limit {min(limit, 8)} --work-packet", 500),
+            "hard_run_start_gate": consumption.get("hard_run_start_gate") is True,
+            "server_executes_shell": consumption.get("server_executes_shell") is True,
+            "live_execution_performed": consumption.get("live_execution_performed") is True,
+            "token_omitted": True,
+        })
+    research_consumption_summary = {
+        "adapters": len(research_consumption_items),
+        "consumed": sum(1 for item in research_consumption_items if item.get("consumed") is True),
+        "missing": sum(1 for item in research_consumption_items if item.get("consumed") is not True),
+        "loop_supervision_status": loop_supervision.get("status") or "unknown",
+        "research_lab_packets": int(loop_supervision_summary.get("research_lab_packets") or 0),
+        "research_lab_consumptions": int(loop_supervision_summary.get("research_lab_consumptions") or len(research_consumption_items)),
+        "research_lab_consumed": int(loop_supervision_summary.get("research_lab_consumed") or 0),
+        "research_lab_consumption_missing": int(loop_supervision_summary.get("research_lab_consumption_missing") or 0),
+    }
 
     blocked_run_rows = rows_to_dicts(conn.execute(
         """SELECT r.run_id, r.task_id, r.agent_id, r.runtime_type, r.status,
@@ -27388,6 +27439,38 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             verify_command="agentops workflow delivery-board --limit 12",
             evidence={"delivery_id": item.get("delivery_id"), "project_id": item.get("project_id"), "status": item.get("status")},
         )
+    for item in research_consumption_items[:limit]:
+        if item.get("consumed") is True:
+            continue
+        adapter = item.get("adapter") or "unknown"
+        add_next_action(
+            f"research_lab_consumption:{adapter}",
+            item.get("record_command"),
+            title=f"Record Research Lab consumption for {adapter}",
+            priority=127,
+            verify_command=item.get("verify_command"),
+            evidence={
+                "adapter": adapter,
+                "status": item.get("status"),
+                "packet_hash": item.get("packet_hash"),
+                "receipt_id": item.get("receipt_id"),
+                "receipt_verified": item.get("receipt_verified"),
+                "memory_recorded": item.get("memory_recorded"),
+                "memory_review_status": item.get("memory_review_status"),
+                "hard_run_start_gate": item.get("hard_run_start_gate"),
+                "server_executes_shell": item.get("server_executes_shell"),
+                "live_execution_performed": item.get("live_execution_performed"),
+                "control_readback_required": True,
+            },
+            action_signature=f"operator.research_lab_consumption:{adapter}:{item.get('packet_hash') or 'missing'}",
+            receipt_required=True,
+            receipt_status="missing",
+            receipt_verified=False,
+            receipt_record_command=item.get("record_command"),
+            receipt_verify_record_command=item.get("verify_command"),
+            control_readback_required=True,
+            control_readback_attached=False,
+        )
 
     next_actions = sorted(next_actions, key=lambda item: int(item.get("priority") or 0), reverse=True)[:limit]
     status = command_center_status(
@@ -27418,6 +27501,9 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             "deliveries_waiting_approval": int(delivery_summary.get("waiting_approval") or 0),
             "stale_worker_refs": len(stale_worker_refs),
             "operator_actions": int(action_plan_summary.get("actions") or len(action_plan_actions)),
+            "research_lab_consumption_adapters": research_consumption_summary["adapters"],
+            "research_lab_consumed": research_consumption_summary["consumed"],
+            "research_lab_consumption_missing": research_consumption_summary["missing"],
             "next_actions": len(next_actions),
         },
         "projects": project_rows,
@@ -27456,8 +27542,28 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             "actions": action_plan_actions[:limit],
             "receipt_coverage": action_plan.get("receipt_coverage"),
         },
+        "research_lab_consumption": {
+            "summary": research_consumption_summary,
+            "items": research_consumption_items[:limit],
+            "source_operation": "operator_loop_supervision",
+            "next_actions": [
+                item.get("record_command")
+                for item in research_consumption_items
+                if item.get("consumed") is not True and item.get("record_command")
+            ][:limit],
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_shell_execution": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        },
         "next_actions": next_actions,
-        "contract": "read-only command-center BFF for operator UI/CLI; aggregates projects, blocked runs, approvals, deliveries, stale workers, Commander coding gates, and next actions without executing commands or mutating ledgers",
+        "contract": "read-only command-center BFF for operator UI/CLI; aggregates projects, blocked runs, approvals, deliveries, stale workers, Commander coding gates, Research Lab consumption, and next actions without executing commands or mutating ledgers",
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
