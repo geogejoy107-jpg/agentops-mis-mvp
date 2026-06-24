@@ -4950,6 +4950,22 @@ export function AIEmployees() {
                           const managedExecutionAdapter = managedExecutionPath?.adapter || "missing";
                           const serviceManagedCommands = serviceManagedLoop?.commands || {};
                           const managedExecutionCommands = managedExecutionPath?.commands || {};
+                          const managedExecutionGates = managedExecutionPath?.gates || [];
+                          const managedExecutionPassCount = managedExecutionGates.filter((gate) => ["pass", "ready", "verified"].includes(String(gate.status || ""))).length;
+                          const managedExecutionGateStatus = managedExecutionGates.some((gate) => ["blocked", "failed", "fail"].includes(String(gate.status || "")))
+                            ? "blocked"
+                            : managedExecutionGates.some((gate) => ["attention", "required", "confirm_required", "review_required"].includes(String(gate.status || "")))
+                              ? "attention"
+                              : managedExecutionGates.length > 0 ? "pass" : "unknown";
+                          const managedExecutionRecommended = managedExecutionPath?.recommended_before_dispatch || "missing";
+                          const managedExecutionReady = managedExecutionPath?.service_managed_loop_ready === true;
+                          const managedExecutionLivePerformed = managedExecutionPath?.safety?.live_execution_performed === true;
+                          const managedExecutionLaneCounts = `${managedExecutionPath?.first_safe_commands?.length || 0}/${managedExecutionPath?.confirm_required_commands?.length || 0}/${managedExecutionPath?.verify_commands?.length || 0}`;
+                          const managedExecutionCommandGroups = [
+                            { label: "First safe", color: "var(--mis-cyan)", commands: managedExecutionPath?.first_safe_commands || [] },
+                            { label: "Confirm", color: "var(--mis-green)", commands: managedExecutionPath?.confirm_required_commands || [] },
+                            { label: "Verify", color: "var(--mis-primary)", commands: managedExecutionPath?.verify_commands || [] },
+                          ].filter((group) => group.commands.length > 0);
                           const serviceManagedCommandButtons = [
                             { label: "service-check", command: serviceManagedCommands.service_check },
                             { label: "record-receipt", command: serviceManagedCommands.record_verified_receipt },
@@ -4968,6 +4984,7 @@ export function AIEmployees() {
                             && recommendedAdapter === item.adapter
                             && serviceManagedAdapter === item.adapter
                             && managedExecutionAdapter === item.adapter
+                            && !managedExecutionLivePerformed
                             && !localDeploymentServerShell;
                           return (
                           <div key={`loop-supervision-item:${item.adapter}`} className="rounded p-1.5 min-w-0" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
@@ -5012,6 +5029,10 @@ export function AIEmployees() {
                                   { label: copy.deploymentRecommendedAdapter, value: String(recommendedAdapter), status: recommendedAdapter === item.adapter ? "pass" : "blocked" },
                                   { label: copy.serviceManagedAdapter, value: String(serviceManagedAdapter), status: serviceManagedAdapter === item.adapter ? "pass" : "blocked" },
                                   { label: "Managed path", value: managedExecutionPath?.operation || "missing", status: managedExecutionAdapter === item.adapter ? "pass" : "blocked" },
+                                  { label: "Managed status", value: managedExecutionPath?.status || "missing", status: managedExecutionReady ? "pass" : "attention" },
+                                  { label: "Before dispatch", value: managedExecutionRecommended, status: managedExecutionRecommended.includes("dispatch") ? "pass" : "attention" },
+                                  { label: "Gate pass", value: `${managedExecutionPassCount}/${managedExecutionGates.length || 0}`, status: managedExecutionGateStatus },
+                                  { label: "Safe/confirm/verify", value: managedExecutionLaneCounts, status: (managedExecutionPath?.confirm_required_commands?.length || 0) > 0 && (managedExecutionPath?.verify_commands?.length || 0) > 0 ? "pass" : "attention" },
                                   { label: copy.serverShellBoundary, value: String(localDeploymentServerShell), status: localDeploymentServerShell ? "blocked" : "pass" },
                                 ].map((metric) => (
                                   <div key={`${item.adapter}:local-deployment:${metric.label}`} className="rounded px-1.5 py-0.5 min-w-0" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
@@ -5037,6 +5058,48 @@ export function AIEmployees() {
                                       <Copy size={8} />
                                       <span className="truncate max-w-[132px]">{copiedIntakeCommand === commandItem.command ? copy.copiedCommand : commandItem.label}</span>
                                     </button>
+                                  ))}
+                                </div>
+                              )}
+                              {managedExecutionGates.length > 0 && (
+                                <div data-testid="operator-loop-supervision-managed-execution-gates" className="flex flex-wrap gap-1 mt-1">
+                                  {managedExecutionGates.map((gate) => (
+                                    <span
+                                      key={`${item.adapter}:managed-execution-gate:${gate.id}`}
+                                      title={gate.proof || gate.id}
+                                      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 max-w-full min-w-0"
+                                      style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                                    >
+                                      <span className="text-[8px] font-semibold truncate max-w-[150px]" style={{ color: "var(--mis-text)" }}>{gate.id}</span>
+                                      <StatusBadge status={gate.status || "unknown"} />
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {managedExecutionCommandGroups.length > 0 && (
+                                <div data-testid="operator-loop-supervision-managed-execution-command-groups" className="grid grid-cols-1 gap-1 mt-1">
+                                  {managedExecutionCommandGroups.map((group) => (
+                                    <div key={`${item.adapter}:managed-execution-group:${group.label}`} className="rounded px-1.5 py-1 min-w-0" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                                      <div className="flex items-center justify-between gap-1">
+                                        <span className="text-[8px] font-semibold" style={{ color: "var(--mis-muted)" }}>{group.label}</span>
+                                        <StatusBadge status={group.label === "Confirm" ? "approval_required" : "pass"} label={`${group.commands.length}`} />
+                                      </div>
+                                      <div className="flex flex-wrap gap-1 mt-1">
+                                        {group.commands.slice(0, 3).map((command, commandIndex) => (
+                                          <button
+                                            key={`${item.adapter}:managed-execution-group:${group.label}:${commandIndex}`}
+                                            type="button"
+                                            onClick={() => void copyIntakeCommand(command)}
+                                            className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                                            style={{ color: group.color, background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                                            title={command}
+                                          >
+                                            <Copy size={8} />
+                                            <span className="truncate max-w-[160px]">{copiedIntakeCommand === command ? copy.copiedCommand : command}</span>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
                                   ))}
                                 </div>
                               )}

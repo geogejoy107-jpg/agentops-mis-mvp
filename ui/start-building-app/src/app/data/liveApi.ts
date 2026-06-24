@@ -2547,6 +2547,13 @@ export interface OperatorLoopSupervisionItemPayload {
       first_safe_commands?: string[];
       confirm_required_commands?: string[];
       verify_commands?: string[];
+      gates?: {
+        id: string;
+        status?: string;
+        required?: boolean;
+        proof?: string;
+        token_omitted?: boolean;
+      }[];
       safety?: {
         server_executes_shell?: boolean;
         live_execution_performed?: boolean;
@@ -7334,6 +7341,13 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
             first_safe_commands: asArray<unknown>(managedExecutionRaw.first_safe_commands).map(String).filter(Boolean),
             confirm_required_commands: asArray<unknown>(managedExecutionRaw.confirm_required_commands).map(String).filter(Boolean),
             verify_commands: asArray<unknown>(managedExecutionRaw.verify_commands).map(String).filter(Boolean),
+            gates: asArray<Record<string, unknown>>(managedExecutionRaw.gates).map((gate) => ({
+              id: String(gate.id || ""),
+              status: gate.status === undefined || gate.status === null ? undefined : String(gate.status),
+              required: gate.required === undefined ? undefined : boolValue(gate.required),
+              proof: gate.proof === undefined || gate.proof === null ? undefined : String(gate.proof),
+              token_omitted: gate.token_omitted === undefined ? undefined : boolValue(gate.token_omitted),
+            })).filter((gate) => gate.id),
             safety: {
               server_executes_shell: managedExecutionSafetyRaw.server_executes_shell === undefined ? undefined : boolValue(managedExecutionSafetyRaw.server_executes_shell),
               live_execution_performed: managedExecutionSafetyRaw.live_execution_performed === undefined ? undefined : boolValue(managedExecutionSafetyRaw.live_execution_performed),

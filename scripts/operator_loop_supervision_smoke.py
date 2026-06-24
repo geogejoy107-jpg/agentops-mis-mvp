@@ -170,6 +170,7 @@ def validate(payload: dict, failures: list[str]) -> None:
         service_commands = service_managed.get("commands") or {}
         managed_execution = local_deployment.get("managed_execution_path") or {}
         managed_commands = managed_execution.get("commands") or {}
+        managed_gate_ids = {str(gate.get("id")) for gate in managed_execution.get("gates") or [] if isinstance(gate, dict)}
         require(local_run_path.get("operation") == "local_run_path_compact", f"{adapter} local run path missing: {local_deployment}", failures)
         require(local_run_path.get("recommended_adapter") == adapter, f"{adapter} local run path adapter mismatch: {local_run_path}", failures)
         require((local_run_path.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} local run path shell proof missing: {local_run_path}", failures)
@@ -179,6 +180,12 @@ def validate(payload: dict, failures: list[str]) -> None:
         require(managed_execution.get("operation") == "operator_service_managed_execution_path", f"{adapter} managed execution path missing: {managed_execution}", failures)
         require(managed_execution.get("adapter") == adapter, f"{adapter} managed execution adapter mismatch: {managed_execution}", failures)
         require((managed_execution.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} managed execution shell proof missing: {managed_execution}", failures)
+        require(managed_execution.get("recommended_before_dispatch") in {"record_service_control_receipt_and_readback", "dispatch_customer_worker_task"}, f"{adapter} managed recommendation missing: {managed_execution}", failures)
+        require({"service_managed_loop_ready", "customer_worker_dispatch", "plan_evidence_required", "review_queue_required"}.issubset(managed_gate_ids), f"{adapter} managed execution gates missing: {managed_gate_ids}", failures)
+        require(any(str(command).startswith(f"agentops worker preflight --adapter {adapter}") for command in managed_execution.get("first_safe_commands") or []), f"{adapter} managed first-safe preflight missing: {managed_execution}", failures)
+        require(any(f"--adapter {adapter}" in str(command) and "--confirm-run" in str(command) for command in managed_execution.get("confirm_required_commands") or []), f"{adapter} managed confirm command missing: {managed_execution}", failures)
+        require(any(str(command).startswith("agentops operator evidence-report --run-id") for command in managed_execution.get("verify_commands") or []), f"{adapter} managed evidence verify missing: {managed_execution}", failures)
+        require(any(str(command).startswith("agentops review queue") for command in managed_execution.get("verify_commands") or []), f"{adapter} managed review verify missing: {managed_execution}", failures)
         require_adapter_command(managed_commands.get("service_check"), adapter, f"{adapter} managed service_check", failures)
         require_adapter_command(managed_commands.get("service_control_receipt"), adapter, f"{adapter} managed service_control_receipt", failures)
         require_adapter_command(managed_commands.get("service_control_readback"), adapter, f"{adapter} managed service_control_readback", failures)
