@@ -20811,6 +20811,19 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
     ]
     evidence_status = operator_run_evidence_status(checks)
     status = evidence_status["status"]
+    failed_check_ids = evidence_status["failed_check_ids"]
+    execution_gap_check_ids = {
+        "agent_plan_bound",
+        "agent_plan_verifies",
+        "plan_evidence_manifest_verified",
+        "tool_evidence",
+        "evaluation_evidence",
+        "artifact_evidence",
+        "audit_evidence",
+        "worker_knowledge_retrieval",
+        "worker_runtime_summary",
+    }
+    has_execution_evidence_gap = bool(set(failed_check_ids) & execution_gap_check_ids)
     commands = [
         f"agentops run get --run-id {run_id}",
     ]
@@ -20828,7 +20841,7 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
         commands.append(f"agentops memory propose --agent-id {shlex.quote(run['agent_id'])} --task-id {shlex.quote(task_id or '')} --run-id {shlex.quote(run_id)} --scope task --type artifact_summary --text \"Summarize approved run outcome for review\"")
     elif int(memory_review.get("pending_review") or 0) > 0:
         commands.append(f"agentops memory list --task-id {shlex.quote(task_id or '')} --status candidate --limit 10")
-    if status != "ready" and not gap_decision:
+    if status != "ready" and has_execution_evidence_gap and not gap_decision:
         commands.append(f"agentops operator remediate-evidence-gap --run-id {run_id} --confirm-create")
     return {
         "run_id": run_id,
@@ -20837,7 +20850,8 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
         "run_status": run["status"],
         "status": status,
         "checks": checks,
-        "failed_check_ids": evidence_status["failed_check_ids"],
+        "failed_check_ids": failed_check_ids,
+        "execution_evidence_gap": has_execution_evidence_gap,
         "evidence_counts": counts,
         "agent_plan": {
             "plan_id": plan["plan_id"] if plan else None,
@@ -23330,6 +23344,8 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     for report_run in evidence_report_runs[: min(limit, 8)]:
         run_id = str(report_run.get("run_id") or "").strip()
         if not run_id or report_run.get("status") == "ready":
+            continue
+        if report_run.get("execution_evidence_gap") is not True:
             continue
         agent_plan = report_run.get("agent_plan") or {}
         manifest = report_run.get("plan_evidence_manifest") or {}
