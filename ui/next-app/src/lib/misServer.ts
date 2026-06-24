@@ -6,6 +6,7 @@ import type {
   AgentSummary,
   BasesPayload,
   CommercialEntitlementStatus,
+  CommercialReleaseGradeReceiptRecordingPayload,
   CommercialReleaseGradeRerunBundlePayload,
   CommercialReleaseStatusPayload,
   CustomerDeliveryBoardPayload,
@@ -183,6 +184,19 @@ export async function loadServerCommercialReleaseGradeRerunBundle(input?: { incl
   const query = params.toString();
   try {
     return { data: await serverMisJson<CommercialReleaseGradeRerunBundlePayload>(`/commercial/release-grade-rerun-bundle${query ? `?${query}` : ""}`), error: null };
+  } catch (err) {
+    return { data: {}, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerCommercialReleaseGradeReceiptRecording(input?: { includeExternalCi?: boolean; requireExternalCi?: boolean; externalCiRunId?: string }): Promise<ServerLoadResult<CommercialReleaseGradeReceiptRecordingPayload>> {
+  const params = new URLSearchParams();
+  if (input?.includeExternalCi) params.set("include_external_ci_evidence", "1");
+  if (input?.requireExternalCi) params.set("require_external_ci_evidence", "1");
+  if (input?.externalCiRunId) params.set("external_ci_run_id", input.externalCiRunId);
+  const query = params.toString();
+  try {
+    return { data: await serverMisJson<CommercialReleaseGradeReceiptRecordingPayload>(`/commercial/release-grade-receipt-recording${query ? `?${query}` : ""}`), error: null };
   } catch (err) {
     return { data: {}, error: err instanceof Error ? err.message : String(err) };
   }

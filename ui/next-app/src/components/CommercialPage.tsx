@@ -1,6 +1,11 @@
 import { ClipboardCheck, GitBranch, ListChecks, LockKeyhole, Rocket, ShieldAlert, ShieldCheck, ToggleLeft } from "lucide-react";
 import { AppFrame } from "./AppFrame";
-import type { CommercialEntitlementStatus, CommercialReleaseGradeRerunBundlePayload, CommercialReleaseStatusPayload } from "@/lib/mis";
+import type {
+  CommercialEntitlementStatus,
+  CommercialReleaseGradeReceiptRecordingPayload,
+  CommercialReleaseGradeRerunBundlePayload,
+  CommercialReleaseStatusPayload,
+} from "@/lib/mis";
 
 function boolText(value: unknown) {
   if (value === true) return "true";
@@ -31,6 +36,8 @@ export function CommercialParityPage({
   releaseError,
   rerunBundle,
   rerunBundleError,
+  receiptRecording,
+  receiptRecordingError,
 }: Readonly<{
   entitlements: CommercialEntitlementStatus;
   error?: string | null;
@@ -38,6 +45,8 @@ export function CommercialParityPage({
   releaseError?: string | null;
   rerunBundle?: CommercialReleaseGradeRerunBundlePayload;
   rerunBundleError?: string | null;
+  receiptRecording?: CommercialReleaseGradeReceiptRecordingPayload;
+  receiptRecordingError?: string | null;
 }>) {
   const capabilities = Object.entries(entitlements.capabilities || {}).sort(([left], [right]) => left.localeCompare(right));
   const gates = [...(entitlements.gates || [])].sort((left, right) => String(left.capability || "").localeCompare(String(right.capability || "")));
@@ -50,6 +59,10 @@ export function CommercialParityPage({
   const rerunBundleDetail = rerunBundle || {};
   const rerunBundleSummary = rerunBundleDetail.bundle_summary || {};
   const gateRerunBundles = (rerunBundleDetail.phase_gate_rerun_bundles || []).slice(0, 5);
+  const receiptRecordingSpec = release.release_grade_receipt_recording || {};
+  const receiptRecordingDetail = receiptRecording || {};
+  const receiptRecordingSummary = receiptRecordingDetail.recording_summary || {};
+  const gateRecordingRequests = (receiptRecordingDetail.phase_gate_recording_requests || []).slice(0, 5);
   const currentEvidence = release.current_evidence_status || {};
   const exactHead = release.external_exact_head_ci || {};
   const blockers = release.blockers?.length ? release.blockers : preflight.known_blockers || [];
@@ -70,6 +83,7 @@ export function CommercialParityPage({
       {error ? <div className="banner error">Entitlements unavailable: {error}</div> : null}
       {releaseError ? <div className="banner error">Release status unavailable: {releaseError}</div> : null}
       {rerunBundleError ? <div className="banner error">Rerun bundle unavailable: {rerunBundleError}</div> : null}
+      {receiptRecordingError ? <div className="banner error">Receipt recording preview unavailable: {receiptRecordingError}</div> : null}
 
       <section className="metrics six">
         {[
@@ -278,6 +292,44 @@ export function CommercialParityPage({
                 <div>
                   <strong>{titleize(requirement)}</strong>
                   <span>rerun bundle requirement</span>
+                </div>
+                <span className="status statusWarn">required</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="panel" data-smoke="commercial-release-grade-receipt-recording">
+          <div className="panelHeader">
+            <h2><ClipboardCheck size={14} /> Receipt recording preview</h2>
+            <span>{compactStatus(receiptRecordingDetail.status || receiptRecordingSpec.status)}</span>
+          </div>
+          <div className="proofStrip">
+            <span>{receiptRecordingDetail.contract_id || receiptRecordingSpec.contract_id || "commercial_release_grade_receipt_recording_v1"}</span>
+            <span>read only {boolText(receiptRecordingDetail.read_only ?? receiptRecordingSpec.read_only)}</span>
+            <span>CI safe {boolText(receiptRecordingDetail.ci_safe ?? receiptRecordingSpec.ci_safe)}</span>
+            <span>mutating writes {String(receiptRecordingSummary.mutating_write_count ?? 0)}</span>
+          </div>
+          <p className="subtle"><code>{release.commands?.release_grade_receipt_recording_api || "/api/commercial/release-grade-receipt-recording"}</code></p>
+          <div className="proofStrip">
+            <span>Recording previews {String(receiptRecordingSummary.recording_request_count ?? gateRecordingRequests.length)}</span>
+            <span>patch previews {String(receiptRecordingSummary.patch_preview_count ?? 0)}</span>
+            <span>confirmations {String(receiptRecordingSummary.requests_requiring_confirmation ?? 0)}</span>
+          </div>
+          <div className="list compactList">
+            {gateRecordingRequests.length ? gateRecordingRequests.map((request) => (
+              <div className="row" data-smoke="commercial-receipt-recording-gate-detail" key={request.gate_id || request.recording_id}>
+                <div>
+                  <strong>{titleize(String(request.gate_id || request.recording_id || "gate"))}</strong>
+                  <span>{String(request.command_count ?? (request.rerun_commands || []).length)} commands / {String(request.patch_preview_count ?? (request.json_patch_preview || []).length)} patch previews</span>
+                </div>
+                <span className={statusClass(request.mutates_receipts === false)}>{compactStatus(request.state || request.operation)}</span>
+              </div>
+            )) : displayList(Object.keys(receiptRecordingSpec.recording_requires || {}), 4).map((requirement) => (
+              <div className="row" key={requirement}>
+                <div>
+                  <strong>{titleize(requirement)}</strong>
+                  <span>receipt recording requirement</span>
                 </div>
                 <span className="status statusWarn">required</span>
               </div>

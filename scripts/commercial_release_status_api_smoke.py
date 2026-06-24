@@ -42,6 +42,11 @@ def main() -> int:
     require(rerun_bundle.get("read_only") is True, "release-grade rerun bundle must be read-only")
     require("python3 scripts/commercial_release_grade_rerun_bundle.py --include-external-ci-evidence" in set(default_payload.get("commands", {}).values()), "release-grade rerun bundle command missing")
     require(default_payload.get("commands", {}).get("release_grade_rerun_bundle_api") == "/api/commercial/release-grade-rerun-bundle", "release-grade rerun bundle API command missing")
+    receipt_recording = default_payload.get("release_grade_receipt_recording") or {}
+    require(receipt_recording.get("contract_id") == "commercial_release_grade_receipt_recording_v1", "release-grade receipt recording contract missing from release status")
+    require(receipt_recording.get("read_only") is True, "release-grade receipt recording must be read-only")
+    require("python3 scripts/commercial_release_grade_receipt_recording.py --include-external-ci-evidence" in set(default_payload.get("commands", {}).values()), "release-grade receipt recording command missing")
+    require(default_payload.get("commands", {}).get("release_grade_receipt_recording_api") == "/api/commercial/release-grade-receipt-recording", "release-grade receipt recording API command missing")
 
     original = server.commercial_release_external_ci_evidence
 

@@ -408,6 +408,7 @@ def commercial_release_status(headers, qs=None) -> dict:
     promotion_packet = read_json_file(docs_dir / "COMMERCIAL_RELEASE_PROMOTION_PACKET.json", {})
     receipt_plan = read_json_file(docs_dir / "COMMERCIAL_RELEASE_GRADE_RECEIPT_PLAN.json", {})
     rerun_bundle = read_json_file(docs_dir / "COMMERCIAL_RELEASE_GRADE_RERUN_BUNDLE.json", {})
+    receipt_recording = read_json_file(docs_dir / "COMMERCIAL_RELEASE_GRADE_RECEIPT_RECORDING.json", {})
     receipts = read_json_file(docs_dir / "COMMERCIAL_EVIDENCE_RECEIPTS.json", {})
     current_summary = current.get("evidence_summary") if isinstance(current.get("evidence_summary"), dict) else {}
     receipt_summary = receipts.get("receipt_summary") if isinstance(receipts.get("receipt_summary"), dict) else {}
@@ -428,6 +429,7 @@ def commercial_release_status(headers, qs=None) -> dict:
         {"path": "docs/COMMERCIAL_RELEASE_PROMOTION_PACKET.json", "contract_id": promotion_packet.get("contract_id"), "status": promotion_packet.get("status")},
         {"path": "docs/COMMERCIAL_RELEASE_GRADE_RECEIPT_PLAN.json", "contract_id": receipt_plan.get("contract_id"), "status": receipt_plan.get("status")},
         {"path": "docs/COMMERCIAL_RELEASE_GRADE_RERUN_BUNDLE.json", "contract_id": rerun_bundle.get("contract_id"), "status": rerun_bundle.get("status")},
+        {"path": "docs/COMMERCIAL_RELEASE_GRADE_RECEIPT_RECORDING.json", "contract_id": receipt_recording.get("contract_id"), "status": receipt_recording.get("status")},
         {"path": "docs/COMMERCIAL_EVIDENCE_RECEIPTS.json", "contract_id": receipts.get("contract_id"), "status": receipts.get("status")},
     ]
     return {
@@ -485,6 +487,16 @@ def commercial_release_status(headers, qs=None) -> dict:
             "required_commands": list(rerun_bundle.get("required_commands") or []),
             "must_not_use": list(rerun_bundle.get("must_not_use") or []),
         },
+        "release_grade_receipt_recording": {
+            "contract_id": receipt_recording.get("contract_id"),
+            "status": receipt_recording.get("status"),
+            "ci_safe": bool(receipt_recording.get("ci_safe")),
+            "read_only": bool(receipt_recording.get("read_only")),
+            "recording_requires": receipt_recording.get("recording_requires") if isinstance(receipt_recording.get("recording_requires"), dict) else {},
+            "source_contracts": list(receipt_recording.get("source_contracts") or []),
+            "required_commands": list(receipt_recording.get("required_commands") or []),
+            "must_not_use": list(receipt_recording.get("must_not_use") or []),
+        },
         "current_evidence_status": {
             "contract_id": current.get("contract_id"),
             "status": current.get("status"),
@@ -524,6 +536,9 @@ def commercial_release_status(headers, qs=None) -> dict:
             "release_grade_rerun_bundle": "python3 scripts/commercial_release_grade_rerun_bundle.py --include-external-ci-evidence",
             "strict_release_grade_rerun_bundle": "python3 scripts/commercial_release_grade_rerun_bundle.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence --require-bundle-ready",
             "release_grade_rerun_bundle_api": "/api/commercial/release-grade-rerun-bundle",
+            "release_grade_receipt_recording": "python3 scripts/commercial_release_grade_receipt_recording.py --include-external-ci-evidence",
+            "strict_release_grade_receipt_recording": "python3 scripts/commercial_release_grade_receipt_recording.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence --require-recording-ready",
+            "release_grade_receipt_recording_api": "/api/commercial/release-grade-receipt-recording",
             "release_status_external_ci_api": "/api/commercial/release-status?include_external_ci_evidence=1",
         },
         "blockers": list(handoff.get("explicit_blockers") or preflight.get("known_blockers") or []),
@@ -11802,6 +11817,45 @@ def commercial_release_grade_rerun_bundle_status(headers, qs=None) -> dict:
     return result
 
 
+def commercial_release_grade_receipt_recording_status(headers, qs=None) -> dict:
+    scripts_dir = ROOT / "scripts"
+    inserted = False
+    scripts_path = str(scripts_dir)
+    if scripts_path not in sys.path:
+        sys.path.insert(0, scripts_path)
+        inserted = True
+    try:
+        from commercial_release_grade_receipt_recording import build_recording
+
+        include_external_ci = qs_flag(qs, "include_external_ci_evidence") or qs_flag(qs, "external_ci") or qs_flag(qs, "exact_head_ci")
+        require_external_ci = qs_flag(qs, "require_external_ci_evidence")
+        payload = build_recording(
+            include_external_ci=include_external_ci,
+            require_external_ci=require_external_ci,
+            external_ci_run_id=qs_first(qs, "external_ci_run_id"),
+        )
+    finally:
+        if inserted:
+            try:
+                sys.path.remove(scripts_path)
+            except ValueError:
+                pass
+
+    result = dict(payload)
+    result["provider"] = "agentops-commercial"
+    result["operation"] = "commercial_release_grade_receipt_recording"
+    result["contract_id"] = payload.get("contract") or "commercial_release_grade_receipt_recording_v1"
+    result["workspace_id"] = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo") if headers else "local-demo"
+    result["generated_at"] = now_iso()
+    result["external_ci_requested"] = bool(qs_flag(qs, "include_external_ci_evidence") or qs_flag(qs, "external_ci") or qs_flag(qs, "exact_head_ci"))
+    result["recording_summary"] = dict(payload.get("recording_summary") or {})
+    result["phase_gate_recording_requests"] = list(payload.get("phase_gate_recording_requests") or [])
+    result["blockers"] = list(payload.get("blockers") or [])
+    result["token_omitted"] = True
+    result["live_execution_performed"] = False
+    return result
+
+
 def demo_readiness(conn: sqlite3.Connection, headers) -> dict:
     local = local_readiness(conn, headers)
     conn.rollback()
@@ -14852,6 +14906,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/commercial/release-grade-rerun-bundle":
                 payload = commercial_release_grade_rerun_bundle_status(self.headers, qs)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/commercial/release-grade-receipt-recording":
+                payload = commercial_release_grade_receipt_recording_status(self.headers, qs)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/demo/readiness":

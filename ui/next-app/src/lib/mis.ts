@@ -1041,6 +1041,86 @@ export type CommercialReleaseGradeRerunBundlePayload = {
   live_execution_performed?: boolean;
 };
 
+export type CommercialReleaseGradeReceiptRecordingRequest = {
+  gate_id?: string;
+  recording_id?: string;
+  state?: string;
+  target?: string;
+  target_path?: string;
+  operation?: string;
+  mutates_receipts?: boolean;
+  writes_release_grade_receipt?: boolean;
+  current_head?: string;
+  previous_verified_head?: string;
+  receipt_head_current?: boolean;
+  local_receipt_current?: boolean;
+  release_grade_current?: boolean;
+  requires_operator_rerun?: boolean;
+  requires_operator_confirmation?: boolean;
+  rerun_commands?: string[];
+  command_count?: number;
+  missing_commands?: string[];
+  json_patch_preview?: {
+    op?: string;
+    path?: string;
+    value?: boolean | string | number | null;
+  }[];
+  patch_preview_count?: number;
+  blockers?: string[];
+};
+
+export type CommercialReleaseGradeReceiptRecordingPayload = {
+  provider?: string;
+  operation?: string;
+  contract?: string;
+  contract_id?: string;
+  status?: string;
+  workspace_id?: string;
+  generated_at?: string;
+  ci_safe?: boolean;
+  read_only?: boolean;
+  current_git_head?: string;
+  external_ci_requested?: boolean;
+  source_contracts?: string[];
+  release_grade_rerun_bundle?: {
+    contract?: string;
+    status?: string;
+    blockers?: string[];
+    bundle_summary?: Record<string, boolean | string | number | null>;
+  };
+  recording_checks?: Record<string, boolean | string | number | null>;
+  recording_requires?: Record<string, boolean | string | number | null>;
+  recording_summary?: {
+    gate_count?: number;
+    recording_request_count?: number;
+    patch_preview_count?: number;
+    mutating_write_count?: number;
+    requests_requiring_rerun?: number;
+    requests_requiring_confirmation?: number;
+  };
+  phase_gate_recording_requests?: CommercialReleaseGradeReceiptRecordingRequest[];
+  blockers?: string[];
+  required_commands?: string[];
+  must_not_use?: string[];
+  safety?: {
+    read_only?: boolean;
+    ci_safe?: boolean;
+    network_called?: boolean;
+    live_execution_performed?: boolean;
+    executes_rerun_commands?: boolean;
+    mutates_receipts?: boolean;
+    writes_release_grade_receipts?: boolean;
+    allows_handoff_or_merge?: boolean;
+    token_omitted?: boolean;
+    raw_prompt_omitted?: boolean;
+    raw_response_omitted?: boolean;
+    private_transcripts_omitted?: boolean;
+    billing_call_performed?: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+};
+
 export type CommercialReleaseStatusPayload = {
   provider?: string;
   operation?: string;
@@ -1110,6 +1190,16 @@ export type CommercialReleaseStatusPayload = {
     required_commands?: string[];
     must_not_use?: string[];
   };
+  release_grade_receipt_recording?: {
+    contract_id?: string;
+    status?: string;
+    ci_safe?: boolean;
+    read_only?: boolean;
+    recording_requires?: Record<string, boolean | string | number | null>;
+    source_contracts?: string[];
+    required_commands?: string[];
+    must_not_use?: string[];
+  };
   current_evidence_status?: {
     contract_id?: string;
     status?: string;
@@ -1166,6 +1256,9 @@ export type CommercialReleaseStatusPayload = {
     release_grade_rerun_bundle?: string;
     strict_release_grade_rerun_bundle?: string;
     release_grade_rerun_bundle_api?: string;
+    release_grade_receipt_recording?: string;
+    strict_release_grade_receipt_recording?: string;
+    release_grade_receipt_recording_api?: string;
     release_status_external_ci_api?: string;
   };
   blockers?: string[];
@@ -1855,6 +1948,15 @@ export async function loadCommercialReleaseGradeRerunBundle(input?: { includeExt
   if (input?.externalCiRunId) params.set("external_ci_run_id", input.externalCiRunId);
   const query = params.toString();
   return misJson<CommercialReleaseGradeRerunBundlePayload>(`/commercial/release-grade-rerun-bundle${query ? `?${query}` : ""}`);
+}
+
+export async function loadCommercialReleaseGradeReceiptRecording(input?: { includeExternalCi?: boolean; requireExternalCi?: boolean; externalCiRunId?: string }): Promise<CommercialReleaseGradeReceiptRecordingPayload> {
+  const params = new URLSearchParams();
+  if (input?.includeExternalCi) params.set("include_external_ci_evidence", "1");
+  if (input?.requireExternalCi) params.set("require_external_ci_evidence", "1");
+  if (input?.externalCiRunId) params.set("external_ci_run_id", input.externalCiRunId);
+  const query = params.toString();
+  return misJson<CommercialReleaseGradeReceiptRecordingPayload>(`/commercial/release-grade-receipt-recording${query ? `?${query}` : ""}`);
 }
 
 export async function loadStorageBackendStatus(): Promise<StorageBackendStatus> {

@@ -1,5 +1,10 @@
 import { CommercialParityPage } from "@/components/CommercialPage";
-import { loadServerCommercialEntitlements, loadServerCommercialReleaseGradeRerunBundle, loadServerCommercialReleaseStatus } from "@/lib/misServer";
+import {
+  loadServerCommercialEntitlements,
+  loadServerCommercialReleaseGradeReceiptRecording,
+  loadServerCommercialReleaseGradeRerunBundle,
+  loadServerCommercialReleaseStatus,
+} from "@/lib/misServer";
 
 export const dynamic = "force-dynamic";
 
@@ -22,13 +27,17 @@ export default async function CommercialPage({ searchParams }: PageProps) {
   const params = await (searchParams || Promise.resolve({} as SearchParams));
   const includeExternalCi = queryFlag(params.exact_head_ci) || queryFlag(params.include_external_ci_evidence);
   const externalCiRunId = one(params.external_ci_run_id);
-  const [entitlements, releaseStatus, rerunBundle] = await Promise.all([
+  const [entitlements, releaseStatus, rerunBundle, receiptRecording] = await Promise.all([
     loadServerCommercialEntitlements(),
     loadServerCommercialReleaseStatus({
       includeExternalCi,
       externalCiRunId,
     }),
     loadServerCommercialReleaseGradeRerunBundle({
+      includeExternalCi,
+      externalCiRunId,
+    }),
+    loadServerCommercialReleaseGradeReceiptRecording({
       includeExternalCi,
       externalCiRunId,
     }),
@@ -41,6 +50,8 @@ export default async function CommercialPage({ searchParams }: PageProps) {
       releaseError={releaseStatus.error}
       rerunBundle={rerunBundle.data}
       rerunBundleError={rerunBundle.error}
+      receiptRecording={receiptRecording.data}
+      receiptRecordingError={receiptRecording.error}
     />
   );
 }
