@@ -123,8 +123,10 @@ def main() -> int:
     blockers = set(status.get("explicit_blockers") or [])
     require("release_promotion_preflight_not_ready" in blockers, "promotion preflight blocker missing")
     require("release_complete_false_until_all_phase_gates_have_current_evidence" in blockers, "release-complete blocker missing")
-    require("exact_head_ci_not_checked_in_this_worktree" in blockers, "exact-head CI blocker missing")
-    require("remote_sync_not_checked_in_this_worktree" in blockers, "remote-sync blocker missing")
+    require("release_grade_receipts_empty" in blockers, "release-grade receipt blocker missing")
+    require("clean_worktree_not_verified" in blockers, "clean worktree blocker missing")
+    require("exact_head_ci_not_checked_in_this_worktree" not in blockers, "exact-head CI blocker should be cleared")
+    require("remote_sync_not_checked_in_this_worktree" not in blockers, "remote-sync blocker should be cleared")
 
     ready_requires = status.get("ready_requires") or {}
     for key in [

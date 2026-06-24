@@ -286,8 +286,8 @@ def main() -> int:
     require(evidence.get("gates_with_local_receipts") == EXPECTED_LOCAL_RECEIPT_GATES, "handoff local receipt summary mismatch")
     require(evidence.get("gates_with_release_grade_receipts") == [], "handoff release-grade receipt summary mismatch")
     require(evidence.get("gates_missing_local_receipts") == [], "handoff local receipt gaps should be empty")
-    require(evidence.get("exact_head_ci_verified") is False, "handoff exact-head CI must remain false")
-    require(evidence.get("remote_sync_verified") is False, "handoff remote sync must remain false")
+    require(evidence.get("exact_head_ci_verified") is True, "handoff exact-head CI should be verified")
+    require(evidence.get("remote_sync_verified") is True, "handoff remote sync should be verified")
     require(evidence.get("clean_worktree_verified") is False, "handoff clean worktree must remain false")
 
     if args.require_handoff_ready:

@@ -10,7 +10,7 @@
   "receipt_policy": {
     "ok_true_means_receipts_are_internally_consistent": true,
     "does_not_execute_heavy_or_live_commands": true,
-    "local_receipts_are_not_exact_head_ci": true,
+    "local_receipts_do_not_by_themselves_prove_exact_head_ci": true,
     "release_grade_requires_clean_worktree_remote_sync_and_exact_head_ci": true,
     "hash_or_ref_only": true
   },
@@ -34,9 +34,61 @@
     },
     "gate_5_local_receipt_commands": 7,
     "gate_5_release_grade_current": false,
-    "exact_head_ci_verified": false,
-    "remote_sync_verified": false,
+    "exact_head_ci_verified": true,
+    "remote_sync_verified": true,
     "clean_worktree_verified": false
+  },
+  "promotion_evidence": {
+    "state": "exact_head_ci_and_real_runtime_verified_release_grade_blocked",
+    "verified_head": "1195c9b",
+    "branch": "codex/commercial-migration-closed-loop",
+    "remote_sync_verified": true,
+    "exact_head_ci": {
+      "provider": "github_actions",
+      "workflow": "Commercial Migration CI",
+      "run_id": "28107647712",
+      "status": "success",
+      "head": "1195c9b",
+      "jobs": [
+        {
+          "name": "Commercial core gates",
+          "status": "success",
+          "job_id": "83226219273"
+        },
+        {
+          "name": "Storage and Postgres parity",
+          "status": "success",
+          "job_id": "83226219128"
+        },
+        {
+          "name": "UI, deployment, and BYOC evidence",
+          "status": "success",
+          "job_id": "83226219253"
+        }
+      ]
+    },
+    "real_runtime_acceptance": {
+      "environment": "isolated_local_mis",
+      "base_url": "http://127.0.0.1:50067",
+      "agent_gateway_run_id": "run_gw_9752c0e5bdb4",
+      "openclaw_run_id": "run_api_integrations_openclaw_probe_20260624144648327413_4534396f",
+      "hermes_run_id": "run_api_integrations_hermes_run_task_20260624144711332542_da040e28",
+      "live_openclaw": true,
+      "live_hermes": true,
+      "require_hermes_api": true,
+      "raw_prompt_omitted": true,
+      "raw_response_omitted": true,
+      "token_values_omitted": true
+    },
+    "release_grade_blockers": [
+      "release_grade_receipts_empty",
+      "clean_worktree_not_verified",
+      "tracked_dirty_files_present",
+      "untracked_files_present",
+      "release_complete_false",
+      "commercial_handoff_not_allowed",
+      "ready_to_merge_false"
+    ]
   },
   "phase_gate_receipts": [
     {
@@ -66,8 +118,8 @@
         }
       ],
       "release_blockers": [
-        "exact_head_ci_not_checked_in_this_worktree",
-        "remote_sync_not_checked_in_this_worktree",
+        "release_grade_receipts_empty",
+        "clean_worktree_not_verified",
         "existing_local_dirty_files_are_outside_this_slice"
       ]
     },
@@ -113,8 +165,8 @@
         }
       ],
       "release_blockers": [
-        "exact_head_ci_not_checked_in_this_worktree",
-        "remote_sync_not_checked_in_this_worktree",
+        "release_grade_receipts_empty",
+        "clean_worktree_not_verified",
         "existing_local_dirty_files_are_outside_this_slice"
       ]
     },
@@ -205,8 +257,8 @@
         }
       ],
       "release_blockers": [
-        "exact_head_ci_not_checked_in_this_worktree",
-        "remote_sync_not_checked_in_this_worktree",
+        "release_grade_receipts_empty",
+        "clean_worktree_not_verified",
         "existing_local_dirty_files_are_outside_this_slice"
       ]
     },
@@ -260,8 +312,8 @@
         "npm_cache_cleaned_after_enospc_before_nextjs_snapshot_retry"
       ],
       "release_blockers": [
-        "exact_head_ci_not_checked_in_this_worktree",
-        "remote_sync_not_checked_in_this_worktree",
+        "release_grade_receipts_empty",
+        "clean_worktree_not_verified",
         "existing_local_dirty_files_are_outside_this_slice"
       ]
     },
@@ -325,8 +377,8 @@
         }
       ],
       "release_blockers": [
-        "exact_head_ci_not_checked_in_this_worktree",
-        "remote_sync_not_checked_in_this_worktree",
+        "release_grade_receipts_empty",
+        "clean_worktree_not_verified",
         "existing_local_dirty_files_are_outside_this_slice",
         "gates_1_4_still_require_release_grade_current_evidence"
       ]

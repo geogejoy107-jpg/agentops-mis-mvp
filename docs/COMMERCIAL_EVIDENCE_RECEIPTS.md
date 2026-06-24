@@ -7,12 +7,19 @@ Current status: `partial_local_receipts_not_release_complete`.
 This is a hash/ref-only receipt ledger for commercial migration evidence. It
 records local isolated evidence that has been run, but it does not execute those
 commands and does not claim release completion. Local receipts are useful for
-handoff triage; release-grade evidence still requires a clean worktree, remote
-sync, exact-head CI, and all phase gates current. Gates 1-5 now have local
-receipt state `local_receipts_complete_exact_head_required`.
-The release-grade flags intentionally remain `exact_head_ci_verified=false`,
-`remote_sync_verified=false`, and `clean_worktree_verified=false` until final
-release review.
+handoff triage; release-grade evidence still requires a clean worktree and all
+phase gates current. Gates 1-5 now have local receipt state
+`local_receipts_complete_exact_head_required`.
+
+PR #22 now has exact-head CI and real-runtime promotion evidence for head
+`1195c9b`: GitHub Actions run `28107647712` passed `Commercial core gates`,
+`Storage and Postgres parity`, and `UI, deployment, and BYOC evidence`; isolated
+real Hermes/OpenClaw acceptance recorded Agent Gateway `run_gw_9752c0e5bdb4`,
+OpenClaw `run_api_integrations_openclaw_probe_20260624144648327413_4534396f`,
+and Hermes `run_api_integrations_hermes_run_task_20260624144711332542_da040e28`.
+The release-grade flags now show `exact_head_ci_verified=true` and
+`remote_sync_verified=true`, while `clean_worktree_verified=false` and
+`gates_with_release_grade_receipts=[]` still block release promotion.
 
 Read receipts:
 

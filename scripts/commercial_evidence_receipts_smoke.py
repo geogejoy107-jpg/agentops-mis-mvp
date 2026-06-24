@@ -38,6 +38,12 @@ REQUIRED_JSON_STRINGS = {
     "exact_head_ci_verified",
     "remote_sync_verified",
     "clean_worktree_verified",
+    "promotion_evidence",
+    "Commercial Migration CI",
+    "28107647712",
+    "run_gw_9752c0e5bdb4",
+    "run_api_integrations_openclaw_probe_20260624144648327413_4534396f",
+    "run_api_integrations_hermes_run_task_20260624144711332542_da040e28",
     "run_gw_",
     "run_api_integrations_openclaw_probe_",
     "run_api_integrations_hermes_run_task_",
@@ -55,9 +61,11 @@ REQUIRED_DOC_STRINGS = {
     "gate_5_byoc_enterprise_deployment",
     "local_receipts_complete_exact_head_required",
     "release-grade",
-    "exact_head_ci_verified=false",
-    "remote_sync_verified=false",
+    "exact_head_ci_verified=true",
+    "remote_sync_verified=true",
     "clean_worktree_verified=false",
+    "28107647712",
+    "run_gw_9752c0e5bdb4",
     "--require-release-grade",
     "mock_only_product_claim",
 }
@@ -70,6 +78,8 @@ REQUIRED_SCRIPT_STRINGS = {
     "exact_head_ci_verified",
     "remote_sync_verified",
     "clean_worktree_verified",
+    "promotion_evidence",
+    "validate_promotion_evidence",
     "--require-release-grade",
 }
 
@@ -133,9 +143,22 @@ def main() -> int:
     require(summary.get("gates_with_release_grade_receipts") == [], "release-grade receipts must be empty")
     require(summary.get("gates_missing_local_receipts") == [], "local receipt gaps should be empty")
     require(summary.get("gate_5_local_receipt_commands") == 7, "Gate 5 command count mismatch")
-    require(summary.get("exact_head_ci_verified") is False, "exact-head CI must remain false")
-    require(summary.get("remote_sync_verified") is False, "remote sync must remain false")
+    require(summary.get("exact_head_ci_verified") is True, "exact-head CI should be verified for the current PR head")
+    require(summary.get("remote_sync_verified") is True, "remote sync should be verified for the current PR head")
     require(summary.get("clean_worktree_verified") is False, "clean worktree must remain false")
+    promotion_evidence = receipts.get("promotion_evidence") or {}
+    require(promotion_evidence.get("verified_head") == "1195c9b", "promotion evidence head mismatch")
+    exact_head_ci = promotion_evidence.get("exact_head_ci") or {}
+    require(exact_head_ci.get("run_id") == "28107647712", "promotion evidence CI run mismatch")
+    require(exact_head_ci.get("status") == "success", "promotion evidence CI status mismatch")
+    require(len(exact_head_ci.get("jobs") or []) == 3, "promotion evidence must list all CI jobs")
+    runtime = promotion_evidence.get("real_runtime_acceptance") or {}
+    require(runtime.get("agent_gateway_run_id") == "run_gw_9752c0e5bdb4", "promotion evidence Agent Gateway run mismatch")
+    require(runtime.get("openclaw_run_id") == "run_api_integrations_openclaw_probe_20260624144648327413_4534396f", "promotion evidence OpenClaw run mismatch")
+    require(runtime.get("hermes_run_id") == "run_api_integrations_hermes_run_task_20260624144711332542_da040e28", "promotion evidence Hermes run mismatch")
+    require(runtime.get("raw_prompt_omitted") is True, "promotion evidence must omit raw prompts")
+    require(runtime.get("raw_response_omitted") is True, "promotion evidence must omit raw responses")
+    require(runtime.get("token_values_omitted") is True, "promotion evidence must omit token values")
 
     receipt_map = {
         str(item.get("gate_id")): item
@@ -173,6 +196,7 @@ def main() -> int:
     require(payload.get("contract") == CONTRACT_ID, "receipt payload contract mismatch")
     require(payload.get("release_complete") is False, "receipt payload must not claim release completion")
     require(payload.get("commercial_handoff_allowed") is False, "receipt payload must not allow handoff")
+    require((payload.get("promotion_evidence") or {}).get("verified_head") == payload.get("current_git_head"), "promotion evidence must match current head")
 
     if args.require_release_grade:
         release_grade = set((payload.get("receipt_summary") or {}).get("gates_with_release_grade_receipts") or [])

@@ -67,6 +67,44 @@ def required_commands_by_gate() -> dict[str, list[str]]:
     }
 
 
+def validate_promotion_evidence(receipts: dict[str, Any], current_head: str) -> dict[str, Any]:
+    evidence = dict(receipts.get("promotion_evidence") or {})
+    summary = dict(receipts.get("receipt_summary") or {})
+    exact_head_ci_verified = summary.get("exact_head_ci_verified") is True
+    remote_sync_verified = summary.get("remote_sync_verified") is True
+    if exact_head_ci_verified or remote_sync_verified:
+        require(evidence.get("state") == "exact_head_ci_and_real_runtime_verified_release_grade_blocked", "promotion evidence state mismatch")
+        require(str(evidence.get("verified_head")) == current_head, "promotion evidence head is not current")
+        require(evidence.get("remote_sync_verified") is True, "promotion evidence remote sync missing")
+        ci = evidence.get("exact_head_ci") or {}
+        require(ci.get("provider") == "github_actions", "promotion evidence CI provider mismatch")
+        require(ci.get("workflow") == "Commercial Migration CI", "promotion evidence CI workflow mismatch")
+        require(str(ci.get("head")) == current_head, "promotion evidence CI head mismatch")
+        require(str(ci.get("run_id")), "promotion evidence CI run id missing")
+        require(ci.get("status") == "success", "promotion evidence CI status mismatch")
+        jobs = [job for job in ci.get("jobs") or [] if isinstance(job, dict)]
+        require({job.get("name") for job in jobs} == {
+            "Commercial core gates",
+            "Storage and Postgres parity",
+            "UI, deployment, and BYOC evidence",
+        }, "promotion evidence CI jobs mismatch")
+        require(all(job.get("status") == "success" for job in jobs), "promotion evidence CI jobs must be successful")
+        runtime = evidence.get("real_runtime_acceptance") or {}
+        require(runtime.get("live_openclaw") is True, "promotion evidence OpenClaw live flag missing")
+        require(runtime.get("live_hermes") is True, "promotion evidence Hermes live flag missing")
+        require(runtime.get("require_hermes_api") is True, "promotion evidence Hermes API requirement missing")
+        require(str(runtime.get("agent_gateway_run_id", "")).startswith("run_gw_"), "promotion evidence Agent Gateway run id missing")
+        require(str(runtime.get("openclaw_run_id", "")).startswith("run_api_integrations_openclaw_probe_"), "promotion evidence OpenClaw run id missing")
+        require(str(runtime.get("hermes_run_id", "")).startswith("run_api_integrations_hermes_run_task_"), "promotion evidence Hermes run id missing")
+        require(runtime.get("raw_prompt_omitted") is True, "promotion evidence raw prompt omission missing")
+        require(runtime.get("raw_response_omitted") is True, "promotion evidence raw response omission missing")
+        require(runtime.get("token_values_omitted") is True, "promotion evidence token omission missing")
+        blockers = set(evidence.get("release_grade_blockers") or [])
+        require("clean_worktree_not_verified" in blockers, "promotion evidence must keep clean-worktree blocker")
+        require("release_complete_false" in blockers, "promotion evidence must keep release-complete blocker")
+    return evidence
+
+
 def build_payload() -> dict[str, Any]:
     receipts = read_json(RECEIPTS_PATH)
     require(receipts.get("contract_id") == CONTRACT_ID, "receipt contract mismatch")
@@ -107,6 +145,7 @@ def build_payload() -> dict[str, Any]:
         for gate_id in release_grade_gates:
             receipt = receipt_map[gate_id]
             require(str(receipt.get("verified_head")) == current_head, f"{gate_id} receipt head is not current")
+    promotion_evidence = validate_promotion_evidence(receipts, current_head)
 
     payload = {
         "ok": True,
@@ -119,6 +158,7 @@ def build_payload() -> dict[str, Any]:
         "commercial_handoff_allowed": False,
         "ready_to_merge": False,
         "receipt_summary": summary,
+        "promotion_evidence": promotion_evidence,
         "phase_gate_receipts": phase_receipts,
         "must_not_use": receipts.get("must_not_use") or [],
     }

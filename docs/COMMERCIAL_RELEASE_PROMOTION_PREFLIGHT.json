@@ -27,9 +27,9 @@
   },
   "known_blockers": [
     "release_grade_receipts_empty",
-    "exact_head_ci_not_verified",
-    "remote_sync_not_verified",
     "worktree_not_clean",
+    "tracked_dirty_files_present",
+    "untracked_files_present",
     "release_complete_false",
     "commercial_handoff_not_allowed",
     "ready_to_merge_false"
