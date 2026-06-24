@@ -235,6 +235,7 @@ def run_checks(base_url: str, db_path: Path) -> int:
     token_ids: list[str] = []
     outputs: list[str] = []
     failures: list[str] = []
+    auto_plan_id = None
 
     try:
         token, token_id = create_enrollment(base_url, workspace_id, agent_id)
@@ -392,6 +393,66 @@ def run_checks(base_url: str, db_path: Path) -> int:
         if before is not None and after is not None:
             for table in ("tasks", "agent_plans"):
                 require(before.get(table) == after.get(table), f"enforced pull mutated {table}: before={before.get(table)} after={after.get(table)}", failures)
+        proc = run_cli(base_url, ["operator", "intake-auto-plan", "--task-id", blocked_task_id, "--agent-id", agent_id, "--adapter", "mock", "--limit", "30"], env)
+        outputs.extend([proc.stdout, proc.stderr])
+        preview_payload = load_json(proc)
+        require(proc.returncode == 0, f"operator intake auto-plan preview failed: {proc.stderr or proc.stdout}", failures)
+        require(preview_payload.get("status") == "preview", f"intake auto-plan should preview first: {preview_payload}", failures)
+        require((preview_payload.get("safety") or {}).get("read_only") is True, f"intake auto-plan preview should be read-only: {preview_payload}", failures)
+        require((preview_payload.get("safety") or {}).get("run_start_attempted") is False, f"intake auto-plan preview should not start run: {preview_payload}", failures)
+        require((preview_payload.get("knowledge_retrieval_evidence") or {}).get("query_omitted") is True, f"preview should omit raw query: {preview_payload}", failures)
+
+        proc = run_cli(base_url, ["operator", "intake-auto-plan", "--task-id", blocked_task_id, "--agent-id", agent_id, "--adapter", "mock", "--limit", "30", "--confirm-plan"], env)
+        outputs.extend([proc.stdout, proc.stderr])
+        auto_plan_payload = load_json(proc)
+        auto_plan_id = auto_plan_payload.get("plan_id")
+        require(proc.returncode == 0, f"operator intake auto-plan confirm failed: {proc.stderr or proc.stdout}", failures)
+        require(auto_plan_payload.get("status") == "planned", f"intake auto-plan should create verified plan: {auto_plan_payload}", failures)
+        require(auto_plan_payload.get("planned") is True, f"intake auto-plan planned flag wrong: {auto_plan_payload}", failures)
+        require(auto_plan_payload.get("verification_pass") is True, f"intake auto-plan verification did not pass: {auto_plan_payload}", failures)
+        require((auto_plan_payload.get("safety") or {}).get("ledger_mutated") is True, f"intake auto-plan confirm should mutate governance ledger: {auto_plan_payload}", failures)
+        require((auto_plan_payload.get("safety") or {}).get("live_execution_performed") is False, f"intake auto-plan must not run live adapter: {auto_plan_payload}", failures)
+        require((auto_plan_payload.get("safety") or {}).get("run_start_attempted") is False, f"intake auto-plan must not start run: {auto_plan_payload}", failures)
+
+        proc = run_cli(base_url, ["operator", "intake-checklist", "--limit", "30"], env)
+        outputs.extend([proc.stdout, proc.stderr])
+        after_auto_plan = load_json(proc)
+        auto_planned_item = find_item(after_auto_plan, blocked_task_id)
+        require(proc.returncode == 0, f"post-auto-plan intake readback failed: {proc.stderr or proc.stdout}", failures)
+        require(auto_planned_item.get("plan_id") == auto_plan_id, f"auto-plan readback missing plan id: {auto_planned_item} {auto_plan_payload}", failures)
+        require(auto_planned_item.get("plan_verified") is True, f"auto-plan readback should pass verified plan gate: {auto_planned_item}", failures)
+        require(auto_planned_item.get("severity") == "ready", f"auto-planned task should be ready for intake: {auto_planned_item}", failures)
+
+        proc = run_cli(base_url, ["operator", "advance-loop", "--source", "task_intake", "--limit", "30"], env)
+        outputs.extend([proc.stdout, proc.stderr])
+        intake_advance_preview = load_json(proc)
+        require(proc.returncode == 0, f"task-intake advance preview failed: {proc.stderr or proc.stdout}", failures)
+        require(intake_advance_preview.get("status") == "preview", f"task-intake advance should preview: {intake_advance_preview}", failures)
+        require((intake_advance_preview.get("preview") or {}).get("gate_id") == "task_intake", f"task-intake advance selected wrong gate: {intake_advance_preview}", failures)
+        require("operator intake-auto-plan" in str((intake_advance_preview.get("preview") or {}).get("action_command") or ""), f"task-intake advance command missing auto-plan: {intake_advance_preview}", failures)
+        require(((intake_advance_preview.get("preview") or {}).get("action_policy") or {}).get("allowed") is True, f"task-intake advance policy should allow auto-plan: {intake_advance_preview}", failures)
+
+        proc = run_cli(base_url, ["operator", "advance-loop", "--source", "task_intake", "--limit", "30", "--confirm-advance"], env)
+        outputs.extend([proc.stdout, proc.stderr])
+        intake_advance = load_json(proc)
+        require(proc.returncode == 0, f"task-intake advance confirm failed: {proc.stderr or proc.stdout}", failures)
+        require(intake_advance.get("advanced") is True, f"task-intake advance should execute: {intake_advance}", failures)
+        require((intake_advance.get("preview") or {}).get("gate_id") == "task_intake", f"task-intake confirm selected wrong gate: {intake_advance}", failures)
+        require((intake_advance.get("action_result") or {}).get("ok") is True, f"task-intake auto-plan action failed: {intake_advance}", failures)
+        require((intake_advance.get("verify_result") or {}).get("ok") is True, f"task-intake auto-plan verify failed: {intake_advance}", failures)
+        require(((intake_advance.get("receipt") or {}).get("receipt") or {}).get("source") == "operator_action_plan:task_intake", f"task-intake advance receipt source mismatch: {intake_advance}", failures)
+        require((intake_advance.get("safety") or {}).get("live_execution_performed") is False, f"task-intake advance must not run live adapter: {intake_advance}", failures)
+        require((intake_advance.get("safety") or {}).get("ledger_mutated") is True, f"task-intake advance should record governance evidence: {intake_advance}", failures)
+        advanced_task_id = ((((intake_advance.get("preview") or {}).get("evidence") or {}).get("evidence") or {}).get("task_id"))
+        require(bool(advanced_task_id), f"task-intake advance should expose selected task id: {intake_advance}", failures)
+
+        proc = run_cli(base_url, ["operator", "intake-checklist", "--limit", "30"], env)
+        outputs.extend([proc.stdout, proc.stderr])
+        after_intake_advance = load_json(proc)
+        advanced_item = find_item(after_intake_advance, advanced_task_id)
+        require(proc.returncode == 0, f"post-task-intake-advance readback failed: {proc.stderr or proc.stdout}", failures)
+        require(advanced_item.get("plan_verified") is True, f"advance-loop should verify selected intake plan: {advanced_item}", failures)
+        require(advanced_item.get("severity") == "ready", f"advance-loop should make selected task ready for intake: {advanced_item}", failures)
         require(not leaked_secret("\n".join(outputs)), "operator task intake leaked token-like material", failures)
 
         print(json.dumps({
@@ -403,6 +464,7 @@ def run_checks(base_url: str, db_path: Path) -> int:
             "blocked_task_id": blocked_task_id,
             "hermes_task_id": hermes_task_id,
             "plan_id": plan_id,
+            "auto_plan_id": auto_plan_id,
             "read_only": before == after_reads if before is not None and after_reads is not None else None,
             "pull_entity_stable": all(before.get(table) == after.get(table) for table in ("tasks", "agent_plans")) if before is not None and after is not None else None,
             "secret_leaked": leaked_secret("\n".join(outputs)),

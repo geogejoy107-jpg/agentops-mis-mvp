@@ -19175,8 +19175,15 @@ def task_intake_item_for_row(conn: sqlite3.Connection, row: sqlite3.Row | dict) 
         command = f"agentops task get --task-id {task_id}"
         next_action = "Assign an owner or collaborator agent before worker execution."
     elif not plan:
-        command = f"agentops knowledge search \"{redact_text(row_field(row, 'title') or task_id, 80)}\" --limit 10"
-        next_action = "Search knowledge, compare base constraints, then submit and verify an Agent Plan before task execution."
+        agent_arg = f" --agent-id {shlex.quote(assigned_agent_ids[0])}" if assigned_agent_ids else ""
+        adapter_arg = f" --adapter {shlex.quote(assigned_adapter)}" if assigned_adapter else ""
+        auto_plan_command = f"agentops operator intake-auto-plan --task-id {shlex.quote(str(task_id))}{agent_arg}{adapter_arg}"
+        if risk_level in {"high", "critical"}:
+            command = auto_plan_command
+            next_action = "Preview task-scoped knowledge retrieval, then require explicit human approval before high-risk Agent Plan creation."
+        else:
+            command = f"{auto_plan_command} --confirm-plan"
+            next_action = "Create and verify a low/medium-risk Agent Plan from task-scoped knowledge retrieval before worker execution."
     elif not plan_verified:
         command = f"agentops agent-plan verify --plan-id {plan['plan_id']}"
         next_action = "Verify the latest Agent Plan before the assigned worker starts a run."

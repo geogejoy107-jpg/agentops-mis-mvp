@@ -552,6 +552,51 @@ def main() -> int:
             outputs.extend([remediation_confirm_policy.stdout, remediation_confirm_policy.stderr])
             remediation_confirm_payload = load_json(remediation_confirm_policy.stdout)
             require(remediation_confirm_payload.get("allowed") is False, f"remediation confirm-create must stay denied: {remediation_confirm_payload}", failures)
+            intake_auto_plan_policy = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy; import json; print(json.dumps(advance_loop_command_policy('agentops operator intake-auto-plan --task-id tsk_demo --agent-id agt_demo --adapter openclaw --confirm-plan', phase='action')))",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            outputs.extend([intake_auto_plan_policy.stdout, intake_auto_plan_policy.stderr])
+            intake_auto_plan_payload = load_json(intake_auto_plan_policy.stdout)
+            require(intake_auto_plan_payload.get("allowed") is True, f"intake auto-plan confirm-plan should be allowlisted: {intake_auto_plan_payload}", failures)
+            intake_auto_plan_preview_policy = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy; import json; print(json.dumps(advance_loop_command_policy('agentops operator intake-auto-plan --task-id tsk_demo --agent-id agt_demo --adapter openclaw', phase='action')))",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            outputs.extend([intake_auto_plan_preview_policy.stdout, intake_auto_plan_preview_policy.stderr])
+            intake_auto_plan_preview_payload = load_json(intake_auto_plan_preview_policy.stdout)
+            require(intake_auto_plan_preview_payload.get("allowed") is False, f"intake auto-plan without confirm-plan should be denied: {intake_auto_plan_preview_payload}", failures)
+            intake_auto_plan_high_risk_policy = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy; import json; print(json.dumps(advance_loop_command_policy('agentops operator intake-auto-plan --task-id tsk_demo --agent-id agt_demo --adapter openclaw --confirm-plan --allow-high-risk', phase='action')))",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            outputs.extend([intake_auto_plan_high_risk_policy.stdout, intake_auto_plan_high_risk_policy.stderr])
+            intake_auto_plan_high_risk_payload = load_json(intake_auto_plan_high_risk_policy.stdout)
+            require(intake_auto_plan_high_risk_payload.get("allowed") is False, f"intake auto-plan high-risk bypass should be denied: {intake_auto_plan_high_risk_payload}", failures)
         finally:
             stop_server(server)
     secret_leaked = leaked("\n".join(outputs))

@@ -885,6 +885,258 @@ def cmd_operator_intake_checklist(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/intake-checklist", query={"limit": args.limit})
 
 
+def _select_intake_auto_plan_item(intake: dict, *, task_id: str | None = None, agent_id: str | None = None, adapter: str | None = None) -> dict:
+    items = intake.get("items") if isinstance(intake.get("items"), list) else []
+    candidates: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if task_id and item.get("task_id") != task_id:
+            continue
+        if agent_id and agent_id not in (item.get("assigned_agent_ids") or []):
+            continue
+        if adapter and item.get("assigned_adapter") not in {adapter, None}:
+            continue
+        failed = set(item.get("failed_gate_ids") or [])
+        if "agent_plan" in failed or "verified_agent_plan" in failed:
+            candidates.append(item)
+    candidates.sort(key=lambda row: (int(row.get("priority_score") or 0), row.get("task_id") or ""), reverse=True)
+    return candidates[0] if candidates else {}
+
+
+def cmd_operator_intake_auto_plan(args, client: AgentOpsClient) -> dict:
+    from agentops_mis_cli import worker as worker_mod
+
+    intake = client.get("/api/operator/intake-checklist", query={"limit": args.limit})
+    item = _select_intake_auto_plan_item(
+        intake,
+        task_id=args.task_id,
+        agent_id=args.agent_id or None,
+        adapter=args.adapter if args.adapter != "auto" else None,
+    )
+    if not item:
+        return {
+            "provider": "agentops-operator",
+            "operation": "operator_intake_auto_plan",
+            "status": "empty",
+            "planned": False,
+            "message": "No intake-blocked task needing Agent Plan creation or verification matched the filter.",
+            "intake_summary": intake.get("summary") or {},
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "run_start_attempted": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }
+
+    task_id = str(item.get("task_id") or "").strip()
+    assigned_agent_ids = item.get("assigned_agent_ids") or []
+    selected_agent_id = args.agent_id or (assigned_agent_ids[0] if assigned_agent_ids else client.agent_id) or worker_mod.DEFAULT_AGENT_ID
+    selected_adapter = args.adapter if args.adapter != "auto" else (item.get("assigned_adapter") or "mock")
+    risk = str(item.get("risk_level") or "medium")
+    failed_gate_ids = set(item.get("failed_gate_ids") or [])
+    plan_id = str(item.get("plan_id") or "").strip()
+    original_agent_id = client.agent_id
+    if selected_agent_id:
+        client.agent_id = selected_agent_id
+    try:
+        task = worker_mod.load_task_for_intake_plan(client, item)
+        task["risk_level"] = task.get("risk_level") or risk
+        preview_packet = {}
+        try:
+            preview_packet = client.get("/api/agent-gateway/knowledge/evidence-packet", {
+                "task_id": task_id,
+                "adapter": selected_adapter,
+                "limit": 5,
+                "baseline_limit": 5,
+            })
+        except Exception as exc:
+            preview_packet = {
+                "status": "unavailable",
+                "error": redact_text(str(exc), 220),
+                "token_omitted": True,
+            }
+        if risk in {"high", "critical"} and not args.allow_high_risk:
+            return {
+                "provider": "agentops-operator",
+                "operation": "operator_intake_auto_plan",
+                "status": "blocked",
+                "planned": False,
+                "task_id": task_id,
+                "agent_id": selected_agent_id,
+                "adapter": selected_adapter,
+                "risk_level": risk,
+                "failed_gate_ids": sorted(failed_gate_ids),
+                "message": "High/critical intake auto-planning requires explicit --allow-high-risk and is never allowlisted for bounded advance-loop.",
+                "knowledge_retrieval_evidence": {
+                    "status": preview_packet.get("status"),
+                    "query_hash": preview_packet.get("query_hash"),
+                    "result_count": len(((preview_packet.get("primary_search") or {}).get("results") or [])),
+                    "query_omitted": True,
+                    "snippet_omitted": True,
+                    "raw_content_omitted": True,
+                    "token_omitted": True,
+                },
+                "safety": {
+                    "read_only": True,
+                    "ledger_mutated": False,
+                    "live_execution_performed": False,
+                    "run_start_attempted": False,
+                    "server_executes_shell": False,
+                    "token_omitted": True,
+                },
+                "token_omitted": True,
+            }
+        if not args.confirm_plan:
+            return {
+                "provider": "agentops-operator",
+                "operation": "operator_intake_auto_plan",
+                "status": "preview",
+                "planned": False,
+                "task_id": task_id,
+                "agent_id": selected_agent_id,
+                "adapter": selected_adapter,
+                "risk_level": risk,
+                "plan_id": plan_id or None,
+                "failed_gate_ids": sorted(failed_gate_ids),
+                "knowledge_retrieval_evidence": {
+                    "operation": preview_packet.get("operation"),
+                    "status": preview_packet.get("status"),
+                    "query_hash": preview_packet.get("query_hash"),
+                    "result_count": len(((preview_packet.get("primary_search") or {}).get("results") or [])),
+                    "metrics": preview_packet.get("metrics") or {},
+                    "query_omitted": True,
+                    "snippet_omitted": True,
+                    "raw_content_omitted": True,
+                    "token_omitted": True,
+                },
+                "next_actions": [
+                    f"agentops operator intake-auto-plan --task-id {shlex.quote(task_id)} --agent-id {shlex.quote(selected_agent_id)} --adapter {shlex.quote(selected_adapter)} --confirm-plan",
+                    f"agentops agent-plan list --task-id {shlex.quote(task_id)} --agent-id {shlex.quote(selected_agent_id)}",
+                    "agentops operator intake-checklist --limit 20",
+                ],
+                "contract": "preview-only; reads intake and knowledge evidence but does not create plans, start runs, call live adapters, or execute shell",
+                "safety": {
+                    "read_only": True,
+                    "ledger_mutated": False,
+                    "live_execution_performed": False,
+                    "run_start_attempted": False,
+                    "server_executes_shell": False,
+                    "raw_prompt_omitted": True,
+                    "raw_response_omitted": True,
+                    "raw_content_omitted": True,
+                    "token_omitted": True,
+                },
+                "token_omitted": True,
+            }
+
+        if plan_id and "verified_agent_plan" in failed_gate_ids:
+            verified_plan = client.get(f"/api/agent-gateway/agent-plans/{plan_id}/verify")
+            verification = verified_plan.get("verification") or {}
+            passed = bool(verification.get("pass"))
+            worker_mod.audit_intake_auto_plan(client, task_id=task_id, plan_id=plan_id, status="verified_existing" if passed else "verify_failed", metadata={
+                "mode": "operator_verify_existing_plan",
+                "verification_pass": passed,
+                "failed_gate_ids": sorted(failed_gate_ids),
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            })
+            return {
+                "provider": "agentops-operator",
+                "operation": "operator_intake_auto_plan",
+                "status": "verified" if passed else "failed",
+                "planned": False,
+                "verified_existing": True,
+                "task_id": task_id,
+                "agent_id": selected_agent_id,
+                "adapter": selected_adapter,
+                "risk_level": risk,
+                "plan_id": plan_id,
+                "verification_pass": passed,
+                "failed_checks": verification.get("failed_checks") or [],
+                "safety": {
+                    "read_only": False,
+                    "ledger_mutated": True,
+                    "live_execution_performed": False,
+                    "run_start_attempted": False,
+                    "server_executes_shell": False,
+                    "token_omitted": True,
+                },
+                "token_omitted": True,
+            }
+
+        knowledge_evidence = worker_mod.fetch_worker_knowledge_evidence(client, task, adapter=selected_adapter)
+        plan_args = argparse.Namespace(adapter=selected_adapter)
+        plan_payload = worker_mod.create_worker_agent_plan(client, task, plan_args, knowledge_evidence)
+        plan_id = (plan_payload.get("agent_plan") or {}).get("plan_id")
+        if not plan_id:
+            raise SystemExit("intake auto-plan create did not return plan_id")
+        verified_plan = client.get(f"/api/agent-gateway/agent-plans/{plan_id}/verify")
+        verification = verified_plan.get("verification") or {}
+        passed = bool(verification.get("pass"))
+        worker_mod.audit_intake_auto_plan(client, task_id=task_id, plan_id=plan_id, status="created_verified" if passed else "created_verify_failed", metadata={
+            "mode": "operator_create_plan",
+            "verification_pass": passed,
+            "failed_gate_ids": sorted(failed_gate_ids),
+            "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+            "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
+            "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
+            "knowledge_retrieval_status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        })
+        return {
+            "provider": "agentops-operator",
+            "operation": "operator_intake_auto_plan",
+            "status": "planned" if passed else "failed",
+            "planned": True,
+            "task_id": task_id,
+            "agent_id": selected_agent_id,
+            "adapter": selected_adapter,
+            "risk_level": risk,
+            "plan_id": plan_id,
+            "verification_pass": passed,
+            "failed_checks": verification.get("failed_checks") or [],
+            "knowledge_retrieval_evidence": {
+                "consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+                "packet_hash": knowledge_evidence.get("packet_hash"),
+                "query_hash": knowledge_evidence.get("query_hash"),
+                "status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+                "paths": knowledge_evidence.get("paths") or [],
+                "query_omitted": True,
+                "snippet_omitted": True,
+                "raw_content_omitted": True,
+                "token_omitted": True,
+            },
+            "next_actions": [
+                f"agentops operator intake-checklist --limit {args.limit}",
+                f"agentops task pull --agent-id {shlex.quote(selected_agent_id)} --status planned --limit 5 --enforce-intake",
+            ],
+            "contract": "confirmed low/medium-risk intake Method Block writeback; creates/verifies only Agent Plan and audit evidence, never starts runs, calls live adapters, or executes shell",
+            "safety": {
+                "read_only": False,
+                "ledger_mutated": True,
+                "live_execution_performed": False,
+                "run_start_attempted": False,
+                "server_executes_shell": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "raw_content_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }
+    finally:
+        client.agent_id = original_agent_id
+
+
 def cmd_operator_loop_launch_packet(args, client: AgentOpsClient) -> dict:
     payload = client.get(
         "/api/operator/loop-launch-packet",
@@ -5283,6 +5535,14 @@ def build_parser() -> argparse.ArgumentParser:
     operator_intake = operator_sub.add_parser("intake-checklist", help="Show read-only pre-intake gates for planned/backlog tasks.")
     operator_intake.add_argument("--limit", type=int, default=12)
     operator_intake.set_defaults(handler="operator_intake_checklist")
+    operator_intake_auto_plan = operator_sub.add_parser("intake-auto-plan", help="Preview or confirm a safe Agent Plan writeback for one intake-blocked low/medium-risk task.")
+    operator_intake_auto_plan.add_argument("--task-id", default=None)
+    operator_intake_auto_plan.add_argument("--agent-id", default=None)
+    operator_intake_auto_plan.add_argument("--adapter", choices=["auto", "mock", "hermes", "openclaw"], default="auto")
+    operator_intake_auto_plan.add_argument("--limit", type=int, default=12)
+    operator_intake_auto_plan.add_argument("--allow-high-risk", action="store_true", help="Permit high/critical planning only for direct explicit CLI use; bounded advance-loop still denies this flag.")
+    operator_intake_auto_plan.add_argument("--confirm-plan", action="store_true", help="Create or verify the Agent Plan and record audit evidence. Default is preview only.")
+    operator_intake_auto_plan.set_defaults(handler="operator_intake_auto_plan")
     operator_launch = operator_sub.add_parser("loop-launch-packet", help="Build a read-only Agent Work Method launch packet for the next agent loop.")
     operator_launch.add_argument("--limit", type=int, default=8)
     operator_launch.add_argument("--task-id", default=None)
@@ -6295,6 +6555,7 @@ HANDLERS = {
     "operator_execution_mode": cmd_operator_execution_mode,
     "operator_command_center": cmd_operator_command_center,
     "operator_intake_checklist": cmd_operator_intake_checklist,
+    "operator_intake_auto_plan": cmd_operator_intake_auto_plan,
     "operator_loop_launch_packet": cmd_operator_loop_launch_packet,
     "operator_research_lab_packet": cmd_operator_research_lab_packet,
     "operator_research_lab_consumption": cmd_operator_research_lab_consumption,

@@ -59,6 +59,7 @@ def advance_loop_policy_summary() -> dict:
             "memory propose is allowed only when --type loop_record is present",
             "operator remediate-evidence-gap is allowed only as read-only preview; --confirm-create is denied",
             "operator research-lab-consumption is allowed only as the explicit --confirm-record governance writeback path",
+            "operator intake-auto-plan is allowed only as the explicit --confirm-plan governance writeback path and the command itself blocks high/critical risk by default",
             "verify phase accepts read-only allowlisted commands only",
         ],
         "denied_flags": sorted(DENIED_FLAGS),
@@ -125,6 +126,14 @@ def advance_loop_command_policy(command: str, *, phase: str) -> dict:
         if "--confirm-record" not in argv:
             return {**base, "allowed": False, "reason": "research lab consumption advance requires --confirm-record", "argv": argv[:6]}
         return {**base, "allowed": True, "reason": "research lab consumption confirmed governance writeback is allowlisted"}
+    if key == ("operator", "intake-auto-plan"):
+        if phase != "action":
+            return {**base, "allowed": False, "reason": "intake auto-plan is only allowlisted as an action command", "argv": argv[:4]}
+        if "--confirm-plan" not in argv:
+            return {**base, "allowed": False, "reason": "intake auto-plan advance requires --confirm-plan", "argv": argv[:6]}
+        if "--allow-high-risk" in argv:
+            return {**base, "allowed": False, "reason": "high-risk intake planning remains explicit human/worker handling", "argv": argv[:6]}
+        return {**base, "allowed": True, "reason": "intake auto-plan confirmed low/medium-risk governance writeback is allowlisted"}
     if phase == "verify":
         if key in ALLOWED_READ_COMMANDS or namespace in {"status", "doctor"}:
             return {**base, "allowed": True, "reason": "read-only verify command is allowlisted"}

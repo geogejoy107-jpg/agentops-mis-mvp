@@ -413,6 +413,7 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
             command = str(action.get("command") or "")
             require(
                 command.startswith("agentops knowledge search ")
+                or command.startswith("agentops operator intake-auto-plan --task-id ")
                 or command.startswith("agentops agent-plan verify --plan-id ")
                 or command.startswith("agentops agent-plan get --plan-id ")
                 or command.startswith("agentops task pull --agent-id "),
