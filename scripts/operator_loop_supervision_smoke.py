@@ -203,7 +203,7 @@ def require_adapter_command(value: object, adapter: str, label: str, failures: l
         require(f"--require-adapter {other}" not in text, f"{label} leaked {other} live-readiness adapter: {text}", failures)
 
 
-def validate(payload: dict, failures: list[str], *, expect_quality_attention: bool = False) -> None:
+def validate(payload: dict, failures: list[str], *, expect_quality_attention: bool = False, expect_service_primary: bool = False) -> None:
     require(payload.get("operation") == "operator_loop_supervision", f"wrong operation: {payload}", failures)
     require(payload.get("provider") == "agentops-operator", f"wrong provider: {payload}", failures)
     require(payload.get("status") in {"ready_to_confirm", "record_first", "preview_only", "blocked", "attention"}, f"bad status: {payload.get('status')}", failures)
@@ -278,6 +278,17 @@ def validate(payload: dict, failures: list[str], *, expect_quality_attention: bo
         if expect_quality_attention:
             require(contract_quality.get("status") == "attention", f"{adapter} work packet quality should be attention: {contract_quality}", failures)
             require(int(contract_quality.get("attention") or 0) >= 1, f"{adapter} work packet quality attention count missing: {contract_quality}", failures)
+        contract_service = evidence_contract.get("service_managed_loop") or {}
+        require(evidence_contract.get("service_managed_loop_required") is True, f"{adapter} work packet service-managed contract missing: {evidence_contract}", failures)
+        require(contract_service.get("status") in {"pass", "attention"}, f"{adapter} work packet service closure status missing: {contract_service}", failures)
+        require(contract_service.get("hard_run_start_gate") is False, f"{adapter} service closure should not be hard run_start gate: {contract_service}", failures)
+        require(contract_service.get("server_executes_shell") is False, f"{adapter} service closure shell proof missing: {contract_service}", failures)
+        require(contract_service.get("receipt_verified") in {True, False}, f"{adapter} service closure receipt state missing: {contract_service}", failures)
+        require(contract_service.get("control_readback_attached") in {True, False}, f"{adapter} service closure readback state missing: {contract_service}", failures)
+        if contract_service.get("required") is True:
+            require(contract_service.get("step") in {"record_service_control_receipt", "record_control_readback", "confirm_service_control_load"}, f"{adapter} service closure step missing: {contract_service}", failures)
+            require(contract_service.get("phase") in {"RECORD", "PREFLIGHT"}, f"{adapter} service closure phase missing: {contract_service}", failures)
+            require_adapter_command(contract_service.get("command"), adapter, f"{adapter} service closure command", failures)
         require(evidence_contract.get("knowledge_retrieval_required") is True, f"{adapter} work packet retrieval contract missing: {evidence_contract}", failures)
         require(evidence_contract.get("audit_ledger_required") is True, f"{adapter} work packet audit contract missing: {evidence_contract}", failures)
         work_safety = work_packet.get("safety") or {}
@@ -289,7 +300,7 @@ def validate(payload: dict, failures: list[str], *, expect_quality_attention: bo
         require(item_safety.get("ledger_mutated") is False, f"{adapter} ledger safety missing: {item_safety}", failures)
         require(item_safety.get("server_executes_shell") is False, f"{adapter} shell safety missing: {item_safety}", failures)
         gate_ids = {gate.get("id") for gate in (item.get("gates") or [])}
-        require({"handoff_ready", "current_code", "method_gates", "preview_loop", "local_deployment", "bounded_confirm", "plan_quality", "record_pressure", "server_shell_boundary"}.issubset(gate_ids), f"{adapter} gates missing: {gate_ids}", failures)
+        require({"handoff_ready", "current_code", "method_gates", "preview_loop", "local_deployment", "bounded_confirm", "plan_quality", "service_managed_loop", "record_pressure", "server_shell_boundary"}.issubset(gate_ids), f"{adapter} gates missing: {gate_ids}", failures)
         quality_gate = next((gate for gate in (item.get("gates") or []) if gate.get("id") == "plan_quality"), {})
         require(quality_gate.get("status") in {"pass", "attention"}, f"{adapter} quality gate status missing: {quality_gate}", failures)
         require(quality_gate.get("hard_run_start_gate") is False, f"{adapter} quality gate should not hard-block run_start: {quality_gate}", failures)
@@ -297,6 +308,24 @@ def validate(payload: dict, failures: list[str], *, expect_quality_attention: bo
         if expect_quality_attention:
             require(quality_gate.get("status") == "attention", f"{adapter} quality gate should be attention: {quality_gate}", failures)
             require(item.get("can_confirm_bounded_loop") is True, f"{adapter} quality attention should not change structural confirm readiness: {item}", failures)
+        service_gate = next((gate for gate in (item.get("gates") or []) if gate.get("id") == "service_managed_loop"), {})
+        require(service_gate.get("status") in {"pass", "attention"}, f"{adapter} service gate status missing: {service_gate}", failures)
+        require(service_gate.get("hard_run_start_gate") is False, f"{adapter} service gate should not hard-block run_start: {service_gate}", failures)
+        if service_gate.get("status") == "attention":
+            require(service_gate.get("step") in {"record_service_control_receipt", "record_control_readback", "confirm_service_control_load"}, f"{adapter} service gate step missing: {service_gate}", failures)
+            require_adapter_command(service_gate.get("command"), adapter, f"{adapter} service gate command", failures)
+        service_closure = item.get("service_closure") or {}
+        require(service_closure.get("status") in {"pass", "attention"}, f"{adapter} service closure missing: {service_closure}", failures)
+        require(service_closure.get("hard_run_start_gate") is False, f"{adapter} service closure should remain non-hard gate: {service_closure}", failures)
+        if service_closure.get("required") is True:
+            require(service_closure.get("step") in {"record_service_control_receipt", "record_control_readback", "confirm_service_control_load"}, f"{adapter} service closure required step missing: {service_closure}", failures)
+            require_adapter_command(service_closure.get("command"), adapter, f"{adapter} service closure required command", failures)
+        if expect_service_primary:
+            require(service_closure.get("required") is True, f"{adapter} service closure should be required before dispatch: {service_closure}", failures)
+            require(item.get("status") == "record_first", f"{adapter} service closure should make item record_first: {item}", failures)
+            require(primary_next.get("command") == service_closure.get("command"), f"{adapter} primary action should be service closure: primary={primary_next} service={service_closure}", failures)
+            require(primary_next.get("phase") == service_closure.get("phase"), f"{adapter} primary phase should match service closure: primary={primary_next} service={service_closure}", failures)
+            require(str(primary_next.get("verify_command") or "").startswith("agentops operator action-receipts"), f"{adapter} service closure should verify through action receipts: {primary_next}", failures)
         local_gate = next((gate for gate in (item.get("gates") or []) if gate.get("id") == "local_deployment"), {})
         require(local_gate.get("ok") is True, f"{adapter} local deployment gate not passing: {local_gate}", failures)
         require(local_gate.get("recommended_adapter") == adapter, f"{adapter} local deployment recommended adapter mismatch: {local_gate}", failures)
@@ -398,6 +427,13 @@ def main() -> int:
         )
         try:
             wait_ready(base_url, proc)
+            pre_before = db_counts(db_path)
+            pre_status, pre_payload = http_json(base_url, "/api/operator/loop-supervision?limit=5")
+            outputs.append(json.dumps(pre_payload, ensure_ascii=False))
+            require(pre_status == 200, f"pre-fixture HTTP loop-supervision status {pre_status}: {pre_payload}", failures)
+            validate(pre_payload, failures, expect_service_primary=True)
+            pre_after = db_counts(db_path)
+            require(pre_before == pre_after, f"pre-fixture loop-supervision mutated ledger: before={pre_before} after={pre_after}", failures)
             fixture = create_plan_quality_attention_fixture(base_url, outputs)
             require(bool(fixture.get("run_id") and fixture.get("plan_id")), f"quality fixture missing ids: {fixture}", failures)
             fixture_task_id = str(fixture.get("task_id") or "")
@@ -446,6 +482,9 @@ def main() -> int:
             require(all(item.get("packet_hash") for item in packet_items), f"work packet bundle hashes missing: {packet_items}", failures)
             require(all((item.get("primary_next_action") or {}).get("command") for item in packet_items), f"work packet bundle primary actions missing: {packet_items}", failures)
             require(all(((item.get("evidence_contract") or {}).get("agent_plan_quality") or {}).get("status") == "attention" for item in packet_items), f"work packet bundle quality attention missing: {packet_items}", failures)
+            require(all((item.get("evidence_contract") or {}).get("service_managed_loop_required") is True for item in packet_items), f"work packet bundle service contract missing: {packet_items}", failures)
+            require(all(((item.get("evidence_contract") or {}).get("service_managed_loop") or {}).get("status") in {"pass", "attention"} for item in packet_items), f"work packet bundle service closure missing: {packet_items}", failures)
+            require(all(((item.get("evidence_contract") or {}).get("service_managed_loop") or {}).get("hard_run_start_gate") is False for item in packet_items), f"work packet bundle service hard gate drift: {packet_items}", failures)
             after = db_counts(db_path)
             require(before == after, f"loop-supervision mutated ledger: before={before} after={after}", failures)
             require(not leaked("\n".join(outputs)), "loop-supervision leaked token-like material", failures)

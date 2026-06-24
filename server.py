@@ -25136,6 +25136,7 @@ def loop_supervision_item(
     service_managed_loop = local_deployment.get("service_managed_loop") if isinstance(local_deployment.get("service_managed_loop"), dict) else {}
     managed_execution = local_deployment.get("managed_execution_path") if isinstance(local_deployment.get("managed_execution_path"), dict) else {}
     managed_execution_commands = managed_execution.get("commands") if isinstance(managed_execution.get("commands"), dict) else {}
+    service_commands = service_managed_loop.get("commands") if isinstance(service_managed_loop.get("commands"), dict) else {}
     local_deployment_safety = local_run_path.get("safety") if isinstance(local_run_path.get("safety"), dict) else {}
     local_deployment_adapter_ok = (
         adapter not in {"hermes", "openclaw"}
@@ -25173,6 +25174,38 @@ def loop_supervision_item(
     plan_quality_issue_count = int(plan_quality_evidence.get("issue_count") or 0)
     plan_quality_attention_required = plan_quality_issue_count > 0
     plan_quality_command = str(plan_quality_evidence.get("command") or managed_execution_commands.get("evidence_report") or "agentops operator evidence-report --limit 8")
+    service_receipt_missing = service_managed_loop.get("receipt_required") is True and service_managed_loop.get("receipt_verified") is not True
+    service_readback_missing = service_managed_loop.get("control_readback_required") is True and service_managed_loop.get("control_readback_attached") is not True
+    service_activation_required = service_managed_loop.get("service_activation_required") is True
+    service_closure_step = None
+    service_closure_phase = "RECORD"
+    service_closure_command = None
+    if service_receipt_missing:
+        service_closure_step = "record_service_control_receipt"
+        service_closure_command = service_commands.get("record_verified_receipt")
+    elif service_readback_missing:
+        service_closure_step = "record_control_readback"
+        service_closure_command = service_commands.get("record_control_readback")
+    elif service_activation_required:
+        service_closure_step = "confirm_service_control_load"
+        service_closure_phase = "PREFLIGHT"
+        service_closure_command = service_commands.get("service_control_load_confirm")
+    service_closure_required = bool(service_closure_command)
+    service_closure = {
+        "required": service_closure_required,
+        "status": "attention" if service_closure_required else "pass",
+        "step": service_closure_step,
+        "phase": service_closure_phase if service_closure_required else None,
+        "command": service_closure_command,
+        "receipt_verified": service_managed_loop.get("receipt_verified") is True,
+        "control_readback_attached": service_managed_loop.get("control_readback_attached") is True,
+        "service_managed_loop_ready": service_managed_loop.get("service_managed_loop_ready") is True,
+        "service_active_loop_ready": service_managed_loop.get("service_active_loop_ready") is True,
+        "service_loaded": service_managed_loop.get("service_loaded") is True,
+        "hard_run_start_gate": False,
+        "server_executes_shell": False,
+        "token_omitted": True,
+    }
     should_record = bool(
         review_pressure["human_review_required"]
         or review_pressure["memory_review_required"]
@@ -25183,9 +25216,15 @@ def loop_supervision_item(
     if blockers or not current_code_ok or server_shell or missing_method_gates or not local_deployment_adapter_ok:
         status = "blocked"
         recommended_next_command = commands.get("start_check") or f"agentops operator start-check --adapter {adapter} --limit {limit}"
-    elif can_confirm and (should_record or plan_quality_attention_required):
+    elif can_confirm and plan_quality_attention_required:
         status = "record_first"
-        recommended_next_command = plan_quality_command if plan_quality_attention_required else review_pressure["record_command"]
+        recommended_next_command = plan_quality_command
+    elif can_confirm and service_closure_required:
+        status = "record_first"
+        recommended_next_command = service_closure_command
+    elif can_confirm and should_record:
+        status = "record_first"
+        recommended_next_command = review_pressure["record_command"]
     elif can_confirm:
         status = "ready_to_confirm"
         recommended_next_command = commands.get("loop_driver_confirm")
@@ -25258,6 +25297,19 @@ def loop_supervision_item(
             "token_omitted": True,
         },
         {
+            "id": "service_managed_loop",
+            "ok": not service_closure_required,
+            "status": "attention" if service_closure_required else "pass",
+            "step": service_closure_step,
+            "command": service_closure_command,
+            "receipt_verified": service_managed_loop.get("receipt_verified") is True,
+            "control_readback_attached": service_managed_loop.get("control_readback_attached") is True,
+            "service_managed_loop_ready": service_managed_loop.get("service_managed_loop_ready") is True,
+            "service_active_loop_ready": service_managed_loop.get("service_active_loop_ready") is True,
+            "hard_run_start_gate": False,
+            "token_omitted": True,
+        },
+        {
             "id": "record_pressure",
             "ok": not should_record,
             "status": "attention" if should_record else "pass",
@@ -25297,12 +25349,22 @@ def loop_supervision_item(
         primary_phase = "RECORD"
     elif recommended_next_command == plan_quality_command:
         primary_phase = "VERIFY"
+    elif service_closure_required and recommended_next_command == service_closure_command:
+        primary_phase = service_closure_phase
     elif recommended_next_command == commands.get("loop_driver_confirm"):
         primary_phase = "EXECUTE"
     elif recommended_next_command == commands.get("loop_driver_preview"):
         primary_phase = "PREFLIGHT"
     elif recommended_next_command == commands.get("start_check"):
         primary_phase = "READ"
+    primary_verify_command = (
+        service_commands.get("receipt_readback") or "agentops operator action-receipts --limit 20"
+        if service_closure_required and recommended_next_command == service_closure_command
+        else run_start_receipt_projection.get("verify_command")
+        if primary_confirm_required
+        else managed_execution_commands.get("evidence_report")
+        or "agentops operator loop-audit --limit 20"
+    )
     primary_next_action = {
         "id": stable_id("loop_next", adapter, status, stable_hash(recommended_next_command or "none")[:12]),
         "status": status,
@@ -25310,15 +25372,10 @@ def loop_supervision_item(
         "command": recommended_next_command,
         "confirm_required": primary_confirm_required,
         "receipt_required": primary_confirm_required,
-        "verify_command": (
-            run_start_receipt_projection.get("verify_command")
-            if primary_confirm_required
-            else managed_execution_commands.get("evidence_report")
-            or "agentops operator loop-audit --limit 20"
-        ),
+        "verify_command": primary_verify_command,
         "control_readback_source": run_start_receipt_projection.get("control_readback_source") if primary_confirm_required else None,
-        "safe_to_auto_continue": bool(recommended_next_command) and not primary_confirm_required and not should_record and not plan_quality_attention_required and not server_shell,
-        "requires_human_before_effect": bool(primary_confirm_required or should_record or plan_quality_attention_required),
+        "safe_to_auto_continue": bool(recommended_next_command) and not primary_confirm_required and not should_record and not plan_quality_attention_required and not service_closure_required and not server_shell,
+        "requires_human_before_effect": bool(primary_confirm_required or should_record or plan_quality_attention_required or service_closure_required),
         "blockers": blockers
         + ([f"missing_method_gate:{gate}" for gate in missing_method_gates] if missing_method_gates else [])
         + ([] if local_deployment_adapter_ok else ["local_deployment_adapter_mismatch"]),
@@ -25443,6 +25500,8 @@ def loop_supervision_item(
                 "hard_run_start_gate": False,
                 "token_omitted": True,
             },
+            "service_managed_loop_required": True,
+            "service_managed_loop": service_closure,
             "knowledge_retrieval_required": True,
             "base_reference_required": True,
             "plan_evidence_required": True,
@@ -25479,7 +25538,8 @@ def loop_supervision_item(
         + ([] if local_deployment_adapter_ok else ["local_deployment_adapter_mismatch"]),
         "attention": attention
         + (["record_before_execute"] if should_record else [])
-        + (["agent_plan_quality_attention"] if plan_quality_attention_required else []),
+        + (["agent_plan_quality_attention"] if plan_quality_attention_required else [])
+        + ([f"service_managed_loop:{service_closure_step}"] if service_closure_required and service_closure_step else []),
         "plan_quality": {
             "status": plan_quality_evidence.get("status") or "not_applicable",
             "issue_count": plan_quality_issue_count,
@@ -25487,6 +25547,7 @@ def loop_supervision_item(
             "hard_run_start_gate": False,
             "token_omitted": True,
         },
+        "service_closure": service_closure,
         "review_pressure": review_pressure,
         "gates": gates,
         "local_deployment": local_deployment,
