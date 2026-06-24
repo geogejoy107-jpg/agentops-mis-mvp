@@ -165,6 +165,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commercial_config_status_ui",
+        "command": "python3 scripts/commercial_config_status_ui_smoke.py",
+        "summary": "Admin Connectors renders commercial entitlement/retention gates with read-only, no billing, no cleanup, raw-config-omitted and token-omitted safety readback.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "external_connector_runtime_inventory",
         "command": "python3 scripts/external_connector_runtime_inventory_smoke.py",
         "summary": "High-risk external connector/runtime prepared-action inventory and guard coverage.",

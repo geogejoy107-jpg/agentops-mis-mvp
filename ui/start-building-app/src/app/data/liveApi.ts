@@ -80,6 +80,47 @@ export interface AgentPerformancePayload {
   recent_runs: Run[];
 }
 
+export interface CommercialConfigStatusPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  configured: boolean;
+  sources: {
+    entitlements?: Record<string, unknown>;
+    retention?: Record<string, unknown>;
+  };
+  entitlements: {
+    schema_version?: string;
+    edition?: string;
+    billing_provider?: string;
+    billing_calls_enabled: boolean;
+    enabled_capabilities: string[];
+    disabled_capabilities: string[];
+  };
+  retention: {
+    schema_version?: string;
+    windows?: {
+      free_local_days?: number;
+      pro_workspace_days?: number;
+      max_retention_days?: number;
+    };
+    cleanup_approval_required: boolean;
+    legal_hold_required_before_cleanup: boolean;
+    cleanup_execution_enabled: boolean;
+    legal_hold_registry_configured: boolean;
+    legal_hold_registry_example_only: boolean;
+  };
+  safety: {
+    read_only: boolean;
+    live_execution_performed: boolean;
+    billing_call_performed: boolean;
+    cleanup_execution_performed: boolean;
+    raw_config_omitted: boolean;
+    token_omitted: boolean;
+  };
+  failures: string[];
+}
+
 export interface LocalBriefResult {
   provider: string;
   workflow: string;
@@ -4113,6 +4154,72 @@ export async function loadMemories(): Promise<Memory[]> {
 
 export async function loadRuntimeConnectors(): Promise<RuntimeConnector[]> {
   return (await apiJson<Record<string, unknown>[]>("/runtime-connectors")).map(normalizeConnector);
+}
+
+export async function loadCommercialConfigStatus(): Promise<CommercialConfigStatusPayload> {
+  const raw = await optionalApiJson<Record<string, unknown>>("/commercial/config-status", {
+    provider: "agentops-commercial-config",
+    operation: "commercial_config_status",
+    status: "unavailable",
+    configured: false,
+    sources: {},
+    entitlements: {},
+    retention: {},
+    safety: {
+      read_only: true,
+      live_execution_performed: false,
+      billing_call_performed: false,
+      cleanup_execution_performed: false,
+      raw_config_omitted: true,
+      token_omitted: true,
+    },
+    failures: ["commercial config status endpoint unavailable"],
+  });
+  const entitlementsRaw = parseJsonObject(raw.entitlements);
+  const retentionRaw = parseJsonObject(raw.retention);
+  const safetyRaw = parseJsonObject(raw.safety);
+  const sourcesRaw = parseJsonObject(raw.sources);
+  const windowsRaw = parseJsonObject(retentionRaw.windows);
+  return {
+    provider: String(raw.provider || "agentops-commercial-config"),
+    operation: String(raw.operation || "commercial_config_status"),
+    status: String(raw.status || "unknown"),
+    configured: boolValue(raw.configured),
+    sources: {
+      entitlements: parseJsonObject(sourcesRaw.entitlements),
+      retention: parseJsonObject(sourcesRaw.retention),
+    },
+    entitlements: {
+      schema_version: entitlementsRaw.schema_version ? String(entitlementsRaw.schema_version) : undefined,
+      edition: entitlementsRaw.edition ? String(entitlementsRaw.edition) : undefined,
+      billing_provider: entitlementsRaw.billing_provider ? String(entitlementsRaw.billing_provider) : undefined,
+      billing_calls_enabled: boolValue(entitlementsRaw.billing_calls_enabled),
+      enabled_capabilities: asArray<unknown>(entitlementsRaw.enabled_capabilities).map(String),
+      disabled_capabilities: asArray<unknown>(entitlementsRaw.disabled_capabilities).map(String),
+    },
+    retention: {
+      schema_version: retentionRaw.schema_version ? String(retentionRaw.schema_version) : undefined,
+      windows: {
+        free_local_days: numberValue(windowsRaw.free_local_days, 0),
+        pro_workspace_days: numberValue(windowsRaw.pro_workspace_days, 0),
+        max_retention_days: numberValue(windowsRaw.max_retention_days, 0),
+      },
+      cleanup_approval_required: boolValue(retentionRaw.cleanup_approval_required),
+      legal_hold_required_before_cleanup: boolValue(retentionRaw.legal_hold_required_before_cleanup),
+      cleanup_execution_enabled: boolValue(retentionRaw.cleanup_execution_enabled),
+      legal_hold_registry_configured: boolValue(retentionRaw.legal_hold_registry_configured),
+      legal_hold_registry_example_only: boolValue(retentionRaw.legal_hold_registry_example_only),
+    },
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      billing_call_performed: boolValue(safetyRaw.billing_call_performed),
+      cleanup_execution_performed: boolValue(safetyRaw.cleanup_execution_performed),
+      raw_config_omitted: boolValue(safetyRaw.raw_config_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    failures: asArray<unknown>(raw.failures).map(String),
+  };
 }
 
 export async function updateRuntimeConnectorTrust(connectorId: string, input: { trust_status: "trusted" | "review_required" | "blocked"; trust_note?: string }): Promise<{ connector: Record<string, unknown>; token_omitted: boolean }> {
