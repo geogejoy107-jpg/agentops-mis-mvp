@@ -1,6 +1,8 @@
 """Pure operator start-check projection helpers."""
 from __future__ import annotations
 
+import hashlib
+import json
 import shlex
 from typing import Any
 
@@ -911,12 +913,53 @@ def operator_local_loop_admission_packet(
     service_managed_commands = service_managed_loop.get("commands") if isinstance(service_managed_loop.get("commands"), dict) else {}
     service_managed_ready = service_managed_loop.get("service_managed_loop_ready") is True
     evidence_report_command = "agentops operator evidence-report --run-id <run_id> --limit 1"
+    service_control_action_signature = hashlib.sha256(
+        f"operator_start_check.service_control_preview:{adapter}:{service_command}:{service_verify}".encode("utf-8")
+    ).hexdigest()
+    service_control_receipt_command = " ".join(shlex.quote(str(part)) for part in [
+        "agentops", "operator", "record-action-receipt",
+        "--action-command", service_command,
+        "--verify-command", service_verify,
+        "--action-id", f"operator_start_check.service_control_preview.{adapter}",
+        "--action-signature", service_control_action_signature,
+        "--source", f"operator_start_check.service_control_preview.{adapter}",
+        "--status", "verified",
+        "--result-summary", f"{adapter} worker service-control preview inspected and service-check reviewed.",
+        "--confirm-record",
+    ])
+    service_control_readback_command = " ".join(shlex.quote(str(part)) for part in [
+        "agentops", "operator", "record-control-readback",
+        "--receipt-id", str(service_managed_loop.get("receipt_id") or "<receipt_id>"),
+        "--source", f"operator_start_check.service_control_preview.{adapter}.control_readback",
+        "--control-readback-json", json.dumps({
+            "before": {
+                "step_id": "preview_worker_service_control",
+                "status": "preview",
+                "adapter": adapter,
+                "service_control_preview": True,
+            },
+            "after": {
+                "verify_command": service_verify,
+                "service_check_expected": True,
+                "confirmed_os_mutation": False,
+            },
+            "self_check": {
+                "copy_only": True,
+                "server_executes_shell": False,
+                "writes_ledger_for_service_control": False,
+                "live_execution_performed": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }, separators=(",", ":")),
+        "--confirm-record",
+    ])
     managed_execution_commands = {
         "read_start_check": acceptance_commands.get("start_check"),
         "current_code_check": current_code_command,
-        "service_check": service_managed_commands.get("service_check") or service_verify,
-        "service_control_receipt": service_managed_commands.get("record_verified_receipt") or acceptance_commands.get("receipt_readback"),
-        "service_control_readback": service_managed_commands.get("record_control_readback") or service_managed_commands.get("receipt_readback") or acceptance_commands.get("receipt_readback"),
+        "service_check": service_verify,
+        "service_control_receipt": service_control_receipt_command or service_managed_commands.get("record_verified_receipt") or acceptance_commands.get("receipt_readback"),
+        "service_control_readback": service_control_readback_command or service_managed_commands.get("record_control_readback") or service_managed_commands.get("receipt_readback") or acceptance_commands.get("receipt_readback"),
         "agent_plan_create": agent_commands.get("agent_plan_create"),
         "knowledge_search": agent_commands.get("knowledge_search"),
         "base_reference": agent_commands.get("base_reference"),
