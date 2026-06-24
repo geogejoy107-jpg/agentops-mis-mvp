@@ -176,26 +176,32 @@ END $$;
 
 
 def docker_exec(container: str, pg_auth: str, psql_args: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess[str]:
-    return run(
-        [
-            "docker",
-            "exec",
-            "-e",
-            f"PGPASSWORD={pg_auth}",
-            container,
-            "psql",
-            "-h",
-            "127.0.0.1",
-            "-U",
-            "agentops",
-            "-d",
-            "agentops",
-            "-v",
-            "ON_ERROR_STOP=1",
-            *psql_args,
-        ],
-        timeout=timeout,
-    )
+    cmd = [
+        "docker",
+        "exec",
+        "-e",
+        f"PGPASSWORD={pg_auth}",
+        container,
+        "psql",
+        "-h",
+        "127.0.0.1",
+        "-U",
+        "agentops",
+        "-d",
+        "agentops",
+        "-v",
+        "ON_ERROR_STOP=1",
+        *psql_args,
+    ]
+    deadline = time.time() + min(timeout, 45)
+    result = run(cmd, timeout=timeout)
+    while result.returncode != 0 and time.time() < deadline:
+        text = result.stderr or result.stdout or ""
+        if not any(marker in text for marker in ["Connection refused", "server closed the connection unexpectedly", "Is the server running"]):
+            return result
+        time.sleep(1)
+        result = run(cmd, timeout=timeout)
+    return result
 
 
 def wait_for_postgres(container: str, timeout_sec: int = 45) -> bool:
