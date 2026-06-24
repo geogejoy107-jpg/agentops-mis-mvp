@@ -201,10 +201,44 @@ def assert_command_center(payload: dict, failures: list[str]) -> None:
     remediation_summary = evidence_remediation.get("summary") or {}
     remediation_items = evidence_remediation.get("items") or []
     remediation_safety = evidence_remediation.get("safety") or {}
+    remediation_workflow = payload.get("evidence_remediation_workflow") or {}
+    remediation_workflow_summary = remediation_workflow.get("summary") or {}
+    remediation_workflow_items = remediation_workflow.get("items") or []
+    remediation_workflow_safety = remediation_workflow.get("safety") or {}
     require(evidence_remediation.get("operation") == "operator_command_center_evidence_remediation", f"evidence remediation lane missing: {payload}", failures)
     require((remediation_safety.get("read_only") is True), f"evidence remediation lane must be read-only: {evidence_remediation}", failures)
     require((remediation_safety.get("server_shell_execution") is False), f"evidence remediation lane cannot execute shell: {evidence_remediation}", failures)
     require("advance-loop --source evidence_remediation" in str((evidence_remediation.get("commands") or {}).get("advance_missing") or ""), f"evidence remediation source advance command missing: {evidence_remediation}", failures)
+    require(remediation_workflow.get("operation") == "operator_command_center_evidence_remediation_workflow", f"evidence remediation workflow lane missing: {payload}", failures)
+    require((remediation_workflow_safety.get("read_only") is True), f"evidence remediation workflow lane must be read-only: {remediation_workflow}", failures)
+    require((remediation_workflow_safety.get("ledger_mutated") is False), f"evidence remediation workflow lane mutated ledger: {remediation_workflow}", failures)
+    require((remediation_workflow_safety.get("live_execution_performed") is False), f"evidence remediation workflow lane ran live execution: {remediation_workflow}", failures)
+    require((remediation_workflow_safety.get("server_shell_execution") is False), f"evidence remediation workflow lane cannot execute shell: {remediation_workflow}", failures)
+    require((remediation_workflow_safety.get("bounded_advance_auto_runs") is False), f"bounded advance must not auto-run remediation workflow: {remediation_workflow}", failures)
+    for key in ["items", "mutating", "confirm_required", "receipt_missing", "receipt_verified"]:
+        require(isinstance(remediation_workflow_summary.get(key), int), f"workflow summary {key} should be integer: {remediation_workflow_summary}", failures)
+    if int(remediation_workflow_summary.get("items") or 0) > 0:
+        require(remediation_workflow_items, f"evidence remediation workflow items missing despite summary: {remediation_workflow}", failures)
+        workflow_actions = [
+            item for item in payload.get("next_actions") or []
+            if str(item.get("source") or "").startswith("evidence_remediation_workflow:")
+        ]
+        require(workflow_actions, f"evidence remediation workflow next action missing: {payload.get('next_actions')}", failures)
+        for item in remediation_workflow_items:
+            require(bool(item.get("run_id")), f"workflow item run_id missing: {item}", failures)
+            require(bool(item.get("step_id")), f"workflow item step_id missing: {item}", failures)
+            require(bool(item.get("command")), f"workflow item command missing: {item}", failures)
+            require(item.get("preview_receipt_verified") is True, f"workflow item should require verified preview receipt: {item}", failures)
+            require(item.get("server_executes_shell") is False, f"workflow item shell proof missing: {item}", failures)
+            require(item.get("live_execution_performed") is False, f"workflow item live proof missing: {item}", failures)
+        for action in workflow_actions:
+            evidence = action.get("evidence") or {}
+            require("operator remediate-evidence-gap" in str(action.get("command") or ""), f"workflow action command missing: {action}", failures)
+            require(action.get("receipt_required") is True, f"workflow action receipt required missing: {action}", failures)
+            require(action.get("control_readback_required") is False, f"workflow action must not claim bounded control readback: {action}", failures)
+            require(str(evidence.get("receipt_source") or "").startswith("handoff.evidence_remediation"), f"workflow action receipt source missing: {action}", failures)
+            require(evidence.get("preview_receipt_verified") is True, f"workflow action preview receipt proof missing: {action}", failures)
+            require(evidence.get("bounded_advance_auto_runs") is False, f"workflow action bounded auto-run proof missing: {action}", failures)
     if int(remediation_summary.get("items") or 0) > 0:
         require(remediation_items, f"evidence remediation items missing despite summary: {evidence_remediation}", failures)
         remediation_actions = [

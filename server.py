@@ -27281,6 +27281,18 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             continue
         receipt_state = raw_item.get("receipt_state") if isinstance(raw_item.get("receipt_state"), dict) else {}
         next_step = raw_item.get("next_workflow_step") if isinstance(raw_item.get("next_workflow_step"), dict) else {}
+        next_step_id = str(next_step.get("step_id") or next_step.get("id") or "").strip()
+        workflow_steps = [
+            step for step in (raw_item.get("workflow_steps") or [])
+            if isinstance(step, dict)
+        ]
+        matching_step = next(
+            (
+                step for step in workflow_steps
+                if str(step.get("step_id") or step.get("id") or "").strip() == next_step_id
+            ),
+            {},
+        )
         safety = raw_item.get("safety") if isinstance(raw_item.get("safety"), dict) else {}
         evidence_remediation_items.append({
             "operation": raw_item.get("operation") or "evidence_remediation_work_item",
@@ -27311,12 +27323,20 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
                 "token_omitted": True,
             },
             "next_workflow_step": {
-                "step_id": next_step.get("step_id") or next_step.get("id"),
+                "step_id": next_step_id or None,
                 "label": next_step.get("label"),
                 "status": next_step.get("status"),
                 "command": redact_text(next_step.get("command"), 500),
                 "verify_command": redact_text(next_step.get("verify_command"), 500),
                 "receipt_required": ((next_step.get("receipt_state") or {}) if isinstance(next_step.get("receipt_state"), dict) else {}).get("required") is True,
+                "mutating": matching_step.get("mutating") is True,
+                "confirm_required": matching_step.get("confirm_required") is True,
+                "action_id": matching_step.get("action_id"),
+                "action_signature": matching_step.get("action_signature"),
+                "receipt_source": matching_step.get("receipt_source") or (f"handoff.evidence_remediation.{next_step_id}" if next_step_id and next_step_id != "preview" else "handoff.evidence_remediation"),
+                "receipt_state": matching_step.get("receipt_state") if isinstance(matching_step.get("receipt_state"), dict) else {},
+                "receipt_record_command": redact_text(matching_step.get("receipt_record_command"), 900),
+                "receipt_verify_record_command": redact_text(matching_step.get("receipt_verify_record_command"), 900),
                 "token_omitted": True,
             } if next_step else None,
             "advance_command": f"agentops operator advance-loop --source evidence_remediation --limit {handoff_limit} --confirm-advance",
@@ -27358,6 +27378,72 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             "live_execution_performed": False,
             "server_shell_execution": False,
             "mutating_steps_are_not_auto_run": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+    evidence_remediation_workflow_items: list[dict] = []
+    for item in evidence_remediation_items:
+        step = item.get("next_workflow_step") if isinstance(item.get("next_workflow_step"), dict) else {}
+        receipt_state = item.get("receipt_state") or {}
+        step_id = str(step.get("step_id") or "").strip()
+        command = str(step.get("command") or "").strip()
+        if not step_id or not command or not receipt_state.get("verified"):
+            continue
+        step_receipt_state = step.get("receipt_state") if isinstance(step.get("receipt_state"), dict) else {}
+        evidence_remediation_workflow_items.append({
+            "operation": "operator_command_center_evidence_remediation_workflow_item",
+            "run_id": item.get("run_id"),
+            "task_id": item.get("task_id"),
+            "step_id": step_id,
+            "label": step.get("label"),
+            "status": step.get("status") or "attention",
+            "command": redact_text(command, 500),
+            "verify_command": step.get("verify_command"),
+            "mutating": step.get("mutating") is True,
+            "confirm_required": step.get("confirm_required") is True,
+            "receipt_required": step.get("receipt_required") is True,
+            "action_id": step.get("action_id") or f"evidence_remediation:{item.get('run_id')}:{step_id}",
+            "action_signature": step.get("action_signature") or stable_id("op_action_sig", "evidence_remediation_step", workspace_id, item.get("run_id") or "", step_id, command)[-18:],
+            "receipt_source": step.get("receipt_source") or (f"handoff.evidence_remediation.{step_id}" if step_id != "preview" else "handoff.evidence_remediation"),
+            "receipt_state": {
+                "status": step_receipt_state.get("status") or "missing",
+                "receipt_id": step_receipt_state.get("receipt_id"),
+                "receipt_hash": step_receipt_state.get("receipt_hash"),
+                "verified": step_receipt_state.get("verified") is True,
+                "current": step_receipt_state.get("current") is True,
+                "token_omitted": True,
+            },
+            "receipt_record_command": step.get("receipt_record_command"),
+            "receipt_verify_record_command": step.get("receipt_verify_record_command"),
+            "preview_receipt_id": (item.get("receipt_state") or {}).get("receipt_id"),
+            "preview_receipt_verified": True,
+            "server_executes_shell": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        })
+    evidence_remediation_workflow_summary = {
+        "items": len(evidence_remediation_workflow_items),
+        "mutating": sum(1 for item in evidence_remediation_workflow_items if item.get("mutating")),
+        "confirm_required": sum(1 for item in evidence_remediation_workflow_items if item.get("confirm_required")),
+        "receipt_missing": sum(1 for item in evidence_remediation_workflow_items if not (item.get("receipt_state") or {}).get("verified")),
+        "receipt_verified": sum(1 for item in evidence_remediation_workflow_items if (item.get("receipt_state") or {}).get("verified")),
+        "selected_run_id": next((item.get("run_id") for item in evidence_remediation_workflow_items if not (item.get("receipt_state") or {}).get("verified")), None),
+        "selected_step_id": next((item.get("step_id") for item in evidence_remediation_workflow_items if not (item.get("receipt_state") or {}).get("verified")), None),
+    }
+    evidence_remediation_workflow = {
+        "operation": "operator_command_center_evidence_remediation_workflow",
+        "status": "attention" if evidence_remediation_workflow_items else "ready",
+        "summary": evidence_remediation_workflow_summary,
+        "items": evidence_remediation_workflow_items[:limit],
+        "next_actions": [item.get("command") for item in evidence_remediation_workflow_items if item.get("command")][:limit],
+        "contract": "read-only projection of post-preview remediation workflow steps; mutating commands require explicit operator confirmation and are never auto-run by bounded advance",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_shell_execution": False,
+            "bounded_advance_auto_runs": False,
             "token_omitted": True,
         },
         "token_omitted": True,
@@ -27582,6 +27668,37 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             control_readback_required=True,
             control_readback_attached=False,
         )
+    for item in evidence_remediation_workflow_items[:limit]:
+        receipt_state = item.get("receipt_state") or {}
+        add_next_action(
+            f"evidence_remediation_workflow:{item.get('step_id') or 'step'}",
+            item.get("command"),
+            title=f"Evidence remediation workflow: {item.get('label') or item.get('step_id')}",
+            priority=124,
+            verify_command=item.get("verify_command"),
+            evidence={
+                "run_id": item.get("run_id"),
+                "task_id": item.get("task_id"),
+                "workflow_step_id": item.get("step_id"),
+                "mutating": item.get("mutating") is True,
+                "confirm_required": item.get("confirm_required") is True,
+                "receipt_source": item.get("receipt_source"),
+                "preview_receipt_id": item.get("preview_receipt_id"),
+                "preview_receipt_verified": item.get("preview_receipt_verified") is True,
+                "server_executes_shell": False,
+                "live_execution_performed": False,
+                "bounded_advance_auto_runs": False,
+            },
+            action_signature=item.get("action_signature"),
+            receipt_required=True,
+            receipt_status=receipt_state.get("status") or "missing",
+            receipt_verified=receipt_state.get("verified") is True,
+            receipt_hash=receipt_state.get("receipt_hash"),
+            receipt_record_command=item.get("receipt_record_command"),
+            receipt_verify_record_command=item.get("receipt_verify_record_command"),
+            control_readback_required=False,
+            control_readback_attached=False,
+        )
     for item in action_plan_actions[:limit]:
         add_next_action(
             f"operator_action_plan:{item.get('lane') or 'general'}",
@@ -27739,6 +27856,9 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             "bounded_advance_safe_to_confirm": 1 if handoff_advance_safe_to_confirm else 0,
             "evidence_remediation_items": evidence_remediation_summary["items"],
             "evidence_remediation_receipt_missing": evidence_remediation_summary["receipt_missing"],
+            "evidence_remediation_workflow_items": evidence_remediation_workflow_summary["items"],
+            "evidence_remediation_workflow_mutating": evidence_remediation_workflow_summary["mutating"],
+            "evidence_remediation_workflow_confirm_required": evidence_remediation_workflow_summary["confirm_required"],
             "next_actions": len(next_actions),
         },
         "projects": project_rows,
@@ -27803,6 +27923,7 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             "token_omitted": True,
         },
         "evidence_remediation": evidence_remediation,
+        "evidence_remediation_workflow": evidence_remediation_workflow,
         "bounded_advance": bounded_advance,
         "next_actions": next_actions,
         "contract": "read-only command-center BFF for operator UI/CLI; aggregates projects, blocked runs, approvals, deliveries, stale workers, Commander coding gates, Research Lab consumption, evidence remediation, bounded advance-loop, and next actions without executing commands or mutating ledgers",

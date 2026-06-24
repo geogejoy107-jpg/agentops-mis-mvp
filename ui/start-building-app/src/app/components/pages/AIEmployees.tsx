@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Bot, CheckCircle2, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2, RotateCw, Inbox, GripVertical, XCircle, Copy, Terminal } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2, RotateCw, Inbox, GripVertical, XCircle, Copy, Terminal, GitBranch } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import {
   createAgentGatewayEnrollment,
@@ -585,6 +585,8 @@ export function AIEmployees() {
   const operatorCommandCenterSummary = operatorCommandCenter?.summary;
   const operatorCommandCenterActions = operatorCommandCenter?.next_actions || [];
   const operatorCommandCenterResearchConsumption = operatorCommandCenter?.research_lab_consumption;
+  const operatorCommandCenterEvidenceRemediation = operatorCommandCenter?.evidence_remediation;
+  const operatorCommandCenterRemediationWorkflow = operatorCommandCenter?.evidence_remediation_workflow;
   const operatorCommandCenterBoundedAdvance = operatorCommandCenter?.bounded_advance;
   const operatorCommandCenterBoundedSummary = operatorCommandCenterBoundedAdvance?.summary || {};
   const operatorCommandCenterBoundedSelected = operatorCommandCenterBoundedAdvance?.selected_item || {};
@@ -598,6 +600,24 @@ export function AIEmployees() {
   const operatorCommandCenterBoundedPolicyVersion = String(operatorCommandCenterBoundedSummary.policy_version || "unknown");
   const operatorCommandCenterBoundedServerShell = Boolean(operatorCommandCenterBoundedSummary.server_executes_shell || operatorCommandCenterBoundedSafety.server_shell_execution);
   const operatorCommandCenterResearchSummary = operatorCommandCenterResearchConsumption?.summary || {};
+  const operatorCommandCenterEvidenceRemediationSummary = operatorCommandCenterEvidenceRemediation?.summary || {};
+  const operatorCommandCenterRemediationWorkflowSummary = operatorCommandCenterRemediationWorkflow?.summary || {};
+  const operatorCommandCenterRemediationWorkflowItems = operatorCommandCenterRemediationWorkflow?.items || [];
+  const operatorCommandCenterRemediationWorkflowActions = operatorCommandCenterActions
+    .filter((item) => String(item.source || "").startsWith("evidence_remediation_workflow:"))
+    .slice(0, 3);
+  const operatorCommandCenterRemediationWorkflowFirst = operatorCommandCenterRemediationWorkflowItems[0] || {};
+  const operatorCommandCenterRemediationWorkflowFirstReceipt = (
+    typeof operatorCommandCenterRemediationWorkflowFirst.receipt_state === "object" &&
+    operatorCommandCenterRemediationWorkflowFirst.receipt_state !== null
+      ? operatorCommandCenterRemediationWorkflowFirst.receipt_state as Record<string, unknown>
+      : {}
+  );
+  const operatorCommandCenterRemediationWorkflowSafety = operatorCommandCenterRemediationWorkflow?.safety || {};
+  const operatorCommandCenterRemediationWorkflowCount = Number(operatorCommandCenterRemediationWorkflowSummary.items ?? operatorCommandCenterSummary?.evidence_remediation_workflow_items ?? 0);
+  const operatorCommandCenterRemediationWorkflowConfirm = Number(operatorCommandCenterRemediationWorkflowSummary.confirm_required ?? operatorCommandCenterSummary?.evidence_remediation_workflow_confirm_required ?? 0);
+  const operatorCommandCenterRemediationWorkflowReceiptMissing = Number(operatorCommandCenterRemediationWorkflowSummary.receipt_missing ?? 0);
+  const operatorCommandCenterEvidenceRemediationMissing = Number(operatorCommandCenterEvidenceRemediationSummary.receipt_missing ?? operatorCommandCenterSummary?.evidence_remediation_receipt_missing ?? 0);
   const operatorCommandCenterResearchMissing = Number(
     operatorCommandCenterResearchSummary.missing ??
     operatorCommandCenterSummary?.research_lab_consumption_missing ??
@@ -4754,7 +4774,7 @@ export function AIEmployees() {
             <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.commandCenterSummary}</p>
             {operatorCommandCenter && (
               <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
-                {copy.operatorCommandCenterSummary} · {copy.commandCenterActions}: {operatorCommandCenterSummary?.next_actions ?? operatorCommandCenterActions.length} · {copy.blockedRuns}: {operatorCommandCenterSummary?.blocked_runs ?? 0} · {copy.pendingApprovals}: {operatorCommandCenterSummary?.pending_approvals ?? 0} · {copy.researchLabConsumption}: {operatorCommandCenterResearchConsumed}/{operatorCommandCenterResearchConsumed + operatorCommandCenterResearchMissing}
+                {copy.operatorCommandCenterSummary} · {copy.commandCenterActions}: {operatorCommandCenterSummary?.next_actions ?? operatorCommandCenterActions.length} · {copy.blockedRuns}: {operatorCommandCenterSummary?.blocked_runs ?? 0} · {copy.pendingApprovals}: {operatorCommandCenterSummary?.pending_approvals ?? 0} · {copy.researchLabConsumption}: {operatorCommandCenterResearchConsumed}/{operatorCommandCenterResearchConsumed + operatorCommandCenterResearchMissing} · {copy.remediationWorkflow}: {operatorCommandCenterRemediationWorkflowCount}/{operatorCommandCenterEvidenceRemediationMissing}
               </p>
             )}
             {panelEvidenceLine("operator_command_center")}
@@ -4803,6 +4823,7 @@ export function AIEmployees() {
           {[
             { label: copy.operatorCommandCenterTitle, value: operatorCommandCenterSummary?.next_actions ?? operatorCommandCenterActions.length, status: operatorCommandCenter?.status || "unknown" },
             { label: copy.researchLabConsumption, value: operatorCommandCenterResearchMissing, status: operatorCommandCenterResearchMissing > 0 ? "attention" : "pass" },
+            { label: copy.remediationWorkflow, value: operatorCommandCenterRemediationWorkflowCount, status: operatorCommandCenterRemediationWorkflowCount > 0 ? "attention" : "pass" },
             { label: copy.advanceLoopTitle, value: operatorCommandCenterBoundedGate, status: operatorCommandCenterBoundedSafeToConfirm ? "attention" : operatorCommandCenterBoundedStatus },
             { label: copy.loopControlTitle, value: loopControlSelectedGate, status: operatorLoopControl?.status || loopControlGateStatus },
             { label: copy.runtimeDoctorTitle, value: runtimeDoctorSummary?.evidence_chain_status || operatorRuntimeDoctor?.status || "—", status: operatorRuntimeDoctor?.status || "unknown" },
@@ -4860,6 +4881,48 @@ export function AIEmployees() {
                     <span className="truncate max-w-[132px]">{copiedIntakeCommand === item.command ? copy.copiedCommand : item.label}</span>
                   </button>
                 ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {operatorCommandCenterRemediationWorkflow && (
+          <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <GitBranch size={13} style={{ color: "var(--mis-cyan)" }} />
+                  <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.remediationWorkflow}</div>
+                  <StatusBadge status={operatorCommandCenterRemediationWorkflow.status || "unknown"} />
+                  <StatusBadge status={operatorCommandCenterRemediationWorkflowConfirm > 0 ? "attention" : "pass"} label={`${copy.confirmRequired}: ${operatorCommandCenterRemediationWorkflowConfirm}`} />
+                  <StatusBadge status={operatorCommandCenterRemediationWorkflowReceiptMissing > 0 ? "attention" : "pass"} label={`${copy.receiptProof}: ${operatorCommandCenterRemediationWorkflowReceiptMissing}`} />
+                  <StatusBadge status={operatorCommandCenterRemediationWorkflowSafety.bounded_advance_auto_runs ? "blocked" : "pass"} label={operatorCommandCenterRemediationWorkflowSafety.bounded_advance_auto_runs ? "auto-run" : "explicit only"} />
+                  <StatusBadge status={operatorCommandCenterRemediationWorkflowSafety.server_shell_execution ? "blocked" : "pass"} label={operatorCommandCenterRemediationWorkflowSafety.server_shell_execution ? "server shell" : "copy-only"} />
+                </div>
+                <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                  {copy.recommendedStep}: {String(operatorCommandCenterRemediationWorkflowFirst.label || operatorCommandCenterRemediationWorkflowFirst.step_id || "—")} · {String(operatorCommandCenterRemediationWorkflowFirst.run_id || "—")}
+                </div>
+                <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
+                  {copy.receiptProof}: {String(operatorCommandCenterRemediationWorkflowFirstReceipt.status || "missing")} · preview {String(operatorCommandCenterRemediationWorkflowFirst.preview_receipt_verified ?? false)}
+                </div>
+              </div>
+              <div className="flex flex-wrap xl:justify-end gap-1.5 shrink-0 xl:max-w-[560px]">
+                {operatorCommandCenterRemediationWorkflowActions.length > 0 ? operatorCommandCenterRemediationWorkflowActions.map((action) => (
+                  <button
+                    key={`command-center-remediation-workflow:${action.action_id || action.command}`}
+                    onClick={() => void copyIntakeCommand(String(action.command || ""))}
+                    className="inline-flex items-center gap-1 text-[9px] px-2 py-1 rounded max-w-full"
+                    style={{ color: "var(--mis-warning)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                    title={String(action.command || "")}
+                  >
+                    <Copy size={10} />
+                    <span className="truncate max-w-[146px]">{copiedIntakeCommand === action.command ? copy.copiedCommand : `${copy.nextAction}: ${String((action.evidence || {}).workflow_step_id || action.source || "step")}`}</span>
+                  </button>
+                )) : (
+                  <span className="text-[9px] px-2 py-1 rounded" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    {copy.remediationState}: {operatorCommandCenterRemediationWorkflowCount}
+                  </span>
+                )}
               </div>
             </div>
           </div>

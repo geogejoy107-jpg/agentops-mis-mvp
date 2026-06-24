@@ -1560,6 +1560,26 @@ export interface OperatorCommandCenterPayload {
     safety?: Record<string, unknown>;
     token_omitted?: boolean;
   };
+  evidence_remediation?: {
+    operation?: string;
+    status?: string;
+    summary?: Record<string, unknown>;
+    items?: Record<string, unknown>[];
+    source_operation?: string;
+    next_actions?: string[];
+    commands?: Record<string, string>;
+    safety?: Record<string, unknown>;
+    token_omitted?: boolean;
+  };
+  evidence_remediation_workflow?: {
+    operation?: string;
+    status?: string;
+    summary?: Record<string, unknown>;
+    items?: Record<string, unknown>[];
+    next_actions?: string[];
+    safety?: Record<string, unknown>;
+    token_omitted?: boolean;
+  };
   bounded_advance?: {
     operation?: string;
     status?: string;
@@ -6014,6 +6034,43 @@ export async function loadOperatorCommandCenter(limit = 12, projectId = ""): Pro
       },
       token_omitted: true,
     },
+    evidence_remediation: {
+      operation: "operator_command_center_evidence_remediation",
+      status: "unavailable",
+      summary: {},
+      items: [],
+      source_operation: "evidence_remediation_chain",
+      next_actions: [],
+      commands: {
+        preview_advance_missing: "agentops operator advance-loop --source evidence_remediation --limit 8",
+        advance_missing: "agentops operator advance-loop --source evidence_remediation --limit 8 --confirm-advance",
+        verify: "agentops operator command-center --limit 8",
+      },
+      safety: {
+        read_only: true,
+        ledger_mutated: false,
+        live_execution_performed: false,
+        server_shell_execution: false,
+        token_omitted: true,
+      },
+      token_omitted: true,
+    },
+    evidence_remediation_workflow: {
+      operation: "operator_command_center_evidence_remediation_workflow",
+      status: "unavailable",
+      summary: {},
+      items: [],
+      next_actions: [],
+      safety: {
+        read_only: true,
+        ledger_mutated: false,
+        live_execution_performed: false,
+        server_shell_execution: false,
+        bounded_advance_auto_runs: false,
+        token_omitted: true,
+      },
+      token_omitted: true,
+    },
     bounded_advance: {
       operation: "operator_command_center_bounded_advance",
       status: "unavailable",
@@ -6066,6 +6123,8 @@ export async function loadOperatorCommandCenter(limit = 12, projectId = ""): Pro
   const workersRaw = typeof raw.workers === "object" && raw.workers !== null ? raw.workers as Record<string, unknown> : {};
   const operatorPlanRaw = typeof raw.operator_action_plan === "object" && raw.operator_action_plan !== null ? raw.operator_action_plan as Record<string, unknown> : {};
   const researchConsumptionRaw = typeof raw.research_lab_consumption === "object" && raw.research_lab_consumption !== null ? raw.research_lab_consumption as Record<string, unknown> : {};
+  const evidenceRemediationRaw = typeof raw.evidence_remediation === "object" && raw.evidence_remediation !== null ? raw.evidence_remediation as Record<string, unknown> : {};
+  const evidenceRemediationWorkflowRaw = typeof raw.evidence_remediation_workflow === "object" && raw.evidence_remediation_workflow !== null ? raw.evidence_remediation_workflow as Record<string, unknown> : {};
   const boundedAdvanceRaw = typeof raw.bounded_advance === "object" && raw.bounded_advance !== null ? raw.bounded_advance as Record<string, unknown> : {};
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
   return {
@@ -6137,6 +6196,28 @@ export async function loadOperatorCommandCenter(limit = 12, projectId = ""): Pro
       ).map(([key, value]) => [key, String(value || "")]).filter(([, value]) => value)),
       safety: typeof researchConsumptionRaw.safety === "object" && researchConsumptionRaw.safety !== null ? researchConsumptionRaw.safety as Record<string, unknown> : undefined,
       token_omitted: researchConsumptionRaw.token_omitted === undefined ? true : boolValue(researchConsumptionRaw.token_omitted),
+    },
+    evidence_remediation: {
+      operation: evidenceRemediationRaw.operation ? String(evidenceRemediationRaw.operation) : "operator_command_center_evidence_remediation",
+      status: evidenceRemediationRaw.status ? String(evidenceRemediationRaw.status) : "unknown",
+      summary: typeof evidenceRemediationRaw.summary === "object" && evidenceRemediationRaw.summary !== null ? evidenceRemediationRaw.summary as Record<string, unknown> : {},
+      items: asArray<Record<string, unknown>>(evidenceRemediationRaw.items),
+      source_operation: evidenceRemediationRaw.source_operation ? String(evidenceRemediationRaw.source_operation) : undefined,
+      next_actions: asArray<unknown>(evidenceRemediationRaw.next_actions).map(String).filter(Boolean),
+      commands: Object.fromEntries(Object.entries(
+        typeof evidenceRemediationRaw.commands === "object" && evidenceRemediationRaw.commands !== null ? evidenceRemediationRaw.commands as Record<string, unknown> : {}
+      ).map(([key, value]) => [key, String(value || "")]).filter(([, value]) => value)),
+      safety: typeof evidenceRemediationRaw.safety === "object" && evidenceRemediationRaw.safety !== null ? evidenceRemediationRaw.safety as Record<string, unknown> : undefined,
+      token_omitted: evidenceRemediationRaw.token_omitted === undefined ? true : boolValue(evidenceRemediationRaw.token_omitted),
+    },
+    evidence_remediation_workflow: {
+      operation: evidenceRemediationWorkflowRaw.operation ? String(evidenceRemediationWorkflowRaw.operation) : "operator_command_center_evidence_remediation_workflow",
+      status: evidenceRemediationWorkflowRaw.status ? String(evidenceRemediationWorkflowRaw.status) : "unknown",
+      summary: typeof evidenceRemediationWorkflowRaw.summary === "object" && evidenceRemediationWorkflowRaw.summary !== null ? evidenceRemediationWorkflowRaw.summary as Record<string, unknown> : {},
+      items: asArray<Record<string, unknown>>(evidenceRemediationWorkflowRaw.items),
+      next_actions: asArray<unknown>(evidenceRemediationWorkflowRaw.next_actions).map(String).filter(Boolean),
+      safety: typeof evidenceRemediationWorkflowRaw.safety === "object" && evidenceRemediationWorkflowRaw.safety !== null ? evidenceRemediationWorkflowRaw.safety as Record<string, unknown> : undefined,
+      token_omitted: evidenceRemediationWorkflowRaw.token_omitted === undefined ? true : boolValue(evidenceRemediationWorkflowRaw.token_omitted),
     },
     bounded_advance: {
       operation: boundedAdvanceRaw.operation ? String(boundedAdvanceRaw.operation) : "operator_command_center_bounded_advance",

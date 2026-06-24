@@ -287,6 +287,32 @@ def main() -> int:
             require((remediation_advanced_payload.get("verify_result") or {}).get("ok") is True, f"remediation preview verify failed: {remediation_advanced_payload}", failures)
             require(((remediation_advanced_payload.get("receipt") or {}).get("receipt") or {}).get("source") == "handoff.evidence_remediation", f"remediation receipt should preserve handoff source: {remediation_advanced_payload}", failures)
             require(remediation_after_receipts >= remediation_before_receipts + 1, f"remediation advance receipt missing: {remediation_before_receipts} -> {remediation_after_receipts}", failures)
+            remediation_workflow_readback = run_cli(["operator", "command-center", "--limit", "20"], base_url, outputs)
+            remediation_workflow_payload = load_json(remediation_workflow_readback.stdout)
+            remediation_workflow = remediation_workflow_payload.get("evidence_remediation_workflow") or {}
+            remediation_workflow_summary = remediation_workflow.get("summary") or {}
+            remediation_workflow_items = remediation_workflow.get("items") or []
+            remediation_workflow_actions = [
+                item for item in remediation_workflow_payload.get("next_actions") or []
+                if str(item.get("source") or "").startswith("evidence_remediation_workflow:")
+            ]
+            first_workflow_item = remediation_workflow_items[0] if remediation_workflow_items else {}
+            first_workflow_action = remediation_workflow_actions[0] if remediation_workflow_actions else {}
+            require(remediation_workflow_readback.returncode == 0, f"remediation workflow readback failed: {remediation_workflow_readback.stderr or remediation_workflow_readback.stdout}", failures)
+            require(remediation_workflow.get("operation") == "operator_command_center_evidence_remediation_workflow", f"remediation workflow lane missing: {remediation_workflow_payload}", failures)
+            require((remediation_workflow.get("safety") or {}).get("read_only") is True, f"remediation workflow lane should be read-only: {remediation_workflow}", failures)
+            require((remediation_workflow.get("safety") or {}).get("bounded_advance_auto_runs") is False, f"remediation workflow must not be auto-run by bounded advance: {remediation_workflow}", failures)
+            require(int(remediation_workflow_summary.get("items") or 0) >= 1, f"verified remediation preview should expose workflow steps: {remediation_workflow_payload}", failures)
+            require(int(remediation_workflow_summary.get("confirm_required") or 0) >= 1, f"workflow steps should preserve explicit confirmation boundary: {remediation_workflow_payload}", failures)
+            require(remediation_workflow_actions, f"workflow next action missing after verified preview: {remediation_workflow_payload}", failures)
+            require(first_workflow_item.get("step_id") in {"create_task", "dispatch_package", "plan_evidence", "synthesize", "close_gap"}, f"unexpected workflow step id: {first_workflow_item}", failures)
+            require(first_workflow_item.get("preview_receipt_verified") is True, f"workflow item should prove preview receipt first: {first_workflow_item}", failures)
+            require(str(first_workflow_item.get("receipt_source") or "").startswith("handoff.evidence_remediation"), f"workflow item receipt source missing: {first_workflow_item}", failures)
+            require(first_workflow_item.get("server_executes_shell") is False, f"workflow item shell proof missing: {first_workflow_item}", failures)
+            require(first_workflow_item.get("live_execution_performed") is False, f"workflow item live proof missing: {first_workflow_item}", failures)
+            require((first_workflow_action.get("evidence") or {}).get("preview_receipt_verified") is True, f"workflow action preview receipt proof missing: {first_workflow_action}", failures)
+            require((first_workflow_action.get("evidence") or {}).get("bounded_advance_auto_runs") is False, f"workflow action bounded auto-run proof missing: {first_workflow_action}", failures)
+            require(first_workflow_action.get("control_readback_required") is False, f"workflow action should require explicit operator action, not bounded readback: {first_workflow_action}", failures)
             handoff_after_global = run_cli(["operator", "handoff", "--limit", "10"], base_url, outputs)
             handoff_after_payload = load_json(handoff_after_global.stdout)
             evidence_work_order = ((handoff_after_payload.get("work_order") or {}).get("evidence_report") or {})
