@@ -182,15 +182,15 @@ def main() -> int:
             block_status, block_payload = http_json_status(
                 "POST",
                 f"{next_base}/api/mis/workflows/customer-worker-task",
-                worker_payload("Blocked Next customer-worker proxy smoke", adapter="hermes"),
+                worker_payload("Blocked Next customer-worker proxy smoke", adapter="invalid-live"),
             )
             transcripts.append(block_payload)
-            require(block_status == 403, f"non-mock Next customer-worker proxy did not fail closed: {block_status} {block_payload}")
-            require(block_payload.get("error") == "customer_worker_mock_only_next_parity", f"wrong non-mock proxy error: {block_payload}")
-            require(block_payload.get("live_execution_performed") is False, f"non-mock proxy did not report no live execution: {block_payload}")
+            require(block_status == 400, f"invalid-adapter Next customer-worker proxy did not fail closed: {block_status} {block_payload}")
+            require(block_payload.get("error") == "adapter_invalid", f"wrong invalid-adapter proxy error: {block_payload}")
+            require(block_payload.get("live_execution_performed") is False, f"invalid-adapter proxy did not report no live execution: {block_payload}")
             after_status, after_payload = http_json_status("GET", f"{api_base}/api/tasks")
             require(after_status == 200, f"post-block task list failed: {after_status} {after_payload}")
-            require(task_ids(after_payload) == before_ids, "non-mock Next customer-worker proxy created or removed tasks")
+            require(task_ids(after_payload) == before_ids, "invalid-adapter Next customer-worker proxy created or removed tasks")
 
             proxy_status, proxy_payload = http_json_status(
                 "POST",
@@ -215,13 +215,13 @@ def main() -> int:
             form_block_before_ids = task_ids(form_block_before_payload)
             form_block_status, form_block_location = post_form_no_redirect(
                 f"{next_base}/workspace/dispatch/customer-worker",
-                {"adapter": "openclaw", "title": "Blocked customer-worker form smoke"},
+                {"adapter": "invalid-live", "title": "Blocked customer-worker form smoke"},
             )
             transcripts.append(form_block_location)
-            require(form_block_status == 303, f"non-mock form did not redirect: {form_block_status} {form_block_location}")
+            require(form_block_status == 303, f"invalid-adapter form did not redirect: {form_block_status} {form_block_location}")
             form_block_query = urllib.parse.parse_qs(urllib.parse.urlparse(form_block_location).query)
-            require(form_block_query.get("customer_worker_status") == ["blocked"], f"non-mock form did not report blocked: {form_block_location}")
-            require(form_block_query.get("customer_worker_error") == ["customer_worker_mock_only_next_parity"], f"non-mock form wrong error: {form_block_location}")
+            require(form_block_query.get("customer_worker_status") == ["blocked"], f"invalid-adapter form did not report blocked: {form_block_location}")
+            require(form_block_query.get("customer_worker_error") == ["adapter_invalid"], f"invalid-adapter form wrong error: {form_block_location}")
             for forbidden_key in (
                 "customer_worker_task_id",
                 "customer_worker_run_id",
@@ -229,10 +229,10 @@ def main() -> int:
                 "customer_worker_manifest_id",
                 "customer_worker_approval_id",
             ):
-                require(forbidden_key not in form_block_query, f"non-mock form returned {forbidden_key}: {form_block_location}")
+                require(forbidden_key not in form_block_query, f"invalid-adapter form returned {forbidden_key}: {form_block_location}")
             form_block_after_status, form_block_after_payload = http_json_status("GET", f"{api_base}/api/tasks")
             require(form_block_after_status == 200, f"post-form-block task list failed: {form_block_after_status} {form_block_after_payload}")
-            require(task_ids(form_block_after_payload) == form_block_before_ids, "non-mock customer-worker form created or removed tasks")
+            require(task_ids(form_block_after_payload) == form_block_before_ids, "invalid-adapter customer-worker form created or removed tasks")
 
             form_status, form_location = post_form_no_redirect(
                 f"{next_base}/workspace/dispatch/customer-worker",
@@ -284,7 +284,7 @@ def main() -> int:
                 "evidence_readback": "/api/mis/runs/:run_id and /api/mis/agent-gateway/plan-evidence-manifests/:id/verify",
                 "non_mock_proxy_status": block_status,
                 "non_mock_form_status": form_block_status,
-                "non_mock_error": "customer_worker_mock_only_next_parity",
+                "invalid_adapter_error": "adapter_invalid",
                 "proxy_task_id": proxy_task_id,
                 "proxy_run_id": proxy_run_id,
                 "proxy_artifact_id": proxy_artifact_id,

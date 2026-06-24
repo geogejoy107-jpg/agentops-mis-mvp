@@ -238,6 +238,7 @@ python3 scripts/local_brief_prepared_action_smoke.py
 python3 scripts/nextjs_local_brief_smoke.py
 python3 scripts/nextjs_customer_worker_dispatch_smoke.py
 python3 scripts/nextjs_customer_worker_async_job_smoke.py
+python3 scripts/nextjs_customer_worker_prepared_action_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
@@ -277,8 +278,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   servers, proves Next `/api/mis/workflows/customer-worker-task` plus
   `/workspace/dispatch/customer-worker` can run one safe mock customer-worker
   dispatch, read task/run/delivery approval/verified plan-evidence back through
-  the Next proxy, and fail closed for Hermes/OpenClaw with
-  `customer_worker_mock_only_next_parity`.
+  the Next proxy, and fail closed for invalid adapters with `adapter_invalid`.
 
   `python3 scripts/nextjs_customer_worker_async_job_smoke.py`
   (`nextjs_customer_worker_async_job_v1`) starts isolated MIS API and Next.js
@@ -286,7 +286,15 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   `/workspace/dispatch/customer-worker-job` can submit one safe mock async
   customer-worker job, read workflow job/task/run/verified plan-evidence back
   through the Next proxy, render the async job list, and fail closed before job
-  creation for Hermes/OpenClaw with `customer_worker_mock_only_next_parity`.
+  creation for invalid adapters with `adapter_invalid`.
+
+  `python3 scripts/nextjs_customer_worker_prepared_action_smoke.py`
+  (`nextjs_customer_worker_prepared_action_v1`) starts a monkeypatched isolated
+  MIS API provider plus Next.js, proves Hermes/OpenClaw customer-worker sync
+  and async requests enter the backend prepared-action wall through the Next
+  proxy and form fallback, require approval before resume, block request-hash
+  mismatch and replay, and surface only IDs, request hashes, status, and
+  omission flags.
 
   The task/run route parity smoke starts isolated MIS API and Next.js servers,
   verifies Next task/run list links to detail routes, compares direct MIS API
@@ -463,6 +471,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/nextjs_local_brief_smoke.py`
   - `scripts/nextjs_customer_worker_dispatch_smoke.py`
   - `scripts/nextjs_customer_worker_async_job_smoke.py`
+  - `scripts/nextjs_customer_worker_prepared_action_smoke.py`
   - `scripts/nextjs_worker_stuck_release_smoke.py`
   - `scripts/nextjs_worker_daemon_control_smoke.py`
   - `scripts/nextjs_enrollment_request_smoke.py`

@@ -17,9 +17,16 @@ type DispatchFeedback = {
   customerWorkerArtifactId?: string;
   customerWorkerManifestId?: string;
   customerWorkerApprovalId?: string;
+  customerWorkerPreparedActionId?: string;
+  customerWorkerPreparedStatus?: string;
+  customerWorkerRequestHash?: string;
   customerWorkerError?: string;
   customerWorkerJobStatus?: string;
   customerWorkerJobId?: string;
+  customerWorkerJobPreparedActionId?: string;
+  customerWorkerJobPreparedStatus?: string;
+  customerWorkerJobRequestHash?: string;
+  customerWorkerJobApprovalId?: string;
 };
 
 function boolText(value: unknown) {
@@ -30,6 +37,11 @@ function boolText(value: unknown) {
 
 function gateFor(entitlements: CommercialEntitlementStatus, capability: string) {
   return (entitlements.gates || []).find((gate) => gate.capability === capability);
+}
+
+function shortId(value?: string) {
+  if (!value) return "none";
+  return value.length > 18 ? `${value.slice(0, 18)}...` : value;
 }
 
 export function DispatchParityPage({
@@ -80,7 +92,12 @@ export function DispatchParityPage({
       ) : null}
       {feedback?.customerWorkerStatus === "blocked" ? (
         <div className="banner warn">
-          <strong>Worker dispatch blocked:</strong> {feedback.customerWorkerError || "customer_worker_mock_only_next_parity"} · adapter {feedback.customerWorkerAdapter || "unknown"}
+          <strong>Worker dispatch blocked:</strong> {feedback.customerWorkerError || "adapter_invalid"} · adapter {feedback.customerWorkerAdapter || "unknown"}
+        </div>
+      ) : null}
+      {feedback?.customerWorkerStatus === "waiting_approval" && feedback.customerWorkerPreparedActionId ? (
+        <div className="banner warn">
+          <strong>Worker dispatch prepared:</strong> approval {feedback.customerWorkerApprovalId || "pending"} must be approved before exact resume · action {shortId(feedback.customerWorkerPreparedActionId)}
         </div>
       ) : null}
       {feedback?.customerWorkerStatus === "started" && feedback.customerWorkerTaskId ? (
@@ -91,7 +108,12 @@ export function DispatchParityPage({
       {feedback?.customerWorkerStatus === "failed" ? <div className="banner error">Customer worker failed: {feedback.customerWorkerError || "unknown"}</div> : null}
       {feedback?.customerWorkerJobStatus === "blocked" ? (
         <div className="banner warn">
-          <strong>Async worker job blocked:</strong> {feedback.customerWorkerError || "customer_worker_mock_only_next_parity"} · adapter {feedback.customerWorkerAdapter || "unknown"}
+          <strong>Async worker job blocked:</strong> {feedback.customerWorkerError || "adapter_invalid"} · adapter {feedback.customerWorkerAdapter || "unknown"}
+        </div>
+      ) : null}
+      {feedback?.customerWorkerJobStatus === "waiting_approval" && feedback.customerWorkerJobPreparedActionId ? (
+        <div className="banner warn">
+          <strong>Async worker job prepared:</strong> approval {feedback.customerWorkerJobApprovalId || "pending"} must be approved before exact resume · action {shortId(feedback.customerWorkerJobPreparedActionId)}
         </div>
       ) : null}
       {feedback?.customerWorkerJobStatus === "submitted" && feedback.customerWorkerJobId ? (
@@ -155,7 +177,7 @@ export function DispatchParityPage({
       <section className="panel wide">
         <div className="panelHeader">
           <h2><Workflow size={14} /> Customer worker dispatch</h2>
-          <span>mock only</span>
+          <span>prepared-action gated</span>
         </div>
         <div className="proofStrip">
           <span>adapter {feedback?.customerWorkerAdapter || "mock"}</span>
@@ -164,6 +186,9 @@ export function DispatchParityPage({
           <span>artifact {feedback?.customerWorkerArtifactId || "none"}</span>
           <span>manifest {feedback?.customerWorkerManifestId ? <Link href={`/workspace/evidence/${encodeURIComponent(feedback.customerWorkerManifestId)}`}>{feedback.customerWorkerManifestId}</Link> : "none"}</span>
           <span>approval {feedback?.customerWorkerApprovalId || "none"}</span>
+          <span>prepared {shortId(feedback?.customerWorkerPreparedActionId)}</span>
+          <span>request {shortId(feedback?.customerWorkerRequestHash)}</span>
+          <span>prepared status {feedback?.customerWorkerPreparedStatus || "none"}</span>
         </div>
         <form className="formGrid" method="post" action="/workspace/dispatch/customer-worker">
           <label className="field">
@@ -192,6 +217,18 @@ export function DispatchParityPage({
           </label>
           <button className="miniButton good" type="submit"><Play size={13} /> Dispatch worker</button>
         </form>
+        {feedback?.customerWorkerStatus === "waiting_approval" && feedback.customerWorkerPreparedActionId && feedback.customerWorkerRequestHash ? (
+          <form className="formGrid" method="post" action="/workspace/dispatch/customer-worker">
+            <input type="hidden" name="adapter" value={feedback.customerWorkerAdapter || "openclaw"} />
+            <input type="hidden" name="prepared_action_id" value={feedback.customerWorkerPreparedActionId} />
+            <input type="hidden" name="request_hash" value={feedback.customerWorkerRequestHash} />
+            <input type="hidden" name="title" value="Next customer worker dispatch" />
+            <input type="hidden" name="worker_agent_id" value="agt_next_customer_worker" />
+            <input type="hidden" name="description" value="Next.js dispatches one safe mock customer-worker task and reads back ledger evidence." />
+            <input type="hidden" name="acceptance_criteria" value="Worker must write run, tool, evaluation, audit, artifact, memory, approval, and verified plan evidence." />
+            <button className="miniButton" type="submit"><ShieldCheck size={13} /> Resume approved worker</button>
+          </form>
+        ) : null}
       </section>
 
       <section className="panel wide">
@@ -200,9 +237,12 @@ export function DispatchParityPage({
           <span>{jobs.length} recent</span>
         </div>
         <div className="proofStrip">
-          <span>submit mock only</span>
+          <span>submit prepared-action gated</span>
           <span>token omitted {boolText(workflowJobs.token_omitted)}</span>
           <span>last job {feedback?.customerWorkerJobId || jobs[0]?.job_id || "none"}</span>
+          <span>prepared {shortId(feedback?.customerWorkerJobPreparedActionId)}</span>
+          <span>request {shortId(feedback?.customerWorkerJobRequestHash)}</span>
+          <span>prepared status {feedback?.customerWorkerJobPreparedStatus || "none"}</span>
         </div>
         <form className="formGrid" method="post" action="/workspace/dispatch/customer-worker-job">
           <label className="field">
@@ -231,6 +271,18 @@ export function DispatchParityPage({
           </label>
           <button className="miniButton good" type="submit"><Clock3 size={13} /> Submit async job</button>
         </form>
+        {feedback?.customerWorkerJobStatus === "waiting_approval" && feedback.customerWorkerJobPreparedActionId && feedback.customerWorkerJobRequestHash ? (
+          <form className="formGrid" method="post" action="/workspace/dispatch/customer-worker-job">
+            <input type="hidden" name="adapter" value={feedback.customerWorkerAdapter || "hermes"} />
+            <input type="hidden" name="prepared_action_id" value={feedback.customerWorkerJobPreparedActionId} />
+            <input type="hidden" name="request_hash" value={feedback.customerWorkerJobRequestHash} />
+            <input type="hidden" name="title" value="Next async customer worker job" />
+            <input type="hidden" name="worker_agent_id" value="agt_next_customer_worker_async" />
+            <input type="hidden" name="description" value="Next.js submits one safe async customer-worker job and reads job status back through the MIS proxy." />
+            <input type="hidden" name="acceptance_criteria" value="Workflow job must complete with run, artifact, delivery approval, and verified plan evidence without token leakage." />
+            <button className="miniButton" type="submit"><ShieldCheck size={13} /> Resume approved job</button>
+          </form>
+        ) : null}
         <div className="list">
           {jobs.length ? jobs.map((job) => (
             <article className="row tall" key={job.job_id}>

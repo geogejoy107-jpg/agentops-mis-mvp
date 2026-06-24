@@ -192,14 +192,14 @@ def main() -> int:
             block_status, block_payload = http_json_status(
                 "POST",
                 f"{next_base}/api/mis/workflows/customer-worker-task/submit",
-                worker_payload("Blocked Next async customer-worker proxy smoke", adapter="hermes"),
+                worker_payload("Blocked Next async customer-worker proxy smoke", adapter="invalid-live"),
             )
             transcripts.append(block_payload)
-            require(block_status == 403, f"non-mock async proxy did not fail closed: {block_status} {block_payload}")
-            require(block_payload.get("error") == "customer_worker_mock_only_next_parity", f"wrong non-mock async proxy error: {block_payload}")
+            require(block_status == 400, f"invalid-adapter async proxy did not fail closed: {block_status} {block_payload}")
+            require(block_payload.get("error") == "adapter_invalid", f"wrong invalid-adapter async proxy error: {block_payload}")
             after_status, after_payload = http_json_status("GET", f"{api_base}/api/workflows/jobs")
             require(after_status == 200, f"post-block job list failed: {after_status} {after_payload}")
-            require(workflow_job_ids(after_payload) == before_ids, "non-mock async proxy created or removed workflow jobs")
+            require(workflow_job_ids(after_payload) == before_ids, "invalid-adapter async proxy created or removed workflow jobs")
 
             proxy_status, proxy_payload = http_json_status(
                 "POST",
@@ -220,16 +220,16 @@ def main() -> int:
             form_block_before_ids = workflow_job_ids(form_block_before_payload)
             form_block_status, form_block_location = post_form_no_redirect(
                 f"{next_base}/workspace/dispatch/customer-worker-job",
-                {"adapter": "openclaw", "title": "Blocked async customer-worker form smoke"},
+                {"adapter": "invalid-live", "title": "Blocked async customer-worker form smoke"},
             )
             transcripts.append(form_block_location)
-            require(form_block_status == 303, f"non-mock async form did not redirect: {form_block_status} {form_block_location}")
+            require(form_block_status == 303, f"invalid-adapter async form did not redirect: {form_block_status} {form_block_location}")
             form_block_query = urllib.parse.parse_qs(urllib.parse.urlparse(form_block_location).query)
-            require(form_block_query.get("customer_worker_job_status") == ["blocked"], f"non-mock async form did not report blocked: {form_block_location}")
-            require(form_block_query.get("customer_worker_error") == ["customer_worker_mock_only_next_parity"], f"non-mock async form wrong error: {form_block_location}")
+            require(form_block_query.get("customer_worker_job_status") == ["blocked"], f"invalid-adapter async form did not report blocked: {form_block_location}")
+            require(form_block_query.get("customer_worker_error") == ["adapter_invalid"], f"invalid-adapter async form wrong error: {form_block_location}")
             form_block_after_status, form_block_after_payload = http_json_status("GET", f"{api_base}/api/workflows/jobs")
             require(form_block_after_status == 200, f"post-form-block job list failed: {form_block_after_status} {form_block_after_payload}")
-            require(workflow_job_ids(form_block_after_payload) == form_block_before_ids, "non-mock async form created or removed workflow jobs")
+            require(workflow_job_ids(form_block_after_payload) == form_block_before_ids, "invalid-adapter async form created or removed workflow jobs")
 
             form_status, form_location = post_form_no_redirect(
                 f"{next_base}/workspace/dispatch/customer-worker-job",
@@ -273,7 +273,7 @@ def main() -> int:
                 "evidence_readback": "/api/mis/runs/:run_id and /api/mis/agent-gateway/plan-evidence-manifests/:id/verify",
                 "non_mock_proxy_status": block_status,
                 "non_mock_form_status": form_block_status,
-                "non_mock_error": "customer_worker_mock_only_next_parity",
+                "invalid_adapter_error": "adapter_invalid",
                 "proxy_job_id": proxy_job_id,
                 "proxy_task_id": proxy_task_id,
                 "proxy_run_id": proxy_run_id,

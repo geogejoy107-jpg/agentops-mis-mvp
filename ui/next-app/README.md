@@ -28,6 +28,7 @@ python3 scripts/local_brief_prepared_action_smoke.py
 python3 scripts/nextjs_local_brief_smoke.py
 python3 scripts/nextjs_customer_worker_dispatch_smoke.py
 python3 scripts/nextjs_customer_worker_async_job_smoke.py
+python3 scripts/nextjs_customer_worker_prepared_action_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
@@ -92,15 +93,16 @@ memory review actions through the Next.js UI, verifies the state change through
 - Customer-worker dispatch contract: the Next dispatch page can run one safe
   mock `POST /api/mis/workflows/customer-worker-task` through the MIS proxy and
   the `/workspace/dispatch/customer-worker` form fallback, read task/run/artifact
-  delivery approval and verified plan-evidence back through the Next proxy, and
-  reject Hermes/OpenClaw with `customer_worker_mock_only_next_parity` before
-  upstream execution.
+  delivery approval and verified plan-evidence back through the Next proxy,
+  reject invalid adapters with `adapter_invalid`, and prepare/resume
+  Hermes/OpenClaw live requests through the backend prepared-action wall.
 - Customer-worker async job contract: the Next dispatch page can submit one
   safe mock `POST /api/mis/workflows/customer-worker-task/submit` through the
   MIS proxy and the `/workspace/dispatch/customer-worker-job` form fallback,
   read the completed workflow job plus task/run/verified plan-evidence back
-  through the Next proxy, and reject Hermes/OpenClaw with
-  `customer_worker_mock_only_next_parity` before job creation.
+  through the Next proxy, reject invalid adapters with `adapter_invalid`, and
+  prepare/resume Hermes/OpenClaw job submission through the backend
+  prepared-action wall.
 - Worker recovery contract: the Next worker console can read stuck tasks and
   release one stale running task through `POST /api/mis/workers/tasks/release`
   plus the `/workspace/agents/release-task` form fallback; the proxy rejects
@@ -125,7 +127,7 @@ memory review actions through the Next.js UI, verifies the state change through
 - Interaction contract: approval review and memory review write through the Next.js UI, with client fetch plus Next form fallback routes, then refresh from the MIS API proxy
 - Ledger detail contract: task/run detail routes are read-only, load through the MIS API proxy, and expose linked evidence rows plus token omission state
 - Customer delivery contract: reports and customer project report pages load from the MIS API, surface Agent Plan / plan-evidence status, link to a read-only evidence drilldown, and report archive writes through a Next form fallback route before refreshing the report artifact evidence
-- Dispatch contract: customer task templates and commercial entitlement gates load from the MIS API; template execution uses a Next form fallback and must surface Free Local `report_templates` blocking without creating a project, then create a ledger-backed project/report artifact when an isolated `pro_workspace` entitlement fixture is active. The dispatch page also supports mock-only customer-worker task execution and mock-only async job submission/status readback with delivery approval and plan-evidence proof. Pixel Office map parity and local-brief prepared-action controls live at `/workspace/pixel-office`; richer owner workflow remains canonical in Vite until later Gate 4 slices.
+- Dispatch contract: customer task templates and commercial entitlement gates load from the MIS API; template execution uses a Next form fallback and must surface Free Local `report_templates` blocking without creating a project, then create a ledger-backed project/report artifact when an isolated `pro_workspace` entitlement fixture is active. The dispatch page also supports safe mock customer-worker task/job readback plus Hermes/OpenClaw prepared-action prepare/resume controls with delivery approval and plan-evidence proof. Pixel Office map parity and local-brief prepared-action controls live at `/workspace/pixel-office`; richer owner workflow remains canonical in Vite until later Gate 4 slices.
 - Canonical predecessors:
   - `ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx`
   - `ui/start-building-app/src/app/components/pages/AIEmployees.tsx`

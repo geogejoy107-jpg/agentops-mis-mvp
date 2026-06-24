@@ -501,6 +501,7 @@ def cmd_run_graph(args, client: AgentOpsClient) -> dict:
 def cmd_run_heartbeat(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
         "status": args.status,
         "output_summary": args.summary,
         "duration_ms": args.duration_ms,

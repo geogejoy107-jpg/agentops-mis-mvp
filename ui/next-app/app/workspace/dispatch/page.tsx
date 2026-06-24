@@ -42,9 +42,16 @@ export default async function DispatchPage({ searchParams }: PageProps) {
         customerWorkerArtifactId: one(params.customer_worker_artifact_id),
         customerWorkerManifestId: one(params.customer_worker_manifest_id),
         customerWorkerApprovalId: one(params.customer_worker_approval_id),
+        customerWorkerPreparedActionId: one(params.customer_worker_prepared_action_id),
+        customerWorkerPreparedStatus: one(params.customer_worker_prepared_status),
+        customerWorkerRequestHash: one(params.customer_worker_request_hash),
         customerWorkerError: one(params.customer_worker_error),
         customerWorkerJobStatus: one(params.customer_worker_job_status),
         customerWorkerJobId: one(params.customer_worker_job_id),
+        customerWorkerJobPreparedActionId: one(params.customer_worker_job_prepared_action_id),
+        customerWorkerJobPreparedStatus: one(params.customer_worker_job_prepared_status),
+        customerWorkerJobRequestHash: one(params.customer_worker_job_request_hash),
+        customerWorkerJobApprovalId: one(params.customer_worker_job_approval_id),
       }}
     />
   );

@@ -202,6 +202,22 @@ function localBriefGuard(body: Buffer | undefined) {
   }
 }
 
+function customerWorkerWorkflowGuard(body: Buffer | undefined) {
+  try {
+    const parsed = parseJsonBody(body);
+    if (!parsed || typeof parsed !== "object") {
+      return { ok: false, status: 400, error: "invalid_json", adapter: "unknown" };
+    }
+    const adapter = String((parsed as { adapter?: unknown }).adapter || "mock");
+    if (!VALID_RUNTIME_TYPES.has(adapter)) {
+      return { ok: false, status: 400, error: "adapter_invalid", adapter };
+    }
+    return { ok: true, status: 200, error: "", adapter };
+  } catch {
+    return { ok: false, status: 400, error: "invalid_json", adapter: "unknown" };
+  }
+}
+
 function normalizedScopes(value: unknown) {
   if (Array.isArray(value)) {
     return value.map((item) => String(item).trim()).filter(Boolean);
@@ -377,16 +393,17 @@ async function proxy(request: NextRequest, context: RouteContext) {
     }
   }
   if (request.method === "POST" && isCustomerWorkerWorkflowPath(path)) {
-    const guard = mockOnlyAdapterGuard(body, "customer_worker_mock_only_next_parity");
+    const guard = customerWorkerWorkflowGuard(body);
     if (!guard.ok) {
       return NextResponse.json({
         ok: false,
         workflow: "customer_worker_task",
-        adapter: guard.adapter === "invalid_json" ? "unknown" : guard.adapter,
+        adapter: guard.adapter,
         error: guard.error,
         live_execution_performed: false,
+        prepared_action_required: true,
         token_omitted: true,
-      }, { status: 403, headers: { "Cache-Control": "no-store" } });
+      }, { status: guard.status, headers: { "Cache-Control": "no-store" } });
     }
   }
   if (request.method === "POST" && isLocalBriefPath(path)) {

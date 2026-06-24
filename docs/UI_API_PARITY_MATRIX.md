@@ -55,9 +55,9 @@ route retirement:
 - Pixel Office is only partially represented in Next.js. Next currently proves
   a read-only Pixel Operating Map, local-brief prepared-action exact resume with
   approval before live Agnesfallback execution, template entitlement dispatch,
-  mock-only customer-worker dispatch, and mock-only async customer-worker job
-  status readback, but Vite remains canonical for the richer owner dispatch
-  workflow and final visual route retirement evidence.
+  safe mock customer-worker dispatch/readback, and Hermes/OpenClaw
+  customer-worker prepared-action exact resume, but Vite remains canonical for
+  the richer owner dispatch workflow and final visual route retirement evidence.
 - Worker console is only partially represented in Next.js. Next is read-only for
   production safety and readiness; Vite remains canonical for local worker
   start/stop/restart, task release, remote enrollment mutation, and detailed
@@ -144,6 +144,7 @@ python3 scripts/local_brief_prepared_action_smoke.py
 python3 scripts/nextjs_local_brief_smoke.py
 python3 scripts/nextjs_customer_worker_dispatch_smoke.py
 python3 scripts/nextjs_customer_worker_async_job_smoke.py
+python3 scripts/nextjs_customer_worker_prepared_action_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
@@ -208,8 +209,7 @@ servers, proves `POST /api/mis/workflows/customer-worker-task` plus the Next
 `/workspace/dispatch/customer-worker` form fallback can run one safe `mock`
 customer-worker task, read task/run/delivery-approval/verified plan-evidence
 back through the Next proxy, render the dispatch evidence strip, and reject
-Hermes/OpenClaw before upstream execution with
-`customer_worker_mock_only_next_parity`.
+invalid adapters before upstream execution with `adapter_invalid`.
 
 `python3 scripts/nextjs_customer_worker_async_job_smoke.py`
 (`nextjs_customer_worker_async_job_v1`) starts isolated MIS API and Next.js
@@ -217,8 +217,16 @@ servers, proves `POST /api/mis/workflows/customer-worker-task/submit` plus the
 Next `/workspace/dispatch/customer-worker-job` form fallback can submit one
 safe `mock` async customer-worker job, read the completed workflow job and
 task/run/verified plan-evidence back through the Next proxy, render the async
-job list on `/workspace/dispatch`, and reject Hermes/OpenClaw before job
-creation with `customer_worker_mock_only_next_parity`.
+job list on `/workspace/dispatch`, and reject invalid adapters before job
+creation with `adapter_invalid`.
+
+`python3 scripts/nextjs_customer_worker_prepared_action_smoke.py`
+(`nextjs_customer_worker_prepared_action_v1`) starts a monkeypatched isolated
+MIS API provider plus Next.js, proves Hermes/OpenClaw customer-worker sync and
+async requests pass through the Next proxy into the backend prepared-action
+wall, require approval before resume, block request-hash mismatch and replay,
+and expose only IDs, request hashes, prepared-action status, and omission flags
+through the proxy/form fallback.
 
 `python3 scripts/nextjs_worker_stuck_release_smoke.py`
 (`nextjs_worker_stuck_release_v1`) starts isolated MIS API and Next.js servers,

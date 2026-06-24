@@ -99,6 +99,7 @@ def main() -> int:
         ROOT / "scripts" / "nextjs_local_brief_smoke.py",
         ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py",
         ROOT / "scripts" / "nextjs_customer_worker_async_job_smoke.py",
+        ROOT / "scripts" / "nextjs_customer_worker_prepared_action_smoke.py",
         ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py",
         ROOT / "scripts" / "nextjs_enrollment_request_smoke.py",
         ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py",
@@ -158,6 +159,7 @@ def main() -> int:
     local_brief_smoke_text = read_text(ROOT / "scripts" / "nextjs_local_brief_smoke.py")
     customer_worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py")
     customer_worker_async_job_smoke_text = read_text(ROOT / "scripts" / "nextjs_customer_worker_async_job_smoke.py")
+    customer_worker_prepared_action_smoke_text = read_text(ROOT / "scripts" / "nextjs_customer_worker_prepared_action_smoke.py")
     worker_release_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py")
     enrollment_request_smoke_text = read_text(ROOT / "scripts" / "nextjs_enrollment_request_smoke.py")
     worker_daemon_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py")
@@ -173,7 +175,7 @@ def main() -> int:
     require("build" in scripts and "next build" in scripts["build"], "Next.js build script is missing")
     require("AGENTOPS_API_BASE" in route_text, "API proxy must be configurable with AGENTOPS_API_BASE")
     require("mock_only_next_parity" in route_text and "isWorkerDispatchPath" in route_text, "API proxy must fail closed for non-mock worker dispatch")
-    require("customer_worker_mock_only_next_parity" in route_text and "isCustomerWorkerWorkflowPath" in route_text, "API proxy must fail closed for non-mock customer-worker dispatch")
+    require("customerWorkerWorkflowGuard" in route_text and "isCustomerWorkerWorkflowPath" in route_text and "prepared_action_required" in route_text, "API proxy must route customer-worker live requests to prepared-action gates")
     require("prepared_action_required" in route_text and "isLocalBriefPath" in route_text, "API proxy must preserve local brief prepared-action routing")
     require("force_release_not_allowed_next_parity" in route_text and "isWorkerReleasePath" in route_text, "API proxy must fail closed for force worker task release")
     require("mock_daemon_only_next_parity" in route_text and "isWorkerDaemonPath" in route_text, "API proxy must fail closed for non-mock worker daemon controls")
@@ -205,13 +207,18 @@ def main() -> int:
     require("nextjs_customer_worker_dispatch_v1" in customer_worker_dispatch_smoke_text, "Next customer-worker dispatch smoke contract is missing")
     require("/api/mis/workflows/customer-worker-task" in customer_worker_dispatch_smoke_text, "Next customer-worker dispatch smoke must exercise the /api/mis workflow proxy route")
     require("/workspace/dispatch/customer-worker" in customer_worker_dispatch_smoke_text, "Next customer-worker dispatch smoke must exercise the dispatch form fallback route")
-    require("customer_worker_mock_only_next_parity" in customer_worker_dispatch_smoke_text, "Next customer-worker dispatch smoke must prove non-mock proxy and form dispatch fail closed")
+    require("adapter_invalid" in customer_worker_dispatch_smoke_text, "Next customer-worker dispatch smoke must prove invalid adapters fail closed")
     require("waiting_approval" in customer_worker_dispatch_smoke_text and "plan-evidence-manifests/:id/verify" in customer_worker_dispatch_smoke_text, "Next customer-worker dispatch smoke must verify delivery approval and plan evidence readback")
     require("nextjs_customer_worker_async_job_v1" in customer_worker_async_job_smoke_text, "Next customer-worker async job smoke contract is missing")
     require("/api/mis/workflows/customer-worker-task/submit" in customer_worker_async_job_smoke_text, "Next customer-worker async smoke must exercise the /api/mis submit proxy route")
     require("/workspace/dispatch/customer-worker-job" in customer_worker_async_job_smoke_text, "Next customer-worker async smoke must exercise the async form fallback route")
     require("/api/mis/workflows/jobs/:job_id" in customer_worker_async_job_smoke_text, "Next customer-worker async smoke must read job status through the Next proxy")
-    require("customer_worker_mock_only_next_parity" in customer_worker_async_job_smoke_text, "Next customer-worker async smoke must prove non-mock async submit fails closed")
+    require("adapter_invalid" in customer_worker_async_job_smoke_text, "Next customer-worker async smoke must prove invalid async submit fails closed")
+    require("nextjs_customer_worker_prepared_action_v1" in customer_worker_prepared_action_smoke_text, "Next customer-worker prepared-action smoke contract is missing")
+    require("prepared_action_request_hash_mismatch" in customer_worker_prepared_action_smoke_text and "prepared_action_already_consumed" in customer_worker_prepared_action_smoke_text, "Next customer-worker prepared-action smoke must prove hash mismatch and replay blocking")
+    require("Resume approved worker" in dispatch_page_text and "Resume approved job" in dispatch_page_text, "Dispatch page must expose prepared-action resume controls")
+    require("prepared_action_id" in customer_worker_dispatch_route_text and "request_hash" in customer_worker_dispatch_route_text, "Customer-worker form route must preserve prepared-action resume ids")
+    require("prepared_action_id" in customer_worker_job_route_text and "request_hash" in customer_worker_job_route_text, "Customer-worker async form route must preserve prepared-action resume ids")
     require("nextjs_worker_stuck_release_v1" in worker_release_smoke_text, "Next worker stuck release smoke contract is missing")
     require("/api/mis/workers/tasks/release" in worker_release_smoke_text, "Next worker stuck release smoke must exercise the /api/mis release route")
     require("/workspace/agents/release-task" in worker_release_smoke_text, "Next worker stuck release smoke must exercise the release form fallback")
@@ -262,8 +269,8 @@ def main() -> int:
     require("/memories/${encodeURIComponent(memoryId)}/${action}" in memory_review_route_text, "memory review form fallback must write through MIS API")
     require("/workflows/customer-projects/${encodeURIComponent(projectId)}/report-artifact" in report_archive_route_text, "customer report archive fallback must write through MIS API")
     require("/workflows/customer-task-templates/run" in dispatch_route_text and "entitlement_required" in dispatch_route_text, "dispatch template fallback must preserve entitlement blocking")
-    require("/workflows/customer-worker-task" in customer_worker_dispatch_route_text and "customer_worker_mock_only_next_parity" in customer_worker_dispatch_route_text, "customer-worker dispatch fallback must preserve mock-only blocking")
-    require("/workflows/customer-worker-task/submit" in customer_worker_job_route_text and "customer_worker_mock_only_next_parity" in customer_worker_job_route_text, "customer-worker async fallback must preserve mock-only blocking")
+    require("/workflows/customer-worker-task" in customer_worker_dispatch_route_text and "prepared_action_id" in customer_worker_dispatch_route_text and "request_hash" in customer_worker_dispatch_route_text, "customer-worker dispatch fallback must preserve prepared-action controls")
+    require("/workflows/customer-worker-task/submit" in customer_worker_job_route_text and "prepared_action_id" in customer_worker_job_route_text and "request_hash" in customer_worker_job_route_text, "customer-worker async fallback must preserve prepared-action controls")
     require("/workflows/local-brief" in local_brief_route_text and "prepared_action_id" in local_brief_route_text and "approval_required" in local_brief_route_text, "local brief form fallback must preserve prepared-action controls")
     require("Customer worker dispatch" in dispatch_page_text and "/workspace/dispatch/customer-worker" in dispatch_page_text, "dispatch parity page must expose customer-worker dispatch form")
     require("Async worker jobs" in dispatch_page_text and "/workspace/dispatch/customer-worker-job" in dispatch_page_text, "dispatch parity page must expose async customer-worker job form")
@@ -435,6 +442,7 @@ def main() -> int:
             "nextjs_local_brief_v1",
             "nextjs_customer_worker_dispatch_v1",
             "nextjs_customer_worker_async_job_v1",
+            "nextjs_customer_worker_prepared_action_v1",
             "nextjs_worker_stuck_release_v1",
             "nextjs_enrollment_request_v1",
             "nextjs_worker_daemon_control_v1",
