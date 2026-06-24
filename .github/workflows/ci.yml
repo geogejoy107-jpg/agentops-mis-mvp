@@ -71,6 +71,7 @@ jobs:
           python3 scripts/module_boundary_smoke.py
           python3 scripts/read_model_cache_smoke.py
           python3 scripts/open_source_adoption_boundary_smoke.py
+          python3 scripts/notion_open_source_loop_convergence_smoke.py
           python3 scripts/notion_project_memory_connector_layer_smoke.py
           python3 scripts/local_open_source_experiment_base_smoke.py
           python3 scripts/external_connector_runtime_inventory_smoke.py
