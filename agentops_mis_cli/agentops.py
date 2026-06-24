@@ -1186,6 +1186,24 @@ def cmd_operator_agent_loop_handoff(args, client: AgentOpsClient) -> dict:
     }
 
 
+def cmd_operator_loop_supervision(args, client: AgentOpsClient) -> dict:
+    return client.get(
+        "/api/operator/loop-supervision",
+        query={
+            "adapter": list(dict.fromkeys(args.adapter or ["hermes", "openclaw"])),
+            "limit": args.limit,
+            "loop_id": args.loop_id,
+            "task_id": args.task_id,
+            "agent_id": args.agent_id,
+            "q": args.query,
+            "handoff_mode": args.handoff_mode,
+            "full_handoff": "true" if args.full_handoff else None,
+            "freshness_hours": args.freshness_hours,
+            "include_codex": "true" if args.include_codex else "false",
+        },
+    )
+
+
 def compact_loop_launch_packet(payload: dict, *, adapter: str, local_readiness: dict | None = None) -> dict:
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
     control = payload.get("control_summary") if isinstance(payload.get("control_summary"), dict) else {}
@@ -3893,6 +3911,19 @@ def build_parser() -> argparse.ArgumentParser:
     operator_agent_loop_handoff.add_argument("--include-codex", dest="include_codex", action="store_true", default=True, help="Include the Codex supervisor consumer block. Enabled by default.")
     operator_agent_loop_handoff.add_argument("--no-codex", dest="include_codex", action="store_false", help="Omit the Codex supervisor consumer block.")
     operator_agent_loop_handoff.set_defaults(handler="operator_agent_loop_handoff")
+    operator_loop_supervision = operator_sub.add_parser("loop-supervision", help="Read the pre-confirm Hermes/OpenClaw/Codex loop supervision gate without running loop-driver.")
+    operator_loop_supervision.add_argument("--adapter", action="append", choices=["mock", "hermes", "openclaw"], default=None, help="Adapter to supervise. Defaults to Hermes and OpenClaw; repeat for multiple adapters.")
+    operator_loop_supervision.add_argument("--limit", type=int, default=8)
+    operator_loop_supervision.add_argument("--loop-id", default=None)
+    operator_loop_supervision.add_argument("--task-id", default=None)
+    operator_loop_supervision.add_argument("--agent-id", default=None)
+    operator_loop_supervision.add_argument("--query", default="READ PLAN RETRIEVE COMPARE VERIFY RECORD")
+    operator_loop_supervision.add_argument("--handoff-mode", choices=["lightweight", "full"], default="lightweight")
+    operator_loop_supervision.add_argument("--full-handoff", action="store_true", help="Shortcut for --handoff-mode full when reading supervision sources.")
+    operator_loop_supervision.add_argument("--freshness-hours", type=int, default=72)
+    operator_loop_supervision.add_argument("--include-codex", dest="include_codex", action="store_true", default=True, help="Include Codex handoff context in the source handoff. Enabled by default.")
+    operator_loop_supervision.add_argument("--no-codex", dest="include_codex", action="store_false", help="Omit Codex handoff context from the source handoff.")
+    operator_loop_supervision.set_defaults(handler="operator_loop_supervision")
     operator_loop_driver = operator_sub.add_parser("loop-driver", help="Preview or run a bounded multi-step local loop for Hermes/OpenClaw/Codex.")
     operator_loop_driver.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     operator_loop_driver.add_argument("--max-steps", type=int, default=3, help="Maximum bounded advance-loop steps to run; capped at 5.")
@@ -4815,6 +4846,7 @@ HANDLERS = {
     "operator_loop_launch_packet": cmd_operator_loop_launch_packet,
     "operator_start_check": cmd_operator_start_check,
     "operator_agent_loop_handoff": cmd_operator_agent_loop_handoff,
+    "operator_loop_supervision": cmd_operator_loop_supervision,
     "operator_loop_driver": cmd_operator_loop_driver,
     "operator_remediate_evidence_gap": cmd_operator_remediate_evidence_gap,
     "operator_close_evidence_gap": cmd_operator_close_evidence_gap,

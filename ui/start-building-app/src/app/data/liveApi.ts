@@ -2467,6 +2467,72 @@ export interface OperatorAgentLoopHandoffPayload {
   live_execution_performed?: boolean;
 }
 
+export interface OperatorLoopSupervisionItemPayload {
+  operation: string;
+  adapter: string;
+  status: string;
+  can_preview_loop: boolean;
+  can_confirm_bounded_loop: boolean;
+  should_record_before_execute: boolean;
+  ready_for_live_dispatch: boolean;
+  blockers: string[];
+  attention: string[];
+  review_pressure: Record<string, unknown>;
+  gates: { id: string; ok?: boolean; status?: string; command?: string | null; token_omitted?: boolean }[];
+  next_commands: {
+    safe_read_commands: string[];
+    preview_commands: string[];
+    confirm_required_commands: string[];
+    recommended_next?: string | null;
+    token_omitted?: boolean;
+  };
+  commands: Record<string, string | null | undefined>;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    server_executes_shell: boolean;
+    raw_prompt_omitted?: boolean;
+    raw_response_omitted?: boolean;
+    raw_content_omitted?: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+}
+
+export interface OperatorLoopSupervisionPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  adapters: string[];
+  handoff_summary: Record<string, unknown>;
+  summary: {
+    items: number;
+    ready_to_confirm: number;
+    record_first: number;
+    preview_only: number;
+    blocked: number;
+    can_confirm_all: boolean;
+    record_required: boolean;
+    current_code_ok: boolean;
+  };
+  items: OperatorLoopSupervisionItemPayload[];
+  next_actions: string[];
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    server_executes_shell: boolean;
+    raw_prompt_omitted?: boolean;
+    raw_response_omitted?: boolean;
+    raw_content_omitted?: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
 export interface OperatorLoopControlPayload {
   provider: string;
   operation: string;
@@ -7008,6 +7074,117 @@ export async function loadOperatorAgentLoopHandoff(limit = 8): Promise<OperatorA
     },
     token_omitted: true,
     live_execution_performed: false,
+  };
+}
+
+export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLoopSupervisionPayload> {
+  const params = new URLSearchParams({ freshness_hours: "72", limit: String(limit) });
+  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/loop-supervision?${params.toString()}`, {
+    provider: "agentops-operator",
+    operation: "operator_loop_supervision",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    adapters: ["hermes", "openclaw"],
+    handoff_summary: {},
+    summary: {
+      items: 0,
+      ready_to_confirm: 0,
+      record_first: 0,
+      preview_only: 0,
+      blocked: 0,
+      can_confirm_all: false,
+      record_required: false,
+      current_code_ok: false,
+    },
+    items: [],
+    next_actions: [],
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      server_executes_shell: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      raw_content_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-operator"),
+    operation: String(raw.operation || "operator_loop_supervision"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    adapters: asArray<unknown>(raw.adapters).map(String).filter(Boolean),
+    handoff_summary: typeof raw.handoff_summary === "object" && raw.handoff_summary !== null ? raw.handoff_summary as Record<string, unknown> : {},
+    summary: {
+      items: numberValue(summaryRaw.items, 0),
+      ready_to_confirm: numberValue(summaryRaw.ready_to_confirm, 0),
+      record_first: numberValue(summaryRaw.record_first, 0),
+      preview_only: numberValue(summaryRaw.preview_only, 0),
+      blocked: numberValue(summaryRaw.blocked, 0),
+      can_confirm_all: boolValue(summaryRaw.can_confirm_all),
+      record_required: boolValue(summaryRaw.record_required),
+      current_code_ok: boolValue(summaryRaw.current_code_ok),
+    },
+    items: asArray<Record<string, unknown>>(raw.items).map((item) => {
+      const itemSafety = typeof item.safety === "object" && item.safety !== null ? item.safety as Record<string, unknown> : {};
+      const nextCommands = typeof item.next_commands === "object" && item.next_commands !== null ? item.next_commands as Record<string, unknown> : {};
+      return {
+        operation: String(item.operation || "operator_loop_supervision_item"),
+        adapter: String(item.adapter || "mock"),
+        status: String(item.status || "unknown"),
+        can_preview_loop: boolValue(item.can_preview_loop),
+        can_confirm_bounded_loop: boolValue(item.can_confirm_bounded_loop),
+        should_record_before_execute: boolValue(item.should_record_before_execute),
+        ready_for_live_dispatch: boolValue(item.ready_for_live_dispatch),
+        blockers: asArray<unknown>(item.blockers).map(String).filter(Boolean),
+        attention: asArray<unknown>(item.attention).map(String).filter(Boolean),
+        review_pressure: typeof item.review_pressure === "object" && item.review_pressure !== null ? item.review_pressure as Record<string, unknown> : {},
+        gates: asArray<Record<string, unknown>>(item.gates).map((gate) => ({
+          id: String(gate.id || ""),
+          ok: gate.ok === undefined ? undefined : boolValue(gate.ok),
+          status: gate.status ? String(gate.status) : undefined,
+          command: gate.command === undefined || gate.command === null ? null : String(gate.command),
+          token_omitted: gate.token_omitted === undefined ? undefined : boolValue(gate.token_omitted),
+        })).filter((gate) => gate.id),
+        next_commands: {
+          safe_read_commands: asArray<unknown>(nextCommands.safe_read_commands).map(String).filter(Boolean),
+          preview_commands: asArray<unknown>(nextCommands.preview_commands).map(String).filter(Boolean),
+          confirm_required_commands: asArray<unknown>(nextCommands.confirm_required_commands).map(String).filter(Boolean),
+          recommended_next: nextCommands.recommended_next === undefined || nextCommands.recommended_next === null ? null : String(nextCommands.recommended_next),
+          token_omitted: nextCommands.token_omitted === undefined ? undefined : boolValue(nextCommands.token_omitted),
+        },
+        commands: typeof item.commands === "object" && item.commands !== null ? item.commands as Record<string, string | null | undefined> : {},
+        safety: {
+          read_only: itemSafety.read_only === undefined ? true : boolValue(itemSafety.read_only),
+          ledger_mutated: boolValue(itemSafety.ledger_mutated),
+          live_execution_performed: boolValue(itemSafety.live_execution_performed),
+          server_executes_shell: boolValue(itemSafety.server_executes_shell),
+          raw_prompt_omitted: itemSafety.raw_prompt_omitted === undefined ? true : boolValue(itemSafety.raw_prompt_omitted),
+          raw_response_omitted: itemSafety.raw_response_omitted === undefined ? true : boolValue(itemSafety.raw_response_omitted),
+          raw_content_omitted: itemSafety.raw_content_omitted === undefined ? true : boolValue(itemSafety.raw_content_omitted),
+          token_omitted: itemSafety.token_omitted === undefined ? true : boolValue(itemSafety.token_omitted),
+        },
+        token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
+      };
+    }),
+    next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
+    safety: {
+      read_only: safetyRaw.read_only === undefined ? true : boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      server_executes_shell: boolValue(safetyRaw.server_executes_shell),
+      raw_prompt_omitted: safetyRaw.raw_prompt_omitted === undefined ? true : boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: safetyRaw.raw_response_omitted === undefined ? true : boolValue(safetyRaw.raw_response_omitted),
+      raw_content_omitted: safetyRaw.raw_content_omitted === undefined ? true : boolValue(safetyRaw.raw_content_omitted),
+      token_omitted: safetyRaw.token_omitted === undefined ? true : boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+    live_execution_performed: raw.live_execution_performed === undefined ? undefined : boolValue(raw.live_execution_performed),
   };
 }
 

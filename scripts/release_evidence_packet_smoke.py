@@ -333,6 +333,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "operator_loop_supervision",
+        "command": "python3 scripts/operator_loop_supervision_smoke.py",
+        "summary": "Pre-confirm Hermes/OpenClaw/Codex loop supervision reads handoff/start-check gates, review pressure, layered next commands and no-server-shell safety without mutating ledgers.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "operator_evidence_report",
         "command": "python3 scripts/operator_evidence_report_smoke.py",
         "summary": "Run-level evidence report checks Agent Plan binding, approval, verified plan evidence, tool/eval/artifact/audit rows, memory review closure, worker knowledge retrieval, worker runtime summary events, raw memory/runtime omission and read-only DB stability.",

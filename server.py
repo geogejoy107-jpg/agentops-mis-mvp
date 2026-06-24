@@ -24573,6 +24573,262 @@ def operator_agent_loop_handoff(conn: sqlite3.Connection, headers, qs=None, auth
     }
 
 
+def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, start_check_payload: dict | None = None) -> dict:
+    adapter = str(consumer.get("adapter") or "mock")
+    start_check = consumer.get("start_check") if isinstance(consumer.get("start_check"), dict) else {}
+    commands = consumer.get("commands") if isinstance(consumer.get("commands"), dict) else {}
+    safety = consumer.get("safety") if isinstance(consumer.get("safety"), dict) else {}
+    blockers = [str(item) for item in (consumer.get("blockers") or []) if item]
+    attention = [str(item) for item in (consumer.get("attention") or []) if item]
+    method = consumer.get("method") if isinstance(consumer.get("method"), dict) else {}
+    method_gate_ids = method.get("method_gate_ids") if isinstance(method.get("method_gate_ids"), list) else []
+    required_gate_ids = method.get("required_gate_ids") if isinstance(method.get("required_gate_ids"), list) else []
+    missing_method_gates = [gate for gate in required_gate_ids if gate not in method_gate_ids]
+    current_code_ok = current_code.get("ok") is True
+    server_shell = safety.get("server_executes_shell") is True or start_check.get("server_executes_shell") is True
+    can_preview = bool(consumer.get("ready_for_handoff")) and start_check.get("can_preview_loop") is True and not server_shell
+    can_confirm = bool(consumer.get("ready_for_bounded_loop_confirm")) and current_code_ok and not server_shell and not missing_method_gates
+    review_pressure = {
+        "human_review_required": start_check.get("human_review_required") is True,
+        "memory_review_required": start_check.get("memory_review_required") is True,
+        "start_check_status": start_check.get("status"),
+        "consumer_status": consumer.get("status"),
+        "review_items_total": 0,
+        "pending_approvals": 0,
+        "memory_candidates": 0,
+        "record_command": commands.get("review_queue") or "agentops review queue --limit 20",
+        "token_omitted": True,
+    }
+    start_check_payload = start_check_payload if isinstance(start_check_payload, dict) else {}
+    loop_driver_entry = start_check_payload.get("loop_driver_entry") if isinstance(start_check_payload.get("loop_driver_entry"), dict) else {}
+    review_snapshot = loop_driver_entry.get("review_snapshot") if isinstance(loop_driver_entry.get("review_snapshot"), dict) else {}
+    review_summary = review_snapshot.get("summary") if isinstance(review_snapshot.get("summary"), dict) else {}
+    review_pressure.update({
+        "review_items_total": int(review_summary.get("review_items_total") or 0),
+        "pending_approvals": int(review_summary.get("pending_approvals") or 0),
+        "memory_candidates": int(review_summary.get("memory_candidates") or 0),
+    })
+    should_record = bool(
+        review_pressure["human_review_required"]
+        or review_pressure["memory_review_required"]
+        or review_pressure["review_items_total"]
+        or review_pressure["pending_approvals"]
+        or review_pressure["memory_candidates"]
+    )
+    if blockers or not current_code_ok or server_shell or missing_method_gates:
+        status = "blocked"
+        recommended_next_command = commands.get("start_check") or f"agentops operator start-check --adapter {adapter} --limit {limit}"
+    elif can_confirm and should_record:
+        status = "record_first"
+        recommended_next_command = review_pressure["record_command"]
+    elif can_confirm:
+        status = "ready_to_confirm"
+        recommended_next_command = commands.get("loop_driver_confirm")
+    elif can_preview:
+        status = "preview_only"
+        recommended_next_command = commands.get("loop_driver_preview") or f"agentops operator loop-driver --adapter {adapter} --max-steps 3 --limit {limit}"
+    else:
+        status = "attention"
+        recommended_next_command = commands.get("start_check") or f"agentops operator start-check --adapter {adapter} --limit {limit}"
+    gates = [
+        {
+            "id": "handoff_ready",
+            "ok": consumer.get("ready_for_handoff") is True,
+            "status": "pass" if consumer.get("ready_for_handoff") is True else "blocked",
+            "command": commands.get("agent_loop_handoff"),
+            "token_omitted": True,
+        },
+        {
+            "id": "current_code",
+            "ok": current_code_ok,
+            "status": "pass" if current_code_ok else "blocked",
+            "command": current_code.get("strict_command"),
+            "token_omitted": True,
+        },
+        {
+            "id": "method_gates",
+            "ok": not missing_method_gates,
+            "status": "pass" if not missing_method_gates else "blocked",
+            "missing": missing_method_gates,
+            "command": commands.get("start_check"),
+            "token_omitted": True,
+        },
+        {
+            "id": "preview_loop",
+            "ok": can_preview,
+            "status": "pass" if can_preview else "attention",
+            "command": commands.get("loop_driver_preview"),
+            "token_omitted": True,
+        },
+        {
+            "id": "bounded_confirm",
+            "ok": can_confirm,
+            "status": "pass" if can_confirm else "attention",
+            "command": commands.get("loop_driver_confirm"),
+            "confirm_required": True,
+            "token_omitted": True,
+        },
+        {
+            "id": "record_pressure",
+            "ok": not should_record,
+            "status": "attention" if should_record else "pass",
+            "command": review_pressure["record_command"],
+            "token_omitted": True,
+        },
+        {
+            "id": "server_shell_boundary",
+            "ok": not server_shell,
+            "status": "pass" if not server_shell else "blocked",
+            "server_executes_shell": server_shell,
+            "token_omitted": True,
+        },
+    ]
+    return {
+        "operation": "operator_loop_supervision_item",
+        "adapter": adapter,
+        "status": status,
+        "can_preview_loop": can_preview,
+        "can_confirm_bounded_loop": can_confirm,
+        "should_record_before_execute": should_record,
+        "ready_for_live_dispatch": consumer.get("ready_for_live_dispatch") is True,
+        "blockers": blockers + ([f"missing_method_gate:{gate}" for gate in missing_method_gates] if missing_method_gates else []),
+        "attention": attention + (["record_before_execute"] if should_record else []),
+        "review_pressure": review_pressure,
+        "gates": gates,
+        "agent_loop_packet": start_check_payload.get("agent_loop_packet") if isinstance(start_check_payload.get("agent_loop_packet"), dict) else None,
+        "next_commands": {
+            "safe_read_commands": [
+                command
+                for command in [
+                    commands.get("agent_loop_handoff"),
+                    commands.get("start_check"),
+                    commands.get("adapter_preflight"),
+                    commands.get("live_product_readiness"),
+                    review_pressure["record_command"],
+                    "agentops operator loop-audit --limit 20",
+                    "agentops operator action-receipts --limit 20",
+                ]
+                if command
+            ],
+            "preview_commands": [
+                command
+                for command in [
+                    commands.get("loop_driver_preview"),
+                ]
+                if command
+            ],
+            "confirm_required_commands": [
+                command
+                for command in [
+                    commands.get("loop_driver_confirm"),
+                ]
+                if command
+            ],
+            "recommended_next": recommended_next_command,
+            "token_omitted": True,
+        },
+        "commands": {
+            "handoff": commands.get("agent_loop_handoff"),
+            "start_check": commands.get("start_check"),
+            "preview_loop": commands.get("loop_driver_preview"),
+            "confirm_loop": commands.get("loop_driver_confirm"),
+            "record_review": review_pressure["record_command"],
+            "live_product_readiness": commands.get("live_product_readiness"),
+            "recommended_next": recommended_next_command,
+        },
+        "contract": "read-only pre-confirm supervision item for Hermes/OpenClaw/Codex loops; it classifies readiness but never executes preview, confirm, review, live-runtime, approval, or shell commands",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
+def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
+    handoff = operator_agent_loop_handoff(conn, headers, qs, auth_ctx)
+    current_code = handoff.get("current_code") if isinstance(handoff.get("current_code"), dict) else {}
+    consumers = handoff.get("consumers") if isinstance(handoff.get("consumers"), list) else []
+    items = [
+        loop_supervision_item(
+            consumer,
+            current_code=current_code,
+            limit=limit,
+            start_check_payload=operator_start_check(
+                conn,
+                headers,
+                {
+                    "adapter": [str(consumer.get("adapter") or "mock")],
+                    "limit": [str(limit)],
+                    "loop_id": qs.get("loop_id") or [],
+                    "task_id": qs.get("task_id") or [],
+                    "agent_id": qs.get("agent_id") or [],
+                    "q": qs.get("q") or qs.get("query") or ["READ PLAN RETRIEVE COMPARE VERIFY RECORD"],
+                    "handoff_mode": qs.get("handoff_mode") or ["lightweight"],
+                    "full_handoff": qs.get("full_handoff") or [],
+                    "freshness_hours": qs.get("freshness_hours") or ["72"],
+                },
+                auth_ctx,
+            ),
+        )
+        for consumer in consumers
+        if isinstance(consumer, dict)
+    ]
+    status_order = {"blocked": 4, "record_first": 3, "attention": 2, "preview_only": 1, "ready_to_confirm": 0}
+    worst_status = max((item.get("status") for item in items), key=lambda value: status_order.get(str(value), 2), default="attention")
+    next_actions = []
+    for item in items:
+        command = ((item.get("commands") or {}).get("recommended_next") if isinstance(item.get("commands"), dict) else None)
+        if command and command not in next_actions:
+            next_actions.append(command)
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_loop_supervision",
+        "status": worst_status,
+        "workspace_id": handoff.get("workspace_id") or "local-demo",
+        "adapters": handoff.get("adapters") or [item.get("adapter") for item in items],
+        "handoff_summary": handoff.get("summary") if isinstance(handoff.get("summary"), dict) else {},
+        "summary": {
+            "items": len(items),
+            "ready_to_confirm": sum(1 for item in items if item.get("status") == "ready_to_confirm"),
+            "record_first": sum(1 for item in items if item.get("status") == "record_first"),
+            "preview_only": sum(1 for item in items if item.get("status") == "preview_only"),
+            "blocked": sum(1 for item in items if item.get("status") == "blocked"),
+            "can_confirm_all": bool(items) and all(item.get("can_confirm_bounded_loop") for item in items),
+            "record_required": any(item.get("should_record_before_execute") for item in items),
+            "current_code_ok": current_code.get("ok") is True,
+        },
+        "items": items,
+        "next_actions": next_actions[:8],
+        "contract": "read-only execution supervision projection for Hermes/OpenClaw/Codex after handoff and before confirm-loop; use it to decide whether to preview, record/review first, or copy the bounded confirm command locally",
+        "auth": handoff.get("auth") if isinstance(handoff.get("auth"), dict) else {
+            "mode": (auth_ctx or {}).get("mode") or "unknown",
+            "required_scope": "tasks:read",
+            "token_omitted": True,
+        },
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_content_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def operator_execution_mode(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     adapter = coerce_choice((qs.get("adapter") or ["mock"])[0], {"mock", "hermes", "openclaw"}, "mock")
@@ -26585,6 +26841,25 @@ class Handler(BaseHTTPRequestHandler):
                     qs,
                     self.headers,
                     lambda: operator_agent_loop_handoff(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
+                )
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/loop-supervision":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = cached_read_model(
+                    "operator_loop_supervision",
+                    qs,
+                    self.headers,
+                    lambda: operator_loop_supervision(conn, self.headers, qs, auth_ctx),
                     auth_ctx,
                 )
                 conn.rollback()

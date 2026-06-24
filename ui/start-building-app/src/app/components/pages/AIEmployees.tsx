@@ -36,6 +36,7 @@ import {
   loadOperatorLoopControl,
   loadOperatorLoopDriverPackets,
   loadOperatorLoopLaunchPacket,
+  loadOperatorLoopSupervision,
   loadOperatorLoopAudit,
   loadOperatorLoopSelfCheck,
   loadOperatorRuntimeDoctor,
@@ -91,6 +92,7 @@ import {
   type OperatorLoopControlPayload,
   type OperatorLoopDriverPacketsPayload,
   type OperatorLoopLaunchPacketPayload,
+  type OperatorLoopSupervisionPayload,
   type OperatorLoopAuditPayload,
   type OperatorLoopSelfCheckPayload,
   type OperatorRuntimeDoctorPayload,
@@ -185,6 +187,7 @@ type AIEmployeesLiveData = {
   operatorExecutionMode?: OperatorExecutionModePayload;
   operatorLoopControl?: OperatorLoopControlPayload;
   operatorLoopDriverPackets?: OperatorLoopDriverPacketsPayload;
+  operatorLoopSupervision?: OperatorLoopSupervisionPayload;
   operatorAgentLoopHandoff?: OperatorAgentLoopHandoffPayload;
   operatorRuntimeDoctor?: OperatorRuntimeDoctorPayload;
   executionModeAdapter?: WorkerAdapterName;
@@ -227,6 +230,7 @@ const AI_EMPLOYEES_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
   { id: "operator_execution_mode", load: async (context) => ({ operatorExecutionMode: await loadOperatorExecutionMode(context.executionModeAdapter || "mock", Boolean(context.executionModeConfirmRun), 8) }) },
   { id: "operator_loop_control", load: async () => ({ operatorLoopControl: await loadOperatorLoopControl(8) }) },
   { id: "operator_agent_loop_handoff", load: async () => ({ operatorAgentLoopHandoff: await loadOperatorAgentLoopHandoff(8) }) },
+  { id: "operator_loop_supervision", load: async () => ({ operatorLoopSupervision: await loadOperatorLoopSupervision(8) }) },
   { id: "operator_loop_driver_packets", load: async () => ({ operatorLoopDriverPackets: await loadOperatorLoopDriverPackets(8) }) },
   { id: "operator_command_center", load: async () => ({ operatorCommandCenter: await loadOperatorCommandCenter(12) }) },
   { id: "operator_action_plan", load: async () => ({ operatorActionPlan: await loadOperatorActionPlan(12) }) },
@@ -257,6 +261,7 @@ const AI_EMPLOYEES_CORE_PANEL_IDS = new Set([
   "operator_execution_mode",
   "operator_loop_control",
   "operator_agent_loop_handoff",
+  "operator_loop_supervision",
   "operator_command_center",
   "operator_action_plan",
   "operator_evidence_report",
@@ -568,6 +573,7 @@ export function AIEmployees() {
   const operatorExecutionMode = data?.operatorExecutionMode as OperatorExecutionModePayload | undefined;
   const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
   const operatorLoopDriverPackets = data?.operatorLoopDriverPackets as OperatorLoopDriverPacketsPayload | undefined;
+  const operatorLoopSupervision = data?.operatorLoopSupervision as OperatorLoopSupervisionPayload | undefined;
   const operatorAgentLoopHandoff = data?.operatorAgentLoopHandoff as OperatorAgentLoopHandoffPayload | undefined;
   const operatorHandoff = data?.operatorHandoff as OperatorHandoffPayload | undefined;
   const operatorHealth = data?.operatorHealth as OperatorHealthPayload | undefined;
@@ -848,6 +854,10 @@ export function AIEmployees() {
       loopDriverSummary: "Copy the bounded local loop wrapper: preview is read-only; confirm advances allowlisted steps with receipts and control readback.",
       agentLoopHandoffTitle: "Agent loop handoff",
       agentLoopHandoffSummary: "Compact shared handoff for Hermes, OpenClaw, and Codex: current-code proof, fresh live evidence, Method gates, and copyable next commands.",
+      loopSupervisionTitle: "Loop supervision",
+      loopSupervisionSummary: "Pre-confirm gate for Hermes/OpenClaw: record pressure, bounded confirm readiness, and the next copy-only command.",
+      recordFirst: "Record first",
+      readyToConfirm: "Ready to confirm",
       handoffReady: "Handoff ready",
       boundedConfirmReady: "Bounded confirm",
       liveDispatchReady: "Live dispatch",
@@ -1450,6 +1460,10 @@ export function AIEmployees() {
       loopDriverSummary: "复制受限本地 loop wrapper：预览只读；确认后只推进 allowlist 步骤，并写入收据和控制回读。",
       agentLoopHandoffTitle: "Agent Loop 交接矩阵",
       agentLoopHandoffSummary: "Hermes、OpenClaw、Codex 共享的紧凑交接包：current-code 证明、fresh live 证据、Method gate 和下一条可复制命令。",
+      loopSupervisionTitle: "Loop 监管",
+      loopSupervisionSummary: "Hermes/OpenClaw 确认执行前的 gate：RECORD 压力、bounded confirm 状态和下一条 copy-only 命令。",
+      recordFirst: "先 RECORD",
+      readyToConfirm: "可确认",
       handoffReady: "交接就绪",
       boundedConfirmReady: "Bounded confirm",
       liveDispatchReady: "Live dispatch",
@@ -2343,6 +2357,19 @@ export function AIEmployees() {
       { label: `${consumer.adapter} handoff`, command: consumer.commands.agent_loop_handoff || "", color: "var(--mis-cyan)" },
       { label: `${consumer.adapter} start-check`, command: consumer.commands.start_check || "", color: "var(--mis-success)" },
       { label: `${consumer.adapter} live proof`, command: consumer.commands.live_product_readiness || "", color: "var(--mis-warning)" },
+    ]),
+  ].filter(item => item.command).slice(0, 7);
+  const loopSupervisionItems = operatorLoopSupervision?.items || [];
+  const loopSupervisionCommands = [
+    ...(operatorLoopSupervision?.next_actions || []).map((command, index) => ({
+      label: `${copy.loopSupervisionTitle} ${index + 1}`,
+      command,
+      color: "var(--mis-cyan)",
+    })),
+    ...loopSupervisionItems.flatMap((item) => [
+      { label: `${item.adapter} ${copy.readyToConfirm}`, command: item.next_commands.confirm_required_commands[0] || "", color: "var(--mis-warning)" },
+      { label: `${item.adapter} ${copy.previewLoopDriver}`, command: item.next_commands.preview_commands[0] || "", color: "var(--mis-cyan)" },
+      { label: `${item.adapter} ${copy.recordFirst}`, command: item.commands.record_review || "", color: "var(--mis-success)" },
     ]),
   ].filter(item => item.command).slice(0, 7);
   const advanceLoopSelectedGate = String(advanceLoopSummaryRaw.selected_gate || "—");
@@ -4767,6 +4794,67 @@ export function AIEmployees() {
                                   <div className="flex items-center justify-between gap-1 mt-0.5">
                                     <span className="text-[8px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</span>
                                     <StatusBadge status={item.status} />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {operatorLoopSupervision && (
+                    <div className="mt-2 pt-2" style={{ borderTop: "1px solid var(--mis-border)" }}>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <div className="text-[8px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopSupervisionTitle}</div>
+                        <StatusBadge status={operatorLoopSupervision.status} />
+                        <StatusBadge status={operatorLoopSupervision.summary.can_confirm_all ? "pass" : "attention"} label={`${copy.boundedConfirmReady}: ${String(operatorLoopSupervision.summary.can_confirm_all)}`} />
+                        <StatusBadge status={operatorLoopSupervision.summary.record_required ? "attention" : "pass"} label={`${copy.recordFirst}: ${String(operatorLoopSupervision.summary.record_required)}`} />
+                        <StatusBadge status={operatorLoopSupervision.safety.server_executes_shell ? "blocked" : "pass"} label={operatorLoopSupervision.safety.server_executes_shell ? "server shell" : "copy-only"} />
+                        {panelStatusBadge("operator_loop_supervision")}
+                        {panelRefreshButton("operator_loop_supervision")}
+                        {panelDiagnosticsButton("operator_loop_supervision")}
+                        {panelReceiptButton("operator_loop_supervision")}
+                      </div>
+                      <div className="text-[8px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>{copy.loopSupervisionSummary}</div>
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {loopSupervisionCommands.map((item) => (
+                          <button
+                            key={`loop-supervision-command:${item.label}:${item.command}`}
+                            type="button"
+                            onClick={() => void copyIntakeCommand(String(item.command))}
+                            className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                            style={{ color: item.color, background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                            title={String(item.command)}
+                          >
+                            <Copy size={8} />
+                            <span className="truncate max-w-[132px]">{copiedIntakeCommand === item.command ? copy.copiedCommand : item.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-1.5 mt-1.5">
+                        {loopSupervisionItems.map((item) => (
+                          <div key={`loop-supervision-item:${item.adapter}`} className="rounded p-1.5 min-w-0" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                            <div className="flex flex-wrap items-center justify-between gap-1">
+                              <div className="text-[8px] font-semibold uppercase" style={{ color: "var(--mis-text)" }}>{item.adapter}</div>
+                              <div className="flex flex-wrap gap-1">
+                                <StatusBadge status={item.status} />
+                                <StatusBadge status={item.can_confirm_bounded_loop ? "pass" : "attention"} label={`${copy.boundedConfirmReady}: ${String(item.can_confirm_bounded_loop)}`} />
+                                <StatusBadge status={item.should_record_before_execute ? "attention" : "pass"} label={`${copy.recordFirst}: ${String(item.should_record_before_execute)}`} />
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-1 mt-1">
+                              {[
+                                { label: copy.currentPhase, value: item.status, status: item.status },
+                                { label: copy.liveDispatchReady, value: String(item.ready_for_live_dispatch), status: item.ready_for_live_dispatch ? "pass" : "attention" },
+                                { label: copy.memoryReview, value: String(item.review_pressure.memory_candidates ?? 0), status: Number(item.review_pressure.memory_candidates ?? 0) > 0 ? "attention" : "pass" },
+                                { label: copy.pendingApprovals, value: String(item.review_pressure.pending_approvals ?? 0), status: Number(item.review_pressure.pending_approvals ?? 0) > 0 ? "attention" : "pass" },
+                              ].map((metric) => (
+                                <div key={`${item.adapter}:supervision:${metric.label}`} className="rounded px-1.5 py-0.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                                  <div className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{metric.label}</div>
+                                  <div className="flex items-center justify-between gap-1 mt-0.5">
+                                    <span className="text-[8px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{metric.value}</span>
+                                    <StatusBadge status={metric.status} />
                                   </div>
                                 </div>
                               ))}

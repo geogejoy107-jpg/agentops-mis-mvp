@@ -31,6 +31,7 @@ Quick loop-control brief for a live local adapter:
 
 ```bash
 agentops operator agent-loop-handoff --limit 8
+agentops operator loop-supervision --limit 8
 
 agentops operator start-check --adapter hermes --limit 8
 agentops worker preflight --adapter hermes
@@ -54,6 +55,14 @@ bypassing Agent Plan, retrieval, base comparison, verification, receipt, or
 memory-review gates. It never executes shell on the server, starts live
 runtimes, mutates ledgers, approves reviews, or exposes raw prompts/responses/
 tokens.
+
+`loop-supervision` is the preferred second machine read before copying any
+bounded `loop-driver --confirm-loop` command. It reuses the handoff/start-check
+state and returns per-adapter `can_preview_loop`, `can_confirm_bounded_loop`,
+`should_record_before_execute`, review/memory pressure, gate status, layered
+safe read/preview/confirm-required commands, and no-server-shell proof. It is
+read-only: it does not run loop-driver, workers, Hermes/OpenClaw, approvals,
+shell commands, or ledger writes.
 
 `start-check` is the preferred first read for a local loop. The CLI reads
 `GET /api/operator/start-check`, so Hermes/OpenClaw/Codex can use either the

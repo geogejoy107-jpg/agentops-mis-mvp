@@ -686,6 +686,26 @@ ledgers, or print raw prompts, raw responses, raw content, worker tokens,
 session tokens, or API keys. Supplied Agent Gateway tokens/sessions require
 `tasks:read` and remain workspace-bound.
 
+### `agentops operator loop-supervision`
+
+Reads the pre-confirm supervision gate after handoff and before bounded loop
+execution:
+
+```bash
+agentops operator loop-supervision --limit 8
+agentops operator loop-supervision --adapter hermes --limit 8
+agentops operator loop-supervision --adapter openclaw --no-codex
+```
+
+Maps to `GET /api/operator/loop-supervision`. The response reuses the canonical
+handoff/start-check data and returns per-adapter `can_preview_loop`,
+`can_confirm_bounded_loop`, `should_record_before_execute`, review/memory
+pressure, gate status, `safe_read_commands`, `preview_commands`, and
+`confirm_required_commands`. It is read-only and does not run loop-driver,
+workers, Hermes/OpenClaw, approvals, shell commands, or ledger mutations.
+Supplied Agent Gateway tokens/sessions require `tasks:read` and remain
+workspace-bound.
+
 ### `agentops operator execution-mode`
 
 Reads the current dispatch mode before a human or agent starts a customer task:

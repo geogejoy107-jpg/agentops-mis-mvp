@@ -479,6 +479,17 @@ bookkeeping, and never starts runtimes, executes server shell, creates tasks,
 mutates ledgers/connectors, approves reviews, or exposes raw prompts, raw
 responses, raw content, credentials, or tokens.
 
+`GET /api/operator/loop-supervision` is the read-only pre-confirm supervision
+projection that follows the handoff. It accepts the same adapter/task/agent,
+query, handoff-mode, and freshness parameters as `agent-loop-handoff`, then
+returns per-adapter `can_preview_loop`, `can_confirm_bounded_loop`,
+`should_record_before_execute`, review/memory/approval pressure, gate status,
+layered `safe_read_commands`, `preview_commands`, and
+`confirm_required_commands`. It is the API surface Hermes/OpenClaw/Codex should
+read immediately before copying a bounded `operator loop-driver --confirm-loop`
+command. It requires `tasks:read`, remains workspace-bound, and never runs
+loop-driver, workers, runtimes, approvals, shell commands, or ledger writes.
+
 `GET /api/operator/live-acceptance` is the read-only Hermes/OpenClaw live
 customer-worker acceptance freshness projection. It samples recent local worker
 runs per adapter, including in-flight `agt_customer_worker_*` attempts before a
