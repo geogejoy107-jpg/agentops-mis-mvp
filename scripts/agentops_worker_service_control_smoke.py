@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 import subprocess
 import sys
 import tempfile
@@ -10,6 +11,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def run(cmd: list[str], cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
@@ -47,6 +50,60 @@ def service_template(agent_id: str, adapter: str = "mock", confirm_run: bool = F
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr or proc.stdout)
     return proc.stdout
+
+
+def idempotent_loaded_control_smoke(failures: list[str]) -> dict:
+    from agentops_mis_cli import worker as worker_mod
+
+    original_check = worker_mod.check_service_installation
+    original_execute = worker_mod.execute_service_command
+    executed: list[list[str]] = []
+
+    def fake_check(args) -> dict:
+        return {
+            "ok": True,
+            "service_file": {
+                "exists": True,
+                "command_has_worker": True,
+                "adapter_present": True,
+                "confirm_gate_ok": True,
+                "token_like_detected": False,
+                "raw_content_omitted": True,
+            },
+            "service_status": {"loaded": True},
+            "token_omitted": True,
+        }
+
+    def fake_execute(command, timeout):
+        executed.append(command)
+        return {"command": " ".join(command), "ok": False, "summary": "should not execute"}
+
+    worker_mod.check_service_installation = fake_check
+    worker_mod.execute_service_command = fake_execute
+    try:
+        payload = worker_mod.control_service(argparse.Namespace(
+            manager="launchd",
+            action="load",
+            workspace_id="proj_mvp",
+            agent_id="agt_loaded_noop",
+            adapter="hermes",
+            label="",
+            service_path="/tmp/local.agentops.worker.agt_loaded_noop.plist",
+            api_key_placeholder="<paste one-time token here>",
+            timeout=1,
+            confirm_control=True,
+        ))
+    finally:
+        worker_mod.check_service_installation = original_check
+        worker_mod.execute_service_command = original_execute
+
+    require(payload.get("ok") is True, f"loaded service control should pass: {payload}", failures)
+    require(payload.get("service_already_loaded") is True, f"already-loaded marker missing: {payload}", failures)
+    require(payload.get("service_control_skipped") is True, f"skip marker missing: {payload}", failures)
+    require(payload.get("service_mutated") is False, f"already-loaded load should not mutate: {payload}", failures)
+    require(payload.get("live_execution_performed") is False, f"already-loaded load should not count as live execution: {payload}", failures)
+    require(not executed, f"already-loaded load executed OS command: {executed}", failures)
+    return payload
 
 
 def main() -> int:
@@ -180,6 +237,8 @@ def main() -> int:
         require(fake_token not in serialized, "service-control leaked raw token-like content", failures)
         require("sk-" not in serialized and "ntn_" not in serialized, "service-control leaked secret-like content", failures)
 
+        loaded_noop_payload = idempotent_loaded_control_smoke(failures)
+
     print(json.dumps({
         "ok": not failures,
         "direct_preview_ok": not failures and direct_payload.get("dry_run"),
@@ -187,6 +246,7 @@ def main() -> int:
         "hermes_confirm_gate_blocked": hermes_payload.get("ok") is False,
         "openclaw_confirm_gate_blocked": openclaw_payload.get("ok") is False,
         "unsafe_blocked": unsafe_payload.get("ok") is False,
+        "loaded_noop_ok": loaded_noop_payload.get("ok") is True and loaded_noop_payload.get("service_control_skipped") is True,
         "failures": failures,
     }, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if not failures else 1

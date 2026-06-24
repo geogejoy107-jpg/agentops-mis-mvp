@@ -2469,10 +2469,12 @@ def control_service(args) -> dict:
     )
     service_check = check_service_installation(check_args)
     service_file = service_check.get("service_file") or {}
+    service_status = service_check.get("service_status") if isinstance(service_check.get("service_status"), dict) else {}
     exists = bool(service_file.get("exists"))
     token_like_detected = bool(service_file.get("token_like_detected"))
     confirm_gate_ok = bool(service_file.get("confirm_gate_ok"))
     command_has_worker = bool(service_file.get("command_has_worker"))
+    already_loaded = service_status.get("loaded") is True
     planned = service_control_sequence(args.manager, service_path, label, args.action)
     failures = []
     if not exists:
@@ -2485,16 +2487,28 @@ def control_service(args) -> dict:
         failures.append("refusing to load/restart Hermes/OpenClaw service without --confirm-run in the service template")
     dry_run = not bool(args.confirm_control)
     command_results = []
+    loaded_noop = bool(args.action == "load" and already_loaded and not failures)
     if not dry_run and not failures:
-        for command in planned:
-            result = execute_service_command(command, args.timeout)
-            command_results.append(result)
-            if not result.get("ok") and not (args.action == "restart" and len(command_results) == 1):
-                failures.append(f"service control command failed: {result.get('command')}")
-                break
+        if loaded_noop:
+            command_results.append({
+                "command": "service-control load skipped",
+                "ok": True,
+                "skipped": True,
+                "reason": "service_already_loaded",
+                "summary": "Service is already loaded; no launchd/systemd load command executed.",
+            })
+        else:
+            for command in planned:
+                result = execute_service_command(command, args.timeout)
+                command_results.append(result)
+                if not result.get("ok") and not (args.action == "restart" and len(command_results) == 1):
+                    failures.append(f"service control command failed: {result.get('command')}")
+                    break
     setup_hints = []
     if dry_run:
         setup_hints.append("Preview only. Re-run with --confirm-control on the agent machine to mutate launchd/systemd state.")
+    if loaded_noop:
+        setup_hints.append("Service is already loaded; confirmed load is treated as an idempotent no-op.")
     if token_like_detected:
         setup_hints.append("Move secrets out of the service file before load/restart; raw token-like content is never printed.")
     if args.adapter in {"hermes", "openclaw"} and not confirm_gate_ok:
@@ -2507,7 +2521,9 @@ def control_service(args) -> dict:
         "action": args.action,
         "dry_run": dry_run,
         "confirmed_control": bool(args.confirm_control),
-        "service_mutated": bool(args.confirm_control and not failures),
+        "service_already_loaded": already_loaded,
+        "service_control_skipped": bool(not dry_run and loaded_noop),
+        "service_mutated": bool(args.confirm_control and not failures and not loaded_noop),
         "service_path": str(service_path),
         "label": label,
         "agent_id": args.agent_id,
@@ -2518,7 +2534,7 @@ def control_service(args) -> dict:
         "command_results": command_results,
         "failures": failures,
         "setup_hints": setup_hints,
-        "live_execution_performed": bool(args.confirm_control and args.action in {"load", "restart"} and args.adapter in {"hermes", "openclaw"} and not failures),
+        "live_execution_performed": bool(args.confirm_control and args.action in {"load", "restart"} and args.adapter in {"hermes", "openclaw"} and not failures and not loaded_noop),
         "raw_content_omitted": True,
         "token_omitted": True,
     }
