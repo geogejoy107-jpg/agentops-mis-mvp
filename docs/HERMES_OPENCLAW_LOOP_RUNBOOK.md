@@ -184,6 +184,14 @@ command fails closed as JSON instead of a bare 404. The blocked packet uses
 `error_type=stale_server_or_missing_endpoint` and includes current-code,
 restart, and retry commands so the agent can repair the local target before
 continuing.
+For large local ledgers, use `agentops operator loop-bootstrap --adapter
+hermes|openclaw --fast` or `GET /api/operator/loop-bootstrap?fast=1` to get the
+copy-only startup commands without waiting for heavy start-check or
+loop-supervision. Fast bootstrap is not acceptance: it keeps bounded loop
+confirmation blocked until current-code and deep supervision readback pass.
+If a deep endpoint times out, the CLI returns
+`error_type=local_mis_endpoint_timeout` with the same fast fallback packet plus a
+longer-timeout retry command instead of a Python traceback.
 
 The same packet is available inside the local MIS through
 `GET /api/operator/loop-bootstrap?limit=8` and the AI Employees page. That API

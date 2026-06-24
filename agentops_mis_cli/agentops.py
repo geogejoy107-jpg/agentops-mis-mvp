@@ -348,6 +348,8 @@ class AgentOpsClient:
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"{method} {path} failed: {exc.code} {redact_text(detail, 1200)}") from exc
+        except TimeoutError as exc:
+            raise RuntimeError(f"{method} {path} timed out after {self.request_timeout}s; {self.connection_hint()}") from exc
         except URLError as exc:
             raise RuntimeError(f"Cannot reach {redact_text(url, 500)}: {redact_text(str(exc.reason), 500)}; {self.connection_hint()}") from exc
 
@@ -1555,18 +1557,23 @@ def _with_requested_manager(command: str, manager: str) -> str:
     return command
 
 
-def _operator_loop_bootstrap_stale_endpoint(args, client: AgentOpsClient, *, endpoint: str, error: Exception) -> dict:
+def _operator_loop_bootstrap_stale_endpoint(args, client: AgentOpsClient, *, endpoint: str, error: Exception, error_type: str = "stale_server_or_missing_endpoint") -> dict:
     local_probe = local_demo_default_probe(client.base_url)
     current_code_command = f"AGENTOPS_BASE_URL={client.base_url} agentops local readiness --require-current-code"
+    retry_timeout = max(int(getattr(args, "request_timeout", 30) or 30), 120)
+    retry_command = f"AGENTOPS_BASE_URL={client.base_url} agentops --request-timeout {retry_timeout} operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check"
     repair_commands = [
         current_code_command,
         f"python3 scripts/run_local_stack.py --install-ui",
-        f"AGENTOPS_BASE_URL={client.base_url} agentops operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check",
+        retry_command,
     ]
     if not local_probe.get("same_as_target") and local_probe.get("ready"):
         probe_url = str(local_probe.get("base_url") or LOCAL_DEMO_DEFAULT_URL)
-        repair_commands.insert(0, f"AGENTOPS_BASE_URL={probe_url} agentops operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check")
+        repair_commands.insert(0, f"AGENTOPS_BASE_URL={probe_url} agentops --request-timeout {retry_timeout} operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check")
         repair_commands.append(f"agentops login --base-url {probe_url}")
+    reason = "The selected MIS server is reachable but does not expose the loop-bootstrap dependency endpoint, or the saved CLI target points at an older/stopped local server."
+    if error_type == "local_mis_endpoint_timeout":
+        reason = "The selected MIS server is reachable, but a loop-bootstrap dependency endpoint exceeded the CLI request timeout on the current local ledger."
     return {
         "provider": "agentops-operator",
         "operation": "operator_loop_bootstrap",
@@ -1575,7 +1582,7 @@ def _operator_loop_bootstrap_stale_endpoint(args, client: AgentOpsClient, *, end
         "adapter": args.adapter,
         "workspace_id": client.workspace_id,
         "target_base_url": client.base_url,
-        "error_type": "stale_server_or_missing_endpoint",
+        "error_type": error_type,
         "missing_endpoint": endpoint,
         "error": redact_text(str(error), 800),
         "diagnostic": {
@@ -1586,7 +1593,9 @@ def _operator_loop_bootstrap_stale_endpoint(args, client: AgentOpsClient, *, end
             "current_code_command": current_code_command,
             "restart_current_code_command": "python3 scripts/run_local_stack.py --install-ui",
             "repair_commands": repair_commands,
-            "reason": "The selected MIS server is reachable but does not expose the loop-bootstrap dependency endpoint, or the saved CLI target points at an older/stopped local server.",
+            "retry_with_longer_timeout_command": retry_command,
+            "fast_bootstrap_command": f"AGENTOPS_BASE_URL={client.base_url} agentops operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --fast",
+            "reason": reason,
             "token_omitted": True,
         },
         "next_action": repair_commands[0] if repair_commands else current_code_command,
@@ -1613,7 +1622,7 @@ def _operator_loop_bootstrap_stale_endpoint(args, client: AgentOpsClient, *, end
                 "id": "retry_loop_bootstrap",
                 "phase": "READ",
                 "status": "waiting",
-                "command": f"AGENTOPS_BASE_URL={client.base_url} agentops operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check",
+                "command": retry_command,
                 "confirm_required": False,
                 "server_executes_shell": False,
                 "token_omitted": True,
@@ -1622,9 +1631,10 @@ def _operator_loop_bootstrap_stale_endpoint(args, client: AgentOpsClient, *, end
         "commands": {
             "current_code_check": current_code_command,
             "restart_current_mis": "python3 scripts/run_local_stack.py --install-ui",
-            "retry_loop_bootstrap": f"AGENTOPS_BASE_URL={client.base_url} agentops operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check",
+            "retry_loop_bootstrap": retry_command,
+            "fast_loop_bootstrap": f"AGENTOPS_BASE_URL={client.base_url} agentops operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --fast",
         },
-        "contract": "blocked bootstrap recovery packet for Hermes/OpenClaw when the selected local MIS is stale or lacks loop-bootstrap dependency endpoints; it never executes shell, service-control, service-check, live adapters, or ledger writes",
+        "contract": "blocked bootstrap recovery packet for Hermes/OpenClaw when the selected local MIS is stale, slow, or lacks loop-bootstrap dependency endpoints; it never executes shell, service-control, service-check, live adapters, or ledger writes",
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
@@ -1637,6 +1647,295 @@ def _operator_loop_bootstrap_stale_endpoint(args, client: AgentOpsClient, *, end
         "live_execution_performed": False,
         "_exit_code": 2,
     }
+
+
+def _operator_loop_bootstrap_minimal_start_check(args, client: AgentOpsClient, *, reason: str) -> dict:
+    current_code_command = f"AGENTOPS_BASE_URL={client.base_url} agentops local readiness --require-current-code"
+    start_check_command = f"AGENTOPS_BASE_URL={client.base_url} agentops operator start-check --adapter {args.adapter} --limit {args.limit}"
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_start_check",
+        "status": "blocked",
+        "adapter": args.adapter,
+        "workspace_id": client.workspace_id,
+        "task_id": args.task_id,
+        "agent_id": args.agent_id or client.agent_id or None,
+        "summary": {
+            "mode": "fast_bootstrap_minimal",
+            "reason": reason,
+            "current_code_ok": False,
+            "can_confirm_bounded_loop": False,
+        },
+        "local_loop_admission_packet": {
+            "operation": "operator_local_loop_admission_packet",
+            "status": "blocked",
+            "adapter": args.adapter,
+            "admission": {
+                "current_code_ok": False,
+                "can_confirm_bounded_loop": False,
+                "reason": reason,
+                "token_omitted": True,
+            },
+            "commands": {
+                "start_check": start_check_command,
+                "current_code_check": current_code_command,
+                "worker_preflight": f"AGENTOPS_BASE_URL={client.base_url} agentops worker preflight --adapter {args.adapter}",
+            },
+            "local_deployment": {},
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        },
+        "acceptance_packet": {
+            "operation": "operator_local_loop_acceptance_packet",
+            "status": "blocked",
+            "decision": {
+                "current_code_ok": False,
+                "can_confirm_bounded_loop": False,
+                "live_dispatch_allowed": False,
+                "reason": reason,
+            },
+            "commands": {
+                "start_check": start_check_command,
+                "current_code_check": current_code_command,
+                "loop_driver_preview": f"AGENTOPS_BASE_URL={client.base_url} agentops operator loop-driver --adapter {args.adapter} --max-steps {args.max_steps} --limit {args.limit}",
+                "loop_driver_confirm": f"AGENTOPS_BASE_URL={client.base_url} agentops operator loop-driver --adapter {args.adapter} --max-steps {args.max_steps} --limit {args.limit} --confirm-loop",
+            },
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        },
+        "loop_driver_entry": {
+            "operation": "operator_start_check_loop_driver_entry",
+            "status": "blocked",
+            "commands": {
+                "preview": f"AGENTOPS_BASE_URL={client.base_url} agentops operator loop-driver --adapter {args.adapter} --max-steps {args.max_steps} --limit {args.limit}",
+                "confirm_loop": f"AGENTOPS_BASE_URL={client.base_url} agentops operator loop-driver --adapter {args.adapter} --max-steps {args.max_steps} --limit {args.limit} --confirm-loop",
+                "review_queue": f"AGENTOPS_BASE_URL={client.base_url} agentops review queue --limit 20",
+            },
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        },
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
+def _operator_loop_bootstrap_minimal_supervision(args) -> dict:
+    return {
+        "operation": "operator_loop_supervision_item",
+        "status": "not_read_fast_bootstrap",
+        "adapter": args.adapter,
+        "primary_next_action": {
+            "id": "read_deep_loop_supervision",
+            "phase": "VERIFY",
+            "command": f"agentops operator loop-supervision --adapter {args.adapter} --limit {args.limit} --no-codex",
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "service_closure": {
+            "required": False,
+            "status": "unknown_until_supervision",
+            "step": "read_loop_supervision",
+            "command": f"agentops operator loop-supervision --adapter {args.adapter} --limit {args.limit} --no-codex",
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
+def _operator_loop_bootstrap_fast_packet(
+    args,
+    client: AgentOpsClient,
+    *,
+    reason: str,
+    error: Exception | None = None,
+    error_type: str | None = None,
+) -> dict:
+    start_check = _operator_loop_bootstrap_minimal_start_check(args, client, reason=reason)
+    supervision_item = _operator_loop_bootstrap_minimal_supervision(args)
+    commands = _bootstrap_command_map(start_check, supervision_item, args)
+    service_check_result = None
+    service_check_missing: list[str] = []
+    if args.run_service_check:
+        check_args = argparse.Namespace(
+            adapter=args.adapter,
+            service_check_manager=args.manager,
+            service_check_agent_id=args.service_check_agent_id or "",
+            service_path=args.service_path or "",
+            service_label=args.service_label or "",
+            api_key_placeholder=args.api_key_placeholder,
+            service_check_timeout=args.service_check_timeout,
+        )
+        service_check_result, service_check_missing = _local_service_check_from_command(
+            check_args,
+            client,
+            commands.get("service_check") or "",
+            manager=args.manager,
+        )
+    status = "blocked" if error_type else "attention"
+    if not error_type and service_check_result and service_check_result.get("ok") is not True:
+        status = "attention"
+    bootstrap_steps = [
+        {
+            "id": "fast_bootstrap_packet",
+            "phase": "READ",
+            "status": "ready",
+            "command": commands["loop_bootstrap_cli"] + " --fast" if "loop_bootstrap_cli" in commands else f"agentops operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --fast",
+            "confirm_required": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "verify_current_code",
+            "phase": "READ",
+            "status": "blocked",
+            "command": commands["current_code_check"],
+            "confirm_required": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "preview_service_install",
+            "phase": "PREFLIGHT",
+            "status": "ready",
+            "command": commands["service_install_preview"],
+            "confirm_required": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "confirm_service_install",
+            "phase": "PREFLIGHT",
+            "status": "manual_confirm_required",
+            "command": commands["service_install_confirm"],
+            "confirm_required": True,
+            "loads_service": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "run_service_check",
+            "phase": "VERIFY",
+            "status": "checked" if service_check_result else "ready",
+            "command": commands["service_check"],
+            "confirm_required": False,
+            "local_cli_service_check_performed": bool(service_check_result),
+            "ok": service_check_result.get("ok") if service_check_result else None,
+            "missing": service_check_missing,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "read_deep_loop_supervision",
+            "phase": "VERIFY",
+            "status": "waiting",
+            "command": commands["loop_supervision"],
+            "confirm_required": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "confirm_bounded_loop",
+            "phase": "EXECUTE",
+            "status": "blocked_until_start_check_and_supervision",
+            "command": commands["loop_driver_auto_service_closure"],
+            "confirm_required": True,
+            "uses_auto_service_closure": True,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+    ]
+    payload = {
+        "provider": "agentops-operator",
+        "operation": "operator_loop_bootstrap",
+        "status": status,
+        "mode": "fast",
+        "adapter": args.adapter,
+        "workspace_id": client.workspace_id,
+        "task_id": args.task_id,
+        "agent_id": args.agent_id or client.agent_id or None,
+        "next_action": commands["current_code_check"],
+        "summary": {
+            "mode": "fast",
+            "reason": reason,
+            "start_check_status": "not_read_fast_bootstrap",
+            "supervision_status": "not_read_fast_bootstrap",
+            "current_code_ok": False,
+            "service_closure_required": False,
+            "local_cli_service_check_performed": bool(service_check_result),
+            "can_confirm_bounded_loop": False,
+            "deep_verification_required": True,
+        },
+        "bootstrap_steps": bootstrap_steps,
+        "commands": commands,
+        "service_check": {
+            "performed": bool(service_check_result),
+            "ok": service_check_result.get("ok") if service_check_result else None,
+            "manager": service_check_result.get("manager") if service_check_result else args.manager,
+            "service_file_exists": ((service_check_result.get("service_file") or {}).get("exists") is True) if service_check_result else None,
+            "service_loaded": ((service_check_result.get("service_status") or {}).get("loaded") is True) if service_check_result else None,
+            "missing": service_check_missing,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "service_closure": supervision_item.get("service_closure"),
+        "local_loop_admission_packet": start_check.get("local_loop_admission_packet"),
+        "supervision": {
+            "status": supervision_item.get("status"),
+            "primary_next_action": supervision_item.get("primary_next_action"),
+            "service_closure": supervision_item.get("service_closure"),
+            "token_omitted": True,
+        },
+        "contract": "fast read-only local loop bootstrap packet for Hermes/OpenClaw; it gives copy-only service install/check/closure and bounded loop commands without waiting for heavy start-check or loop-supervision, but confirm-loop remains blocked until current-code and deep supervision readback pass",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "local_cli_service_check_performed": bool(service_check_result),
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+    if error_type:
+        payload.update({
+            "error_type": error_type,
+            "error": redact_text(str(error), 800) if error else None,
+            "diagnostic": {
+                "reason": reason,
+                "fallback": "fast_bootstrap_packet",
+                "deep_start_check_command": commands["start_check"],
+                "deep_loop_supervision_command": commands["loop_supervision"],
+                "token_omitted": True,
+            },
+            "_exit_code": 2,
+        })
+    return payload
 
 
 def _bootstrap_command_map(start_check: dict, supervision_item: dict, args) -> dict:
@@ -1722,6 +2021,8 @@ def _bootstrap_command_map(start_check: dict, supervision_item: dict, args) -> d
 
 
 def cmd_operator_loop_bootstrap(args, client: AgentOpsClient) -> dict:
+    if args.fast:
+        return _operator_loop_bootstrap_fast_packet(args, client, reason="fast_requested")
     try:
         start_check = client.get(
             "/api/operator/start-check",
@@ -1739,6 +2040,8 @@ def cmd_operator_loop_bootstrap(args, client: AgentOpsClient) -> dict:
     except RuntimeError as exc:
         if "/api/operator/start-check" in str(exc) and ("404" in str(exc) or "unknown endpoint" in str(exc)):
             return _operator_loop_bootstrap_stale_endpoint(args, client, endpoint="/api/operator/start-check", error=exc)
+        if "/api/operator/start-check" in str(exc) and "timed out" in str(exc).lower():
+            return _operator_loop_bootstrap_fast_packet(args, client, reason="start_check_timeout", error=exc, error_type="local_mis_endpoint_timeout")
         raise
     try:
         supervision = client.get(
@@ -1757,6 +2060,8 @@ def cmd_operator_loop_bootstrap(args, client: AgentOpsClient) -> dict:
     except RuntimeError as exc:
         if "/api/operator/loop-supervision" in str(exc) and ("404" in str(exc) or "unknown endpoint" in str(exc)):
             return _operator_loop_bootstrap_stale_endpoint(args, client, endpoint="/api/operator/loop-supervision", error=exc)
+        if "/api/operator/loop-supervision" in str(exc) and "timed out" in str(exc).lower():
+            return _operator_loop_bootstrap_fast_packet(args, client, reason="loop_supervision_timeout", error=exc, error_type="local_mis_endpoint_timeout")
         raise
     items = supervision.get("items") if isinstance(supervision.get("items"), list) else []
     supervision_item = next((row for row in items if isinstance(row, dict) and row.get("adapter") == args.adapter), {})
@@ -4832,6 +5137,7 @@ def build_parser() -> argparse.ArgumentParser:
     operator_loop_bootstrap.add_argument("--query", default="READ PLAN RETRIEVE COMPARE VERIFY RECORD")
     operator_loop_bootstrap.add_argument("--handoff-mode", choices=["lightweight", "full"], default="lightweight")
     operator_loop_bootstrap.add_argument("--full-handoff", action="store_true")
+    operator_loop_bootstrap.add_argument("--fast", action="store_true", help="Return a lightweight copy-only bootstrap packet without reading heavy start-check or loop-supervision endpoints.")
     operator_loop_bootstrap.add_argument("--run-service-check", action="store_true", help="Perform only local read-only worker service-check while building the packet.")
     operator_loop_bootstrap.add_argument("--service-check-agent-id", default="")
     operator_loop_bootstrap.add_argument("--service-path", default="")

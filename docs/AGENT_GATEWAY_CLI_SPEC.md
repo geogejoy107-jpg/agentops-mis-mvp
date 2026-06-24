@@ -2159,14 +2159,24 @@ service-closure record, optional service-control load confirmation, and
 `loop-driver --confirm-loop --auto-service-closure`. It is read-only by default;
 `--run-service-check` performs only local worker service-check and still does
 not mutate ledgers, load services, execute server shell, or run live adapters.
+Use `--fast` when Hermes/OpenClaw need the copy-only startup commands before a
+large local ledger can finish heavy start-check or loop-supervision reads. The
+fast packet is intentionally not a pass: it marks deep verification required,
+keeps confirm-loop blocked until current-code and supervision readback pass, and
+preserves the same no-ledger/no-live/no-server-shell boundary.
 If the selected local MIS is stale or missing a required loop endpoint,
 `loop-bootstrap` returns a structured blocked packet with
 `error_type=stale_server_or_missing_endpoint`, current-code/restart/retry
 commands, token omission proof, and no ledger or service side effects.
+If a required local endpoint exceeds the CLI request timeout, the command
+returns `error_type=local_mis_endpoint_timeout` with a fast fallback packet and
+longer-timeout retry command instead of a Python traceback.
 `GET /api/operator/loop-bootstrap` exposes the same read-only startup packet to
 the local MIS and AI Employees console. The API never performs service-check or
 service-control itself; operators copy the returned CLI commands and run them
 locally when the packet says confirmation is required.
+`GET /api/operator/loop-bootstrap?fast=1` exposes the same lightweight startup
+commands without reading heavy start-check or loop-supervision endpoints.
 `operator handoff` exposes the same `work_order.advance_loop` preview/confirm
 commands, and `/workspace/agents` renders copy buttons for those local CLI
 commands without letting the browser or server execute shell.
