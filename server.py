@@ -26034,6 +26034,137 @@ def operator_loop_bootstrap_item(
     }
 
 
+def operator_loop_bootstrap_fast_start_check(
+    *,
+    adapter: str,
+    workspace_id: str,
+    task_id: str | None,
+    agent_id: str | None,
+    limit: int,
+    max_steps: int,
+    reason: str,
+) -> dict:
+    start_check = f"agentops operator start-check --adapter {adapter} --limit {limit}"
+    current_code = "agentops local readiness --require-current-code"
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_start_check",
+        "status": "blocked",
+        "adapter": adapter,
+        "workspace_id": workspace_id,
+        "task_id": task_id or None,
+        "agent_id": agent_id or None,
+        "summary": {
+            "mode": "fast_bootstrap_minimal",
+            "reason": reason,
+            "current_code_ok": False,
+            "can_confirm_bounded_loop": False,
+        },
+        "local_loop_admission_packet": {
+            "operation": "operator_local_loop_admission_packet",
+            "status": "blocked",
+            "adapter": adapter,
+            "workspace_id": workspace_id,
+            "task_id": task_id or None,
+            "agent_id": agent_id or None,
+            "admission": {
+                "current_code_ok": False,
+                "can_confirm_bounded_loop": False,
+                "reason": reason,
+                "token_omitted": True,
+            },
+            "commands": {
+                "start_check": start_check,
+                "current_code_check": current_code,
+                "worker_preflight": f"agentops worker preflight --adapter {adapter}",
+            },
+            "local_deployment": {},
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        },
+        "acceptance_packet": {
+            "operation": "operator_local_loop_acceptance_packet",
+            "status": "blocked",
+            "decision": {
+                "current_code_ok": False,
+                "can_confirm_bounded_loop": False,
+                "live_dispatch_allowed": False,
+                "reason": reason,
+            },
+            "commands": {
+                "start_check": start_check,
+                "current_code_check": current_code,
+                "loop_driver_preview": f"agentops operator loop-driver --adapter {adapter} --max-steps {max_steps} --limit {limit}",
+                "loop_driver_confirm": f"agentops operator loop-driver --adapter {adapter} --max-steps {max_steps} --limit {limit} --confirm-loop",
+            },
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        },
+        "loop_driver_entry": {
+            "operation": "operator_start_check_loop_driver_entry",
+            "status": "blocked",
+            "commands": {
+                "preview": f"agentops operator loop-driver --adapter {adapter} --max-steps {max_steps} --limit {limit}",
+                "confirm_loop": f"agentops operator loop-driver --adapter {adapter} --max-steps {max_steps} --limit {limit} --confirm-loop",
+                "review_queue": "agentops review queue --limit 20",
+            },
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        },
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
+def operator_loop_bootstrap_fast_supervision(*, adapter: str, limit: int) -> dict:
+    command = f"agentops operator loop-supervision --adapter {adapter} --limit {limit} --no-codex"
+    return {
+        "operation": "operator_loop_supervision_item",
+        "status": "not_read_fast_bootstrap",
+        "adapter": adapter,
+        "primary_next_action": {
+            "id": "read_deep_loop_supervision",
+            "phase": "VERIFY",
+            "command": command,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "service_closure": {
+            "required": False,
+            "status": "unknown_until_supervision",
+            "step": "read_loop_supervision",
+            "command": command,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
 def operator_loop_bootstrap(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     requested_adapters = qs.get("adapter") or []
@@ -26047,6 +26178,87 @@ def operator_loop_bootstrap(conn: sqlite3.Connection, headers, qs=None, auth_ctx
     limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
     service_path = redact_text((qs.get("service_path") or qs.get("service-path") or [""])[0], 500)
     service_label = redact_text((qs.get("service_label") or qs.get("service-label") or [""])[0], 200)
+    fast = str((qs.get("fast") or [""])[0]).strip().lower() in {"1", "true", "yes", "on"}
+    effective_headers = headers
+    if agent_gateway_is_bound_auth(auth_ctx):
+        effective_headers = dict(headers)
+        effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
+        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or effective_headers.get("X-AgentOps-Workspace-Id")
+        or "local-demo"
+    )
+    task_id = redact_text((qs.get("task_id") or [""])[0], 160) or None
+    requested_agent_id = redact_text((qs.get("agent_id") or [""])[0], 120) or None
+    if not requested_agent_id:
+        requested_agent_id = redact_text((auth_ctx or {}).get("agent_id") or effective_headers.get("X-AgentOps-Agent-Id") or "", 120) or None
+    if fast:
+        items = [
+            operator_loop_bootstrap_item(
+                operator_loop_bootstrap_fast_start_check(
+                    adapter=adapter,
+                    workspace_id=workspace_id,
+                    task_id=task_id,
+                    agent_id=requested_agent_id,
+                    limit=limit,
+                    max_steps=max_steps,
+                    reason="fast_requested",
+                ),
+                operator_loop_bootstrap_fast_supervision(adapter=adapter, limit=limit),
+                adapter=adapter,
+                manager=manager,
+                max_steps=max_steps,
+                limit=limit,
+                service_path=service_path,
+                service_label=service_label,
+            )
+            for adapter in adapters
+        ]
+        next_actions = []
+        for item in items:
+            command = item.get("next_action")
+            if command and command not in next_actions:
+                next_actions.append(command)
+        return {
+            "provider": "agentops-operator",
+            "operation": "operator_loop_bootstrap",
+            "status": "blocked",
+            "mode": "fast",
+            "workspace_id": workspace_id,
+            "adapters": adapters,
+            "summary": {
+                "mode": "fast",
+                "items": len(items),
+                "ready": 0,
+                "attention": sum(1 for item in items if item.get("status") == "attention"),
+                "blocked": sum(1 for item in items if item.get("status") == "blocked"),
+                "current_code_ok": False,
+                "deep_verification_required": True,
+                "local_cli_service_check_performed": False,
+            },
+            "items": items,
+            "next_actions": next_actions[:8],
+            "supervision_summary": {
+                "status": "not_read_fast_bootstrap",
+                "reason": "fast_requested",
+                "token_omitted": True,
+            },
+            "contract": "fast read-only API bootstrap packet for local Hermes/OpenClaw loop deployment; it returns copy-only startup commands without heavy start-check or loop-supervision reads, and confirm-loop remains blocked until deep verification passes",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "local_cli_service_check_performed": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "raw_content_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+            "live_execution_performed": False,
+        }
     base_query = {
         "limit": [str(limit)],
         "loop_id": qs.get("loop_id") or [],
