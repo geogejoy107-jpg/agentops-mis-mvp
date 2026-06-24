@@ -293,7 +293,11 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   MIS API provider plus Next.js, proves Hermes/OpenClaw customer-worker sync
   and async requests enter the backend prepared-action wall through the Next
   proxy and form fallback, require approval before resume, block request-hash
-  mismatch and replay, and surface only IDs, request hashes, status, and
+  mismatch and replay, and read back
+  `/api/mis/workflows/customer-worker-prepared-actions` so the Dispatch page
+  can render ledger-derived pending/approved actions with safe redacted
+  `resume_form` fields. The readback still surfaces only IDs, adapter,
+  sync/async flag, approval decision, request hashes, status/result ids, and
   omission flags.
 
   The task/run route parity smoke starts isolated MIS API and Next.js servers,

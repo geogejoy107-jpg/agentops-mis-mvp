@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Clock3, LockKeyhole, Play, ShieldCheck, Workflow } from "lucide-react";
 import { AppFrame } from "./AppFrame";
-import type { CommercialEntitlementStatus, CustomerTaskTemplateListPayload, WorkflowJobListPayload } from "@/lib/mis";
+import type { CommercialEntitlementStatus, CustomerTaskTemplateListPayload, CustomerWorkerPreparedAction, CustomerWorkerPreparedActionListPayload, WorkflowJobListPayload } from "@/lib/mis";
 
 type DispatchFeedback = {
   status?: string;
@@ -44,6 +44,27 @@ function shortId(value?: string) {
   return value.length > 18 ? `${value.slice(0, 18)}...` : value;
 }
 
+function workerDefaults(action: CustomerWorkerPreparedAction) {
+  if (action.async_job) {
+    return {
+      route: "/workspace/dispatch/customer-worker-job",
+      title: action.resume_form?.title || "Next async customer worker job",
+      workerAgentId: action.resume_form?.worker_agent_id || action.requested_by_agent_id || "agt_next_customer_worker_async",
+      description: action.resume_form?.description || "Next.js submits one safe async customer-worker job and reads job status back through the MIS proxy.",
+      acceptance: action.resume_form?.acceptance_criteria || "Workflow job must complete with run, artifact, delivery approval, and verified plan evidence without token leakage.",
+      label: "Resume job",
+    };
+  }
+  return {
+    route: "/workspace/dispatch/customer-worker",
+    title: action.resume_form?.title || "Next customer worker dispatch",
+    workerAgentId: action.resume_form?.worker_agent_id || action.requested_by_agent_id || "agt_next_customer_worker",
+    description: action.resume_form?.description || "Next.js dispatches one safe mock customer-worker task and reads back ledger evidence.",
+    acceptance: action.resume_form?.acceptance_criteria || "Worker must write run, tool, evaluation, audit, artifact, memory, approval, and verified plan evidence.",
+    label: "Resume worker",
+  };
+}
+
 export function DispatchParityPage({
   entitlements,
   entitlementsError,
@@ -51,6 +72,8 @@ export function DispatchParityPage({
   templatesError,
   workflowJobs,
   workflowJobsError,
+  preparedActions,
+  preparedActionsError,
   feedback,
 }: Readonly<{
   entitlements: CommercialEntitlementStatus;
@@ -59,12 +82,15 @@ export function DispatchParityPage({
   templatesError?: string | null;
   workflowJobs: WorkflowJobListPayload;
   workflowJobsError?: string | null;
+  preparedActions: CustomerWorkerPreparedActionListPayload;
+  preparedActionsError?: string | null;
   feedback?: DispatchFeedback;
 }>) {
   const reportTemplateGate = gateFor(entitlements, "report_templates");
   const reportTemplatesEnabled = Boolean(entitlements.capabilities?.report_templates);
   const rows = templates.templates || [];
   const jobs = workflowJobs.jobs || [];
+  const preparedQueue = preparedActions.prepared_actions || [];
 
   return (
     <AppFrame>
@@ -80,6 +106,7 @@ export function DispatchParityPage({
       {entitlementsError ? <div className="banner error">Entitlements unavailable: {entitlementsError}</div> : null}
       {templatesError ? <div className="banner error">Templates unavailable: {templatesError}</div> : null}
       {workflowJobsError ? <div className="banner error">Workflow jobs unavailable: {workflowJobsError}</div> : null}
+      {preparedActionsError ? <div className="banner error">Prepared actions unavailable: {preparedActionsError}</div> : null}
       {feedback?.status === "blocked" ? (
         <div className="banner warn">
           <strong>Entitlement required:</strong> {feedback.capability || "report_templates"} requires {feedback.requiredEdition || "pro_workspace"}; current edition is {feedback.currentEdition || entitlements.edition || "free_local"}.
@@ -229,6 +256,54 @@ export function DispatchParityPage({
             <button className="miniButton" type="submit"><ShieldCheck size={13} /> Resume approved worker</button>
           </form>
         ) : null}
+      </section>
+
+      <section className="panel wide">
+        <div className="panelHeader">
+          <h2><ShieldCheck size={14} /> Prepared worker actions</h2>
+          <span>{preparedQueue.length} resumable checks</span>
+        </div>
+        <div className="proofStrip">
+          <span>workflow {preparedActions.workflow || "customer_worker_task"}</span>
+          <span>raw request omitted {boolText(preparedActions.raw_request_omitted)}</span>
+          <span>raw result omitted {boolText(preparedActions.raw_result_omitted)}</span>
+          <span>token omitted {boolText(preparedActions.token_omitted)}</span>
+        </div>
+        <div className="list" data-smoke="customer-worker-prepared-actions">
+          {preparedQueue.length ? preparedQueue.map((action) => {
+            const defaults = workerDefaults(action);
+            return (
+              <article className="row tall" key={action.prepared_action_id}>
+                <div>
+                  <strong>{action.async_job ? "Async worker prepared action" : "Worker prepared action"}</strong>
+                  <span>{shortId(action.prepared_action_id)} · {action.status || "status unknown"} · approval {action.approval_decision || "unknown"}</span>
+                  <p>request {shortId(action.request_hash || action.request_hash_short || "")} · adapter {action.adapter || "unknown"} · target {action.target_resource || "agentops://workflow/customer-worker-task"}</p>
+                </div>
+                <div className="rowActions">
+                  <span className="metaPill">raw omitted {boolText(action.raw_request_omitted)}</span>
+                  <span className="metaPill">resume {boolText(action.can_resume)}</span>
+                  {action.task_id ? <Link className="miniButton" href={`/workspace/tasks/${encodeURIComponent(action.task_id)}`}>Task</Link> : null}
+                  {action.run_id ? <Link className="miniButton" href={`/workspace/runs/${encodeURIComponent(action.run_id)}`}>Run</Link> : null}
+                  {action.can_resume && action.request_hash ? (
+                    <form method="post" action={defaults.route}>
+                      <input type="hidden" name="adapter" value={action.adapter || "openclaw"} />
+                      <input type="hidden" name="prepared_action_id" value={action.prepared_action_id} />
+                      <input type="hidden" name="request_hash" value={action.request_hash} />
+                      <input type="hidden" name="title" value={defaults.title} />
+                      <input type="hidden" name="worker_agent_id" value={defaults.workerAgentId} />
+                      <input type="hidden" name="description" value={defaults.description} />
+                      <input type="hidden" name="acceptance_criteria" value={defaults.acceptance} />
+                      <input type="hidden" name="priority" value={action.resume_form?.priority || "high"} />
+                      <input type="hidden" name="risk_level" value={action.resume_form?.risk_level || "medium"} />
+                      <button className="miniButton" type="submit"><ShieldCheck size={13} /> {defaults.label}</button>
+                    </form>
+                  ) : null}
+                  {action.waiting_for_approval ? <Link className="miniButton" href="/workspace/approvals">Approvals</Link> : null}
+                </div>
+              </article>
+            );
+          }) : <p className="empty">No prepared customer-worker actions loaded.</p>}
+        </div>
       </section>
 
       <section className="panel wide">

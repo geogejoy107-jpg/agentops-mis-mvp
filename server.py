@@ -2266,6 +2266,29 @@ def repo_list_workspace_prepared_actions(
     ).fetchall()
 
 
+def repo_list_workspace_customer_worker_prepared_actions(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    statuses: list[str] | None = None,
+    limit: int = 100,
+) -> list[sqlite3.Row]:
+    workspace_id = normalize_workspace_id(workspace_id)
+    limit = max(1, min(int(limit or 100), 200))
+    params: list = [workspace_id, CUSTOMER_WORKER_PREPARED_ACTION_PROVIDER, CUSTOMER_WORKER_PREPARED_ACTION_TYPE]
+    where = ["workspace_id=?", "provider=?", "action_type=?"]
+    if statuses:
+        where.append("status IN (" + ",".join("?" for _ in statuses) + ")")
+        params.extend(statuses)
+    params.append(limit)
+    return conn.execute(
+        f"""SELECT * FROM prepared_actions
+        WHERE {' AND '.join(where)}
+        ORDER BY updated_at DESC
+        LIMIT ?""",
+        params,
+    ).fetchall()
+
+
 def repo_get_workspace_prepared_action(conn: sqlite3.Connection, workspace_id: str, prepared_action_id: str) -> sqlite3.Row | None:
     return conn.execute(
         "SELECT * FROM prepared_actions WHERE workspace_id=? AND prepared_action_id=?",
@@ -8315,6 +8338,134 @@ def workflow_job_public(row: sqlite3.Row | dict | None) -> dict | None:
     }
 
 
+def query_flag(qs: dict, key: str, default: bool = False) -> bool:
+    value = (qs.get(key) or [None])[0]
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def customer_worker_prepared_action_public(conn: sqlite3.Connection, row: sqlite3.Row | dict | None) -> dict | None:
+    if not row:
+        return None
+    data = dict(row)
+    if data.get("provider") != CUSTOMER_WORKER_PREPARED_ACTION_PROVIDER:
+        return None
+    if data.get("action_type") != CUSTOMER_WORKER_PREPARED_ACTION_TYPE:
+        return None
+
+    args: dict = {}
+    try:
+        args = json.loads(data.get("normalized_args_json") or "{}")
+    except Exception:
+        args = {}
+    result: dict = {}
+    try:
+        result = json.loads(data.get("result_json") or "{}")
+    except Exception:
+        result = {}
+    approval = None
+    if data.get("approval_id"):
+        approval = conn.execute(
+            "SELECT approval_id, decision, expires_at, created_at, decided_at FROM approvals WHERE approval_id=?",
+            (data.get("approval_id"),),
+        ).fetchone()
+    approval_decision = approval["decision"] if approval else None
+    status = data.get("status")
+    target_resource = data.get("target_resource") or ""
+    async_job = bool(args.get("async_job"))
+    default_title = "Next async customer worker job" if async_job else "Next customer worker dispatch"
+    default_description = (
+        "Next.js submits one safe async customer-worker job and reads job status back through the MIS proxy."
+        if async_job
+        else "Next.js dispatches one safe mock customer-worker task and reads back ledger evidence."
+    )
+    default_acceptance = (
+        "Workflow job must complete with run, artifact, delivery approval, and verified plan evidence without token leakage."
+        if async_job
+        else "Worker must write run, tool, evaluation, audit, artifact, memory, approval, and verified plan evidence."
+    )
+    return {
+        "prepared_action_id": data.get("prepared_action_id"),
+        "workspace_id": data.get("workspace_id"),
+        "task_id": data.get("task_id"),
+        "run_id": data.get("run_id"),
+        "tool_call_id": data.get("tool_call_id"),
+        "approval_id": data.get("approval_id"),
+        "approval_decision": approval_decision,
+        "approval_expires_at": approval["expires_at"] if approval else None,
+        "approval_decided_at": approval["decided_at"] if approval else None,
+        "requested_by_agent_id": data.get("requested_by_agent_id"),
+        "action_type": data.get("action_type"),
+        "provider": data.get("provider"),
+        "target_resource": target_resource if target_resource.startswith(CUSTOMER_WORKER_PREPARED_TARGET_PREFIX) else None,
+        "adapter": args.get("adapter") if args.get("adapter") in {"mock", "hermes", "openclaw"} else None,
+        "async_job": async_job,
+        "status": status,
+        "request_hash": data.get("snapshot_hash"),
+        "request_hash_short": (data.get("snapshot_hash") or "")[:16],
+        "args_hash": data.get("args_hash"),
+        "created_at": data.get("created_at"),
+        "updated_at": data.get("updated_at"),
+        "approved_at": data.get("approved_at"),
+        "consumed_at": data.get("consumed_at"),
+        "can_resume": status == "approved" and approval_decision == "approved",
+        "waiting_for_approval": status == "waiting_approval" or approval_decision == "pending",
+        "result_hash": result.get("result_hash"),
+        "result_hash_short": (result.get("result_hash") or "")[:16],
+        "result_status": result.get("result_status"),
+        "result_task_id": result.get("result_task_id"),
+        "result_run_id": result.get("result_run_id"),
+        "result_artifact_id": result.get("result_artifact_id"),
+        "resume_form": {
+            "title": args.get("resume_title") or default_title,
+            "description": args.get("resume_description") or default_description,
+            "acceptance_criteria": args.get("resume_acceptance_criteria") or default_acceptance,
+            "priority": args.get("priority") or "high",
+            "risk_level": args.get("risk_level") or "medium",
+            "worker_agent_id": args.get("worker_agent_id") or data.get("requested_by_agent_id") or ("agt_next_customer_worker_async" if async_job else "agt_next_customer_worker"),
+            "raw_request_omitted": True,
+        },
+        "raw_request_omitted": True,
+        "raw_result_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def customer_worker_prepared_actions_readback(conn: sqlite3.Connection, headers, qs: dict) -> dict:
+    workspace_id = request_workspace(headers, qs)
+    allowed_statuses = {"prepared", "waiting_approval", "approved", "rejected", "consumed", "expired", "canceled"}
+    status_param = (qs.get("status") or [""])[0].strip().lower()
+    if status_param == "all":
+        statuses = None
+    elif status_param:
+        statuses = [item.strip() for item in status_param.split(",") if item.strip() in allowed_statuses]
+        if not statuses:
+            statuses = ["waiting_approval", "approved"]
+    else:
+        statuses = ["waiting_approval", "approved"]
+        if query_flag(qs, "include_consumed"):
+            statuses.append("consumed")
+    limit = int((qs.get("limit") or ["25"])[0])
+    rows = repo_list_workspace_customer_worker_prepared_actions(conn, workspace_id, statuses=statuses, limit=limit)
+    actions = [item for item in (customer_worker_prepared_action_public(conn, row) for row in rows) if item]
+    return {
+        "provider": CUSTOMER_WORKER_PREPARED_ACTION_PROVIDER,
+        "workflow": "customer_worker_task",
+        "workspace_id": workspace_id,
+        "prepared_actions": actions,
+        "count": len(actions),
+        "status_filter": statuses or "all",
+        "raw_request_omitted": True,
+        "raw_result_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+
+
 def _parse_iso_datetime(value: str | None) -> dt.datetime | None:
     if not value:
         return None
@@ -8559,6 +8710,11 @@ def submit_customer_task_template_job(conn, body: dict) -> tuple[dict, int]:
     }, 202
 
 
+CUSTOMER_WORKER_PREPARED_ACTION_TYPE = "workflow.customer_worker_task_external_write"
+CUSTOMER_WORKER_PREPARED_ACTION_PROVIDER = "agentops-worker"
+CUSTOMER_WORKER_PREPARED_TARGET_PREFIX = "agentops://workflow/customer-worker-task/"
+
+
 def customer_worker_external_write_args(
     body: dict,
     adapter: str,
@@ -8572,6 +8728,9 @@ def customer_worker_external_write_args(
         "workflow_type": "customer_worker_task",
         "adapter": adapter,
         "async_job": bool(async_job),
+        "resume_title": redact_text(title, 160),
+        "resume_description": redact_text(description, 800),
+        "resume_acceptance_criteria": redact_text(acceptance, 500),
         "title_hash": stable_hash(title),
         "description_hash": stable_hash(description),
         "acceptance_hash": stable_hash(acceptance),
@@ -8705,8 +8864,8 @@ def prepare_customer_worker_external_write(
         "tool_call_id": tool_call_id,
         "approval_id": approval_id,
         "requested_by_agent_id": worker_agent_id,
-        "action_type": "workflow.customer_worker_task_external_write",
-        "provider": "agentops-worker",
+        "action_type": CUSTOMER_WORKER_PREPARED_ACTION_TYPE,
+        "provider": CUSTOMER_WORKER_PREPARED_ACTION_PROVIDER,
         "target_resource": f"agentops://workflow/customer-worker-task/{'submit' if async_job else 'run'}",
         "normalized_args_json": json.dumps(args, ensure_ascii=False, sort_keys=True),
         "args_hash": None,
@@ -8754,7 +8913,7 @@ def resume_customer_worker_external_write(
 ) -> tuple[dict, int]:
     prepared_action_id = body.get("prepared_action_id")
     action = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
-    if not action or action["provider"] != "agentops-worker" or action["action_type"] != "workflow.customer_worker_task_external_write":
+    if not action or action["provider"] != CUSTOMER_WORKER_PREPARED_ACTION_PROVIDER or action["action_type"] != CUSTOMER_WORKER_PREPARED_ACTION_TYPE:
         return {"provider": "agentops-worker", "workflow": "customer_worker_task", "ok": False, "error": "prepared_action_not_found", "prepared_action_id": prepared_action_id, "token_omitted": True}, 404
     if action["status"] == "consumed":
         return {"provider": "agentops-worker", "workflow": "customer_worker_task", "ok": False, "error": "prepared_action_already_consumed", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
@@ -14520,6 +14679,8 @@ class Handler(BaseHTTPRequestHandler):
                 workspace_id = request_workspace(self.headers, qs)
                 rows = repo_list_workspace_workflow_jobs(conn, workspace_id, limit)
                 return self.send_json({"jobs": [workflow_job_public(row) for row in rows], "workspace_id": workspace_id, "token_omitted": True})
+            if path == "/api/workflows/customer-worker-prepared-actions":
+                return self.send_json(customer_worker_prepared_actions_readback(conn, self.headers, qs))
             if path == "/api/workflows/jobs/stuck":
                 threshold = int((qs.get("threshold_sec") or ["900"])[0])
                 limit = int((qs.get("limit") or ["25"])[0])

@@ -95,7 +95,10 @@ memory review actions through the Next.js UI, verifies the state change through
   the `/workspace/dispatch/customer-worker` form fallback, read task/run/artifact
   delivery approval and verified plan-evidence back through the Next proxy,
   reject invalid adapters with `adapter_invalid`, and prepare/resume
-  Hermes/OpenClaw live requests through the backend prepared-action wall.
+  Hermes/OpenClaw live requests through the backend prepared-action wall. It
+  also reads `/api/mis/workflows/customer-worker-prepared-actions` and renders a
+  ledger-derived pending/approved queue whose resume controls use safe redacted
+  `resume_form` fields instead of raw prepared-action JSON.
 - Customer-worker async job contract: the Next dispatch page can submit one
   safe mock `POST /api/mis/workflows/customer-worker-task/submit` through the
   MIS proxy and the `/workspace/dispatch/customer-worker-job` form fallback,
@@ -127,7 +130,7 @@ memory review actions through the Next.js UI, verifies the state change through
 - Interaction contract: approval review and memory review write through the Next.js UI, with client fetch plus Next form fallback routes, then refresh from the MIS API proxy
 - Ledger detail contract: task/run detail routes are read-only, load through the MIS API proxy, and expose linked evidence rows plus token omission state
 - Customer delivery contract: reports and customer project report pages load from the MIS API, surface Agent Plan / plan-evidence status, link to a read-only evidence drilldown, and report archive writes through a Next form fallback route before refreshing the report artifact evidence
-- Dispatch contract: customer task templates and commercial entitlement gates load from the MIS API; template execution uses a Next form fallback and must surface Free Local `report_templates` blocking without creating a project, then create a ledger-backed project/report artifact when an isolated `pro_workspace` entitlement fixture is active. The dispatch page also supports safe mock customer-worker task/job readback plus Hermes/OpenClaw prepared-action prepare/resume controls with delivery approval and plan-evidence proof. Pixel Office map parity and local-brief prepared-action controls live at `/workspace/pixel-office`; richer owner workflow remains canonical in Vite until later Gate 4 slices.
+- Dispatch contract: customer task templates and commercial entitlement gates load from the MIS API; template execution uses a Next form fallback and must surface Free Local `report_templates` blocking without creating a project, then create a ledger-backed project/report artifact when an isolated `pro_workspace` entitlement fixture is active. The dispatch page also supports safe mock customer-worker task/job readback plus Hermes/OpenClaw prepared-action prepare/resume controls, ledger-derived prepared-action resume queue, delivery approval, and plan-evidence proof. Pixel Office map parity and local-brief prepared-action controls live at `/workspace/pixel-office`; richer owner workflow remains canonical in Vite until later Gate 4 slices.
 - Canonical predecessors:
   - `ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx`
   - `ui/start-building-app/src/app/components/pages/AIEmployees.tsx`

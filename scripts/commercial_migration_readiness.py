@@ -348,9 +348,15 @@ def main() -> int:
             and file_contains("ui/next-app/app/workspace/dispatch/customer-worker-job/route.ts", "request_hash")
             and file_contains("ui/next-app/src/components/DispatchPage.tsx", "Async worker jobs")
             and file_contains("ui/next-app/src/components/DispatchPage.tsx", "Resume approved job")
+            and file_contains("ui/next-app/src/components/DispatchPage.tsx", "Prepared worker actions")
+            and file_contains("ui/next-app/src/components/DispatchPage.tsx", "customer-worker-prepared-actions")
             and file_contains("ui/next-app/src/components/DispatchPage.tsx", "/workspace/dispatch/customer-worker-job")
             and file_contains("ui/next-app/src/lib/misServer.ts", "loadServerWorkflowJobs")
             and file_contains("ui/next-app/src/lib/misServer.ts", "/workflows/jobs?limit=")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "loadServerCustomerWorkerPreparedActions")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "/workflows/customer-worker-prepared-actions?limit=")
+            and file_contains("ui/next-app/src/lib/mis.ts", "CustomerWorkerPreparedActionListPayload")
+            and file_contains("ui/next-app/src/lib/mis.ts", "resume_form")
             and file_contains("scripts/nextjs_customer_worker_dispatch_smoke.py", "nextjs_customer_worker_dispatch_v1")
             and file_contains("scripts/nextjs_customer_worker_dispatch_smoke.py", "/api/mis/workflows/customer-worker-task")
             and file_contains("scripts/nextjs_customer_worker_dispatch_smoke.py", "/workspace/dispatch/customer-worker")
@@ -362,6 +368,8 @@ def main() -> int:
             and file_contains("scripts/nextjs_customer_worker_async_job_smoke.py", "/api/mis/workflows/jobs/:job_id")
             and file_contains("scripts/nextjs_customer_worker_async_job_smoke.py", "adapter_invalid")
             and file_contains("scripts/nextjs_customer_worker_prepared_action_smoke.py", "nextjs_customer_worker_prepared_action_v1")
+            and file_contains("scripts/nextjs_customer_worker_prepared_action_smoke.py", "/api/mis/workflows/customer-worker-prepared-actions")
+            and file_contains("scripts/nextjs_customer_worker_prepared_action_smoke.py", "resume_form")
             and file_contains("scripts/nextjs_customer_worker_prepared_action_smoke.py", "prepared_action_request_hash_mismatch")
             and file_contains("scripts/nextjs_customer_worker_prepared_action_smoke.py", "prepared_action_already_consumed")
             and file_contains("scripts/nextjs_worker_stuck_release_smoke.py", "nextjs_worker_stuck_release_v1")
@@ -423,7 +431,7 @@ def main() -> int:
             and (ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_enrollment_request_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py").exists(),
-            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, CLI worker dogfood proof through the Next proxy, read-only Pixel Operating Map parity, local brief prepared-action exact resume with approval/hash/replay guards, worker mock dispatch, customer-worker prepared-action exact resume for Hermes/OpenClaw plus mock dispatch/readback, async customer-worker prepared-action submit/resume plus mock job status readback, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
+            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, CLI worker dogfood proof through the Next proxy, read-only Pixel Operating Map parity, local brief prepared-action exact resume with approval/hash/replay guards, worker mock dispatch, customer-worker prepared-action exact resume for Hermes/OpenClaw plus ledger-derived safe resume readback, async customer-worker prepared-action submit/resume plus mock job status readback, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
         ),
         check(
             "vite_browser_snapshot_surface_exists",

@@ -259,6 +259,9 @@ def main() -> int:
     require("read-only Pixel Operating Map" in pixel_dispatch_gate, "pixel_office_and_dispatch retirement gate must record Next Pixel Office floor evidence")
     require("local-brief prepared-action exact resume" in pixel_dispatch_gate, "pixel_office_and_dispatch retirement gate must record Next local brief prepared-action evidence")
     require("customer-worker prepared-action exact resume" in pixel_dispatch_gate, "pixel_office_and_dispatch retirement gate must record customer-worker prepared-action evidence")
+    require("safe resume_form readback" in pixel_dispatch_gate, "pixel_office_and_dispatch retirement gate must record ledger-derived prepared-action resume readback")
+    pixel_dispatch_contracts = entries_by_id.get("pixel_office_and_dispatch", {}).get("api_contracts") or []
+    require("GET /workflows/customer-worker-prepared-actions" in pixel_dispatch_contracts, "pixel_office_and_dispatch must include customer-worker prepared-action readback API")
     assert_entry_routes(entries_by_id.get("tool_calls"), "tool_calls", ["/admin/toolcalls"], ["/workspace/tool-calls"])
     tool_call_evidence = entries_by_id.get("tool_calls", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_parity_smoke.py" in tool_call_evidence, "tool_calls must include Next static parity evidence")
@@ -282,6 +285,8 @@ def main() -> int:
     require("python3 scripts/nextjs_customer_worker_async_job_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next customer-worker async job proxy evidence")
     require("python3 scripts/nextjs_customer_worker_prepared_action_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next customer-worker prepared-action proxy evidence")
     require("python3 scripts/nextjs_enrollment_request_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next enrollment proxy guard evidence")
+    next_proxy_contracts = entries_by_id.get("next_mis_proxy", {}).get("api_contracts") or []
+    require(any("customer-worker-prepared-actions" in contract for contract in next_proxy_contracts), "next_mis_proxy must include customer-worker prepared-action readback proxy contract")
 
     vite_routes = actual_vite_routes()
     next_routes = actual_next_routes()

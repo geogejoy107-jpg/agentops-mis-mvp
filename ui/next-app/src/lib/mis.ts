@@ -876,6 +876,68 @@ export type WorkflowJobListPayload = {
   token_omitted?: boolean;
 };
 
+export type CustomerWorkerPreparedAction = {
+  prepared_action_id: string;
+  workspace_id?: string;
+  task_id?: string | null;
+  run_id?: string | null;
+  tool_call_id?: string | null;
+  approval_id?: string | null;
+  approval_decision?: string | null;
+  approval_expires_at?: string | null;
+  approval_decided_at?: string | null;
+  requested_by_agent_id?: string | null;
+  action_type?: string;
+  provider?: string;
+  target_resource?: string | null;
+  adapter?: string | null;
+  async_job?: boolean;
+  status?: string;
+  request_hash?: string | null;
+  request_hash_short?: string | null;
+  args_hash?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  approved_at?: string | null;
+  consumed_at?: string | null;
+  can_resume?: boolean;
+  waiting_for_approval?: boolean;
+  result_hash?: string | null;
+  result_hash_short?: string | null;
+  result_status?: number | null;
+  result_task_id?: string | null;
+  result_run_id?: string | null;
+  result_artifact_id?: string | null;
+  resume_form?: {
+    title?: string;
+    description?: string;
+    acceptance_criteria?: string;
+    priority?: string;
+    risk_level?: string;
+    worker_agent_id?: string;
+    raw_request_omitted?: boolean;
+  };
+  raw_request_omitted?: boolean;
+  raw_result_omitted?: boolean;
+  raw_prompt_omitted?: boolean;
+  raw_response_omitted?: boolean;
+  token_omitted?: boolean;
+};
+
+export type CustomerWorkerPreparedActionListPayload = {
+  provider?: string;
+  workflow?: string;
+  workspace_id?: string;
+  prepared_actions: CustomerWorkerPreparedAction[];
+  count?: number;
+  status_filter?: string[] | string;
+  raw_request_omitted?: boolean;
+  raw_result_omitted?: boolean;
+  raw_prompt_omitted?: boolean;
+  raw_response_omitted?: boolean;
+  token_omitted?: boolean;
+};
+
 export type PlanEvidenceManifest = {
   manifest_id?: string;
   workspace_id?: string;

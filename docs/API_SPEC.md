@@ -246,6 +246,7 @@ POST /api/workflows/hermes-openclaw-loop
 GET  /api/workflows/hermes-openclaw-loop?loop_id=loop_123
 POST /api/workflows/customer-task-templates/run
 POST /api/workflows/customer-task-templates/submit
+GET  /api/workflows/customer-worker-prepared-actions
 GET  /api/workflows/jobs
 GET  /api/workflows/jobs/stuck
 GET  /api/workflows/jobs/:job_id
@@ -261,6 +262,13 @@ queues the same workflow as a `workflow_jobs` row and returns immediately with a
 outlive a short browser or CLI request. Job records store status, request hash,
 safe summaries, result ids, and safe result JSON; they must not store raw
 prompts, raw responses, credentials, tokens, or private transcripts.
+
+`/workflows/customer-worker-prepared-actions` returns the workspace-scoped,
+customer-worker-only prepared-action queue for Dispatch resume UX. Rows expose
+ids, adapter, sync/async flag, approval decision, request hash, safe redacted
+`resume_form`, status, result ids/hashes and omission flags only. It must not
+return `normalized_args_json`, `result_json`, `snapshot_ref`, raw prompts, raw
+responses, credentials, tokens, or private transcripts.
 
 `/workflows/jobs/stuck` lists queued/running jobs older than a threshold.
 `/mark-failed` is an operator recovery action for stale jobs; it marks the job

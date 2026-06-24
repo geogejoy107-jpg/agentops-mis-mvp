@@ -88,7 +88,7 @@
     },
     {
       "id": "pixel_office_and_dispatch",
-      "capability": "Pixel Office map plus local brief controls plus customer task/template dispatch; Next currently proves a read-only Pixel Operating Map, local-brief prepared-action exact resume with approval before live Agnesfallback execution, isolated Pro template dispatch, safe mock customer-worker dispatch/readback, and Hermes/OpenClaw customer-worker prepared-action exact resume.",
+      "capability": "Pixel Office map plus local brief controls plus customer task/template dispatch; Next currently proves a read-only Pixel Operating Map, local-brief prepared-action exact resume with approval before live Agnesfallback execution, isolated Pro template dispatch, safe mock customer-worker dispatch/readback, Hermes/OpenClaw customer-worker prepared-action exact resume, and ledger-derived safe prepared-action resume readback.",
       "status": "partial",
       "gate4_required": true,
       "vite_routes": [
@@ -113,6 +113,7 @@
         "POST /workflows/customer-task",
         "POST /workflows/customer-worker-task",
         "POST /workflows/customer-worker-task/submit",
+        "GET /workflows/customer-worker-prepared-actions",
         "GET /workflows/jobs",
         "GET /workflows/jobs/:job_id"
       ],
@@ -145,7 +146,7 @@
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Next currently proves read-only Pixel Operating Map parity, local-brief prepared-action exact resume with approval-required, hash-mismatch, consume, and replay guards, Free Local blocking, isolated Pro template entitlement dispatch, safe mock customer-worker dispatch/job readback, and Hermes/OpenClaw customer-worker prepared-action exact resume with approval-required, hash-mismatch, consume, and replay guards; it still lacks richer owner dispatch workflow and explicit visual route retirement evidence."
+      "retirement_gate": "Next currently proves read-only Pixel Operating Map parity, local-brief prepared-action exact resume with approval-required, hash-mismatch, consume, and replay guards, Free Local blocking, isolated Pro template entitlement dispatch, safe mock customer-worker dispatch/job readback, and Hermes/OpenClaw customer-worker prepared-action exact resume with approval-required, hash-mismatch, consume, replay guards, and ledger-derived safe resume_form readback; it still lacks richer owner dispatch workflow and explicit visual route retirement evidence."
     },
     {
       "id": "task_list",
@@ -888,6 +889,7 @@
         "POST /api/mis/agent-gateway/enrollment/create -> AGENTOPS_API_BASE blocked before upstream by enrollment_token_issue_not_allowed_next_parity",
         "POST /api/mis/workflows/customer-worker-task -> AGENTOPS_API_BASE/workflows/customer-worker-task with prepared-action exact-resume guard for Hermes/OpenClaw",
         "POST /api/mis/workflows/customer-worker-task/submit -> AGENTOPS_API_BASE/workflows/customer-worker-task/submit with prepared-action exact-resume guard for Hermes/OpenClaw",
+        "GET /api/mis/workflows/customer-worker-prepared-actions -> AGENTOPS_API_BASE/workflows/customer-worker-prepared-actions with safe customer-worker prepared-action projection",
         "POST /api/mis/workflows/local-brief -> AGENTOPS_API_BASE/workflows/local-brief with prepared-action exact-resume guard"
       ],
       "vite_files": [],

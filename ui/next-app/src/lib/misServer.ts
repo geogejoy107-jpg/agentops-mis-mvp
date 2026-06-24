@@ -6,6 +6,7 @@ import type {
   AgentSummary,
   CommercialEntitlementStatus,
   CustomerDeliveryBoardPayload,
+  CustomerWorkerPreparedActionListPayload,
   CustomerProjectIndexPayload,
   CustomerProjectReportPayload,
   CustomerTaskTemplateListPayload,
@@ -220,6 +221,14 @@ export async function loadServerWorkflowJobs(limit = 6): Promise<ServerLoadResul
     return { data: await serverMisJson<WorkflowJobListPayload>(`/workflows/jobs?limit=${encodeURIComponent(String(limit))}`), error: null };
   } catch (err) {
     return { data: { jobs: [] }, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerCustomerWorkerPreparedActions(limit = 6): Promise<ServerLoadResult<CustomerWorkerPreparedActionListPayload>> {
+  try {
+    return { data: await serverMisJson<CustomerWorkerPreparedActionListPayload>(`/workflows/customer-worker-prepared-actions?limit=${encodeURIComponent(String(limit))}`), error: null };
+  } catch (err) {
+    return { data: { prepared_actions: [] }, error: err instanceof Error ? err.message : String(err) };
   }
 }
 

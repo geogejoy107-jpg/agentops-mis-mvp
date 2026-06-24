@@ -225,8 +225,12 @@ creation with `adapter_invalid`.
 MIS API provider plus Next.js, proves Hermes/OpenClaw customer-worker sync and
 async requests pass through the Next proxy into the backend prepared-action
 wall, require approval before resume, block request-hash mismatch and replay,
-and expose only IDs, request hashes, prepared-action status, and omission flags
-through the proxy/form fallback.
+and load `GET /api/mis/workflows/customer-worker-prepared-actions` so Dispatch
+can render a ledger-derived pending/approved queue with safe redacted
+`resume_form` fields. The readback exposes only IDs, adapter, sync/async flag,
+approval decision, request hashes, status/result ids, and omission flags; it
+must not expose raw `normalized_args_json`, `result_json`, `snapshot_ref`,
+prompts, responses, credentials, tokens, or private transcripts.
 
 `python3 scripts/nextjs_worker_stuck_release_smoke.py`
 (`nextjs_worker_stuck_release_v1`) starts isolated MIS API and Next.js servers,

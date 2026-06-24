@@ -1,5 +1,5 @@
 import { DispatchParityPage } from "@/components/DispatchPage";
-import { loadServerCommercialEntitlements, loadServerCustomerTaskTemplates, loadServerWorkflowJobs } from "@/lib/misServer";
+import { loadServerCommercialEntitlements, loadServerCustomerTaskTemplates, loadServerCustomerWorkerPreparedActions, loadServerWorkflowJobs } from "@/lib/misServer";
 
 export const dynamic = "force-dynamic";
 
@@ -14,10 +14,11 @@ function one(value: string | string[] | undefined) {
 }
 
 export default async function DispatchPage({ searchParams }: PageProps) {
-  const [entitlements, templates, workflowJobs, params] = await Promise.all([
+  const [entitlements, templates, workflowJobs, preparedActions, params] = await Promise.all([
     loadServerCommercialEntitlements(),
     loadServerCustomerTaskTemplates(),
     loadServerWorkflowJobs(),
+    loadServerCustomerWorkerPreparedActions(),
     searchParams || Promise.resolve({} as SearchParams),
   ]);
   return (
@@ -28,6 +29,8 @@ export default async function DispatchPage({ searchParams }: PageProps) {
       templatesError={templates.error}
       workflowJobs={workflowJobs.data}
       workflowJobsError={workflowJobs.error}
+      preparedActions={preparedActions.data}
+      preparedActionsError={preparedActions.error}
       feedback={{
         status: one(params.run_status),
         capability: one(params.capability),

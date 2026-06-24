@@ -15,6 +15,11 @@ function safeText(value: FormDataEntryValue | null, fallback: string) {
   return text || fallback;
 }
 
+function safeChoice(value: FormDataEntryValue | null, choices: string[], fallback: string) {
+  const text = safeText(value, fallback);
+  return choices.includes(text) ? text : fallback;
+}
+
 export async function POST(request: Request) {
   const form = await request.formData();
   const adapter = safeText(form.get("adapter"), "mock");
@@ -35,8 +40,8 @@ export async function POST(request: Request) {
     title: safeText(form.get("title"), "Next customer worker dispatch"),
     description: safeText(form.get("description"), "Next.js dispatches one safe mock customer-worker task."),
     acceptance_criteria: safeText(form.get("acceptance_criteria"), "Worker must write run, tool, evaluation, audit, artifact, memory, approval, and verified plan evidence."),
-    priority: "high",
-    risk_level: "medium",
+    priority: safeChoice(form.get("priority"), ["low", "medium", "high", "critical"], "high"),
+    risk_level: safeChoice(form.get("risk_level"), ["low", "medium", "high", "critical"], "medium"),
     worker_agent_id: safeText(form.get("worker_agent_id"), "agt_next_customer_worker"),
     selected_agent_ids: [safeText(form.get("worker_agent_id"), "agt_next_customer_worker")],
     ...(preparedActionId ? { prepared_action_id: preparedActionId } : {}),

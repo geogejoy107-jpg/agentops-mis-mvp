@@ -75,6 +75,14 @@ def http_json_status(method: str, url: str, payload: dict[str, Any] | None = Non
         return exc.code, body
 
 
+def http_text_status(url: str) -> tuple[int, str]:
+    try:
+        with urllib.request.urlopen(url, timeout=60) as response:
+            return response.status, response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", errors="replace")
+
+
 def post_form_no_redirect(url: str, data: dict[str, str]) -> tuple[int, str]:
     encoded = urllib.parse.urlencode(data).encode("utf-8")
 
@@ -215,6 +223,23 @@ def approve(next_base: str, approval_id: str) -> dict[str, Any]:
     return payload
 
 
+def prepared_action_readback(next_base: str, action_id: str, *, include_consumed: bool = False) -> dict[str, Any]:
+    suffix = "?limit=20"
+    if include_consumed:
+        suffix += "&include_consumed=true"
+    status, payload = http_json_status("GET", f"{next_base}/api/mis/workflows/customer-worker-prepared-actions{suffix}")
+    require(status == 200, f"prepared-action readback failed: {status} {payload}")
+    require(payload.get("raw_request_omitted") is True and payload.get("raw_result_omitted") is True, f"prepared-action payload omission flags missing: {payload}")
+    actions = payload.get("prepared_actions") or []
+    match = next((item for item in actions if item.get("prepared_action_id") == action_id), None)
+    require(match, f"prepared action {action_id} missing from readback: {payload}")
+    forbidden = {"normalized_args_json", "result_json", "snapshot_ref"}
+    leaked_fields = sorted(forbidden.intersection(match))
+    require(not leaked_fields, f"prepared-action readback leaked raw fields: {leaked_fields} in {match}")
+    require(match.get("raw_request_omitted") is True and match.get("raw_result_omitted") is True, f"prepared-action row omission flags missing: {match}")
+    return match
+
+
 def prepared_body(adapter: str, *, async_job: bool = False) -> dict[str, Any]:
     return {
         "adapter": adapter,
@@ -239,12 +264,17 @@ def exercise_sync_proxy(next_base: str, calls: list[dict[str, Any]], transcripts
     action_id = str(prepare.get("prepared_action_id") or "")
     request_hash = str(prepare.get("request_hash") or "")
     require(action_id and request_hash and prepare.get("approval_id"), f"sync prepare missing ids: {prepare}")
+    waiting = prepared_action_readback(next_base, action_id)
+    require(waiting.get("status") == "waiting_approval" and waiting.get("approval_decision") == "pending", f"sync waiting readback wrong: {waiting}")
+    require(waiting.get("request_hash") == request_hash and waiting.get("can_resume") is False, f"sync waiting resume guard wrong: {waiting}")
 
     premature_status, premature = http_json_status("POST", f"{next_base}/api/mis/workflows/customer-worker-task", {**body, "prepared_action_id": action_id, "request_hash": request_hash})
     transcripts.append(premature)
     require(premature_status == 428 and premature.get("error") == "approval_required", f"sync premature wrong: {premature_status} {premature}")
 
     approve(next_base, str(prepare["approval_id"]))
+    approved = prepared_action_readback(next_base, action_id)
+    require(approved.get("status") == "approved" and approved.get("can_resume") is True, f"sync approved readback wrong: {approved}")
     mismatch_status, mismatch = http_json_status("POST", f"{next_base}/api/mis/workflows/customer-worker-task", {**body, "title": "Changed title", "prepared_action_id": action_id, "request_hash": request_hash})
     transcripts.append(mismatch)
     require(mismatch_status == 409 and mismatch.get("error") == "prepared_action_request_hash_mismatch", f"sync mismatch wrong: {mismatch_status} {mismatch}")
@@ -255,6 +285,8 @@ def exercise_sync_proxy(next_base: str, calls: list[dict[str, Any]], transcripts
     require(resume_status == 201 and resume.get("ok") is True, f"sync resume failed: {resume_status} {resume}")
     require(resume.get("prepared_action_status") == "consumed", f"sync action not consumed: {resume}")
     require(len(calls) == 1, f"sync provider not called exactly once: {calls}")
+    consumed = prepared_action_readback(next_base, action_id, include_consumed=True)
+    require(consumed.get("status") == "consumed" and consumed.get("can_resume") is False, f"sync consumed readback wrong: {consumed}")
 
     replay_status, replay = http_json_status("POST", f"{next_base}/api/mis/workflows/customer-worker-task", {**body, "prepared_action_id": action_id, "request_hash": request_hash})
     transcripts.append(replay)
@@ -265,6 +297,13 @@ def exercise_sync_proxy(next_base: str, calls: list[dict[str, Any]], transcripts
 
 def exercise_sync_form(next_base: str, calls: list[dict[str, Any]], transcripts: list[Any]) -> dict[str, str]:
     form_body = {key: str(value) for key, value in prepared_body("openclaw").items() if key not in {"confirm_run", "selected_agent_ids"}}
+    form_body.update({
+        "title": "Next prepared queue custom resume",
+        "description": "Custom dispatch text proves the ledger-derived resume form survives page refresh without raw JSON exposure.",
+        "acceptance_criteria": "The prepared action queue must resume this exact custom request by safe projected fields.",
+        "priority": "medium",
+        "risk_level": "high",
+    })
     status, location = post_form_no_redirect(f"{next_base}/workspace/dispatch/customer-worker", form_body)
     transcripts.append(location)
     require(status == 303, f"sync form prepare did not redirect: {status} {location}")
@@ -275,8 +314,27 @@ def exercise_sync_form(next_base: str, calls: list[dict[str, Any]], transcripts:
     approval_id = (query.get("customer_worker_approval_id") or [""])[0]
     require(action_id and request_hash and approval_id, f"sync form missing prepared ids: {location}")
     approve(next_base, approval_id)
+    approved = prepared_action_readback(next_base, action_id)
+    require(approved.get("can_resume") is True and approved.get("request_hash") == request_hash, f"sync form approved queue wrong: {approved}")
+    resume_form = approved.get("resume_form") or {}
+    require(resume_form.get("title") == form_body["title"], f"sync form safe resume title missing: {approved}")
+    require(resume_form.get("description") == form_body["description"], f"sync form safe resume description missing: {approved}")
+    require(resume_form.get("acceptance_criteria") == form_body["acceptance_criteria"], f"sync form safe resume acceptance missing: {approved}")
+    page_status, page_html = http_text_status(f"{next_base}/workspace/dispatch")
+    require(page_status == 200, f"dispatch page failed while rendering prepared queue: {page_status}")
+    require("customer-worker-prepared-actions" in page_html and "Prepared worker actions" in page_html and "Resume worker" in page_html, "dispatch page did not render ledger-derived prepared action resume controls")
 
-    resume_body = {**form_body, "prepared_action_id": action_id, "request_hash": request_hash}
+    resume_body = {
+        "adapter": str(approved.get("adapter") or "openclaw"),
+        "prepared_action_id": action_id,
+        "request_hash": request_hash,
+        "title": str(resume_form.get("title") or ""),
+        "worker_agent_id": str(resume_form.get("worker_agent_id") or "agt_next_customer_worker"),
+        "description": str(resume_form.get("description") or ""),
+        "acceptance_criteria": str(resume_form.get("acceptance_criteria") or ""),
+        "priority": str(resume_form.get("priority") or "high"),
+        "risk_level": str(resume_form.get("risk_level") or "medium"),
+    }
     resume_status, resume_location = post_form_no_redirect(f"{next_base}/workspace/dispatch/customer-worker", resume_body)
     transcripts.append(resume_location)
     require(resume_status == 303, f"sync form resume did not redirect: {resume_status} {resume_location}")
@@ -295,14 +353,20 @@ def exercise_async_proxy(next_base: str, transcripts: list[Any]) -> dict[str, An
     action_id = str(prepare.get("prepared_action_id") or "")
     request_hash = str(prepare.get("request_hash") or "")
     require(action_id and request_hash and prepare.get("approval_id"), f"async prepare missing ids: {prepare}")
+    waiting = prepared_action_readback(next_base, action_id)
+    require(waiting.get("status") == "waiting_approval" and waiting.get("async_job") is True, f"async waiting readback wrong: {waiting}")
     premature_status, premature = http_json_status("POST", f"{next_base}/api/mis/workflows/customer-worker-task/submit", {**body, "prepared_action_id": action_id, "request_hash": request_hash})
     transcripts.append(premature)
     require(premature_status == 428 and premature.get("error") == "approval_required", f"async premature wrong: {premature_status} {premature}")
     approve(next_base, str(prepare["approval_id"]))
+    approved = prepared_action_readback(next_base, action_id)
+    require(approved.get("can_resume") is True and approved.get("adapter") == "hermes", f"async approved readback wrong: {approved}")
     resume_status, resume = http_json_status("POST", f"{next_base}/api/mis/workflows/customer-worker-task/submit", {**body, "prepared_action_id": action_id, "request_hash": request_hash})
     transcripts.append(resume)
     require(resume_status == 202 and resume.get("ok") is True and resume.get("job_id"), f"async resume failed: {resume_status} {resume}")
     require(resume.get("prepared_action_status") == "consumed", f"async action not consumed: {resume}")
+    consumed = prepared_action_readback(next_base, action_id, include_consumed=True)
+    require(consumed.get("status") == "consumed" and consumed.get("async_job") is True, f"async consumed readback wrong: {consumed}")
     replay_status, replay = http_json_status("POST", f"{next_base}/api/mis/workflows/customer-worker-task/submit", {**body, "prepared_action_id": action_id, "request_hash": request_hash})
     transcripts.append(replay)
     require(replay_status == 409 and replay.get("error") == "prepared_action_already_consumed", f"async replay wrong: {replay_status} {replay}")
