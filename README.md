@@ -675,6 +675,8 @@ python3 server.py
 
 打开 `/integrations` 可以查看 OpenClaw/Hermes/Notion 状态、汇报预览，并执行 dry-run 或实际导出。
 
+Notion / 开源实验底座 / 本地 Hermes-OpenClaw loop 的收拢顺序见 `docs/NOTION_OPEN_SOURCE_LOOP_CONVERGENCE_PLAN.md`。它把 Notion Project Ledger 定位成 Web GPT / 人类协作可见层，把开源底座定位成本地实验和证据来源，把 AgentOps MIS SQLite/API 保持为运行、审批、交付和审计的权威账本。
+
 ## 文件结构
 
 ```text
