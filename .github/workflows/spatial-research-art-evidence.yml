@@ -1,0 +1,116 @@
+name: Spatial Research Art Evidence
+
+on:
+  pull_request:
+    paths:
+      - "ui/start-building-app/src/app/components/pages/AdvancedSpatialOffice.tsx"
+      - "ui/start-building-app/src/app/components/spatial/**"
+      - "ui/start-building-app/src/app/spatial/**"
+      - "ui/start-building-app/src/assets/spatial/**"
+      - "ui/start-building-app/src/styles/spatial.css"
+      - "ui/start-building-app/src/styles/index.css"
+      - "ui/start-building-app/src/app/App.tsx"
+      - "ui/start-building-app/src/app/components/layout/Sidebar.tsx"
+      - "scripts/spatial_research_semantics_smoke.py"
+      - ".github/workflows/spatial-research-art-evidence.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spatial-research-art-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    name: Advanced Spatial screenshots
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/start-building-app/package-lock.json
+
+      - name: Install UI dependencies and build
+        working-directory: ui/start-building-app
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Install Chromium for deterministic capture
+        working-directory: ui/start-building-app
+        run: |
+          set -euo pipefail
+          npx --yes playwright@1.52.0 install --with-deps chromium
+
+      - name: Start built UI
+        working-directory: ui/start-building-app
+        run: |
+          set -euo pipefail
+          npx vite preview --host 127.0.0.1 --port 4173 > "$RUNNER_TEMP/spatial-vite.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/spatial-vite.pid"
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4173/workspace/spatial-world >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/spatial-vite.log"
+          exit 1
+
+      - name: Capture exact-head spatial evidence
+        working-directory: ui/start-building-app
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/spatial-research-art-v1
+          CAPTURE="npx --yes playwright@1.52.0 screenshot --browser=chromium --wait-for-timeout=3500 --full-page"
+
+          $CAPTURE --viewport-size="1600,1000" \
+            "http://127.0.0.1:4173/workspace/spatial-world?art=cozy&level=1" \
+            artifacts/spatial-research-art-v1/cozy-desktop-l1.png
+          $CAPTURE --viewport-size="1600,1000" \
+            "http://127.0.0.1:4173/workspace/spatial-world?art=industrial&level=1" \
+            artifacts/spatial-research-art-v1/industrial-desktop-l1.png
+          $CAPTURE --viewport-size="480,900" \
+            "http://127.0.0.1:4173/workspace/spatial-world?art=cozy&level=1" \
+            artifacts/spatial-research-art-v1/cozy-compact-l1.png
+          $CAPTURE --viewport-size="480,900" \
+            "http://127.0.0.1:4173/workspace/spatial-world?art=industrial&level=1" \
+            artifacts/spatial-research-art-v1/industrial-compact-l1.png
+
+          for level in 0 1 2 3; do
+            $CAPTURE --viewport-size="1280,900" \
+              "http://127.0.0.1:4173/workspace/spatial-world?art=cozy&level=${level}" \
+              "artifacts/spatial-research-art-v1/semantic-l${level}.png"
+          done
+
+      - name: Verify screenshot files
+        working-directory: ui/start-building-app
+        run: |
+          set -euo pipefail
+          test "$(find artifacts/spatial-research-art-v1 -type f -name '*.png' | wc -l)" -eq 8
+          du -h artifacts/spatial-research-art-v1/*.png
+
+      - name: Upload Spatial Research evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: spatial-research-art-v1-${{ github.sha }}
+          path: ui/start-building-app/artifacts/spatial-research-art-v1/*.png
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Stop built UI
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/spatial-vite.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/spatial-vite.pid")" 2>/dev/null || true
+          fi
+          cat "$RUNNER_TEMP/spatial-vite.log" 2>/dev/null || true

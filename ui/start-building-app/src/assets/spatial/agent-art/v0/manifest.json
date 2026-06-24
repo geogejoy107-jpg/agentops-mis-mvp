@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "spatial-agent-art-assets/v0",
+  "license": "PROJECT_OWNED",
+  "provenance": "first_party",
+  "externalProductionAssets": [],
+  "tracks": [
+    {
+      "id": "cozy-research-agent-v0",
+      "mode": "full-character",
+      "file": "cozy-research-agent-v0.png",
+      "frame": { "width": 32, "height": 48 },
+      "columns": 4,
+      "rows": 4,
+      "directions": ["south", "west", "east", "north"],
+      "phases": ["idle", "step-a", "passing", "step-b"],
+      "identityEncoding": ["silhouette", "hair", "coat", "scarf", "satchel", "notebook"],
+      "detachedBadge": false,
+      "misRole": "research-agent",
+      "formalRoute": "/workspace/agents"
+    },
+    {
+      "id": "industrial-agent-units-v0",
+      "mode": "complete-unit",
+      "file": "industrial-agent-units-v0.png",
+      "frame": { "width": 32, "height": 32 },
+      "columns": 3,
+      "rows": 2,
+      "roles": ["research", "coder", "browser", "memory", "approval", "runtime"],
+      "roleRoutes": {
+        "research": "/workspace/agents",
+        "coder": "/workspace/agents",
+        "browser": "/admin/toolcalls",
+        "memory": "/workspace/memory",
+        "approval": "/workspace/approvals",
+        "runtime": "/admin/connectors"
+      },
+      "identityEncoding": ["chassis", "core", "tool-module", "accent-ramp"],
+      "humanBody": false,
+      "detachedBadge": false
+    }
+  ],
+  "sha256": {
+    "cozy-research-agent-v0.png": "96553b0e297f6070896522f0fe2dccaa24018ee19b78fda235e3b82c2aa2390a",
+    "industrial-agent-units-v0.png": "1b3072980447505baf48145a17b6486bfb086d08995d444bf48395dfba928a86"
+  },
+  "references": [
+    {
+      "repository": "BenCreating/LPC-Spritesheet-Generator",
+      "licenseReviewed": "MIT code; art licenses vary per item",
+      "adoption": "animation, layer, palette, compatibility and provenance method only",
+      "assetsCopied": false
+    },
+    {
+      "repository": "Anuken/Mindustry",
+      "licenseReviewed": "GPL-3.0",
+      "adoption": "modular chassis/core/effect regions, outline generation, palette slots and generated UI icon method only",
+      "assetsCopied": false
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+[data-testid="advanced-spatial-office"] canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+@media (max-width: 767px) {
+  .app-shell > aside {
+    display: none;
+  }
+
+  .app-main {
+    padding: 0.75rem;
+  }
+
+  [data-testid="advanced-spatial-office"] {
+    min-width: 0;
+  }
+
+  [data-testid="spatial-agent-rail"] > div:last-child {
+    scrollbar-width: thin;
+  }
+}

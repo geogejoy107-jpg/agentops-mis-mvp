@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router";
 import {
   Home, CheckSquare, Bot, ShieldCheck, Brain, BarChart2, Package,
-  Activity, List, Wrench, Plug, Database, ClipboardList, Map,
+  Activity, List, Wrench, Plug, Database, ClipboardList, Map, Gamepad2,
   ChevronDown, ChevronRight, Zap,
 } from "lucide-react";
 import { pick, usePreferences } from "../../context/PreferencesContext";
@@ -23,14 +23,15 @@ const navGroups: NavGroup[] = [
   {
     titleKey: "clientWorkspace",
     items: [
-      { labelKey: "home",         path: "/workspace",              icon: <Home size={15} /> },
-      { labelKey: "pixelOffice",  path: "/workspace/pixel-office", icon: <Map size={15} /> },
-      { labelKey: "myTasks",      path: "/workspace/tasks",        icon: <CheckSquare size={15} /> },
-      { labelKey: "aiEmployees",  path: "/workspace/agents",       icon: <Bot size={15} /> },
-      { labelKey: "approvals",    path: "/workspace/approvals",    icon: <ShieldCheck size={15} /> },
-      { labelKey: "memory",       path: "/workspace/memory",       icon: <Brain size={15} /> },
-      { labelKey: "reports",      path: "/workspace/reports",      icon: <BarChart2 size={15} /> },
-      { labelKey: "templates",    path: "/admin/templates",        icon: <Package size={15} /> },
+      { labelKey: "home",         path: "/workspace",               icon: <Home size={15} /> },
+      { labelKey: "pixelOffice",  path: "/workspace/pixel-office",  icon: <Map size={15} /> },
+      { labelKey: "spatialWorld", path: "/workspace/spatial-world", icon: <Gamepad2 size={15} /> },
+      { labelKey: "myTasks",      path: "/workspace/tasks",         icon: <CheckSquare size={15} /> },
+      { labelKey: "aiEmployees",  path: "/workspace/agents",        icon: <Bot size={15} /> },
+      { labelKey: "approvals",    path: "/workspace/approvals",     icon: <ShieldCheck size={15} /> },
+      { labelKey: "memory",       path: "/workspace/memory",        icon: <Brain size={15} /> },
+      { labelKey: "reports",      path: "/workspace/reports",       icon: <BarChart2 size={15} /> },
+      { labelKey: "templates",    path: "/admin/templates",         icon: <Package size={15} /> },
     ],
   },
   {
@@ -58,6 +59,7 @@ export function Sidebar() {
       adminConsole: "Admin Console",
       home: "Home",
       pixelOffice: "Pixel Office",
+      spatialWorld: "Spatial World",
       myTasks: "My Tasks",
       aiEmployees: "AI Employees",
       approvals: "Approvals",
@@ -79,6 +81,7 @@ export function Sidebar() {
       adminConsole: "后台管理端",
       home: "首页",
       pixelOffice: "像素办公室",
+      spatialWorld: "空间工作世界",
       myTasks: "我的任务",
       aiEmployees: "AI 员工",
       approvals: "审批",
@@ -109,7 +112,6 @@ export function Sidebar() {
         borderColor: "var(--mis-border)",
       }}
     >
-      {/* Logo */}
       <div
         className="flex items-center gap-2 px-4 py-4 border-b"
         style={{ borderColor: "var(--mis-border)" }}
@@ -130,7 +132,6 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
         {navGroups.map((group) => {
           const groupTitle = copy[group.titleKey as keyof typeof copy];
@@ -180,7 +181,6 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* Footer */}
       <div
         className="px-4 py-3 border-t text-[10px]"
         style={{ borderColor: "var(--mis-border)", color: "var(--mis-dim)" }}
