@@ -31,7 +31,7 @@ from agentops_mis_storage.parity_fixture import (  # noqa: E402
     snapshot_hash,
 )
 from agentops_mis_storage.postgres import PostgresAdapter, PostgresAdapterUnavailable  # noqa: E402
-from storage_postgres_optional_adapter_smoke import BUNDLED_PYTHON, ensure_psycopg, mapped_port  # noqa: E402
+from storage_postgres_optional_adapter_smoke import BUNDLED_PYTHON, ensure_psycopg, mapped_port, wait_for_adapter_connect  # noqa: E402
 
 
 CONTRACT_ID = "postgres_route_read_model_parity_v1"
@@ -262,7 +262,7 @@ def postgres_snapshot(*, image: str, skip: bool, install_driver: bool) -> tuple[
                 return unavailable("Postgres container did not become ready before timeout.", skip=skip), None, None
             port = mapped_port(container)
             dsn = f"postgresql://agentops:{pg_auth}@127.0.0.1:{port}/agentops"
-            adapter = PostgresAdapter.connect(dsn)
+            adapter = wait_for_adapter_connect(dsn)
             adapter.executescript(contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
             for operation in fixture_operations():
                 adapter.execute(operation.sql, operation.params)

@@ -710,7 +710,7 @@ def run_postgres_write_fixture(*, image: str, skip_if_unavailable: bool, install
     import storage_postgres_container_smoke as container_smoke  # noqa: PLC0415
     import storage_postgres_contract_smoke as pg_contract  # noqa: PLC0415
     from agentops_mis_storage.postgres import PostgresAdapter  # noqa: PLC0415
-    from storage_postgres_optional_adapter_smoke import ensure_psycopg, mapped_port  # noqa: PLC0415
+    from storage_postgres_optional_adapter_smoke import ensure_psycopg, mapped_port, wait_for_adapter_connect  # noqa: PLC0415
 
     docker = run_cmd(["docker", "info", "--format", "{{json .ServerVersion}}"], timeout=15)
     if docker.returncode != 0:
@@ -778,7 +778,7 @@ def run_postgres_write_fixture(*, image: str, skip_if_unavailable: bool, install
             require(container_smoke.wait_for_postgres(container), "Postgres container did not become ready before timeout")
             pg_port = mapped_port(container)
             dsn = f"postgresql://agentops:{pg_auth}@127.0.0.1:{pg_port}/agentops"
-            adapter = PostgresAdapter.connect(dsn)
+            adapter = wait_for_adapter_connect(dsn)
             adapter.executescript(pg_contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
             seed_minimal_postgres_db(adapter)
             before_counts = postgres_ledger_counts(adapter)

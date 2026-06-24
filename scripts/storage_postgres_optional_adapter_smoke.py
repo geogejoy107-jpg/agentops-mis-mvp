@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -102,6 +103,20 @@ def mapped_port(container: str) -> str:
         raise RuntimeError((result.stderr or result.stdout).strip())
     raw = result.stdout.strip().splitlines()[0]
     return raw.rsplit(":", 1)[1]
+
+
+def wait_for_adapter_connect(dsn: str, *, timeout_sec: int = 45) -> PostgresAdapter:
+    deadline = time.time() + timeout_sec
+    last_error = ""
+    while time.time() < deadline:
+        try:
+            return PostgresAdapter.connect(dsn)
+        except PostgresAdapterUnavailable:
+            raise
+        except Exception as exc:
+            last_error = str(exc)
+            time.sleep(1)
+    raise RuntimeError(f"Postgres adapter connection did not become ready before timeout: {last_error}")
 
 
 def insert_sql() -> dict[str, str]:
@@ -225,7 +240,7 @@ def main() -> int:
                 return unavailable("Postgres container did not become ready before timeout.", skip=args.skip_if_unavailable)
             port = mapped_port(container)
             dsn = f"postgresql://agentops:{pg_auth}@127.0.0.1:{port}/agentops"
-            adapter = PostgresAdapter.connect(dsn)
+            adapter = wait_for_adapter_connect(dsn)
             adapter.executescript(contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
             rows = fixture_rows()
             sql = insert_sql()

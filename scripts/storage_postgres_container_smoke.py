@@ -60,7 +60,10 @@ def unavailable(message: str, *, skip: bool) -> int:
 
 
 def docker_available(skip: bool) -> int | None:
-    docker = run(["docker", "info", "--format", "{{json .ServerVersion}}"], timeout=15)
+    try:
+        docker = run(["docker", "info", "--format", "{{json .ServerVersion}}"], timeout=15)
+    except subprocess.TimeoutExpired as exc:
+        return unavailable(f"Docker daemon unavailable: docker info timed out after {exc.timeout} seconds", skip=skip)
     if docker.returncode != 0:
         detail = (docker.stderr or docker.stdout or "docker info failed").strip()
         return unavailable(f"Docker daemon unavailable: {detail}", skip=skip)

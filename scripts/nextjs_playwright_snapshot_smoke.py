@@ -35,7 +35,7 @@ import server  # noqa: E402
 import storage_postgres_container_smoke as container_smoke  # noqa: E402
 import storage_postgres_contract_smoke as pg_contract  # noqa: E402
 from agentops_mis_storage.postgres import PostgresAdapter  # noqa: E402
-from storage_postgres_optional_adapter_smoke import BUNDLED_PYTHON, ensure_psycopg, mapped_port  # noqa: E402
+from storage_postgres_optional_adapter_smoke import BUNDLED_PYTHON, ensure_psycopg, mapped_port, wait_for_adapter_connect  # noqa: E402
 
 NEXT_APP = ROOT / "ui" / "next-app"
 PWCLI = Path.home() / ".codex" / "skills" / "playwright" / "scripts" / "playwright_cli.sh"
@@ -1549,7 +1549,7 @@ def run_postgres_write_fixture(
             require(container_smoke.wait_for_postgres(container), "Postgres container did not become ready before timeout")
             port = mapped_port(container)
             dsn = f"postgresql://agentops:{pg_auth}@127.0.0.1:{port}/agentops"
-            adapter = PostgresAdapter.connect(dsn)
+            adapter = wait_for_adapter_connect(dsn)
             adapter.executescript(pg_contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
             seed_minimal_postgres_db(adapter)
 

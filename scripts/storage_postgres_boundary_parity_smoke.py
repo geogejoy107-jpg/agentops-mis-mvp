@@ -31,6 +31,7 @@ from storage_postgres_optional_adapter_smoke import (  # noqa: E402
     BUNDLED_PYTHON,
     ensure_psycopg,
     mapped_port,
+    wait_for_adapter_connect,
 )
 
 
@@ -132,7 +133,7 @@ def apply_fixture_postgres(*, image: str, skip: bool, install_driver: bool) -> t
                 return unavailable("Postgres container did not become ready before timeout.", skip=skip), None
             port = mapped_port(container)
             dsn = f"postgresql://agentops:{pg_auth}@127.0.0.1:{port}/agentops"
-            adapter = PostgresAdapter.connect(dsn)
+            adapter = wait_for_adapter_connect(dsn)
             adapter.executescript(contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
             for operation in fixture_operations():
                 adapter.execute(operation.sql, operation.params)

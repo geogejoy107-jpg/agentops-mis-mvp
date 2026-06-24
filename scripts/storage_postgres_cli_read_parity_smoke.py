@@ -24,7 +24,7 @@ import storage_postgres_container_smoke as container_smoke  # noqa: E402
 import storage_postgres_contract_smoke as contract  # noqa: E402
 from agentops_mis_storage.parity_fixture import FIXTURE_VERSION, fixture_operations, snapshot_hash  # noqa: E402
 from agentops_mis_storage.postgres import PostgresAdapter, PostgresAdapterUnavailable  # noqa: E402
-from storage_postgres_optional_adapter_smoke import BUNDLED_PYTHON, ensure_psycopg, mapped_port  # noqa: E402
+from storage_postgres_optional_adapter_smoke import BUNDLED_PYTHON, ensure_psycopg, mapped_port, wait_for_adapter_connect  # noqa: E402
 from storage_postgres_route_read_model_smoke import JOB_A, RUN_A, TASK_A, TASK_B, WORKSPACE_A  # noqa: E402
 
 
@@ -411,7 +411,7 @@ def main() -> int:
                 return unavailable("Postgres container did not become ready before timeout.", skip=args.skip_if_unavailable)
             port = mapped_port(container)
             dsn = f"postgresql://agentops:{pg_auth}@127.0.0.1:{port}/agentops"
-            adapter = PostgresAdapter.connect(dsn)
+            adapter = wait_for_adapter_connect(dsn)
             adapter.executescript(contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
             for operation in fixture_operations():
                 adapter.execute(operation.sql, operation.params)
@@ -490,7 +490,7 @@ def main() -> int:
             if "postgres_read_only_backend" not in write_stderr:
                 failures.append("cli_write_block_missing_reason")
 
-            adapter = PostgresAdapter.connect(dsn)
+            adapter = wait_for_adapter_connect(dsn)
             leaked_write = adapter.fetchone("SELECT task_id FROM tasks WHERE task_id=?", ["tsk_cli_postgres_write_should_block"])
             if leaked_write:
                 failures.append("cli_read_only_write_created_task")

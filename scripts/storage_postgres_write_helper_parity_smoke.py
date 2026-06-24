@@ -24,7 +24,7 @@ import storage_postgres_container_smoke as container_smoke  # noqa: E402
 import storage_postgres_contract_smoke as contract  # noqa: E402
 from agentops_mis_storage.parity_fixture import snapshot_hash  # noqa: E402
 from agentops_mis_storage.postgres import PostgresAdapter, PostgresAdapterUnavailable  # noqa: E402
-from storage_postgres_optional_adapter_smoke import BUNDLED_PYTHON, ensure_psycopg, mapped_port  # noqa: E402
+from storage_postgres_optional_adapter_smoke import BUNDLED_PYTHON, ensure_psycopg, mapped_port, wait_for_adapter_connect  # noqa: E402
 
 
 CONTRACT_ID = "postgres_write_helper_parity_v1"
@@ -665,7 +665,7 @@ def run_postgres(*, image: str, skip: bool, install_driver: bool) -> tuple[int |
                 return unavailable("Postgres container did not become ready before timeout.", skip=skip), None
             port = mapped_port(container)
             dsn = f"postgresql://agentops:{pg_auth}@127.0.0.1:{port}/agentops"
-            adapter = PostgresAdapter.connect(dsn)
+            adapter = wait_for_adapter_connect(dsn)
             adapter.executescript(contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
             seed_reference_rows(adapter)
             outcomes = run_write_helpers(adapter)
