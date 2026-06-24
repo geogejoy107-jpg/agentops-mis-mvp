@@ -105,6 +105,18 @@ def require(condition: bool, message: str, failures: list[str]) -> None:
         failures.append(message)
 
 
+def require_adapter_command(value: object, adapter: str, label: str, failures: list[str]) -> None:
+    text = str(value or "")
+    require(
+        f"--adapter {adapter}" in text or f"--require-adapter {adapter}" in text,
+        f"{label} missing {adapter} adapter binding: {text}",
+        failures,
+    )
+    for other in {"hermes", "openclaw", "mock"} - {adapter}:
+        require(f"--adapter {other}" not in text, f"{label} leaked {other} adapter: {text}", failures)
+        require(f"--require-adapter {other}" not in text, f"{label} leaked {other} live-readiness adapter: {text}", failures)
+
+
 def validate(payload: dict, failures: list[str]) -> None:
     require(payload.get("operation") == "operator_agent_loop_handoff", f"wrong operation: {payload}", failures)
     require(payload.get("provider") == "agentops-operator", f"wrong provider: {payload}", failures)
@@ -136,14 +148,47 @@ def validate(payload: dict, failures: list[str]) -> None:
         require(start.get("can_preview_loop") is True, f"{adapter} preview loop gate missing: {start}", failures)
         require(start.get("server_executes_shell") is False, f"{adapter} start-check server shell proof missing: {start}", failures)
         method = item.get("method") or {}
-        require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(method.get("phase_commands") or {})), f"{adapter} phase commands missing: {method}", failures)
+        phase_commands = method.get("phase_commands") or {}
+        require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(phase_commands)), f"{adapter} phase commands missing: {method}", failures)
+        require_adapter_command(phase_commands.get("preflight"), adapter, f"{adapter} phase preflight", failures)
+        require_adapter_command(phase_commands.get("execute"), adapter, f"{adapter} phase execute", failures)
+        require("--confirm-loop" in str(phase_commands.get("execute") or ""), f"{adapter} phase execute must be bounded confirm: {phase_commands}", failures)
         gate_ids = set(method.get("method_gate_ids") or [])
         require({"read_start_check", "read_current_code", "plan_agent_plan", "retrieve_knowledge", "compare_base_reference", "preflight_adapter", "execute_bounded_loop", "verify_loop", "record_memory_candidate"}.issubset(gate_ids), f"{adapter} method gates missing: {gate_ids}", failures)
         commands = item.get("commands") or {}
         require(str(commands.get("agent_loop_handoff") or "").startswith(f"agentops operator agent-loop-handoff --adapter {adapter}"), f"{adapter} handoff command missing: {commands}", failures)
         require(str(commands.get("start_check") or "").startswith(f"agentops operator start-check --adapter {adapter}"), f"{adapter} start-check command missing: {commands}", failures)
         require(str(commands.get("launch_brief") or "").startswith(f"agentops operator loop-launch-packet --brief --adapter {adapter}"), f"{adapter} launch brief command missing: {commands}", failures)
+        require_adapter_command(commands.get("adapter_preflight"), adapter, f"{adapter} command preflight", failures)
+        require_adapter_command(commands.get("loop_driver_preview"), adapter, f"{adapter} loop-driver preview", failures)
+        require_adapter_command(commands.get("loop_driver_confirm"), adapter, f"{adapter} loop-driver confirm", failures)
         require("--confirm-loop" in str(commands.get("loop_driver_confirm") or ""), f"{adapter} confirm-loop command missing: {commands}", failures)
+        launch = item.get("launch_brief") or {}
+        require(launch.get("adapter") == adapter, f"{adapter} launch brief adapter mismatch: {launch}", failures)
+        require_adapter_command(launch.get("adapter_preflight_command"), adapter, f"{adapter} launch preflight", failures)
+        require_adapter_command(launch.get("live_run_command"), adapter, f"{adapter} launch live run", failures)
+        require("--confirm-run" in str(launch.get("live_run_command") or ""), f"{adapter} launch live run must require confirm-run: {launch}", failures)
+        local_deployment = item.get("local_deployment") or {}
+        local_run_path = local_deployment.get("local_run_path") or {}
+        require(local_run_path.get("operation") == "local_run_path_compact", f"{adapter} local run path missing: {local_deployment}", failures)
+        require(local_run_path.get("recommended_adapter") == adapter, f"{adapter} local run path adapter mismatch: {local_run_path}", failures)
+        require((local_run_path.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} local run path server shell proof missing: {local_run_path}", failures)
+        local_steps = local_run_path.get("steps") or []
+        for step_id in ["select_worker_adapter", "start_selected_worker", "preview_worker_service_control", "dispatch_customer_task", "prove_live_product_readiness"]:
+            step = next((entry for entry in local_steps if isinstance(entry, dict) and entry.get("step_id") == step_id), {})
+            require(step, f"{adapter} local step {step_id} missing: {local_run_path}", failures)
+            require(step.get("adapter") == adapter, f"{adapter} local step {step_id} adapter mismatch: {step}", failures)
+            for key in ["command", "verify_command", "receipt_record_command", "receipt_verify_record_command"]:
+                text = str(step.get(key) or "")
+                if "--adapter " in text or "--require-adapter " in text:
+                    require_adapter_command(text, adapter, f"{adapter} local step {step_id} {key}", failures)
+        service_managed = local_deployment.get("service_managed_loop") or {}
+        service_commands = service_managed.get("commands") or {}
+        require(service_managed.get("adapter") == adapter, f"{adapter} service-managed adapter mismatch: {service_managed}", failures)
+        for key in ["service_install_preview", "service_install_confirm", "service_check", "service_control_preview", "record_verified_receipt", "record_control_readback"]:
+            require_adapter_command(service_commands.get(key), adapter, f"{adapter} service-managed {key}", failures)
+        require("--confirm-run" in str(service_commands.get("service_install_preview") or ""), f"{adapter} service install preview must preserve confirm-run: {service_commands}", failures)
+        require("--confirm-install" in str(service_commands.get("service_install_confirm") or ""), f"{adapter} service install confirm missing: {service_commands}", failures)
         live = item.get("live_product_readiness") or {}
         require(live.get("command") == f"agentops operator live-product-readiness --require-adapter {adapter}", f"{adapter} live readiness command missing: {live}", failures)
     codex = payload.get("codex_consumer") or {}

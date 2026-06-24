@@ -1027,6 +1027,8 @@ def _build_agent_loop_handoff_consumer(
     brief_summary = brief.get("summary") if isinstance(brief.get("summary"), dict) else {}
     if brief_summary.get("current_code_ok") is False:
         blockers.append("launch_brief_current_code_not_ok")
+    local_run_path = brief.get("local_run_path") if isinstance(brief.get("local_run_path"), dict) else {}
+    service_managed_loop = local_run_path.get("service_managed_loop") if isinstance(local_run_path.get("service_managed_loop"), dict) else {}
     status = "blocked" if blockers else "attention" if attention or start_check.get("status") == "attention" else "ready"
     return {
         "operation": "agent_loop_handoff_consumer",
@@ -1053,12 +1055,20 @@ def _build_agent_loop_handoff_consumer(
         },
         "launch_brief": {
             "status": brief.get("status"),
+            "adapter": brief.get("adapter"),
             "next_command": brief.get("next_command"),
             "verify_command": brief.get("verify_command"),
             "receipt_command": brief.get("receipt_command"),
+            "adapter_preflight_command": brief.get("adapter_preflight_command"),
+            "live_run_command": brief.get("live_run_command"),
             "current_code_ok": brief_summary.get("current_code_ok"),
             "control_mode": brief_summary.get("control_mode"),
             "recommended_step": brief_summary.get("recommended_step"),
+            "token_omitted": True,
+        },
+        "local_deployment": {
+            "local_run_path": local_run_path,
+            "service_managed_loop": service_managed_loop,
             "token_omitted": True,
         },
         "live_product_readiness": live_adapter,
