@@ -8,17 +8,15 @@ Machine-readable contract: `docs/UI_NAVIGATION_INVENTORY.json`
 
 ## Decision
 
-Task and run navigation in the Next.js commercial parity track uses
-`/workspace` as the primary namespace. The Next `/admin/tasks/:taskId`,
-`/admin/runs`, and `/admin/runs/:runId` routes are compatibility redirect
-aliases only; they are not primary navigation targets.
+Task and run navigation in both the Next.js commercial parity track and the
+Vite primary UI uses `/workspace` as the primary namespace. The Next
+`/admin/tasks/:taskId`, `/admin/runs`, and `/admin/runs/:runId` routes are
+compatibility redirect aliases only; the Vite `/admin/tasks/:id`,
+`/admin/runs`, and `/admin/runs/:id` routes are also redirect aliases only.
 
-This inventory still does not retire the Vite routes. It proves the Next
-navigation surface has moved to `/workspace`, leaving only an explicit route
-retirement commit before any legacy task/run route can be removed.
-The explicit-commit evidence is prepared separately in
-`ui_route_retirement_packet_v1`; that packet is candidate-only and also keeps
-`retirement_allowed` false.
+This inventory records the explicit task/run route retirement executed by
+`ui_route_retirement_packet_v1`. Other legacy routes remain blocked until their
+own route-pair retirement evidence is committed.
 
 ## Canonical Next Routes
 
@@ -36,6 +34,15 @@ The explicit-commit evidence is prepared separately in
 | `/admin/tasks/:taskId` | `/workspace/tasks/:taskId` |
 | `/admin/runs` | `/workspace/runs` |
 | `/admin/runs/:runId` | `/workspace/runs/:runId` |
+
+## Canonical Vite Routes
+
+| Surface | Canonical route |
+|---|---|
+| Task list | `/workspace/tasks` |
+| Task detail | `/workspace/tasks/:id` |
+| Run ledger | `/workspace/runs` |
+| Run detail | `/workspace/runs/:id` |
 
 ## Verification
 

@@ -42,8 +42,8 @@ AgentOps MIS remains the authority system for agents, tasks, runs, tool calls, a
 | Memory Archive | `/workspace/memory` | Memory Library |
 | Audit Vault | `/admin/audit` | Audit Center |
 | External Base Dock | `/admin/bases/notion` | External Base Dock / Notion Base |
-| Run Stream | `/admin/runs` | Run Ledger |
-| Incident Corner | `/admin/runs` | Failed/blocked run inspection |
+| Run Stream | `/workspace/runs` | Run Ledger |
+| Incident Corner | `/workspace/runs` | Failed/blocked run inspection |
 | Template Market | `/admin/templates` | Template Switching / Template Market |
 
 ## State-to-zone mapping

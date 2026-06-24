@@ -129,7 +129,8 @@ def main() -> int:
             "contract": CONTRACT_ID,
             "next_base": next_base,
             "aliases": checked,
-            "retirement_allowed": False,
+            "legacy_aliases_preserved": True,
+            "task_run_retirement_action": "executed_workspace_redirect",
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     except Exception as exc:

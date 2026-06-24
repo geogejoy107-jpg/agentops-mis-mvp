@@ -356,7 +356,7 @@ export function WorkspaceHome() {
                   {briefResult.dry_run ? "Dry-run planned" : briefResult.ok ? "Real run completed" : "Run failed"}
                 </div>
                 {briefResult.run_id && (
-                  <Link to={`/admin/runs/${briefResult.run_id}`} style={{ color: "var(--mis-cyan)" }}>
+                  <Link to={`/workspace/runs/${briefResult.run_id}`} style={{ color: "var(--mis-cyan)" }}>
                     Open run {briefResult.run_id}
                   </Link>
                 )}
@@ -412,7 +412,7 @@ export function WorkspaceHome() {
           <div className="space-y-2">
             {activeTasks.length === 0 && <p className="text-xs" style={{ color: "var(--mis-muted)" }}>No active tasks.</p>}
             {activeTasks.map(task => (
-              <Link key={task.task_id} to={`/admin/tasks/${task.task_id}`} className="block rounded p-2.5 hover:opacity-80" style={{ background: "var(--mis-surface2)" }}>
+              <Link key={task.task_id} to={`/workspace/tasks/${task.task_id}`} className="block rounded p-2.5 hover:opacity-80" style={{ background: "var(--mis-surface2)" }}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="text-xs font-medium truncate" style={{ color: "var(--mis-text)" }}>{task.title}</div>
@@ -428,12 +428,12 @@ export function WorkspaceHome() {
         <section className="rounded-lg p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>Run Ledger</h2>
-            <Link to="/admin/runs" className="text-[11px]" style={{ color: "var(--mis-cyan)" }}>Runs</Link>
+            <Link to="/workspace/runs" className="text-[11px]" style={{ color: "var(--mis-cyan)" }}>Runs</Link>
           </div>
           <div className="space-y-2">
             {recentRuns.length === 0 && <p className="text-xs" style={{ color: "var(--mis-muted)" }}>No recent runs.</p>}
             {recentRuns.map(run => (
-              <Link key={run.run_id} to={`/admin/runs/${run.run_id}`} className="flex items-center justify-between gap-3 rounded p-2.5 hover:opacity-80" style={{ background: "var(--mis-surface2)" }}>
+              <Link key={run.run_id} to={`/workspace/runs/${run.run_id}`} className="flex items-center justify-between gap-3 rounded p-2.5 hover:opacity-80" style={{ background: "var(--mis-surface2)" }}>
                 <div className="min-w-0">
                   <div className="text-xs font-mono truncate" style={{ color: "var(--mis-text)" }}>{run.run_id}</div>
                   <div className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>{run.runtime_type} · {run.agent_id}</div>
@@ -462,7 +462,7 @@ export function WorkspaceHome() {
               </div>
             ))}
             {latestRun && (
-              <Link to={`/admin/runs/${latestRun}`} className="block text-[11px] pt-1" style={{ color: "var(--mis-cyan)" }}>
+              <Link to={`/workspace/runs/${latestRun}`} className="block text-[11px] pt-1" style={{ color: "var(--mis-cyan)" }}>
                 Latest ledger entry: {latestRun}
               </Link>
             )}

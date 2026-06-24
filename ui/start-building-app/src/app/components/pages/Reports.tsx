@@ -148,12 +148,12 @@ export function Reports() {
               </div>
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {delivery.task_id && (
-                  <Link to={`/admin/tasks/${delivery.task_id}`} className="text-[10px] rounded px-2 py-1" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>
+                  <Link to={`/workspace/tasks/${delivery.task_id}`} className="text-[10px] rounded px-2 py-1" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>
                     {zh ? "打开任务" : "Open task"}
                   </Link>
                 )}
                 {delivery.run_id && (
-                  <Link to={`/admin/runs/${delivery.run_id}`} className="text-[10px] rounded px-2 py-1" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>
+                  <Link to={`/workspace/runs/${delivery.run_id}`} className="text-[10px] rounded px-2 py-1" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>
                     {zh ? "打开 Run" : "Open run"}
                   </Link>
                 )}

@@ -102,7 +102,7 @@ export function ApprovalsInbox() {
 
             <div className="flex flex-wrap gap-3 text-[10px]" style={{ color: "var(--mis-muted)" }}>
               <span>{copy.agent}: <span style={{ color: "var(--mis-dim)" }}>{agent?.name ?? ap.requested_by_agent_id}</span></span>
-              <span>{copy.task}: <Link to={`/admin/tasks/${ap.task_id}`} style={{ color: "var(--mis-cyan)" }}>{task?.title?.slice(0, 34) ?? ap.task_id}</Link></span>
+              <span>{copy.task}: <Link to={`/workspace/tasks/${ap.task_id}`} style={{ color: "var(--mis-cyan)" }}>{task?.title?.slice(0, 34) ?? ap.task_id}</Link></span>
               {tool && <span>{copy.risk}: <span style={{ color: tool.risk_level === "high" ? "var(--mis-warning)" : "var(--mis-dim)" }}>{tool.risk_level}</span></span>}
               {isPending && (
                 <span>{copy.expires}: <span style={{ color: "#FBBF24" }}>{new Date(ap.expires_at).toLocaleString(zh ? "zh-CN" : "en-US")}</span></span>

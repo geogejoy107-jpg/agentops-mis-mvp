@@ -8,26 +8,23 @@ Machine-readable contract: `docs/UI_ROUTE_NAMING_DECISION.json`
 
 ## Decision
 
-Task and run operator routes use `/workspace` as the future commercial
-namespace in the Next.js parity track. Existing Vite `/admin` task/run routes
-remain legacy compatibility routes until explicit retirement gates pass.
+Task and run operator routes now use `/workspace` as the commercial namespace
+in both the Vite primary UI and the Next.js parity track. Existing Vite
+`/admin` task/run routes are retired to redirect-only compatibility deep links,
+and Next `/admin` task/run routes remain redirect aliases.
 
-This decision does not retire Vite routes and does not create redirects by
-itself. The current Next.js parity track now provides backward-compatible
-redirect aliases for the task/run legacy deep links. The navigation inventory is
-now verified by `ui_navigation_inventory_v1`: Next primary task/run navigation
-uses `/workspace`, and Next `/admin` task/run routes are redirect aliases only.
-The retirement packet is now prepared by `ui_route_retirement_packet_v1`, but
-retirement remains blocked until an explicit route retirement commit on the
-exact route pair being retired.
+The navigation inventory is verified by `ui_navigation_inventory_v1`: Next and
+Vite primary task/run navigation use `/workspace`, while `/admin` task/run
+routes are aliases only. The task/run retirement packet is now executed by
+`ui_route_retirement_packet_v1`.
 
 ## Route Pairs
 
 | Matrix entry | Legacy Vite route | Next alias | Target Next route | Retirement |
 |---|---|---|---|---|
-| `task_detail` | `/admin/tasks/:id` | `/admin/tasks/:taskId` | `/workspace/tasks/:taskId` | Not allowed |
-| `run_ledger` | `/admin/runs` | `/admin/runs` | `/workspace/runs` | Not allowed |
-| `run_detail` | `/admin/runs/:id` | `/admin/runs/:runId` | `/workspace/runs/:runId` | Not allowed |
+| `task_detail` | `/admin/tasks/:id` | `/admin/tasks/:taskId` | `/workspace/tasks/:taskId` | Executed |
+| `run_ledger` | `/admin/runs` | `/admin/runs` | `/workspace/runs` | Executed |
+| `run_detail` | `/admin/runs/:id` | `/admin/runs/:runId` | `/workspace/runs/:runId` | Executed |
 
 ## Verification
 

@@ -377,28 +377,25 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   rotation, and revocation remain outside the Next browser migration slice.
 
   The route naming decision smoke verifies the structured
-  `ui_route_naming_decision_v1` contract: Next `/workspace` task/run routes are
-  the future commercial namespace, Vite `/admin` task/run routes remain legacy
-  compatibility routes, and every task/run retirement still requires a
-  backward-compatible redirect or alias plus an explicit route retirement
-  commit.
+  `ui_route_naming_decision_v1` contract: Next and Vite primary task/run routes
+  now use `/workspace` as the commercial namespace. Vite `/admin` task/run
+  routes are redirect-only compatibility deep links, and Next `/admin`
+  task/run routes remain redirect aliases.
 
   The legacy route alias smoke starts a Next.js dev server and verifies Next
   `/admin/tasks/:taskId`, `/admin/runs`, and `/admin/runs/:runId` deep links
-  redirect to their `/workspace` task/run targets without allowing Vite route
-  retirement.
+  redirect to their `/workspace` task/run targets.
 
   The navigation inventory smoke verifies `ui_navigation_inventory_v1`: Next
-  primary task/run navigation uses `/workspace`, Next `/admin` task/run routes
-  are redirect aliases only, and the route naming decision now has canonical
-  navigation evidence while still blocking route retirement until an explicit
-  retirement commit.
+  and Vite primary task/run navigation use `/workspace`, `/admin` task/run
+  routes are redirect aliases only, and the task/run route cutover has no
+  remaining explicit-commit blocker.
 
   The route retirement packet smoke verifies `ui_route_retirement_packet_v1`:
-  the task/run `/admin` routes have a candidate-only retirement packet with
-  exact commit evidence requirements, but `retirement_action` remains
-  `not_executed` and `retirement_allowed` remains false until a route-pair
-  retirement commit lands.
+  the task/run `/admin` routes are retired to workspace redirect aliases with
+  `retirement_action=executed_workspace_redirect` and
+  `retirement_allowed=true` for `task_detail`, `run_ledger`, and `run_detail`
+  only.
 
   The covered-route retirement packet smoke verifies
   `ui_covered_route_retirement_packet_v1`: Control Tower and Worker Console are
@@ -409,8 +406,9 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
 
   The Vite smoke starts isolated MIS API and Vite dev servers, captures
   canonical Vite route snapshots for workspace, Pixel Office, tasks, agents,
-  approvals, memory, reports, run ledger, Vite `/admin/tasks/:id` task detail,
-  Vite `/admin/runs/:id` run detail, audit, and customer project report,
+  approvals, memory, reports, run ledger, Vite `/workspace/tasks/:id` task
+  detail, Vite `/workspace/runs/:id` run detail, legacy `/admin` task/run
+  redirect aliases, audit, and customer project report,
   verifies `/mis-api/*` proxy reads, and checks for token-like leakage. These
   detail snapshots are evidence for the existing Vite routes; they are not a
   retirement or rename decision.

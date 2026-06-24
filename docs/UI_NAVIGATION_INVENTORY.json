@@ -1,15 +1,17 @@
 {
   "contract_id": "ui_navigation_inventory_v1",
   "gate": "gate_4_ui_api_parity_before_nextjs",
-  "status": "accepted_no_route_retirement",
-  "updated_at": "2026-06-22",
+  "status": "accepted_task_run_workspace_redirect_retirement",
+  "updated_at": "2026-06-25",
   "policy": {
     "scope": "task_run_route_cutover",
     "next_primary_namespace": "/workspace",
     "legacy_namespace": "/admin",
     "legacy_admin_usage_in_next": "redirect_alias_only",
-    "retirement_allowed": false,
-    "verification_command": "python3 scripts/ui_navigation_inventory_smoke.py"
+    "retirement_allowed": true,
+    "verification_command": "python3 scripts/ui_navigation_inventory_smoke.py",
+    "vite_primary_namespace": "/workspace",
+    "legacy_admin_usage_in_vite": "redirect_alias_only"
   },
   "canonical_next_routes": [
     "/workspace/tasks",
@@ -33,13 +35,34 @@
     "ui/next-app/app/admin/runs/page.tsx",
     "ui/next-app/app/admin/runs/[runId]/page.tsx"
   ],
-  "legacy_vite_inventory_status": "kept_for_compatibility_until_explicit_retirement_commit",
+  "legacy_vite_inventory_status": "redirect_alias_only_after_explicit_retirement_commit",
   "cutover_evidence": [
     "next_primary_navigation_uses_workspace_task_run_routes",
     "legacy_admin_task_run_routes_are_redirect_aliases_in_next",
-    "vite_admin_task_run_routes_remain_documented_compatibility_routes"
+    "vite_primary_navigation_uses_workspace_task_run_routes",
+    "legacy_admin_task_run_routes_are_redirect_aliases_in_vite",
+    "agent_gateway_cli_api_mcp_unchanged"
   ],
-  "remaining_cutover_requires": [
-    "explicit_route_retirement_commit"
+  "remaining_cutover_requires": [],
+  "canonical_vite_routes": [
+    "/workspace/tasks",
+    "/workspace/tasks/:id",
+    "/workspace/runs",
+    "/workspace/runs/:id"
+  ],
+  "allowed_vite_alias_routes": [
+    "/admin/tasks/:id",
+    "/admin/runs",
+    "/admin/runs/:id"
+  ],
+  "vite_primary_inventory_files": [
+    "ui/start-building-app/src/app/App.tsx",
+    "ui/start-building-app/src/app/components/layout/Sidebar.tsx",
+    "ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx",
+    "ui/start-building-app/src/app/components/pages/MyTasks.tsx",
+    "ui/start-building-app/src/app/components/pages/RunLedger.tsx",
+    "ui/start-building-app/src/app/components/pages/TaskDetail.tsx",
+    "ui/start-building-app/src/app/components/pages/AIEmployees.tsx",
+    "ui/start-building-app/src/app/components/pixel/pixelModel.ts"
   ]
 }

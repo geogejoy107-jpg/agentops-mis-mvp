@@ -253,7 +253,7 @@ export function TaskDetail() {
               {taskRuns.map(run => (
                 <tr key={run.run_id} style={{ color: "var(--mis-dim)" }}>
                   <td className="py-2 pr-4 font-mono text-[11px]">
-                    <Link to={`/admin/runs/${run.run_id}`} className="hover:opacity-80" style={{ color: "var(--mis-cyan)" }}>{run.run_id}</Link>
+                    <Link to={`/workspace/runs/${run.run_id}`} className="hover:opacity-80" style={{ color: "var(--mis-cyan)" }}>{run.run_id}</Link>
                   </td>
                   <td className="py-2 pr-4">{run.agent_id}</td>
                   <td className="py-2 pr-4">{run.runtime_type}</td>

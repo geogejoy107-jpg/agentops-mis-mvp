@@ -1621,7 +1621,7 @@ export function AIEmployees() {
                   </div>
                   <div className="text-[10px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>{pkg.scope}</div>
                   {commanderPlannerResult.created_task_ids.includes(pkg.task_id) && (
-                    <Link to={`/admin/tasks/${pkg.task_id}`} className="inline-flex mt-2 text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>
+                    <Link to={`/workspace/tasks/${pkg.task_id}`} className="inline-flex mt-2 text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>
                       {copy.openTask}
                     </Link>
                   )}
@@ -1665,9 +1665,9 @@ export function AIEmployees() {
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-1.5 shrink-0">
-                    <Link to={`/admin/tasks/${pkg.task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>{copy.openTask}</Link>
+                    <Link to={`/workspace/tasks/${pkg.task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>{copy.openTask}</Link>
                     {pkg.latest_run?.run_id && (
-                      <Link to={`/admin/runs/${pkg.latest_run.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>{copy.openRun}</Link>
+                      <Link to={`/workspace/runs/${pkg.latest_run.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>{copy.openRun}</Link>
                     )}
                   </div>
                 </div>
@@ -1748,10 +1748,10 @@ export function AIEmployees() {
                 </div>
                 <div className="flex flex-wrap lg:justify-end gap-1.5 shrink-0">
                   {item.task_id && (
-                    <Link to={`/admin/tasks/${item.task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>{copy.openTask}</Link>
+                    <Link to={`/workspace/tasks/${item.task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>{copy.openTask}</Link>
                   )}
                   {item.run_id && (
-                    <Link to={`/admin/runs/${item.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>{copy.openRun}</Link>
+                    <Link to={`/workspace/runs/${item.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>{copy.openRun}</Link>
                   )}
                   {item.links?.report_url && (
                     <Link to={item.links.report_url} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(251,191,36,0.10)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.20)" }}>{copy.openReport}</Link>
@@ -1879,7 +1879,7 @@ export function AIEmployees() {
                       ))}
                     </div>
                     {loopLaneResult.mis_ledger?.parent_run_id && (
-                      <Link to={`/admin/runs/${loopLaneResult.mis_ledger.parent_run_id}`} className="inline-flex text-[10px] rounded px-2 py-1" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>
+                      <Link to={`/workspace/runs/${loopLaneResult.mis_ledger.parent_run_id}`} className="inline-flex text-[10px] rounded px-2 py-1" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>
                         {copy.openRun}
                       </Link>
                     )}
@@ -1909,7 +1909,7 @@ export function AIEmployees() {
             </div>
             <div className="mt-3 space-y-1.5">
               {(loopLaneReadback?.runs || []).slice(0, 3).map((run) => (
-                <Link key={String(run.run_id)} to={`/admin/runs/${String(run.run_id)}`} className="block rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <Link key={String(run.run_id)} to={`/workspace/runs/${String(run.run_id)}`} className="block rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                   <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{String(run.run_id || "—")}</div>
                   <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>{String(run.status || "unknown")} · {String(run.agent_id || "—")}</div>
                 </Link>
@@ -1998,10 +1998,10 @@ export function AIEmployees() {
                 </div>
                 <div className="flex flex-wrap md:justify-end gap-1.5 shrink-0">
                   {delivery.task_id && (
-                    <Link to={`/admin/tasks/${delivery.task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>{copy.openTask}</Link>
+                    <Link to={`/workspace/tasks/${delivery.task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>{copy.openTask}</Link>
                   )}
                   {delivery.run_id && (
-                    <Link to={`/admin/runs/${delivery.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>{copy.openRun}</Link>
+                    <Link to={`/workspace/runs/${delivery.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>{copy.openRun}</Link>
                   )}
                   {delivery.ui_report_url && (
                     <Link to={delivery.ui_report_url} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(251,191,36,0.10)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.20)" }}>{copy.openReport}</Link>
@@ -2402,8 +2402,8 @@ export function AIEmployees() {
                         </div>
                       )}
                       <div className="flex flex-wrap gap-1.5 mt-1">
-                        {item.task_id && <Link className="text-[10px]" style={{ color: "var(--mis-cyan)" }} to={`/admin/tasks/${item.task_id}`}>{copy.taskId}: {item.task_id}</Link>}
-                        {item.run_id && <Link className="text-[10px]" style={{ color: "var(--mis-cyan)" }} to={`/admin/runs/${item.run_id}`}>{copy.runId}: {item.run_id}</Link>}
+                        {item.task_id && <Link className="text-[10px]" style={{ color: "var(--mis-cyan)" }} to={`/workspace/tasks/${item.task_id}`}>{copy.taskId}: {item.task_id}</Link>}
+                        {item.run_id && <Link className="text-[10px]" style={{ color: "var(--mis-cyan)" }} to={`/workspace/runs/${item.run_id}`}>{copy.runId}: {item.run_id}</Link>}
                         {item.job_id && <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.jobId}: {item.job_id}</span>}
                         {item.artifact_id && <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.artifactId}: {item.artifact_id}</span>}
                       </div>
@@ -2723,7 +2723,7 @@ export function AIEmployees() {
                 <div className="flex flex-wrap items-center gap-2">
                   {customerTaskResult.task_id && (
                     <Link
-                      to={`/admin/tasks/${customerTaskResult.task_id}`}
+                      to={`/workspace/tasks/${customerTaskResult.task_id}`}
                       className="text-[11px] px-3 py-1.5 rounded"
                       style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
                     >
@@ -2732,7 +2732,7 @@ export function AIEmployees() {
                   )}
                   {customerTaskResult.run_id && (
                     <Link
-                      to={`/admin/runs/${customerTaskResult.run_id}`}
+                      to={`/workspace/runs/${customerTaskResult.run_id}`}
                       className="text-[11px] px-3 py-1.5 rounded"
                       style={{ background: "rgba(45,212,191,0.12)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.22)" }}
                     >
@@ -2841,12 +2841,12 @@ export function AIEmployees() {
                 </div>
                 <div className="flex gap-1.5 justify-end">
                   {job.result_task_id && (
-                    <Link to={`/admin/tasks/${job.result_task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.1)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>
+                    <Link to={`/workspace/tasks/${job.result_task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.1)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>
                       {copy.taskId}
                     </Link>
                   )}
                   {job.result_run_id && (
-                    <Link to={`/admin/runs/${job.result_run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.1)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>
+                    <Link to={`/workspace/runs/${job.result_run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.1)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>
                       {copy.runId}
                     </Link>
                   )}

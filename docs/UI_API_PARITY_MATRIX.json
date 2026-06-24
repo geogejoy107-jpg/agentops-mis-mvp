@@ -5,33 +5,33 @@
     "canonical_ui": "vite_react",
     "migration_track": "nextjs_app_router",
     "retirement_default": false,
-      "route_level_contracts": [
-        "ui_task_run_route_parity_v1",
-        "ui_route_naming_decision_v1",
-        "ui_legacy_route_alias_v1",
-        "ui_navigation_inventory_v1",
-        "ui_route_retirement_packet_v1",
-        "ui_covered_route_retirement_packet_v1",
-        "nextjs_agent_gateway_task_proxy_v1",
-        "nextjs_agent_gateway_cli_worker_dogfood_v1",
-        "nextjs_worker_dispatch_once_v1",
-        "nextjs_pixel_office_floor_v1",
-        "nextjs_pixel_office_dispatch_v1",
-        "pixel_office_dispatch_retirement_evidence_v1",
-        "local_brief_prepared_action_v1",
-        "nextjs_local_brief_v1",
-        "nextjs_customer_worker_dispatch_v1",
-        "nextjs_customer_worker_async_job_v1",
-        "nextjs_customer_worker_prepared_action_v1",
-        "nextjs_worker_stuck_release_v1",
-        "nextjs_enrollment_request_v1",
-        "nextjs_worker_gateway_lifecycle_guard_v1",
-        "nextjs_worker_daemon_control_v1",
-        "nextjs_worker_console_parity_v1",
-        "operator_execution_mode_v1",
-        "nextjs_template_switching_parity_v1",
-        "nextjs_control_tower_parity_v1"
-      ],
+    "route_level_contracts": [
+      "ui_task_run_route_parity_v1",
+      "ui_route_naming_decision_v1",
+      "ui_legacy_route_alias_v1",
+      "ui_navigation_inventory_v1",
+      "ui_route_retirement_packet_v1",
+      "ui_covered_route_retirement_packet_v1",
+      "nextjs_agent_gateway_task_proxy_v1",
+      "nextjs_agent_gateway_cli_worker_dogfood_v1",
+      "nextjs_worker_dispatch_once_v1",
+      "nextjs_pixel_office_floor_v1",
+      "nextjs_pixel_office_dispatch_v1",
+      "pixel_office_dispatch_retirement_evidence_v1",
+      "local_brief_prepared_action_v1",
+      "nextjs_local_brief_v1",
+      "nextjs_customer_worker_dispatch_v1",
+      "nextjs_customer_worker_async_job_v1",
+      "nextjs_customer_worker_prepared_action_v1",
+      "nextjs_worker_stuck_release_v1",
+      "nextjs_enrollment_request_v1",
+      "nextjs_worker_gateway_lifecycle_guard_v1",
+      "nextjs_worker_daemon_control_v1",
+      "nextjs_worker_console_parity_v1",
+      "operator_execution_mode_v1",
+      "nextjs_template_switching_parity_v1",
+      "nextjs_control_tower_parity_v1"
+    ],
     "retirement_rule": "A Vite route can be retired only after the matrix marks its capability covered, Vite and Next browser evidence both pass, API contracts match, and the route has an explicit retirement decision."
   },
   "entries": [
@@ -200,6 +200,7 @@
       "status": "covered",
       "gate4_required": true,
       "vite_routes": [
+        "/workspace/tasks/:id",
         "/admin/tasks/:id"
       ],
       "next_routes": [
@@ -228,8 +229,9 @@
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
-      "retirement_allowed": false,
-      "retirement_gate": "Route naming decision records /workspace/tasks/:taskId as the future canonical target while /admin/tasks/:id stays as a compatibility route; Next alias, navigation inventory, and retirement packet evidence exist, but retirement still needs an explicit route retirement commit."
+      "retirement_allowed": true,
+      "retirement_gate": "Explicit route retirement executed for task_detail: Vite primary/internal task-detail links now use /workspace/tasks/:id, the legacy Vite /admin/tasks/:id route is a redirect-only deep link, Next /admin/tasks/:taskId remains a redirect alias to /workspace/tasks/:taskId, and Vite/Next browser evidence must keep both canonical workspace rendering and admin deep-link compatibility green.",
+      "retirement_action": "executed_workspace_redirect"
     },
     {
       "id": "worker_console",
@@ -481,6 +483,7 @@
       "status": "covered",
       "gate4_required": true,
       "vite_routes": [
+        "/workspace/runs",
         "/admin/runs"
       ],
       "next_routes": [
@@ -509,8 +512,9 @@
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
-      "retirement_allowed": false,
-      "retirement_gate": "Route naming decision records /workspace/runs as the future canonical target while /admin/runs stays as a compatibility route; Next alias, navigation inventory, and retirement packet evidence exist, but retirement still needs an explicit route retirement commit."
+      "retirement_allowed": true,
+      "retirement_gate": "Explicit route retirement executed for run_ledger: Vite primary/internal run-ledger links now use /workspace/runs, the legacy Vite /admin/runs route is a redirect-only deep link, Next /admin/runs remains a redirect alias to /workspace/runs, and Vite/Next browser evidence must keep both canonical workspace rendering and admin deep-link compatibility green.",
+      "retirement_action": "executed_workspace_redirect"
     },
     {
       "id": "run_detail",
@@ -518,6 +522,7 @@
       "status": "covered",
       "gate4_required": true,
       "vite_routes": [
+        "/workspace/runs/:id",
         "/admin/runs/:id"
       ],
       "next_routes": [
@@ -547,8 +552,9 @@
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
-      "retirement_allowed": false,
-      "retirement_gate": "Route naming decision records /workspace/runs/:runId as the future canonical target while /admin/runs/:id stays as a compatibility route; Next alias, navigation inventory, and retirement packet evidence exist, but retirement still needs an explicit route retirement commit."
+      "retirement_allowed": true,
+      "retirement_gate": "Explicit route retirement executed for run_detail: Vite primary/internal run-detail links now use /workspace/runs/:id, the legacy Vite /admin/runs/:id route is a redirect-only deep link, Next /admin/runs/:runId remains a redirect alias to /workspace/runs/:runId, and Vite/Next browser evidence must keep both canonical workspace rendering and admin deep-link compatibility green.",
+      "retirement_action": "executed_workspace_redirect"
     },
     {
       "id": "tool_calls",

@@ -118,7 +118,7 @@ export function ToolCallLedger() {
                       <Wrench size={11} style={{ color: "var(--mis-muted)" }} />
                       <span className="font-medium" style={{ color: "var(--mis-text)" }}>{tc.tool_name}</span>
                     </div>
-                    <Link to={`/admin/runs/${tc.run_id}`} className="text-[10px] mt-0.5 font-mono hover:opacity-80" style={{ color: "var(--mis-cyan)" }}>{tc.run_id}</Link>
+                    <Link to={`/workspace/runs/${tc.run_id}`} className="text-[10px] mt-0.5 font-mono hover:opacity-80" style={{ color: "var(--mis-cyan)" }}>{tc.run_id}</Link>
                   </td>
                   <td className="px-4 py-3">{tc.tool_category}</td>
                   <td className="px-4 py-3">{agent?.name ?? tc.agent_id}</td>

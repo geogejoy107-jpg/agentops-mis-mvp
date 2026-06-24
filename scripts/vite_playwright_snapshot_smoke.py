@@ -48,7 +48,7 @@ VITE_ROUTE_EXPECTATIONS: list[tuple[str, list[Expectation]]] = [
     ("/workspace/approvals", [("Approvals Inbox", "审批收件箱"), ("Pending Approval", "待审批"), ("Approve", "批准")]),
     ("/workspace/memory", ["Memory Library", "candidate"]),
     ("/workspace/reports", [("Reports", "报告"), ("Customer delivery board", "客户交付看板")]),
-    ("/admin/runs", [("Run Ledger", "运行账本"), ("Run", "运行")]),
+    ("/workspace/runs", [("Run Ledger", "运行账本"), ("Run", "运行")]),
     ("/admin/audit", ["Audit Center", "Chain intact"]),
 ]
 
@@ -133,7 +133,7 @@ def snapshot_vite_detail_routes(base_url: str, run: dict, env: dict[str, str]) -
     require(bool(run_id and task_id), f"Cannot snapshot detail routes without task/run ids: {run!r}")
 
     details: list[dict] = []
-    task_path = f"/admin/tasks/{task_id}"
+    task_path = f"/workspace/tasks/{task_id}"
     task_goto = playwright(env, "goto", base_url.rstrip("/") + task_path)
     require(task_goto.returncode == 0, f"Playwright goto failed for {task_path}: {task_goto.stderr or task_goto.stdout}")
     task_text = wait_for_snapshot_text(
@@ -150,7 +150,7 @@ def snapshot_vite_detail_routes(base_url: str, run: dict, env: dict[str, str]) -
         "snapshot_chars": len(task_text),
     })
 
-    run_path = f"/admin/runs/{run_id}"
+    run_path = f"/workspace/runs/{run_id}"
     run_goto = playwright(env, "goto", base_url.rstrip("/") + run_path)
     require(run_goto.returncode == 0, f"Playwright goto failed for {run_path}: {run_goto.stderr or run_goto.stdout}")
     run_text = wait_for_snapshot_text(
@@ -166,6 +166,28 @@ def snapshot_vite_detail_routes(base_url: str, run: dict, env: dict[str, str]) -
         "expected": ["Tool Calls", "Cost", "Input Tokens", task_id, run_id],
         "snapshot_chars": len(run_text),
     })
+
+    legacy_paths = {
+        f"/admin/tasks/{task_id}": f"/workspace/tasks/{task_id}",
+        "/admin/runs": "/workspace/runs",
+        f"/admin/runs/{run_id}": f"/workspace/runs/{run_id}",
+    }
+    for legacy_path, expected_target in legacy_paths.items():
+        legacy_goto = playwright(env, "goto", base_url.rstrip("/") + legacy_path)
+        require(legacy_goto.returncode == 0, f"Playwright goto failed for legacy {legacy_path}: {legacy_goto.stderr or legacy_goto.stdout}")
+        legacy_text = wait_for_snapshot_text(
+            env,
+            legacy_path,
+            lambda text: (task_id in text or run_id in text or "Run Ledger" in text or "运行账本" in text),
+            "Vite legacy admin task/run deep link to redirect to workspace content",
+        )
+        require(not leaked_secret(legacy_text), f"Vite legacy redirect snapshot for {legacy_path} leaked token-like material")
+        details.append({
+            "path": legacy_path,
+            "redirect_target": expected_target,
+            "expected": ["workspace task/run content via Vite redirect"],
+            "snapshot_chars": len(legacy_text),
+        })
     return details
 
 

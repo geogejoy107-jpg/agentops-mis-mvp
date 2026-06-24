@@ -306,11 +306,11 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
         </div>
         {result?.task_id && (
           <div className="flex flex-wrap gap-2 text-[11px]">
-            <Link className="rounded px-2.5 py-1.5" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }} to={`/admin/tasks/${result.task_id}`}>
+            <Link className="rounded px-2.5 py-1.5" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }} to={`/workspace/tasks/${result.task_id}`}>
               {zh ? "打开任务" : "Open task"}
             </Link>
             {result.run_id && (
-              <Link className="rounded px-2.5 py-1.5" style={{ background: "rgba(168,85,247,0.12)", color: "var(--mis-purple)", border: "1px solid rgba(168,85,247,0.26)" }} to={`/admin/runs/${result.run_id}`}>
+              <Link className="rounded px-2.5 py-1.5" style={{ background: "rgba(168,85,247,0.12)", color: "var(--mis-purple)", border: "1px solid rgba(168,85,247,0.26)" }} to={`/workspace/runs/${result.run_id}`}>
                 {zh ? "打开运行账本" : "Open run"}
               </Link>
             )}
@@ -318,11 +318,11 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
         )}
         {(kbResult?.task_id || kbFinalStep?.task_id) && (
           <div className="flex flex-wrap gap-2 text-[11px]">
-            <Link className="rounded px-2.5 py-1.5" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }} to={`/admin/tasks/${kbResult.task_id || kbFinalStep?.task_id}`}>
+            <Link className="rounded px-2.5 py-1.5" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }} to={`/workspace/tasks/${kbResult.task_id || kbFinalStep?.task_id}`}>
               {zh ? "打开项目交付任务" : "Open project delivery task"}
             </Link>
             {(kbResult.run_id || kbFinalStep?.run_id) && (
-              <Link className="rounded px-2.5 py-1.5" style={{ background: "rgba(168,85,247,0.12)", color: "var(--mis-purple)", border: "1px solid rgba(168,85,247,0.26)" }} to={`/admin/runs/${kbResult.run_id || kbFinalStep?.run_id}`}>
+              <Link className="rounded px-2.5 py-1.5" style={{ background: "rgba(168,85,247,0.12)", color: "var(--mis-purple)", border: "1px solid rgba(168,85,247,0.26)" }} to={`/workspace/runs/${kbResult.run_id || kbFinalStep?.run_id}`}>
                 {zh ? "打开最终运行" : "Open final run"}
               </Link>
             )}
@@ -621,8 +621,8 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
                 <div className="mt-1 text-[10px]" style={{ color: "var(--mis-dim)" }}>{evidenceLine(job.result?.evidence)}</div>
               )}
               <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
-                {job.result_task_id && <Link style={{ color: "var(--mis-cyan)" }} to={`/admin/tasks/${job.result_task_id}`}>{zh ? "任务" : "Task"}</Link>}
-                {job.result_run_id && <Link style={{ color: "var(--mis-purple)" }} to={`/admin/runs/${job.result_run_id}`}>{zh ? "运行" : "Run"}</Link>}
+                {job.result_task_id && <Link style={{ color: "var(--mis-cyan)" }} to={`/workspace/tasks/${job.result_task_id}`}>{zh ? "任务" : "Task"}</Link>}
+                {job.result_run_id && <Link style={{ color: "var(--mis-purple)" }} to={`/workspace/runs/${job.result_run_id}`}>{zh ? "运行" : "Run"}</Link>}
                 {job.result_artifact_id && <span style={{ color: "var(--mis-success)" }}>{job.result_artifact_id}</span>}
                 {job.result?.approval_ids?.length ? <Link style={{ color: "#FBBF24" }} to="/workspace/approvals">{zh ? "审批" : "Approval"}</Link> : null}
                 {job.result?.project_id && <Link style={{ color: "var(--mis-success)" }} to={`/workspace/customer-projects/${job.result.project_id}/report`}>{zh ? "报告" : "Report"}</Link>}

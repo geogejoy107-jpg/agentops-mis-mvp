@@ -116,7 +116,7 @@ export const PIXEL_ZONES: PixelZoneDefinition[] = [
   {
     id: "run_stream",
     label: "Run Stream",
-    route: "/admin/runs",
+    route: "/workspace/runs",
     description: "Run ledger, delegation chain, runtime history and replay entry.",
     x: 73,
     y: 6,
@@ -212,7 +212,7 @@ export const PIXEL_ZONES: PixelZoneDefinition[] = [
   {
     id: "incident_corner",
     label: "Incident Corner",
-    route: "/admin/runs",
+    route: "/workspace/runs",
     description: "Failed runs, blocked tasks, runtime errors and recovery pointers.",
     x: 81,
     y: 55,
@@ -496,7 +496,7 @@ export function deriveTaskCards(tasks: Task[]): PixelTaskCard[] {
     risk: task.risk_level,
     status: task.status,
     group: taskGroup(task.status),
-    route: task.task_id ? `/admin/tasks/${task.task_id}` : "/workspace/tasks",
+    route: task.task_id ? `/workspace/tasks/${task.task_id}` : "/workspace/tasks",
   }));
 }
 

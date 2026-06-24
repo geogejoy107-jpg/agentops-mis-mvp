@@ -67,7 +67,7 @@ def route_naming_decision_semantics_ok() -> bool:
     decision = read_json("docs/UI_ROUTE_NAMING_DECISION.json")
     if decision.get("contract_id") != "ui_route_naming_decision_v1":
         return False
-    if decision.get("status") != "accepted_no_route_retirement":
+    if decision.get("status") != "accepted_task_run_workspace_redirect_retirement":
         return False
     policy = decision.get("policy") or {}
     if policy.get("legacy_namespace") != "/admin" or policy.get("target_namespace") != "/workspace":
@@ -82,10 +82,12 @@ def route_naming_decision_semantics_ok() -> bool:
         return False
     if policy.get("redirects_required_before_retirement") is not True:
         return False
+    if set(policy.get("executed_route_retirement_ids") or []) != {"task_detail", "run_ledger", "run_detail"}:
+        return False
     required = {
-        "task_detail": ("/admin/tasks/:id", "/workspace/tasks/:taskId"),
-        "run_ledger": ("/admin/runs", "/workspace/runs"),
-        "run_detail": ("/admin/runs/:id", "/workspace/runs/:runId"),
+        "task_detail": ("/admin/tasks/:id", "/workspace/tasks/:taskId", "/workspace/tasks/:id"),
+        "run_ledger": ("/admin/runs", "/workspace/runs", "/workspace/runs"),
+        "run_detail": ("/admin/runs/:id", "/workspace/runs/:runId", "/workspace/runs/:id"),
     }
     required_cutover = {
         "route_level_read_model_parity",
@@ -95,9 +97,11 @@ def route_naming_decision_semantics_ok() -> bool:
         "explicit_route_retirement_commit",
     }
     pairs = {str(pair.get("id")): pair for pair in decision.get("route_pairs") or [] if isinstance(pair, dict)}
-    for pair_id, (legacy, target) in required.items():
+    for pair_id, (legacy, target, vite_target) in required.items():
         pair = pairs.get(pair_id) or {}
         if pair.get("legacy_route") != legacy or pair.get("target_route") != target:
+            return False
+        if not file_contains("ui/start-building-app/src/app/App.tsx", vite_target):
             return False
         if pair.get("next_alias_status") != "redirects_to_target_route":
             return False
@@ -105,11 +109,13 @@ def route_naming_decision_semantics_ok() -> bool:
             return False
         if "canonical_navigation_inventory_verified" not in set(pair.get("cutover_evidence") or []):
             return False
-        if "retirement_packet_prepared" not in set(pair.get("cutover_evidence") or []):
+        if "retirement_packet_executed" not in set(pair.get("cutover_evidence") or []):
             return False
-        if set(pair.get("remaining_cutover_requires") or []) != {"explicit_route_retirement_commit"}:
+        if "vite_primary_links_migrated_to_workspace" not in set(pair.get("cutover_evidence") or []):
             return False
-        if pair.get("retirement_allowed") is not False:
+        if set(pair.get("remaining_cutover_requires") or []):
+            return False
+        if pair.get("retirement_allowed") is not True:
             return False
         if not required_cutover.issubset(set(pair.get("cutover_requires") or [])):
             return False
@@ -716,6 +722,8 @@ def main() -> int:
             and file_contains("scripts/vite_playwright_snapshot_smoke.py", "snapshots + detail_snapshots")
             and file_contains("scripts/vite_playwright_snapshot_smoke.py", '"detail_task_id"')
             and file_contains("scripts/vite_playwright_snapshot_smoke.py", '"detail_run_id"')
+            and file_contains("scripts/vite_playwright_snapshot_smoke.py", "/workspace/tasks/")
+            and file_contains("scripts/vite_playwright_snapshot_smoke.py", "/workspace/runs/")
             and file_contains("scripts/vite_playwright_snapshot_smoke.py", "/admin/tasks/")
             and file_contains("scripts/vite_playwright_snapshot_smoke.py", "/admin/runs/")
             and (ROOT / "scripts" / "vite_playwright_snapshot_smoke.py").exists(),
@@ -755,7 +763,7 @@ def main() -> int:
             and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "ui_route_naming_decision_smoke.py")
             and file_contains("scripts/ui_route_naming_decision_smoke.py", "ui_route_naming_decision_v1")
             and (ROOT / "scripts" / "ui_route_naming_decision_smoke.py").exists(),
-            "Gate 4 task/run route naming decision is recorded and remains fail-closed for legacy route retirement",
+            "Gate 4 task/run route naming decision records executed workspace redirect retirement for legacy admin task/run routes",
         ),
         check(
             "ui_legacy_route_alias_surface_exists",
@@ -767,7 +775,7 @@ def main() -> int:
             and file_contains("ui/next-app/app/admin/runs/page.tsx", "/workspace/runs")
             and file_contains("ui/next-app/app/admin/runs/[runId]/page.tsx", "/workspace/runs/")
             and (ROOT / "scripts" / "ui_legacy_route_alias_smoke.py").exists(),
-            "Gate 4 Next.js legacy /admin task/run aliases redirect to /workspace targets while route retirement remains blocked",
+            "Gate 4 Next.js legacy /admin task/run aliases redirect to /workspace targets while task/run Vite routes retire to workspace redirects",
         ),
         check(
             "ui_navigation_inventory_surface_exists",
@@ -779,21 +787,23 @@ def main() -> int:
             and file_contains("scripts/ui_navigation_inventory_smoke.py", "ui_navigation_inventory_v1")
             and file_contains("ui/next-app/src/components/AppFrame.tsx", 'href: "/workspace/tasks"')
             and file_contains("ui/next-app/src/components/AppFrame.tsx", 'href: "/workspace/runs"')
+            and file_contains("ui/start-building-app/src/app/App.tsx", 'path="/workspace/runs"')
+            and file_contains("ui/start-building-app/src/app/components/layout/Sidebar.tsx", 'path: "/workspace/runs"')
             and (ROOT / "scripts" / "ui_navigation_inventory_smoke.py").exists(),
-            "Gate 4 Next.js task/run primary navigation is inventoried under /workspace; /admin remains redirect-alias only",
+            "Gate 4 Next.js and Vite task/run primary navigation is inventoried under /workspace; /admin remains redirect-alias only",
         ),
         check(
             "ui_route_retirement_packet_surface_exists",
             file_contains("docs/UI_ROUTE_RETIREMENT_PACKET.json", "ui_route_retirement_packet_v1")
             and file_contains("docs/UI_ROUTE_RETIREMENT_PACKET.md", "ui_route_retirement_packet_v1")
-            and file_contains("docs/UI_ROUTE_NAMING_DECISION.json", "retirement_packet_prepared")
+            and file_contains("docs/UI_ROUTE_NAMING_DECISION.json", "retirement_packet_executed")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "ui_route_retirement_packet_v1")
             and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "ui_route_retirement_packet_smoke.py")
             and file_contains("scripts/ui_route_retirement_packet_smoke.py", "ui_route_retirement_packet_v1")
-            and file_contains("docs/UI_ROUTE_RETIREMENT_PACKET.json", "\"retirement_action\": \"not_executed\"")
-            and file_contains("docs/UI_ROUTE_RETIREMENT_PACKET.json", "\"retirement_allowed\": false")
+            and file_contains("docs/UI_ROUTE_RETIREMENT_PACKET.json", "\"retirement_action\": \"executed_workspace_redirect\"")
+            and file_contains("docs/UI_ROUTE_RETIREMENT_PACKET.json", "\"retirement_allowed\": true")
             and (ROOT / "scripts" / "ui_route_retirement_packet_smoke.py").exists(),
-            "Gate 4 task/run legacy route retirement packet is prepared but keeps route retirement fail-closed",
+            "Gate 4 task/run legacy route retirement packet executes workspace redirect retirement while preserving deep links",
         ),
         check(
             "ui_covered_route_retirement_packet_surface_exists",

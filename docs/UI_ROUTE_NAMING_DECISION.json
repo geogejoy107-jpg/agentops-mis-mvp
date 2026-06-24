@@ -1,20 +1,25 @@
 {
   "contract_id": "ui_route_naming_decision_v1",
   "gate": "gate_4_ui_api_parity_before_nextjs",
-  "status": "accepted_no_route_retirement",
-  "updated_at": "2026-06-22",
+  "status": "accepted_task_run_workspace_redirect_retirement",
+  "updated_at": "2026-06-25",
   "policy": {
     "legacy_namespace": "/admin",
     "target_namespace": "/workspace",
-    "legacy_owner": "vite_react",
+    "legacy_owner": "vite_react_redirect_alias",
     "target_owner": "nextjs_app_router",
-    "decision": "Task and run operator routes use /workspace as the future commercial namespace. Existing Vite /admin task/run routes remain legacy compatibility routes until explicit retirement gates pass.",
+    "decision": "Task and run operator routes use /workspace as the commercial namespace. Vite primary/internal task-run navigation now uses /workspace, legacy Vite /admin task-run routes are redirect-only deep links, and Next /admin task-run routes remain redirect aliases.",
     "alias_contract": "ui_legacy_route_alias_v1",
     "navigation_inventory_contract": "ui_navigation_inventory_v1",
     "retirement_packet_contract": "ui_route_retirement_packet_v1",
     "retirement_allowed_by_default": false,
     "redirects_required_before_retirement": true,
-    "no_breaking_deep_links": true
+    "no_breaking_deep_links": true,
+    "executed_route_retirement_ids": [
+      "task_detail",
+      "run_ledger",
+      "run_detail"
+    ]
   },
   "route_pairs": [
     {
@@ -35,18 +40,20 @@
         "ui/next-app/src/components/LedgerDetailPages.tsx"
       ],
       "decision": "next_workspace_route_is_future_canonical",
-      "legacy_route_status": "keep_until_redirect_and_cutover_evidence",
+      "legacy_route_status": "redirects_to_target_route",
       "next_alias_status": "redirects_to_target_route",
-      "target_route_status": "next_parity_target",
-      "retirement_allowed": false,
+      "target_route_status": "workspace_canonical_route",
+      "retirement_allowed": true,
       "cutover_evidence": [
+        "route_level_read_model_parity",
+        "vite_and_next_browser_snapshot_parity",
         "backward_compatible_redirect_or_alias",
         "canonical_navigation_inventory_verified",
-        "retirement_packet_prepared"
+        "retirement_packet_executed",
+        "vite_primary_links_migrated_to_workspace",
+        "agent_gateway_cli_api_mcp_unchanged"
       ],
-      "remaining_cutover_requires": [
-        "explicit_route_retirement_commit"
-      ],
+      "remaining_cutover_requires": [],
       "cutover_requires": [
         "route_level_read_model_parity",
         "vite_and_next_browser_snapshot_parity",
@@ -75,18 +82,20 @@
         "ui/next-app/src/components/LedgerPages.tsx"
       ],
       "decision": "next_workspace_route_is_future_canonical",
-      "legacy_route_status": "keep_until_redirect_and_cutover_evidence",
+      "legacy_route_status": "redirects_to_target_route",
       "next_alias_status": "redirects_to_target_route",
-      "target_route_status": "next_parity_target",
-      "retirement_allowed": false,
+      "target_route_status": "workspace_canonical_route",
+      "retirement_allowed": true,
       "cutover_evidence": [
+        "route_level_read_model_parity",
+        "vite_and_next_browser_snapshot_parity",
         "backward_compatible_redirect_or_alias",
         "canonical_navigation_inventory_verified",
-        "retirement_packet_prepared"
+        "retirement_packet_executed",
+        "vite_primary_links_migrated_to_workspace",
+        "agent_gateway_cli_api_mcp_unchanged"
       ],
-      "remaining_cutover_requires": [
-        "explicit_route_retirement_commit"
-      ],
+      "remaining_cutover_requires": [],
       "cutover_requires": [
         "route_level_read_model_parity",
         "vite_and_next_browser_snapshot_parity",
@@ -113,18 +122,20 @@
         "ui/next-app/src/components/LedgerDetailPages.tsx"
       ],
       "decision": "next_workspace_route_is_future_canonical",
-      "legacy_route_status": "keep_until_redirect_and_cutover_evidence",
+      "legacy_route_status": "redirects_to_target_route",
       "next_alias_status": "redirects_to_target_route",
-      "target_route_status": "next_parity_target",
-      "retirement_allowed": false,
+      "target_route_status": "workspace_canonical_route",
+      "retirement_allowed": true,
       "cutover_evidence": [
+        "route_level_read_model_parity",
+        "vite_and_next_browser_snapshot_parity",
         "backward_compatible_redirect_or_alias",
         "canonical_navigation_inventory_verified",
-        "retirement_packet_prepared"
+        "retirement_packet_executed",
+        "vite_primary_links_migrated_to_workspace",
+        "agent_gateway_cli_api_mcp_unchanged"
       ],
-      "remaining_cutover_requires": [
-        "explicit_route_retirement_commit"
-      ],
+      "remaining_cutover_requires": [],
       "cutover_requires": [
         "route_level_read_model_parity",
         "vite_and_next_browser_snapshot_parity",

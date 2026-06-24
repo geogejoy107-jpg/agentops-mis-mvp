@@ -17,9 +17,12 @@ remains the canonical UI until a route has explicit evidence that the Next.js
 route preserves the same MIS API semantics, visible workflow, safety boundaries,
 and browser behavior.
 
-The matrix is not a retirement approval. Every entry currently has
-`retirement_allowed: false`. Retiring a Vite route requires a future explicit
-decision after both browser smokes and route-level API/read-model diffs pass.
+The matrix is not a blanket retirement approval. `task_detail`, `run_ledger`,
+and `run_detail` now have an explicit `executed_workspace_redirect`
+retirement: Vite primary links use `/workspace`, and the old Vite `/admin`
+task/run routes are redirect-only deep links. Every other entry remains
+`retirement_allowed: false` until a future explicit decision passes browser
+smokes and route-level API/read-model diffs.
 
 ## Status Values
 
@@ -46,7 +49,7 @@ route retirement:
 | Memory review | `memory` | `covered` | Not allowed |
 | Audit evidence | `audit` | `covered` | Not allowed |
 | Customer report | `customer_project_report` | `covered` | Not allowed |
-| Task and run ledgers | `task_list`, `task_detail`, `run_ledger`, `run_detail` | `covered` | Not allowed |
+| Task and run ledgers | `task_list`, `task_detail`, `run_ledger`, `run_detail` | `covered` | `task_detail`, `run_ledger`, and `run_detail` executed to workspace redirects |
 | Tool call ledger | `tool_calls` | `covered` | Not allowed |
 | Evaluation room | `evaluation_room` | `covered` | Not allowed |
 | Runtime connectors | `runtime_connectors` | `covered` | Not allowed |
@@ -134,28 +137,31 @@ route retirement:
   rate, failures, approval count, budget usage, allowed tools, recent error
   groups, and recent run/task links. `/admin/agents/:id` remains canonical until
   worker console mutations and route retirement are explicit.
-- Task and run list/detail now have first route-level evidence:
+- Task and run list/detail now have executed route-retirement evidence:
   `python3 scripts/ui_task_run_route_parity_smoke.py`
   (`ui_task_run_route_parity_v1`) checks Next list links to detail routes and
   compares direct MIS API task/run list/detail/graph read models with the Next
   `/api/mis/*` proxy. `python3 scripts/vite_playwright_snapshot_smoke.py`
-  (`vite_browser_snapshot_parity_v1`) now also opens seeded Vite task/run detail
-  routes and checks the related task/run IDs plus evidence sections.
+  (`vite_browser_snapshot_parity_v1`) now opens seeded Vite task/run detail
+  routes under `/workspace` and checks the related task/run IDs plus evidence
+  sections; it also keeps `/admin` task/run deep-link redirect coverage.
   `python3 scripts/ui_route_naming_decision_smoke.py`
-  (`ui_route_naming_decision_v1`) records `/workspace` as the future commercial
-  namespace for task/run routes while keeping `/admin` as legacy compatibility;
+  (`ui_route_naming_decision_v1`) records `/workspace` as the commercial
+  namespace for task/run routes while making `/admin` redirect-only
+  compatibility;
   the human and machine-readable decision live in
   `docs/UI_ROUTE_NAMING_DECISION.md` and
   `docs/UI_ROUTE_NAMING_DECISION.json`. `python3
   scripts/ui_legacy_route_alias_smoke.py` (`ui_legacy_route_alias_v1`) verifies
   Next.js `/admin` task/run deep links redirect to the `/workspace` target
   routes. `python3 scripts/ui_navigation_inventory_smoke.py`
-  (`ui_navigation_inventory_v1`) verifies Next primary task/run navigation uses
-  `/workspace` and treats `/admin` task/run routes as redirect aliases only.
+  (`ui_navigation_inventory_v1`) verifies Next and Vite primary task/run
+  navigation use `/workspace` and treats `/admin` task/run routes as redirect
+  aliases only.
   `python3 scripts/ui_route_retirement_packet_smoke.py`
-  (`ui_route_retirement_packet_v1`) prepares the candidate retirement packet
-  while keeping `retirement_allowed: false`. Retirement still needs an explicit
-  route retirement commit for each route pair.
+  (`ui_route_retirement_packet_v1`) verifies the task/run `/admin` routes are
+  retired to workspace redirect aliases while Agent Gateway CLI/API/MCP remains
+  unchanged.
 
 ## Verification Stack
 

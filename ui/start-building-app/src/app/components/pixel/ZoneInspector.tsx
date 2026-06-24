@@ -87,7 +87,7 @@ export function ZoneInspector({
           {selectedAgent.latestRunId && (
             <button
               type="button"
-              onClick={() => onOpenRoute(`/admin/runs/${selectedAgent.latestRunId}`)}
+              onClick={() => onOpenRoute(`/workspace/runs/${selectedAgent.latestRunId}`)}
               className="mt-3 w-full rounded px-2.5 py-1.5 text-[11px] inline-flex items-center justify-between"
               style={{ background: "rgba(2,6,23,0.45)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}
             >

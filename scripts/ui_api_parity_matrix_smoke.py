@@ -33,6 +33,7 @@ GATE4_REQUIRED_IDS = {
     "external_bases_notion",
     "next_mis_proxy",
 }
+EXECUTED_RETIREMENT_IDS = {"task_detail", "run_ledger", "run_detail"}
 
 
 def require(condition: bool, message: str) -> None:
@@ -116,13 +117,13 @@ def source_text_for(paths: list[str]) -> str:
     return "\n".join(chunks)
 
 
-def assert_entry_routes(entry: dict | None, entry_id: str, vite_routes: list[str], next_routes: list[str]) -> None:
+def assert_entry_routes(entry: dict | None, entry_id: str, vite_routes: list[str], next_routes: list[str], *, retirement_allowed: bool = False) -> None:
     require(isinstance(entry, dict), f"missing matrix entry for {entry_id}")
     actual_vite = set(entry.get("vite_routes") or [])
     actual_next = set(entry.get("next_routes") or [])
     require(set(vite_routes) <= actual_vite, f"{entry_id}.vite_routes must include {vite_routes}")
     require(set(next_routes) <= actual_next, f"{entry_id}.next_routes must include {next_routes}")
-    require(entry.get("retirement_allowed") is False, f"{entry_id} must stay blocked from retirement until a naming/navigation decision exists")
+    require(entry.get("retirement_allowed") is retirement_allowed, f"{entry_id} retirement_allowed must be {retirement_allowed}")
 
 
 def main() -> int:
@@ -223,11 +224,12 @@ def main() -> int:
         matrix_vite_routes.update(map(str, vite_routes))
         matrix_next_routes.update(map(str, next_routes))
 
-    require(not retired, f"no Vite routes may be retired in this gate slice; found {retired}")
+    require(set(retired) == EXECUTED_RETIREMENT_IDS, f"only task/run legacy admin routes may be retired in this gate slice; found {retired}")
     require(GATE4_REQUIRED_IDS.issubset(gate4_required), f"missing Gate 4 required ids: {sorted(GATE4_REQUIRED_IDS - gate4_required)}")
     vite_smoke_text = read_text(ROOT / "scripts" / "vite_playwright_snapshot_smoke.py")
     require("snapshot_vite_detail_routes" in vite_smoke_text, "Vite browser smoke must include task/run detail snapshot coverage")
-    require("/admin/tasks/" in vite_smoke_text and "/admin/runs/" in vite_smoke_text, "Vite browser smoke must navigate task/run admin detail routes")
+    require("/workspace/tasks/" in vite_smoke_text and "/workspace/runs/" in vite_smoke_text, "Vite browser smoke must navigate canonical task/run workspace detail routes")
+    require("/admin/tasks/" in vite_smoke_text and "/admin/runs/" in vite_smoke_text, "Vite browser smoke must keep admin deep-link redirect coverage")
     for detail_id in ("task_detail", "run_detail"):
         evidence = entries_by_id.get(detail_id, {}).get("evidence_commands") or []
         require("python3 scripts/vite_playwright_snapshot_smoke.py" in evidence, f"{detail_id} must include Vite browser detail snapshot evidence")
@@ -237,9 +239,13 @@ def main() -> int:
         require("python3 scripts/ui_legacy_route_alias_smoke.py" in evidence, f"{route_id} must include legacy route alias evidence")
         require("python3 scripts/ui_navigation_inventory_smoke.py" in evidence, f"{route_id} must include navigation inventory evidence")
         require("python3 scripts/ui_route_retirement_packet_smoke.py" in evidence, f"{route_id} must include route retirement packet evidence")
-    assert_entry_routes(entries_by_id.get("task_detail"), "task_detail", ["/admin/tasks/:id"], ["/workspace/tasks/:taskId"])
-    assert_entry_routes(entries_by_id.get("run_ledger"), "run_ledger", ["/admin/runs"], ["/workspace/runs"])
-    assert_entry_routes(entries_by_id.get("run_detail"), "run_detail", ["/admin/runs/:id"], ["/workspace/runs/:runId"])
+    for route_id in EXECUTED_RETIREMENT_IDS:
+        route_entry = entries_by_id.get(route_id) or {}
+        require(route_entry.get("retirement_action") == "executed_workspace_redirect", f"{route_id} must record executed workspace redirect retirement")
+        require("Explicit route retirement executed" in str(route_entry.get("retirement_gate") or ""), f"{route_id} retirement gate must record execution")
+    assert_entry_routes(entries_by_id.get("task_detail"), "task_detail", ["/workspace/tasks/:id", "/admin/tasks/:id"], ["/workspace/tasks/:taskId"], retirement_allowed=True)
+    assert_entry_routes(entries_by_id.get("run_ledger"), "run_ledger", ["/workspace/runs", "/admin/runs"], ["/workspace/runs"], retirement_allowed=True)
+    assert_entry_routes(entries_by_id.get("run_detail"), "run_detail", ["/workspace/runs/:id", "/admin/runs/:id"], ["/workspace/runs/:runId"], retirement_allowed=True)
     assert_entry_routes(entries_by_id.get("agent_detail"), "agent_detail", ["/admin/agents/:id"], ["/workspace/agents/:agentId"])
     agent_detail_evidence = entries_by_id.get("agent_detail", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_parity_smoke.py" in agent_detail_evidence, "agent_detail must include Next static parity evidence")
@@ -369,7 +375,7 @@ def main() -> int:
         "status_counts": status_counts,
         "vite_routes": sorted(vite_routes),
         "next_routes": sorted(next_routes),
-        "retirement_allowed": False,
+        "executed_retirements": sorted(EXECUTED_RETIREMENT_IDS),
     }, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 

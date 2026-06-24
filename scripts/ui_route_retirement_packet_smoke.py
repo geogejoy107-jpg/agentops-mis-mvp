@@ -19,6 +19,7 @@ CONTRACT_ID = "ui_route_retirement_packet_v1"
 REQUIRED_ROUTES = {
     "task_detail": {
         "legacy_vite_route": "/admin/tasks/:id",
+        "canonical_vite_route": "/workspace/tasks/:id",
         "canonical_next_route": "/workspace/tasks/:taskId",
         "next_alias_route": "/admin/tasks/:taskId",
         "alias_file": "ui/next-app/app/admin/tasks/[taskId]/page.tsx",
@@ -26,6 +27,7 @@ REQUIRED_ROUTES = {
     },
     "run_ledger": {
         "legacy_vite_route": "/admin/runs",
+        "canonical_vite_route": "/workspace/runs",
         "canonical_next_route": "/workspace/runs",
         "next_alias_route": "/admin/runs",
         "alias_file": "ui/next-app/app/admin/runs/page.tsx",
@@ -33,6 +35,7 @@ REQUIRED_ROUTES = {
     },
     "run_detail": {
         "legacy_vite_route": "/admin/runs/:id",
+        "canonical_vite_route": "/workspace/runs/:id",
         "canonical_next_route": "/workspace/runs/:runId",
         "next_alias_route": "/admin/runs/:runId",
         "alias_file": "ui/next-app/app/admin/runs/[runId]/page.tsx",
@@ -102,14 +105,16 @@ def main() -> int:
     packet = read_json(PACKET_PATH)
     require(packet.get("contract_id") == CONTRACT_ID, f"packet contract_id must be {CONTRACT_ID}")
     require(packet.get("gate") == "gate_4_ui_api_parity_before_nextjs", "packet gate id is wrong")
-    require(packet.get("status") == "candidate_ready_no_route_retirement", "packet must be candidate-only")
+    require(packet.get("status") == "executed_task_run_workspace_redirect_retirement", "packet must record executed task/run route retirement")
     policy = packet.get("policy") or {}
     require(policy.get("scope") == "task_run_legacy_admin_routes", "packet scope is wrong")
-    require(policy.get("retirement_action") == "not_executed", "packet must not execute retirement")
-    require(policy.get("retirement_allowed") is False, "packet must keep retirement fail-closed")
-    require(policy.get("candidate_only") is True, "packet must be candidate-only")
-    require(policy.get("requires_explicit_route_retirement_commit") is True, "packet must require explicit retirement commit")
+    require(policy.get("retirement_action") == "executed_workspace_redirect", "packet must execute workspace redirect retirement")
+    require(policy.get("retirement_allowed") is True, "packet must allow the executed task/run retirement")
+    require(policy.get("candidate_only") is False, "packet must no longer be candidate-only")
+    require(policy.get("requires_explicit_route_retirement_commit") is False, "packet must close the explicit retirement requirement")
     require(policy.get("no_breaking_deep_links") is True, "packet must preserve deep links")
+    require(set(policy.get("executed_route_ids") or []) == set(REQUIRED_ROUTES), "packet must name the executed task/run route ids")
+    require(policy.get("agent_gateway_cli_api_mcp_unchanged") is True, "packet must preserve Agent Gateway CLI/API/MCP")
     require(policy.get("verification_command") == "python3 scripts/ui_route_retirement_packet_smoke.py", "packet verification command is wrong")
 
     evidence_commands = set(packet.get("evidence_commands") or [])
@@ -128,6 +133,7 @@ def main() -> int:
 
     vite_routes = actual_vite_routes()
     next_routes = actual_next_routes()
+    vite_app_text = read_text(VITE_APP / "src" / "app" / "App.tsx")
     matrix_entries = {str(entry.get("id")): entry for entry in matrix.get("entries") or [] if isinstance(entry, dict)}
     decision_pairs = {str(pair.get("id")): pair for pair in decision.get("route_pairs") or [] if isinstance(pair, dict)}
     packet_routes = {str(route.get("id")): route for route in packet.get("candidate_routes") or [] if isinstance(route, dict)}
@@ -138,12 +144,15 @@ def main() -> int:
         require(route.get("legacy_vite_route") == expected["legacy_vite_route"], f"{route_id} legacy route changed")
         require(route.get("canonical_next_route") == expected["canonical_next_route"], f"{route_id} canonical route changed")
         require(route.get("next_alias_route") == expected["next_alias_route"], f"{route_id} alias route changed")
-        require(route.get("current_state") == "vite_legacy_route_kept_next_alias_ready", f"{route_id} current state is wrong")
-        require(route.get("retirement_allowed_now") is False, f"{route_id} must not be retired by this packet")
-        require(route.get("explicit_commit_required") is True, f"{route_id} must require an explicit retirement commit")
+        require(route.get("current_state") == "vite_legacy_route_redirects_to_workspace_next_alias_ready", f"{route_id} current state is wrong")
+        require(route.get("retirement_allowed_now") is True, f"{route_id} must be retired by this packet")
+        require(route.get("explicit_commit_required") is False, f"{route_id} must close the explicit retirement requirement")
+        require(route.get("retirement_action") == "executed_workspace_redirect", f"{route_id} must record workspace redirect retirement")
         require(REQUIRED_COMMIT_EVIDENCE <= set(route.get("required_commit_evidence") or []), f"{route_id} misses commit evidence requirements")
+        require("agent_gateway_cli_api_mcp_unchanged" in set(route.get("executed_evidence") or []), f"{route_id} must preserve Agent Gateway CLI/API/MCP")
 
         require(expected["legacy_vite_route"] in vite_routes, f"{route_id} Vite legacy route is already missing")
+        require(expected["canonical_vite_route"] in vite_routes, f"{route_id} Vite canonical workspace route is missing")
         require(expected["canonical_next_route"] in next_routes, f"{route_id} Next canonical route is missing")
         require(expected["next_alias_route"] in next_routes, f"{route_id} Next alias route is missing")
         alias_file = ROOT / expected["alias_file"]
@@ -151,15 +160,22 @@ def main() -> int:
         require(expected["alias_target_fragment"] in read_text(alias_file), f"{route_id} alias no longer redirects to canonical target")
 
         decision_pair = decision_pairs.get(route_id) or {}
-        require(decision_pair.get("retirement_allowed") is False, f"{route_id} route decision must remain fail-closed")
-        require("retirement_packet_prepared" in set(decision_pair.get("cutover_evidence") or []), f"{route_id} route decision must record packet evidence")
-        require(set(decision_pair.get("remaining_cutover_requires") or []) == {"explicit_route_retirement_commit"}, f"{route_id} should wait only on explicit retirement commit")
+        require(decision_pair.get("retirement_allowed") is True, f"{route_id} route decision must record executed retirement")
+        require(decision_pair.get("legacy_route_status") == "redirects_to_target_route", f"{route_id} route decision must make the legacy route redirect-only")
+        require("retirement_packet_executed" in set(decision_pair.get("cutover_evidence") or []), f"{route_id} route decision must record executed packet evidence")
+        require("vite_primary_links_migrated_to_workspace" in set(decision_pair.get("cutover_evidence") or []), f"{route_id} route decision must record Vite primary link migration")
+        require(set(decision_pair.get("remaining_cutover_requires") or []) == set(), f"{route_id} should have no remaining route cutover requirements")
 
         matrix_entry = matrix_entries.get(route_id) or {}
-        require(matrix_entry.get("retirement_allowed") is False, f"{route_id} matrix must remain fail-closed")
+        require(matrix_entry.get("retirement_allowed") is True, f"{route_id} matrix must record executed retirement")
+        require(matrix_entry.get("retirement_action") == "executed_workspace_redirect", f"{route_id} matrix must record workspace redirect retirement")
         matrix_evidence = set(matrix_entry.get("evidence_commands") or [])
         require("python3 scripts/ui_route_retirement_packet_smoke.py" in matrix_evidence, f"{route_id} matrix must include packet smoke")
-        require("retirement packet" in str(matrix_entry.get("retirement_gate") or "").lower(), f"{route_id} retirement gate must mention the packet")
+        gate = str(matrix_entry.get("retirement_gate") or "").lower()
+        require("explicit route retirement executed" in gate and "redirect" in gate, f"{route_id} retirement gate must record executed redirect retirement")
+
+    require("LegacyTaskDetailRedirect" in vite_app_text and "LegacyRunDetailRedirect" in vite_app_text, "Vite legacy task/run deep links must be redirect components")
+    require('<Route path="/admin/runs" element={<Navigate to="/workspace/runs" replace />} />' in vite_app_text, "Vite legacy run ledger must redirect to workspace runs")
 
     human_doc = read_text(ROOT / "docs" / "UI_ROUTE_RETIREMENT_PACKET.md")
     route_doc = read_text(ROOT / "docs" / "UI_ROUTE_NAMING_DECISION.md")
@@ -167,7 +183,7 @@ def main() -> int:
     closed_loop = read_text(ROOT / "docs" / "COMMERCIAL_MIGRATION_CLOSED_LOOP.md")
     readiness = read_text(ROOT / "scripts" / "commercial_migration_readiness.py")
     require(CONTRACT_ID in human_doc, "human packet doc must name the contract")
-    require("does not retire any Vite route" in human_doc, "human packet doc must keep route retirement fail-closed")
+    require("redirect-only deep links" in human_doc, "human packet doc must record executed route retirement")
     require(CONTRACT_ID in route_doc, "route naming doc must reference the packet contract")
     require(CONTRACT_ID in matrix_doc, "matrix doc must reference the packet contract")
     require("scripts/ui_route_retirement_packet_smoke.py" in closed_loop, "closed-loop doc must include packet smoke")
@@ -177,8 +193,8 @@ def main() -> int:
         "ok": True,
         "contract": CONTRACT_ID,
         "candidate_routes": sorted(REQUIRED_ROUTES),
-        "retirement_action": "not_executed",
-        "retirement_allowed": False,
+        "retirement_action": "executed_workspace_redirect",
+        "retirement_allowed": True,
     }, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 

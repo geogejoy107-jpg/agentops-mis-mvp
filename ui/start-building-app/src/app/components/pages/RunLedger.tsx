@@ -63,7 +63,7 @@ export function RunLedger() {
             {rows.slice(0, 120).map((run, i) => (
               <tr key={run.run_id} style={{ color: "var(--mis-dim)", borderTop: i > 0 ? "1px solid var(--mis-border)" : "none" }}>
                 <td className="px-4 py-3">
-                  <Link to={`/admin/runs/${run.run_id}`} className="font-mono font-medium hover:opacity-80" style={{ color: "var(--mis-cyan)" }}>
+                  <Link to={`/workspace/runs/${run.run_id}`} className="font-mono font-medium hover:opacity-80" style={{ color: "var(--mis-cyan)" }}>
                     {run.run_id}
                   </Link>
                 </td>

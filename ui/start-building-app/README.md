@@ -32,7 +32,7 @@ Then run this UI:
 npm run dev -- --host 127.0.0.1 --port 19000
 ```
 
-Live-connected pages include `/workspace`, `/workspace/tasks`, `/workspace/agents`, `/admin`, `/admin/runs`, `/admin/runs/:id`, `/admin/connectors`, `/admin/tasks/:id`, and `/admin/agents/:id`.
+Live-connected pages include `/workspace`, `/workspace/tasks`, `/workspace/tasks/:id`, `/workspace/agents`, `/admin`, `/workspace/runs`, `/workspace/runs/:id`, `/admin/connectors`, and `/admin/agents/:id`; legacy `/admin/tasks/:id`, `/admin/runs`, and `/admin/runs/:id` deep links redirect to the workspace task/run routes.
 
 Browser smoke:
 

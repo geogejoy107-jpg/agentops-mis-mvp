@@ -38,7 +38,7 @@ const navGroups: NavGroup[] = [
     items: [
       { labelKey: "controlTower",  path: "/admin",                    icon: <Activity size={15} /> },
       { labelKey: "agentRegistry", path: "/workspace/agents",         icon: <Bot size={15} /> },
-      { labelKey: "runLedger",     path: "/admin/runs",               icon: <List size={15} /> },
+      { labelKey: "runLedger",     path: "/workspace/runs",               icon: <List size={15} /> },
       { labelKey: "evaluationRoom",path: "/admin/evaluations",        icon: <BarChart2 size={15} /> },
       { labelKey: "toolCalls",     path: "/admin/toolcalls",          icon: <Wrench size={15} /> },
       { labelKey: "connectors",    path: "/admin/connectors",         icon: <Plug size={15} /> },

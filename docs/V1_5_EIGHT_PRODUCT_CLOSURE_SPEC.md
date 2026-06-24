@@ -458,7 +458,7 @@ Current v1.5 implementation:
   inbox for commander review of work that returns at different speeds.
 - `/workspace/approvals` reads live approvals from the backend and can approve/reject through the real API.
 - `/admin/toolcalls` reads live tool-call evidence from the backend instead of mock data.
-- `/admin/tasks/:id` shows delivery artifacts and links related runs to their Run Detail pages.
+- `/workspace/tasks/:id` shows delivery artifacts and links related runs to their Run Detail pages; legacy `/admin/tasks/:id` redirects to the workspace route.
 - Approval decisions preserve the original approval reason and synchronize linked tool/run/task status: approval completes the tool without overwriting completed run output; rejection blocks the tool, run and task.
 - Browser verification confirmed the controls render.
 - The Agent Gateway card shows gateway readiness, auth mode, workspace, scope count, active enrollments, and stale heartbeats.

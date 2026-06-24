@@ -119,7 +119,7 @@ export function MyTasks() {
         {filtered.map(task => (
           <Link
             key={task.task_id}
-            to={`/admin/tasks/${task.task_id}`}
+            to={`/workspace/tasks/${task.task_id}`}
             className="block rounded-xl p-4 hover:opacity-90 transition-opacity"
             style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
           >

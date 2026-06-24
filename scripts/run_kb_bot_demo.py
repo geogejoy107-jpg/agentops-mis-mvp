@@ -484,7 +484,7 @@ def main() -> int:
         "open_pages": {
             "pixel_office": f"{args.base_url.replace(':8787', ':19001')}/workspace/pixel-office",
             "tasks": f"{args.base_url.replace(':8787', ':19001')}/workspace/tasks",
-            "runs": f"{args.base_url.replace(':8787', ':19001')}/admin/runs",
+            "runs": f"{args.base_url.replace(':8787', ':19001')}/workspace/runs",
             "approvals": f"{args.base_url.replace(':8787', ':19001')}/workspace/approvals",
             "evaluations": f"{args.base_url.replace(':8787', ':19001')}/admin/evaluations",
             "audit": f"{args.base_url.replace(':8787', ':19001')}/admin/audit",

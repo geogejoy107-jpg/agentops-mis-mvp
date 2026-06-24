@@ -88,7 +88,7 @@ export function EvaluationRoom() {
           </p>
         </div>
         <Link
-          to="/admin/runs"
+          to="/workspace/runs"
           className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs"
           style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
         >
@@ -128,7 +128,7 @@ export function EvaluationRoom() {
             {evaluations.map((evaluation) => (
               <Link
                 key={evaluation.evaluation_id}
-                to={`/admin/runs/${evaluation.run_id}`}
+                to={`/workspace/runs/${evaluation.run_id}`}
                 className="block p-4 hover:opacity-80"
                 style={{ borderColor: "var(--mis-border)" }}
               >
@@ -168,7 +168,7 @@ export function EvaluationRoom() {
             {failedRuns.map((run) => (
               <Link
                 key={run.run_id}
-                to={`/admin/runs/${run.run_id}`}
+                to={`/workspace/runs/${run.run_id}`}
                 className="block rounded p-3 hover:opacity-80"
                 style={{ background: "rgba(248,113,113,0.10)", border: "1px solid rgba(248,113,113,0.22)" }}
               >
