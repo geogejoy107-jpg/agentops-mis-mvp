@@ -800,6 +800,11 @@ export function AIEmployees() {
       verifiedReceipts: "Verified receipts",
       demoReadinessTitle: "Demo readiness",
       demoReadinessSummary: "Canonical v1.5 recording path: readiness, security boundary, fleet lanes, async inbox, customer task loop, and run ledger evidence.",
+      productEvidencePacket: "Product evidence packet",
+      productEvidenceSummary: "Copyable current-code acceptance route for non-live checks, confirmed Hermes/OpenClaw live proof, live readback, and remote worker fallback.",
+      productEvidencePhases: "Evidence phases",
+      manualLivePhases: "Manual live",
+      isolatedDbPhases: "Isolated DB",
       demoReady: "Demo ready",
       shotsReady: "Shots ready",
       loopAuditTitle: "Loop audit",
@@ -1423,6 +1428,11 @@ export function AIEmployees() {
       verifiedReceipts: "已验收收据",
       demoReadinessTitle: "Demo 就绪",
       demoReadinessSummary: "v1.5 录屏主路径：本地就绪、安全边界、Fleet 队伍、异步 Inbox、客户任务闭环、Run 账本证据。",
+      productEvidencePacket: "产品证据包",
+      productEvidenceSummary: "可复制的 current-code 验收路线：非 live 检查、确认后的 Hermes/OpenClaw 真实证明、live 回读和远程 worker fallback。",
+      productEvidencePhases: "证据阶段",
+      manualLivePhases: "手动 Live",
+      isolatedDbPhases: "隔离 DB",
       demoReady: "可录 Demo",
       shotsReady: "镜头就绪",
       loopAuditTitle: "Loop 审计",
@@ -6001,6 +6011,69 @@ export function AIEmployees() {
               </div>
             ))}
           </div>
+          {demoReadiness?.product_evidence_packet && (
+            <div className="mt-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Terminal size={12} style={{ color: "var(--mis-cyan)" }} />
+                    <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.productEvidencePacket}</div>
+                    <StatusBadge status={demoReadiness.product_evidence_packet.status || "unknown"} />
+                    <StatusBadge status={demoReadiness.product_evidence_packet.safety.read_only && !demoReadiness.product_evidence_packet.safety.ledger_mutated ? "pass" : "attention"} label={copy.safetyProof} />
+                  </div>
+                  <p className="text-[10px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>{copy.productEvidenceSummary}</p>
+                  {demoReadiness.product_evidence_packet.contract && (
+                    <p className="text-[9px] mt-1 max-w-4xl" style={{ color: "var(--mis-muted)" }}>{copy.contract}: {demoReadiness.product_evidence_packet.contract}</p>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-1 min-w-[220px]">
+                  {[
+                    { label: copy.productEvidencePhases, value: demoReadiness.product_evidence_packet.summary.phase_count, status: "pass" },
+                    { label: copy.manualLivePhases, value: demoReadiness.product_evidence_packet.summary.manual_live_phase_count, status: demoReadiness.product_evidence_packet.safety.requires_confirm_live ? "attention" : "pass" },
+                    { label: copy.isolatedDbPhases, value: demoReadiness.product_evidence_packet.summary.isolated_db_phase_count, status: demoReadiness.product_evidence_packet.safety.requires_isolated_db_for_live ? "attention" : "pass" },
+                  ].map((item) => (
+                    <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                      <div className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                      <div className="flex items-center justify-between gap-1 mt-0.5">
+                        <span className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{item.value}</span>
+                        <StatusBadge status={item.status} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-3">
+                {demoReadiness.product_evidence_packet.phases.slice(0, 6).map((phase) => (
+                  <div key={phase.id} className="rounded px-2 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{phase.label}</div>
+                          {phase.requires_confirm_live && <StatusBadge status="attention" label="confirm-live" />}
+                          {phase.requires_isolated_db && <StatusBadge status="planned" label="isolated-db" />}
+                        </div>
+                        <div className="text-[9px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>{phase.summary}</div>
+                      </div>
+                      {phase.command && (
+                        <button
+                          type="button"
+                          className="shrink-0 inline-flex items-center gap-1 rounded px-2 py-1 text-[9px]"
+                          style={{ border: "1px solid var(--mis-border)", color: "var(--mis-cyan)", background: "var(--mis-bg)" }}
+                          onClick={() => void copyIntakeCommand(phase.command)}
+                        >
+                          <Copy size={10} />
+                          <span className="truncate max-w-[72px]">{copiedIntakeCommand === phase.command ? copy.copiedCommand : copy.copyCommand}</span>
+                        </button>
+                      )}
+                    </div>
+                    <div className="text-[8px] mt-1 truncate" style={{ color: copiedIntakeCommand === phase.command ? "var(--mis-success)" : "var(--mis-cyan)" }}>
+                      {phase.command}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>

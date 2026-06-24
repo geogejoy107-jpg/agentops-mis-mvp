@@ -3372,6 +3372,43 @@ export interface DemoReadinessShot {
   next_action: string;
 }
 
+export interface DemoProductEvidencePhase {
+  id: string;
+  label: string;
+  command: string;
+  route?: string;
+  manual_only: boolean;
+  requires_confirm_live: boolean;
+  requires_isolated_db: boolean;
+  summary: string;
+}
+
+export interface DemoProductEvidencePacket {
+  id: string;
+  operation: string;
+  status: string;
+  summary: {
+    phase_count: number;
+    manual_live_phase_count: number;
+    isolated_db_phase_count: number;
+    copyable_command_count: number;
+  };
+  phases: DemoProductEvidencePhase[];
+  references?: Record<string, string>;
+  contract?: string;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    token_omitted: boolean;
+    raw_prompt_omitted: boolean;
+    requires_confirm_live: boolean;
+    requires_isolated_db_for_live: boolean;
+  };
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+}
+
 export interface DemoReadinessPayload {
   provider: string;
   operation: string;
@@ -3391,6 +3428,7 @@ export interface DemoReadinessPayload {
   shots: DemoReadinessShot[];
   next_actions: string[];
   references?: Record<string, string>;
+  product_evidence_packet?: DemoProductEvidencePacket;
   contract?: string;
   safety: {
     read_only: boolean;
@@ -8597,6 +8635,15 @@ export async function loadDemoReadiness(): Promise<DemoReadinessPayload> {
   });
   const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  const productEvidenceRaw = typeof raw.product_evidence_packet === "object" && raw.product_evidence_packet !== null
+    ? raw.product_evidence_packet as Record<string, unknown>
+    : undefined;
+  const productEvidenceSummaryRaw = productEvidenceRaw && typeof productEvidenceRaw.summary === "object" && productEvidenceRaw.summary !== null
+    ? productEvidenceRaw.summary as Record<string, unknown>
+    : {};
+  const productEvidenceSafetyRaw = productEvidenceRaw && typeof productEvidenceRaw.safety === "object" && productEvidenceRaw.safety !== null
+    ? productEvidenceRaw.safety as Record<string, unknown>
+    : {};
   return {
     provider: String(raw.provider || "agentops-demo"),
     operation: String(raw.operation || "v1_5_demo_readiness"),
@@ -8625,6 +8672,40 @@ export async function loadDemoReadiness(): Promise<DemoReadinessPayload> {
     })).filter((shot) => shot.id || shot.label),
     next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
     references: typeof raw.references === "object" && raw.references !== null ? raw.references as Record<string, string> : undefined,
+    product_evidence_packet: productEvidenceRaw ? {
+      id: String(productEvidenceRaw.id || ""),
+      operation: String(productEvidenceRaw.operation || "product_evidence_packet"),
+      status: String(productEvidenceRaw.status || "unknown"),
+      summary: {
+        phase_count: numberValue(productEvidenceSummaryRaw.phase_count, 0),
+        manual_live_phase_count: numberValue(productEvidenceSummaryRaw.manual_live_phase_count, 0),
+        isolated_db_phase_count: numberValue(productEvidenceSummaryRaw.isolated_db_phase_count, 0),
+        copyable_command_count: numberValue(productEvidenceSummaryRaw.copyable_command_count, 0),
+      },
+      phases: asArray<Record<string, unknown>>(productEvidenceRaw.phases).map((phase) => ({
+        id: String(phase.id || ""),
+        label: String(phase.label || phase.id || ""),
+        command: String(phase.command || ""),
+        route: phase.route ? String(phase.route) : undefined,
+        manual_only: boolValue(phase.manual_only),
+        requires_confirm_live: boolValue(phase.requires_confirm_live),
+        requires_isolated_db: boolValue(phase.requires_isolated_db),
+        summary: String(phase.summary || ""),
+      })).filter((phase) => phase.id || phase.label || phase.command),
+      references: typeof productEvidenceRaw.references === "object" && productEvidenceRaw.references !== null ? productEvidenceRaw.references as Record<string, string> : undefined,
+      contract: productEvidenceRaw.contract ? String(productEvidenceRaw.contract) : undefined,
+      safety: {
+        read_only: boolValue(productEvidenceSafetyRaw.read_only),
+        ledger_mutated: boolValue(productEvidenceSafetyRaw.ledger_mutated),
+        live_execution_performed: boolValue(productEvidenceSafetyRaw.live_execution_performed),
+        token_omitted: boolValue(productEvidenceSafetyRaw.token_omitted),
+        raw_prompt_omitted: boolValue(productEvidenceSafetyRaw.raw_prompt_omitted),
+        requires_confirm_live: boolValue(productEvidenceSafetyRaw.requires_confirm_live),
+        requires_isolated_db_for_live: boolValue(productEvidenceSafetyRaw.requires_isolated_db_for_live),
+      },
+      token_omitted: boolValue(productEvidenceRaw.token_omitted),
+      live_execution_performed: boolValue(productEvidenceRaw.live_execution_performed),
+    } : undefined,
     contract: raw.contract ? String(raw.contract) : undefined,
     safety: {
       read_only: boolValue(safetyRaw.read_only),
