@@ -45,6 +45,10 @@ python3 scripts/release_evidence_packet_smoke.py
 git diff --check
 ```
 
+Rebase verification after the config-boundary PR landed kept this as a
+one-slice follow-up: the branch contains only the read-only status API/CLI,
+status smoke, release-evidence wiring and this acceptance note.
+
 Expected result:
 
 - API and CLI both return `operation: commercial_config_status`
