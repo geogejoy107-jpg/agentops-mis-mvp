@@ -118,6 +118,35 @@ def leaked(text: str) -> bool:
     return any(pattern.search(text) for pattern in SECRET_PATTERNS)
 
 
+def write_launchd_service_fixture(path: Path, adapter: str, base_url: str) -> None:
+    path.write_text(
+        f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.agentops.worker.{adapter}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>agentops-worker</string>
+    <string>--adapter</string>
+    <string>{adapter}</string>
+    <string>--confirm-run</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AGENTOPS_BASE_URL</key>
+    <string>{base_url}</string>
+  </dict>
+  <key>KeepAlive</key>
+  <true/>
+</dict>
+</plist>
+""",
+        encoding="utf-8",
+    )
+
+
 def main() -> int:
     failures: list[str] = []
     outputs: list[str] = []
@@ -284,6 +313,54 @@ def main() -> int:
             require((confirmed_payload.get("policy") or {}).get("policy_id") == "advance_loop_local_bounded_v1", f"policy missing: {confirmed_payload}", failures)
             require((confirmed_payload.get("policy") or {}).get("acceptance_packet_required_before_confirm_loop") is True, f"acceptance policy missing: {confirmed_payload}", failures)
             require((confirmed_payload.get("policy") or {}).get("adapter_preflight_required_before_live_run") is True, f"adapter preflight policy missing: {confirmed_payload}", failures)
+
+            service_path = tmp_path / "hermes-loop-driver.plist"
+            write_launchd_service_fixture(service_path, "hermes", base_url)
+            before_auto = fingerprint(db_path)
+            auto_closed = run_cli(
+                [
+                    "operator",
+                    "loop-driver",
+                    "--adapter",
+                    "hermes",
+                    "--max-steps",
+                    "1",
+                    "--limit",
+                    "5",
+                    "--confirm-loop",
+                    "--auto-service-closure",
+                    "--service-path",
+                    str(service_path),
+                ],
+                base_url,
+                outputs,
+                timeout=120,
+            )
+            auto_payload = load_json(auto_closed.stdout)
+            after_auto = fingerprint(db_path)
+            require(auto_closed.returncode == 0, f"auto service-closure loop-driver failed: {auto_closed.stderr or auto_closed.stdout}", failures)
+            require(auto_payload.get("operation") == "operator_loop_driver", f"auto operation mismatch: {auto_payload}", failures)
+            require((auto_payload.get("policy") or {}).get("auto_service_closure_enabled") is True, f"auto policy flag missing: {auto_payload}", failures)
+            require((auto_payload.get("safety") or {}).get("local_cli_service_check_performed") is True, f"auto service check not reported: {auto_payload}", failures)
+            require((auto_payload.get("safety") or {}).get("server_executes_shell") is False, f"auto server shell boundary missing: {auto_payload}", failures)
+            require((auto_payload.get("safety") or {}).get("live_execution_performed") is False, f"auto live boundary missing: {auto_payload}", failures)
+            require(after_auto["operator_action_receipts"] >= before_auto["operator_action_receipts"] + 1, f"auto service closure did not record receipt: {before_auto} -> {after_auto}", failures)
+            service_attempts = auto_payload.get("service_closure_attempts") or []
+            require(len(service_attempts) >= 1, f"auto service closure attempts missing: {auto_payload}", failures)
+            first_attempt = service_attempts[0] if service_attempts else {}
+            first_post_closure = first_attempt.get("post_service_closure") or {}
+            first_check = first_attempt.get("service_check") or {}
+            require(first_attempt.get("operation") == "operator_loop_driver_service_closure", f"auto service closure operation missing: {first_attempt}", failures)
+            require(first_attempt.get("recorded") is True, f"auto service closure did not record: {first_attempt}", failures)
+            require((first_attempt.get("safety") or {}).get("local_cli_service_check_performed") is True, f"auto attempt did not run local check: {first_attempt}", failures)
+            require((first_attempt.get("safety") or {}).get("server_executes_shell") is False, f"auto attempt server shell boundary missing: {first_attempt}", failures)
+            require(first_check.get("source") == "local_cli_service_check", f"auto service check source missing: {first_check}", failures)
+            require(first_check.get("service_file_exists") is True, f"auto service check file proof missing: {first_check}", failures)
+            if first_post_closure.get("required") is True:
+                require(auto_payload.get("stop_reason") == "service_activation_required", f"auto unloaded service should stop for activation: {auto_payload}", failures)
+                require(auto_payload.get("steps_attempted") == 0, f"auto unloaded service should not advance loop: {auto_payload}", failures)
+            else:
+                require(first_attempt.get("ready_to_continue") is True, f"auto loaded service should be ready: {first_attempt}", failures)
         finally:
             stop_server(proc)
     combined = "\n".join(outputs)

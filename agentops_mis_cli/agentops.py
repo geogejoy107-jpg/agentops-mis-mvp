@@ -2047,6 +2047,75 @@ def fetch_loop_driver_review_snapshot(args, client: AgentOpsClient) -> dict:
     }
 
 
+def maybe_auto_close_loop_driver_service(args, client: AgentOpsClient, *, step: int = 0) -> dict | None:
+    if not getattr(args, "auto_service_closure", False):
+        return None
+    if getattr(args, "adapter", "") not in {"hermes", "openclaw"}:
+        return None
+    service_args = argparse.Namespace(
+        adapter=args.adapter,
+        service_check_json="",
+        run_service_check=True,
+        service_check_command="",
+        service_check_manager=None,
+        service_check_agent_id="",
+        service_path=getattr(args, "service_path", "") or "",
+        service_label=getattr(args, "service_label", "") or "",
+        api_key_placeholder="<paste one-time token here>",
+        service_check_timeout=int(getattr(args, "service_check_timeout", 5) or 5),
+        receipt_command="",
+        receipt_status="verified",
+        result_summary=f"{args.adapter} loop-driver auto service closure readback recorded before bounded loop.",
+        actor_id=getattr(args, "actor_id", "usr_founder") or "usr_founder",
+        limit=getattr(args, "limit", 8),
+        task_id=getattr(args, "task_id", None),
+        agent_id=getattr(args, "agent_id", None),
+        query=getattr(args, "query", "READ PLAN RETRIEVE COMPARE VERIFY RECORD"),
+        handoff_mode=getattr(args, "handoff_mode", "lightweight"),
+        full_handoff=bool(getattr(args, "full_handoff", False)),
+        confirm_record=True,
+    )
+    result = cmd_operator_service_closure(service_args, client)
+    post_supervision = client.get(
+        "/api/operator/loop-supervision",
+        query={
+            "adapter": args.adapter,
+            "limit": getattr(args, "limit", 8),
+            "task_id": getattr(args, "task_id", None),
+            "agent_id": getattr(args, "agent_id", None),
+            "q": getattr(args, "query", "READ PLAN RETRIEVE COMPARE VERIFY RECORD"),
+            "handoff_mode": getattr(args, "handoff_mode", "lightweight"),
+            "full_handoff": "true" if getattr(args, "full_handoff", False) else None,
+            "include_codex": "false",
+        },
+    )
+    post_items = post_supervision.get("items") if isinstance(post_supervision.get("items"), list) else []
+    post_item = next((row for row in post_items if isinstance(row, dict) and row.get("adapter") == args.adapter), {})
+    post_service_closure = post_item.get("service_closure") if isinstance(post_item.get("service_closure"), dict) else {}
+    return {
+        "operation": "operator_loop_driver_service_closure",
+        "step": step,
+        "adapter": args.adapter,
+        "status": result.get("status"),
+        "ok": result.get("ok") is True,
+        "ready_to_continue": result.get("ok") is True and post_service_closure.get("required") is not True,
+        "recorded": result.get("recorded") is True,
+        "receipt_id": result.get("receipt_id"),
+        "service_closure": result.get("service_closure"),
+        "post_service_closure": post_service_closure,
+        "service_check": result.get("service_check"),
+        "missing": result.get("missing") or [],
+        "safety": {
+            **(result.get("safety") if isinstance(result.get("safety"), dict) else {}),
+            "server_executes_shell": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "contract": "explicit loop-driver --auto-service-closure uses only local read-only worker service-check plus Action Receipt/control-readback recording; it does not run service-control, shell, server-side commands, or live adapter work",
+        "token_omitted": True,
+    }
+
+
 def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
     max_steps = min(max(int(args.max_steps or 1), 1), 5)
     initial_acceptance_gate = fetch_loop_driver_acceptance_gate(args, client)
@@ -2090,6 +2159,8 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
                 "driver_uses": "operator start-check acceptance_packet plus operator loop-launch-packet --brief plus operator advance-loop --fast-control --confirm-advance",
                 "acceptance_packet_required_before_confirm_loop": True,
                 "adapter_preflight_required_before_live_run": args.adapter in {"hermes", "openclaw"},
+                "auto_service_closure_available": args.adapter in {"hermes", "openclaw"},
+                "auto_service_closure_enabled": False,
             },
             "contract": "preview-only agent loop driver; reads start-check acceptance_packet, compact launch brief, adapter readiness, and review pressure without executing commands or mutating ledgers",
             "safety": {
@@ -2104,6 +2175,7 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
         }
 
     steps: list[dict] = []
+    service_closure_attempts: list[dict] = []
     stop_reason = "max_steps_reached"
     if (initial_acceptance_gate.get("decision") or {}).get("can_confirm_bounded_loop") is not True or (initial_acceptance_gate.get("safety") or {}).get("server_executes_shell") is not False:
         stop_reason = "acceptance_gate_blocked"
@@ -2160,6 +2232,16 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
         if (before_acceptance_gate.get("decision") or {}).get("can_confirm_bounded_loop") is not True or (before_acceptance_gate.get("safety") or {}).get("server_executes_shell") is not False:
             stop_reason = "acceptance_gate_blocked"
             break
+        service_closure_attempt = maybe_auto_close_loop_driver_service(args, client, step=index + 1)
+        if service_closure_attempt:
+            service_closure_attempts.append(service_closure_attempt)
+            if service_closure_attempt.get("ok") is not True:
+                stop_reason = "service_closure_blocked"
+                break
+            if service_closure_attempt.get("ready_to_continue") is not True:
+                stop_reason = "service_activation_required"
+                break
+            before_acceptance_gate = fetch_loop_driver_acceptance_gate(args, client)
         before_readiness = fetch_loop_driver_adapter_readiness(args, client)
         before_brief = fetch_loop_launch_brief(args, client)
         advance_args = argparse.Namespace(
@@ -2178,6 +2260,7 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
         compact_advance = compact_advance_loop_result(advance_result)
         step = {
             "step": index + 1,
+            "service_closure": service_closure_attempt,
             "acceptance_gate_before": before_acceptance_gate,
             "adapter_readiness_before": before_readiness,
             "before": {
@@ -2243,6 +2326,7 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
         "agent_loop_packet": final_agent_loop_packet,
         "initial_agent_loop_packet": initial_agent_loop_packet,
         "steps": steps,
+        "service_closure_attempts": service_closure_attempts,
         "adapter_readiness": final_adapter_readiness,
         "final_brief": final_brief,
         "initial_record_review_snapshot": initial_review_snapshot,
@@ -2253,13 +2337,19 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
             "server_executes_shell": False,
             "acceptance_packet_required_before_confirm_loop": True,
             "adapter_preflight_required_before_live_run": args.adapter in {"hermes", "openclaw"},
+            "auto_service_closure_available": args.adapter in {"hermes", "openclaw"},
+            "auto_service_closure_enabled": bool(getattr(args, "auto_service_closure", False)),
         },
-        "contract": "bounded local agent loop driver for Hermes/OpenClaw/Codex; each step re-reads start-check acceptance_packet and launch brief, delegates execution to advance-loop allowlist policy only when confirm-loop is accepted, records receipts/control-readback, surfaces a read-only RECORD review snapshot, and never runs live/workflow/approval commands",
+        "contract": "bounded local agent loop driver for Hermes/OpenClaw/Codex; each step re-reads start-check acceptance_packet and launch brief, can explicitly auto-close service readback evidence before advancing, delegates execution to advance-loop allowlist policy only when confirm-loop is accepted, records receipts/control-readback, surfaces a read-only RECORD review snapshot, and never runs live/workflow/approval commands",
         "safety": {
             "read_only": False,
-            "ledger_mutated": bool(advanced),
+            "ledger_mutated": bool(advanced or service_closure_attempts),
             "live_execution_performed": False,
             "server_executes_shell": False,
+            "local_cli_service_check_performed": any(
+                ((attempt.get("safety") or {}).get("local_cli_service_check_performed") is True)
+                for attempt in service_closure_attempts
+            ),
             "raw_output_omitted": True,
             "token_omitted": True,
         },
@@ -4346,6 +4436,10 @@ def build_parser() -> argparse.ArgumentParser:
     operator_loop_driver.add_argument("--timeout", type=int, default=90)
     operator_loop_driver.add_argument("--actor-id", default="usr_founder")
     operator_loop_driver.add_argument("--confirm-loop", action="store_true", help="Run bounded advance-loop steps and record receipts/control-readback.")
+    operator_loop_driver.add_argument("--auto-service-closure", action="store_true", help="Before each confirmed Hermes/OpenClaw bounded step, run local read-only service-check and record service closure evidence.")
+    operator_loop_driver.add_argument("--service-path", default="", help="Optional service file path override for --auto-service-closure.")
+    operator_loop_driver.add_argument("--service-label", default="", help="Optional service label override for --auto-service-closure.")
+    operator_loop_driver.add_argument("--service-check-timeout", type=int, default=5)
     operator_loop_driver.set_defaults(handler="operator_loop_driver")
     evidence_gap = operator_sub.add_parser("remediate-evidence-gap", help="Preview or create a Commander package for a run execution-evidence gap.")
     evidence_gap.add_argument("--run-id", required=True)
