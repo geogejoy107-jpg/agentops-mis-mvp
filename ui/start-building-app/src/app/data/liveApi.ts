@@ -2328,6 +2328,7 @@ export interface OperatorStartCheckPayload {
   loop_driver_entry: Record<string, unknown>;
   acceptance_packet: Record<string, unknown>;
   local_loop_admission_packet: Record<string, unknown>;
+  local_run_path?: LocalRunPathStep[];
   agent_loop_packet?: OperatorLoopDriverAgentPacketPayload;
   next_commands: string[];
   safety: {
@@ -6892,6 +6893,33 @@ export async function loadOperatorStartCheck(adapter: OperatorStartCheckAdapter 
   });
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
   const packet = normalizeOperatorLoopDriverAgentPacket(raw.agent_loop_packet, adapter, limit);
+  const localRunPath = asArray<Record<string, unknown>>(raw.local_run_path).map((step) => ({
+    step_id: String(step.step_id || ""),
+    label: String(step.label || step.step_id || ""),
+    phase: String(step.phase || ""),
+    status: String(step.status || "unknown"),
+    adapter: ["mock", "hermes", "openclaw"].includes(String(step.adapter)) ? String(step.adapter) as WorkerAdapterName : undefined,
+    command: String(step.command || ""),
+    verify_command: step.verify_command ? String(step.verify_command) : null,
+    route: step.route ? String(step.route) : null,
+    detail: step.detail ? String(step.detail) : undefined,
+    mutating: boolValue(step.mutating),
+    confirm_required: boolValue(step.confirm_required),
+    writes_ledger: boolValue(step.writes_ledger),
+    live_execution: boolValue(step.live_execution),
+    service_control_preview: step.service_control_preview === undefined ? undefined : boolValue(step.service_control_preview),
+    copy_only: step.copy_only === undefined ? undefined : boolValue(step.copy_only),
+    server_executes_shell: step.server_executes_shell === undefined ? undefined : boolValue(step.server_executes_shell),
+    receipt_required: step.receipt_required === undefined ? undefined : boolValue(step.receipt_required),
+    control_readback_required: step.control_readback_required === undefined ? undefined : boolValue(step.control_readback_required),
+    receipt_command: step.receipt_command ? String(step.receipt_command) : null,
+    receipt_record_command: step.receipt_record_command ? String(step.receipt_record_command) : null,
+    receipt_verify_record_command: step.receipt_verify_record_command ? String(step.receipt_verify_record_command) : null,
+    receipt_state: typeof step.receipt_state === "object" && step.receipt_state !== null ? step.receipt_state as Record<string, unknown> : undefined,
+    action_signature: step.action_signature ? String(step.action_signature) : null,
+    source: step.source ? String(step.source) : null,
+    token_omitted: step.token_omitted === undefined ? undefined : boolValue(step.token_omitted),
+  })).filter((step) => step.step_id && step.command);
   return {
     provider: String(raw.provider || "agentops-operator"),
     operation: String(raw.operation || "operator_start_check"),
@@ -6902,6 +6930,7 @@ export async function loadOperatorStartCheck(adapter: OperatorStartCheckAdapter 
     loop_driver_entry: typeof raw.loop_driver_entry === "object" && raw.loop_driver_entry !== null ? raw.loop_driver_entry as Record<string, unknown> : {},
     acceptance_packet: typeof raw.acceptance_packet === "object" && raw.acceptance_packet !== null ? raw.acceptance_packet as Record<string, unknown> : {},
     local_loop_admission_packet: typeof raw.local_loop_admission_packet === "object" && raw.local_loop_admission_packet !== null ? raw.local_loop_admission_packet as Record<string, unknown> : {},
+    local_run_path: localRunPath,
     agent_loop_packet: packet,
     next_commands: asArray<unknown>(raw.next_commands).map(String).filter(Boolean),
     safety: {

@@ -23,6 +23,8 @@ import {
   loadWorkerFleet,
   loadWorkerFleetHygiene,
   loadWorkerStatus,
+  recordOperatorActionControlReadback,
+  recordOperatorActionReceipt,
   applyWorkerFleetHygiene,
   restartLocalWorkerDaemon,
   startLocalWorkerDaemon,
@@ -30,6 +32,7 @@ import {
   useLiveData,
   type OperatorExecutionModePayload,
   type OperatorStartCheckPayload,
+  type LocalRunPathStep,
   type WorkerAdapterName,
   type WorkerAdapterReadinessPayload,
   type WorkerDaemonResult,
@@ -73,6 +76,7 @@ export function WorkerConsole() {
   const [lastHygieneResult, setLastHygieneResult] = useState<WorkerFleetHygienePayload | null>(null);
   const [confirmCleanup, setConfirmCleanup] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [receiptAction, setReceiptAction] = useState<string | null>(null);
 
   const copy = pick(locale, {
     en: {
@@ -132,8 +136,20 @@ export function WorkerConsole() {
       serviceInstallPreview: "Service install preview",
       confirmInstall: "Confirm install file",
       serviceCheck: "Service check",
+      serviceControlAudit: "Service control audit",
+      serviceControlAuditSummary: "Preview load/restart separately, then record the verified receipt and readback before treating the local loop as service-managed.",
+      serviceControlPreview: "Control preview",
+      verifiedReceipt: "Verified receipt",
+      recordVerifiedReceipt: "Record verified receipt",
+      recordControlReadback: "Record control readback",
+      receiptProof: "receipt",
+      controlReadback: "readback",
       previewFirst: "preview first",
       noServiceLoad: "does not load service",
+      noLedgerWrite: "no ledger write",
+      receiptRequired: "receipt required",
+      receiptAttached: "receipt attached",
+      readbackAttached: "readback attached",
       firstSafeIncludesInstall: "install in first-safe",
       readOnlyProof: "read-only proof",
       noServerShell: "no server shell",
@@ -210,8 +226,20 @@ export function WorkerConsole() {
       serviceInstallPreview: "安装预览",
       confirmInstall: "确认写服务文件",
       serviceCheck: "服务自检",
+      serviceControlAudit: "服务控制审计",
+      serviceControlAuditSummary: "加载/重启只给预览命令；真正把本地 loop 视为服务托管前，必须记录 verified receipt 和控制回读。",
+      serviceControlPreview: "控制预览",
+      verifiedReceipt: "验证回执",
+      recordVerifiedReceipt: "记录验证回执",
+      recordControlReadback: "记录控制回读",
+      receiptProof: "回执",
+      controlReadback: "回读",
       previewFirst: "先预览",
       noServiceLoad: "不加载服务",
+      noLedgerWrite: "不写控制账本",
+      receiptRequired: "需要回执",
+      receiptAttached: "回执已挂接",
+      readbackAttached: "回读已挂接",
       firstSafeIncludesInstall: "first-safe 含安装",
       readOnlyProof: "只读证明",
       noServerShell: "服务端不执行 shell",
@@ -355,6 +383,13 @@ export function WorkerConsole() {
   const firstSafeCommands = Array.isArray(localAdmissionPacket.first_safe_commands)
     ? localAdmissionPacket.first_safe_commands.map(String).filter(Boolean)
     : [];
+  const localRunPath = startCheck?.local_run_path || [];
+  const serviceControlStep = localRunPath.find((step) => step.service_control_preview || step.step_id === "preview_worker_service_control");
+  const serviceReceiptState = (serviceControlStep?.receipt_state || {}) as Record<string, unknown>;
+  const serviceReceiptVerified = Boolean(serviceReceiptState.verified);
+  const serviceReadbackAttached = Boolean(serviceReceiptState.control_readback_attached || serviceReceiptState.control_readback_id);
+  const serviceReceiptStatus = String(serviceReceiptState.status || (serviceControlStep?.receipt_required ? "missing" : "not_required"));
+  const serviceReceiptHash = String(serviceReceiptState.receipt_hash || serviceReceiptState.action_hash || serviceReceiptState.receipt_id || "").slice(0, 10);
   const firstSafeHasInstall = firstSafeCommands.slice(0, 8).some((command) => command.includes("service-install"));
   const serviceInstallSafety = [
     { label: copy.previewFirst, status: serviceInstall.preview_only_by_default === false ? "attention" : "pass" },
@@ -363,6 +398,81 @@ export function WorkerConsole() {
     { label: copy.firstSafeIncludesInstall, status: firstSafeHasInstall ? "pass" : "attention" },
     { label: copy.tokenOmitted, status: serviceInstall.token_omitted === false ? "attention" : "pass" },
   ];
+  const serviceControlSafety = [
+    { label: copy.previewFirst, status: serviceControlStep?.service_control_preview ? "pass" : "attention" },
+    { label: copy.noServerShell, status: serviceControlStep?.server_executes_shell === false ? "pass" : "attention" },
+    { label: copy.noLedgerWrite, status: serviceControlStep?.writes_ledger ? "attention" : "pass" },
+    { label: copy.receiptRequired, status: serviceControlStep?.receipt_required ? "attention" : "pass" },
+    { label: copy.receiptAttached, status: serviceReceiptVerified ? "pass" : "attention" },
+    { label: copy.readbackAttached, status: serviceReadbackAttached ? "pass" : "attention" },
+  ];
+
+  const recordServiceControlReceipt = (step: LocalRunPathStep) => runAction(`service-receipt:${step.step_id}`, async () => {
+    setReceiptAction(`service-receipt:${step.step_id}`);
+    try {
+      const result = await recordOperatorActionReceipt({
+        action_command: step.command,
+        verify_command: step.verify_command || undefined,
+        action_id: step.step_id,
+        action_signature: step.action_signature || undefined,
+        source: step.source || "ui.worker_console.service_control_preview",
+        status: "verified",
+        result_summary: `Worker Console verified local service-control preview ${step.step_id}.`,
+      });
+      setActionMessage(`${copy.verifiedReceipt}: ${result.status} · ${result.receipt?.receipt_id || ""}`);
+    } finally {
+      setReceiptAction(null);
+    }
+  });
+
+  const recordServiceControlReadback = (step: LocalRunPathStep) => runAction(`service-readback:${step.step_id}`, async () => {
+    setReceiptAction(`service-readback:${step.step_id}`);
+    try {
+      const state = step.receipt_state || {};
+      let receiptId = String(state.receipt_id || "");
+      if (!receiptId || !state.verified) {
+        const receiptResult = await recordOperatorActionReceipt({
+          action_command: step.command,
+          verify_command: step.verify_command || undefined,
+          action_id: step.step_id,
+          action_signature: step.action_signature || undefined,
+          source: step.source || "ui.worker_console.service_control_preview",
+          status: "verified",
+          result_summary: `Worker Console verified local service-control preview ${step.step_id} before control readback.`,
+        });
+        receiptId = receiptResult.receipt?.receipt_id || receiptId;
+      }
+      if (!receiptId) throw new Error("receipt_id_required");
+      const result = await recordOperatorActionControlReadback({
+        receipt_id: receiptId,
+        source: `${step.source || "ui.worker_console.service_control_preview"}.control_readback`,
+        control_readback: {
+          before: {
+            step_id: step.step_id,
+            status: step.status,
+            adapter: step.adapter || selectedAdapter,
+            service_control_preview: Boolean(step.service_control_preview),
+          },
+          after: {
+            verify_command: step.verify_command || null,
+            service_check_expected: true,
+            confirmed_os_mutation: false,
+          },
+          self_check: {
+            copy_only: step.copy_only !== false,
+            server_executes_shell: false,
+            writes_ledger_for_service_control: false,
+            live_execution_performed: false,
+            token_omitted: true,
+          },
+          token_omitted: true,
+        },
+      });
+      setActionMessage(`${copy.controlReadback}: ${result.status}`);
+    } finally {
+      setReceiptAction(null);
+    }
+  });
 
   const statCards = [
     { label: copy.runningDaemons, value: workerStatus?.running_workers ?? workerFleet?.summary.running_local_daemons ?? "—", status: (workerStatus?.running_workers || 0) > 0 ? "running" : "ready" },
@@ -528,6 +638,92 @@ export function WorkerConsole() {
                 </button>
               ))}
             </div>
+            {serviceControlStep && (
+              <div data-testid="worker-service-control-audit" className="rounded p-3 mt-3" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Power size={12} style={{ color: "var(--mis-cyan)" }} />
+                      <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.serviceControlAudit}</div>
+                      <StatusBadge status={serviceControlStep.status || "preview"} />
+                      <StatusBadge status={serviceReceiptVerified ? "pass" : "attention"} label={`${copy.receiptProof}: ${serviceReceiptStatus}${serviceReceiptHash ? ` · ${serviceReceiptHash}` : ""}`} />
+                      <StatusBadge status={serviceReadbackAttached ? "pass" : "attention"} label={`${copy.controlReadback}: ${serviceReadbackAttached ? "yes" : "no"}`} />
+                    </div>
+                    <p className="text-[9px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>{serviceControlStep.detail || copy.serviceControlAuditSummary}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {serviceControlSafety.map((item) => (
+                      <StatusBadge key={item.label} status={item.status} label={item.label} />
+                    ))}
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-3">
+                  <button
+                    type="button"
+                    onClick={() => void copyCommand(serviceControlStep.command)}
+                    className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0"
+                    style={{ color: "var(--mis-text)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                    title={serviceControlStep.command}
+                  >
+                    <Copy size={9} />
+                    <span className="text-[9px] font-semibold shrink-0">{copy.serviceControlPreview}</span>
+                    <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{copiedCommand === serviceControlStep.command ? copy.copied : serviceControlStep.command}</span>
+                  </button>
+                  {serviceControlStep.verify_command && (
+                    <button
+                      type="button"
+                      onClick={() => void copyCommand(String(serviceControlStep.verify_command))}
+                      className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0"
+                      style={{ color: "var(--mis-text)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                      title={String(serviceControlStep.verify_command)}
+                    >
+                      <Copy size={9} />
+                      <span className="text-[9px] font-semibold shrink-0">{copy.serviceCheck}</span>
+                      <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{copiedCommand === serviceControlStep.verify_command ? copy.copied : serviceControlStep.verify_command}</span>
+                    </button>
+                  )}
+                  {serviceControlStep.receipt_verify_record_command && (
+                    <button
+                      type="button"
+                      onClick={() => void copyCommand(String(serviceControlStep.receipt_verify_record_command))}
+                      className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0"
+                      style={{ color: "var(--mis-warning)", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.18)" }}
+                      title={String(serviceControlStep.receipt_verify_record_command)}
+                    >
+                      <Copy size={9} />
+                      <span className="text-[9px] font-semibold shrink-0">{copy.verifiedReceipt}</span>
+                      <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{copiedCommand === serviceControlStep.receipt_verify_record_command ? copy.copied : serviceControlStep.receipt_verify_record_command}</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void recordServiceControlReceipt(serviceControlStep)}
+                    disabled={Boolean(busyAction) || Boolean(receiptAction)}
+                    className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0 disabled:opacity-50"
+                    style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.10)", border: "1px solid rgba(45,212,191,0.20)" }}
+                    title={copy.recordVerifiedReceipt}
+                  >
+                    {receiptAction === `service-receipt:${serviceControlStep.step_id}` ? <RefreshCw size={9} /> : <CheckCircle2 size={9} />}
+                    <span className="text-[9px] font-semibold shrink-0">{copy.recordVerifiedReceipt}</span>
+                    <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{serviceControlStep.receipt_command || "agentops operator action-receipts --limit 20"}</span>
+                  </button>
+                  {serviceControlStep.control_readback_required && (
+                    <button
+                      type="button"
+                      onClick={() => void recordServiceControlReadback(serviceControlStep)}
+                      disabled={Boolean(busyAction) || Boolean(receiptAction)}
+                      className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0 disabled:opacity-50"
+                      style={{ color: "var(--mis-cyan)", background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.20)" }}
+                      title={copy.recordControlReadback}
+                    >
+                      {receiptAction === `service-readback:${serviceControlStep.step_id}` ? <RefreshCw size={9} /> : <Activity size={9} />}
+                      <span className="text-[9px] font-semibold shrink-0">{copy.recordControlReadback}</span>
+                      <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{serviceControlStep.verify_command || copy.serviceCheck}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
