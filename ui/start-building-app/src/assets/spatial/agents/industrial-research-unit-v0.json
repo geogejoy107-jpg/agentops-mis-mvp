@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "spatial-agent-art/v0",
+  "id": "industrial-research-unit-v0",
+  "rendererFamily": "industrial-unit",
+  "assetType": "directional-unit-sheet",
+  "license": "PROJECT_OWNED",
+  "provenance": "first_party",
+  "references": [
+    {
+      "project": "Anuken/Mindustry",
+      "adoption": "silhouette-first modular unit design, raw/packed asset separation, atlas-friendly naming only"
+    },
+    {
+      "project": "Anuken/Arc",
+      "adoption": "2D atlas/rendering organization only"
+    }
+  ],
+  "copiedPixels": false,
+  "frame": {
+    "width": 32,
+    "height": 32
+  },
+  "sheet": {
+    "columns": 8,
+    "rows": 3,
+    "width": 256,
+    "height": 96
+  },
+  "directions": [
+    "N",
+    "NE",
+    "E",
+    "SE",
+    "S",
+    "SW",
+    "W",
+    "NW"
+  ],
+  "states": [
+    "idle",
+    "active",
+    "blocked"
+  ],
+  "identityMapping": {
+    "bodyRenderer": "machine-unit",
+    "floatingGlyph": false,
+    "identityMaterialBand": true,
+    "statusSocket": true,
+    "statusChannel": "separate",
+    "riskChannel": "separate"
+  },
+  "sha256": "cea70e84fa98526c6f4001a68ff9763168aa39d4cc75490798671352d607d098"
+}
