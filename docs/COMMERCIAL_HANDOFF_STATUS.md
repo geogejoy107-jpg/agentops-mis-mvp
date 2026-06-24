@@ -13,7 +13,7 @@ Docker, browsers, or live agents.
 Passing the default check means the handoff status is internally consistent; it
 does not mean the product is release-complete.
 The embedded current-evidence summary exposes `gates_with_local_receipts` and
-`gates_with_release_grade_receipts` so local Gate 5 receipts can be visible
+`gates_with_release_grade_receipts` so local Gate 1-5 receipts can be visible
 with `local_receipts_complete_exact_head_required` without changing
 release-grade readiness.
 
@@ -61,6 +61,35 @@ python3 scripts/commercial_release_evidence_packet_smoke.py
 python3 scripts/release_freeze_protocol_smoke.py
 python3 scripts/merge_readiness_status_smoke.py
 python3 scripts/commercial_migration_readiness.py
+python3 scripts/commercial_entitlements_smoke.py
+python3 scripts/team_entitlement_enrollment_smoke.py
+python3 scripts/enrollment_approval_workflow_smoke.py
+python3 scripts/production_auth_fail_closed_smoke.py --configured-production-fixture
+python3 scripts/security_production_readiness_smoke.py --configured-production-fixture
+python3 scripts/agent_gateway_scope_matrix_smoke.py --isolated-fixture
+python3 scripts/workspace_isolation_smoke.py --isolated-fixture
+python3 scripts/workspace_rbac_governance_smoke.py --isolated-fixture
+python3 scripts/workspace_memory_session_governance_smoke.py --isolated-fixture
+python3 scripts/storage_boundary_sqlite_smoke.py
+python3 scripts/storage_postgres_contract_smoke.py
+python3 scripts/storage_postgres_container_smoke.py
+python3 scripts/storage_postgres_adapter_contract_smoke.py
+python3 scripts/storage_postgres_optional_adapter_smoke.py
+python3 scripts/storage_postgres_boundary_parity_smoke.py
+python3 scripts/storage_postgres_route_read_model_smoke.py
+python3 scripts/storage_backend_selection_smoke.py
+python3 scripts/storage_postgres_http_read_parity_smoke.py
+python3 scripts/storage_postgres_cli_read_parity_smoke.py
+python3 scripts/storage_postgres_write_helper_parity_smoke.py
+python3 scripts/storage_postgres_http_write_task_smoke.py
+python3 scripts/storage_postgres_cli_write_parity_smoke.py
+python3 scripts/nextjs_parity_smoke.py
+python3 scripts/ui_api_parity_matrix_smoke.py
+python3 scripts/ui_covered_route_retirement_packet_smoke.py
+python3 scripts/vite_playwright_snapshot_smoke.py
+python3 scripts/nextjs_playwright_snapshot_smoke.py
+cd ui/start-building-app && npm run build
+cd ui/next-app && npm run build
 python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture
 python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture
 python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture

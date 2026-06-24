@@ -14,21 +14,24 @@ ROOT = Path(__file__).resolve().parents[1]
 RECEIPTS_PATH = ROOT / "docs" / "COMMERCIAL_EVIDENCE_RECEIPTS.json"
 RECEIPTS_DOC = ROOT / "docs" / "COMMERCIAL_EVIDENCE_RECEIPTS.md"
 RECEIPTS_SCRIPT = ROOT / "scripts" / "commercial_evidence_receipts.py"
+RELEASE_PACKET_PATH = ROOT / "docs" / "COMMERCIAL_RELEASE_EVIDENCE_PACKET.json"
 CONTRACT_ID = "commercial_evidence_receipts_v1"
 
-REQUIRED_GATE5_COMMANDS = {
-    "python3 scripts/audit_retention_policy_smoke.py",
-    "python3 scripts/audit_retention_controls_smoke.py --configured-fixture",
-    "python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture",
-    "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
-    "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
-    "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
-    "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api",
-}
+REQUIRED_RECEIPT_GATE_IDS = [
+    "gate_1_product_packaging_and_entitlement",
+    "gate_2_production_safety_baseline",
+    "gate_3_storage_boundary_before_postgres",
+    "gate_4_ui_api_parity_before_nextjs",
+    "gate_5_byoc_enterprise_deployment",
+]
 
 REQUIRED_JSON_STRINGS = {
     "commercial_evidence_receipts_v1",
     "partial_local_receipts_not_release_complete",
+    "gate_1_product_packaging_and_entitlement",
+    "gate_2_production_safety_baseline",
+    "gate_3_storage_boundary_before_postgres",
+    "gate_4_ui_api_parity_before_nextjs",
     "gate_5_byoc_enterprise_deployment",
     "local_receipts_complete_exact_head_required",
     "release_grade_current",
@@ -45,6 +48,10 @@ REQUIRED_JSON_STRINGS = {
 REQUIRED_DOC_STRINGS = {
     "commercial_evidence_receipts_v1",
     "partial_local_receipts_not_release_complete",
+    "gate_1_product_packaging_and_entitlement",
+    "gate_2_production_safety_baseline",
+    "gate_3_storage_boundary_before_postgres",
+    "gate_4_ui_api_parity_before_nextjs",
     "gate_5_byoc_enterprise_deployment",
     "local_receipts_complete_exact_head_required",
     "release-grade",
@@ -95,12 +102,25 @@ def run_receipts(*args: str) -> str:
     return proc.stdout
 
 
+def required_commands_by_gate() -> dict[str, set[str]]:
+    release = read_json(RELEASE_PACKET_PATH)
+    require(release.get("contract_id") == "commercial_release_evidence_packet_v1", "release packet contract mismatch")
+    commands = {
+        str(gate.get("id")): {str(command) for command in gate.get("required_commands") or []}
+        for gate in release.get("phase_gate_evidence") or []
+        if isinstance(gate, dict) and str(gate.get("id")) in REQUIRED_RECEIPT_GATE_IDS
+    }
+    require(set(commands) == set(REQUIRED_RECEIPT_GATE_IDS), "release packet receipt gate coverage mismatch")
+    return commands
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify commercial evidence receipts.")
     parser.add_argument("--require-release-grade", action="store_true", help="Fail unless receipts are release-grade.")
     args = parser.parse_args()
 
     receipts = read_json(RECEIPTS_PATH)
+    required_commands = required_commands_by_gate()
     require(receipts.get("contract_id") == CONTRACT_ID, f"contract_id must be {CONTRACT_ID}")
     require(receipts.get("status") == "partial_local_receipts_not_release_complete", "receipt status mismatch")
     require(receipts.get("ci_safe") is True, "receipts must be CI-safe")
@@ -109,21 +129,28 @@ def main() -> int:
     require(receipts.get("ready_to_merge") is False, "receipts must not claim merge readiness")
 
     summary = receipts.get("receipt_summary") or {}
-    require(summary.get("gates_with_local_receipts") == ["gate_5_byoc_enterprise_deployment"], "local receipt gate summary mismatch")
+    require(summary.get("gates_with_local_receipts") == REQUIRED_RECEIPT_GATE_IDS, "local receipt gate summary mismatch")
     require(summary.get("gates_with_release_grade_receipts") == [], "release-grade receipts must be empty")
+    require(summary.get("gates_missing_local_receipts") == [], "local receipt gaps should be empty")
     require(summary.get("gate_5_local_receipt_commands") == 7, "Gate 5 command count mismatch")
     require(summary.get("exact_head_ci_verified") is False, "exact-head CI must remain false")
     require(summary.get("remote_sync_verified") is False, "remote sync must remain false")
     require(summary.get("clean_worktree_verified") is False, "clean worktree must remain false")
 
-    gate5 = next((item for item in receipts.get("phase_gate_receipts") or [] if item.get("gate_id") == "gate_5_byoc_enterprise_deployment"), None)
-    require(isinstance(gate5, dict), "Gate 5 receipt missing")
-    require(gate5.get("local_receipt_current") is True, "Gate 5 local receipt must be current")
-    require(gate5.get("release_grade_current") is False, "Gate 5 must not be release-grade current")
-    commands = {str(item.get("command")) for item in gate5.get("commands") or [] if isinstance(item, dict)}
-    require(REQUIRED_GATE5_COMMANDS == commands, f"Gate 5 command receipts mismatch: {sorted(REQUIRED_GATE5_COMMANDS - commands)}")
-    for command in gate5.get("commands") or []:
-        require(command.get("status") == "passed", f"Gate 5 command did not pass: {command}")
+    receipt_map = {
+        str(item.get("gate_id")): item
+        for item in receipts.get("phase_gate_receipts") or []
+        if isinstance(item, dict)
+    }
+    require(set(receipt_map) == set(REQUIRED_RECEIPT_GATE_IDS), f"receipt gate ids mismatch: {sorted(receipt_map)}")
+    for gate_id in REQUIRED_RECEIPT_GATE_IDS:
+        receipt = receipt_map[gate_id]
+        require(receipt.get("local_receipt_current") is True, f"{gate_id} local receipt must be current")
+        require(receipt.get("release_grade_current") is False, f"{gate_id} must not be release-grade current")
+        commands = {str(item.get("command")) for item in receipt.get("commands") or [] if isinstance(item, dict)}
+        require(required_commands[gate_id] == commands, f"{gate_id} command receipts mismatch: {sorted(required_commands[gate_id] - commands)}")
+        for command in receipt.get("commands") or []:
+            require(command.get("status") == "passed", f"{gate_id} command did not pass: {command}")
 
     for relative, needles in {
         "docs/COMMERCIAL_EVIDENCE_RECEIPTS.json": REQUIRED_JSON_STRINGS,
@@ -135,8 +162,10 @@ def main() -> int:
             require(needle in text, f"{relative} missing {needle!r}")
 
     doc = read_text(RECEIPTS_DOC)
-    for command in REQUIRED_GATE5_COMMANDS:
-        require(command in doc, f"receipt doc missing {command}")
+    for gate_id, commands in required_commands.items():
+        require(gate_id in doc, f"receipt doc missing {gate_id}")
+        for command in commands:
+            require(command in doc, f"receipt doc missing {command}")
 
     output = run_receipts()
     payload = json.loads(output)

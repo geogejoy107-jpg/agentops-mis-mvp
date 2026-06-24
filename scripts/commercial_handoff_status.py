@@ -169,6 +169,7 @@ def build_payload() -> dict[str, Any]:
             "gates_with_local_receipts": (current_evidence.get("evidence_summary") or {}).get("gates_with_local_receipts") or [],
             "gates_with_release_grade_receipts": (current_evidence.get("evidence_summary") or {}).get("gates_with_release_grade_receipts") or [],
             "gates_missing_local_receipts": (current_evidence.get("evidence_summary") or {}).get("gates_missing_local_receipts") or [],
+            "local_receipt_command_counts": (current_evidence.get("evidence_summary") or {}).get("local_receipt_command_counts") or {},
             "exact_head_ci_verified": (current_evidence.get("evidence_summary") or {}).get("exact_head_ci_verified"),
             "remote_sync_verified": (current_evidence.get("evidence_summary") or {}).get("remote_sync_verified"),
             "clean_worktree_verified": (current_evidence.get("evidence_summary") or {}).get("clean_worktree_verified"),

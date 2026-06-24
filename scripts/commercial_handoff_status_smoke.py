@@ -114,6 +114,10 @@ REQUIRED_SOURCES = {
     "docs/COMMERCIAL_EVIDENCE_RECEIPTS.json": {
         "commercial_evidence_receipts_v1",
         "partial_local_receipts_not_release_complete",
+        "gate_1_product_packaging_and_entitlement",
+        "gate_2_production_safety_baseline",
+        "gate_3_storage_boundary_before_postgres",
+        "gate_4_ui_api_parity_before_nextjs",
         "gate_5_byoc_enterprise_deployment",
     },
     "docs/COMMERCIAL_EVIDENCE_RECEIPTS.md": {
@@ -166,6 +170,14 @@ EXPECTED_GATE_STATUSES = {
     "gate_4_ui_api_parity_before_nextjs": "started",
     "gate_5_byoc_enterprise_deployment": "evidence_required",
 }
+
+EXPECTED_LOCAL_RECEIPT_GATES = [
+    "gate_1_product_packaging_and_entitlement",
+    "gate_2_production_safety_baseline",
+    "gate_3_storage_boundary_before_postgres",
+    "gate_4_ui_api_parity_before_nextjs",
+    "gate_5_byoc_enterprise_deployment",
+]
 
 
 def require(condition: bool, message: str) -> None:
@@ -238,9 +250,10 @@ def main() -> int:
     evidence = payload.get("current_evidence_status") or {}
     require(evidence.get("contract") == "commercial_current_evidence_status_v1", "current evidence contract missing from handoff payload")
     require(evidence.get("status") == "current_evidence_required", "current evidence status mismatch")
-    require("gate_5_byoc_enterprise_deployment" in set(evidence.get("gates_requiring_current_evidence") or []), "current evidence Gate 5 gap missing")
-    require(evidence.get("gates_with_local_receipts") == ["gate_5_byoc_enterprise_deployment"], "handoff local receipt summary mismatch")
+    require(set(evidence.get("gates_requiring_current_evidence") or []) == set(EXPECTED_LOCAL_RECEIPT_GATES), "current evidence gaps mismatch")
+    require(evidence.get("gates_with_local_receipts") == EXPECTED_LOCAL_RECEIPT_GATES, "handoff local receipt summary mismatch")
     require(evidence.get("gates_with_release_grade_receipts") == [], "handoff release-grade receipt summary mismatch")
+    require(evidence.get("gates_missing_local_receipts") == [], "handoff local receipt gaps should be empty")
     require(evidence.get("exact_head_ci_verified") is False, "handoff exact-head CI must remain false")
     require(evidence.get("remote_sync_verified") is False, "handoff remote sync must remain false")
     require(evidence.get("clean_worktree_verified") is False, "handoff clean worktree must remain false")

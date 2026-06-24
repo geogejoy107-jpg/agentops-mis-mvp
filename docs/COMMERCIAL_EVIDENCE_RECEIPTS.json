@@ -17,15 +17,21 @@
   "receipt_summary": {
     "gate_count": 6,
     "gates_with_local_receipts": [
-      "gate_5_byoc_enterprise_deployment"
-    ],
-    "gates_with_release_grade_receipts": [],
-    "gates_missing_local_receipts": [
       "gate_1_product_packaging_and_entitlement",
       "gate_2_production_safety_baseline",
       "gate_3_storage_boundary_before_postgres",
-      "gate_4_ui_api_parity_before_nextjs"
+      "gate_4_ui_api_parity_before_nextjs",
+      "gate_5_byoc_enterprise_deployment"
     ],
+    "gates_with_release_grade_receipts": [],
+    "gates_missing_local_receipts": [],
+    "local_receipt_command_counts": {
+      "gate_1_product_packaging_and_entitlement": 3,
+      "gate_2_production_safety_baseline": 6,
+      "gate_3_storage_boundary_before_postgres": 13,
+      "gate_4_ui_api_parity_before_nextjs": 7,
+      "gate_5_byoc_enterprise_deployment": 7
+    },
     "gate_5_local_receipt_commands": 7,
     "gate_5_release_grade_current": false,
     "exact_head_ci_verified": false,
@@ -33,6 +39,232 @@
     "clean_worktree_verified": false
   },
   "phase_gate_receipts": [
+    {
+      "gate_id": "gate_1_product_packaging_and_entitlement",
+      "local_receipt_current": true,
+      "release_grade_current": false,
+      "receipt_state": "local_receipts_complete_exact_head_required",
+      "verified_head": "823ac8d",
+      "verified_at": "2026-06-24T22:18:54+08:00",
+      "environment": "local_isolated",
+      "evidence_level": "local_current_not_release_grade",
+      "commands": [
+        {
+          "command": "python3 scripts/commercial_entitlements_smoke.py",
+          "status": "passed",
+          "contract": "commercial_entitlements_v1"
+        },
+        {
+          "command": "python3 scripts/team_entitlement_enrollment_smoke.py",
+          "status": "passed",
+          "contract": "team_entitlement_enrollment_v1"
+        },
+        {
+          "command": "python3 scripts/enrollment_approval_workflow_smoke.py",
+          "status": "passed",
+          "contract": "enrollment_approval_workflow_v1"
+        }
+      ],
+      "release_blockers": [
+        "exact_head_ci_not_checked_in_this_worktree",
+        "remote_sync_not_checked_in_this_worktree",
+        "existing_local_dirty_files_are_outside_this_slice"
+      ]
+    },
+    {
+      "gate_id": "gate_2_production_safety_baseline",
+      "local_receipt_current": true,
+      "release_grade_current": false,
+      "receipt_state": "local_receipts_complete_exact_head_required",
+      "verified_head": "823ac8d",
+      "verified_at": "2026-06-24T22:18:54+08:00",
+      "environment": "local_isolated",
+      "evidence_level": "local_current_not_release_grade",
+      "commands": [
+        {
+          "command": "python3 scripts/production_auth_fail_closed_smoke.py --configured-production-fixture",
+          "status": "passed",
+          "contract": "production_auth_fail_closed"
+        },
+        {
+          "command": "python3 scripts/security_production_readiness_smoke.py --configured-production-fixture",
+          "status": "passed",
+          "contract": "security_production_readiness_v1"
+        },
+        {
+          "command": "python3 scripts/agent_gateway_scope_matrix_smoke.py --isolated-fixture",
+          "status": "passed",
+          "contract": "agent_gateway_scope_matrix_v1"
+        },
+        {
+          "command": "python3 scripts/workspace_isolation_smoke.py --isolated-fixture",
+          "status": "passed",
+          "contract": "workspace_isolation_v1"
+        },
+        {
+          "command": "python3 scripts/workspace_rbac_governance_smoke.py --isolated-fixture",
+          "status": "passed",
+          "contract": "workspace_rbac_governance_v1"
+        },
+        {
+          "command": "python3 scripts/workspace_memory_session_governance_smoke.py --isolated-fixture",
+          "status": "passed",
+          "contract": "workspace_memory_session_governance_v1"
+        }
+      ],
+      "release_blockers": [
+        "exact_head_ci_not_checked_in_this_worktree",
+        "remote_sync_not_checked_in_this_worktree",
+        "existing_local_dirty_files_are_outside_this_slice"
+      ]
+    },
+    {
+      "gate_id": "gate_3_storage_boundary_before_postgres",
+      "local_receipt_current": true,
+      "release_grade_current": false,
+      "receipt_state": "local_receipts_complete_exact_head_required",
+      "verified_head": "823ac8d",
+      "verified_at": "2026-06-24T22:18:54+08:00",
+      "environment": "local_isolated_postgres_container",
+      "evidence_level": "local_current_not_release_grade",
+      "commands": [
+        {
+          "command": "python3 scripts/storage_boundary_sqlite_smoke.py",
+          "status": "passed",
+          "contract": "storage_boundary_sqlite_v1"
+        },
+        {
+          "command": "python3 scripts/storage_postgres_contract_smoke.py",
+          "status": "passed",
+          "contract": "postgres_contract_v1"
+        },
+        {
+          "command": "python3 scripts/storage_postgres_container_smoke.py",
+          "status": "passed",
+          "contract": "postgres_container_parity_v1",
+          "skipped": false
+        },
+        {
+          "command": "python3 scripts/storage_postgres_adapter_contract_smoke.py",
+          "status": "passed",
+          "contract": "postgres_adapter_sql_contract_v1",
+          "skipped": false
+        },
+        {
+          "command": "python3 scripts/storage_postgres_optional_adapter_smoke.py",
+          "status": "passed",
+          "contract": "postgres_optional_psycopg_adapter_v1",
+          "skipped": false
+        },
+        {
+          "command": "python3 scripts/storage_postgres_boundary_parity_smoke.py",
+          "status": "passed",
+          "contract": "postgres_boundary_fixture_parity_v1",
+          "skipped": false
+        },
+        {
+          "command": "python3 scripts/storage_postgres_route_read_model_smoke.py",
+          "status": "passed",
+          "contract": "postgres_route_read_model_parity_v1",
+          "skipped": false
+        },
+        {
+          "command": "python3 scripts/storage_backend_selection_smoke.py",
+          "status": "passed",
+          "contract": "storage_backend_selection_fail_closed_v1"
+        },
+        {
+          "command": "python3 scripts/storage_postgres_http_read_parity_smoke.py",
+          "status": "passed",
+          "contract": "postgres_http_read_parity_v1",
+          "skipped": false
+        },
+        {
+          "command": "python3 scripts/storage_postgres_cli_read_parity_smoke.py",
+          "status": "passed",
+          "contract": "postgres_cli_read_parity_v1",
+          "skipped": false
+        },
+        {
+          "command": "python3 scripts/storage_postgres_write_helper_parity_smoke.py",
+          "status": "passed",
+          "contract": "postgres_write_helper_parity_v1",
+          "skipped": false
+        },
+        {
+          "command": "python3 scripts/storage_postgres_http_write_task_smoke.py",
+          "status": "passed",
+          "contract": "postgres_http_write_task_parity_v1",
+          "skipped": false
+        },
+        {
+          "command": "python3 scripts/storage_postgres_cli_write_parity_smoke.py",
+          "status": "passed",
+          "contract": "postgres_cli_write_parity_v1",
+          "skipped": false
+        }
+      ],
+      "release_blockers": [
+        "exact_head_ci_not_checked_in_this_worktree",
+        "remote_sync_not_checked_in_this_worktree",
+        "existing_local_dirty_files_are_outside_this_slice"
+      ]
+    },
+    {
+      "gate_id": "gate_4_ui_api_parity_before_nextjs",
+      "local_receipt_current": true,
+      "release_grade_current": false,
+      "receipt_state": "local_receipts_complete_exact_head_required",
+      "verified_head": "823ac8d",
+      "verified_at": "2026-06-24T22:18:54+08:00",
+      "environment": "local_isolated_browser",
+      "evidence_level": "local_current_not_release_grade",
+      "commands": [
+        {
+          "command": "python3 scripts/nextjs_parity_smoke.py",
+          "status": "passed",
+          "contract": "nextjs_parity_v1"
+        },
+        {
+          "command": "python3 scripts/ui_api_parity_matrix_smoke.py",
+          "status": "passed",
+          "contract": "ui_api_parity_matrix_v1"
+        },
+        {
+          "command": "python3 scripts/ui_covered_route_retirement_packet_smoke.py",
+          "status": "passed",
+          "contract": "ui_covered_route_retirement_packet_v1"
+        },
+        {
+          "command": "python3 scripts/vite_playwright_snapshot_smoke.py",
+          "status": "passed",
+          "contract": "vite_browser_snapshot_parity_v1"
+        },
+        {
+          "command": "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+          "status": "passed",
+          "contract": "nextjs_browser_snapshot_parity_v1"
+        },
+        {
+          "command": "cd ui/start-building-app && npm run build",
+          "status": "passed",
+          "contract": "vite_build"
+        },
+        {
+          "command": "cd ui/next-app && npm run build",
+          "status": "passed",
+          "contract": "nextjs_build"
+        }
+      ],
+      "recovery_notes": [
+        "npm_cache_cleaned_after_enospc_before_nextjs_snapshot_retry"
+      ],
+      "release_blockers": [
+        "exact_head_ci_not_checked_in_this_worktree",
+        "remote_sync_not_checked_in_this_worktree",
+        "existing_local_dirty_files_are_outside_this_slice"
+      ]
+    },
     {
       "gate_id": "gate_5_byoc_enterprise_deployment",
       "local_receipt_current": true,
@@ -96,7 +328,7 @@
         "exact_head_ci_not_checked_in_this_worktree",
         "remote_sync_not_checked_in_this_worktree",
         "existing_local_dirty_files_are_outside_this_slice",
-        "gates_1_4_still_require_current_evidence"
+        "gates_1_4_still_require_release_grade_current_evidence"
       ]
     }
   ],

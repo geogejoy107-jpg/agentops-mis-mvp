@@ -38,15 +38,21 @@
     "real_runtime_required": true,
     "heavy_evidence_not_executed_by_default": true,
     "gates_with_local_receipts": [
-      "gate_5_byoc_enterprise_deployment"
-    ],
-    "gates_with_release_grade_receipts": [],
-    "gates_missing_local_receipts": [
       "gate_1_product_packaging_and_entitlement",
       "gate_2_production_safety_baseline",
       "gate_3_storage_boundary_before_postgres",
-      "gate_4_ui_api_parity_before_nextjs"
+      "gate_4_ui_api_parity_before_nextjs",
+      "gate_5_byoc_enterprise_deployment"
     ],
+    "gates_with_release_grade_receipts": [],
+    "gates_missing_local_receipts": [],
+    "local_receipt_command_counts": {
+      "gate_1_product_packaging_and_entitlement": 3,
+      "gate_2_production_safety_baseline": 6,
+      "gate_3_storage_boundary_before_postgres": 13,
+      "gate_4_ui_api_parity_before_nextjs": 7,
+      "gate_5_byoc_enterprise_deployment": 7
+    },
     "gate_5_local_receipt_commands": 7,
     "exact_head_ci_verified": false,
     "remote_sync_verified": false,
@@ -74,10 +80,10 @@
       "id": "gate_1_product_packaging_and_entitlement",
       "packet_status": "evidence_required",
       "evidence_current": false,
-      "evidence_state": "current_evidence_required",
-      "local_receipt_current": false,
+      "evidence_state": "local_receipts_complete_exact_head_required",
+      "local_receipt_current": true,
       "release_grade_current": false,
-      "receipt_state": "missing_local_receipts",
+      "receipt_state": "local_receipts_complete_exact_head_required",
       "required_commands": [
         "python3 scripts/commercial_entitlements_smoke.py",
         "python3 scripts/team_entitlement_enrollment_smoke.py",
@@ -93,10 +99,10 @@
       "id": "gate_2_production_safety_baseline",
       "packet_status": "evidence_required",
       "evidence_current": false,
-      "evidence_state": "current_evidence_required",
-      "local_receipt_current": false,
+      "evidence_state": "local_receipts_complete_exact_head_required",
+      "local_receipt_current": true,
       "release_grade_current": false,
-      "receipt_state": "missing_local_receipts",
+      "receipt_state": "local_receipts_complete_exact_head_required",
       "required_commands": [
         "python3 scripts/production_auth_fail_closed_smoke.py --configured-production-fixture",
         "python3 scripts/security_production_readiness_smoke.py --configured-production-fixture",
@@ -117,10 +123,10 @@
       "id": "gate_3_storage_boundary_before_postgres",
       "packet_status": "evidence_required",
       "evidence_current": false,
-      "evidence_state": "current_evidence_required",
-      "local_receipt_current": false,
+      "evidence_state": "local_receipts_complete_exact_head_required",
+      "local_receipt_current": true,
       "release_grade_current": false,
-      "receipt_state": "missing_local_receipts",
+      "receipt_state": "local_receipts_complete_exact_head_required",
       "required_commands": [
         "python3 scripts/storage_boundary_sqlite_smoke.py",
         "python3 scripts/storage_postgres_contract_smoke.py",
@@ -148,10 +154,10 @@
       "id": "gate_4_ui_api_parity_before_nextjs",
       "packet_status": "started",
       "evidence_current": false,
-      "evidence_state": "current_evidence_required",
-      "local_receipt_current": false,
+      "evidence_state": "local_receipts_complete_exact_head_required",
+      "local_receipt_current": true,
       "release_grade_current": false,
-      "receipt_state": "missing_local_receipts",
+      "receipt_state": "local_receipts_complete_exact_head_required",
       "required_commands": [
         "python3 scripts/nextjs_parity_smoke.py",
         "python3 scripts/ui_api_parity_matrix_smoke.py",
