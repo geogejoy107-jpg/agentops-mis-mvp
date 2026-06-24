@@ -243,6 +243,7 @@ python3 scripts/nextjs_customer_worker_async_job_smoke.py
 python3 scripts/nextjs_customer_worker_prepared_action_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
+python3 scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
@@ -420,6 +421,14 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   and proves `force:true` is rejected at the Next proxy with
   `force_release_not_allowed_next_parity`.
 
+  The Next worker gateway lifecycle guard smoke starts isolated MIS API and
+  Next.js servers, creates a real backend enrollment/session as setup proof that
+  backend CLI/API paths can issue one-time credentials, then proves the Next
+  `/api/mis` proxy blocks Agent Gateway session create, session revoke, and
+  enrollment revoke writes with `gateway_lifecycle_write_not_allowed_next_parity`.
+  `/workspace/agents` only renders session hygiene readback with token/session
+  omission proof, while backend CLI/API lifecycle controls remain canonical.
+
   The Next worker daemon control smoke starts isolated MIS API and Next.js
   servers with a temporary runtime directory, proves the Next
   `/api/mis/workers/local/start|restart|stop` proxy and
@@ -497,6 +506,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/nextjs_worker_stuck_release_smoke.py`
   - `scripts/nextjs_worker_daemon_control_smoke.py`
   - `scripts/nextjs_enrollment_request_smoke.py`
+  - `scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py`
   - `scripts/nextjs_playwright_snapshot_smoke.py`
   - `scripts/vite_playwright_snapshot_smoke.py`
   - `docs/UI_API_PARITY_MATRIX.md`

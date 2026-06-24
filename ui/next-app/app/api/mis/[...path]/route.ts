@@ -34,6 +34,14 @@ const VALID_AGENT_GATEWAY_SCOPES = new Set([
   "audit:write",
 ]);
 const VALID_RUNTIME_TYPES = new Set(["mock", "hermes", "openclaw"]);
+const GATEWAY_LIFECYCLE_WRITE_CONTRACTS = [
+  "/agent-gateway/session/create",
+  "/agent-gateway/session/revoke",
+  "/agent-gateway/enrollment/revoke",
+];
+const GATEWAY_LIFECYCLE_WRITE_PATHS = new Set(
+  GATEWAY_LIFECYCLE_WRITE_CONTRACTS.map((path) => path.replace(/^\//, "")),
+);
 
 type RouteContext = {
   params: Promise<{ path?: string[] }>;
@@ -88,6 +96,10 @@ function isEnrollmentPath(path: string[]) {
   return path.join("/").startsWith("agent-gateway/enrollment/");
 }
 
+function isGatewaySessionsReadPath(path: string[]) {
+  return path.join("/") === "agent-gateway/sessions";
+}
+
 function isEnrollmentPolicyPreviewPath(path: string[]) {
   return path.join("/") === "agent-gateway/enrollment/policy-preview";
 }
@@ -100,9 +112,40 @@ function isEnrollmentTokenIssuePath(path: string[]) {
   ].includes(path.join("/"));
 }
 
+function isGatewayLifecycleWritePath(path: string[]) {
+  return GATEWAY_LIFECYCLE_WRITE_PATHS.has(path.join("/"));
+}
+
 function parseJsonBody(body: Buffer | undefined) {
   if (!body || body.byteLength === 0) return {};
   return JSON.parse(body.toString("utf-8"));
+}
+
+function refTail(value: unknown) {
+  return String(value || "").replace(/[^A-Za-z0-9]/g, "").slice(-12);
+}
+
+function safeGatewaySessionsPayload(body: Buffer) {
+  const parsed = JSON.parse(body.toString("utf-8"));
+  const sessions = Array.isArray(parsed?.sessions) ? parsed.sessions : [];
+  return {
+    ...parsed,
+    sessions: sessions.map((session: Record<string, unknown>) => {
+      const sessionTail = refTail(session.session_id);
+      const parentTail = refTail(session.parent_token_id);
+      const { session_id, parent_token_id, ...rest } = session;
+      void session_id;
+      void parent_token_id;
+      return {
+        ...rest,
+        session_ref: session.session_ref || (sessionTail ? `session_ref_${sessionTail}` : ""),
+        session_id_omitted: true,
+        parent_token_ref: session.parent_token_ref || (parentTail ? `token_ref_${parentTail}` : ""),
+        parent_token_id_omitted: true,
+      };
+    }),
+    token_omitted: true,
+  };
 }
 
 function workerDispatchAdapter(body: Buffer | undefined) {
@@ -446,6 +489,18 @@ async function proxy(request: NextRequest, context: RouteContext) {
       token_omitted: true,
     }, { status: 403, headers: { "Cache-Control": "no-store" } });
   }
+  if (request.method === "POST" && isGatewayLifecycleWritePath(path)) {
+    return NextResponse.json({
+      ok: false,
+      error: "gateway_lifecycle_write_not_allowed_next_parity",
+      blocked_operation: path.join("/"),
+      token_issued: false,
+      session_issued: false,
+      lifecycle_mutation_performed: false,
+      live_execution_performed: false,
+      token_omitted: true,
+    }, { status: 403, headers: { "Cache-Control": "no-store" } });
+  }
   if (request.method === "POST" && isEnrollmentPolicyPreviewPath(path)) {
     const guard = enrollmentPolicyPreviewGuard(body);
     if (!guard.ok) {
@@ -466,6 +521,14 @@ async function proxy(request: NextRequest, context: RouteContext) {
   headers.delete("content-length");
   if (isEnrollmentPath(path)) {
     headers.set("cache-control", "no-store");
+  }
+  if (request.method === "GET" && isGatewaySessionsReadPath(path) && response.body.byteLength > 0) {
+    try {
+      const payload = safeGatewaySessionsPayload(response.body);
+      return NextResponse.json(payload, { status: response.status, headers: { "Cache-Control": "no-store" } });
+    } catch {
+      headers.set("cache-control", "no-store");
+    }
   }
   return new NextResponse(response.body.byteLength > 0 ? response.body : null, {
     status: response.status,

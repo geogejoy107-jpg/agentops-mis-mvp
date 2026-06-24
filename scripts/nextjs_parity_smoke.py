@@ -106,6 +106,7 @@ def main() -> int:
         ROOT / "scripts" / "nextjs_customer_worker_prepared_action_smoke.py",
         ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py",
         ROOT / "scripts" / "nextjs_enrollment_request_smoke.py",
+        ROOT / "scripts" / "nextjs_worker_gateway_lifecycle_guard_smoke.py",
         ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py",
         ROOT / "scripts" / "audit_retention_policy_smoke.py",
         ROOT / "scripts" / "audit_retention_controls_smoke.py",
@@ -173,6 +174,7 @@ def main() -> int:
     customer_worker_prepared_action_smoke_text = read_text(ROOT / "scripts" / "nextjs_customer_worker_prepared_action_smoke.py")
     worker_release_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py")
     enrollment_request_smoke_text = read_text(ROOT / "scripts" / "nextjs_enrollment_request_smoke.py")
+    worker_gateway_lifecycle_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_gateway_lifecycle_guard_smoke.py")
     worker_daemon_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py")
     route_parity_smoke_text = read_text(ROOT / "scripts" / "ui_task_run_route_parity_smoke.py")
     route_alias_smoke_text = read_text(ROOT / "scripts" / "ui_legacy_route_alias_smoke.py")
@@ -254,6 +256,10 @@ def main() -> int:
     require("/workspace/agents/enrollment-request" in enrollment_request_smoke_text, "Next enrollment smoke must exercise the form fallback")
     require("enrollment_token_issue_not_allowed_next_parity" in enrollment_request_smoke_text, "Next enrollment smoke must prove raw token issue routes fail closed")
     require("invalid_scopes" in enrollment_request_smoke_text, "Next enrollment smoke must prove invalid scopes fail closed before backend filtering")
+    require("nextjs_worker_gateway_lifecycle_guard_v1" in worker_gateway_lifecycle_smoke_text, "Next worker gateway lifecycle guard smoke contract is missing")
+    require("/api/mis/agent-gateway/session/create" in worker_gateway_lifecycle_smoke_text and "/api/mis/agent-gateway/session/revoke" in worker_gateway_lifecycle_smoke_text, "Next lifecycle guard smoke must exercise session create/revoke blocks")
+    require("/api/mis/agent-gateway/enrollment/revoke" in worker_gateway_lifecycle_smoke_text and "/api/mis/agent-gateway/enrollment/rotate" in worker_gateway_lifecycle_smoke_text, "Next lifecycle guard smoke must exercise enrollment revoke/rotate blocks")
+    require("gateway_lifecycle_write_not_allowed_next_parity" in worker_gateway_lifecycle_smoke_text and "session_token" in worker_gateway_lifecycle_smoke_text, "Next lifecycle guard smoke must prove lifecycle writes fail closed before token/session leakage")
     require("nextjs_worker_daemon_control_v1" in worker_daemon_smoke_text, "Next worker daemon control smoke contract is missing")
     require("/api/mis/workers/local/start" in worker_daemon_smoke_text and "/api/mis/workers/local/restart" in worker_daemon_smoke_text and "/api/mis/workers/local/stop" in worker_daemon_smoke_text, "Next worker daemon smoke must exercise start/restart/stop proxy routes")
     require("/workspace/agents/daemon-control" in worker_daemon_smoke_text, "Next worker daemon smoke must exercise the form fallback route")
@@ -270,6 +276,7 @@ def main() -> int:
     require("/memories" in lib_text and "/audit?limit=120" in lib_text, "governance parity data misses memory or audit ledgers")
     require("/workers/status" in lib_text and "/workers/adapter-readiness" in lib_text, "agent-control parity data misses worker readiness")
     require("/agent-gateway/enrollments" in lib_text and "loadAgentGatewayEnrollments" in lib_text, "agent-control parity data misses enrollment readback")
+    require("/agent-gateway/sessions" in lib_text and "loadAgentGatewaySessions" in lib_text, "agent-control parity data misses session hygiene readback")
     require("/agent-gateway/enrollment/policy-preview" in lib_text and "previewAgentGatewayEnrollmentPolicy" in lib_text, "agent-control parity data misses enrollment policy preview")
     require("/agent-gateway/enrollment/request" in lib_text and "requestAgentGatewayEnrollment" in lib_text, "agent-control parity data misses approval-gated enrollment request")
     require("/workers/local/dispatch-once" in lib_text and "dispatchLocalWorkerOnce" in lib_text, "agent-control parity data misses worker dispatch mutation")
@@ -330,7 +337,12 @@ def main() -> int:
     require("previewAgentGatewayEnrollmentPolicy" in agents_page_text and "requestAgentGatewayEnrollment" in agents_page_text, "agents parity page must expose approval-gated enrollment request")
     require('action="/workspace/agents/enrollment-request"' in agents_page_text, "agents parity page must keep the Next enrollment request form fallback")
     require("direct token issue blocked" in agents_page_text and "token omitted" in agents_page_text, "agents parity page must show enrollment token-safety state")
+    require("agent-gateway-session-hygiene" in agents_page_text and "session token omitted" in agents_page_text and "session create blocked" in agents_page_text, "agents parity page must show Agent Gateway session hygiene state")
+    require("session.session_ref" in agents_page_text and "session id hidden" in agents_page_text, "agents parity page must avoid rendering raw session ids")
     require("/agent-gateway/enrollment/request" in agents_enrollment_route_text and "invalid_scopes" in agents_enrollment_route_text, "enrollment request form fallback must validate scopes and write through approval-gated MIS API")
+    require("isGatewayLifecycleWritePath" in route_text and "gateway_lifecycle_write_not_allowed_next_parity" in route_text, "Next MIS proxy must guard Agent Gateway lifecycle writes")
+    require("agent-gateway/session/create" in route_text and "agent-gateway/session/revoke" in route_text and "agent-gateway/enrollment/revoke" in route_text, "Next MIS proxy must name blocked session/enrollment lifecycle routes")
+    require("safeGatewaySessionsPayload" in route_text and "session_id_omitted" in route_text and "parent_token_id_omitted" in route_text, "Next MIS proxy must project safe session readback")
     require("/workspace/agents/${encodeURIComponent(agent.agent_id)}" in agents_page_text, "agents parity page must link rows to agent detail")
     require("AgentDetailParityPage" in agent_detail_page_text and "loadAgentPerformance" in agent_detail_page_text, "agent detail page must load live performance data")
     require("Per-agent performance" in agent_detail_page_text and "Recent Runs" in agent_detail_page_text, "agent detail page must expose performance and recent run evidence")
@@ -475,6 +487,7 @@ def main() -> int:
             "nextjs_customer_worker_prepared_action_v1",
             "nextjs_worker_stuck_release_v1",
             "nextjs_enrollment_request_v1",
+            "nextjs_worker_gateway_lifecycle_guard_v1",
             "nextjs_worker_daemon_control_v1",
         ],
         "stack": {

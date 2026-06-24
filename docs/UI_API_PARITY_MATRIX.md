@@ -61,9 +61,11 @@ route retirement:
   customer-worker prepared-action exact resume, and ledger-derived resume
   readback. Vite remains canonical until an explicit route retirement commit
   preserves `/workspace/pixel-office` deep links and reruns browser evidence.
-- Worker console is only partially represented in Next.js. Next is read-only for
-  production safety and readiness; Vite remains canonical for local worker
-  start/stop/restart, task release, remote enrollment mutation, and detailed
+- Worker console is only partially represented in Next.js. Next now proves
+  production safety/readiness, safe mock worker controls, approval-gated
+  enrollment request, and Agent Gateway session hygiene readback while blocking
+  token/session lifecycle writes. Vite/CLI remain canonical for direct token
+  issuance, rotate/revoke/session mutation, live worker controls, and detailed
   operator controls.
 - Admin-only Vite routes for the full template/base-switching console are
   deferred. Tool calls, evaluation room, runtime connectors, Notion external
@@ -152,6 +154,7 @@ python3 scripts/nextjs_customer_worker_async_job_smoke.py
 python3 scripts/nextjs_customer_worker_prepared_action_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
+python3 scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
@@ -259,6 +262,15 @@ can read them, proves Next `/api/mis/workers/tasks/release` returns one task to
 `/workspace/agents/release-task` form fallback performs the same recovery, and
 proves `force:true` is rejected at the Next proxy with
 `force_release_not_allowed_next_parity`.
+
+`python3 scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py`
+(`nextjs_worker_gateway_lifecycle_guard_v1`) starts isolated MIS API and
+Next.js servers, creates a real backend enrollment/session as setup proof that
+the backend can emit one-time session tokens, then proves the Next `/api/mis`
+proxy blocks `session/create`, `session/revoke`, and `enrollment/revoke` with
+`gateway_lifecycle_write_not_allowed_next_parity`. It also verifies
+`/workspace/agents` renders only session hygiene readback with token/session
+omission proof.
 
 `python3 scripts/nextjs_worker_daemon_control_smoke.py`
 (`nextjs_worker_daemon_control_v1`) starts isolated MIS API and Next.js

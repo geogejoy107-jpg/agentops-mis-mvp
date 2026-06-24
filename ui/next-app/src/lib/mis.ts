@@ -1065,6 +1065,7 @@ export type AgentControlSnapshot = {
   workerStatus: WorkerStatusSummary;
   adapterReadiness: WorkerAdapterReadinessSummary;
   enrollments: AgentGatewayEnrollmentListPayload;
+  sessions: AgentGatewaySessionsPayload;
 };
 
 export type WorkspaceSnapshot = {
@@ -1210,6 +1211,10 @@ export async function loadAgentGatewayEnrollments(): Promise<AgentGatewayEnrollm
   return misJson<AgentGatewayEnrollmentListPayload>("/agent-gateway/enrollments");
 }
 
+export async function loadAgentGatewaySessions(): Promise<AgentGatewaySessionsPayload> {
+  return misJson<AgentGatewaySessionsPayload>("/agent-gateway/sessions");
+}
+
 export async function previewAgentGatewayEnrollmentPolicy(input: {
   workspace_id?: string;
   runtime_type?: string;
@@ -1323,12 +1328,13 @@ export async function loadWorkflowJobs(limit = 8): Promise<WorkflowJobListPayloa
 }
 
 export async function loadAgentControlSnapshot(): Promise<AgentControlSnapshot> {
-  const [agents, security, workerStatus, adapterReadiness, enrollments] = await Promise.all([
+  const [agents, security, workerStatus, adapterReadiness, enrollments, sessions] = await Promise.all([
     loadAgents(),
     loadSecurityProductionReadiness(),
     loadWorkerStatus(),
     loadWorkerAdapterReadiness(),
     loadAgentGatewayEnrollments(),
+    loadAgentGatewaySessions(),
   ]);
-  return { agents, security, workerStatus, adapterReadiness, enrollments };
+  return { agents, security, workerStatus, adapterReadiness, enrollments, sessions };
 }

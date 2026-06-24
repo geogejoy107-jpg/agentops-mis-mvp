@@ -54,7 +54,7 @@ READ_ONLY_LEDGER_TABLES = [
 
 ROUTES = [
     ("/workspace", ["Workspace control plane", "Active tasks", "Pending approval queue"]),
-    ("/workspace/agents", ["Agents", "Production security", "Remote enrollment request", "live daemon blocked", "Adapter readiness"]),
+    ("/workspace/agents", ["Agents", "Production security", "Remote enrollment request", "session token omitted", "session create blocked", "live daemon blocked", "Adapter readiness"]),
     ("/workspace/agents/agt_cos", ["Agent Detail", "Per-agent performance", "Recent Runs"]),
     ("/workspace/commercial", ["Commercial", "Capability matrix", "Fail-closed gates"]),
     ("/workspace/governance", ["Governance", "Production readiness", "Session governance"]),

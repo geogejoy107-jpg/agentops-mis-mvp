@@ -268,9 +268,15 @@ export function AgentsParityPage() {
   const stuckTasks = worker?.stuck_tasks || [];
   const adapter = state.data?.adapterReadiness;
   const enrollments = state.data?.enrollments?.enrollments || [];
+  const sessions = state.data?.sessions?.sessions || [];
   const runningDaemons = (worker?.daemons || []).filter((daemon) => daemon.running).length;
   const mockDaemon = (worker?.daemons || []).find((daemon) => daemon.adapter === "mock");
   const adapterRows = useMemo(() => Object.values(adapter?.adapters || {}), [adapter?.adapters]);
+  const sessionStateCounts = useMemo(() => sessions.reduce<Record<string, number>>((counts, session) => {
+    const key = session.session_state || session.status || "unknown";
+    counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {}), [sessions]);
 
   return (
     <AppFrame>
@@ -435,6 +441,8 @@ export function AgentsParityPage() {
           <span>fresh <strong>{numberValue(worker?.fresh_remote_enrollments)}</strong></span>
           <span>stale <strong>{numberValue(worker?.stale_remote_enrollments)}</strong></span>
           <span>visible tokens <strong>{numberValue(enrollments.length)}</strong></span>
+          <span>sessions <strong>{numberValue(sessions.length)}</strong></span>
+          <span>active sessions <strong>{numberValue(sessionStateCounts.active)}</strong></span>
         </div>
         <div className="formGrid" data-smoke="enrollment-request-panel">
           <label className="field">
@@ -492,6 +500,14 @@ export function AgentsParityPage() {
           <span className={statusClass("ready")}>token omitted</span>
           <span className={statusClass("blocked")}>direct token issue blocked</span>
         </div>
+        <div className="proofStrip" data-smoke="agent-gateway-session-hygiene">
+          <span className={statusClass(state.data?.sessions?.token_omitted ? "ready" : "attention")}>session token omitted</span>
+          <span className={statusClass("ready")}>session id hidden</span>
+          <span className={statusClass("blocked")}>session create blocked</span>
+          <span className={statusClass("blocked")}>session revoke blocked</span>
+          <span className={statusClass("blocked")}>enrollment revoke blocked</span>
+          <span>session states active {numberValue(sessionStateCounts.active)} · expired {numberValue(sessionStateCounts.expired)} · revoked {numberValue(sessionStateCounts.revoked)}</span>
+        </div>
         {enrollmentPolicy ? (
           <>
             <div className="adapterGrid" data-smoke="enrollment-policy-result">
@@ -534,6 +550,15 @@ export function AgentsParityPage() {
           </div>
         ) : null}
         <div className="list compact">
+          {sessions.slice(0, 3).map((session) => (
+            <article className="row" key={session.session_ref || `${session.agent_id}:${session.created_at}`}>
+              <div>
+                <strong>{session.session_ref || "session id hidden"}</strong>
+                <span>{session.agent_id || "agent"} · {session.workspace_id || "workspace"} · scopes {numberValue(session.scope_count || session.scopes?.length)}</span>
+              </div>
+              <span className={statusClass(session.session_state || session.status)}>{session.session_state || session.status || "unknown"}</span>
+            </article>
+          ))}
           {enrollments.slice(0, 4).map((enrollment) => (
             <article className="row" key={enrollment.token_id || enrollment.token_ref || enrollment.agent_id}>
               <div>

@@ -149,6 +149,7 @@ def main() -> int:
     require("nextjs_customer_worker_prepared_action_v1" in route_contracts, "matrix policy must include the Next customer-worker prepared-action contract")
     require("nextjs_worker_stuck_release_v1" in route_contracts, "matrix policy must include the Next worker stuck release contract")
     require("nextjs_enrollment_request_v1" in route_contracts, "matrix policy must include the Next enrollment request contract")
+    require("nextjs_worker_gateway_lifecycle_guard_v1" in route_contracts, "matrix policy must include the Next worker gateway lifecycle guard contract")
     require("nextjs_worker_daemon_control_v1" in route_contracts, "matrix policy must include the Next worker daemon control contract")
 
     entries = matrix.get("entries")
@@ -242,6 +243,7 @@ def main() -> int:
     require("python3 scripts/nextjs_worker_dispatch_once_smoke.py" in worker_console_evidence, "worker_console must include Next worker dispatch mutation evidence")
     require("python3 scripts/nextjs_worker_stuck_release_smoke.py" in worker_console_evidence, "worker_console must include Next worker stuck release mutation evidence")
     require("python3 scripts/nextjs_enrollment_request_smoke.py" in worker_console_evidence, "worker_console must include Next approval-gated enrollment request evidence")
+    require("python3 scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py" in worker_console_evidence, "worker_console must include Next gateway lifecycle guard evidence")
     require("python3 scripts/nextjs_worker_daemon_control_smoke.py" in worker_console_evidence, "worker_console must include Next mock worker daemon control evidence")
     worker_console_gate = str(entries_by_id.get("worker_console", {}).get("retirement_gate") or "")
     require("mock_only_next_parity" in worker_console_gate, "worker_console retirement gate must record non-mock dispatch fail-closed evidence")
@@ -249,6 +251,7 @@ def main() -> int:
     require("live_worker_daemon_not_allowed_next_parity" in worker_console_gate, "worker_console retirement gate must record live daemon fail-closed evidence")
     require("force_release_not_allowed_next_parity" in worker_console_gate, "worker_console retirement gate must record force-release fail-closed evidence")
     require("enrollment_token_issue_not_allowed_next_parity" in worker_console_gate, "worker_console retirement gate must record raw enrollment token issue fail-closed evidence")
+    require("gateway_lifecycle_write_not_allowed_next_parity" in worker_console_gate, "worker_console retirement gate must record session/enrollment lifecycle write fail-closed evidence")
     assert_entry_routes(entries_by_id.get("pixel_office_and_dispatch"), "pixel_office_and_dispatch", ["/workspace/pixel-office"], ["/workspace/pixel-office", "/workspace/pixel-office/local-brief", "/workspace/dispatch", "/workspace/dispatch/customer-task", "/workspace/dispatch/template-job", "/workspace/dispatch/template-run", "/workspace/dispatch/customer-worker", "/workspace/dispatch/customer-worker-job"])
     require(entries_by_id.get("pixel_office_and_dispatch", {}).get("status") == "covered", "pixel_office_and_dispatch should be covered once explicit retirement evidence exists")
     pixel_dispatch_evidence = entries_by_id.get("pixel_office_and_dispatch", {}).get("evidence_commands") or []
