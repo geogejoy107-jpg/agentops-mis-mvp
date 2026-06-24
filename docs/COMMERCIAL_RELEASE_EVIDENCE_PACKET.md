@@ -10,6 +10,8 @@ commercial handoff candidate.
 Verify the packet itself:
 
 ```bash
+python3 scripts/commercial_handoff_status.py
+python3 scripts/commercial_handoff_status_smoke.py
 python3 scripts/commercial_release_evidence_packet_smoke.py
 ```
 
@@ -54,4 +56,5 @@ The BYOC handoff path must prove:
 - real Hermes/OpenClaw runtime acceptance separate from mock/offline smokes.
 
 The machine-readable source of truth is
-`docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json`.
+`docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json`. The current handoff aggregate is
+`commercial_handoff_status_v1` in `docs/COMMERCIAL_HANDOFF_STATUS.json`.

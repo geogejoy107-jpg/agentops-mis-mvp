@@ -1,0 +1,98 @@
+{
+  "contract_id": "commercial_handoff_status_v1",
+  "status": "blocked_release_evidence_required",
+  "updated_at": "2026-06-24",
+  "ci_safe": true,
+  "description": "Read-only aggregate of current release, commercial, freeze, and merge packets. This is not release-complete proof.",
+  "commercial_handoff_allowed": false,
+  "release_complete": false,
+  "ready_to_merge": false,
+  "sources": [
+    {
+      "path": "docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json",
+      "contract_id": "commercial_release_evidence_packet_v1",
+      "expected_status": "gate_enforced_not_release_complete"
+    },
+    {
+      "path": "docs/RELEASE_EVIDENCE_PACKET.json",
+      "contract_id": "release_evidence_packet_v1",
+      "expected_status": "delegates_to_commercial_release_evidence_packet"
+    },
+    {
+      "path": "docs/RELEASE_FREEZE_PROTOCOL.json",
+      "contract_id": "release_freeze_protocol_v1",
+      "expected_status": "freeze_active_not_release_complete"
+    },
+    {
+      "path": "docs/MERGE_READINESS_STATUS.json",
+      "contract_id": "merge_readiness_status_v1",
+      "expected_status": "blocked_release_evidence_required"
+    }
+  ],
+  "phase_gate_statuses": [
+    {
+      "id": "gate_0_isolated_commercial_track",
+      "status": "ready"
+    },
+    {
+      "id": "gate_1_product_packaging_and_entitlement",
+      "status": "evidence_required"
+    },
+    {
+      "id": "gate_2_production_safety_baseline",
+      "status": "evidence_required"
+    },
+    {
+      "id": "gate_3_storage_boundary_before_postgres",
+      "status": "evidence_required"
+    },
+    {
+      "id": "gate_4_ui_api_parity_before_nextjs",
+      "status": "started"
+    },
+    {
+      "id": "gate_5_byoc_enterprise_deployment",
+      "status": "evidence_required"
+    }
+  ],
+  "explicit_blockers": [
+    "release_complete_false_until_all_phase_gates_have_current_evidence",
+    "exact_head_ci_not_checked_in_this_worktree",
+    "remote_sync_not_checked_in_this_worktree",
+    "existing_local_dirty_files_are_outside_this_slice"
+  ],
+  "required_commands": [
+    "python3 scripts/commercial_handoff_status.py",
+    "python3 scripts/commercial_handoff_status_smoke.py",
+    "python3 scripts/release_evidence_packet_smoke.py",
+    "python3 scripts/commercial_release_evidence_packet_smoke.py",
+    "python3 scripts/release_freeze_protocol_smoke.py",
+    "python3 scripts/merge_readiness_status_smoke.py",
+    "python3 scripts/commercial_migration_readiness.py",
+    "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
+    "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
+    "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
+    "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api"
+  ],
+  "required_contracts": [
+    "commercial_handoff_status_v1",
+    "commercial_release_evidence_packet_v1",
+    "release_evidence_packet_v1",
+    "release_freeze_protocol_v1",
+    "merge_readiness_status_v1",
+    "deployment_readiness_postgres_runtime_write_fixture_v1",
+    "nextjs_deployment_postgres_runtime_write_fixture_v1",
+    "byoc_deployment_acceptance_v1",
+    "real_hermes_openclaw_acceptance"
+  ],
+  "must_not_use": [
+    "--skip-postgres-if-unavailable",
+    "mock_only_product_claim",
+    "release_complete_true",
+    "raw_prompts",
+    "raw_responses",
+    "private_transcripts",
+    "token_values",
+    "sqlite_fallback_as_postgres_proof"
+  ]
+}

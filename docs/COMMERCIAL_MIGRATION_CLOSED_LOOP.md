@@ -606,6 +606,11 @@ Must be true:
   acceptance before a commercial handoff can claim readiness. Verify with
   `python3 scripts/release_evidence_packet_smoke.py` and
   `python3 scripts/commercial_release_evidence_packet_smoke.py`.
+- `commercial_handoff_status_v1` is the CI-safe operator status aggregate for
+  release, commercial, freeze, and merge packets. It reports
+  `phase_gate_statuses`, `explicit_blockers`, and `required_commands` through
+  `python3 scripts/commercial_handoff_status.py`; verify the surface with
+  `python3 scripts/commercial_handoff_status_smoke.py`.
 - `release_freeze_protocol_v1` keeps commercial handoff in
   `freeze_active_not_release_complete`, and `merge_readiness_status_v1` keeps
   merge status at `blocked_release_evidence_required` until release evidence,

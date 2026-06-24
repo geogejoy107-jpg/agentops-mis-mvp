@@ -17,6 +17,7 @@ RELEASE_SMOKE = ROOT / "scripts" / "release_evidence_packet_smoke.py"
 CONTRACT_ID = "release_freeze_protocol_v1"
 
 REQUIRED_COMMANDS = {
+    "python3 scripts/commercial_handoff_status_smoke.py",
     "python3 scripts/release_evidence_packet_smoke.py",
     "python3 scripts/commercial_release_evidence_packet_smoke.py",
     "python3 scripts/commercial_migration_readiness.py",
@@ -27,6 +28,7 @@ REQUIRED_COMMANDS = {
 }
 
 REQUIRED_CONTRACTS = {
+    "commercial_handoff_status_v1",
     "release_evidence_packet_v1",
     "commercial_release_evidence_packet_v1",
     "deployment_readiness_postgres_runtime_write_fixture_v1",

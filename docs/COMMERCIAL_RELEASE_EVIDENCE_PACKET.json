@@ -154,6 +154,8 @@
     }
   ],
   "handoff_required_commands": [
+    "python3 scripts/commercial_handoff_status.py",
+    "python3 scripts/commercial_handoff_status_smoke.py",
     "python3 scripts/release_evidence_packet_smoke.py",
     "python3 scripts/commercial_release_evidence_packet_smoke.py",
     "python3 scripts/release_freeze_protocol_smoke.py",

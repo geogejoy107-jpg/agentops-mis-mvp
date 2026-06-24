@@ -172,6 +172,8 @@ def main() -> int:
         "docs/RELEASE_FREEZE_PROTOCOL.json",
         "docs/MERGE_READINESS_STATUS.md",
         "docs/MERGE_READINESS_STATUS.json",
+        "docs/COMMERCIAL_HANDOFF_STATUS.md",
+        "docs/COMMERCIAL_HANDOFF_STATUS.json",
         "docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.md",
         "docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json",
         "docs/UI_ROUTE_NAMING_DECISION.md",
@@ -722,6 +724,32 @@ def main() -> int:
             "Commercial release evidence packet makes Gate 5 BYOC/Postgres and real Hermes/OpenClaw evidence machine-checkable",
         ),
         check(
+            "commercial_handoff_status_surface_exists",
+            file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "commercial_handoff_status_v1")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "commercial_release_evidence_packet_v1")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "release_evidence_packet_v1")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "release_freeze_protocol_v1")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "merge_readiness_status_v1")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "phase_gate_statuses")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "explicit_blockers")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "required_commands")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "python3 scripts/commercial_handoff_status.py")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "python3 scripts/commercial_handoff_status_smoke.py")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.md", "blocked_release_evidence_required")
+            and file_contains("docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json", "commercial_handoff_status_smoke.py")
+            and file_contains("docs/RELEASE_EVIDENCE_PACKET.json", "handoff_status_command")
+            and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "commercial_handoff_status_v1")
+            and file_contains("docs/MERGE_READINESS_STATUS.json", "commercial_handoff_status_v1")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "commercial_handoff_status_v1")
+            and file_contains("scripts/commercial_handoff_status.py", "commercial_handoff_status_v1")
+            and file_contains("scripts/commercial_handoff_status.py", "--require-handoff-ready")
+            and file_contains("scripts/commercial_handoff_status_smoke.py", "commercial_handoff_status_v1")
+            and file_contains("scripts/commercial_handoff_status_smoke.py", "phase_gate_statuses")
+            and (ROOT / "scripts" / "commercial_handoff_status.py").exists()
+            and (ROOT / "scripts" / "commercial_handoff_status_smoke.py").exists(),
+            "Commercial handoff status gives operators one CI-safe command for current gate states, blockers, and required evidence",
+        ),
+        check(
             "release_freeze_protocol_surface_exists",
             file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "release_freeze_protocol_v1")
             and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "freeze_active_not_release_complete")
@@ -1186,6 +1214,7 @@ def main() -> int:
             "status": "started",
             "verify": [
                 "python3 scripts/nextjs_parity_smoke.py",
+                "python3 scripts/commercial_handoff_status_smoke.py",
                 "python3 scripts/release_evidence_packet_smoke.py",
                 "python3 scripts/commercial_release_evidence_packet_smoke.py",
                 "python3 scripts/release_freeze_protocol_smoke.py",
@@ -1229,6 +1258,7 @@ def main() -> int:
             "verify": [
                 "Postgres container parity smoke",
                 "Postgres ledger acceptance",
+                "python3 scripts/commercial_handoff_status_smoke.py",
                 "python3 scripts/release_evidence_packet_smoke.py",
                 "python3 scripts/commercial_release_evidence_packet_smoke.py",
                 "python3 scripts/release_freeze_protocol_smoke.py",

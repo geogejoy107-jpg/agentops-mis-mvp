@@ -22,6 +22,8 @@ REQUIRED_GATE_IDS = {
 }
 
 REQUIRED_HANDOFF_COMMANDS = {
+    "python3 scripts/commercial_handoff_status.py",
+    "python3 scripts/commercial_handoff_status_smoke.py",
     "python3 scripts/release_evidence_packet_smoke.py",
     "python3 scripts/commercial_release_evidence_packet_smoke.py",
     "python3 scripts/release_freeze_protocol_smoke.py",
@@ -60,8 +62,10 @@ REQUIRED_SOURCES = {
     "docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md": [
         "release_evidence_packet_v1",
         "commercial_release_evidence_packet_v1",
+        "commercial_handoff_status_v1",
         "release_evidence_packet_smoke.py",
         "commercial_release_evidence_packet_smoke.py",
+        "commercial_handoff_status_smoke.py",
         "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
         "deployment_readiness_smoke.py --postgres-write-fixture",
         "nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
@@ -107,6 +111,9 @@ REQUIRED_SOURCES = {
     "docs/RELEASE_EVIDENCE_PACKET.json": [
         "release_evidence_packet_v1",
         "commercial_release_evidence_packet_v1",
+        "commercial_handoff_status_v1",
+        "commercial_handoff_status.py",
+        "commercial_handoff_status_smoke.py",
         "release_freeze_protocol_smoke.py",
         "merge_readiness_status_smoke.py",
         "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
@@ -116,12 +123,16 @@ REQUIRED_SOURCES = {
     "docs/RELEASE_EVIDENCE_PACKET.md": [
         "release_evidence_packet_v1",
         "commercial_release_evidence_packet_v1",
+        "commercial_handoff_status.py",
+        "commercial_handoff_status_smoke.py",
         "release_freeze_protocol_smoke.py",
         "merge_readiness_status_smoke.py",
         "mock-only",
     ],
     "docs/RELEASE_FREEZE_PROTOCOL.json": [
         "release_freeze_protocol_v1",
+        "commercial_handoff_status_v1",
+        "commercial_handoff_status_smoke.py",
         "freeze_active_not_release_complete",
         "commercial_release_evidence_packet_v1",
         "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
@@ -131,10 +142,13 @@ REQUIRED_SOURCES = {
     "docs/RELEASE_FREEZE_PROTOCOL.md": [
         "release_freeze_protocol_v1",
         "freeze_active_not_release_complete",
+        "commercial_handoff_status_smoke.py",
         "release_freeze_protocol_smoke.py",
     ],
     "docs/MERGE_READINESS_STATUS.json": [
         "merge_readiness_status_v1",
+        "commercial_handoff_status_v1",
+        "commercial_handoff_status_smoke.py",
         "blocked_release_evidence_required",
         "commercial_release_evidence_packet_v1",
         "release_freeze_protocol_v1",
@@ -143,20 +157,56 @@ REQUIRED_SOURCES = {
     "docs/MERGE_READINESS_STATUS.md": [
         "merge_readiness_status_v1",
         "blocked_release_evidence_required",
+        "commercial_handoff_status_smoke.py",
         "merge_readiness_status_smoke.py",
+    ],
+    "docs/COMMERCIAL_HANDOFF_STATUS.json": [
+        "commercial_handoff_status_v1",
+        "commercial_release_evidence_packet_v1",
+        "release_evidence_packet_v1",
+        "release_freeze_protocol_v1",
+        "merge_readiness_status_v1",
+        "blocked_release_evidence_required",
+        "phase_gate_statuses",
+        "explicit_blockers",
+        "required_commands",
+    ],
+    "docs/COMMERCIAL_HANDOFF_STATUS.md": [
+        "commercial_handoff_status_v1",
+        "commercial_handoff_status.py",
+        "commercial_handoff_status_smoke.py",
+        "blocked_release_evidence_required",
+    ],
+    "scripts/commercial_handoff_status.py": [
+        "commercial_handoff_status_v1",
+        "commercial_handoff_allowed",
+        "phase_gate_statuses",
+        "explicit_blockers",
+        "required_commands",
+    ],
+    "scripts/commercial_handoff_status_smoke.py": [
+        "commercial_handoff_status_v1",
+        "commercial_release_evidence_packet_v1",
+        "release_freeze_protocol_v1",
+        "merge_readiness_status_v1",
     ],
     "scripts/release_evidence_packet_smoke.py": [
         "release_evidence_packet_v1",
         "commercial_release_evidence_packet_v1",
+        "commercial_handoff_status",
         "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
     ],
     "scripts/release_freeze_protocol_smoke.py": [
         "release_freeze_protocol_v1",
+        "commercial_handoff_status_v1",
+        "commercial_handoff_status_smoke.py",
         "freeze_active_not_release_complete",
         "release_evidence_packet_smoke.py",
     ],
     "scripts/merge_readiness_status_smoke.py": [
         "merge_readiness_status_v1",
+        "commercial_handoff_status_v1",
+        "commercial_handoff_status_smoke.py",
         "blocked_release_evidence_required",
         "release_freeze_protocol_smoke.py",
     ],
