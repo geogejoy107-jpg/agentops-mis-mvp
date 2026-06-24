@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router";
 import { AppShell } from "./components/layout/AppShell";
 import { WorkspaceHome } from "./components/pages/WorkspaceHome";
 import { PixelOffice } from "./components/pages/PixelOffice";
+import { AdvancedSpatialOffice } from "./components/pages/AdvancedSpatialOffice";
 import { MyTasks } from "./components/pages/MyTasks";
 import { AIEmployees } from "./components/pages/AIEmployees";
 import { ApprovalsInbox } from "./components/pages/ApprovalsInbox";
@@ -30,6 +31,7 @@ export default function App() {
             <Route path="/" element={<Navigate to="/workspace" replace />} />
             <Route path="/workspace" element={<WorkspaceHome />} />
             <Route path="/workspace/pixel-office" element={<PixelOffice />} />
+            <Route path="/workspace/spatial-world" element={<AdvancedSpatialOffice />} />
             <Route path="/workspace/tasks" element={<MyTasks />} />
             <Route path="/workspace/agents" element={<AIEmployees />} />
             <Route path="/workspace/approvals" element={<ApprovalsInbox />} />
