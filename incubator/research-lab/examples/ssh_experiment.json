@@ -1,0 +1,84 @@
+{
+  "name": "dummy-ssh-confirmatory-multiseed",
+  "stage": "confirmatory",
+  "executor": "ssh",
+  "executor_config": {
+    "profile": "lab-gpu-01",
+    "sync_paths": [
+      "research_lab",
+      "examples"
+    ]
+  },
+  "command": [
+    "python",
+    "-m",
+    "examples.dummy_train",
+    "--learning-rate",
+    "0.1",
+    "--seed",
+    "{seed}",
+    "--steps",
+    "5"
+  ],
+  "matrix": {
+    "seed": [
+      11,
+      22
+    ]
+  },
+  "max_concurrency": 2,
+  "timeout_seconds": 120,
+  "retries": 0,
+  "workdir": ".",
+  "environment": {},
+  "integrity": {
+    "strict_actuals": true,
+    "required_actual_fields": [
+      "initialization_mode",
+      "training_scope",
+      "dataset_version",
+      "model_architecture",
+      "precision"
+    ],
+    "minimum_completed_trials": 2,
+    "minimum_distinct_seeds": 2,
+    "allow_warning_deviations": false,
+    "require_provenance": true
+  },
+  "protocol": {
+    "research_question": "Can the declared configuration complete on the approved SSH server under two seeds?",
+    "primary_metric": "accuracy",
+    "initialization_mode": "from_scratch",
+    "training_scope": "full_model",
+    "dataset_version": "synthetic-v1",
+    "model_architecture": "dummy-exponential-model",
+    "precision": "float64",
+    "checkpoint_selection_rule": "final step",
+    "claim_policy": "eligible only after all declared seeds complete without unresolved deviations"
+  },
+  "provenance": {
+    "code": {
+      "repository": "https://example.invalid/research-lab-demo.git",
+      "revision": "demo-v1",
+      "dirty": false
+    },
+    "datasets": [
+      {
+        "name": "train",
+        "uri": "dvc://synthetic/train",
+        "version": "synthetic-v1"
+      }
+    ],
+    "models": [],
+    "resolved_config": {
+      "learning_rate": 0.1,
+      "steps": 5,
+      "seed_count": 2
+    },
+    "environment": {
+      "name": "python-runtime",
+      "uri": "pyproject.toml",
+      "version": "0.3.1"
+    }
+  }
+}
