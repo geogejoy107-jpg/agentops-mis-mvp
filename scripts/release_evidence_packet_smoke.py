@@ -159,6 +159,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commercial_config_status",
+        "command": "python3 scripts/commercial_config_status_smoke.py",
+        "summary": "Read-only commercial config status API/CLI reports entitlement and retention gates without billing, cleanup, live execution, raw config, or token exposure.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "external_connector_runtime_inventory",
         "command": "python3 scripts/external_connector_runtime_inventory_smoke.py",
         "summary": "High-risk external connector/runtime prepared-action inventory and guard coverage.",

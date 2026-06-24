@@ -518,6 +518,10 @@ def cmd_command_center_overview(args, client: AgentOpsClient) -> dict:
     })
 
 
+def cmd_commercial_config_status(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/commercial/config-status")
+
+
 def cmd_operator_action_plan(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/action-plan", query={"limit": args.limit})
 
@@ -5071,6 +5075,11 @@ def build_parser() -> argparse.ArgumentParser:
     command_center_overview.add_argument("--refresh-cache", action="store_true")
     command_center_overview.set_defaults(handler="command_center_overview")
 
+    commercial = sub.add_parser("commercial", help="Commercial-readiness config previews.")
+    commercial_sub = commercial.add_subparsers(dest="action", required=True)
+    commercial_config_status = commercial_sub.add_parser("config-status", help="Read safe-by-default commercial config status without billing or cleanup execution.")
+    commercial_config_status.set_defaults(handler="commercial_config_status")
+
     operator = sub.add_parser("operator", help="Read-only operator command-center plans.")
     operator_sub = operator.add_subparsers(dest="action", required=True)
     operator_plan = operator_sub.add_parser("action-plan", help="Show the prioritized next safe CLI/UI actions.")
@@ -6169,6 +6178,7 @@ HANDLERS = {
     "local_readiness": cmd_local_readiness,
     "demo_readiness": cmd_demo_readiness,
     "command_center_overview": cmd_command_center_overview,
+    "commercial_config_status": cmd_commercial_config_status,
     "operator_action_plan": cmd_operator_action_plan,
     "operator_action_receipts": cmd_operator_action_receipts,
     "operator_record_action_receipt": cmd_operator_record_action_receipt,

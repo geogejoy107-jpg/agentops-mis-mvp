@@ -10003,6 +10003,106 @@ def dify_status(conn=None) -> dict:
     return payload
 
 
+def commercial_config_path(env_name: str, default_name: str) -> Path:
+    value = os.environ.get(env_name, "").strip()
+    return Path(value).expanduser() if value else ROOT / "config" / default_name
+
+
+def commercial_config_source(path: Path, env_name: str) -> dict:
+    try:
+        display_path = str(path.resolve().relative_to(ROOT))
+    except Exception:
+        display_path = "external_path_omitted"
+    return {
+        "env_name": env_name,
+        "source": "env" if os.environ.get(env_name, "").strip() else "default_example",
+        "path": display_path,
+        "exists": path.exists() and path.is_file(),
+    }
+
+
+def load_commercial_json(path: Path, label: str, failures: list[str]) -> dict:
+    if not path.exists() or not path.is_file():
+        failures.append(f"{label} config missing")
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        failures.append(f"{label} config invalid json: {exc}")
+        return {}
+    if not isinstance(payload, dict):
+        failures.append(f"{label} config must be object")
+        return {}
+    return payload
+
+
+def commercial_config_status() -> dict:
+    failures: list[str] = []
+    entitlements_path = commercial_config_path("AGENTOPS_ENTITLEMENTS_PATH", "entitlements.example.json")
+    retention_path = commercial_config_path("AGENTOPS_RETENTION_CONTROLS_PATH", "retention-controls.example.json")
+    entitlements = load_commercial_json(entitlements_path, "entitlements", failures)
+    retention = load_commercial_json(retention_path, "retention", failures)
+    billing = entitlements.get("billing") if isinstance(entitlements.get("billing"), dict) else {}
+    capabilities = entitlements.get("capabilities") if isinstance(entitlements.get("capabilities"), dict) else {}
+    windows = retention.get("retention_windows") if isinstance(retention.get("retention_windows"), dict) else {}
+    cleanup = retention.get("cleanup_policy") if isinstance(retention.get("cleanup_policy"), dict) else {}
+    legal_hold = retention.get("legal_hold_registry") if isinstance(retention.get("legal_hold_registry"), dict) else {}
+    enabled_capabilities = sorted(key for key, value in capabilities.items() if value is True)
+    disabled_capabilities = sorted(key for key, value in capabilities.items() if value is False)
+    billing_calls_enabled = any(
+        billing.get(key) is True
+        for key in ("billing_call_enabled", "checkout_enabled", "metering_export_enabled")
+    )
+    cleanup_execution_enabled = any(
+        cleanup.get(key) is True
+        for key in ("cleanup_execution_enabled", "cleanup_endpoint_exposed", "delete_supported")
+    )
+    if billing_calls_enabled:
+        failures.append("billing calls are enabled")
+    if cleanup_execution_enabled:
+        failures.append("cleanup execution or delete support is enabled")
+    return {
+        "provider": "agentops-commercial-config",
+        "operation": "commercial_config_status",
+        "status": "ready" if not failures else "attention",
+        "configured": not failures,
+        "sources": {
+            "entitlements": commercial_config_source(entitlements_path, "AGENTOPS_ENTITLEMENTS_PATH"),
+            "retention": commercial_config_source(retention_path, "AGENTOPS_RETENTION_CONTROLS_PATH"),
+        },
+        "entitlements": {
+            "schema_version": entitlements.get("schema_version"),
+            "edition": entitlements.get("edition"),
+            "billing_provider": billing.get("provider"),
+            "billing_calls_enabled": billing_calls_enabled,
+            "enabled_capabilities": enabled_capabilities,
+            "disabled_capabilities": disabled_capabilities,
+        },
+        "retention": {
+            "schema_version": retention.get("schema_version"),
+            "windows": {
+                "free_local_days": windows.get("free_local_days"),
+                "pro_workspace_days": windows.get("pro_workspace_days"),
+                "max_retention_days": windows.get("max_retention_days"),
+            },
+            "cleanup_approval_required": cleanup.get("approval_required") is True,
+            "legal_hold_required_before_cleanup": cleanup.get("legal_hold_required_before_cleanup") is True,
+            "cleanup_execution_enabled": cleanup_execution_enabled,
+            "legal_hold_registry_configured": legal_hold.get("configured") is True,
+            "legal_hold_registry_example_only": legal_hold.get("example_only") is True,
+        },
+        "safety": {
+            "read_only": True,
+            "live_execution_performed": False,
+            "billing_call_performed": False,
+            "cleanup_execution_performed": False,
+            "raw_config_omitted": True,
+            "token_omitted": True,
+        },
+        "failures": failures,
+    }
+
+
 def ensure_dify_agent_task(conn, body: dict):
     now = now_iso()
     agent_id = body.get("agent_id") or "agt_gw_kb_builder"
@@ -29426,6 +29526,9 @@ class Handler(BaseHTTPRequestHandler):
                 project_id = path.split("/")[-2]
                 payload, status = customer_project_report(conn, project_id)
                 return self.send_json(payload, status)
+            if path == "/api/commercial/config-status":
+                conn.rollback()
+                return self.send_json(commercial_config_status())
             if path == "/api/integrations/openclaw/status":
                 return self.send_json(openclaw_status())
             if path == "/api/integrations/hermes/status":
