@@ -1,0 +1,229 @@
+{
+  "schemaVersion": "spatial-world/v0",
+  "id": "research-district-v0",
+  "version": "0.1.0",
+  "label": {
+    "en": "AgentOps Research District",
+    "zh": "AgentOps 研究区"
+  },
+  "templateId": "top-down-rpg-campus",
+  "artKitId": "warm-research-v0",
+  "rootNodeId": "world.agentops-atlas",
+  "nodes": [
+    {
+      "id": "world.agentops-atlas",
+      "kind": "world",
+      "label": { "en": "AgentOps World Atlas", "zh": "AgentOps 世界图册" },
+      "description": { "en": "The global spatial index for all governed AI work.", "zh": "所有受治理 AI 工作的全局空间索引。" },
+      "parentId": null,
+      "childIds": ["district.research"],
+      "zoomLevel": 0,
+      "gridPosition": { "x": 0, "y": 0 },
+      "gridSize": { "width": 96, "height": 64 },
+      "tags": ["atlas", "global", "governed"]
+    },
+    {
+      "id": "district.research",
+      "kind": "district",
+      "label": { "en": "Research District", "zh": "研究区" },
+      "description": { "en": "A living district for paper discovery, evidence synthesis and research runs.", "zh": "用于论文发现、证据综合和研究运行的活跃区域。" },
+      "parentId": "world.agentops-atlas",
+      "childIds": ["facility.ai-papers-house", "landmark.evidence-garden", "landmark.mission-control-kiosk"],
+      "zoomLevel": 1,
+      "gridPosition": { "x": 8, "y": 7 },
+      "gridSize": { "width": 64, "height": 44 },
+      "tags": ["research", "papers", "evidence", "agents"]
+    },
+    {
+      "id": "facility.ai-papers-house",
+      "kind": "facility",
+      "label": { "en": "AI Papers House", "zh": "AI 论文研究馆" },
+      "description": { "en": "An enterable facility for reading, comparing and evaluating AI papers.", "zh": "用于阅读、比较和评估 AI 论文的可进入建筑。" },
+      "parentId": "district.research",
+      "childIds": ["workspace.claude-research-desk", "workspace.shared-paper-table", "portal.research-task-board"],
+      "zoomLevel": 2,
+      "gridPosition": { "x": 24, "y": 14 },
+      "gridSize": { "width": 24, "height": 18 },
+      "tags": ["facility", "papers", "knowledge"],
+      "primaryPortalId": "portal.research-task-board"
+    },
+    {
+      "id": "workspace.claude-research-desk",
+      "kind": "workspace",
+      "label": { "en": "Claude Research Desk", "zh": "Claude 研究桌" },
+      "description": { "en": "The focused workspace for an active research Agent and its current run evidence.", "zh": "用于展示研究 Agent 当前运行与证据的聚焦工作区。" },
+      "parentId": "facility.ai-papers-house",
+      "childIds": ["portal.claude-run-ledger", "portal.claude-evidence-library"],
+      "zoomLevel": 3,
+      "gridPosition": { "x": 7, "y": 6 },
+      "gridSize": { "width": 7, "height": 5 },
+      "tags": ["workspace", "agent", "run", "evidence"],
+      "primaryPortalId": "portal.claude-run-ledger"
+    },
+    {
+      "id": "workspace.shared-paper-table",
+      "kind": "workspace",
+      "label": { "en": "Shared Paper Table", "zh": "共享论文桌" },
+      "description": { "en": "A collaborative surface for comparing sources and reviewed memory.", "zh": "用于比较来源与已审核记忆的协作工作台。" },
+      "parentId": "facility.ai-papers-house",
+      "childIds": ["portal.shared-evidence-library"],
+      "zoomLevel": 3,
+      "gridPosition": { "x": 14, "y": 8 },
+      "gridSize": { "width": 6, "height": 5 },
+      "tags": ["workspace", "comparison", "memory"],
+      "primaryPortalId": "portal.shared-evidence-library"
+    },
+    {
+      "id": "landmark.evidence-garden",
+      "kind": "landmark",
+      "label": { "en": "Evidence Garden", "zh": "证据花园" },
+      "description": { "en": "A calm landmark showing reviewed, candidate and stale knowledge signals.", "zh": "以空间景观表达已审核、候选和过期知识信号的地标。" },
+      "parentId": "district.research",
+      "childIds": [],
+      "zoomLevel": 1,
+      "gridPosition": { "x": 50, "y": 28 },
+      "gridSize": { "width": 13, "height": 10 },
+      "tags": ["landmark", "memory", "knowledge"]
+    },
+    {
+      "id": "landmark.mission-control-kiosk",
+      "kind": "landmark",
+      "label": { "en": "Mission Control Kiosk", "zh": "任务控制亭" },
+      "description": { "en": "A global-lens portal for system health, risk and active work.", "zh": "用于查看系统健康、风险与活跃工作的全局透镜入口。" },
+      "parentId": "district.research",
+      "childIds": ["portal.mission-control"],
+      "zoomLevel": 1,
+      "gridPosition": { "x": 11, "y": 31 },
+      "gridSize": { "width": 8, "height": 8 },
+      "tags": ["landmark", "mission-control", "global-lens"],
+      "primaryPortalId": "portal.mission-control"
+    },
+    {
+      "id": "portal.research-task-board",
+      "kind": "portal",
+      "label": { "en": "Research Task Board", "zh": "研究任务板" },
+      "description": { "en": "Open the formal task ledger.", "zh": "打开正式任务账本。" },
+      "parentId": "facility.ai-papers-house",
+      "childIds": [],
+      "zoomLevel": 2,
+      "gridPosition": { "x": 11, "y": 2 },
+      "gridSize": { "width": 3, "height": 2 },
+      "tags": ["portal", "task", "formal-route"]
+    },
+    {
+      "id": "portal.claude-run-ledger",
+      "kind": "portal",
+      "label": { "en": "Run Ledger Terminal", "zh": "运行账本终端" },
+      "description": { "en": "Open the formal run ledger for execution evidence.", "zh": "打开用于执行证据的正式运行账本。" },
+      "parentId": "workspace.claude-research-desk",
+      "childIds": [],
+      "zoomLevel": 3,
+      "gridPosition": { "x": 4, "y": 1 },
+      "gridSize": { "width": 2, "height": 2 },
+      "tags": ["portal", "run", "evidence", "formal-route"]
+    },
+    {
+      "id": "portal.claude-evidence-library",
+      "kind": "portal",
+      "label": { "en": "Evidence Library", "zh": "证据库" },
+      "description": { "en": "Open reviewed memory and research evidence.", "zh": "打开已审核记忆与研究证据。" },
+      "parentId": "workspace.claude-research-desk",
+      "childIds": [],
+      "zoomLevel": 3,
+      "gridPosition": { "x": 1, "y": 1 },
+      "gridSize": { "width": 2, "height": 2 },
+      "tags": ["portal", "memory", "evidence", "formal-route"]
+    },
+    {
+      "id": "portal.shared-evidence-library",
+      "kind": "portal",
+      "label": { "en": "Shared Evidence Library", "zh": "共享证据库" },
+      "description": { "en": "Open the formal memory library.", "zh": "打开正式记忆库。" },
+      "parentId": "workspace.shared-paper-table",
+      "childIds": [],
+      "zoomLevel": 3,
+      "gridPosition": { "x": 2, "y": 1 },
+      "gridSize": { "width": 2, "height": 2 },
+      "tags": ["portal", "memory", "formal-route"]
+    },
+    {
+      "id": "portal.mission-control",
+      "kind": "portal",
+      "label": { "en": "Mission Control", "zh": "任务控制中心" },
+      "description": { "en": "Open the formal Control Tower.", "zh": "打开正式控制塔。" },
+      "parentId": "landmark.mission-control-kiosk",
+      "childIds": [],
+      "zoomLevel": 1,
+      "gridPosition": { "x": 2, "y": 2 },
+      "gridSize": { "width": 2, "height": 2 },
+      "tags": ["portal", "mission-control", "formal-route"]
+    }
+  ],
+  "portals": [
+    {
+      "id": "portal.research-task-board",
+      "nodeId": "portal.research-task-board",
+      "label": { "en": "Research Task Board", "zh": "研究任务板" },
+      "authorityRef": {
+        "authority": "agentops-mis",
+        "kind": "task",
+        "route": "/workspace/tasks",
+        "provenance": "App.tsx formal route"
+      },
+      "interaction": "open-route",
+      "confirmationRequired": false
+    },
+    {
+      "id": "portal.claude-run-ledger",
+      "nodeId": "portal.claude-run-ledger",
+      "label": { "en": "Run Ledger Terminal", "zh": "运行账本终端" },
+      "authorityRef": {
+        "authority": "agentops-mis",
+        "kind": "run",
+        "route": "/admin/runs",
+        "provenance": "App.tsx formal route"
+      },
+      "interaction": "open-route",
+      "confirmationRequired": false
+    },
+    {
+      "id": "portal.claude-evidence-library",
+      "nodeId": "portal.claude-evidence-library",
+      "label": { "en": "Evidence Library", "zh": "证据库" },
+      "authorityRef": {
+        "authority": "agentops-mis",
+        "kind": "memory",
+        "route": "/workspace/memory",
+        "provenance": "App.tsx formal route"
+      },
+      "interaction": "open-route",
+      "confirmationRequired": false
+    },
+    {
+      "id": "portal.shared-evidence-library",
+      "nodeId": "portal.shared-evidence-library",
+      "label": { "en": "Shared Evidence Library", "zh": "共享证据库" },
+      "authorityRef": {
+        "authority": "agentops-mis",
+        "kind": "memory",
+        "route": "/workspace/memory",
+        "provenance": "App.tsx formal route"
+      },
+      "interaction": "open-route",
+      "confirmationRequired": false
+    },
+    {
+      "id": "portal.mission-control",
+      "nodeId": "portal.mission-control",
+      "label": { "en": "Mission Control", "zh": "任务控制中心" },
+      "authorityRef": {
+        "authority": "agentops-mis",
+        "kind": "route",
+        "route": "/admin",
+        "provenance": "App.tsx formal route"
+      },
+      "interaction": "open-route",
+      "confirmationRequired": false
+    }
+  ]
+}

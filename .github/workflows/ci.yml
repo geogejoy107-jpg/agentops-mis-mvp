@@ -74,6 +74,7 @@ jobs:
           python3 scripts/notion_open_source_loop_convergence_smoke.py
           python3 scripts/notion_project_memory_connector_layer_smoke.py
           python3 scripts/local_open_source_experiment_base_smoke.py
+          python3 scripts/spatial_os_manifest_smoke.py
           python3 scripts/external_connector_runtime_inventory_smoke.py
           python3 scripts/secret_scan_smoke.py
           python3 scripts/license_provenance_smoke.py

@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "spatial-world-template/v0",
+  "id": "top-down-rpg-campus",
+  "version": "0.1.0",
+  "label": {
+    "en": "Top-down RPG Campus",
+    "zh": "俯视像素 RPG 园区"
+  },
+  "description": {
+    "en": "A semantic-zoom campus template with outdoor districts, enterable facilities, interior workspaces and formal MIS portals.",
+    "zh": "支持语义缩放的园区模板，包含户外区域、可进入建筑、室内工作区和正式 MIS 门户。"
+  },
+  "projection": "top-down",
+  "tileSize": {
+    "width": 32,
+    "height": 32
+  },
+  "defaultWorldId": "research-district-v0",
+  "defaultArtKitId": "warm-research-v0",
+  "supportedArtKitIds": [
+    "warm-research-v0"
+  ],
+  "semanticZoom": [
+    {
+      "level": 0,
+      "id": "world-atlas",
+      "nodeKinds": ["world", "district"],
+      "cameraMode": "atlas",
+      "queryScope": "global",
+      "interactionDepth": "overview"
+    },
+    {
+      "level": 1,
+      "id": "district-map",
+      "nodeKinds": ["district", "facility", "landmark"],
+      "cameraMode": "district",
+      "queryScope": "district",
+      "interactionDepth": "navigate"
+    },
+    {
+      "level": 2,
+      "id": "facility-scene",
+      "nodeKinds": ["facility", "workspace", "portal"],
+      "cameraMode": "facility",
+      "queryScope": "facility",
+      "interactionDepth": "inspect"
+    },
+    {
+      "level": 3,
+      "id": "workspace-operation",
+      "nodeKinds": ["workspace", "portal"],
+      "cameraMode": "workspace",
+      "queryScope": "workspace",
+      "interactionDepth": "operate"
+    }
+  ],
+  "capabilities": {
+    "tilemap": true,
+    "interiors": true,
+    "semanticZoom": true,
+    "agentPathfinding": true,
+    "animatedAvatars": true,
+    "lighting": true,
+    "weather": false,
+    "minimap": true,
+    "screenshotHooks": true
+  },
+  "rendererRequirements": {
+    "preferred": "game-canvas",
+    "fallback": "basic-lite",
+    "minimumWebGLVersion": 1
+  }
+}

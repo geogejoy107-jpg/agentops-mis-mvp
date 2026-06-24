@@ -1,0 +1,108 @@
+{
+  "schemaVersion": "spatial-art-kit/v0",
+  "id": "warm-research-v0",
+  "version": "0.1.0",
+  "label": {
+    "en": "Warm Research Village",
+    "zh": "温暖研究村"
+  },
+  "description": {
+    "en": "An original warm 16-bit life-sim art direction for a research campus, with readable silhouettes, hand-built materials and calm activity animation.",
+    "zh": "面向研究园区的原创温暖 16-bit 生活模拟美术方向，强调清晰轮廓、手作材质和克制的工作动画。"
+  },
+  "compatibleWorldTemplateIds": [
+    "top-down-rpg-campus"
+  ],
+  "pixelDensity": {
+    "logicalTileSize": {
+      "width": 32,
+      "height": 32
+    },
+    "characterFrame": {
+      "width": 32,
+      "height": 48
+    },
+    "scalePolicy": "integer-only"
+  },
+  "visualLanguage": {
+    "perspective": "top-down",
+    "silhouette": "Chunky readable buildings, rounded vegetation, compact furniture and clear door/window landmarks.",
+    "materialLanguage": "Painted timber, warm stone, copper details, paper, glass and garden materials with project-owned pixel clusters.",
+    "lightingLanguage": "Soft morning daylight, warm interior lamps and restrained state glows that never replace text labels.",
+    "animationLanguage": "Four-direction stepped movement plus idle, read, type, carry, wait, blocked and complete state actions."
+  },
+  "requiredAgentAnimations": [
+    "idle-north",
+    "idle-east",
+    "idle-south",
+    "idle-west",
+    "walk-north",
+    "walk-east",
+    "walk-south",
+    "walk-west",
+    "read",
+    "type",
+    "carry",
+    "wait",
+    "blocked",
+    "complete"
+  ],
+  "assetSlots": [
+    {
+      "id": "terrain.research-garden",
+      "kind": "terrain-tileset",
+      "status": "planned",
+      "provenance": "planned_first_party",
+      "license": "PROJECT_OWNED",
+      "sourcePath": "src/assets/spatial/warm-research/terrain.png"
+    },
+    {
+      "id": "buildings.research-campus",
+      "kind": "building-tileset",
+      "status": "planned",
+      "provenance": "planned_first_party",
+      "license": "PROJECT_OWNED",
+      "sourcePath": "src/assets/spatial/warm-research/buildings.png"
+    },
+    {
+      "id": "interiors.ai-papers-house",
+      "kind": "interior-tileset",
+      "status": "planned",
+      "provenance": "planned_first_party",
+      "license": "PROJECT_OWNED",
+      "sourcePath": "src/assets/spatial/warm-research/interiors.png"
+    },
+    {
+      "id": "props.research-tools",
+      "kind": "prop-atlas",
+      "status": "planned",
+      "provenance": "planned_first_party",
+      "license": "PROJECT_OWNED",
+      "sourcePath": "src/assets/spatial/warm-research/props.png"
+    },
+    {
+      "id": "avatars.research-agents",
+      "kind": "avatar-atlas",
+      "status": "planned",
+      "provenance": "planned_first_party",
+      "license": "PROJECT_OWNED",
+      "sourcePath": "src/assets/spatial/warm-research/agents.png"
+    },
+    {
+      "id": "effects.research-signals",
+      "kind": "effect-atlas",
+      "status": "planned",
+      "provenance": "planned_first_party",
+      "license": "PROJECT_OWNED",
+      "sourcePath": "src/assets/spatial/warm-research/effects.png"
+    },
+    {
+      "id": "hud.research-notebook",
+      "kind": "hud-skin",
+      "status": "planned",
+      "provenance": "planned_first_party",
+      "license": "PROJECT_OWNED",
+      "sourcePath": "src/assets/spatial/warm-research/hud.png"
+    }
+  ]
+}
