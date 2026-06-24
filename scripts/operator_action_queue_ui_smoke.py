@@ -668,6 +668,8 @@ EXPECTED_MARKERS = {
     "adapter_readiness_remediation_shell_boundary": "server_executes_shell === false",
     "adapter_readiness_remediation_copy_command": "copyIntakeCommand(String(command.command",
     "adapter_readiness_remediation_confirm_label": "command.confirm_required",
+    "operator_loop_supervision_activation_timeline": 'label: "Activation"',
+    "operator_loop_supervision_load_service_button": 'label: "load-service"',
 }
 
 EXPECTED_LIVE_API_MARKERS = {
@@ -693,6 +695,7 @@ EXPECTED_LIVE_API_MARKERS = {
     "operator_loop_supervision_service_managed_commands_type": "commands?: Record<string, string | null | undefined>",
     "operator_loop_supervision_service_managed_receipt_type": "receipt_verified?: boolean",
     "operator_loop_supervision_service_managed_readback_type": "control_readback_attached?: boolean",
+    "operator_loop_supervision_service_managed_active_type": "service_active_loop_ready?: boolean",
     "operator_loop_supervision_service_managed_safety_type": "safety?: {",
     "operator_loop_supervision_managed_execution_type": "managed_execution_path?: {",
     "operator_loop_supervision_managed_execution_gates_type": "gates?: {",
@@ -701,6 +704,7 @@ EXPECTED_LIVE_API_MARKERS = {
     "operator_loop_supervision_service_managed_safety_normalize": "const serviceManagedSafetyRaw = typeof serviceManagedRaw.safety",
     "operator_loop_supervision_service_managed_receipt_normalize": "receipt_verified: serviceManagedRaw.receipt_verified",
     "operator_loop_supervision_service_managed_readback_normalize": "control_readback_attached: serviceManagedRaw.control_readback_attached",
+    "operator_loop_supervision_service_managed_active_normalize": "service_active_loop_ready: serviceManagedRaw.service_active_loop_ready",
     "operator_loop_supervision_managed_execution_normalize": "const managedExecutionRaw = typeof localDeploymentRaw.managed_execution_path",
     "operator_loop_supervision_managed_execution_commands_normalize": "const managedExecutionCommandsRaw = typeof managedExecutionRaw.commands",
     "operator_loop_supervision_managed_execution_commands_projection": "commands: Object.fromEntries(Object.entries(managedExecutionCommandsRaw)",

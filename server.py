@@ -18603,10 +18603,12 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         readback_after = control_readback.get("after") if isinstance(control_readback.get("after"), dict) else {}
         service_check = readback_after.get("service_check") if isinstance(readback_after.get("service_check"), dict) else {}
         service_file = service_check.get("service_file") if isinstance(service_check.get("service_file"), dict) else {}
+        service_status = service_check.get("service_status") if isinstance(service_check.get("service_status"), dict) else {}
         check_ok = readback_after.get("service_check_ok") is True or service_check.get("ok") is True
         file_exists = readback_after.get("service_file_exists") is True or service_file.get("exists") is True
         confirm_gate_ok = readback_after.get("confirm_gate_ok") is True or service_file.get("confirm_gate_ok") is True
         relaunch_policy_ok = readback_after.get("relaunch_policy_ok") is True or service_file.get("relaunch_policy_ok") is True
+        service_loaded = readback_after.get("service_loaded") is True or service_status.get("loaded") is True
         verified = bool(
             receipt_state.get("verified") is True
             and receipt_state.get("control_readback_attached") is True
@@ -18629,6 +18631,9 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
             "service_file_exists": bool(file_exists),
             "service_confirm_gate_ok": bool(confirm_gate_ok),
             "service_relaunch_policy_ok": bool(relaunch_policy_ok),
+            "service_loaded": bool(service_loaded),
+            "service_active_loop_ready": bool(verified and service_loaded),
+            "active_status": "loaded" if service_loaded else ("not_loaded" if verified else "unverified"),
             "service_control_readback_verified": verified,
             "checked_status": checked_status,
             "readback_verification_status": "passed" if verified else checked_status,
@@ -18691,15 +18696,23 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "service_file_exists": readback_status["service_file_exists"],
         "service_confirm_gate_ok": readback_status["service_confirm_gate_ok"],
         "service_relaunch_policy_ok": readback_status["service_relaunch_policy_ok"],
+        "service_loaded": readback_status["service_loaded"],
+        "service_active_loop_ready": readback_status["service_active_loop_ready"],
+        "active_status": readback_status["active_status"],
+        "activation_status": readback_status["active_status"],
+        "service_activation_required": ready and not readback_status["service_loaded"],
         "readback_verification_status": readback_status["readback_verification_status"],
         "service_managed_loop_ready": ready,
         "installed_status": "operator_verified_service_check" if ready else "unverified",
+        "active_loop_status": "active" if readback_status["service_active_loop_ready"] else ("not_loaded" if ready else "unverified"),
         "checked_status": readback_status["checked_status"],
         "commands": {
             "service_install_preview": f"agentops worker service-install --manager launchd --adapter {adapter} --agent-id agt_worker_daemon_{adapter}{' --confirm-run' if adapter in {'hermes', 'openclaw'} else ''}",
             "service_install_confirm": f"agentops worker service-install --manager launchd --adapter {adapter} --agent-id agt_worker_daemon_{adapter}{' --confirm-run' if adapter in {'hermes', 'openclaw'} else ''} --confirm-install",
             "service_check": verify_command,
             "service_control_preview": command_set["command"],
+            "service_control_load_confirm": f"agentops worker service-control --manager launchd --action load --adapter {adapter} --agent-id agt_worker_daemon_{adapter} --confirm-control",
+            "service_control_restart_confirm": f"agentops worker service-control --manager launchd --action restart --adapter {adapter} --agent-id agt_worker_daemon_{adapter} --confirm-control",
             "record_verified_receipt": command_set["receipt_verify_record_command"],
             "record_control_readback": " ".join(shlex.quote(str(part)) for part in [
                 "agentops", "operator", "record-control-readback",
@@ -18717,6 +18730,7 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
                         "service_check_expected": True,
                         "service_check_ok": False,
                         "service_file_exists": False,
+                        "service_loaded": False,
                         "confirm_gate_ok": False,
                         "relaunch_policy_ok": False,
                         "confirmed_os_mutation": False,

@@ -60,6 +60,8 @@ EXPECTED = {
     "service_managed_loop_source": (CONSOLE, "localDeployment.service_managed_loop"),
     "service_managed_loop_panel": (CONSOLE, 'data-testid="worker-service-managed-loop"'),
     "service_managed_loop_ready": (CONSOLE, "serviceManagedLoop.service_managed_loop_ready"),
+    "service_managed_active_loop_ready": (CONSOLE, "serviceManagedLoop.service_active_loop_ready"),
+    "service_managed_service_loaded": (CONSOLE, "serviceManagedLoop.service_loaded"),
     "service_managed_installed_status": (CONSOLE, "serviceManagedLoop.installed_status"),
     "service_managed_checked_status": (CONSOLE, "serviceManagedLoop.checked_status"),
     "service_managed_no_service_load": (CONSOLE, "serviceManagedLoop.loads_service"),

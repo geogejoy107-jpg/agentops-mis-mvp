@@ -524,6 +524,7 @@ def compact_start_check_local_run_path(local: dict[str, Any], *, adapter: str | 
                     "service_check_expected": True,
                     "service_check_ok": False,
                     "service_file_exists": False,
+                    "service_loaded": False,
                     "confirm_gate_ok": False,
                     "relaunch_policy_ok": False,
                     "confirmed_os_mutation": False,
@@ -577,6 +578,8 @@ def compact_start_check_local_run_path(local: dict[str, Any], *, adapter: str | 
                     "readback_verification_status": service_managed_loop.get("readback_verification_status"),
                     "service_check_ok": bool(service_managed_loop.get("service_check_ok")),
                     "service_file_exists": bool(service_managed_loop.get("service_file_exists")),
+                    "service_loaded": bool(service_managed_loop.get("service_loaded")),
+                    "service_active_loop_ready": bool(service_managed_loop.get("service_active_loop_ready")),
                     "token_omitted": True,
                 }
             elif step_id == "dispatch_customer_task":
@@ -619,6 +622,8 @@ def compact_start_check_local_run_path(local: dict[str, Any], *, adapter: str | 
                 ),
                 "service_check": service_verify_command,
                 "service_control_preview": service_control_command,
+                "service_control_load_confirm": f"agentops worker service-control --manager launchd --action load --adapter {requested_adapter} --agent-id {service_agent_id} --confirm-control",
+                "service_control_restart_confirm": f"agentops worker service-control --manager launchd --action restart --adapter {requested_adapter} --agent-id {service_agent_id} --confirm-control",
                 "record_verified_receipt": service_receipt_verified,
                 "record_control_readback": service_control_readback,
                 "receipt_readback": "agentops operator action-receipts --limit 20",
@@ -1052,6 +1057,15 @@ def operator_local_loop_admission_packet(
     ]
     service_managed_commands = service_managed_loop.get("commands") if isinstance(service_managed_loop.get("commands"), dict) else {}
     service_managed_ready = service_managed_loop.get("service_managed_loop_ready") is True
+    service_active_ready = service_managed_loop.get("service_active_loop_ready") is True
+    service_load_command = (
+        service_managed_commands.get("service_control_load_confirm")
+        or f"agentops worker service-control --manager launchd --action load --adapter {adapter} --agent-id {service_agent_id} --confirm-control"
+    )
+    service_restart_command = (
+        service_managed_commands.get("service_control_restart_confirm")
+        or f"agentops worker service-control --manager launchd --action restart --adapter {adapter} --agent-id {service_agent_id} --confirm-control"
+    )
     evidence_report_command = "agentops operator evidence-report --run-id <run_id> --limit 1"
     service_control_action_signature = hashlib.sha256(
         f"operator_start_check.service_control_preview:{adapter}:{service_command}:{service_verify}".encode("utf-8")
@@ -1083,6 +1097,7 @@ def operator_local_loop_admission_packet(
                 "service_check_expected": True,
                 "service_check_ok": False,
                 "service_file_exists": False,
+                "service_loaded": False,
                 "confirm_gate_ok": False,
                 "relaunch_policy_ok": False,
                 "confirmed_os_mutation": False,
@@ -1105,6 +1120,8 @@ def operator_local_loop_admission_packet(
         "service_check": service_verify,
         "service_control_receipt": service_control_receipt_command or service_managed_commands.get("record_verified_receipt") or acceptance_commands.get("receipt_readback"),
         "service_control_readback": service_control_readback_command or service_managed_commands.get("record_control_readback") or service_managed_commands.get("receipt_readback") or acceptance_commands.get("receipt_readback"),
+        "service_control_load_confirm": service_load_command,
+        "service_control_restart_confirm": service_restart_command,
         "agent_plan_create": agent_commands.get("agent_plan_create"),
         "knowledge_search": agent_commands.get("knowledge_search"),
         "base_reference": agent_commands.get("base_reference"),
@@ -1119,9 +1136,14 @@ def operator_local_loop_admission_packet(
         "adapter": adapter,
         "workspace_id": workspace_id,
         "service_managed_loop_ready": service_managed_ready,
+        "service_active_loop_ready": service_active_ready,
+        "service_loaded": service_managed_loop.get("service_loaded") is True,
+        "service_active_status": service_managed_loop.get("active_loop_status") or service_managed_loop.get("active_status") or "unknown",
         "recommended_before_dispatch": (
             "record_service_control_receipt_and_readback"
             if not service_managed_ready
+            else "confirm_service_control_load"
+            if not service_active_ready
             else "dispatch_customer_worker_task"
         ),
         "gates": [
@@ -1130,6 +1152,12 @@ def operator_local_loop_admission_packet(
                 "required": True,
                 "status": "pass" if service_managed_ready else "attention",
                 "proof": "verified service-control receipt and control readback are attached before treating local loop as service-managed",
+            },
+            {
+                "id": "service_active_loop_ready",
+                "required": False,
+                "status": "pass" if service_active_ready else ("attention" if service_managed_ready else "blocked"),
+                "proof": "launchd/systemd service is actually loaded before claiming a continuous service-managed worker loop is active",
             },
             {
                 "id": "current_code_ok",
@@ -1193,6 +1221,9 @@ def operator_local_loop_admission_packet(
         "confirm_required_commands": [
             command
             for command in (
+                _safe_text(managed_execution_commands.get("service_control_load_confirm"), 700)
+                if service_managed_ready and not service_active_ready
+                else None,
                 _safe_text(managed_execution_commands.get("customer_worker_dispatch"), 700),
             )
             if command

@@ -214,7 +214,11 @@ def validate(payload: dict) -> None:
     require(service_managed_loop.get("service_control_preview_available") is True, f"service-managed control preview missing: {service_managed_loop}")
     require(service_managed_loop.get("receipt_required") is True, f"service-managed receipt requirement missing: {service_managed_loop}")
     require(service_managed_loop.get("control_readback_required") is True, f"service-managed readback requirement missing: {service_managed_loop}")
+    require(service_managed_loop.get("service_active_loop_ready") in {True, False}, f"service-managed active loop state missing: {service_managed_loop}")
+    require(service_managed_loop.get("active_status") in {"loaded", "not_loaded", "unverified"}, f"service-managed active status missing: {service_managed_loop}")
     service_managed_commands = service_managed_loop.get("commands") or {}
+    require(str(service_managed_commands.get("service_control_load_confirm") or "").startswith("agentops worker service-control"), f"service-managed load confirm command missing: {service_managed_loop}")
+    require("--confirm-control" in str(service_managed_commands.get("service_control_load_confirm") or ""), f"service-managed load command must require confirm-control: {service_managed_loop}")
     require(str(service_managed_commands.get("record_control_readback") or "").startswith("agentops operator record-control-readback"), f"service-managed control-readback command missing: {service_managed_loop}")
     require("--confirm-record" in str(service_managed_commands.get("record_control_readback") or ""), f"service-managed control-readback command should be explicit-confirm: {service_managed_loop}")
     require("service_check_ok" in str(service_managed_commands.get("record_control_readback") or ""), f"service-managed control-readback command should carry service-check proof fields: {service_managed_loop}")
@@ -230,6 +234,7 @@ def validate(payload: dict) -> None:
         require(scoped_loop.get("adapter") == adapter_name, f"{adapter_name} service-managed loop adapter mismatch: {scoped_loop}")
         require(f"--adapter {adapter_name}" in str(scoped_commands.get("service_check") or ""), f"{adapter_name} service-check command mismatch: {scoped_loop}")
         require(f"--adapter {adapter_name}" in str(scoped_commands.get("record_control_readback") or ""), f"{adapter_name} readback command mismatch: {scoped_loop}")
+        require(f"--adapter {adapter_name}" in str(scoped_commands.get("service_control_load_confirm") or ""), f"{adapter_name} load confirm command mismatch: {scoped_loop}")
         require("service_check_ok" in str(scoped_commands.get("record_control_readback") or ""), f"{adapter_name} readback proof fields missing: {scoped_loop}")
     for step in local_run_path:
         require(step.get("command"), f"local run path step missing command: {step}")
@@ -324,6 +329,7 @@ def exercise_service_control_receipt_readback(base_url: str, payload: dict) -> d
                 "service_check_expected": True,
                 "service_check_ok": True,
                 "service_file_exists": True,
+                "service_loaded": False,
                 "confirm_gate_ok": True,
                 "relaunch_policy_ok": True,
                 "confirmed_os_mutation": False,
@@ -357,6 +363,9 @@ def exercise_service_control_receipt_readback(base_url: str, payload: dict) -> d
     require(service_managed_loop.get("service_file_exists") is True, f"service-managed service_file_exists not read back: {service_managed_loop}")
     require(service_managed_loop.get("service_confirm_gate_ok") is True, f"service-managed confirm gate not read back: {service_managed_loop}")
     require(service_managed_loop.get("service_relaunch_policy_ok") is True, f"service-managed relaunch policy not read back: {service_managed_loop}")
+    require(service_managed_loop.get("service_loaded") is False, f"isolated fixture should distinguish installed service from loaded service: {service_managed_loop}")
+    require(service_managed_loop.get("service_active_loop_ready") is False, f"unloaded service must not be active-loop ready: {service_managed_loop}")
+    require(service_managed_loop.get("active_status") == "not_loaded", f"unloaded service active status mismatch: {service_managed_loop}")
     require(str(service_managed_loop.get("control_readback_hash") or ""), f"service-managed readback hash missing: {service_managed_loop}")
     service_managed_loops = reread_payload.get("service_managed_loops") or {}
     recommended_adapter = service_managed_loop.get("adapter")

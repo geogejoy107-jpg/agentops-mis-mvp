@@ -2544,6 +2544,10 @@ export interface OperatorLoopSupervisionItemPayload {
       adapter?: string | null;
       manager?: string | null;
       service_managed_loop_ready?: boolean;
+      service_active_loop_ready?: boolean;
+      service_loaded?: boolean;
+      active_status?: string;
+      active_loop_status?: string;
       status?: string;
       checked_status?: string;
       installed_status?: string;
@@ -2569,6 +2573,9 @@ export interface OperatorLoopSupervisionItemPayload {
       status?: string;
       adapter?: string | null;
       service_managed_loop_ready?: boolean;
+      service_active_loop_ready?: boolean;
+      service_loaded?: boolean;
+      service_active_status?: string;
       recommended_before_dispatch?: string | null;
       commands?: Record<string, string | null | undefined>;
       first_safe_commands?: string[];
@@ -7361,6 +7368,10 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
             adapter: serviceManagedRaw.adapter === undefined || serviceManagedRaw.adapter === null ? null : String(serviceManagedRaw.adapter),
             manager: serviceManagedRaw.manager === undefined || serviceManagedRaw.manager === null ? null : String(serviceManagedRaw.manager),
             service_managed_loop_ready: serviceManagedRaw.service_managed_loop_ready === undefined ? undefined : boolValue(serviceManagedRaw.service_managed_loop_ready),
+            service_active_loop_ready: serviceManagedRaw.service_active_loop_ready === undefined ? undefined : boolValue(serviceManagedRaw.service_active_loop_ready),
+            service_loaded: serviceManagedRaw.service_loaded === undefined ? undefined : boolValue(serviceManagedRaw.service_loaded),
+            active_status: serviceManagedRaw.active_status === undefined || serviceManagedRaw.active_status === null ? undefined : String(serviceManagedRaw.active_status),
+            active_loop_status: serviceManagedRaw.active_loop_status === undefined || serviceManagedRaw.active_loop_status === null ? undefined : String(serviceManagedRaw.active_loop_status),
             status: serviceManagedRaw.status === undefined || serviceManagedRaw.status === null ? undefined : String(serviceManagedRaw.status),
             checked_status: serviceManagedRaw.checked_status === undefined || serviceManagedRaw.checked_status === null ? undefined : String(serviceManagedRaw.checked_status),
             installed_status: serviceManagedRaw.installed_status === undefined || serviceManagedRaw.installed_status === null ? undefined : String(serviceManagedRaw.installed_status),
@@ -7386,6 +7397,9 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
             status: managedExecutionRaw.status === undefined || managedExecutionRaw.status === null ? undefined : String(managedExecutionRaw.status),
             adapter: managedExecutionRaw.adapter === undefined || managedExecutionRaw.adapter === null ? null : String(managedExecutionRaw.adapter),
             service_managed_loop_ready: managedExecutionRaw.service_managed_loop_ready === undefined ? undefined : boolValue(managedExecutionRaw.service_managed_loop_ready),
+            service_active_loop_ready: managedExecutionRaw.service_active_loop_ready === undefined ? undefined : boolValue(managedExecutionRaw.service_active_loop_ready),
+            service_loaded: managedExecutionRaw.service_loaded === undefined ? undefined : boolValue(managedExecutionRaw.service_loaded),
+            service_active_status: managedExecutionRaw.service_active_status === undefined || managedExecutionRaw.service_active_status === null ? undefined : String(managedExecutionRaw.service_active_status),
             recommended_before_dispatch: managedExecutionRaw.recommended_before_dispatch === undefined || managedExecutionRaw.recommended_before_dispatch === null ? null : String(managedExecutionRaw.recommended_before_dispatch),
             commands: Object.fromEntries(Object.entries(managedExecutionCommandsRaw).map(([key, value]) => [key, value === undefined || value === null ? null : String(value)])),
             first_safe_commands: asArray<unknown>(managedExecutionRaw.first_safe_commands).map(String).filter(Boolean),

@@ -185,10 +185,13 @@ def validate(payload: dict, failures: list[str]) -> None:
         service_managed = local_deployment.get("service_managed_loop") or {}
         service_commands = service_managed.get("commands") or {}
         require(service_managed.get("adapter") == adapter, f"{adapter} service-managed adapter mismatch: {service_managed}", failures)
-        for key in ["service_install_preview", "service_install_confirm", "service_check", "service_control_preview", "record_verified_receipt", "record_control_readback"]:
+        require(service_managed.get("service_active_loop_ready") in {True, False}, f"{adapter} active loop state missing: {service_managed}", failures)
+        require(service_managed.get("active_status") in {"loaded", "not_loaded", "unverified"}, f"{adapter} active status missing: {service_managed}", failures)
+        for key in ["service_install_preview", "service_install_confirm", "service_check", "service_control_preview", "service_control_load_confirm", "service_control_restart_confirm", "record_verified_receipt", "record_control_readback"]:
             require_adapter_command(service_commands.get(key), adapter, f"{adapter} service-managed {key}", failures)
         require("--confirm-run" in str(service_commands.get("service_install_preview") or ""), f"{adapter} service install preview must preserve confirm-run: {service_commands}", failures)
         require("--confirm-install" in str(service_commands.get("service_install_confirm") or ""), f"{adapter} service install confirm missing: {service_commands}", failures)
+        require("--confirm-control" in str(service_commands.get("service_control_load_confirm") or ""), f"{adapter} service load confirm-control missing: {service_commands}", failures)
         live = item.get("live_product_readiness") or {}
         require(live.get("command") == f"agentops operator live-product-readiness --require-adapter {adapter}", f"{adapter} live readiness command missing: {live}", failures)
     codex = payload.get("codex_consumer") or {}

@@ -144,6 +144,8 @@ export function WorkerConsole() {
       recordControlReadback: "Record control readback",
       serviceManagedLoop: "Service-managed loop",
       managedLoopReady: "managed loop ready",
+      activeLoopReady: "active loop ready",
+      serviceLoaded: "service loaded",
       managedExecutionPath: "Managed execution path",
       managedExecutionSummary: "Service-managed readiness, Agent Plan, knowledge retrieval, dispatch, evidence report and review queue in one copy-only packet.",
       nextManagedStep: "Next managed step",
@@ -244,6 +246,8 @@ export function WorkerConsole() {
       recordControlReadback: "记录控制回读",
       serviceManagedLoop: "服务托管 Loop",
       managedLoopReady: "托管 loop 就绪",
+      activeLoopReady: "常驻 loop 已激活",
+      serviceLoaded: "服务已加载",
       managedExecutionPath: "托管执行路径",
       managedExecutionSummary: "把服务就绪、Agent Plan、知识检索、派发、证据报告和 review queue 收进同一个只读 packet。",
       nextManagedStep: "下一步托管动作",
@@ -447,9 +451,13 @@ export function WorkerConsole() {
     { label: copy.readbackAttached, status: serviceReadbackAttached ? "pass" : "attention" },
   ];
   const serviceManagedReady = serviceManagedLoop.service_managed_loop_ready === true;
+  const serviceActiveReady = serviceManagedLoop.service_active_loop_ready === true;
+  const serviceLoaded = serviceManagedLoop.service_loaded === true;
   const serviceManagedStatus = String(serviceManagedLoop.status || (serviceManagedReady ? "ready" : "attention"));
   const serviceManagedFacts = [
     { label: copy.managedLoopReady, value: serviceManagedReady ? "yes" : "no", status: serviceManagedReady ? "pass" : "attention" },
+    { label: copy.activeLoopReady, value: serviceActiveReady ? "yes" : "no", status: serviceActiveReady ? "pass" : "attention" },
+    { label: copy.serviceLoaded, value: serviceLoaded ? "yes" : String(serviceManagedLoop.active_status || serviceManagedLoop.active_loop_status || "unknown"), status: serviceLoaded ? "pass" : "attention" },
     { label: copy.installedStatus, value: String(serviceManagedLoop.installed_status || "unverified"), status: serviceManagedReady ? "pass" : "attention" },
     { label: copy.checkedStatus, value: String(serviceManagedLoop.checked_status || "missing_readback"), status: serviceReadbackAttached ? "pass" : "attention" },
   ];

@@ -4962,6 +4962,8 @@ export function AIEmployees() {
                           const managedExecutionLivePerformed = managedExecutionPath?.safety?.live_execution_performed === true;
                           const serviceManagedShell = serviceManagedLoop?.safety?.server_executes_shell === true;
                           const serviceManagedLivePerformed = serviceManagedLoop?.live_execution_performed === true || serviceManagedLoop?.safety?.live_execution_performed === true;
+                          const serviceActiveReady = serviceManagedLoop?.service_active_loop_ready === true;
+                          const serviceLoaded = serviceManagedLoop?.service_loaded === true;
                           const managedExecutionLaneCounts = `${managedExecutionPath?.first_safe_commands?.length || 0}/${managedExecutionPath?.confirm_required_commands?.length || 0}/${managedExecutionPath?.verify_commands?.length || 0}`;
                           const managedExecutionCommandGroups = [
                             { label: "First safe", color: "var(--mis-cyan)", commands: managedExecutionPath?.first_safe_commands || [] },
@@ -4988,6 +4990,12 @@ export function AIEmployees() {
                               command: serviceManagedCommands.record_control_readback,
                             },
                             {
+                              label: "Activation",
+                              status: serviceActiveReady ? "pass" : serviceManagedLoop?.service_managed_loop_ready ? "attention" : "blocked",
+                              detail: serviceLoaded ? "loaded" : (serviceManagedLoop?.active_status || serviceManagedLoop?.active_loop_status || "not loaded"),
+                              command: serviceManagedCommands.service_control_load_confirm || managedExecutionCommands.service_control_load_confirm,
+                            },
+                            {
                               label: "Dispatch",
                               status: managedExecutionReady ? "approval_required" : "attention",
                               detail: managedExecutionReady ? "confirm required" : managedExecutionRecommended,
@@ -5008,6 +5016,7 @@ export function AIEmployees() {
                           ];
                           const serviceManagedCommandButtons = [
                             { label: "service-check", command: serviceManagedCommands.service_check },
+                            { label: "load-service", command: serviceManagedCommands.service_control_load_confirm || managedExecutionCommands.service_control_load_confirm },
                             { label: "record-receipt", command: serviceManagedCommands.record_verified_receipt },
                             { label: "record-readback", command: serviceManagedCommands.record_control_readback },
                           ].filter((entry) => entry.command);
