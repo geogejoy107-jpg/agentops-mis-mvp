@@ -1448,6 +1448,8 @@ def _fast_service_closure_context(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
+    if not hasattr(args, "fast"):
+        args.fast = False
     if args.fast:
         fast_context = _fast_service_closure_context(args, client)
         supervision = fast_context["supervision"]
@@ -2862,6 +2864,7 @@ def maybe_auto_close_loop_driver_service(args, client: AgentOpsClient, *, step: 
         return None
     service_args = argparse.Namespace(
         adapter=args.adapter,
+        fast=False,
         service_check_json="",
         run_service_check=True,
         service_check_command="",
