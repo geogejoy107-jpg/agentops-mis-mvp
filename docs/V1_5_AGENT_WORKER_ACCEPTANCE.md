@@ -1703,32 +1703,38 @@ readiness, exercised remote worker mock fallback, and finished with non-live
 local acceptance.
 
 ```text
-head: 8cf84fb4ff12819577db03800af9bd0f5923b665
-server: http://127.0.0.1:57473
-db: /tmp/agentops_v15_current_full_57473.db
-script: AGENTOPS_DB_PATH=/tmp/agentops_v15_current_full_57473.db python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:57473 --db-path /tmp/agentops_v15_current_full_57473.db --confirm-live --timeout 900 --hermes-timeout 600 --hermes-max-tokens 512
+head: af09ca85b4f91c0d5b97406cfb74e8f2712496d9
+server: http://127.0.0.1:57591
+db: /tmp/agentops_v15_current_exact_57591.db
+script: AGENTOPS_DB_PATH=/tmp/agentops_v15_current_exact_57591.db python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:57591 --db-path /tmp/agentops_v15_current_exact_57591.db --confirm-live --timeout 900 --hermes-timeout 600 --hermes-max-tokens 512
 
 before readiness: attention
 after readiness: ready
 product_readiness_proof: true
+knowledge documents/chunks: 95 / 1001
 commander synthesis artifacts: 1
 commander promoted deliveries: 1
 fresh live adapters: 2
+closed-loop runs after evidence: 16
 
-Hermes run: run_gw_5f56882420b2
-Hermes task: tsk_worker_ui_hermes_20260624002816_44e8adb2
-Hermes manifest: pem_a14fcd149447ef57
+Hermes run: run_gw_37fbb0125371
+Hermes task: tsk_worker_ui_hermes_20260624004030_e4fc9c30
+Hermes artifact: art_customer_worker_task_run_gw_37fbb0125371
+Hermes approval: ap_customer_worker_delivery_run_gw_37fbb0125371
+Hermes manifest: pem_be3fbff0dfec04e1
 Hermes status: completed
-Hermes evidence: live readiness readback true, plan evidence verified, run/tool/evaluation/runtime/audit/artifact/memory/approval evidence present
+Hermes evidence: tool_calls 1, evaluations 1, runtime_events 15, audit_logs 12, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
 
-OpenClaw run: run_gw_5c69344e2a6f
-OpenClaw task: tsk_worker_ui_openclaw_20260624002838_e4dfcf5c
-OpenClaw manifest: pem_a393179642709e17
+OpenClaw run: run_gw_ad5d349494b4
+OpenClaw task: tsk_worker_ui_openclaw_20260624004111_8fdac32b
+OpenClaw artifact: art_customer_worker_task_run_gw_ad5d349494b4
+OpenClaw approval: ap_customer_worker_delivery_run_gw_ad5d349494b4
+OpenClaw manifest: pem_649e9fec7abef9f5
 OpenClaw status: completed
-OpenClaw evidence: live readiness readback true, plan evidence verified, run/tool/evaluation/runtime/audit/artifact/memory/approval evidence present
+OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 15, audit_logs 12, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
 
-remote worker token fallback run: run_gw_b8183ca9b507
-remote launch/session fallback run: run_gw_7f97789134e4
+remote worker token fallback run: run_gw_e1bc3347526d
+remote launch/session fallback run: run_gw_f147132f9027
 non-live local acceptance: 169 checks, 0 failures
 safety: raw_prompt_omitted true, raw_response_omitted true, token_omitted true, repo_artifacts_written false, sample exports not committed
 ```
