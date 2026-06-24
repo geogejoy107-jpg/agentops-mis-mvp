@@ -403,6 +403,22 @@ Hermes/OpenClaw 真实执行仍必须显式加 `--confirm-run`。
 - 也可以从 Pixel Office 里的“一键生成知识库机器人项目”按钮触发同一条浏览器工作流，后端接口是 `POST /api/workflows/kb-bot-project`。
 - Pixel Office 的客户派活面板也能触发 `POST /api/workflows/customer-worker-task`：客户任务进入 Agent Gateway worker，mock/Hermes/OpenClaw adapter 执行后写回 run、tool call、evaluation、audit、`customer_worker_result` artifact、`agent_plan` 和 verified `plan_evidence_manifest`。交付审批只会在 manifest 门禁通过后生成；Hermes/OpenClaw 仍需显式确认。
 
+## Local Open Source Experiment Base
+
+本地开源底座不是把 LangGraph、CrewAI、OpenHands、Dify 或 UI 模板变成新的任务权威，而是把它们作为参考、工具或 runtime adapter 输入，统一落到 MIS 的知识检索、Agent Plan、evaluation case、artifact、memory candidate 和 audit 证据链里。
+
+核心 spec：`docs/LOCAL_OPEN_SOURCE_EXPERIMENT_BASE_SPEC.md`。
+
+只读验收：
+
+```bash
+python3 scripts/local_open_source_experiment_base_smoke.py
+./scripts/agentops knowledge evidence-packet "open source experiment base" --limit 5
+./scripts/agentops eval propose-case --source-type manual --title "Local experiment regression" --expectation "Experiment learnings must become reviewable MIS evidence before product adoption."
+```
+
+这条 smoke 不刷新知识索引、不写 SQLite、不调用 Hermes/OpenClaw、不联网；它只确认开源采纳边界、知识底座、实验脚本、evaluation case API/CLI 和 CI 入口还连在一起。真实 OpenClaw/Hermes 实验仍走显式确认和账本证据。
+
 ## v1.5 Local Agent Worker Loop
 
 `agentops-worker` 是可安装的 worker daemon 命令。它通过 Agent Gateway API 拉取普通 MIS 任务，认领后调用 adapter，并把 run/tool/eval/artifact/audit、`agent_plan` 和 `plan_evidence_manifest` 写回 MIS。`scripts/agent_worker.py` 仍保留为 repo-local 兼容 wrapper，供本地 UI/smoke 继续使用。
@@ -676,6 +692,12 @@ python3 server.py
 打开 `/integrations` 可以查看 OpenClaw/Hermes/Notion 状态、汇报预览，并执行 dry-run 或实际导出。
 
 Notion / 开源实验底座 / 本地 Hermes-OpenClaw loop 的收拢顺序见 `docs/NOTION_OPEN_SOURCE_LOOP_CONVERGENCE_PLAN.md`。它把 Notion Project Ledger 定位成 Web GPT / 人类协作可见层，把开源底座定位成本地实验和证据来源，把 AgentOps MIS SQLite/API 保持为运行、审批、交付和审计的权威账本。
+
+Notion Project Memory 的产品边界见 `docs/NOTION_PROJECT_MEMORY_CONNECTOR_LAYER.md`：当前把 Notion Project Ledger 当作 Web GPT / 人类协作的项目记忆层，负责候选增量、已审查决策、风险、Backlog 与 Handoff；AgentOps MIS 仍然负责 Run、Tool Call、Approval、Artifact、Evaluation 与 Audit 的执行账本。对应静态验收为：
+
+```bash
+python3 scripts/notion_project_memory_connector_layer_smoke.py
+```
 
 ## 文件结构
 
