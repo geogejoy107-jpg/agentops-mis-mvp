@@ -1746,6 +1746,61 @@ pull/claim/start work but fails when writing runtime evidence. Guard evidence:
 `scripts/remote_worker_product_acceptance.py`, and the current-code product
 evidence command above.
 
+## 2026-06-24 Main Current-Code Live Recheck
+
+After the v1.5 branch was merged to `main`, the local product proof was rechecked
+against the merged current code with real Hermes and OpenClaw adapters. The
+server used an isolated `/tmp` SQLite database and `AGENTOPS_SKIP_SEED_EXPORTS=1`,
+so the tracked repo database, sample exports, credentials, prompts, responses,
+and transcripts were not written.
+
+```text
+head: 8f2fa73ab72821ed7fe7c062f9e04dd84af05c20
+server: http://127.0.0.1:8796
+db: /tmp/agentops_mis_loop_896ee1a.db
+script: AGENTOPS_BASE_URL=http://127.0.0.1:8796 python3 scripts/customer_worker_real_runtime_acceptance.py --base-url http://127.0.0.1:8796 --confirm-live --adapter hermes --adapter openclaw --request-timeout 720 --hermes-timeout 600 --hermes-max-tokens 512
+
+local readiness: ok true, status attention, current_code current, live_acceptance ready
+live product readiness proof: true
+fresh live adapters: 2
+knowledge documents/chunks: 95 / 1001
+closed-loop runs: 12
+non-live local acceptance: 169 checks, 0 failures
+
+Hermes run: run_gw_a3f710ec3d20
+Hermes task: tsk_worker_ui_hermes_20260624034655_e2dbdda0
+Hermes artifact: art_customer_worker_task_run_gw_a3f710ec3d20
+Hermes approval: ap_customer_worker_delivery_run_gw_a3f710ec3d20
+Hermes plan: plan_bace786efca44cd2
+Hermes manifest: pem_fda6767d98fa64cb
+Hermes status: completed
+Hermes evidence: tool_calls 1, evaluations 1, runtime_events 15, audit_logs 7, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
+
+OpenClaw run: run_gw_e653bc7754b7
+OpenClaw task: tsk_worker_ui_openclaw_20260624034753_2a357cc3
+OpenClaw artifact: art_customer_worker_task_run_gw_e653bc7754b7
+OpenClaw approval: ap_customer_worker_delivery_run_gw_e653bc7754b7
+OpenClaw plan: plan_0d681c393933fa5e
+OpenClaw manifest: pem_94eabef754cb61de
+OpenClaw status: completed
+OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 15, audit_logs 7, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
+
+safety: raw_prompt_omitted true, raw_response_omitted true, token_omitted true, repo_artifacts_written false
+commercial boundary: Hermes/OpenClaw remain ledger_summary_only and restricted_until_runtime_tool_events until runtime-internal tool events are ingested or high-risk actions use prepared-action gates.
+```
+
+Readback commands:
+
+```bash
+AGENTOPS_BASE_URL=http://127.0.0.1:8796 ./scripts/agentops operator live-product-readiness --require-adapter hermes --require-adapter openclaw
+AGENTOPS_BASE_URL=http://127.0.0.1:8796 ./scripts/agentops local readiness --require-current-code --expect-head-sha 8f2fa73ab72821ed7fe7c062f9e04dd84af05c20
+AGENTOPS_BASE_URL=http://127.0.0.1:8796 python3 scripts/v1_5_local_product_acceptance.py --base-url http://127.0.0.1:8796
+AGENTOPS_BASE_URL=http://127.0.0.1:8796 ./scripts/agentops run get run_gw_a3f710ec3d20
+AGENTOPS_BASE_URL=http://127.0.0.1:8796 ./scripts/agentops run get run_gw_e653bc7754b7
+AGENTOPS_BASE_URL=http://127.0.0.1:8796 ./scripts/agentops artifact list --run-id run_gw_a3f710ec3d20
+AGENTOPS_BASE_URL=http://127.0.0.1:8796 ./scripts/agentops artifact list --run-id run_gw_e653bc7754b7
+```
+
 ## 2026-06-22 Remote Worker Scope Baseline
 
 The worker now writes `agent_plan`, `plan_evidence_manifest`, `artifact`,

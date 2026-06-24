@@ -1,10 +1,10 @@
 # AgentOps MIS 当前项目记忆与事实基线
 
 > 状态日期：2026-06-24
-> 审计基准：`8d1827e00629bdca4779794121ca4a31dfa3f1e1`  
-> 当前交付 HEAD：`37f3eb1f5bbd2a8b9666e6ad84916cdbcb32de80`
-> 开发主线：`codex/agent-gateway-kb-demo`  
-> 相对远端分支：ahead 0 / behind 0
+> 审计基准：`8d1827e00629bdca4779794121ca4a31dfa3f1e1`
+> 当前交付 HEAD：`8f2fa73ab72821ed7fe7c062f9e04dd84af05c20`
+> 开发主线：`main`
+> 相对远端分支：ahead 0 / behind 0 against `origin/main`
 > 审计分支：`audit/v1-5-agent-gateway-hardening`
 
 ## 1. 基准更新
