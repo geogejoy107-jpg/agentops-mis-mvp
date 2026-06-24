@@ -1786,6 +1786,21 @@ prompts, raw responses, tokens, credentials, private messages, or full
 transcripts in docs or committed state. Mock/offline evidence remains CI
 fallback only.
 
+Preflight slice verification:
+
+```text
+python3 scripts/live_worker_loop_demo_slice_smoke.py
+python3 -m py_compile scripts/live_worker_loop_demo_slice.py scripts/live_worker_loop_demo_slice_smoke.py
+python3 scripts/secret_scan_smoke.py
+git diff --check
+```
+
+Result: all passed locally on branch `codex/live-demo-preflight`. The smoke uses
+temporary launchd plist fixtures and verifies `--preflight` returns dry-run
+service-control summaries for Hermes/OpenClaw while preserving no live runtime,
+no service mutation, no ledger mutation, no saved CLI config, and no token-like
+output.
+
 Negative isolated validation on a `/tmp` SQLite server showed the wrapper now
 records service-closure receipt/readback evidence but returns
 `*_service_closure_still_required` with `live_execution_performed:false` when
