@@ -1703,37 +1703,42 @@ readiness, exercised remote worker mock fallback, and finished with non-live
 local acceptance.
 
 ```text
-head: a82642134e4dbbce729fc56010de3b6e74a37442
-server: http://127.0.0.1:57950
-db: /tmp/agentops_v15_current_code_57950.db
-script: AGENTOPS_DB_PATH=/tmp/agentops_v15_current_code_57950.db python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:57950 --db-path /tmp/agentops_v15_current_code_57950.db --confirm-live --timeout 900 --hermes-timeout 600 --hermes-max-tokens 512
+head: 8cf84fb4ff12819577db03800af9bd0f5923b665
+server: http://127.0.0.1:57473
+db: /tmp/agentops_v15_current_full_57473.db
+script: AGENTOPS_DB_PATH=/tmp/agentops_v15_current_full_57473.db python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:57473 --db-path /tmp/agentops_v15_current_full_57473.db --confirm-live --timeout 900 --hermes-timeout 600 --hermes-max-tokens 512
 
 before readiness: attention
 after readiness: ready
-knowledge documents/chunks: 95 / 998
+product_readiness_proof: true
 commander synthesis artifacts: 1
 commander promoted deliveries: 1
 fresh live adapters: 2
-closed-loop runs after evidence: 16
 
-Hermes run: run_gw_87a1a98f9e19
-Hermes task: tsk_worker_ui_hermes_20260623225814_de550cf6
-Hermes artifact: art_customer_worker_task_run_gw_87a1a98f9e19
-Hermes approval: ap_customer_worker_delivery_run_gw_87a1a98f9e19
-Hermes manifest: pem_c09f0ac2664dd932
-Hermes evidence: tool_calls 1, evaluations 1, runtime_events 14, audit_logs 7, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
+Hermes run: run_gw_5f56882420b2
+Hermes task: tsk_worker_ui_hermes_20260624002816_44e8adb2
+Hermes manifest: pem_a14fcd149447ef57
+Hermes status: completed
+Hermes evidence: live readiness readback true, plan evidence verified, run/tool/evaluation/runtime/audit/artifact/memory/approval evidence present
 
-OpenClaw run: run_gw_32fd8474b6c9
-OpenClaw task: tsk_worker_ui_openclaw_20260623225847_80df63fd
-OpenClaw artifact: art_customer_worker_task_run_gw_32fd8474b6c9
-OpenClaw approval: ap_customer_worker_delivery_run_gw_32fd8474b6c9
-OpenClaw manifest: pem_6f796bbb7ce51093
-OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 14, audit_logs 7, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
+OpenClaw run: run_gw_5c69344e2a6f
+OpenClaw task: tsk_worker_ui_openclaw_20260624002838_e4dfcf5c
+OpenClaw manifest: pem_a393179642709e17
+OpenClaw status: completed
+OpenClaw evidence: live readiness readback true, plan evidence verified, run/tool/evaluation/runtime/audit/artifact/memory/approval evidence present
 
-remote worker fallback runs: run_gw_7e99d3d72636, run_gw_411ad2d1e001
+remote worker token fallback run: run_gw_b8183ca9b507
+remote launch/session fallback run: run_gw_7f97789134e4
 non-live local acceptance: 169 checks, 0 failures
-safety: raw_prompt_omitted true, raw_response_omitted true, token_omitted true, repo_artifacts_written false
+safety: raw_prompt_omitted true, raw_response_omitted true, token_omitted true, repo_artifacts_written false, sample exports not committed
 ```
+
+The same HEAD also fixed the remote worker token baseline so scoped worker tokens
+include `runtime_events:write`. Without that scope, a remote worker can
+pull/claim/start work but fails when writing runtime evidence. Guard evidence:
+`scripts/remote_agent_token_worker_smoke.py --adapter mock`,
+`scripts/remote_worker_product_acceptance.py`, and the current-code product
+evidence command above.
 
 ## 2026-06-22 Remote Worker Scope Baseline
 
