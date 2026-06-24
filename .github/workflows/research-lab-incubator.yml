@@ -1,0 +1,39 @@
+name: Research Lab incubator contracts
+
+on:
+  pull_request:
+    paths:
+      - "incubator/research-lab/**"
+      - ".github/workflows/research-lab-incubator.yml"
+  push:
+    branches:
+      - "incubator/research-lab-ssh-v0-3"
+    paths:
+      - "incubator/research-lab/**"
+      - ".github/workflows/research-lab-incubator.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Protocol and provenance / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    defaults:
+      run:
+        working-directory: incubator/research-lab
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile uploaded contract slice
+        run: python -m compileall -q research_lab tests
+      - name: Run protocol and provenance contracts
+        run: python -m unittest discover -s tests -p 'test_pro*.py' -v
