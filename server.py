@@ -128,6 +128,7 @@ from agentops_mis_core.operator_receipts import (
     operator_control_readback_public,
     operator_receipt_requires_control_readback,
 )
+from agentops_mis_core.research_lab_packet import build_research_lab_packet
 from agentops_mis_core.operator_start_check import (
     compact_start_check_loop_driver_entry,
     compact_start_check_launch_brief,
@@ -19280,6 +19281,25 @@ def operator_task_intake_checklist(conn: sqlite3.Connection, workspace_id: str, 
     }
 
 
+def operator_research_lab_packet(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    adapter = str((qs.get("adapter") or ["hermes"])[0] or "hermes").strip().lower()
+    limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
+    profile = redact_text((qs.get("profile") or [""])[0], 120)
+    packet = build_research_lab_packet(ROOT, adapter=adapter, limit=limit, profile=profile)
+    packet["server_projection"] = {
+        "read_only": True,
+        "ledger_mutated": False,
+        "database_connection_opened": conn is not None,
+        "auth_context_used_for_execution": False,
+        "server_executes_shell": False,
+        "ssh_command_executed": False,
+        "network_probe_performed": False,
+        "token_omitted": True,
+    }
+    return packet
+
+
 def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     workspace_id = normalize_workspace_id(
@@ -28825,6 +28845,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/operator/loop-launch-packet":
                 payload = operator_loop_launch_packet(conn, self.headers, dict(qs))
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/research-lab-packet":
+                payload = operator_research_lab_packet(conn, self.headers, dict(qs))
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/security/production-readiness":

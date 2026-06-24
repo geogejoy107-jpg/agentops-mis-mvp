@@ -903,6 +903,17 @@ def cmd_operator_loop_launch_packet(args, client: AgentOpsClient) -> dict:
     return payload
 
 
+def cmd_operator_research_lab_packet(args, client: AgentOpsClient) -> dict:
+    return client.get(
+        "/api/operator/research-lab-packet",
+        query={
+            "adapter": args.adapter,
+            "limit": args.limit,
+            "profile": args.profile,
+        },
+    )
+
+
 def cmd_operator_start_check(args, client: AgentOpsClient) -> dict:
     return client.get(
         "/api/operator/start-check",
@@ -5202,6 +5213,11 @@ def build_parser() -> argparse.ArgumentParser:
     operator_launch.add_argument("--brief", action="store_true", help="Return a compact copy-only launch brief for Hermes/OpenClaw/Codex instead of the full packet.")
     operator_launch.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock", help="Adapter context to include in --brief preflight and live-confirmation guidance.")
     operator_launch.set_defaults(handler="operator_loop_launch_packet")
+    operator_research_lab = operator_sub.add_parser("research-lab-packet", help="Build a read-only Research Lab work packet for Hermes/OpenClaw/Codex.")
+    operator_research_lab.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="hermes")
+    operator_research_lab.add_argument("--limit", type=int, default=8)
+    operator_research_lab.add_argument("--profile", default="")
+    operator_research_lab.set_defaults(handler="operator_research_lab_packet")
     operator_start_check = operator_sub.add_parser("start-check", help="Read the pre-task local loop start check for Hermes/OpenClaw/Codex.")
     operator_start_check.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     operator_start_check.add_argument("--limit", type=int, default=8)
@@ -6187,6 +6203,7 @@ HANDLERS = {
     "operator_command_center": cmd_operator_command_center,
     "operator_intake_checklist": cmd_operator_intake_checklist,
     "operator_loop_launch_packet": cmd_operator_loop_launch_packet,
+    "operator_research_lab_packet": cmd_operator_research_lab_packet,
     "operator_start_check": cmd_operator_start_check,
     "operator_agent_loop_handoff": cmd_operator_agent_loop_handoff,
     "operator_loop_supervision": cmd_operator_loop_supervision,
