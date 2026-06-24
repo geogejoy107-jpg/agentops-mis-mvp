@@ -140,10 +140,12 @@ def main() -> int:
     require(checks.get("release_grade_receipts_complete") is False, "release-grade receipts should not be complete")
     require(checks.get("exact_head_ci_verified") is False, "current HEAD exact-head CI should still block promotion")
     require(checks.get("remote_sync_verified") is True, "remote sync should now be verified")
-    require(checks.get("clean_worktree_verified") is False, "clean worktree must still block promotion")
     require("release_grade_receipts_empty" in set(payload.get("blockers") or []), "release-grade blocker missing")
     require("exact_head_ci_not_verified" in set(payload.get("blockers") or []), "exact-head CI blocker missing")
-    require("worktree_not_clean" in set(payload.get("blockers") or []), "worktree blocker missing")
+    if checks.get("clean_worktree_verified") is True:
+        require("worktree_not_clean" not in set(payload.get("blockers") or []), "clean CI worktree must not report dirty-worktree blocker")
+    else:
+        require("worktree_not_clean" in set(payload.get("blockers") or []), "dirty local worktree blocker missing")
     receipt_state = payload.get("receipt_state") or {}
     require(receipt_state.get("all_local_receipts_complete") is True, "local receipts should now be complete")
     require(receipt_state.get("gates_with_local_receipts") == REQUIRED_LOCAL_RECEIPT_GATES, "local receipt gate summary mismatch")
