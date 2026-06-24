@@ -2197,6 +2197,11 @@ classifies each adapter packet as `plan_first`, `service_closure_first`,
 `preview_first`, `confirm_ready`, `safe_read_or_preview`, `blocked`, or `stop`,
 then repeats the command, verify command, confirm/receipt requirements, and
 server-may-execute=false safety proof.
+`operator loop-driver --confirm-loop` consumes that decision before confirmed
+bounded advance and before each bounded step. It may continue governance-first
+decisions through the local allowlisted `advance-loop` path, but fails closed
+for `stop`, `blocked`, missing decisions, server-shell evidence, or live
+execution evidence before running any bounded advance.
 `operator service-closure --fast --run-service-check --confirm-record` is the
 standalone RECORD command for service-managed loop readback when the packet
 asks for it; verify with `operator action-receipts` and then re-read the compact

@@ -176,6 +176,8 @@ def main() -> int:
             preview_review = preview_payload.get("record_review_snapshot") or {}
             preview_readiness = preview_payload.get("adapter_readiness") or {}
             preview_acceptance = preview_payload.get("acceptance_gate") or {}
+            preview_work_decision = preview_payload.get("work_packet_decision") or {}
+            preview_work_decision_item = preview_work_decision.get("decision") or {}
             preview_agent_packet = preview_payload.get("agent_loop_packet") or {}
             preview_readiness_commands = preview_readiness.get("commands") or {}
             preview_gate = preview_readiness.get("gate") or {}
@@ -198,6 +200,15 @@ def main() -> int:
             require("--require-current-code" in str(preview_acceptance_commands.get("current_code_check") or ""), f"preview current-code command missing: {preview_acceptance}", failures)
             require("--confirm-loop" in str(preview_acceptance_commands.get("loop_driver_confirm") or ""), f"preview loop confirm command missing: {preview_acceptance}", failures)
             require((preview_acceptance.get("safety") or {}).get("server_executes_shell") is False, f"preview acceptance server-shell boundary missing: {preview_acceptance}", failures)
+            require(preview_work_decision.get("operation") == "operator_loop_driver_work_packet_decision_gate", f"preview work-packet decision gate missing: {preview_payload}", failures)
+            require(preview_work_decision.get("source_operation") == "operator_loop_work_packet_decision", f"preview work-packet decision source mismatch: {preview_work_decision}", failures)
+            require(preview_work_decision.get("ok") is True, f"preview work-packet decision should be consumable: {preview_work_decision}", failures)
+            require(preview_work_decision.get("consumed_before_bounded_advance") is True, f"preview work-packet decision consumption proof missing: {preview_work_decision}", failures)
+            require(preview_work_decision_item.get("adapter") == "hermes", f"preview work-packet decision adapter mismatch: {preview_work_decision}", failures)
+            require(preview_work_decision_item.get("decision") not in {"stop", "blocked", "missing"}, f"preview work-packet decision should not hard-block: {preview_work_decision}", failures)
+            require((preview_work_decision_item.get("policy") or {}).get("server_may_execute") is False, f"preview work-packet decision server policy missing: {preview_work_decision}", failures)
+            require((preview_work_decision.get("safety") or {}).get("read_only") is True, f"preview work-packet decision should be read-only: {preview_work_decision}", failures)
+            require((preview_work_decision.get("safety") or {}).get("server_executes_shell") is False, f"preview work-packet decision shell boundary missing: {preview_work_decision}", failures)
             require(preview_agent_packet.get("operation") == "operator_loop_driver_agent_loop_packet", f"preview agent loop packet missing: {preview_payload}", failures)
             require(preview_agent_packet.get("current_phase") == "preview", f"preview agent loop phase wrong: {preview_agent_packet}", failures)
             require(preview_agent_packet.get("ready_to_confirm_loop") is True, f"preview agent loop should be confirm-ready: {preview_agent_packet}", failures)
@@ -251,12 +262,22 @@ def main() -> int:
             require((confirmed_payload.get("safety") or {}).get("server_executes_shell") is False, f"server shell boundary missing: {confirmed_payload}", failures)
             initial_acceptance = confirmed_payload.get("initial_acceptance_gate") or {}
             final_acceptance = confirmed_payload.get("acceptance_gate") or {}
+            initial_work_decision = confirmed_payload.get("initial_work_packet_decision") or {}
+            final_work_decision = confirmed_payload.get("work_packet_decision") or {}
+            initial_work_decision_item = initial_work_decision.get("decision") or {}
             initial_agent_packet = confirmed_payload.get("initial_agent_loop_packet") or {}
             final_agent_packet = confirmed_payload.get("agent_loop_packet") or {}
             require(initial_acceptance.get("operation") == "operator_loop_driver_acceptance_gate", f"confirm initial acceptance missing: {confirmed_payload}", failures)
             require(final_acceptance.get("operation") == "operator_loop_driver_acceptance_gate", f"confirm final acceptance missing: {confirmed_payload}", failures)
             require((initial_acceptance.get("decision") or {}).get("can_confirm_bounded_loop") is True, f"confirm initial acceptance should allow bounded loop: {initial_acceptance}", failures)
             require((final_acceptance.get("safety") or {}).get("server_executes_shell") is False, f"confirm final acceptance server-shell boundary missing: {final_acceptance}", failures)
+            require(initial_work_decision.get("operation") == "operator_loop_driver_work_packet_decision_gate", f"confirm initial work-packet decision missing: {confirmed_payload}", failures)
+            require(final_work_decision.get("operation") == "operator_loop_driver_work_packet_decision_gate", f"confirm final work-packet decision missing: {confirmed_payload}", failures)
+            require(initial_work_decision.get("ok") is True, f"confirm initial work-packet decision should be ok: {initial_work_decision}", failures)
+            require(initial_work_decision_item.get("adapter") == "openclaw", f"confirm initial work-packet decision adapter mismatch: {initial_work_decision}", failures)
+            require(initial_work_decision_item.get("decision") not in {"stop", "blocked", "missing"}, f"confirm initial work-packet decision should not hard-block: {initial_work_decision}", failures)
+            require((initial_work_decision_item.get("policy") or {}).get("server_may_execute") is False, f"confirm initial work-packet decision server policy missing: {initial_work_decision}", failures)
+            require((final_work_decision.get("safety") or {}).get("server_executes_shell") is False, f"confirm final work-packet decision shell boundary missing: {final_work_decision}", failures)
             require(initial_agent_packet.get("operation") == "operator_loop_driver_agent_loop_packet", f"confirm initial agent loop packet missing: {confirmed_payload}", failures)
             require(final_agent_packet.get("operation") == "operator_loop_driver_agent_loop_packet", f"confirm final agent loop packet missing: {confirmed_payload}", failures)
             require(final_agent_packet.get("ready_to_confirm_loop") is True, f"confirm final agent packet not confirm-ready: {final_agent_packet}", failures)
@@ -288,6 +309,8 @@ def main() -> int:
                 advance = step.get("advance") or {}
                 step_acceptance_before = step.get("acceptance_gate_before") or {}
                 step_acceptance_after = step.get("acceptance_gate_after") or {}
+                step_decision_before = step.get("work_packet_decision_before") or {}
+                step_decision_after = step.get("work_packet_decision_after") or {}
                 before_readiness = step.get("adapter_readiness_before") or {}
                 after_readiness = step.get("adapter_readiness_after") or {}
                 step_review = step.get("record_review_snapshot") or {}
@@ -296,6 +319,12 @@ def main() -> int:
                 require((step_acceptance_before.get("safety") or {}).get("server_executes_shell") is False, f"step acceptance before server shell boundary missing: {step}", failures)
                 require(step_acceptance_after.get("operation") == "operator_loop_driver_acceptance_gate", f"step acceptance after missing: {step}", failures)
                 require((step_acceptance_after.get("safety") or {}).get("server_executes_shell") is False, f"step acceptance after server shell boundary missing: {step}", failures)
+                require(step_decision_before.get("operation") == "operator_loop_driver_work_packet_decision_gate", f"step work-packet decision before missing: {step}", failures)
+                require(step_decision_before.get("ok") is True, f"step work-packet decision before should be ok: {step}", failures)
+                require(((step_decision_before.get("decision") or {}).get("policy") or {}).get("server_may_execute") is False, f"step work-packet decision before server policy missing: {step}", failures)
+                require((step_decision_before.get("safety") or {}).get("server_executes_shell") is False, f"step work-packet decision before shell boundary missing: {step}", failures)
+                require(step_decision_after.get("operation") == "operator_loop_driver_work_packet_decision_gate", f"step work-packet decision after missing: {step}", failures)
+                require((step_decision_after.get("safety") or {}).get("server_executes_shell") is False, f"step work-packet decision after shell boundary missing: {step}", failures)
                 require(advance.get("operation") == "operator_advance_loop", f"step advance missing: {step}", failures)
                 require(str(advance.get("action_command") or "").startswith("agentops "), f"step action command missing: {step}", failures)
                 require(advance.get("receipt_status") in {"verified", "failed", None}, f"step receipt status wrong: {step}", failures)
@@ -312,6 +341,7 @@ def main() -> int:
             require("--expect-head-sha" in str(final_current_code_gate.get("strict_command") or ""), f"confirm final strict current-code command missing expected head: {final_current_code_gate}", failures)
             require((confirmed_payload.get("policy") or {}).get("policy_id") == "advance_loop_local_bounded_v1", f"policy missing: {confirmed_payload}", failures)
             require((confirmed_payload.get("policy") or {}).get("acceptance_packet_required_before_confirm_loop") is True, f"acceptance policy missing: {confirmed_payload}", failures)
+            require((confirmed_payload.get("policy") or {}).get("work_packet_decision_required_before_confirm_loop") is True, f"work-packet decision policy missing: {confirmed_payload}", failures)
             require((confirmed_payload.get("policy") or {}).get("adapter_preflight_required_before_live_run") is True, f"adapter preflight policy missing: {confirmed_payload}", failures)
 
             service_path = tmp_path / "hermes-loop-driver.plist"
