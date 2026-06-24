@@ -497,7 +497,7 @@ TEST_COMMANDS = [
     {
         "id": "worker_external_write_preflight_gate",
         "command": "python3 scripts/worker_external_write_preflight_gate_smoke.py",
-        "summary": "Live Hermes/OpenClaw worker tasks with external-write intent pause before adapter execution and create prepared-action approval evidence.",
+        "summary": "Live Hermes/OpenClaw worker tasks with external-write intent pause before adapter execution and create prepared-action approval evidence after local service receipt/readback closure.",
         "ci_step": "Server-backed smoke suite",
     },
     {

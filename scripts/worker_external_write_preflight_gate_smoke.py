@@ -61,6 +61,63 @@ def wait_ready(base_url: str, proc: subprocess.Popen[str], timeout: float = 20.0
     return False
 
 
+def record_loopback_service_closure(base_url: str, adapter: str, failures: list[str], outputs: list[str]) -> str | None:
+    action_command = f"agentops worker service-control --manager launchd --action restart --adapter {adapter} --agent-id agt_worker_daemon_{adapter}"
+    verify_command = f"agentops worker service-check --manager launchd --adapter {adapter} --agent-id agt_worker_daemon_{adapter}"
+    status, receipt_payload, raw = http_json("POST", base_url, "/api/operator/action-receipts", {
+        "workspace_id": "local-demo",
+        "actor_id": "usr_worker_external_gate_smoke",
+        "action_command": action_command,
+        "verify_command": verify_command,
+        "action_id": f"local_readiness.service_control_preview.{adapter}",
+        "source": f"local_readiness.service_control_preview.{adapter}",
+        "status": "verified",
+        "result_summary": f"{adapter} worker service-control preview inspected and service-check readback recorded.",
+    })
+    outputs.append(raw)
+    receipt = receipt_payload.get("receipt") or {}
+    receipt_id = receipt.get("receipt_id")
+    require(status == 201 and bool(receipt_id), f"{adapter} service closure receipt failed: {status} {receipt_payload}", failures)
+    if not receipt_id:
+        return None
+    status, readback_payload, raw = http_json("POST", base_url, "/api/operator/action-receipts/control-readback", {
+        "workspace_id": "local-demo",
+        "actor_id": "usr_worker_external_gate_smoke",
+        "receipt_id": receipt_id,
+        "source": f"local_readiness.service_control_preview.{adapter}.control_readback",
+        "control_readback": {
+            "before": {
+                "step_id": "preview_worker_service_control",
+                "status": "preview",
+                "adapter": adapter,
+                "service_control_preview": True,
+            },
+            "after": {
+                "verify_command": verify_command,
+                "service_check_expected": True,
+                "service_check_ok": True,
+                "service_file_exists": True,
+                "service_loaded": True,
+                "confirm_gate_ok": True,
+                "relaunch_policy_ok": True,
+                "confirmed_os_mutation": False,
+                "loopback_fixture": True,
+            },
+            "self_check": {
+                "copy_only": True,
+                "server_executes_shell": False,
+                "writes_ledger_for_service_control": False,
+                "live_execution_performed": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        },
+    })
+    outputs.append(raw)
+    require(status == 201, f"{adapter} service closure readback failed: {status} {readback_payload}", failures)
+    return receipt_id
+
+
 def start_server(db_path: Path, port: int) -> subprocess.Popen[str]:
     env = os.environ.copy()
     env["AGENTOPS_DB_PATH"] = str(db_path)
@@ -134,6 +191,7 @@ def main() -> int:
                 raise AssertionError(failures[-1])
 
             for adapter in ("hermes", "openclaw"):
+                record_loopback_service_closure(base_url, adapter, failures, outputs)
                 agent_id = f"agt_worker_external_gate_{adapter}_{stamp}"
                 task_id = f"tsk_worker_external_gate_{adapter}_{stamp}"
                 status, registered, raw = http_json("POST", base_url, "/api/agent-gateway/register", {
