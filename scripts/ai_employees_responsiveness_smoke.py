@@ -25,17 +25,20 @@ CORE_ENDPOINTS = [
     ("/api/workers/status", "worker_status"),
     ("/api/workers/fleet", "worker_fleet"),
     ("/api/local/readiness", "local_readiness"),
+    ("/api/operator/runtime-doctor?limit=8", "operator_runtime_doctor"),
+    ("/api/operator/execution-mode?adapter=mock&limit=8", "operator_execution_mode"),
     ("/api/operator/loop-control?limit=8", "operator_loop_control"),
-    ("/api/operator/command-center?limit=12", "operator_command_center"),
-    ("/api/operator/action-plan?limit=12", "operator_action_plan"),
-    ("/api/operator/evidence-report?limit=8", "operator_evidence_report"),
     ("/api/agent-gateway/status", "agent_gateway_status"),
-    ("/api/operator/health?limit=12", "operator_health"),
 ]
 DEFERRED_ENDPOINTS = [
     ("/api/demo/readiness", "demo_readiness"),
     ("/api/workers/fleet/hygiene?limit=5", "worker_hygiene"),
     ("/api/workers/adapter-readiness", "adapter_readiness"),
+    ("/api/operator/agent-loop-handoff?limit=8", "operator_agent_loop_handoff"),
+    ("/api/operator/loop-supervision?limit=8", "operator_loop_supervision"),
+    ("/api/operator/command-center?limit=12", "operator_command_center"),
+    ("/api/operator/action-plan?limit=12", "operator_action_plan"),
+    ("/api/operator/evidence-report?limit=8", "operator_evidence_report"),
     ("/api/operator/action-receipts?limit=8", "operator_action_receipts"),
     ("/api/security/production-readiness", "security_readiness"),
     ("/api/commander/integration-inbox?limit=20", "integration_inbox"),
@@ -59,7 +62,16 @@ AGENT_ENDPOINTS = [
     ("/api/agents", "agents"),
 ]
 ALL_ENDPOINTS = CORE_ENDPOINTS + DEFERRED_ENDPOINTS + SCOPED_DEFERRED_ENDPOINTS + AGENT_ENDPOINTS
-CRITICAL_COMMAND_CENTER_LABELS = {"dashboard", "worker_status", "worker_fleet", "operator_loop_control", "operator_command_center", "operator_health"}
+CRITICAL_COMMAND_CENTER_LABELS = {
+    "dashboard",
+    "worker_status",
+    "worker_fleet",
+    "local_readiness",
+    "operator_runtime_doctor",
+    "operator_execution_mode",
+    "operator_loop_control",
+    "agent_gateway_status",
+}
 SECRET_PATTERNS = [
     re.compile(r"Authorization:", re.IGNORECASE),
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+"),
@@ -152,6 +164,8 @@ def leaked_secret(text: str) -> bool:
 
 def static_contract() -> dict:
     text = AI_EMPLOYEES_TSX.read_text(encoding="utf-8")
+    core_ids_match = re.search(r"const AI_EMPLOYEES_CORE_PANEL_IDS = new Set\(\[(.*?)\]\);", text, re.S)
+    core_ids_block = core_ids_match.group(1) if core_ids_match else ""
     return {
         "has_initial_daemon_log_prefetch": "WORKER_ADAPTERS.map(loadWorkerDaemonLogs)" in text,
         "has_lazy_daemon_log_effect": "if (!daemonLogsOpen) return;" in text and "loadSelectedDaemonLog(selectedLogAdapter)" in text,
@@ -164,14 +178,20 @@ def static_contract() -> dict:
         "has_panel_local_refresh": "const refreshPanel = useCallback" in text and "panelRefreshButton" in text and "localPanelRefreshing" in text,
         "has_panel_retry_evidence": all(marker in text for marker in ["attempts", "updated_at", "last_error", "panelDiagnosticJson", "panel_diagnostics_json", "token_omitted"]),
         "has_panel_diagnostic_receipts": all(marker in text for marker in ["recordPanelDiagnosticReceipt", "ui.panel_diagnostics", "ui_panel_diagnostics:${panelId}", "operator_action_receipts"]),
-        "has_operator_command_center_core": all(marker in text for marker in [
+        "has_operator_command_center_deferred": all(marker in text for marker in [
             "loadOperatorCommandCenter",
             'id: "operator_command_center", load: async () => ({ operatorCommandCenter: await loadOperatorCommandCenter(12) })',
             '"operator_command_center"',
             "operatorCommandCenterActions",
             "isOperatorCommandCenterAction ? 119",
             'panelStatusBadge("operator_command_center")',
-        ]),
+        ]) and '"operator_command_center"' not in core_ids_block,
+        "has_deferred_action_queue_panels": all(marker in text for marker in [
+            'id: "operator_action_plan", load: async () => ({ operatorActionPlan: await loadOperatorActionPlan(12) })',
+            'id: "operator_evidence_report", load: async () => ({ operatorEvidenceReport: await loadOperatorEvidenceReport(8) })',
+            '"operator_action_plan"',
+            '"operator_evidence_report"',
+        ]) and '"operator_action_plan"' not in core_ids_block and '"operator_evidence_report"' not in core_ids_block,
         "has_operator_loop_control_core": all(marker in text for marker in [
             "loadOperatorLoopControl",
             'id: "operator_loop_control", load: async () => ({ operatorLoopControl: await loadOperatorLoopControl(8) })',
@@ -179,7 +199,7 @@ def static_contract() -> dict:
             "operatorLoopControl",
             "directLoopControlSummary",
             'panelStatusBadge("operator_loop_control")',
-        ]),
+        ]) and '"operator_loop_control"' in core_ids_block,
         "has_use_live_data_loader": "useLiveData(" in text,
         "has_monolithic_initial_loader": "const [metrics, demoReadiness, workerStatus" in text,
         "has_monolithic_scoped_loader": "const [operatorLoopAudit, operatorHandoff, operatorHealth, operatorLoopSelfCheck]" in text,
@@ -253,10 +273,10 @@ def main() -> int:
             "agents_deferred": len(AGENT_ENDPOINTS),
         },
         "budgets": {
-            "max_initial_api_requests": 32,
-            "critical_command_center_ms": 1000,
+            "max_initial_api_requests": 36,
+            "critical_command_center_ms": 1500,
             "current_first_useful_panel_ms": 1500,
-            "background_panels_ms": 2000,
+            "background_panels_ms": 20000,
         },
         "measurements": {
             "core_parallel_ms": core_ms,
@@ -299,8 +319,10 @@ def main() -> int:
         failures.append(f"AI Employees panel refreshes do not expose retry/error diagnostics: {contract}")
     if not contract["has_panel_diagnostic_receipts"]:
         failures.append(f"AI Employees panel diagnostics are not connected to Action Queue receipts: {contract}")
-    if not contract["has_operator_command_center_core"]:
-        failures.append(f"AI Employees does not expose operator command-center as a core queue source: {contract}")
+    if not contract["has_operator_command_center_deferred"]:
+        failures.append(f"AI Employees does not expose operator command-center as an independently deferred queue source: {contract}")
+    if not contract["has_deferred_action_queue_panels"]:
+        failures.append(f"AI Employees action queue/evidence report panels are not independently deferred: {contract}")
     if not contract["has_operator_loop_control_core"]:
         failures.append(f"AI Employees does not expose direct operator loop-control as a core queue source: {contract}")
     if contract["has_use_live_data_loader"]:

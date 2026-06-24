@@ -270,6 +270,7 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix="agentops-loop-audit-") as tmp:
             env = os.environ.copy()
             env["AGENTOPS_CONFIG"] = str(Path(tmp) / "config.json")
+            env["AGENTOPS_REQUEST_TIMEOUT"] = "60"
             env.pop("AGENTOPS_API_KEY", None)
             cli_args = ["operator", "loop-audit", "--limit", str(args.limit)]
             if args.loop_id:

@@ -260,11 +260,6 @@ const AI_EMPLOYEES_CORE_PANEL_IDS = new Set([
   "operator_runtime_doctor",
   "operator_execution_mode",
   "operator_loop_control",
-  "operator_agent_loop_handoff",
-  "operator_loop_supervision",
-  "operator_command_center",
-  "operator_action_plan",
-  "operator_evidence_report",
   "agent_gateway_status",
 ]);
 
@@ -418,10 +413,7 @@ export function AIEmployees() {
     setDeferredError(null);
     const commanderProject = options?.commanderProject === undefined ? activeCommanderProject : options.commanderProject;
     try {
-      const coreContext = await loadAIEmployeesPanelSet([
-        ...AI_EMPLOYEES_CORE_PANEL_LOADERS,
-        { id: "operator_health", load: async () => ({ operatorHealth: await loadOperatorHealth(12, "") }) },
-      ], {
+      const coreContext = await loadAIEmployeesPanelSet(AI_EMPLOYEES_CORE_PANEL_LOADERS, {
         integrationInboxBucket,
         executionModeAdapter: customerTaskForm.adapter,
         executionModeConfirmRun: liveRuntimeConfirmed,
