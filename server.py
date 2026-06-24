@@ -24155,6 +24155,424 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
     }
 
 
+def agent_loop_handoff_current_code_summary(local_readiness_payload: dict) -> dict:
+    running = local_readiness_payload.get("running_instance") if isinstance(local_readiness_payload.get("running_instance"), dict) else {}
+    local_code = local_readiness_payload.get("local_code_check") if isinstance(local_readiness_payload.get("local_code_check"), dict) else {}
+    gates = local_readiness_payload.get("gates") if isinstance(local_readiness_payload.get("gates"), list) else []
+    freshness_gate = next(
+        (gate for gate in gates if isinstance(gate, dict) and gate.get("id") == "running_instance_freshness"),
+        {},
+    )
+    git_head = running.get("git_head_sha") or local_code.get("server_head_sha") or ""
+    current = (
+        running.get("current") is True
+        or local_code.get("ok") is True
+        or freshness_gate.get("status") == "current"
+        or freshness_gate.get("ok") is True
+    )
+    status = running.get("status") or local_code.get("status") or freshness_gate.get("status") or ("current" if current else "unknown")
+    strict_command = "agentops local readiness --require-current-code"
+    if git_head:
+        strict_command = f"{strict_command} --expect-head-sha {shlex.quote(str(git_head))}"
+    return {
+        "operation": "agent_loop_handoff_current_code",
+        "ok": bool(current),
+        "status": status,
+        "git_head_sha": git_head or None,
+        "git_branch": running.get("git_branch"),
+        "server_pid": running.get("server_pid"),
+        "server_started_after_source_mtime": (
+            running.get("server_started_after_source_mtime")
+            if "server_started_after_source_mtime" in running
+            else local_code.get("server_started_after_source_mtime")
+        ),
+        "command": "agentops local readiness --require-current-code",
+        "strict_command": strict_command,
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
+def agent_loop_handoff_live_product_summary(live_acceptance: dict, *, workspace_id: str, freshness_hours: int, required_adapters: list[str]) -> dict:
+    required = list(dict.fromkeys([adapter for adapter in required_adapters if adapter in {"hermes", "openclaw"}]))
+    adapters_payload = live_acceptance.get("adapters") if isinstance(live_acceptance.get("adapters"), dict) else {}
+    failures = []
+    items = []
+    for adapter in required:
+        item = adapters_payload.get(adapter) if isinstance(adapters_payload.get(adapter), dict) else {}
+        latest = item.get("latest_passing") if isinstance(item.get("latest_passing"), dict) else {}
+        fresh = item.get("status") == "fresh" and item.get("ok") is True and latest.get("pass") is not False
+        if not fresh:
+            failures.append(f"{adapter}: fresh live product evidence missing")
+        items.append({
+            "adapter": adapter,
+            "status": item.get("status") or "missing",
+            "fresh": bool(fresh),
+            "run_id": latest.get("run_id"),
+            "task_id": latest.get("task_id"),
+            "artifact_id": latest.get("artifact_id"),
+            "plan_evidence_manifest_id": latest.get("plan_evidence_manifest_id"),
+            "evidence": latest.get("evidence") if isinstance(latest.get("evidence"), dict) else {},
+            "command": f"agentops operator live-product-readiness --require-adapter {adapter}",
+            "token_omitted": True,
+        })
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_live_product_readiness",
+        "ok": not failures,
+        "product_readiness_proof": not failures,
+        "evidence_class": "manual_live_ledger_readback",
+        "workspace_id": workspace_id,
+        "freshness_hours": freshness_hours,
+        "required_adapters": required,
+        "live_acceptance_status": live_acceptance.get("status"),
+        "adapters": items,
+        "failures": failures,
+        "next_actions": [
+            command
+            for adapter in required
+            for command in [
+                f"agentops operator live-product-readiness --require-adapter {adapter}",
+                f"python3 scripts/customer_worker_real_runtime_acceptance.py --confirm-live --adapter {adapter} --hermes-max-tokens 512",
+            ]
+            if failures
+        ][:8],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
+def agent_loop_handoff_live_adapter(live_product: dict, adapter: str) -> dict:
+    adapters = live_product.get("adapters") if isinstance(live_product.get("adapters"), list) else []
+    item = next((row for row in adapters if isinstance(row, dict) and row.get("adapter") == adapter), {})
+    if not item and adapter not in {"hermes", "openclaw"}:
+        return {
+            "adapter": adapter,
+            "status": "not_required",
+            "fresh": True,
+            "command": "agentops operator live-product-readiness --require-adapter hermes --require-adapter openclaw",
+            "token_omitted": True,
+        }
+    return {
+        "adapter": adapter,
+        "status": item.get("status") or "missing",
+        "fresh": item.get("fresh") is True,
+        "run_id": item.get("run_id"),
+        "task_id": item.get("task_id"),
+        "artifact_id": item.get("artifact_id"),
+        "plan_evidence_manifest_id": item.get("plan_evidence_manifest_id"),
+        "evidence": item.get("evidence") if isinstance(item.get("evidence"), dict) else {},
+        "command": item.get("command") or f"agentops operator live-product-readiness --require-adapter {adapter}",
+        "token_omitted": True,
+    }
+
+
+def build_agent_loop_handoff_consumer(
+    conn: sqlite3.Connection,
+    headers,
+    qs: dict,
+    auth_ctx,
+    *,
+    adapter: str,
+    limit: int,
+    current_code: dict,
+    live_product: dict,
+    loop_id: str,
+    task_id: str,
+    agent_id: str,
+    query: str,
+    handoff_mode: str,
+    freshness_hours: int,
+) -> dict:
+    start_check_qs = {
+        "adapter": [adapter],
+        "limit": [str(limit)],
+        "loop_id": [loop_id] if loop_id else [],
+        "task_id": [task_id] if task_id else [],
+        "agent_id": [agent_id] if agent_id else [],
+        "q": [query],
+        "handoff_mode": [handoff_mode],
+        "full_handoff": ["true"] if handoff_mode == "full" else [],
+        "freshness_hours": [str(freshness_hours)],
+    }
+    start_check = operator_start_check(conn, headers, start_check_qs, auth_ctx)
+    acceptance = start_check.get("acceptance_packet") if isinstance(start_check.get("acceptance_packet"), dict) else {}
+    decision = acceptance.get("decision") if isinstance(acceptance.get("decision"), dict) else {}
+    start_safety = start_check.get("safety") if isinstance(start_check.get("safety"), dict) else {}
+    agent_loop = start_check.get("agent_loop_packet") if isinstance(start_check.get("agent_loop_packet"), dict) else {}
+    method_gates = agent_loop.get("method_gates") if isinstance(agent_loop.get("method_gates"), list) else []
+    method_gate_ids = [gate.get("id") for gate in method_gates if isinstance(gate, dict) and gate.get("id")]
+    phase_commands = agent_loop.get("phase_commands") if isinstance(agent_loop.get("phase_commands"), dict) else {}
+    loop_commands = agent_loop.get("commands") if isinstance(agent_loop.get("commands"), dict) else {}
+    launch_brief = start_check.get("launch_brief") if isinstance(start_check.get("launch_brief"), dict) else {}
+    launch_summary = launch_brief.get("summary") if isinstance(launch_brief.get("summary"), dict) else {}
+    live_adapter = agent_loop_handoff_live_adapter(live_product, adapter)
+    required_phase_commands = {"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}
+    blockers = []
+    attention = []
+    if current_code.get("ok") is not True:
+        blockers.append("current_code_not_current")
+    if start_safety.get("server_executes_shell") is not False:
+        blockers.append("server_shell_safety_missing")
+    if not method_gate_ids:
+        blockers.append("method_gates_missing")
+    if not required_phase_commands.issubset(set(phase_commands)):
+        blockers.append("phase_commands_incomplete")
+    if decision.get("can_preview_loop") is not True:
+        blockers.append("preview_loop_not_allowed")
+    if decision.get("can_confirm_bounded_loop") is not True:
+        attention.append("bounded_loop_confirm_not_ready")
+    if adapter in {"hermes", "openclaw"} and live_adapter.get("fresh") is not True:
+        attention.append("live_product_evidence_not_fresh")
+    if launch_summary.get("current_code_ok") is False:
+        blockers.append("launch_brief_current_code_not_ok")
+    status = "blocked" if blockers else "attention" if attention or start_check.get("status") == "attention" else "ready"
+    return {
+        "operation": "agent_loop_handoff_consumer",
+        "adapter": adapter,
+        "status": status,
+        "ready_for_handoff": not blockers,
+        "ready_for_bounded_loop_confirm": not blockers and decision.get("can_confirm_bounded_loop") is True,
+        "ready_for_live_dispatch": adapter not in {"hermes", "openclaw"} or (live_adapter.get("fresh") is True and decision.get("live_dispatch_allowed") is True),
+        "blockers": blockers,
+        "attention": attention,
+        "task_id": start_check.get("task_id") or launch_brief.get("task_id"),
+        "agent_id": start_check.get("agent_id") or launch_brief.get("agent_id"),
+        "start_check": {
+            "status": start_check.get("status"),
+            "command": loop_commands.get("start_check") or f"agentops operator start-check --adapter {adapter} --limit {limit}",
+            "current_phase": agent_loop.get("current_phase"),
+            "can_preview_loop": decision.get("can_preview_loop") is True,
+            "can_confirm_bounded_loop": decision.get("can_confirm_bounded_loop") is True,
+            "live_dispatch_requires_confirm_run": decision.get("live_dispatch_requires_confirm_run") is True,
+            "human_review_required": decision.get("human_review_required") is True,
+            "memory_review_required": decision.get("memory_review_required") is True,
+            "server_executes_shell": start_safety.get("server_executes_shell"),
+            "token_omitted": True,
+        },
+        "launch_brief": {
+            "status": launch_brief.get("status"),
+            "next_command": launch_brief.get("next_command"),
+            "verify_command": launch_brief.get("verify_command"),
+            "receipt_command": launch_brief.get("receipt_command"),
+            "current_code_ok": launch_summary.get("current_code_ok"),
+            "control_mode": launch_summary.get("control_mode"),
+            "recommended_step": launch_summary.get("recommended_step"),
+            "token_omitted": True,
+        },
+        "live_product_readiness": live_adapter,
+        "method": {
+            "phases": ["read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"],
+            "phase_commands": {key: phase_commands.get(key) for key in ["read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"]},
+            "method_gate_ids": method_gate_ids,
+            "required_gate_ids": [
+                "read_start_check",
+                "read_current_code",
+                "plan_agent_plan",
+                "retrieve_knowledge",
+                "compare_base_reference",
+                "preflight_adapter",
+                "execute_bounded_loop",
+                "verify_loop",
+                "record_memory_candidate",
+            ],
+            "token_omitted": True,
+        },
+        "commands": {
+            "agent_loop_handoff": f"agentops operator agent-loop-handoff --adapter {adapter} --limit {limit}",
+            "local_readiness": current_code.get("strict_command") or "agentops local readiness --require-current-code",
+            "start_check": loop_commands.get("start_check") or f"agentops operator start-check --adapter {adapter} --limit {limit}",
+            "launch_brief": f"agentops operator loop-launch-packet --brief --adapter {adapter} --limit {limit}",
+            "loop_driver_preview": loop_commands.get("preview_loop"),
+            "loop_driver_confirm": loop_commands.get("confirm_loop"),
+            "adapter_preflight": loop_commands.get("adapter_preflight") or f"agentops worker preflight --adapter {adapter}",
+            "live_product_readiness": live_adapter.get("command"),
+            "review_queue": loop_commands.get("review_queue") or "agentops review queue --limit 20",
+        },
+        "contract": "compact consumer-specific Agent Work Method handoff for local Hermes/OpenClaw/Codex loops; copy commands locally and never treat this read as permission for live execution without the confirm gates it names",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
+def operator_agent_loop_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    effective_headers = headers
+    if agent_gateway_is_bound_auth(auth_ctx):
+        effective_headers = dict(headers)
+        effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
+        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or effective_headers.get("X-AgentOps-Workspace-Id")
+        or "local-demo"
+    )
+    requested_adapters = qs.get("adapter") or []
+    adapters = list(dict.fromkeys([
+        coerce_choice(str(adapter), {"mock", "hermes", "openclaw"}, "mock")
+        for adapter in requested_adapters
+        if str(adapter or "").strip()
+    ] or ["hermes", "openclaw"]))
+    limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
+    freshness_hours = bounded_int((qs.get("freshness_hours") or ["72"])[0], 72, 1, 720)
+    loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
+    task_id = redact_text((qs.get("task_id") or [""])[0], 160)
+    agent_id = redact_text(
+        (qs.get("agent_id") or [""])[0]
+        or (auth_ctx or {}).get("agent_id")
+        or effective_headers.get("X-AgentOps-Agent-Id")
+        or "",
+        120,
+    )
+    query = redact_text((qs.get("q") or qs.get("query") or ["READ PLAN RETRIEVE COMPARE VERIFY RECORD"])[0], 240)
+    handoff_mode = str((qs.get("handoff_mode") or ["lightweight"])[0] or "lightweight").strip().lower()
+    if str((qs.get("full_handoff") or [""])[0]).strip().lower() in {"1", "true", "yes", "on"}:
+        handoff_mode = "full"
+    handoff_mode = "full" if handoff_mode == "full" else "lightweight"
+    include_codex = str((qs.get("include_codex") or ["true"])[0]).strip().lower() not in {"0", "false", "no", "off"}
+    local = local_readiness(conn, effective_headers, refresh_runtime=False)
+    current_code = agent_loop_handoff_current_code_summary(local)
+    live_required = [adapter for adapter in adapters if adapter in {"hermes", "openclaw"}] or ["hermes", "openclaw"]
+    live_acceptance = live_acceptance_readiness(conn, workspace_id, freshness_hours=freshness_hours, limit=limit)
+    live_product = agent_loop_handoff_live_product_summary(
+        live_acceptance,
+        workspace_id=workspace_id,
+        freshness_hours=freshness_hours,
+        required_adapters=live_required,
+    )
+    consumers = [
+        build_agent_loop_handoff_consumer(
+            conn,
+            effective_headers,
+            qs,
+            auth_ctx,
+            adapter=adapter,
+            limit=limit,
+            current_code=current_code,
+            live_product=live_product,
+            loop_id=loop_id,
+            task_id=task_id,
+            agent_id=agent_id,
+            query=query,
+            handoff_mode=handoff_mode,
+            freshness_hours=freshness_hours,
+        )
+        for adapter in adapters
+    ]
+    consumer_statuses = [item.get("status") for item in consumers]
+    codex_consumer = {
+        "operation": "agent_loop_handoff_codex_consumer",
+        "status": "ready" if current_code.get("ok") else "blocked",
+        "role": "repo_local_supervisor",
+        "uses_same_packets": True,
+        "commands": {
+            "read_handoff": f"agentops operator agent-loop-handoff --limit {limit}",
+            "read_handoff_api": f"GET /api/operator/agent-loop-handoff?limit={limit}",
+            "loop_control": f"agentops operator loop-control --limit {limit}",
+            "loop_launch_brief": f"agentops operator loop-launch-packet --brief --adapter {adapters[0] if adapters else 'mock'} --limit {limit}",
+            "loop_driver_preview": f"agentops operator loop-driver --adapter {adapters[0] if adapters else 'mock'} --max-steps 3 --limit {limit}",
+            "review_queue": "agentops review queue --limit 20",
+        },
+        "contract": "Codex supervises the same copy-only Method Block packet and should not bypass Agent Plan, retrieval, base comparison, receipt, approval, or memory-review gates.",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    } if include_codex else None
+    if any(status == "blocked" for status in consumer_statuses) or (codex_consumer and codex_consumer.get("status") == "blocked"):
+        status = "blocked"
+    elif any(status == "attention" for status in consumer_statuses) or live_product.get("ok") is not True:
+        status = "attention"
+    else:
+        status = "ready"
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_agent_loop_handoff",
+        "status": status,
+        "base_url": f"http://{headers.get('Host') or '127.0.0.1:8787'}",
+        "workspace_id": workspace_id,
+        "adapters": adapters,
+        "current_code": current_code,
+        "live_product_readiness": {
+            "ok": live_product.get("ok"),
+            "status": live_product.get("live_acceptance_status"),
+            "product_readiness_proof": live_product.get("product_readiness_proof"),
+            "required_adapters": live_product.get("required_adapters") or [],
+            "safety": live_product.get("safety") or {},
+            "token_omitted": True,
+        },
+        "summary": {
+            "consumers": len(consumers) + (1 if codex_consumer else 0),
+            "ready_consumers": sum(1 for item in consumers if item.get("status") == "ready") + (1 if codex_consumer and codex_consumer.get("status") == "ready" else 0),
+            "attention_consumers": sum(1 for item in consumers if item.get("status") == "attention"),
+            "blocked_consumers": sum(1 for item in consumers if item.get("status") == "blocked") + (1 if codex_consumer and codex_consumer.get("status") == "blocked" else 0),
+            "ready_for_handoff": all(item.get("ready_for_handoff") for item in consumers) and (not codex_consumer or codex_consumer.get("status") != "blocked"),
+            "ready_for_all_bounded_loop_confirm": all(item.get("ready_for_bounded_loop_confirm") for item in consumers),
+            "fresh_live_adapters": sum(1 for item in consumers if (item.get("live_product_readiness") or {}).get("fresh") is True and item.get("adapter") in {"hermes", "openclaw"}),
+            "current_code_ok": current_code.get("ok") is True,
+        },
+        "consumers": consumers,
+        "codex_consumer": codex_consumer,
+        "next_actions": [
+            command
+            for command in [
+                current_code.get("strict_command") if current_code.get("ok") is not True else None,
+                *(item.get("commands", {}).get("start_check") for item in consumers if item.get("status") != "ready"),
+                *(item.get("commands", {}).get("live_product_readiness") for item in consumers if item.get("attention")),
+            ]
+            if command
+        ][:8],
+        "contract": "read-only aggregate Agent Work Method handoff for Hermes/OpenClaw/Codex; it reads current-code readiness, live ledger proof, start-check, and compact launch briefs, but never runs adapters, executes shell on the server, mutates ledgers, approves reviews, or exposes raw prompts/responses/tokens",
+        "auth": {
+            "mode": (auth_ctx or {}).get("mode") or "unknown",
+            "required_scope": "tasks:read",
+            "workspace_id": workspace_id,
+            "agent_id": (auth_ctx or {}).get("agent_id") or agent_id or None,
+            "token_omitted": True,
+        },
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_content_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def operator_execution_mode(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     adapter = coerce_choice((qs.get("adapter") or ["mock"])[0], {"mock", "hermes", "openclaw"}, "mock")
@@ -26148,6 +26566,25 @@ class Handler(BaseHTTPRequestHandler):
                     qs,
                     self.headers,
                     lambda: operator_start_check(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
+                )
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/agent-loop-handoff":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = cached_read_model(
+                    "operator_agent_loop_handoff",
+                    qs,
+                    self.headers,
+                    lambda: operator_agent_loop_handoff(conn, self.headers, qs, auth_ctx),
                     auth_ctx,
                 )
                 conn.rollback()

@@ -1057,6 +1057,25 @@ def _build_agent_loop_handoff_consumer(
 
 def cmd_operator_agent_loop_handoff(args, client: AgentOpsClient) -> dict:
     adapters = list(dict.fromkeys(args.adapter or ["hermes", "openclaw"]))
+    server_query = {
+        "adapter": adapters,
+        "limit": args.limit,
+        "loop_id": args.loop_id,
+        "task_id": args.task_id,
+        "agent_id": args.agent_id,
+        "q": args.query,
+        "handoff_mode": args.handoff_mode,
+        "full_handoff": "true" if args.full_handoff else None,
+        "freshness_hours": args.freshness_hours,
+        "include_codex": "true" if args.include_codex else "false",
+    }
+    try:
+        payload = client.get("/api/operator/agent-loop-handoff", query=server_query)
+        if payload.get("operation") == "operator_agent_loop_handoff":
+            return payload
+    except RuntimeError as exc:
+        if "failed: 404" not in str(exc):
+            raise
     local_readiness = client.get("/api/local/readiness")
     current_code = _local_current_code_summary(local_readiness)
     live_required = [adapter for adapter in adapters if adapter in {"hermes", "openclaw"}]

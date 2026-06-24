@@ -590,6 +590,7 @@ EXPECTED_LIVE_API_MARKERS = {
     "worker_daemon_result_admission": "local_loop_admission_summary?: LocalLoopAdmissionSummary",
     "operator_loop_control_api_loader": "export async function loadOperatorLoopControl",
     "operator_loop_control_api_endpoint": "`/operator/loop-control?",
+    "operator_agent_loop_handoff_api": "/operator/agent-loop-handoff?${",
     "operator_runtime_doctor_payload_type": "export interface OperatorRuntimeDoctorPayload",
     "operator_runtime_doctor_loader_fn": "export async function loadOperatorRuntimeDoctor",
     "operator_runtime_doctor_endpoint": "/operator/runtime-doctor?${params.toString()}",

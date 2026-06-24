@@ -465,6 +465,20 @@ commands. It requires `tasks:read` for supplied Agent Gateway tokens/sessions
 and never starts runtimes, executes server shell, creates tasks, mutates
 ledgers/connectors, or exposes tokens/raw prompts/raw responses.
 
+`GET /api/operator/agent-loop-handoff` is the server-side canonical Agent Loop
+handoff matrix for Hermes, OpenClaw, Codex, and remote Agents. It accepts
+repeatable `adapter=mock|hermes|openclaw`, `limit=<n>`, optional `loop_id`,
+`task_id`, `agent_id`, `q`, `handoff_mode=lightweight|full`,
+`full_handoff=true`, `freshness_hours=<n>`, and `include_codex=false`. It
+aggregates current-code readiness, live Hermes/OpenClaw ledger proof,
+per-adapter `start-check` packets, launch briefs, Method Block phase commands,
+required gate ids, consumer-specific copyable commands, and a Codex supervisor
+block into one read-only response. It requires `tasks:read` for supplied Agent
+Gateway tokens/sessions, remains workspace-bound, rolls back auth read
+bookkeeping, and never starts runtimes, executes server shell, creates tasks,
+mutates ledgers/connectors, approves reviews, or exposes raw prompts, raw
+responses, raw content, credentials, or tokens.
+
 `GET /api/operator/live-acceptance` is the read-only Hermes/OpenClaw live
 customer-worker acceptance freshness projection. It samples recent local worker
 runs per adapter, including in-flight `agt_customer_worker_*` attempts before a

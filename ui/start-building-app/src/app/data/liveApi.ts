@@ -6833,6 +6833,12 @@ function liveAcceptanceAdapter(raw: Record<string, unknown>, adapter: string): O
 }
 
 export async function loadOperatorAgentLoopHandoff(limit = 8): Promise<OperatorAgentLoopHandoffPayload> {
+  const canonical = await optionalApiJson<Record<string, unknown>>(`/operator/agent-loop-handoff?${new URLSearchParams({ freshness_hours: "72", limit: String(limit) }).toString()}`, {
+    operation: "operator_agent_loop_handoff_unavailable",
+  });
+  if (canonical.operation === "operator_agent_loop_handoff") {
+    return canonical as unknown as OperatorAgentLoopHandoffPayload;
+  }
   const adapters: OperatorStartCheckAdapter[] = ["hermes", "openclaw"];
   const [localReadiness, liveAcceptance, launchPacket, ...startChecks] = await Promise.all([
     loadLocalReadiness(),

@@ -42,6 +42,8 @@ LEDGER_TABLES = [
     "agent_plans",
     "plan_evidence_manifests",
     "workflow_jobs",
+    "agent_gateway_tokens",
+    "agent_gateway_sessions",
 ]
 
 
@@ -113,6 +115,9 @@ def validate(payload: dict, failures: list[str]) -> None:
     require(safety.get("ledger_mutated") is False, f"ledger mutation proof missing: {safety}", failures)
     require(safety.get("live_execution_performed") is False, f"live execution proof missing: {safety}", failures)
     require(safety.get("server_executes_shell") is False, f"server shell proof missing: {safety}", failures)
+    require(safety.get("raw_prompt_omitted") is True, f"raw prompt omission proof missing: {safety}", failures)
+    require(safety.get("raw_response_omitted") is True, f"raw response omission proof missing: {safety}", failures)
+    require(safety.get("raw_content_omitted") is True, f"raw content omission proof missing: {safety}", failures)
     current_code = payload.get("current_code") or {}
     require(current_code.get("ok") is True, f"current code should pass on isolated server: {current_code}", failures)
     require("--require-current-code" in str(current_code.get("strict_command") or ""), f"strict current-code command missing: {current_code}", failures)
@@ -171,6 +176,10 @@ def main() -> int:
         try:
             wait_ready(base_url, proc)
             before = db_counts(db_path)
+            http_status, http_payload = http_json(base_url, "/api/operator/agent-loop-handoff?limit=5")
+            outputs.append(json.dumps(http_payload, ensure_ascii=False))
+            require(http_status == 200, f"HTTP agent-loop-handoff status {http_status}: {http_payload}", failures)
+            validate(http_payload, failures)
             cli_env = env.copy()
             cli_env["AGENTOPS_BASE_URL"] = base_url
             result = subprocess.run(
@@ -186,6 +195,8 @@ def main() -> int:
             require(result.returncode == 0, f"agent-loop-handoff failed: {result.stderr or result.stdout}", failures)
             payload = json.loads(result.stdout or "{}")
             validate(payload, failures)
+            require(payload.get("summary") == http_payload.get("summary"), f"CLI/HTTP summary drift: cli={payload.get('summary')} http={http_payload.get('summary')}", failures)
+            require(payload.get("adapters") == http_payload.get("adapters"), f"CLI/HTTP adapter drift: cli={payload.get('adapters')} http={http_payload.get('adapters')}", failures)
             after = db_counts(db_path)
             require(before == after, f"agent-loop-handoff mutated ledger: before={before} after={after}", failures)
             require(not leaked("\n".join(outputs)), "agent-loop-handoff leaked token-like material", failures)

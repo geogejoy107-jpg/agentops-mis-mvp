@@ -665,6 +665,27 @@ Hermes/OpenClaw it may report `status=attention` when adapter binaries,
 credentials, or fresh live product proof are missing; that is still useful loop
 input rather than a failed CLI call.
 
+### `agentops operator agent-loop-handoff`
+
+Reads the canonical multi-consumer loop handoff matrix for Hermes, OpenClaw,
+Codex, or remote Agents:
+
+```bash
+agentops operator agent-loop-handoff --limit 8
+agentops operator agent-loop-handoff --adapter hermes --limit 8
+agentops operator agent-loop-handoff --adapter openclaw --no-codex
+```
+
+Maps to `GET /api/operator/agent-loop-handoff`. The response combines
+current-code readiness, fresh live Hermes/OpenClaw ledger proof, per-adapter
+`start-check`, compact launch brief state, Method Block phase commands and gate
+ids, copyable preflight/preview/confirm/verify/record commands, and the Codex
+supervisor block. The command is read-only and copy-only: it does not run
+Hermes/OpenClaw, execute server shell, create tasks, approve gates, mutate
+ledgers, or print raw prompts, raw responses, raw content, worker tokens,
+session tokens, or API keys. Supplied Agent Gateway tokens/sessions require
+`tasks:read` and remain workspace-bound.
+
 ### `agentops operator execution-mode`
 
 Reads the current dispatch mode before a human or agent starts a customer task:
