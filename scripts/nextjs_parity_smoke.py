@@ -131,6 +131,7 @@ def main() -> int:
     for path in required_files:
         require(path.exists(), f"missing Next.js parity file: {path.relative_to(ROOT)}")
 
+    server_text = read_text(ROOT / "server.py")
     route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "[...path]" / "route.ts")
     approvals_review_route_text = read_text(NEXT_APP / "app" / "workspace" / "approvals" / "review" / "route.ts")
     memory_review_route_text = read_text(NEXT_APP / "app" / "workspace" / "memory" / "review" / "route.ts")
@@ -422,6 +423,12 @@ def main() -> int:
     require("CommercialParityPage" in commercial_page_text and "Capability matrix" in commercial_page_text and "Fail-closed gates" in commercial_page_text, "commercial parity page must expose capability gates")
     require("billing call" in commercial_page_text and "token omitted" in commercial_page_text, "commercial parity page must expose safety proof")
     require("loadServerCommercialEntitlements" in server_lib_text, "commercial parity page must load server entitlement state")
+    require("/api/commercial/release-status" in server_text and "commercial_release_status_api_v1" in server_text, "backend must expose read-only commercial release status")
+    require("/commercial/release-status" in lib_text and "CommercialReleaseStatusPayload" in lib_text and "loadCommercialReleaseStatus" in lib_text, "commercial release status parity data is missing")
+    require("loadServerCommercialReleaseStatus" in server_lib_text and "/commercial/release-status" in server_lib_text, "commercial parity page must load server release status")
+    require("Release promotion" in commercial_page_text and "Exact-head CI" in commercial_page_text and "Current evidence" in commercial_page_text, "commercial page must expose release promotion and current evidence state")
+    require("commercial-release-status" in commercial_page_text and "commercial-release-promotion-preflight" in commercial_page_text and "commercial-exact-head-ci-command" in commercial_page_text and "commercial-current-evidence-gates" in commercial_page_text, "commercial page must expose release status smoke markers")
+    require("commercial_release_status_api_v1" in commercial_page_text and "commercial_current_evidence_status_v1" in commercial_page_text and "commercial_release_promotion_preflight_v1" in commercial_page_text, "commercial page must render release status contracts")
     require("GovernanceParityPage" in governance_page_text and "Production readiness" in governance_page_text and "Session governance" in governance_page_text, "governance parity page must expose production/session governance")
     require("session id omitted" in governance_page_text and "Audit evidence" in governance_page_text, "governance parity page must avoid raw session ids and expose audit evidence")
     require("Remote enrollment approval" in governance_page_text and "approval_policies" in governance_page_text and "billing call" in governance_page_text, "governance parity page must expose approval-policies entitlement proof")

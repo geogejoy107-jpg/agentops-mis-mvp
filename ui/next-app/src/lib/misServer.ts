@@ -6,6 +6,7 @@ import type {
   AgentSummary,
   BasesPayload,
   CommercialEntitlementStatus,
+  CommercialReleaseStatusPayload,
   CustomerDeliveryBoardPayload,
   CustomerWorkerPreparedActionListPayload,
   CustomerProjectIndexPayload,
@@ -155,6 +156,14 @@ export async function loadServerCustomerProjectReport(projectId: string): Promis
 export async function loadServerCommercialEntitlements(): Promise<ServerLoadResult<CommercialEntitlementStatus>> {
   try {
     return { data: await serverMisJson<CommercialEntitlementStatus>("/commercial/entitlements"), error: null };
+  } catch (err) {
+    return { data: {}, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerCommercialReleaseStatus(): Promise<ServerLoadResult<CommercialReleaseStatusPayload>> {
+  try {
+    return { data: await serverMisJson<CommercialReleaseStatusPayload>("/commercial/release-status"), error: null };
   } catch (err) {
     return { data: {}, error: err instanceof Error ? err.message : String(err) };
   }

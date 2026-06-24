@@ -592,6 +592,27 @@ def main() -> int:
             "Pixel Office / Dispatch has explicit route retirement evidence while keeping Vite route retirement fail-closed",
         ),
         check(
+            "nextjs_commercial_release_status_surface_exists",
+            file_contains("server.py", "/api/commercial/release-status")
+            and file_contains("server.py", "commercial_release_status_api_v1")
+            and file_contains("server.py", "network_called")
+            and file_contains("ui/next-app/src/lib/mis.ts", "CommercialReleaseStatusPayload")
+            and file_contains("ui/next-app/src/lib/mis.ts", "/commercial/release-status")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "loadServerCommercialReleaseStatus")
+            and file_contains("ui/next-app/app/workspace/commercial/page.tsx", "loadServerCommercialReleaseStatus")
+            and file_contains("ui/next-app/src/components/CommercialPage.tsx", "Release promotion")
+            and file_contains("ui/next-app/src/components/CommercialPage.tsx", "Exact-head CI")
+            and file_contains("ui/next-app/src/components/CommercialPage.tsx", "Current evidence")
+            and file_contains("ui/next-app/src/components/CommercialPage.tsx", "commercial-release-status")
+            and file_contains("ui/next-app/src/components/CommercialPage.tsx", "commercial-release-promotion-preflight")
+            and file_contains("ui/next-app/src/components/CommercialPage.tsx", "commercial-exact-head-ci-command")
+            and file_contains("ui/next-app/src/components/CommercialPage.tsx", "commercial-current-evidence-gates")
+            and file_contains("scripts/nextjs_parity_smoke.py", "commercial_release_status_api_v1")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "Release promotion")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "/api/commercial/release-status"),
+            "Next commercial page renders read-only release promotion, exact-head CI command, and current-evidence blockers from the MIS API without network/live execution",
+        ),
+        check(
             "vite_browser_snapshot_surface_exists",
             file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "vite_playwright_snapshot_smoke.py")
             and file_contains("ui/start-building-app/vite.config.ts", "VITE_AGENTOPS_PROXY_TARGET")

@@ -289,6 +289,135 @@ def entitlement_status(headers) -> dict:
     }
 
 
+def commercial_release_git_state() -> dict:
+    def git_output(*args: str) -> str:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+            check=False,
+        )
+        return (proc.stdout or proc.stderr).strip()
+
+    status_lines = [line for line in git_output("status", "--porcelain=v1").splitlines() if line]
+    upstream = git_output("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+    upstream_available = bool(upstream and "fatal:" not in upstream.lower())
+    ahead = behind = None
+    if upstream_available:
+        raw_counts = git_output("rev-list", "--left-right", "--count", "@{u}...HEAD").split()
+        if len(raw_counts) == 2 and all(item.isdigit() for item in raw_counts):
+            behind, ahead = int(raw_counts[0]), int(raw_counts[1])
+    return {
+        "branch": git_output("branch", "--show-current"),
+        "head": git_output("rev-parse", "--short", "HEAD"),
+        "upstream": upstream if upstream_available else "",
+        "ahead": ahead,
+        "behind": behind,
+        "worktree_clean": not status_lines,
+        "tracked_dirty_count": len([line for line in status_lines if not line.startswith("??")]),
+        "untracked_count": len([line for line in status_lines if line.startswith("??")]),
+        "dirty_count": len(status_lines),
+    }
+
+
+def commercial_release_status(headers) -> dict:
+    docs_dir = ROOT / "docs"
+    handoff = read_json_file(docs_dir / "COMMERCIAL_HANDOFF_STATUS.json", {})
+    current = read_json_file(docs_dir / "COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", {})
+    preflight = read_json_file(docs_dir / "COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", {})
+    receipts = read_json_file(docs_dir / "COMMERCIAL_EVIDENCE_RECEIPTS.json", {})
+    current_summary = current.get("evidence_summary") if isinstance(current.get("evidence_summary"), dict) else {}
+    receipt_summary = receipts.get("receipt_summary") if isinstance(receipts.get("receipt_summary"), dict) else {}
+    exact_head_command = "python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head"
+    strict_promotion_command = "python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence --require-promotion-ready"
+    source_documents = [
+        {"path": "docs/COMMERCIAL_HANDOFF_STATUS.json", "contract_id": handoff.get("contract_id"), "status": handoff.get("status")},
+        {"path": "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", "contract_id": current.get("contract_id"), "status": current.get("status")},
+        {"path": "docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", "contract_id": preflight.get("contract_id"), "status": preflight.get("status")},
+        {"path": "docs/COMMERCIAL_EVIDENCE_RECEIPTS.json", "contract_id": receipts.get("contract_id"), "status": receipts.get("status")},
+    ]
+    return {
+        "provider": "agentops-commercial",
+        "operation": "commercial_release_status",
+        "contract_id": "commercial_release_status_api_v1",
+        "status": preflight.get("status") or handoff.get("status") or "blocked_release_promotion_required",
+        "workspace_id": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo") if headers else "local-demo",
+        "generated_at": now_iso(),
+        "ci_safe": True,
+        "read_only": True,
+        "release_complete": bool(handoff.get("release_complete")),
+        "commercial_handoff_allowed": bool(handoff.get("commercial_handoff_allowed")),
+        "ready_to_merge": bool(handoff.get("ready_to_merge")),
+        "git_state": commercial_release_git_state(),
+        "source_documents": source_documents,
+        "promotion_preflight": {
+            "contract_id": preflight.get("contract_id"),
+            "status": preflight.get("status"),
+            "release_promotion_allowed": bool(preflight.get("release_promotion_allowed")),
+            "release_grade_update_allowed": bool(preflight.get("release_grade_update_allowed")),
+            "promotion_requires": preflight.get("promotion_requires") if isinstance(preflight.get("promotion_requires"), dict) else {},
+            "source_contracts": list(preflight.get("source_contracts") or []),
+            "known_blockers": list(preflight.get("known_blockers") or []),
+            "required_commands": list(preflight.get("required_commands") or []),
+            "must_not_use": list(preflight.get("must_not_use") or []),
+        },
+        "current_evidence_status": {
+            "contract_id": current.get("contract_id"),
+            "status": current.get("status"),
+            "gate_count": current_summary.get("gate_count"),
+            "ready_gate_count": current_summary.get("ready_gate_count"),
+            "gates_requiring_current_evidence": list(current_summary.get("gates_requiring_current_evidence") or []),
+            "gates_with_local_receipts": list(current_summary.get("gates_with_local_receipts") or []),
+            "gates_with_release_grade_receipts": list(current_summary.get("gates_with_release_grade_receipts") or []),
+            "exact_head_ci_verified": bool(current_summary.get("exact_head_ci_verified")),
+            "remote_sync_verified": bool(current_summary.get("remote_sync_verified")),
+            "clean_worktree_verified": bool(current_summary.get("clean_worktree_verified")),
+            "postgres_required": bool(current_summary.get("postgres_required")),
+            "browser_required": bool(current_summary.get("browser_required")),
+            "real_runtime_required": bool(current_summary.get("real_runtime_required")),
+            "heavy_evidence_not_executed_by_default": bool(current_summary.get("heavy_evidence_not_executed_by_default")),
+        },
+        "receipt_summary": {
+            "gates_with_local_receipts": list(receipt_summary.get("gates_with_local_receipts") or []),
+            "gates_with_release_grade_receipts": list(receipt_summary.get("gates_with_release_grade_receipts") or []),
+            "gates_missing_local_receipts": list(receipt_summary.get("gates_missing_local_receipts") or []),
+            "exact_head_ci_verified": bool(receipt_summary.get("exact_head_ci_verified")),
+            "remote_sync_verified": bool(receipt_summary.get("remote_sync_verified")),
+            "clean_worktree_verified": bool(receipt_summary.get("clean_worktree_verified")),
+        },
+        "external_exact_head_ci": {
+            "contract_id": "commercial_exact_head_ci_evidence_v1",
+            "checked": False,
+            "network_called": False,
+            "exact_head_ci_verified": False,
+            "command": exact_head_command,
+            "required_for_promotion": True,
+        },
+        "commands": {
+            "include_external_ci_evidence": "python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence",
+            "strict_promotion": strict_promotion_command,
+            "exact_head_ci": exact_head_command,
+        },
+        "blockers": list(handoff.get("explicit_blockers") or preflight.get("known_blockers") or []),
+        "safety": {
+            "read_only": True,
+            "ci_safe": True,
+            "live_execution_performed": False,
+            "network_called": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "private_transcripts_omitted": True,
+            "billing_call_performed": False,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def commercial_capability_enabled(capability: str) -> bool:
     return bool(entitlement_status(None).get("capabilities", {}).get(capability))
 
@@ -14551,6 +14680,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/commercial/entitlements":
                 payload = entitlement_status(self.headers)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/commercial/release-status":
+                payload = commercial_release_status(self.headers)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/demo/readiness":

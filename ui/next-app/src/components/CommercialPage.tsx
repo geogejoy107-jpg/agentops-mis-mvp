@@ -1,6 +1,6 @@
-import { LockKeyhole, ShieldCheck, ToggleLeft } from "lucide-react";
+import { GitBranch, ListChecks, LockKeyhole, Rocket, ShieldAlert, ShieldCheck, ToggleLeft } from "lucide-react";
 import { AppFrame } from "./AppFrame";
-import type { CommercialEntitlementStatus } from "@/lib/mis";
+import type { CommercialEntitlementStatus, CommercialReleaseStatusPayload } from "@/lib/mis";
 
 function boolText(value: unknown) {
   if (value === true) return "true";
@@ -16,13 +16,35 @@ function titleize(value: string) {
   return value.replace(/_/g, " ");
 }
 
+function compactStatus(value: unknown) {
+  return titleize(String(value || "unknown")).replace("blocked release promotion required", "blocked promotion");
+}
+
+function displayList(items: string[] | undefined, limit = 5) {
+  return (items || []).filter(Boolean).slice(0, limit);
+}
+
 export function CommercialParityPage({
   entitlements,
   error,
-}: Readonly<{ entitlements: CommercialEntitlementStatus; error?: string | null }>) {
+  releaseStatus,
+  releaseError,
+}: Readonly<{
+  entitlements: CommercialEntitlementStatus;
+  error?: string | null;
+  releaseStatus?: CommercialReleaseStatusPayload;
+  releaseError?: string | null;
+}>) {
   const capabilities = Object.entries(entitlements.capabilities || {}).sort(([left], [right]) => left.localeCompare(right));
   const gates = [...(entitlements.gates || [])].sort((left, right) => String(left.capability || "").localeCompare(String(right.capability || "")));
   const enabledCount = capabilities.filter(([, enabled]) => enabled).length;
+  const release = releaseStatus || {};
+  const preflight = release.promotion_preflight || {};
+  const currentEvidence = release.current_evidence_status || {};
+  const exactHead = release.external_exact_head_ci || {};
+  const blockers = release.blockers?.length ? release.blockers : preflight.known_blockers || [];
+  const currentGates = displayList(currentEvidence.gates_requiring_current_evidence, 6);
+  const releaseGradeGates = release.receipt_summary?.gates_with_release_grade_receipts || [];
 
   return (
     <AppFrame>
@@ -36,19 +58,117 @@ export function CommercialParityPage({
       </header>
 
       {error ? <div className="banner error">Entitlements unavailable: {error}</div> : null}
+      {releaseError ? <div className="banner error">Release status unavailable: {releaseError}</div> : null}
 
-      <section className="metrics">
+      <section className="metrics six">
         {[
           ["Edition", entitlements.edition_label || entitlements.edition || "Free Local"],
           ["Workspace", entitlements.workspace_id || "local_demo"],
           ["Enabled caps", `${enabledCount}/${capabilities.length}`],
           ["Fail-closed gates", gates.length],
+          ["Release gate", compactStatus(release.status)],
+          ["Exact-head CI", boolText(currentEvidence.exact_head_ci_verified || exactHead.exact_head_ci_verified)],
         ].map(([label, value]) => (
           <div className="metric compactMetric" key={String(label)}>
             <span>{label}</span>
             <strong>{String(value)}</strong>
           </div>
         ))}
+      </section>
+
+      <section className="grid">
+        <div className="panel" data-smoke="commercial-release-status">
+          <div className="panelHeader">
+            <h2><Rocket size={14} /> Release promotion</h2>
+            <span>{compactStatus(release.status)}</span>
+          </div>
+          <div className="proofStrip">
+            <span>{release.contract_id || "commercial_release_status_api_v1"}</span>
+            <span>release complete {boolText(release.release_complete)}</span>
+            <span>handoff {boolText(release.commercial_handoff_allowed)}</span>
+            <span>ready to merge {boolText(release.ready_to_merge)}</span>
+          </div>
+          <div className="list compactList">
+            {displayList(blockers, 4).map((blocker) => (
+              <div className="row" key={blocker}>
+                <div>
+                  <strong>{titleize(blocker)}</strong>
+                  <span>promotion blocker</span>
+                </div>
+                <span className="status statusWarn">blocked</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="panel" data-smoke="commercial-exact-head-ci-command">
+          <div className="panelHeader">
+            <h2><GitBranch size={14} /> Exact-head CI</h2>
+            <span>{boolText(exactHead.checked)}</span>
+          </div>
+          <div className="proofStrip">
+            <span>{exactHead.contract_id || "commercial_exact_head_ci_evidence_v1"}</span>
+            <span>network called {boolText(exactHead.network_called)}</span>
+            <span>verified {boolText(currentEvidence.exact_head_ci_verified || exactHead.exact_head_ci_verified)}</span>
+          </div>
+          <p className="subtle"><code>{exactHead.command || release.commands?.exact_head_ci || "python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head"}</code></p>
+        </div>
+      </section>
+
+      <section className="grid">
+        <div className="panel" data-smoke="commercial-release-promotion-preflight">
+          <div className="panelHeader">
+            <h2><ShieldAlert size={14} /> Promotion preflight</h2>
+            <span>{preflight.contract_id || "commercial_release_promotion_preflight_v1"}</span>
+          </div>
+          <div className="proofStrip">
+            <span>promotion {boolText(preflight.release_promotion_allowed)}</span>
+            <span>release-grade update {boolText(preflight.release_grade_update_allowed)}</span>
+            <span>worktree clean {boolText(release.git_state?.worktree_clean)}</span>
+          </div>
+          <div className="list compactList">
+            {displayList(preflight.source_contracts, 4).map((contract) => (
+              <div className="row" key={contract}>
+                <div>
+                  <strong>{contract}</strong>
+                  <span>source contract</span>
+                </div>
+                <span className="status statusWarn">required</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="panel" data-smoke="commercial-current-evidence-gates">
+          <div className="panelHeader">
+            <h2><ListChecks size={14} /> Current evidence</h2>
+            <span>{currentEvidence.contract_id || "commercial_current_evidence_status_v1"}</span>
+          </div>
+          <div className="proofStrip">
+            <span>local receipts {(currentEvidence.gates_with_local_receipts || []).length}</span>
+            <span>release-grade receipts {releaseGradeGates.length}</span>
+            <span>real runtime required {boolText(currentEvidence.real_runtime_required)}</span>
+          </div>
+          <div className="list compactList">
+            {currentGates.length ? currentGates.map((gate) => (
+              <div className="row" key={gate}>
+                <div>
+                  <strong>{titleize(gate)}</strong>
+                  <span>current evidence required</span>
+                </div>
+                <span className="status statusWarn">pending</span>
+              </div>
+            )) : (
+              <div className="row">
+                <div>
+                  <strong>No current evidence gaps</strong>
+                  <span>release-grade receipts can be checked</span>
+                </div>
+                <span className="status statusGood">ready</span>
+              </div>
+            )}
+          </div>
+        </div>
       </section>
 
       <section className="grid">

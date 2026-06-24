@@ -67,7 +67,7 @@ ROUTES = [
     ("/workspace/agents", ["Agents", "Production security", "Remote enrollment request", "session token omitted", "session create blocked", "live daemon blocked", "Adapter readiness"]),
     ("/workspace/workers", ["Worker Console", "Worker fleet lanes", "Fleet hygiene plan", "worker_console_read_model_parity", "session token omitted", "live daemon blocked", "fleet cleanup preview only", "Worker Console coverage boundary", "Agent Gateway CLI/API/MCP canonical for token issue/rotate/revoke", "Operator execution mode", "operator execution-mode readback"]),
     ("/workspace/agents/agt_cos", ["Agent Detail", "Per-agent performance", "Recent Runs"]),
-    ("/workspace/commercial", ["Commercial", "Capability matrix", "Fail-closed gates"]),
+    ("/workspace/commercial", ["Commercial", "Capability matrix", "Fail-closed gates", "Release promotion", "Exact-head CI", "Current evidence", "commercial_release_status_api_v1"]),
     ("/workspace/governance", ["Governance", "Production readiness", "Session governance"]),
     ("/workspace/deployment", ["Deployment", "Deployment readiness verdict", "Storage backend migration gate", "Storage and retention", "audit_retention_policy_v1", "audit_retention_controls_v1"]),
     ("/workspace/pixel-office", ["Pixel Office", "Pixel Operating Map", "Owner dispatch workflow", "Local brief controls", "commercial-safe geometry", "live runtime disabled"]),

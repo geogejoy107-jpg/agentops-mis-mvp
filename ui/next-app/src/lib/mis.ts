@@ -954,6 +954,98 @@ export type CommercialEntitlementStatus = {
   live_execution_performed?: boolean;
 };
 
+export type CommercialReleaseStatusPayload = {
+  provider?: string;
+  operation?: string;
+  contract_id?: string;
+  status?: string;
+  workspace_id?: string;
+  generated_at?: string;
+  ci_safe?: boolean;
+  read_only?: boolean;
+  release_complete?: boolean;
+  commercial_handoff_allowed?: boolean;
+  ready_to_merge?: boolean;
+  git_state?: {
+    branch?: string;
+    head?: string;
+    upstream?: string;
+    ahead?: number | null;
+    behind?: number | null;
+    worktree_clean?: boolean;
+    tracked_dirty_count?: number;
+    untracked_count?: number;
+    dirty_count?: number;
+  };
+  source_documents?: {
+    path?: string;
+    contract_id?: string;
+    status?: string;
+  }[];
+  promotion_preflight?: {
+    contract_id?: string;
+    status?: string;
+    release_promotion_allowed?: boolean;
+    release_grade_update_allowed?: boolean;
+    promotion_requires?: Record<string, boolean | string | number | null>;
+    source_contracts?: string[];
+    known_blockers?: string[];
+    required_commands?: string[];
+    must_not_use?: string[];
+  };
+  current_evidence_status?: {
+    contract_id?: string;
+    status?: string;
+    gate_count?: number;
+    ready_gate_count?: number;
+    gates_requiring_current_evidence?: string[];
+    gates_with_local_receipts?: string[];
+    gates_with_release_grade_receipts?: string[];
+    exact_head_ci_verified?: boolean;
+    remote_sync_verified?: boolean;
+    clean_worktree_verified?: boolean;
+    postgres_required?: boolean;
+    browser_required?: boolean;
+    real_runtime_required?: boolean;
+    heavy_evidence_not_executed_by_default?: boolean;
+  };
+  receipt_summary?: {
+    gates_with_local_receipts?: string[];
+    gates_with_release_grade_receipts?: string[];
+    gates_missing_local_receipts?: string[];
+    exact_head_ci_verified?: boolean;
+    remote_sync_verified?: boolean;
+    clean_worktree_verified?: boolean;
+  };
+  external_exact_head_ci?: {
+    contract_id?: string;
+    checked?: boolean;
+    network_called?: boolean;
+    exact_head_ci_verified?: boolean;
+    command?: string;
+    required_for_promotion?: boolean;
+  };
+  commands?: {
+    include_external_ci_evidence?: string;
+    strict_promotion?: string;
+    exact_head_ci?: string;
+  };
+  blockers?: string[];
+  safety?: {
+    read_only?: boolean;
+    ci_safe?: boolean;
+    live_execution_performed?: boolean;
+    network_called?: boolean;
+    token_omitted?: boolean;
+    raw_prompt_omitted?: boolean;
+    raw_response_omitted?: boolean;
+    private_transcripts_omitted?: boolean;
+    billing_call_performed?: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+};
+
 export type StorageBackendStatus = {
   provider?: string;
   status?: string;
@@ -1607,6 +1699,10 @@ export async function loadCustomerProjectReport(projectId: string): Promise<Cust
 
 export async function loadCommercialEntitlements(): Promise<CommercialEntitlementStatus> {
   return misJson<CommercialEntitlementStatus>("/commercial/entitlements");
+}
+
+export async function loadCommercialReleaseStatus(): Promise<CommercialReleaseStatusPayload> {
+  return misJson<CommercialReleaseStatusPayload>("/commercial/release-status");
 }
 
 export async function loadStorageBackendStatus(): Promise<StorageBackendStatus> {

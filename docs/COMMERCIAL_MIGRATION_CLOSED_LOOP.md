@@ -18,6 +18,11 @@ The target state is:
   parallel Next.js App Router migration track; it starts with the workspace
   cockpit and `/api/mis/*` proxy, then replaces routes only after the UI/API
   parity gate is green.
+- Commercial release status is also exposed through read-only
+  `/api/commercial/release-status` and rendered on Next `/workspace/commercial`
+  so release promotion, exact-head CI, and current-evidence blockers are visible
+  in the migration track without running network, live runtime, or billing calls
+  during page load.
 - Commercial release replaces demo-only visual assets with original Pixel Office
   assets and keeps Star-Office assets out of public/commercial distribution.
 - Every migration step has a reversible branch, a named verification command,
