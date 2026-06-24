@@ -997,6 +997,10 @@ def compact_worker_loop_supervision_gate(payload: dict, *, adapter: str, task_id
     safety = item.get("safety") if isinstance(item.get("safety"), dict) else {}
     next_commands = item.get("next_commands") if isinstance(item.get("next_commands"), dict) else {}
     commands = item.get("commands") if isinstance(item.get("commands"), dict) else {}
+    local_deployment = item.get("local_deployment") if isinstance(item.get("local_deployment"), dict) else {}
+    local_run_path = local_deployment.get("local_run_path") if isinstance(local_deployment.get("local_run_path"), dict) else {}
+    service_managed_loop = local_deployment.get("service_managed_loop") if isinstance(local_deployment.get("service_managed_loop"), dict) else {}
+    local_deployment_safety = local_run_path.get("safety") if isinstance(local_run_path.get("safety"), dict) else {}
     gates = [
         {
             "id": gate.get("id"),
@@ -1031,6 +1035,14 @@ def compact_worker_loop_supervision_gate(payload: dict, *, adapter: str, task_id
         "blockers": blockers,
         "attention": [str(entry) for entry in (item.get("attention") or []) if entry],
         "review_pressure": item.get("review_pressure") if isinstance(item.get("review_pressure"), dict) else {},
+        "local_deployment": {
+            "local_run_path_present": bool(local_run_path),
+            "service_managed_loop_present": bool(service_managed_loop),
+            "recommended_adapter": local_run_path.get("recommended_adapter"),
+            "service_managed_adapter": service_managed_loop.get("adapter"),
+            "server_executes_shell": local_deployment_safety.get("server_executes_shell") is True,
+            "token_omitted": True,
+        },
         "blocked_gate_ids": [gate.get("id") for gate in gates if gate.get("ok") is not True and gate.get("status") == "blocked"],
         "gates": gates,
         "recommended_next": commands.get("recommended_next") or next_commands.get("recommended_next"),

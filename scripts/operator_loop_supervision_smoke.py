@@ -105,6 +105,18 @@ def require(condition: bool, message: str, failures: list[str]) -> None:
         failures.append(message)
 
 
+def require_adapter_command(value: object, adapter: str, label: str, failures: list[str]) -> None:
+    text = str(value or "")
+    require(
+        f"--adapter {adapter}" in text or f"--require-adapter {adapter}" in text,
+        f"{label} missing {adapter} adapter binding: {text}",
+        failures,
+    )
+    for other in {"hermes", "openclaw", "mock"} - {adapter}:
+        require(f"--adapter {other}" not in text, f"{label} leaked {other} adapter: {text}", failures)
+        require(f"--require-adapter {other}" not in text, f"{label} leaked {other} live-readiness adapter: {text}", failures)
+
+
 def validate(payload: dict, failures: list[str]) -> None:
     require(payload.get("operation") == "operator_loop_supervision", f"wrong operation: {payload}", failures)
     require(payload.get("provider") == "agentops-operator", f"wrong provider: {payload}", failures)
@@ -138,14 +150,30 @@ def validate(payload: dict, failures: list[str]) -> None:
         require(item_safety.get("ledger_mutated") is False, f"{adapter} ledger safety missing: {item_safety}", failures)
         require(item_safety.get("server_executes_shell") is False, f"{adapter} shell safety missing: {item_safety}", failures)
         gate_ids = {gate.get("id") for gate in (item.get("gates") or [])}
-        require({"handoff_ready", "current_code", "method_gates", "preview_loop", "bounded_confirm", "record_pressure", "server_shell_boundary"}.issubset(gate_ids), f"{adapter} gates missing: {gate_ids}", failures)
+        require({"handoff_ready", "current_code", "method_gates", "preview_loop", "local_deployment", "bounded_confirm", "record_pressure", "server_shell_boundary"}.issubset(gate_ids), f"{adapter} gates missing: {gate_ids}", failures)
+        local_gate = next((gate for gate in (item.get("gates") or []) if gate.get("id") == "local_deployment"), {})
+        require(local_gate.get("ok") is True, f"{adapter} local deployment gate not passing: {local_gate}", failures)
+        require(local_gate.get("recommended_adapter") == adapter, f"{adapter} local deployment recommended adapter mismatch: {local_gate}", failures)
+        require(local_gate.get("service_managed_adapter") == adapter, f"{adapter} service-managed gate adapter mismatch: {local_gate}", failures)
         commands = item.get("commands") or {}
         require(str(commands.get("handoff") or "").startswith(f"agentops operator agent-loop-handoff --adapter {adapter}"), f"{adapter} handoff command missing: {commands}", failures)
         require(str(commands.get("start_check") or "").startswith(f"agentops operator start-check --adapter {adapter}"), f"{adapter} start-check command missing: {commands}", failures)
         require(str(commands.get("preview_loop") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"{adapter} preview command missing: {commands}", failures)
         require("--confirm-loop" in str(commands.get("confirm_loop") or ""), f"{adapter} confirm-loop command missing: {commands}", failures)
+        require_adapter_command(commands.get("preview_loop"), adapter, f"{adapter} preview command", failures)
+        require_adapter_command(commands.get("confirm_loop"), adapter, f"{adapter} confirm command", failures)
         require(str(commands.get("record_review") or "").startswith("agentops review queue"), f"{adapter} record command missing: {commands}", failures)
         require(commands.get("recommended_next"), f"{adapter} recommended command missing: {commands}", failures)
+        local_deployment = item.get("local_deployment") or {}
+        local_run_path = local_deployment.get("local_run_path") or {}
+        service_managed = local_deployment.get("service_managed_loop") or {}
+        service_commands = service_managed.get("commands") or {}
+        require(local_run_path.get("operation") == "local_run_path_compact", f"{adapter} local run path missing: {local_deployment}", failures)
+        require(local_run_path.get("recommended_adapter") == adapter, f"{adapter} local run path adapter mismatch: {local_run_path}", failures)
+        require((local_run_path.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} local run path shell proof missing: {local_run_path}", failures)
+        require(service_managed.get("adapter") == adapter, f"{adapter} service-managed adapter mismatch: {service_managed}", failures)
+        for key in ["service_check", "service_control_preview", "record_verified_receipt", "record_control_readback"]:
+            require_adapter_command(service_commands.get(key), adapter, f"{adapter} service-managed {key}", failures)
         run_start_admission = item.get("run_start_admission") or {}
         require(run_start_admission.get("operation") == "operator_loop_supervision_run_start_admission", f"{adapter} run_start admission operation missing: {run_start_admission}", failures)
         require(run_start_admission.get("gateway_endpoint") == "POST /api/agent-gateway/runs/start", f"{adapter} gateway endpoint missing: {run_start_admission}", failures)

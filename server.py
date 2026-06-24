@@ -24965,10 +24965,22 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
     method_gate_ids = method.get("method_gate_ids") if isinstance(method.get("method_gate_ids"), list) else []
     required_gate_ids = method.get("required_gate_ids") if isinstance(method.get("required_gate_ids"), list) else []
     missing_method_gates = [gate for gate in required_gate_ids if gate not in method_gate_ids]
+    local_deployment = consumer.get("local_deployment") if isinstance(consumer.get("local_deployment"), dict) else {}
+    local_run_path = local_deployment.get("local_run_path") if isinstance(local_deployment.get("local_run_path"), dict) else {}
+    service_managed_loop = local_deployment.get("service_managed_loop") if isinstance(local_deployment.get("service_managed_loop"), dict) else {}
+    local_deployment_safety = local_run_path.get("safety") if isinstance(local_run_path.get("safety"), dict) else {}
+    local_deployment_adapter_ok = (
+        adapter not in {"hermes", "openclaw"}
+        or (
+            local_run_path.get("recommended_adapter") == adapter
+            and service_managed_loop.get("adapter") == adapter
+            and local_deployment_safety.get("server_executes_shell") is False
+        )
+    )
     current_code_ok = current_code.get("ok") is True
     server_shell = safety.get("server_executes_shell") is True or start_check.get("server_executes_shell") is True
-    can_preview = bool(consumer.get("ready_for_handoff")) and start_check.get("can_preview_loop") is True and not server_shell
-    can_confirm = bool(consumer.get("ready_for_bounded_loop_confirm")) and current_code_ok and not server_shell and not missing_method_gates
+    can_preview = bool(consumer.get("ready_for_handoff")) and start_check.get("can_preview_loop") is True and not server_shell and local_deployment_adapter_ok
+    can_confirm = bool(consumer.get("ready_for_bounded_loop_confirm")) and current_code_ok and not server_shell and not missing_method_gates and local_deployment_adapter_ok
     review_pressure = {
         "human_review_required": start_check.get("human_review_required") is True,
         "memory_review_required": start_check.get("memory_review_required") is True,
@@ -24996,7 +25008,7 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
         or review_pressure["pending_approvals"]
         or review_pressure["memory_candidates"]
     )
-    if blockers or not current_code_ok or server_shell or missing_method_gates:
+    if blockers or not current_code_ok or server_shell or missing_method_gates or not local_deployment_adapter_ok:
         status = "blocked"
         recommended_next_command = commands.get("start_check") or f"agentops operator start-check --adapter {adapter} --limit {limit}"
     elif can_confirm and should_record:
@@ -25042,6 +25054,16 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
             "token_omitted": True,
         },
         {
+            "id": "local_deployment",
+            "ok": local_deployment_adapter_ok,
+            "status": "pass" if local_deployment_adapter_ok else "blocked",
+            "recommended_adapter": local_run_path.get("recommended_adapter"),
+            "service_managed_adapter": service_managed_loop.get("adapter"),
+            "server_executes_shell": local_deployment_safety.get("server_executes_shell") is True,
+            "command": commands.get("handoff") or commands.get("agent_loop_handoff"),
+            "token_omitted": True,
+        },
+        {
             "id": "bounded_confirm",
             "ok": can_confirm,
             "status": "pass" if can_confirm else "attention",
@@ -25073,10 +25095,13 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
         "can_confirm_bounded_loop": can_confirm,
         "should_record_before_execute": should_record,
         "ready_for_live_dispatch": consumer.get("ready_for_live_dispatch") is True,
-        "blockers": blockers + ([f"missing_method_gate:{gate}" for gate in missing_method_gates] if missing_method_gates else []),
+        "blockers": blockers
+        + ([f"missing_method_gate:{gate}" for gate in missing_method_gates] if missing_method_gates else [])
+        + ([] if local_deployment_adapter_ok else ["local_deployment_adapter_mismatch"]),
         "attention": attention + (["record_before_execute"] if should_record else []),
         "review_pressure": review_pressure,
         "gates": gates,
+        "local_deployment": local_deployment,
         "agent_loop_packet": start_check_payload.get("agent_loop_packet") if isinstance(start_check_payload.get("agent_loop_packet"), dict) else None,
         "next_commands": {
             "safe_read_commands": [

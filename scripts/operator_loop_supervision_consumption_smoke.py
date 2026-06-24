@@ -62,8 +62,33 @@ def blocked_supervision(adapter: str, *, task_id: str | None = None, agent_id: s
                 "blockers": ["smoke_blocked_supervision"],
                 "attention": [],
                 "review_pressure": {"token_omitted": True},
+                "local_deployment": {
+                    "local_run_path": {
+                        "operation": "local_run_path_compact",
+                        "recommended_adapter": adapter,
+                        "safety": {
+                            "read_only": True,
+                            "ledger_mutated": False,
+                            "live_execution_performed": False,
+                            "server_executes_shell": False,
+                            "token_omitted": True,
+                        },
+                        "token_omitted": True,
+                    },
+                    "service_managed_loop": {
+                        "operation": "local_service_managed_loop_readiness",
+                        "adapter": adapter,
+                        "commands": {
+                            "service_check": f"agentops worker service-check --manager launchd --adapter {adapter}",
+                            "record_control_readback": f"agentops operator record-control-readback --source operator_loop_supervision.{adapter} --control-readback-json '{{}}' --confirm-record",
+                        },
+                        "token_omitted": True,
+                    },
+                    "token_omitted": True,
+                },
                 "gates": [
                     {"id": "bounded_confirm", "ok": False, "status": "blocked", "confirm_required": True, "token_omitted": True},
+                    {"id": "local_deployment", "ok": True, "status": "pass", "recommended_adapter": adapter, "service_managed_adapter": adapter, "server_executes_shell": False, "token_omitted": True},
                     {"id": "server_shell_boundary", "ok": True, "status": "pass", "server_executes_shell": False, "token_omitted": True},
                 ],
                 "commands": {
@@ -288,6 +313,12 @@ def verify_worker_consumption(failures: list[str]) -> dict:
     require(result.get("run_start_attempted") is False, f"worker should report pre-run_start block: {result}", failures)
     require(gate.get("operation") == "worker_loop_supervision_gate", f"worker gate missing: {result}", failures)
     require(gate.get("ok") is False and gate.get("can_confirm_bounded_loop") is False, f"worker gate should block confirm: {gate}", failures)
+    worker_local = gate.get("local_deployment") or {}
+    require(worker_local.get("local_run_path_present") is True, f"worker gate lost local run path summary: {gate}", failures)
+    require(worker_local.get("service_managed_loop_present") is True, f"worker gate lost service-managed summary: {gate}", failures)
+    require(worker_local.get("recommended_adapter") == "hermes", f"worker gate local adapter mismatch: {gate}", failures)
+    require(worker_local.get("service_managed_adapter") == "hermes", f"worker gate service adapter mismatch: {gate}", failures)
+    require(worker_local.get("server_executes_shell") is False, f"worker gate local shell proof mismatch: {gate}", failures)
     require(not heartbeat_posts, f"worker should not heartbeat a run that was never started: {heartbeat_posts}", failures)
     require(any((payload.get("metadata") or {}).get("loop_supervision") for payload in audit_posts), "worker audit missing loop supervision metadata", failures)
     return result
