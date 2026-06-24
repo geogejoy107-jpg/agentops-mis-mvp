@@ -1013,6 +1013,16 @@ export type CommercialReleaseStatusPayload = {
     required_commands?: string[];
     must_not_use?: string[];
   };
+  release_grade_rerun_bundle?: {
+    contract_id?: string;
+    status?: string;
+    ci_safe?: boolean;
+    read_only?: boolean;
+    bundle_requires?: Record<string, boolean | string | number | null>;
+    source_contracts?: string[];
+    required_commands?: string[];
+    must_not_use?: string[];
+  };
   current_evidence_status?: {
     contract_id?: string;
     status?: string;
@@ -1066,6 +1076,8 @@ export type CommercialReleaseStatusPayload = {
     strict_promotion_packet?: string;
     release_grade_receipt_plan?: string;
     strict_release_grade_receipt_plan?: string;
+    release_grade_rerun_bundle?: string;
+    strict_release_grade_rerun_bundle?: string;
     release_status_external_ci_api?: string;
   };
   blockers?: string[];

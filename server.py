@@ -407,6 +407,7 @@ def commercial_release_status(headers, qs=None) -> dict:
     preflight = read_json_file(docs_dir / "COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", {})
     promotion_packet = read_json_file(docs_dir / "COMMERCIAL_RELEASE_PROMOTION_PACKET.json", {})
     receipt_plan = read_json_file(docs_dir / "COMMERCIAL_RELEASE_GRADE_RECEIPT_PLAN.json", {})
+    rerun_bundle = read_json_file(docs_dir / "COMMERCIAL_RELEASE_GRADE_RERUN_BUNDLE.json", {})
     receipts = read_json_file(docs_dir / "COMMERCIAL_EVIDENCE_RECEIPTS.json", {})
     current_summary = current.get("evidence_summary") if isinstance(current.get("evidence_summary"), dict) else {}
     receipt_summary = receipts.get("receipt_summary") if isinstance(receipts.get("receipt_summary"), dict) else {}
@@ -426,6 +427,7 @@ def commercial_release_status(headers, qs=None) -> dict:
         {"path": "docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", "contract_id": preflight.get("contract_id"), "status": preflight.get("status")},
         {"path": "docs/COMMERCIAL_RELEASE_PROMOTION_PACKET.json", "contract_id": promotion_packet.get("contract_id"), "status": promotion_packet.get("status")},
         {"path": "docs/COMMERCIAL_RELEASE_GRADE_RECEIPT_PLAN.json", "contract_id": receipt_plan.get("contract_id"), "status": receipt_plan.get("status")},
+        {"path": "docs/COMMERCIAL_RELEASE_GRADE_RERUN_BUNDLE.json", "contract_id": rerun_bundle.get("contract_id"), "status": rerun_bundle.get("status")},
         {"path": "docs/COMMERCIAL_EVIDENCE_RECEIPTS.json", "contract_id": receipts.get("contract_id"), "status": receipts.get("status")},
     ]
     return {
@@ -473,6 +475,16 @@ def commercial_release_status(headers, qs=None) -> dict:
             "required_commands": list(receipt_plan.get("required_commands") or []),
             "must_not_use": list(receipt_plan.get("must_not_use") or []),
         },
+        "release_grade_rerun_bundle": {
+            "contract_id": rerun_bundle.get("contract_id"),
+            "status": rerun_bundle.get("status"),
+            "ci_safe": bool(rerun_bundle.get("ci_safe")),
+            "read_only": bool(rerun_bundle.get("read_only")),
+            "bundle_requires": rerun_bundle.get("bundle_requires") if isinstance(rerun_bundle.get("bundle_requires"), dict) else {},
+            "source_contracts": list(rerun_bundle.get("source_contracts") or []),
+            "required_commands": list(rerun_bundle.get("required_commands") or []),
+            "must_not_use": list(rerun_bundle.get("must_not_use") or []),
+        },
         "current_evidence_status": {
             "contract_id": current.get("contract_id"),
             "status": current.get("status"),
@@ -509,6 +521,8 @@ def commercial_release_status(headers, qs=None) -> dict:
             "strict_promotion_packet": "python3 scripts/commercial_release_promotion_packet.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence --require-promotion-packet-ready",
             "release_grade_receipt_plan": "python3 scripts/commercial_release_grade_receipt_plan.py --include-external-ci-evidence",
             "strict_release_grade_receipt_plan": "python3 scripts/commercial_release_grade_receipt_plan.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence --require-plan-ready",
+            "release_grade_rerun_bundle": "python3 scripts/commercial_release_grade_rerun_bundle.py --include-external-ci-evidence",
+            "strict_release_grade_rerun_bundle": "python3 scripts/commercial_release_grade_rerun_bundle.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence --require-bundle-ready",
             "release_status_external_ci_api": "/api/commercial/release-status?include_external_ci_evidence=1",
         },
         "blockers": list(handoff.get("explicit_blockers") or preflight.get("known_blockers") or []),
