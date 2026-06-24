@@ -91,6 +91,7 @@ jobs:
           python3 scripts/osbi_v1_1_registry_smoke.py
           python3 scripts/mis_context_engineer_smoke.py
           python3 scripts/evaluation_scorecard_smoke.py
+          python3 scripts/ui_research_spec_smoke.py
           python3 scripts/commander_repo_map_smoke.py
           python3 scripts/commander_coding_project_template_smoke.py
           python3 scripts/commander_coding_workspace_smoke.py
