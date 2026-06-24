@@ -1693,6 +1693,56 @@ Safety observations:
   internal tool events are ingested or high-risk actions are routed through
   prepared actions.
 
+## Minimal Local Live Demo Slice
+
+`scripts/live_worker_loop_demo_slice.py` is the single entrypoint for recording
+or self-dogfooding the local real worker loop. It deliberately does not use the
+saved `agentops` CLI config, because a stale saved base URL can point to an old
+demo server. Pass the current server URL explicitly or through
+`AGENTOPS_BASE_URL`.
+
+Plan-only path:
+
+```bash
+python3 scripts/live_worker_loop_demo_slice.py \
+  --base-url http://127.0.0.1:8787
+```
+
+This prints the exact readiness, start-check, service-closure receipt, real-run
+and readback commands, probes local readiness if the server is reachable, and
+performs no live runtime execution and no ledger mutation. The service-closure
+commands are the fast path for the `record_first` / service-control receipt gate
+that can block confirmed Hermes/OpenClaw dispatch before runtime execution.
+
+Confirmed live path:
+
+```bash
+python3 scripts/live_worker_loop_demo_slice.py \
+  --base-url http://127.0.0.1:8787 \
+  --confirm-live \
+  --adapter hermes \
+  --adapter openclaw \
+  --request-timeout 720 \
+  --hermes-timeout 600 \
+  --hermes-max-tokens 512
+```
+
+This wraps the existing product path:
+
+```text
+local readiness probe
+  -> operator start-check --adapter hermes/openclaw
+  -> operator service-closure --fast --run-service-check --confirm-record
+  -> customer_worker_real_runtime_acceptance.py --confirm-live
+  -> v1_5_live_product_readiness_smoke.py readback
+  -> local readiness reread
+```
+
+The output is a compact redacted JSON proof with run/task/artifact/approval and
+plan-evidence ids only. It does not store raw prompts, raw responses, tokens,
+credentials, private messages, or full transcripts in docs or committed state.
+Mock/offline evidence remains CI fallback only.
+
 ## 2026-06-24 Current-Code Isolated Product Evidence
 
 Latest current-code evidence used an isolated `/tmp` SQLite database and a
