@@ -537,6 +537,7 @@ def commercial_release_status(headers, qs=None) -> dict:
             "strict_release_grade_rerun_bundle": "python3 scripts/commercial_release_grade_rerun_bundle.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence --require-bundle-ready",
             "release_grade_rerun_bundle_api": "/api/commercial/release-grade-rerun-bundle",
             "release_grade_receipt_recording": "python3 scripts/commercial_release_grade_receipt_recording.py --include-external-ci-evidence",
+            "confirmed_release_grade_receipt_recording": "python3 scripts/commercial_release_grade_receipt_recording.py --recording-payload-json /tmp/receipt-recording-payload.json --receipts-path docs/COMMERCIAL_EVIDENCE_RECEIPTS.json --confirm-recording",
             "strict_release_grade_receipt_recording": "python3 scripts/commercial_release_grade_receipt_recording.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence --require-recording-ready",
             "release_grade_receipt_recording_api": "/api/commercial/release-grade-receipt-recording",
             "release_status_external_ci_api": "/api/commercial/release-status?include_external_ci_evidence=1",

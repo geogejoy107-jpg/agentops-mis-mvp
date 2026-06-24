@@ -1047,6 +1047,7 @@ export type CommercialReleaseGradeReceiptRecordingRequest = {
   state?: string;
   target?: string;
   target_path?: string;
+  target_index?: number | null;
   operation?: string;
   mutates_receipts?: boolean;
   writes_release_grade_receipt?: boolean;
@@ -1097,8 +1098,30 @@ export type CommercialReleaseGradeReceiptRecordingPayload = {
     mutating_write_count?: number;
     requests_requiring_rerun?: number;
     requests_requiring_confirmation?: number;
+    transaction_apply_ready?: boolean;
   };
   phase_gate_recording_requests?: CommercialReleaseGradeReceiptRecordingRequest[];
+  recording_apply_checks?: Record<string, boolean | string | number | null>;
+  recording_transaction?: {
+    transaction_id?: string;
+    operation?: string;
+    target?: string;
+    confirm_flag?: string;
+    recording_payload_flag?: string;
+    receipts_path_flag?: string;
+    selected_gate_ids?: string[];
+    selected_gate_count?: number;
+    apply_ready?: boolean;
+    applies_by_default?: boolean;
+    applied?: boolean;
+    mutates_receipts_when_confirmed?: boolean;
+    writes_release_grade_receipts?: boolean;
+    allows_handoff_or_merge?: boolean;
+    requires_operator_confirmation?: boolean;
+    confirm_command_template?: string;
+    blocked_reasons?: string[];
+    apply_checks?: Record<string, boolean | string | number | null>;
+  };
   blockers?: string[];
   required_commands?: string[];
   must_not_use?: string[];
@@ -1257,6 +1280,7 @@ export type CommercialReleaseStatusPayload = {
     strict_release_grade_rerun_bundle?: string;
     release_grade_rerun_bundle_api?: string;
     release_grade_receipt_recording?: string;
+    confirmed_release_grade_receipt_recording?: string;
     strict_release_grade_receipt_recording?: string;
     release_grade_receipt_recording_api?: string;
     release_status_external_ci_api?: string;

@@ -32,7 +32,12 @@ def require(condition: bool, message: str) -> None:
 
 
 def read_text(path: Path) -> str:
-    require(path.exists(), f"missing file: {path.relative_to(ROOT)}")
+    display_path = str(path)
+    try:
+        display_path = str(path.relative_to(ROOT))
+    except ValueError:
+        pass
+    require(path.exists(), f"missing file: {display_path}")
     return path.read_text(encoding="utf-8", errors="replace")
 
 
@@ -70,6 +75,23 @@ def runtime_fixture(path: Path) -> None:
     }), encoding="utf-8")
 
 
+def transaction_fixture(payload: dict[str, Any], path: Path) -> None:
+    clone = json.loads(json.dumps(payload))
+    checks = clone.setdefault("recording_checks", {})
+    checks["exact_head_ci_verified"] = True
+    checks["real_runtime_acceptance_verified"] = True
+    checks["current_runtime_evidence_supplied"] = True
+    clone["blockers"] = ["operator_confirmation_required"]
+    for item in clone.get("phase_gate_recording_requests") or []:
+        item["missing_commands"] = []
+        item["requires_operator_confirmation"] = True
+        item["writes_release_grade_receipt"] = False
+        item["mutates_receipts"] = False
+        item["operation"] = "preview_only_json_patch"
+        item["blockers"] = ["operator_confirmation_required", "receipt_head_not_current"]
+    path.write_text(json.dumps(clone, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
+
 def main() -> int:
     spec = read_json(RECORDING_JSON)
     require(spec.get("contract_id") == CONTRACT_ID, "recording contract mismatch")
@@ -97,6 +119,10 @@ def main() -> int:
         "--include-external-ci-evidence",
         "--runtime-acceptance-json",
         "--require-recording-ready",
+        "--confirm-recording",
+        "--recording-payload-json",
+        "explicit_confirm_receipt_recording_transaction",
+        "apply_recording_transaction",
     ]:
         require(needle in script_text, f"recording script missing {needle}")
 
@@ -118,6 +144,13 @@ def main() -> int:
     summary = payload.get("recording_summary") or {}
     require(summary.get("recording_request_count") == len(REQUIRED_GATE_IDS), "recording request count mismatch")
     require(summary.get("mutating_write_count") == 0, "recording must report zero mutating writes")
+    transaction = payload.get("recording_transaction") or {}
+    require(transaction.get("operation") == "explicit_confirm_receipt_recording_transaction", "recording transaction preview missing")
+    require(transaction.get("applies_by_default") is False, "recording transaction must not apply by default")
+    require(transaction.get("applied") is False, "recording transaction preview must not apply")
+    require(transaction.get("confirm_flag") == "--confirm-recording", "recording transaction confirm flag missing")
+    require(transaction.get("writes_release_grade_receipts") is False, "recording transaction must not write release-grade receipts")
+    require(transaction.get("allows_handoff_or_merge") is False, "recording transaction must not allow handoff/merge")
     require("operator_confirmation_required" in set(payload.get("blockers") or []), "operator confirmation blocker missing")
     for item in payload.get("phase_gate_recording_requests") or []:
         require(item.get("recording_id") == f"record_{item.get('gate_id')}", f"{item.get('gate_id')} recording id mismatch")
@@ -128,7 +161,11 @@ def main() -> int:
         require(item.get("rerun_commands"), f"{item.get('gate_id')} rerun commands missing")
         patch = item.get("json_patch_preview") or []
         require(patch, f"{item.get('gate_id')} patch preview missing")
-        require(all(str(op.get("path", "")).startswith(f"/phase_gate_receipts/{item.get('gate_id')}/") for op in patch), f"{item.get('gate_id')} patch path mismatch")
+        require(all(str(op.get("path", "")).startswith("/phase_gate_receipts/") for op in patch), f"{item.get('gate_id')} patch path mismatch")
+
+    denied = run_recording("--confirm-recording")
+    require(denied.returncode != 0, "confirmed recording must fail without exact-head/runtime evidence")
+    require(before_hash == file_hash(RECEIPTS_JSON), "failed confirmed recording must not mutate receipts")
 
     with tempfile.TemporaryDirectory() as tmp:
         runtime_path = Path(tmp) / "runtime_acceptance.json"
@@ -141,6 +178,30 @@ def main() -> int:
         require(checks.get("current_runtime_evidence_supplied") is True, "runtime fixture must be current-session evidence")
         strict = run_recording("--runtime-acceptance-json", str(runtime_path), "--require-current-runtime-evidence", "--require-recording-ready")
         require(strict.returncode != 0, "strict receipt recording must remain blocked")
+
+        synthetic_payload = Path(tmp) / "recording_payload.json"
+        transaction_fixture(payload, synthetic_payload)
+        temp_receipts = Path(tmp) / "receipts.json"
+        temp_receipts.write_text(RECEIPTS_JSON.read_text(encoding="utf-8"), encoding="utf-8")
+        temp_before = file_hash(temp_receipts)
+        preview_only = run_recording("--recording-payload-json", str(synthetic_payload), "--receipts-path", str(temp_receipts))
+        require(preview_only.returncode == 0, f"payload transaction preview failed: {preview_only.stdout}{preview_only.stderr}")
+        require(file_hash(temp_receipts) == temp_before, "recording payload without confirmation must not mutate temp receipts")
+        applied = run_recording("--recording-payload-json", str(synthetic_payload), "--receipts-path", str(temp_receipts), "--confirm-recording")
+        require(applied.returncode == 0, f"confirmed temp recording failed: {applied.stdout}{applied.stderr}")
+        applied_payload = json.loads(applied.stdout)
+        result = applied_payload.get("recording_transaction_result") or {}
+        require(result.get("applied") is True, "confirmed temp recording result must apply")
+        require(result.get("mutates_receipts") is True, "confirmed temp recording must declare receipt mutation")
+        require(result.get("writes_release_grade_receipts") is False, "confirmed temp recording must not write release-grade receipts")
+        require(result.get("release_complete") is False and result.get("commercial_handoff_allowed") is False and result.get("ready_to_merge") is False, "confirmed temp recording must keep release/handoff/merge false")
+        temp_after = read_json(temp_receipts)
+        require(temp_after.get("release_complete") is False, "temp recording must keep release_complete false")
+        require(temp_after.get("commercial_handoff_allowed") is False, "temp recording must keep handoff false")
+        require(temp_after.get("ready_to_merge") is False, "temp recording must keep merge false")
+        require(temp_after.get("receipt_recording_transactions"), "temp recording must append transaction audit metadata")
+        receipt_heads = {item.get("verified_head") for item in temp_after.get("phase_gate_receipts") or []}
+        require(payload.get("current_git_head") in receipt_heads, "confirmed temp recording must record current head")
 
     require(before_hash == file_hash(RECEIPTS_JSON), "recording smoke must leave receipts unchanged")
     print(json.dumps({

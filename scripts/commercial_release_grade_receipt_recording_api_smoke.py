@@ -52,6 +52,13 @@ def main() -> int:
     summary = payload.get("recording_summary") or {}
     require(summary.get("recording_request_count") == len(REQUIRED_GATE_IDS), "API recording request count mismatch")
     require(summary.get("mutating_write_count") == 0, "API must report zero mutating writes")
+    transaction = payload.get("recording_transaction") or {}
+    require(transaction.get("operation") == "explicit_confirm_receipt_recording_transaction", "API recording transaction preview missing")
+    require(transaction.get("applies_by_default") is False, "API transaction must not apply by default")
+    require(transaction.get("applied") is False, "API transaction preview must not apply")
+    require(transaction.get("confirm_flag") == "--confirm-recording", "API transaction confirm flag missing")
+    require(transaction.get("writes_release_grade_receipts") is False, "API transaction must not write release-grade receipts")
+    require(transaction.get("allows_handoff_or_merge") is False, "API transaction must not allow handoff/merge")
     requests = payload.get("phase_gate_recording_requests") or []
     require([item.get("gate_id") for item in requests] == REQUIRED_GATE_IDS, "API gate coverage mismatch")
     for item in requests:

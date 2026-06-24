@@ -678,7 +678,14 @@ Must be true:
   explicit operator-confirmation blockers, and `mutating_write_count=0`. The
   current recording details are exposed through read-only
   `GET /api/commercial/release-grade-receipt-recording` and rendered on Next
-  `/workspace/commercial` as Receipt recording preview. Verify with
+  `/workspace/commercial` as Receipt recording preview. It also carries an
+  `explicit_confirm_receipt_recording_transaction` with a CLI-only
+  `--confirm-recording` path: browser/API surfaces may display the transaction
+  and command, but do not execute it. Confirmed recording requires a reviewed
+  `--recording-payload-json`, a chosen `--receipts-path`, exact-head CI, and
+  current real Hermes/OpenClaw runtime evidence; even then it records
+  local-current receipt fields only and leaves release-grade receipts,
+  commercial handoff, and merge readiness false. Verify with
   `python3 scripts/commercial_release_grade_receipt_recording_smoke.py` and
   `python3 scripts/commercial_release_grade_receipt_recording_api_smoke.py`;
   strict recording readiness uses

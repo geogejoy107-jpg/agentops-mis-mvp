@@ -11,6 +11,14 @@ request: the current-head rerun commands, the target
 would be recorded only after the operator supplies fresh evidence. Every patch
 operation is `preview_only_json_patch` in this preview layer.
 
+The packet also carries an
+`explicit_confirm_receipt_recording_transaction` preview. This is a CLI-only
+write path: API and Next surfaces may display the transaction and command, but
+they do not execute it. A confirmed recording requires `--confirm-recording`,
+an explicit `--recording-payload-json`, and a `--receipts-path`; it still never
+writes release-grade receipts, never flips release/handoff/merge readiness, and
+requires exact-head CI plus current real Hermes/OpenClaw runtime evidence.
+
 Default mode is offline, read-only, and CI-safe:
 
 ```bash
@@ -21,6 +29,12 @@ Add current-head GitHub Actions evidence:
 
 ```bash
 python3 scripts/commercial_release_grade_receipt_recording.py --include-external-ci-evidence
+```
+
+After saving a reviewed payload, explicitly record to a chosen receipt ledger:
+
+```bash
+python3 scripts/commercial_release_grade_receipt_recording.py --recording-payload-json /tmp/receipt-recording-payload.json --receipts-path docs/COMMERCIAL_EVIDENCE_RECEIPTS.json --confirm-recording
 ```
 
 Add a fresh real Hermes/OpenClaw runtime acceptance JSON:
@@ -46,10 +60,12 @@ Recording readiness requires `all_gate_recording_patches_materialized=true`,
 `remote_sync_verified=true`, `release_complete=true`,
 `commercial_handoff_allowed=true`, and `ready_to_merge=true`.
 
-The packet never mutates `COMMERCIAL_EVIDENCE_RECEIPTS.json`, never executes
+Default mode never mutates `COMMERCIAL_EVIDENCE_RECEIPTS.json`, never executes
 rerun commands, never promotes release-grade receipts, never runs live agents,
-and never changes release, handoff, or merge readiness. It is a recording
-request and patch preview, not the write path.
+and never changes release, handoff, or merge readiness. Confirmed CLI recording
+can mutate only the selected receipt ledger path after the operator supplies a
+reviewed payload and `--confirm-recording`; it remains a local-current receipt
+recording path, not a release-grade promotion path.
 
 Invalid recording evidence includes `manual_receipt_promotion_without_ci`,
 `direct_json_edit_without_recording_preview`,

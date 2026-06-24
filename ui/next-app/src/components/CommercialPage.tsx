@@ -62,6 +62,7 @@ export function CommercialParityPage({
   const receiptRecordingSpec = release.release_grade_receipt_recording || {};
   const receiptRecordingDetail = receiptRecording || {};
   const receiptRecordingSummary = receiptRecordingDetail.recording_summary || {};
+  const receiptRecordingTransaction = receiptRecordingDetail.recording_transaction || {};
   const gateRecordingRequests = (receiptRecordingDetail.phase_gate_recording_requests || []).slice(0, 5);
   const currentEvidence = release.current_evidence_status || {};
   const exactHead = release.external_exact_head_ci || {};
@@ -316,6 +317,13 @@ export function CommercialParityPage({
             <span>patch previews {String(receiptRecordingSummary.patch_preview_count ?? 0)}</span>
             <span>confirmations {String(receiptRecordingSummary.requests_requiring_confirmation ?? 0)}</span>
           </div>
+          <div className="proofStrip" data-smoke="commercial-receipt-recording-transaction">
+            <span>Transaction preview {boolText(Boolean(receiptRecordingTransaction.operation))}</span>
+            <span>applies by default {boolText(receiptRecordingTransaction.applies_by_default)}</span>
+            <span>CLI confirm only {receiptRecordingTransaction.confirm_flag || "--confirm-recording"}</span>
+            <span>release-grade writes {boolText(receiptRecordingTransaction.writes_release_grade_receipts)}</span>
+          </div>
+          <p className="subtle"><code>{receiptRecordingTransaction.confirm_command_template || "python3 scripts/commercial_release_grade_receipt_recording.py --recording-payload-json /tmp/receipt-recording-payload.json --receipts-path docs/COMMERCIAL_EVIDENCE_RECEIPTS.json --confirm-recording"}</code></p>
           <div className="list compactList">
             {gateRecordingRequests.length ? gateRecordingRequests.map((request) => (
               <div className="row" data-smoke="commercial-receipt-recording-gate-detail" key={request.gate_id || request.recording_id}>
