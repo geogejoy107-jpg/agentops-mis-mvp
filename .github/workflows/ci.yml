@@ -108,6 +108,7 @@ jobs:
           python3 scripts/operator_loop_driver_smoke.py
           python3 scripts/operator_loop_launch_packet_smoke.py
           python3 scripts/operator_research_lab_packet_smoke.py
+          python3 scripts/operator_research_lab_consumption_smoke.py
           python3 scripts/operator_agent_loop_handoff_smoke.py
           python3 scripts/operator_loop_supervision_smoke.py
           python3 scripts/operator_loop_supervision_consumption_smoke.py

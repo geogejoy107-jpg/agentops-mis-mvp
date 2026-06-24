@@ -19300,6 +19300,231 @@ def operator_research_lab_packet(conn: sqlite3.Connection, headers, qs=None, aut
     return packet
 
 
+def operator_research_lab_consumption(conn: sqlite3.Connection, body: dict, headers=None) -> tuple[dict, int]:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    adapter = coerce_choice(body.get("adapter") or "hermes", {"mock", "hermes", "openclaw"}, "hermes")
+    profile = redact_text(body.get("profile") or body.get("research_profile") or "", 120)
+    limit = bounded_int(body.get("limit") or 8, 8, 1, 20)
+    actor_id = redact_text(body.get("actor_id") or "usr_founder", 120)
+    agent_id = redact_text(body.get("agent_id") or headers.get("X-AgentOps-Agent-Id") or f"agt_worker_daemon_{adapter}", 120)
+    task_id = redact_text(body.get("task_id") or "", 160)
+    confirm_record = bool(body.get("confirm_record"))
+    expected_packet_hash = str(body.get("packet_hash") or "").strip()
+    supervision_qs = {
+        "adapter": [adapter],
+        "limit": [str(limit)],
+        "research_profile": [profile] if profile else [],
+        "agent_id": [agent_id] if agent_id else [],
+        "task_id": [task_id] if task_id else [],
+    }
+    supervision = operator_loop_supervision(conn, headers, supervision_qs)
+    work_packets = [item for item in (supervision.get("work_packets") or []) if isinstance(item, dict)]
+    work_packet = next((item for item in work_packets if item.get("adapter") == adapter), work_packets[0] if work_packets else {})
+    research_packet = work_packet.get("research_lab_packet") if isinstance(work_packet.get("research_lab_packet"), dict) else {}
+    research_safety = research_packet.get("safety") if isinstance(research_packet.get("safety"), dict) else {}
+    packet_hash = str(research_packet.get("packet_hash") or "")
+    hash_matches = not expected_packet_hash or expected_packet_hash == packet_hash
+    action_command = f"agentops operator loop-supervision --adapter {adapter} --limit {limit} --work-packet"
+    if profile:
+        action_command += f" --research-profile {shlex.quote(profile)}"
+    verify_command = " && ".join([
+        "python3 scripts/operator_research_lab_packet_smoke.py",
+        f"agentops operator loop-supervision --adapter {adapter} --limit {limit} --work-packet",
+        "agentops operator action-receipts --limit 20 --plan-limit 20",
+    ])
+    action_signature = stable_hash({
+        "operation": "operator_research_lab_consumption",
+        "adapter": adapter,
+        "packet_hash": packet_hash,
+        "work_packet_hash": work_packet.get("packet_hash"),
+        "schema_version": research_packet.get("schema_version"),
+    })
+    result_summary = redact_text(
+        body.get("result_summary")
+        or f"Consumed Research Lab packet {packet_hash[:16] or 'missing'} via loop-supervision for adapter {adapter}; local validation remains copy-only and real SSH/GPU requires approval.",
+        240,
+    )
+    memory_agent_id = agent_id if agent_id and conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (agent_id,)).fetchone() else None
+    memory_task_id = task_id if task_id and conn.execute("SELECT 1 FROM tasks WHERE task_id=?", (task_id,)).fetchone() else None
+    memory_owner_user_id = actor_id if actor_id and conn.execute("SELECT 1 FROM users WHERE user_id=?", (actor_id,)).fetchone() else None
+    memory_id = stable_id("mem", "research_lab_consumption", workspace_id, adapter, packet_hash or "missing")
+    memory_row = {
+        "memory_id": memory_id,
+        "scope": "project",
+        "memory_type": "loop_record",
+        "canonical_text": redact_text(
+            f"Research Lab packet consumption recorded for adapter {adapter}: packet_hash={packet_hash[:16] or 'missing'}, "
+            f"work_packet_hash={str(work_packet.get('packet_hash') or '')[:16] or 'missing'}. "
+            "Agents must use local validate-spec/inventory commands first; real SSH/GPU/network execution remains approval-bound and must not be inferred from packet readback.",
+            900,
+        ),
+        "source_type": "run_log",
+        "source_ref": f"research_lab_packet://{packet_hash or 'missing'}",
+        "project_id": "proj_mvp",
+        "task_id": memory_task_id,
+        "agent_id": memory_agent_id,
+        "confidence": 0.82,
+        "review_status": "candidate",
+        "owner_user_id": memory_owner_user_id,
+        "ttl_review_due_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=30)).isoformat(),
+        "supersedes_memory_id": None,
+        "access_tags": json.dumps(["operator", "research_lab", "packet_consumption", adapter], ensure_ascii=False),
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    safety = {
+        "read_only": not confirm_record,
+        "ledger_mutated": False,
+        "live_execution_performed": False,
+        "server_executes_shell": False,
+        "ssh_command_executed": False,
+        "network_probe_performed": False,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    }
+    if not research_packet or research_packet.get("operation") != "operator_research_lab_packet":
+        return {
+            "provider": "agentops-operator",
+            "operation": "operator_research_lab_consumption",
+            "status": "blocked",
+            "recorded": False,
+            "workspace_id": workspace_id,
+            "adapter": adapter,
+            "blockers": ["research_lab_packet_missing_from_loop_supervision"],
+            "supervision_status": supervision.get("status"),
+            "safety": safety,
+            "token_omitted": True,
+        }, 409
+    if not hash_matches:
+        return {
+            "provider": "agentops-operator",
+            "operation": "operator_research_lab_consumption",
+            "status": "blocked",
+            "recorded": False,
+            "workspace_id": workspace_id,
+            "adapter": adapter,
+            "expected_packet_hash": expected_packet_hash,
+            "actual_packet_hash": packet_hash,
+            "blockers": ["research_lab_packet_hash_mismatch"],
+            "safety": safety,
+            "token_omitted": True,
+        }, 409
+    preview = {
+        "action_command": action_command,
+        "verify_command": verify_command,
+        "action_signature": action_signature,
+        "packet_hash": packet_hash,
+        "work_packet_hash": work_packet.get("packet_hash"),
+        "memory_id": memory_id,
+        "memory_candidate_preview": memory_row,
+        "research_lab_contract": ((work_packet.get("evidence_contract") or {}).get("research_lab_packet") if isinstance(work_packet.get("evidence_contract"), dict) else {}),
+        "safety": {
+            "research_lab_read_only": research_safety.get("read_only") is True,
+            "server_executes_shell": research_safety.get("server_executes_shell") is True,
+            "ssh_command_executed": research_safety.get("ssh_command_executed") is True,
+            "network_probe_performed": research_safety.get("network_probe_performed") is True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+    if not confirm_record:
+        return {
+            "provider": "agentops-operator",
+            "operation": "operator_research_lab_consumption",
+            "status": "preview",
+            "recorded": False,
+            "workspace_id": workspace_id,
+            "adapter": adapter,
+            "agent_id": agent_id,
+            "task_id": task_id or None,
+            "packet": preview,
+            "next_actions": [
+                f"agentops operator research-lab-consumption --adapter {adapter} --packet-hash {packet_hash} --confirm-record",
+                verify_command,
+                "agentops review queue --limit 20",
+            ],
+            "contract": "preview-only; does not execute packet commands and does not mutate the ledger until --confirm-record",
+            "safety": safety,
+            "token_omitted": True,
+        }, 200
+    receipt_payload, receipt_status = record_operator_action_receipt(conn, {
+        "workspace_id": workspace_id,
+        "actor_id": actor_id,
+        "action_command": action_command,
+        "verify_command": verify_command,
+        "action_id": f"research_lab_packet_consumption:{adapter}",
+        "action_signature": action_signature,
+        "source": f"operator.research_lab_consumption:{adapter}",
+        "status": "verified",
+        "result_summary": result_summary,
+    }, headers)
+    if receipt_status >= 400:
+        return receipt_payload, receipt_status
+    existing_memory = conn.execute("SELECT * FROM memories WHERE memory_id=?", (memory_id,)).fetchone()
+    memory_outcome = "unchanged"
+    if not existing_memory:
+        memory_outcome = upsert_memory_candidate(conn, memory_row, "operator-research-lab-consumption")
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "operator.research_lab_consumption",
+        "recorded",
+        input_summary=f"Research Lab packet consumed by {adapter}; packet_hash={packet_hash[:16]}",
+        output_summary=f"Receipt recorded; memory candidate {memory_id} {memory_outcome}.",
+        raw_payload_hash=stable_hash({"packet_hash": packet_hash, "adapter": adapter, "work_packet_hash": work_packet.get("packet_hash")}),
+    )
+    audit(conn, "user", actor_id, "operator.research_lab_consumption", "research_lab_packet", packet_hash or action_signature, None, {
+        "workspace_id": workspace_id,
+        "adapter": adapter,
+        "agent_id": agent_id,
+        "task_id": task_id or None,
+        "packet_hash": packet_hash,
+        "work_packet_hash": work_packet.get("packet_hash"),
+        "receipt_id": ((receipt_payload.get("receipt") or {}).get("receipt_id") if isinstance(receipt_payload.get("receipt"), dict) else None),
+        "memory_id": memory_id,
+        "memory_outcome": memory_outcome,
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    }, {
+        "ledger_mutated": True,
+        "live_execution_performed": False,
+        "server_executes_shell": False,
+        "ssh_command_executed": False,
+        "network_probe_performed": False,
+        "token_omitted": True,
+    })
+    safety["read_only"] = False
+    safety["ledger_mutated"] = True
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_research_lab_consumption",
+        "status": "recorded",
+        "recorded": True,
+        "workspace_id": workspace_id,
+        "adapter": adapter,
+        "agent_id": agent_id,
+        "task_id": task_id or None,
+        "packet": preview,
+        "receipt": receipt_payload.get("receipt"),
+        "receipt_status": receipt_payload.get("status"),
+        "memory_id": memory_id,
+        "memory_outcome": memory_outcome,
+        "review_status": "candidate",
+        "next_actions": [
+            "agentops operator action-receipts --limit 20 --plan-limit 20",
+            "agentops review queue --limit 20",
+            f"agentops memory approve --memory-id {memory_id}",
+            f"agentops memory reject --memory-id {memory_id}",
+        ],
+        "contract": "confirmed consumption receipt; records governance evidence only and never executes Research Lab, SSH, network, or live adapter commands",
+        "safety": safety,
+        "token_omitted": True,
+    }, 201
+
+
 def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     workspace_id = normalize_workspace_id(
@@ -29714,6 +29939,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path == "/api/operator/action-receipts":
                 payload, status = record_operator_action_receipt(conn, body, self.headers)
+                conn.commit()
+                clear_read_model_cache()
+                return self.send_json(payload, status)
+            if path == "/api/operator/research-lab-consumption":
+                payload, status = operator_research_lab_consumption(conn, body, self.headers)
                 conn.commit()
                 clear_read_model_cache()
                 return self.send_json(payload, status)

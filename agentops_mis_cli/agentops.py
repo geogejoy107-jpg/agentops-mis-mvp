@@ -914,6 +914,25 @@ def cmd_operator_research_lab_packet(args, client: AgentOpsClient) -> dict:
     )
 
 
+def cmd_operator_research_lab_consumption(args, client: AgentOpsClient) -> dict:
+    return client.post(
+        "/api/operator/research-lab-consumption",
+        {
+            "workspace_id": client.workspace_id,
+            "adapter": args.adapter,
+            "limit": args.limit,
+            "profile": args.profile,
+            "research_profile": args.research_profile,
+            "packet_hash": args.packet_hash,
+            "task_id": args.task_id,
+            "agent_id": args.agent_id or client.agent_id,
+            "actor_id": args.actor_id,
+            "result_summary": args.result_summary,
+            "confirm_record": bool(args.confirm_record),
+        },
+    )
+
+
 def cmd_operator_start_check(args, client: AgentOpsClient) -> dict:
     return client.get(
         "/api/operator/start-check",
@@ -5227,6 +5246,18 @@ def build_parser() -> argparse.ArgumentParser:
     operator_research_lab.add_argument("--limit", type=int, default=8)
     operator_research_lab.add_argument("--profile", default="")
     operator_research_lab.set_defaults(handler="operator_research_lab_packet")
+    operator_research_lab_consumption = operator_sub.add_parser("research-lab-consumption", help="Preview or record audited consumption of the embedded Research Lab work packet.")
+    operator_research_lab_consumption.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="hermes")
+    operator_research_lab_consumption.add_argument("--limit", type=int, default=8)
+    operator_research_lab_consumption.add_argument("--profile", default="")
+    operator_research_lab_consumption.add_argument("--research-profile", default="")
+    operator_research_lab_consumption.add_argument("--packet-hash", default="")
+    operator_research_lab_consumption.add_argument("--task-id", default="")
+    operator_research_lab_consumption.add_argument("--agent-id", default="")
+    operator_research_lab_consumption.add_argument("--actor-id", default="usr_founder")
+    operator_research_lab_consumption.add_argument("--result-summary", default="")
+    operator_research_lab_consumption.add_argument("--confirm-record", action="store_true", help="Append receipt, runtime event, audit row, and reviewable memory candidate.")
+    operator_research_lab_consumption.set_defaults(handler="operator_research_lab_consumption")
     operator_start_check = operator_sub.add_parser("start-check", help="Read the pre-task local loop start check for Hermes/OpenClaw/Codex.")
     operator_start_check.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     operator_start_check.add_argument("--limit", type=int, default=8)
@@ -6214,6 +6245,7 @@ HANDLERS = {
     "operator_intake_checklist": cmd_operator_intake_checklist,
     "operator_loop_launch_packet": cmd_operator_loop_launch_packet,
     "operator_research_lab_packet": cmd_operator_research_lab_packet,
+    "operator_research_lab_consumption": cmd_operator_research_lab_consumption,
     "operator_start_check": cmd_operator_start_check,
     "operator_agent_loop_handoff": cmd_operator_agent_loop_handoff,
     "operator_loop_supervision": cmd_operator_loop_supervision,
