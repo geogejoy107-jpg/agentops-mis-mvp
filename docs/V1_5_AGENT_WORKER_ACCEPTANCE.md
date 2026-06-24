@@ -1717,6 +1717,23 @@ performs no live runtime execution and no ledger mutation. The service-closure
 commands are the fast path for the `record_first` / service-control receipt gate
 that can block confirmed Hermes/OpenClaw dispatch before runtime execution.
 
+Non-mutating preflight path:
+
+```bash
+python3 scripts/live_worker_loop_demo_slice.py \
+  --base-url http://127.0.0.1:8787 \
+  --preflight \
+  --service-control-service-path-template "$HOME/Library/LaunchAgents/local.agentops.worker.agt_worker_daemon_{adapter}.plist"
+```
+
+This still does not run Hermes/OpenClaw and does not write ledger rows. It runs
+the preview-only `agentops worker service-control` path without
+`--confirm-control`, renders the adapter-specific service path template, and
+adds advisory loop-supervision readback for each selected adapter. Use it before
+the confirmed live path to catch missing/unsafe service files or still-open
+service-closure gates while preserving `live_execution_performed:false`,
+`service_control_mutated:false`, and `ledger_mutated:false`.
+
 Confirmed live path:
 
 ```bash

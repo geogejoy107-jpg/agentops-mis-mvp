@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import importlib.util
+import tempfile
 from pathlib import Path
 
 
@@ -37,6 +38,35 @@ def load_demo_module():
     assert spec and spec.loader
     spec.loader.exec_module(module)
     return module
+
+
+def write_launchd_service_fixture(path: Path, adapter: str, base_url: str) -> None:
+    path.write_text(
+        f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.agentops.worker.{adapter}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>agentops-worker</string>
+    <string>--adapter</string>
+    <string>{adapter}</string>
+    <string>--confirm-run</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AGENTOPS_BASE_URL</key>
+    <string>{base_url}</string>
+  </dict>
+  <key>KeepAlive</key>
+  <true/>
+</dict>
+</plist>
+""",
+        encoding="utf-8",
+    )
 
 
 def main() -> int:
@@ -108,6 +138,59 @@ def main() -> int:
     require(safety.get("requires_explicit_confirm_service_control") is True, f"service-control safety proof missing: {safety}", failures)
     require(safety.get("requires_explicit_confirm_service_closure") is True, f"service-closure safety proof missing: {safety}", failures)
 
+    with tempfile.TemporaryDirectory(prefix="agentops-live-demo-preflight-") as tmp:
+        tmp_path = Path(tmp)
+        for adapter in ["hermes", "openclaw"]:
+            write_launchd_service_fixture(tmp_path / f"{adapter}.plist", adapter, "http://127.0.0.1:9")
+        preflight_proc = subprocess.run(
+            [
+                sys.executable,
+                "scripts/live_worker_loop_demo_slice.py",
+                "--base-url",
+                "http://127.0.0.1:9",
+                "--probe-timeout",
+                "1",
+                "--preflight",
+                "--service-control-timeout",
+                "12",
+                "--service-control-service-path-template",
+                str(tmp_path / "{adapter}.plist"),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        require(preflight_proc.returncode == 0, f"preflight command failed: {preflight_proc.stderr or preflight_proc.stdout}", failures)
+        try:
+            preflight = json.loads(preflight_proc.stdout)
+        except json.JSONDecodeError as exc:
+            preflight = {}
+            failures.append(f"invalid preflight JSON output: {exc}")
+        require(preflight.get("mode") == "preflight", f"preflight mode missing: {preflight}", failures)
+        require(preflight.get("ok") is True, f"preflight should be ok with local fixtures: {preflight}", failures)
+        require(preflight.get("live_execution_performed") is False, f"preflight executed live work: {preflight}", failures)
+        require(preflight.get("service_control_mutated") is False, f"preflight mutated service-control: {preflight}", failures)
+        require(preflight.get("service_closure_attempted") is False, f"preflight wrote service closure: {preflight}", failures)
+        require(preflight.get("ledger_mutated") is False, f"preflight mutated ledger: {preflight}", failures)
+        preflight_safety = preflight.get("safety") or {}
+        require(preflight_safety.get("preflight_only") is True, f"preflight safety proof missing: {preflight_safety}", failures)
+        preflight_steps = preflight.get("steps") or []
+        for adapter in ["hermes", "openclaw"]:
+            control_step = next((step for step in preflight_steps if step.get("name") == f"{adapter}_service_control_preflight"), {})
+            require(bool(control_step), f"{adapter} service-control preflight step missing: {preflight_steps}", failures)
+            control_summary = control_step.get("summary") if isinstance(control_step.get("summary"), dict) else {}
+            require(control_summary.get("dry_run") is True, f"{adapter} preflight should be dry-run: {control_summary}", failures)
+            require(control_summary.get("confirmed_control") is False, f"{adapter} preflight should not confirm control: {control_summary}", failures)
+            require(control_summary.get("service_mutated") is False, f"{adapter} preflight mutated service: {control_summary}", failures)
+            require(control_summary.get("live_execution_performed") is False, f"{adapter} preflight ran live runtime: {control_summary}", failures)
+            require(control_summary.get("service_file_exists") is True, f"{adapter} preflight did not inspect fixture service file: {control_summary}", failures)
+            readback_step = next((step for step in preflight_steps if step.get("name") == f"{adapter}_service_closure_readback_preflight"), {})
+            require(bool(readback_step), f"{adapter} service-closure readback preflight missing: {preflight_steps}", failures)
+            require(readback_step.get("advisory") is True, f"{adapter} readback preflight should be advisory without server: {readback_step}", failures)
+        require(not leaked_secret(preflight_proc.stdout + preflight_proc.stderr), "preflight output leaked token-like material", failures)
+
     demo_module = load_demo_module()
     open_gate_item = {
         "service_closure": {"required": True, "status": "attention", "step": "confirm_service_control_load"},
@@ -173,6 +256,7 @@ def main() -> int:
             "no_token_like_output",
             "service_control_confirm_wall",
             "service_closure_fail_closed_helper",
+            "preflight_service_control_preview",
         ],
     }, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if not failures else 1
