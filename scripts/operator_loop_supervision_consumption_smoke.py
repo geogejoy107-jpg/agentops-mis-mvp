@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+SMOKE_DB_DIR = tempfile.TemporaryDirectory(prefix="agentops-loop-supervision-consumption-")
+os.environ["AGENTOPS_DB_PATH"] = str(Path(SMOKE_DB_DIR.name) / "agentops.db")
+os.environ.setdefault("AGENTOPS_SKIP_SEED_EXPORTS", "1")
 
 import server  # noqa: E402
 from agentops_mis_cli import worker  # noqa: E402
@@ -256,6 +261,7 @@ def verify_worker_consumption(failures: list[str]) -> dict:
 
 
 def main() -> int:
+    server.seed(reset=True)
     failures: list[str] = []
     server_result = verify_server_customer_worker_consumption(failures)
     worker_result = verify_worker_consumption(failures)
