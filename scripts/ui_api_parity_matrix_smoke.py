@@ -141,6 +141,7 @@ def main() -> int:
     require("nextjs_worker_dispatch_once_v1" in route_contracts, "matrix policy must include the Next worker dispatch contract")
     require("nextjs_pixel_office_floor_v1" in route_contracts, "matrix policy must include the Next Pixel Office floor contract")
     require("nextjs_pixel_office_dispatch_v1" in route_contracts, "matrix policy must include the Next Pixel Office owner dispatch contract")
+    require("pixel_office_dispatch_retirement_evidence_v1" in route_contracts, "matrix policy must include the Pixel Office dispatch retirement evidence contract")
     require("local_brief_prepared_action_v1" in route_contracts, "matrix policy must include the local brief backend prepared-action contract")
     require("nextjs_local_brief_v1" in route_contracts, "matrix policy must include the Next local brief contract")
     require("nextjs_customer_worker_dispatch_v1" in route_contracts, "matrix policy must include the Next customer-worker dispatch contract")
@@ -249,7 +250,9 @@ def main() -> int:
     require("force_release_not_allowed_next_parity" in worker_console_gate, "worker_console retirement gate must record force-release fail-closed evidence")
     require("enrollment_token_issue_not_allowed_next_parity" in worker_console_gate, "worker_console retirement gate must record raw enrollment token issue fail-closed evidence")
     assert_entry_routes(entries_by_id.get("pixel_office_and_dispatch"), "pixel_office_and_dispatch", ["/workspace/pixel-office"], ["/workspace/pixel-office", "/workspace/pixel-office/local-brief", "/workspace/dispatch", "/workspace/dispatch/customer-task", "/workspace/dispatch/template-job", "/workspace/dispatch/template-run", "/workspace/dispatch/customer-worker", "/workspace/dispatch/customer-worker-job"])
+    require(entries_by_id.get("pixel_office_and_dispatch", {}).get("status") == "covered", "pixel_office_and_dispatch should be covered once explicit retirement evidence exists")
     pixel_dispatch_evidence = entries_by_id.get("pixel_office_and_dispatch", {}).get("evidence_commands") or []
+    require("python3 scripts/pixel_office_dispatch_retirement_evidence_smoke.py" in pixel_dispatch_evidence, "pixel_office_and_dispatch must include explicit retirement evidence smoke")
     require("python3 scripts/nextjs_pixel_office_floor_smoke.py" in pixel_dispatch_evidence, "pixel_office_and_dispatch must include Next Pixel Office floor evidence")
     require("python3 scripts/nextjs_pixel_office_dispatch_smoke.py" in pixel_dispatch_evidence, "pixel_office_and_dispatch must include Next Pixel Office owner dispatch evidence")
     require("python3 scripts/local_brief_prepared_action_smoke.py" in pixel_dispatch_evidence, "pixel_office_and_dispatch must include local brief prepared-action backend evidence")
@@ -264,6 +267,8 @@ def main() -> int:
     require("local-brief prepared-action exact resume" in pixel_dispatch_gate, "pixel_office_and_dispatch retirement gate must record Next local brief prepared-action evidence")
     require("customer-worker prepared-action exact resume" in pixel_dispatch_gate, "pixel_office_and_dispatch retirement gate must record customer-worker prepared-action evidence")
     require("safe resume_form readback" in pixel_dispatch_gate, "pixel_office_and_dispatch retirement gate must record ledger-derived prepared-action resume readback")
+    require("pixel_office_dispatch_retirement_evidence_v1" in pixel_dispatch_gate, "pixel_office_and_dispatch retirement gate must name the explicit evidence contract")
+    require("explicit route retirement commit" in pixel_dispatch_gate, "pixel_office_and_dispatch retirement gate must still require an explicit route retirement commit")
     pixel_dispatch_contracts = entries_by_id.get("pixel_office_and_dispatch", {}).get("api_contracts") or []
     require("GET /workflows/customer-worker-prepared-actions" in pixel_dispatch_contracts, "pixel_office_and_dispatch must include customer-worker prepared-action readback API")
     assert_entry_routes(entries_by_id.get("tool_calls"), "tool_calls", ["/admin/toolcalls"], ["/workspace/tool-calls"])

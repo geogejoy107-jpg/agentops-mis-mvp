@@ -98,6 +98,7 @@ def main() -> int:
         ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py",
         ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py",
         ROOT / "scripts" / "nextjs_pixel_office_dispatch_smoke.py",
+        ROOT / "scripts" / "pixel_office_dispatch_retirement_evidence_smoke.py",
         ROOT / "scripts" / "local_brief_prepared_action_smoke.py",
         ROOT / "scripts" / "nextjs_local_brief_smoke.py",
         ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py",
@@ -110,6 +111,8 @@ def main() -> int:
         ROOT / "scripts" / "audit_retention_controls_smoke.py",
         ROOT / "docs" / "UI_NAVIGATION_INVENTORY.json",
         ROOT / "docs" / "UI_ROUTE_RETIREMENT_PACKET.json",
+        ROOT / "docs" / "PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.json",
+        ROOT / "docs" / "PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.md",
     ]
 
     for path in required_files:
@@ -161,6 +164,8 @@ def main() -> int:
     worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py")
     pixel_office_floor_smoke_text = read_text(ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py")
     pixel_office_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_pixel_office_dispatch_smoke.py")
+    pixel_office_retirement_evidence_smoke_text = read_text(ROOT / "scripts" / "pixel_office_dispatch_retirement_evidence_smoke.py")
+    pixel_office_retirement_evidence_text = read_text(ROOT / "docs" / "PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.json")
     local_brief_prepared_action_smoke_text = read_text(ROOT / "scripts" / "local_brief_prepared_action_smoke.py")
     local_brief_smoke_text = read_text(ROOT / "scripts" / "nextjs_local_brief_smoke.py")
     customer_worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py")
@@ -206,6 +211,9 @@ def main() -> int:
     require("commercial-safe geometry" in pixel_office_floor_smoke_text and "live runtime disabled" in pixel_office_floor_smoke_text, "Next Pixel Office smoke must prove read-only safe map evidence")
     require("nextjs_pixel_office_dispatch_v1" in pixel_office_dispatch_smoke_text, "Next Pixel Office owner dispatch smoke contract is missing")
     require("/workspace/dispatch/customer-task" in pixel_office_dispatch_smoke_text and "/workspace/dispatch/template-job" in pixel_office_dispatch_smoke_text, "Next Pixel Office dispatch smoke must exercise owner task and template job form fallbacks")
+    require("pixel_office_dispatch_retirement_evidence_v1" in pixel_office_retirement_evidence_smoke_text, "Pixel Office retirement evidence smoke contract is missing")
+    require('"retirement_action": "not_executed"' in pixel_office_retirement_evidence_text and '"retirement_allowed": false' in pixel_office_retirement_evidence_text, "Pixel Office retirement evidence must stay fail-closed")
+    require("/workspace/pixel-office" in pixel_office_retirement_evidence_text and "/workspace/dispatch" in pixel_office_retirement_evidence_text, "Pixel Office retirement evidence must name Vite and Next route pair")
     require("Owner dispatch workflow" in pixel_office_page_text and "owner-dispatch-workflow" in pixel_office_page_text, "Pixel Office page must expose the owner dispatch workflow bridge")
     require("template intake /workspace/dispatch" in pixel_office_floor_smoke_text and "delivery reports /workspace/reports" in pixel_office_floor_smoke_text, "Next Pixel Office smoke must prove owner dispatch workflow route bridge")
     require("nextjs_local_brief_v1" in local_brief_smoke_text, "Next local brief smoke contract is missing")
@@ -459,6 +467,7 @@ def main() -> int:
             "nextjs_worker_dispatch_once_v1",
             "nextjs_pixel_office_floor_v1",
             "nextjs_pixel_office_dispatch_v1",
+            "pixel_office_dispatch_retirement_evidence_v1",
             "local_brief_prepared_action_v1",
             "nextjs_local_brief_v1",
             "nextjs_customer_worker_dispatch_v1",

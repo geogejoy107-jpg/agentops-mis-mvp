@@ -342,6 +342,7 @@ def main() -> int:
             and file_contains("ui/next-app/src/components/DispatchPage.tsx", "/workspace/dispatch/template-job")
             and file_contains("scripts/nextjs_pixel_office_dispatch_smoke.py", "nextjs_pixel_office_dispatch_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_pixel_office_dispatch_v1")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "pixel_office_dispatch_retirement_evidence_v1")
             and file_contains("scripts/local_brief_prepared_action_smoke.py", "local_brief_prepared_action_v1")
             and file_contains("scripts/nextjs_local_brief_smoke.py", "nextjs_local_brief_v1")
             and file_contains("scripts/nextjs_local_brief_smoke.py", "/api/mis/workflows/local-brief")
@@ -437,6 +438,9 @@ def main() -> int:
             and (ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_pixel_office_dispatch_smoke.py").exists()
+            and (ROOT / "scripts" / "pixel_office_dispatch_retirement_evidence_smoke.py").exists()
+            and (ROOT / "docs" / "PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.json").exists()
+            and (ROOT / "docs" / "PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.md").exists()
             and (ROOT / "scripts" / "local_brief_prepared_action_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_local_brief_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py").exists()
@@ -447,6 +451,19 @@ def main() -> int:
             and (ROOT / "scripts" / "nextjs_enrollment_request_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py").exists(),
             "parallel Next.js App Router track has API proxy, Gateway task-create proxy, CLI worker dogfood proof through the Next proxy, read-only Pixel Operating Map parity, local brief prepared-action exact resume with approval/hash/replay guards, worker mock dispatch, customer-worker prepared-action exact resume for Hermes/OpenClaw plus ledger-derived safe resume readback, async customer-worker prepared-action submit/resume plus mock job status readback, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
+        ),
+        check(
+            "pixel_office_dispatch_retirement_evidence_surface_exists",
+            file_contains("docs/PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.json", "pixel_office_dispatch_retirement_evidence_v1")
+            and file_contains("docs/PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.json", '"retirement_action": "not_executed"')
+            and file_contains("docs/PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.json", '"retirement_allowed": false')
+            and file_contains("docs/PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.json", "explicit_route_retirement_commit")
+            and file_contains("docs/PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.md", "does not retire the Vite")
+            and file_contains("scripts/pixel_office_dispatch_retirement_evidence_smoke.py", "pixel_office_dispatch_retirement_evidence_v1")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "pixel_office_dispatch_retirement_evidence_v1")
+            and file_contains("docs/UI_API_PARITY_MATRIX.md", "pixel_office_dispatch_retirement_evidence_v1")
+            and (ROOT / "scripts" / "pixel_office_dispatch_retirement_evidence_smoke.py").exists(),
+            "Pixel Office / Dispatch has explicit route retirement evidence while keeping Vite route retirement fail-closed",
         ),
         check(
             "vite_browser_snapshot_surface_exists",
@@ -931,6 +948,7 @@ def main() -> int:
                 "python3 scripts/ui_legacy_route_alias_smoke.py",
                 "python3 scripts/ui_navigation_inventory_smoke.py",
                 "python3 scripts/ui_route_retirement_packet_smoke.py",
+                "python3 scripts/pixel_office_dispatch_retirement_evidence_smoke.py",
                 "python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py",
                 "python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py",
                 "python3 scripts/nextjs_worker_dispatch_once_smoke.py",

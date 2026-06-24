@@ -230,6 +230,7 @@ python3 scripts/ui_route_naming_decision_smoke.py
 python3 scripts/ui_legacy_route_alias_smoke.py
 python3 scripts/ui_navigation_inventory_smoke.py
 python3 scripts/ui_route_retirement_packet_smoke.py
+python3 scripts/pixel_office_dispatch_retirement_evidence_smoke.py
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
@@ -250,6 +251,14 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   The matrix smoke statically compares actual Vite routes, actual Next App
   Router pages/routes, API contracts, evidence commands, and retirement gates so
   page parity cannot drift into undocumented route replacement.
+
+  `python3 scripts/pixel_office_dispatch_retirement_evidence_smoke.py`
+  (`pixel_office_dispatch_retirement_evidence_v1`) records Pixel Office /
+  Dispatch as visually evidenced for Next migration without retiring Vite. It
+  verifies `/workspace/pixel-office` still exists in Vite, Next owns the Pixel
+  Office and Dispatch route fallbacks, Vite/Next browser evidence names both
+  sides, omission rules stay fail-closed, and a future route change still needs
+  an explicit retirement commit.
 
   `python3 scripts/nextjs_pixel_office_floor_smoke.py`
   (`nextjs_pixel_office_floor_v1`) starts isolated MIS API and Next.js servers,

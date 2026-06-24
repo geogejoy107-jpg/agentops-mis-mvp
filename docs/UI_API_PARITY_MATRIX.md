@@ -36,7 +36,7 @@ route retirement:
 
 | Capability | Matrix ID | Current status | Retirement state |
 | --- | --- | --- | --- |
-| Customer dispatch / Pixel Office | `pixel_office_and_dispatch` | `partial` | Not allowed |
+| Customer dispatch / Pixel Office | `pixel_office_and_dispatch` | `covered` | Not allowed |
 | Worker console | `worker_console` | `partial` | Not allowed |
 | Agent detail | `agent_detail` | `covered` | Not allowed |
 | Reports and delivery board | `reports` | `covered` | Not allowed |
@@ -52,14 +52,15 @@ route retirement:
 
 ## Current Important Gaps
 
-- Pixel Office is only partially represented in Next.js. Next currently proves
-  a read-only Pixel Operating Map, the owner dispatch workflow route bridge,
-  owner task dry-run, template async job form fallback, local-brief
-  prepared-action exact resume with approval before live Agnesfallback execution,
-  template entitlement dispatch, safe mock customer-worker dispatch/readback,
-  Hermes/OpenClaw customer-worker prepared-action exact resume, and
-  ledger-derived resume readback. Vite remains canonical until final visual
-  route retirement evidence is explicit.
+- Pixel Office / Dispatch now has explicit visual retirement evidence in
+  `pixel_office_dispatch_retirement_evidence_v1`. Next proves a read-only Pixel
+  Operating Map, the owner dispatch workflow route bridge, owner task dry-run,
+  template async job form fallback, local-brief prepared-action exact resume
+  with approval before live Agnesfallback execution, template entitlement
+  dispatch, safe mock customer-worker dispatch/readback, Hermes/OpenClaw
+  customer-worker prepared-action exact resume, and ledger-derived resume
+  readback. Vite remains canonical until an explicit route retirement commit
+  preserves `/workspace/pixel-office` deep links and reruns browser evidence.
 - Worker console is only partially represented in Next.js. Next is read-only for
   production safety and readiness; Vite remains canonical for local worker
   start/stop/restart, task release, remote enrollment mutation, and detailed
@@ -135,6 +136,7 @@ python3 scripts/ui_route_naming_decision_smoke.py
 python3 scripts/ui_legacy_route_alias_smoke.py
 python3 scripts/ui_navigation_inventory_smoke.py
 python3 scripts/ui_route_retirement_packet_smoke.py
+python3 scripts/pixel_office_dispatch_retirement_evidence_smoke.py
 python3 scripts/nextjs_parity_smoke.py
 cd ui/start-building-app && npm run build
 cd ui/next-app && npm run build
@@ -157,6 +159,13 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
 
 The matrix smoke is static and fast. Browser smokes are still required for
 actual UI evidence.
+
+`python3 scripts/pixel_office_dispatch_retirement_evidence_smoke.py`
+(`pixel_office_dispatch_retirement_evidence_v1`) records the Pixel Office /
+Dispatch route pair as visually evidenced but not retired. It verifies Vite
+still owns `/workspace/pixel-office`, Next has `/workspace/pixel-office` plus
+Dispatch form fallbacks, browser evidence names both surfaces, omission rules
+stay fail-closed, and any future retirement still needs an explicit commit.
 
 `python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py`
 (`nextjs_agent_gateway_task_proxy_v1`) starts isolated MIS API and Next.js

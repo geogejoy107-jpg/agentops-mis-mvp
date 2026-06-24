@@ -1,0 +1,113 @@
+{
+  "contract_id": "pixel_office_dispatch_retirement_evidence_v1",
+  "gate": "gate_4_ui_api_parity_before_nextjs",
+  "status": "visual_evidence_ready_no_route_retirement",
+  "updated_at": "2026-06-24",
+  "policy": {
+    "scope": "pixel_office_and_dispatch",
+    "retirement_action": "not_executed",
+    "retirement_allowed": false,
+    "candidate_only": true,
+    "requires_explicit_route_retirement_commit": true,
+    "vite_canonical_until_explicit_commit": true,
+    "no_breaking_deep_links": true,
+    "verification_command": "python3 scripts/pixel_office_dispatch_retirement_evidence_smoke.py"
+  },
+  "route_pair": {
+    "id": "pixel_office_and_dispatch",
+    "legacy_vite_route": "/workspace/pixel-office",
+    "canonical_next_routes": [
+      "/workspace/pixel-office",
+      "/workspace/pixel-office/local-brief",
+      "/workspace/dispatch",
+      "/workspace/dispatch/customer-task",
+      "/workspace/dispatch/template-job",
+      "/workspace/dispatch/template-run",
+      "/workspace/dispatch/customer-worker",
+      "/workspace/dispatch/customer-worker-job",
+      "/workspace/reports",
+      "/workspace/approvals",
+      "/workspace/runs"
+    ],
+    "current_state": "vite_route_kept_next_visual_evidence_ready",
+    "retirement_allowed_now": false,
+    "explicit_commit_required": true,
+    "remaining_cutover_requires": [
+      "explicit_route_retirement_commit"
+    ],
+    "required_commit_evidence": [
+      "route_pair_named_in_commit",
+      "deep_link_redirect_or_alias_preserved",
+      "matrix_retirement_decision_updated",
+      "vite_and_next_browser_evidence_re_run",
+      "agent_gateway_contract_unchanged"
+    ]
+  },
+  "visual_evidence": {
+    "vite": {
+      "command": "python3 scripts/vite_playwright_snapshot_smoke.py",
+      "route": "/workspace/pixel-office",
+      "required_visible_text": [
+        "Pixel Office",
+        "Operations Bar",
+        "Customer task templates"
+      ],
+      "secret_leak_check": true
+    },
+    "next": {
+      "command": "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+      "routes": [
+        "/workspace/pixel-office",
+        "/workspace/dispatch"
+      ],
+      "required_visible_text": [
+        "Pixel Office",
+        "Pixel Operating Map",
+        "Owner dispatch workflow",
+        "Dispatch",
+        "Owner task composer",
+        "Customer task templates"
+      ],
+      "secret_leak_check": true
+    }
+  },
+  "next_behavior_evidence": [
+    "python3 scripts/nextjs_pixel_office_floor_smoke.py",
+    "python3 scripts/nextjs_pixel_office_dispatch_smoke.py",
+    "python3 scripts/local_brief_prepared_action_smoke.py",
+    "python3 scripts/nextjs_local_brief_smoke.py",
+    "python3 scripts/nextjs_customer_worker_dispatch_smoke.py",
+    "python3 scripts/nextjs_customer_worker_async_job_smoke.py",
+    "python3 scripts/nextjs_customer_worker_prepared_action_smoke.py"
+  ],
+  "api_contracts": [
+    "GET /dashboard/metrics",
+    "GET /agents",
+    "GET /tasks",
+    "POST /workflows/local-brief",
+    "GET /workflows/customer-task-templates",
+    "POST /workflows/customer-task-templates/run",
+    "POST /workflows/customer-task-templates/submit",
+    "POST /workflows/customer-task",
+    "POST /workflows/customer-worker-task",
+    "POST /workflows/customer-worker-task/submit",
+    "GET /workflows/customer-worker-prepared-actions",
+    "GET /workflows/jobs",
+    "GET /workflows/jobs/:job_id"
+  ],
+  "omission_contract": {
+    "token_omitted": true,
+    "raw_prompt_omitted": true,
+    "raw_response_omitted": true,
+    "raw_private_transcript_omitted": true,
+    "local_database_committed": false,
+    "generated_artifacts_committed": false
+  },
+  "retirement_commit_checklist": [
+    "Keep /workspace/pixel-office deep links working through a redirect or compatibility route before removing the Vite route.",
+    "Update docs/UI_API_PARITY_MATRIX.json for pixel_office_and_dispatch in the same commit that changes route ownership.",
+    "Re-run Vite and Next browser snapshot evidence after the route change.",
+    "Keep Agent Gateway CLI/API/MCP contracts unchanged.",
+    "Do not commit local databases, generated artifacts, raw prompts, raw responses, private transcripts, or secrets."
+  ]
+}
