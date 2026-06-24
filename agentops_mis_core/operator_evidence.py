@@ -50,11 +50,26 @@ def operator_run_evidence_status(checks: list[dict[str, Any]]) -> dict[str, Any]
 
 
 def operator_evidence_report_summary(items: list[dict[str, Any]], receipt_summary: dict[str, Any]) -> dict[str, Any]:
+    plan_quality_items = [
+        (item.get("agent_plan") or {}).get("quality") or {}
+        for item in items
+        if ((item.get("agent_plan") or {}).get("quality") or {}).get("status")
+    ]
+    plan_quality_scores = [
+        int(item.get("score") or 0)
+        for item in plan_quality_items
+        if item.get("score") is not None
+    ]
     return {
         "runs": len(items),
         "ready": sum(1 for item in items if item.get("status") == "ready"),
         "attention": sum(1 for item in items if item.get("status") == "attention"),
         "blocked": sum(1 for item in items if item.get("status") == "blocked"),
+        "agent_plan_quality_ready": sum(1 for item in plan_quality_items if item.get("status") == "ready"),
+        "agent_plan_quality_attention": sum(1 for item in plan_quality_items if item.get("status") == "attention"),
+        "agent_plan_quality_blocked": sum(1 for item in plan_quality_items if item.get("status") == "blocked"),
+        "agent_plan_quality_min_score": min(plan_quality_scores) if plan_quality_scores else None,
+        "agent_plan_quality_avg_score": round(sum(plan_quality_scores) / len(plan_quality_scores), 2) if plan_quality_scores else None,
         "verified_plan_evidence_manifests": sum(
             1 for item in items if (item.get("plan_evidence_manifest") or {}).get("verification_pass")
         ),

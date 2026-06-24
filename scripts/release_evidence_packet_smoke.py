@@ -207,6 +207,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "agent_plan_quality",
+        "command": "python3 scripts/agent_plan_quality_smoke.py",
+        "summary": "Agent Plan quality rubric scores READ/PLAN/RETRIEVE/COMPARE/EXECUTE/VERIFY/RECORD coverage, authority diversity, governance and evidence hygiene without raw prompt or response storage.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "retrieval_quality",
         "command": "python3 scripts/knowledge_retrieval_quality_smoke.py",
         "summary": "Bilingual knowledge retrieval quality baseline.",
@@ -359,7 +365,7 @@ TEST_COMMANDS = [
     {
         "id": "operator_evidence_report",
         "command": "python3 scripts/operator_evidence_report_smoke.py",
-        "summary": "Run-level evidence report checks Agent Plan binding, approval, verified plan evidence, tool/eval/artifact/audit rows, memory review closure, worker knowledge retrieval, worker runtime summary events, raw memory/runtime omission and read-only DB stability.",
+        "summary": "Run-level evidence report checks Agent Plan binding, quality rubric, approval, verified plan evidence, tool/eval/artifact/audit rows, memory review closure, worker knowledge retrieval, worker runtime summary events, raw memory/runtime omission and read-only DB stability.",
         "ci_step": "Offline safety smokes",
     },
     {

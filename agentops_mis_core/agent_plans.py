@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
+
+AGENT_PLAN_METHOD_STEPS = ("READ", "PLAN", "RETRIEVE", "COMPARE", "EXECUTE", "VERIFY", "RECORD")
+AGENT_PLAN_QUALITY_VERSION = "agent_plan_quality_v1"
 
 
 def _stable_hash(value: Any) -> str:
@@ -58,12 +62,19 @@ def compute_agent_plan_hash(row: Any) -> str:
 
 
 def agent_plan_verification_hash(plan_id: str, verification: dict[str, Any]) -> str:
+    quality = verification.get("quality") or {}
     return _stable_hash({
         "plan_id": plan_id,
         "plan_hash": verification.get("plan_hash"),
         "pass": verification.get("pass"),
         "failed_checks": [check.get("id") for check in verification.get("failed_checks") or []],
         "summary": verification.get("summary") or {},
+        "quality": {
+            "version": quality.get("version"),
+            "score": quality.get("score"),
+            "status": quality.get("status"),
+            "failed_rubric_ids": quality.get("failed_rubric_ids") or [],
+        },
     })
 
 
@@ -142,6 +153,152 @@ def resolve_agent_plan_file_scope(refs: list, repo_root: Path | str) -> dict[str
     }
 
 
+def agent_plan_method_block_coverage(steps: list[Any]) -> dict[str, Any]:
+    present: list[str] = []
+    positions: dict[str, int] = {}
+    for index, step in enumerate(steps):
+        normalized = re.sub(r"[^A-Z]+", " ", str(step or "").upper())
+        tokens = set(normalized.split())
+        for required in AGENT_PLAN_METHOD_STEPS:
+            if required in tokens and required not in present:
+                present.append(required)
+                positions[required] = index
+    missing = [step for step in AGENT_PLAN_METHOD_STEPS if step not in present]
+    ordered_positions = [positions[step] for step in AGENT_PLAN_METHOD_STEPS if step in positions]
+    in_order = ordered_positions == sorted(ordered_positions)
+    return {
+        "required_steps": list(AGENT_PLAN_METHOD_STEPS),
+        "present_steps": present,
+        "missing_steps": missing,
+        "coverage_ratio": round(len(present) / len(AGENT_PLAN_METHOD_STEPS), 3),
+        "in_order": in_order,
+        "token_omitted": True,
+    }
+
+
+def _quality_item(item_id: str, score: int, max_score: int, ok: bool, message: str) -> dict[str, Any]:
+    return {
+        "id": item_id,
+        "score": int(score),
+        "max_score": int(max_score),
+        "ok": bool(ok),
+        "message": message,
+    }
+
+
+def build_agent_plan_quality(
+    row: Any,
+    *,
+    verification_summary: dict[str, Any] | None = None,
+    hard_checks_pass: bool | None = None,
+) -> dict[str, Any]:
+    summary = verification_summary or {}
+    steps = load_json_list_field(row, "execution_steps_json")
+    files = load_json_list_field(row, "proposed_files_to_change_json")
+    risk = str(row_field(row, "risk_level") or "").strip().lower()
+    approval_required = bool(row_field(row, "approval_required"))
+    method = agent_plan_method_block_coverage(steps)
+
+    coverage_score = int(round(24 * float(method["coverage_ratio"])))
+    method_score = min(30, coverage_score + (6 if method["in_order"] and not method["missing_steps"] else 0))
+
+    spec_ok = int(summary.get("readable_spec_refs") or 0) > 0
+    memory_ok = int(summary.get("approved_memory_refs") or 0) > 0 or int(summary.get("knowledge_context_refs") or 0) > 0
+    base_ok = int(summary.get("resolved_base_refs") or 0) > 0
+    authority_clean = not any(
+        int(summary.get(key) or 0) > 0
+        for key in ("missing_memory_refs", "non_authoritative_memory_refs")
+    )
+    authority_score = (8 if spec_ok else 0) + (8 if memory_ok else 0) + (7 if base_ok else 0) + (2 if authority_clean else 0)
+
+    verification_text = str(row_field(row, "verification_plan") or "").strip()
+    rollback_text = str(row_field(row, "rollback_plan") or "").strip()
+    scoped_files = int(summary.get("scoped_file_refs") or 0)
+    file_scope_ok = risk == "low" or (bool(files) and scoped_files == len(files))
+    readiness_score = (
+        (5 if len(steps) >= len(AGENT_PLAN_METHOD_STEPS) else 0)
+        + (5 if len(verification_text) >= 20 else 0)
+        + (5 if len(rollback_text) >= 20 else 0)
+        + (5 if file_scope_ok else 0)
+    )
+
+    risk_valid = risk in {"low", "medium", "high", "critical"}
+    approval_posture_ok = risk not in {"high", "critical"} or approval_required
+    governance_score = (5 if risk_valid else 0) + (5 if approval_posture_ok else 0) + (5 if hard_checks_pass else 0)
+
+    plan_hash_present = bool(row_field(row, "plan_hash") or compute_agent_plan_hash(row))
+    file_refs_safe = scoped_files == len(files)
+    hygiene_score = (4 if plan_hash_present else 0) + 3 + (3 if file_refs_safe else 0)
+
+    rubric = [
+        _quality_item(
+            "method_block_coverage",
+            method_score,
+            30,
+            not method["missing_steps"] and method["in_order"],
+            "Execution steps cover READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD in order.",
+        ),
+        _quality_item(
+            "authority_diversity",
+            authority_score,
+            25,
+            spec_ok and memory_ok and base_ok and authority_clean,
+            "Plan cites readable specs, approved/knowledge memory context, and base constraints without non-authoritative refs.",
+        ),
+        _quality_item(
+            "execution_readiness",
+            readiness_score,
+            20,
+            readiness_score >= 15,
+            "Plan has enough steps, verification, rollback, and scoped file intent for operators to assess execution.",
+        ),
+        _quality_item(
+            "governance_posture",
+            governance_score,
+            15,
+            risk_valid and approval_posture_ok and bool(hard_checks_pass),
+            "Risk level is valid, high/critical work requires approval, and hard method-block checks pass.",
+        ),
+        _quality_item(
+            "evidence_hygiene",
+            hygiene_score,
+            10,
+            plan_hash_present and file_refs_safe,
+            "Quality projection uses hashes/counts/flags only and keeps raw prompts, responses and token values omitted.",
+        ),
+    ]
+    score = sum(item["score"] for item in rubric)
+    failed = [item["id"] for item in rubric if not item["ok"]]
+    status = "ready" if score >= 85 and not failed else "attention" if score >= 60 else "blocked"
+    return {
+        "version": AGENT_PLAN_QUALITY_VERSION,
+        "score": score,
+        "max_score": 100,
+        "status": status,
+        "rubric": rubric,
+        "failed_rubric_ids": failed,
+        "method_block": method,
+        "summary": {
+            "referenced_specs": int(summary.get("referenced_specs") or 0),
+            "readable_spec_refs": int(summary.get("readable_spec_refs") or 0),
+            "referenced_memories": int(summary.get("referenced_memories") or 0),
+            "approved_memory_refs": int(summary.get("approved_memory_refs") or 0),
+            "knowledge_context_refs": int(summary.get("knowledge_context_refs") or 0),
+            "referenced_bases": int(summary.get("referenced_bases") or 0),
+            "resolved_base_refs": int(summary.get("resolved_base_refs") or 0),
+            "proposed_files_to_change": int(summary.get("proposed_files_to_change") or 0),
+            "scoped_file_refs": scoped_files,
+            "execution_steps": len(steps),
+            "risk_level": risk,
+            "approval_required": approval_required,
+        },
+        "raw_plan_body_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+
+
 def build_agent_plan_verification(
     row: Any,
     *,
@@ -169,27 +326,30 @@ def build_agent_plan_verification(
         {"id": "file_scope", "ok": (bool(files) or risk == "low") and bool(file_scope.get("ok")), "message": "Non-low work names proposed files or surfaces inside the repository.", "details": file_scope},
     ]
     failed = [check for check in checks if not check["ok"]]
+    summary = {
+        "referenced_specs": len(specs),
+        "readable_spec_refs": len(spec_authority.get("readable") or []),
+        "referenced_memories": len(memories),
+        "approved_memory_refs": len(memory_authority.get("approved") or []),
+        "non_authoritative_memory_refs": len(memory_authority.get("non_authoritative") or []),
+        "missing_memory_refs": len(memory_authority.get("missing") or []),
+        "knowledge_context_refs": len(memory_authority.get("knowledge_context") or []),
+        "referenced_bases": len(bases),
+        "resolved_base_refs": len((base_authority.get("table_bases") or []) + (base_authority.get("file_bases") or []) + (base_authority.get("virtual_bases") or [])),
+        "proposed_files_to_change": len(files),
+        "scoped_file_refs": len(file_scope.get("scoped") or []),
+        "execution_steps": len(steps),
+        "risk_level": risk,
+        "approval_required": approval_required,
+    }
+    quality = build_agent_plan_quality(row, verification_summary=summary, hard_checks_pass=not failed)
     return {
         "pass": not failed,
         "plan_hash": row_field(row, "plan_hash") or compute_agent_plan_hash(row),
         "checks": checks,
         "failed_checks": failed,
-        "summary": {
-            "referenced_specs": len(specs),
-            "readable_spec_refs": len(spec_authority.get("readable") or []),
-            "referenced_memories": len(memories),
-            "approved_memory_refs": len(memory_authority.get("approved") or []),
-            "non_authoritative_memory_refs": len(memory_authority.get("non_authoritative") or []),
-            "missing_memory_refs": len(memory_authority.get("missing") or []),
-            "knowledge_context_refs": len(memory_authority.get("knowledge_context") or []),
-            "referenced_bases": len(bases),
-            "resolved_base_refs": len((base_authority.get("table_bases") or []) + (base_authority.get("file_bases") or []) + (base_authority.get("virtual_bases") or [])),
-            "proposed_files_to_change": len(files),
-            "scoped_file_refs": len(file_scope.get("scoped") or []),
-            "execution_steps": len(steps),
-            "risk_level": risk,
-            "approval_required": approval_required,
-        },
+        "summary": {**summary, "quality_score": quality["score"], "quality_status": quality["status"]},
+        "quality": quality,
         "token_omitted": True,
     }
 

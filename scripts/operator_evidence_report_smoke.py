@@ -159,7 +159,7 @@ def main() -> int:
                 "--referenced-bases", "base_local_tasks",
                 "--proposed-files-to-change", "server.py,scripts/operator_evidence_report_smoke.py",
                 "--risk", "high",
-                "--execution-steps", "READ,PLAN,RETRIEVE,EXECUTE,VERIFY,RECORD",
+                "--execution-steps", "READ,PLAN,RETRIEVE,COMPARE,EXECUTE,VERIFY,RECORD",
                 "--verification-plan", "Run operator_evidence_report_smoke.py.",
                 "--rollback-plan", "Reject the plan and do not start the run if approval or manifest verification fails.",
             ], base_url, agent_id, outputs)
@@ -224,6 +224,15 @@ def main() -> int:
             require(item.get("status") == "ready", f"complete run should be ready: {item}", failures)
             require(all(check.get("ok") is True for check in item.get("checks") or []), f"expected every run check to pass: {item}", failures)
             require((item.get("agent_plan") or {}).get("approval_decision") == "approved", f"plan approval missing in report: {item}", failures)
+            plan_quality = (item.get("agent_plan") or {}).get("quality") or {}
+            require(plan_quality.get("version") == "agent_plan_quality_v1", f"plan quality version missing in report: {item}", failures)
+            require(plan_quality.get("status") == "ready", f"plan quality should be ready: {plan_quality}", failures)
+            require(int(plan_quality.get("score") or 0) >= 85, f"plan quality score too low: {plan_quality}", failures)
+            require((plan_quality.get("method_block") or {}).get("missing_steps") == [], f"plan method block incomplete: {plan_quality}", failures)
+            require(plan_quality.get("raw_plan_body_omitted") is True, f"plan quality should omit raw plan body: {plan_quality}", failures)
+            require(plan_quality.get("raw_prompt_omitted") is True, f"plan quality should omit raw prompt: {plan_quality}", failures)
+            require(plan_quality.get("raw_response_omitted") is True, f"plan quality should omit raw response: {plan_quality}", failures)
+            require(plan_quality.get("token_omitted") is True, f"plan quality should omit tokens: {plan_quality}", failures)
             require((item.get("plan_evidence_manifest") or {}).get("verification_pass") is True, f"manifest missing in report: {item}", failures)
             memory_review = item.get("memory_review") or {}
             require(memory_review.get("status") == "reviewed", f"memory review should be reviewed: {item}", failures)
@@ -236,6 +245,10 @@ def main() -> int:
             require(int(summary.get("worker_runs") or 0) == 0, f"non-worker fixture should not count as worker run: {summary}", failures)
             require(int(summary.get("worker_runtime_summary_ready") or 0) == 0, f"non-worker fixture should not count ready runtime summary: {summary}", failures)
             require(int(summary.get("worker_runtime_summary_missing") or 0) == 0, f"non-worker fixture should not count missing runtime summary: {summary}", failures)
+            require(int(summary.get("agent_plan_quality_ready") or 0) >= 1, f"summary missing ready plan quality: {summary}", failures)
+            require(int(summary.get("agent_plan_quality_attention") or 0) == 0, f"summary should have no plan quality attention: {summary}", failures)
+            require(int(summary.get("agent_plan_quality_blocked") or 0) == 0, f"summary should have no blocked plan quality: {summary}", failures)
+            require(float(summary.get("agent_plan_quality_min_score") or 0) >= 85, f"summary plan quality score too low: {summary}", failures)
             runtime_summary = item.get("worker_runtime_summary") or {}
             require(runtime_summary.get("applicable") is False, f"non-worker run should mark runtime summary not applicable: {runtime_summary}", failures)
             require(runtime_summary.get("status") == "not_applicable", f"non-worker runtime summary status should be not_applicable: {runtime_summary}", failures)

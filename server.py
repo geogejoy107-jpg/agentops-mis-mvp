@@ -20258,6 +20258,7 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
     task_id = run["task_id"]
     plan = conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (run["agent_plan_id"] or "",)).fetchone() if run["agent_plan_id"] else latest_agent_plan_for_run(conn, run)
     plan_verification = verify_agent_plan_row(plan, conn) if plan else None
+    plan_quality = (plan_verification or {}).get("quality") if plan_verification else None
     plan_approval = None
     if plan and plan["approval_id"]:
         approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (plan["approval_id"],)).fetchone()
@@ -20339,6 +20340,7 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
             "approval_decision": (plan_approval or {}).get("decision"),
             "verification_pass": bool(plan_verification and plan_verification.get("pass")),
             "plan_hash": plan["plan_hash"] if plan else None,
+            "quality": plan_quality,
         },
         "plan_evidence_manifest": {
             "manifest_id": manifest["manifest_id"] if manifest else None,
