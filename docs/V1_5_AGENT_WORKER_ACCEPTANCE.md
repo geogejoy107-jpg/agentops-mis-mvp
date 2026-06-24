@@ -1750,6 +1750,15 @@ python3 scripts/live_worker_loop_demo_slice.py \
   --hermes-max-tokens 512
 ```
 
+Confirmed live now has a hard current-code gate. The wrapper first reads
+`/api/local/readiness` and refuses to enter service-control, service-closure, or
+live runtime dispatch unless the selected MIS server reports
+`running_instance_current:true`. If the operator points the wrapper at a stale
+server or an unavailable server, it returns
+`local_readiness_current_code_required` with `live_execution_performed:false`,
+`service_control_attempted:false`, `service_closure_attempted:false`, and
+`ledger_mutated:false`.
+
 This wraps the existing product path:
 
 ```text
