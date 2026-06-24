@@ -171,6 +171,7 @@ const GATEWAY_SCOPE_PRESETS = [
 ];
 
 const WORKER_ADAPTERS = ["mock", "hermes", "openclaw"] as const;
+type OperatorLoopBootstrapMode = "fast" | "deep";
 
 type AIEmployeesPanelLoadState = {
   id: string;
@@ -189,6 +190,7 @@ type AIEmployeesLiveData = {
   operatorExecutionMode?: OperatorExecutionModePayload;
   operatorLoopControl?: OperatorLoopControlPayload;
   operatorLoopBootstrap?: OperatorLoopBootstrapPayload;
+  loopBootstrapMode?: OperatorLoopBootstrapMode;
   operatorLoopDriverPackets?: OperatorLoopDriverPacketsPayload;
   operatorLoopSupervision?: OperatorLoopSupervisionPayload;
   operatorAgentLoopHandoff?: OperatorAgentLoopHandoffPayload;
@@ -232,7 +234,7 @@ const AI_EMPLOYEES_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
   { id: "operator_runtime_doctor", load: async () => ({ operatorRuntimeDoctor: await loadOperatorRuntimeDoctor(8) }) },
   { id: "operator_execution_mode", load: async (context) => ({ operatorExecutionMode: await loadOperatorExecutionMode(context.executionModeAdapter || "mock", Boolean(context.executionModeConfirmRun), 8) }) },
   { id: "operator_loop_control", load: async () => ({ operatorLoopControl: await loadOperatorLoopControl(8) }) },
-  { id: "operator_loop_bootstrap", load: async () => ({ operatorLoopBootstrap: await loadOperatorLoopBootstrap(8) }) },
+  { id: "operator_loop_bootstrap", load: async (context) => ({ operatorLoopBootstrap: await loadOperatorLoopBootstrap(8, { fast: context.loopBootstrapMode !== "deep" }) }) },
   { id: "operator_agent_loop_handoff", load: async () => ({ operatorAgentLoopHandoff: await loadOperatorAgentLoopHandoff(8) }) },
   { id: "operator_loop_supervision", load: async () => ({ operatorLoopSupervision: await loadOperatorLoopSupervision(8) }) },
   { id: "operator_loop_driver_packets", load: async () => ({ operatorLoopDriverPackets: await loadOperatorLoopDriverPackets(8) }) },
@@ -375,6 +377,7 @@ export function AIEmployees() {
       : "Ask the AI team to review Pixel Office from a customer perspective: improve the pixel style, clarify the flow, and keep MIS ledger, approvals, and run evidence visible.",
   });
   const [liveRuntimeConfirmed, setLiveRuntimeConfirmed] = useState(false);
+  const [loopBootstrapMode, setLoopBootstrapMode] = useState<OperatorLoopBootstrapMode>("fast");
   const [selectedLogAdapter, setSelectedLogAdapter] = useState<(typeof WORKER_ADAPTERS)[number]>("mock");
   const [daemonLogsOpen, setDaemonLogsOpen] = useState(false);
   const [daemonLogsByAdapter, setDaemonLogsByAdapter] = useState<Partial<Record<(typeof WORKER_ADAPTERS)[number], WorkerDaemonLogPayload>>>({});
@@ -421,6 +424,7 @@ export function AIEmployees() {
         integrationInboxBucket,
         executionModeAdapter: customerTaskForm.adapter,
         executionModeConfirmRun: liveRuntimeConfirmed,
+        loopBootstrapMode,
         activeCommanderProjectId: commanderProject?.projectId || "",
         activeCommanderPlanId: commanderProject?.planId || "",
       });
@@ -438,6 +442,7 @@ export function AIEmployees() {
         const deferredContext = await loadAIEmployeesPanelSet(AI_EMPLOYEES_DEFERRED_PANEL_LOADERS, {
           ...coreContext,
           integrationInboxBucket,
+          loopBootstrapMode,
           activeCommanderProjectId: commanderProject?.projectId || "",
           activeCommanderPlanId: commanderProject?.planId || "",
         });
@@ -473,7 +478,7 @@ export function AIEmployees() {
       setLoading(false);
       setDeferredLoading(false);
     }
-  }, [activeCommanderProject?.planId, activeCommanderProject?.projectId, clearIssuedCredential, customerTaskForm.adapter, integrationInboxBucket, liveRuntimeConfirmed]);
+  }, [activeCommanderProject?.planId, activeCommanderProject?.projectId, clearIssuedCredential, customerTaskForm.adapter, integrationInboxBucket, liveRuntimeConfirmed, loopBootstrapMode]);
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -492,6 +497,7 @@ export function AIEmployees() {
       scopedLoopId,
       executionModeAdapter: customerTaskForm.adapter,
       executionModeConfirmRun: liveRuntimeConfirmed,
+      loopBootstrapMode,
       activeCommanderProjectId: activeCommanderProject?.projectId || "",
       activeCommanderPlanId: activeCommanderProject?.planId || "",
     };
@@ -535,7 +541,7 @@ export function AIEmployees() {
     } finally {
       setLocalPanelRefreshing((current) => current === panelId ? null : current);
     }
-  }, [activeCommanderProject?.planId, activeCommanderProject?.projectId, clearIssuedCredential, customerTaskForm.adapter, data, integrationInboxBucket, liveRuntimeConfirmed]);
+  }, [activeCommanderProject?.planId, activeCommanderProject?.projectId, clearIssuedCredential, customerTaskForm.adapter, data, integrationInboxBucket, liveRuntimeConfirmed, loopBootstrapMode]);
   const loadSelectedDaemonLog = async (adapter = selectedLogAdapter) => {
     setDaemonLogsLoading(true);
     setDaemonLogsError(null);
@@ -853,6 +859,9 @@ export function AIEmployees() {
       agentLoopHandoffSummary: "Compact shared handoff for Hermes, OpenClaw, and Codex: current-code proof, fresh live evidence, Method gates, and copyable next commands.",
       loopBootstrapTitle: "Local loop bootstrap",
       loopBootstrapSummary: "Ordered startup packet for local Hermes/OpenClaw services: install preview, service-check, service closure, activation confirm, and bounded loop-driver.",
+      loopBootstrapMode: "Bootstrap mode",
+      loopBootstrapFast: "Fast",
+      loopBootstrapDeep: "Deep",
       loopBootstrapStep: "Bootstrap step",
       serviceClosure: "Service closure",
       serviceActive: "Service active",
@@ -1473,6 +1482,9 @@ export function AIEmployees() {
       agentLoopHandoffSummary: "Hermes、OpenClaw、Codex 共享的紧凑交接包：current-code 证明、fresh live 证据、Method gate 和下一条可复制命令。",
       loopBootstrapTitle: "本地 Loop 启动包",
       loopBootstrapSummary: "给本地 Hermes/OpenClaw 服务的有序启动包：安装预览、service-check、服务闭环、激活确认和受限 loop-driver。",
+      loopBootstrapMode: "启动模式",
+      loopBootstrapFast: "快速",
+      loopBootstrapDeep: "深度",
       loopBootstrapStep: "启动步骤",
       serviceClosure: "服务闭环",
       serviceActive: "服务活跃",
@@ -4950,6 +4962,32 @@ export function AIEmployees() {
                         {panelReceiptButton("operator_loop_bootstrap")}
                       </div>
                       <div className="text-[8px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>{copy.loopBootstrapSummary}</div>
+                      <div data-testid="operator-loop-bootstrap-mode" className="inline-flex items-center gap-1 mt-1.5 rounded px-1 py-0.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                        <span className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{copy.loopBootstrapMode}</span>
+                        {([
+                          ["fast", copy.loopBootstrapFast],
+                          ["deep", copy.loopBootstrapDeep],
+                        ] as const).map(([mode, label]) => {
+                          const active = loopBootstrapMode === mode;
+                          return (
+                            <button
+                              key={`loop-bootstrap-mode:${mode}`}
+                              data-testid={`operator-loop-bootstrap-mode-${mode}`}
+                              type="button"
+                              onClick={() => setLoopBootstrapMode(mode)}
+                              className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded"
+                              style={{
+                                color: active ? "var(--mis-bg)" : "var(--mis-text)",
+                                background: active ? "var(--mis-cyan)" : "transparent",
+                                border: "1px solid var(--mis-border)",
+                              }}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                        <StatusBadge status={operatorLoopBootstrap.mode === "fast" ? "attention" : "pass"} label={operatorLoopBootstrap.mode || loopBootstrapMode} />
+                      </div>
                       <div className="flex flex-wrap gap-1 mt-1.5">
                         {loopBootstrapCommands.map((item) => (
                           <button

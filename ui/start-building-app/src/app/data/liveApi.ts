@@ -2705,6 +2705,7 @@ export interface OperatorLoopBootstrapPayload {
   provider: string;
   operation: string;
   status: string;
+  mode?: string;
   workspace_id: string;
   adapters: string[];
   summary: {
@@ -7580,12 +7581,16 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
   };
 }
 
-export async function loadOperatorLoopBootstrap(limit = 8): Promise<OperatorLoopBootstrapPayload> {
+export async function loadOperatorLoopBootstrap(limit = 8, options: { fast?: boolean } = {}): Promise<OperatorLoopBootstrapPayload> {
   const params = new URLSearchParams({ limit: String(limit) });
+  if (options.fast) params.set("fast", "1");
+  const fallbackMode = options.fast ? "fast" : "deep";
+  const fallbackModeFlag = options.fast ? " --fast" : "";
   const raw = await optionalApiJson<Record<string, unknown>>(`/operator/loop-bootstrap?${params.toString()}`, {
     provider: "agentops-operator",
     operation: "operator_loop_bootstrap",
     status: "unavailable",
+    mode: fallbackMode,
     workspace_id: "local-demo",
     adapters: ["hermes", "openclaw"],
     summary: {
@@ -7600,8 +7605,8 @@ export async function loadOperatorLoopBootstrap(limit = 8): Promise<OperatorLoop
     },
     items: [],
     next_actions: [
-      `agentops operator loop-bootstrap --adapter hermes --limit ${limit}`,
-      `agentops operator loop-bootstrap --adapter openclaw --limit ${limit}`,
+      `agentops operator loop-bootstrap --adapter hermes --limit ${limit}${fallbackModeFlag}`,
+      `agentops operator loop-bootstrap --adapter openclaw --limit ${limit}${fallbackModeFlag}`,
     ],
     contract: "read-only API bootstrap packet fallback",
     safety: {
@@ -7624,6 +7629,7 @@ export async function loadOperatorLoopBootstrap(limit = 8): Promise<OperatorLoop
     provider: String(raw.provider || "agentops-operator"),
     operation: String(raw.operation || "operator_loop_bootstrap"),
     status: String(raw.status || "unknown"),
+    mode: raw.mode === undefined || raw.mode === null ? fallbackMode : String(raw.mode),
     workspace_id: String(raw.workspace_id || "local-demo"),
     adapters: asArray<unknown>(raw.adapters).map(String).filter(Boolean),
     summary: {
