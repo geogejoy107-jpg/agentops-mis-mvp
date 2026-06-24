@@ -27461,6 +27461,7 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
                 "server_executes_shell": item.get("server_executes_shell"),
                 "live_execution_performed": item.get("live_execution_performed"),
                 "control_readback_required": True,
+                "advance_command": "agentops operator advance-loop --source research_lab_consumption --limit 8 --confirm-advance",
             },
             action_signature=f"operator.research_lab_consumption:{adapter}:{item.get('packet_hash') or 'missing'}",
             receipt_required=True,
@@ -27551,6 +27552,11 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
                 for item in research_consumption_items
                 if item.get("consumed") is not True and item.get("record_command")
             ][:limit],
+            "commands": {
+                "advance_missing": "agentops operator advance-loop --source research_lab_consumption --limit 8 --confirm-advance",
+                "preview_advance_missing": "agentops operator advance-loop --source research_lab_consumption --limit 8",
+                "verify": "agentops operator command-center --limit 8",
+            },
             "safety": {
                 "read_only": True,
                 "ledger_mutated": False,

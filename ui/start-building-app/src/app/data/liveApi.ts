@@ -1556,6 +1556,7 @@ export interface OperatorCommandCenterPayload {
     items?: OperatorCommandCenterResearchConsumptionItem[];
     source_operation?: string;
     next_actions?: string[];
+    commands?: Record<string, string>;
     safety?: Record<string, unknown>;
     token_omitted?: boolean;
   };
@@ -5983,6 +5984,11 @@ export async function loadOperatorCommandCenter(limit = 12, projectId = ""): Pro
       items: [],
       source_operation: "operator_loop_supervision",
       next_actions: [],
+      commands: {
+        preview_advance_missing: "agentops operator advance-loop --source research_lab_consumption --limit 8",
+        advance_missing: "agentops operator advance-loop --source research_lab_consumption --limit 8 --confirm-advance",
+        verify: "agentops operator command-center --limit 8",
+      },
       safety: {
         read_only: true,
         ledger_mutated: false,
@@ -6085,6 +6091,9 @@ export async function loadOperatorCommandCenter(limit = 12, projectId = ""): Pro
       })),
       source_operation: researchConsumptionRaw.source_operation ? String(researchConsumptionRaw.source_operation) : undefined,
       next_actions: asArray<unknown>(researchConsumptionRaw.next_actions).map(String).filter(Boolean),
+      commands: Object.fromEntries(Object.entries(
+        typeof researchConsumptionRaw.commands === "object" && researchConsumptionRaw.commands !== null ? researchConsumptionRaw.commands as Record<string, unknown> : {}
+      ).map(([key, value]) => [key, String(value || "")]).filter(([, value]) => value)),
       safety: typeof researchConsumptionRaw.safety === "object" && researchConsumptionRaw.safety !== null ? researchConsumptionRaw.safety as Record<string, unknown> : undefined,
       token_omitted: researchConsumptionRaw.token_omitted === undefined ? true : boolValue(researchConsumptionRaw.token_omitted),
     },

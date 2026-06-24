@@ -3377,6 +3377,50 @@ def select_advance_loop_item(handoff: dict) -> dict:
     return {}
 
 
+def select_command_center_advance_item(command_center: dict, source_filter: str) -> dict:
+    source_filter = str(source_filter or "").strip()
+    if not source_filter:
+        return {}
+    for item in command_center.get("next_actions") or []:
+        source = str(item.get("source") or "")
+        if source_filter not in source:
+            continue
+        command = str(item.get("command") or "").strip()
+        if not command:
+            continue
+        policy = advance_loop_command_policy(command, phase="action")
+        if not policy.get("allowed"):
+            continue
+        return {
+            "package_id": f"operator_command_center:{source}",
+            "action_id": item.get("action_id"),
+            "action_signature": item.get("action_signature") or item.get("action_id"),
+            "gate_id": source_filter.replace(":", "_"),
+            "gate_label": item.get("title") or source,
+            "gate_status": item.get("receipt_status") or "missing",
+            "source": "operator_command_center",
+            "action_command": command,
+            "verify_command": item.get("verify_command") or "agentops operator command-center --limit 12",
+            "receipt_verify_record_command": item.get("receipt_verify_record_command"),
+            "receipt_source": source,
+            "evidence": {
+                "command_center_source": source,
+                "title": item.get("title"),
+                "priority": item.get("priority"),
+                "receipt_status": item.get("receipt_status"),
+                "receipt_verified": item.get("receipt_verified"),
+                "control_readback_required": item.get("control_readback_required"),
+                "evidence": item.get("evidence") if isinstance(item.get("evidence"), dict) else {},
+                "operation": command_center.get("operation"),
+                "status": command_center.get("status"),
+                "token_omitted": True,
+            },
+            "advance_policy": policy,
+            "token_omitted": True,
+        }
+    return {}
+
+
 def compact_loop_control(payload: dict) -> dict:
     control = payload.get("control_summary") or {}
     step = control.get("recommended_step") or {}
@@ -3403,7 +3447,13 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
     control_endpoint = "/api/operator/loop-control" if args.fast_control else "/api/operator/handoff"
     handoff = client.get(control_endpoint, query={"limit": args.limit, "loop_id": args.loop_id or None})
     before_control = compact_loop_control(handoff)
-    selected = select_advance_loop_item(handoff)
+    selected = {}
+    source_filter = str(getattr(args, "source", "") or "").strip()
+    if source_filter:
+        command_center = client.get("/api/operator/command-center", query={"limit": args.limit})
+        selected = select_command_center_advance_item(command_center, source_filter)
+    if not selected:
+        selected = select_advance_loop_item(handoff)
     policy_summary = advance_loop_policy_summary()
     if not selected:
         return {
@@ -5197,6 +5247,7 @@ def build_parser() -> argparse.ArgumentParser:
     operator_advance.add_argument("--timeout", type=int, default=90)
     operator_advance.add_argument("--actor-id", default="usr_founder")
     operator_advance.add_argument("--fast-control", action="store_true", help="Use lightweight loop-control readback instead of full handoff.")
+    operator_advance.add_argument("--source", default="", help="Prefer a command-center next-action source such as research_lab_consumption.")
     operator_advance.add_argument("--confirm-advance", action="store_true", help="Execute exactly one allowlisted local agentops action and record its receipt.")
     operator_advance.set_defaults(handler="operator_advance_loop")
     operator_advance_policy = operator_sub.add_parser("advance-loop-policy", help="Read the bounded advance-loop policy.")

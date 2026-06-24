@@ -23,6 +23,7 @@ DENIED_OPERATOR_ACTIONS = {"close-evidence-gap", "propose-receipt-failure-memory
 ALLOWED_READ_COMMANDS = {
     ("operator", "loop-audit"),
     ("operator", "loop-control"),
+    ("operator", "loop-supervision"),
     ("operator", "action-plan"),
     ("operator", "handoff"),
     ("operator", "health"),
@@ -57,6 +58,7 @@ def advance_loop_policy_summary() -> dict:
         "special_rules": [
             "memory propose is allowed only when --type loop_record is present",
             "operator remediate-evidence-gap is allowed only as read-only preview; --confirm-create is denied",
+            "operator research-lab-consumption is allowed only as the explicit --confirm-record governance writeback path",
             "verify phase accepts read-only allowlisted commands only",
         ],
         "denied_flags": sorted(DENIED_FLAGS),
@@ -117,6 +119,12 @@ def advance_loop_command_policy(command: str, *, phase: str) -> dict:
     if namespace == "operator" and action in DENIED_OPERATOR_ACTIONS:
         return {**base, "allowed": False, "reason": f"operator {action} requires a dedicated explicit confirmation path", "argv": argv[:4]}
     key = (namespace, action)
+    if key == ("operator", "research-lab-consumption"):
+        if phase != "action":
+            return {**base, "allowed": False, "reason": "research lab consumption is only allowlisted as an action command", "argv": argv[:4]}
+        if "--confirm-record" not in argv:
+            return {**base, "allowed": False, "reason": "research lab consumption advance requires --confirm-record", "argv": argv[:6]}
+        return {**base, "allowed": True, "reason": "research lab consumption confirmed governance writeback is allowlisted"}
     if phase == "verify":
         if key in ALLOWED_READ_COMMANDS or namespace in {"status", "doctor"}:
             return {**base, "allowed": True, "reason": "read-only verify command is allowlisted"}

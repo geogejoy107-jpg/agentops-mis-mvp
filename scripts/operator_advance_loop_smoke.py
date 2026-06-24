@@ -146,6 +146,25 @@ def receipt_count_for_source(db_path: Path, source: str) -> int:
     return int(row[0] if row else 0)
 
 
+def research_consumption_counts(db_path: Path) -> dict:
+    with sqlite3.connect(db_path) as conn:
+        receipt_row = conn.execute(
+            "SELECT COUNT(*) AS c FROM audit_logs WHERE action='operator.action_queue_receipt' AND metadata_json LIKE ?",
+            ("%operator.research_lab_consumption:%",),
+        ).fetchone()
+        audit_row = conn.execute(
+            "SELECT COUNT(*) AS c FROM audit_logs WHERE action='operator.research_lab_consumption'",
+        ).fetchone()
+        memory_row = conn.execute(
+            "SELECT COUNT(*) AS c FROM memories WHERE source_ref LIKE 'research_lab_packet://%'",
+        ).fetchone()
+    return {
+        "receipts": int(receipt_row[0] if receipt_row else 0),
+        "audits": int(audit_row[0] if audit_row else 0),
+        "memories": int(memory_row[0] if memory_row else 0),
+    }
+
+
 def main() -> int:
     failures: list[str] = []
     outputs: list[str] = []
@@ -166,8 +185,45 @@ def main() -> int:
             require(policy_summary.get("policy_id") == "advance_loop_local_bounded_v1", f"advance policy id missing: {policy_payload}", failures)
             require((policy_payload.get("safety") or {}).get("read_only") is True, f"advance policy should be read-only: {policy_payload}", failures)
             allowed_read_commands = set(policy_summary.get("allowed_read_commands") or [])
+            special_rules = " ".join(policy_summary.get("special_rules") or [])
             require("operator runtime-doctor" in allowed_read_commands, f"advance policy should allow runtime-doctor read: {policy_summary}", failures)
             require("operator execution-mode" in allowed_read_commands, f"advance policy should allow execution-mode read: {policy_summary}", failures)
+            require("operator loop-supervision" in allowed_read_commands, f"advance policy should allow loop-supervision verify read: {policy_summary}", failures)
+            require("research-lab-consumption" in special_rules, f"advance policy should document research consumption writeback rule: {policy_summary}", failures)
+
+            research_before = research_consumption_counts(db_path)
+            research_preview = run_cli(["operator", "advance-loop", "--source", "research_lab_consumption", "--limit", "10"], base_url, outputs)
+            research_preview_payload = load_json(research_preview.stdout)
+            research_after_preview = research_consumption_counts(db_path)
+            require(research_preview.returncode == 0, f"research source advance preview failed: {research_preview.stderr or research_preview.stdout}", failures)
+            require(research_preview_payload.get("status") == "preview", f"research source advance should preview: {research_preview_payload}", failures)
+            research_preview_item = research_preview_payload.get("preview") or {}
+            require(research_preview_item.get("gate_id") == "research_lab_consumption", f"research source advance should select research gate: {research_preview_payload}", failures)
+            require("operator research-lab-consumption" in str(research_preview_item.get("action_command") or ""), f"research source action command missing: {research_preview_payload}", failures)
+            require("--confirm-record" in str(research_preview_item.get("action_command") or ""), f"research source action must be confirm-record gated: {research_preview_payload}", failures)
+            require(((research_preview_item.get("action_policy") or {}).get("allowed") is True), f"research source action should be allowlisted: {research_preview_payload}", failures)
+            require(((research_preview_item.get("verify_policy") or {}).get("allowed") is True), f"research source verify should be allowlisted: {research_preview_payload}", failures)
+            require(research_after_preview == research_before, f"research source preview mutated db: {research_before} -> {research_after_preview}", failures)
+
+            research_confirm = run_cli(["operator", "advance-loop", "--source", "research_lab_consumption", "--limit", "10", "--confirm-advance"], base_url, outputs, timeout=180)
+            research_confirm_payload = load_json(research_confirm.stdout)
+            research_after_confirm = research_consumption_counts(db_path)
+            require(research_confirm.returncode == 0, f"research source advance confirm failed: {research_confirm.stderr or research_confirm.stdout}", failures)
+            require(research_confirm_payload.get("advanced") is True, f"research source advance should execute: {research_confirm_payload}", failures)
+            require((research_confirm_payload.get("preview") or {}).get("gate_id") == "research_lab_consumption", f"research confirm selected wrong gate: {research_confirm_payload}", failures)
+            require((research_confirm_payload.get("action_result") or {}).get("ok") is True, f"research confirm action failed: {research_confirm_payload}", failures)
+            require((research_confirm_payload.get("verify_result") or {}).get("ok") is True, f"research confirm verify failed: {research_confirm_payload}", failures)
+            require(((research_confirm_payload.get("receipt") or {}).get("receipt") or {}).get("source", "").startswith("research_lab_consumption:"), f"research advance receipt source mismatch: {research_confirm_payload}", failures)
+            require((research_confirm_payload.get("safety") or {}).get("ledger_mutated") is True, f"research confirm should mutate governance ledger: {research_confirm_payload}", failures)
+            require((research_confirm_payload.get("safety") or {}).get("live_execution_performed") is False, f"research confirm must not run live adapters: {research_confirm_payload}", failures)
+            require(research_after_confirm["receipts"] >= research_before["receipts"] + 1, f"research consumption receipt missing: {research_before} -> {research_after_confirm}", failures)
+            require(research_after_confirm["audits"] >= research_before["audits"] + 1, f"research consumption audit missing: {research_before} -> {research_after_confirm}", failures)
+            require(research_after_confirm["memories"] >= research_before["memories"] + 1, f"research consumption memory missing: {research_before} -> {research_after_confirm}", failures)
+            research_readback = run_cli(["operator", "command-center", "--limit", "10"], base_url, outputs)
+            research_readback_payload = load_json(research_readback.stdout)
+            research_summary = ((research_readback_payload.get("research_lab_consumption") or {}).get("summary") or {})
+            require(int(research_summary.get("consumed") or 0) >= 1, f"command-center should read back consumed research packet: {research_readback_payload}", failures)
+            require(int(research_summary.get("missing") or 0) >= 1, f"one unadvanced research adapter should remain visible: {research_readback_payload}", failures)
 
             global_preview = run_cli(["operator", "advance-loop", "--limit", "10"], base_url, outputs)
             global_preview_payload = load_json(global_preview.stdout)
@@ -378,6 +434,51 @@ def main() -> int:
             outputs.extend([execution_mode_confirm_policy.stdout, execution_mode_confirm_policy.stderr])
             execution_mode_confirm_policy_payload = load_json(execution_mode_confirm_policy.stdout)
             require(execution_mode_confirm_policy_payload.get("allowed") is False, f"execution-mode --confirm-run should still be denied: {execution_mode_confirm_policy_payload}", failures)
+            research_policy = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy; import json; print(json.dumps(advance_loop_command_policy('agentops operator research-lab-consumption --adapter hermes --packet-hash abc --confirm-record', phase='action')))",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            outputs.extend([research_policy.stdout, research_policy.stderr])
+            research_policy_payload = load_json(research_policy.stdout)
+            require(research_policy_payload.get("allowed") is True, f"research-lab-consumption confirm-record should be allowlisted: {research_policy_payload}", failures)
+            research_preview_policy = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy; import json; print(json.dumps(advance_loop_command_policy('agentops operator research-lab-consumption --adapter hermes --packet-hash abc', phase='action')))",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            outputs.extend([research_preview_policy.stdout, research_preview_policy.stderr])
+            research_preview_policy_payload = load_json(research_preview_policy.stdout)
+            require(research_preview_policy_payload.get("allowed") is False, f"research-lab-consumption without confirm-record should be denied for advance: {research_preview_policy_payload}", failures)
+            loop_supervision_verify_policy = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy; import json; print(json.dumps(advance_loop_command_policy('agentops operator loop-supervision --adapter hermes --limit 8 --work-packet', phase='verify')))",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            outputs.extend([loop_supervision_verify_policy.stdout, loop_supervision_verify_policy.stderr])
+            loop_supervision_verify_payload = load_json(loop_supervision_verify_policy.stdout)
+            require(loop_supervision_verify_payload.get("allowed") is True, f"loop-supervision verify should be allowlisted: {loop_supervision_verify_payload}", failures)
             remediation_policy = subprocess.run(
                 [
                     sys.executable,

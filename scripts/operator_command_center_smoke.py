@@ -146,10 +146,12 @@ def assert_command_center(payload: dict, failures: list[str]) -> None:
     research_consumption = payload.get("research_lab_consumption") or {}
     research_summary = research_consumption.get("summary") or {}
     research_items = research_consumption.get("items") or []
+    research_commands = research_consumption.get("commands") or {}
     require(isinstance(research_consumption, dict), f"research consumption lane missing: {payload}", failures)
     require(research_consumption.get("source_operation") == "operator_loop_supervision", f"research consumption must come from loop-supervision: {research_consumption}", failures)
     require((research_consumption.get("safety") or {}).get("read_only") is True, f"research consumption lane must be read-only: {research_consumption}", failures)
     require((research_consumption.get("safety") or {}).get("server_shell_execution") is False, f"research consumption lane cannot execute shell: {research_consumption}", failures)
+    require("advance-loop --source research_lab_consumption" in str(research_commands.get("advance_missing") or ""), f"research consumption advance command missing: {research_consumption}", failures)
     require(int(research_summary.get("adapters") or 0) >= 2, f"research consumption summary missing adapters: {research_summary}", failures)
     require(int(research_summary.get("missing") or 0) >= 1, f"isolated command-center should surface missing Research Lab consumption: {research_summary}", failures)
     require(len(research_items) >= 2, f"research consumption items missing: {research_consumption}", failures)
@@ -171,6 +173,7 @@ def assert_command_center(payload: dict, failures: list[str]) -> None:
         require(action.get("receipt_required") is True, f"research action receipt_required missing: {action}", failures)
         require(action.get("control_readback_required") is True, f"research action control readback missing: {action}", failures)
         require((action.get("evidence") or {}).get("server_executes_shell") is False, f"research action shell proof missing: {action}", failures)
+        require("advance-loop --source research_lab_consumption" in str((action.get("evidence") or {}).get("advance_command") or ""), f"research action advance command missing: {action}", failures)
     require(((payload.get("commander") or {}).get("raw_source_omitted") is True), f"raw source omission missing: {payload}", failures)
     require(((payload.get("commander") or {}).get("raw_patch_omitted") is True), f"raw patch omission missing: {payload}", failures)
     for item in payload.get("next_actions") or []:

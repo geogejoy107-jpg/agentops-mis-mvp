@@ -317,7 +317,7 @@ TEST_COMMANDS = [
     {
         "id": "operator_advance_loop",
         "command": "python3 scripts/operator_advance_loop_smoke.py",
-        "summary": "Bounded advance-loop runner records receipts plus persisted control readback evidence.",
+        "summary": "Bounded advance-loop runner records receipts plus persisted control readback evidence, including command-center Research Lab consumption writeback.",
         "ci_step": "Offline safety smokes",
     },
     {
