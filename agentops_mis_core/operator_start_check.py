@@ -519,7 +519,12 @@ def compact_start_check_local_run_path(local: dict[str, Any], *, adapter: str | 
                 "after": {
                     "verify_command": service_verify_command,
                     "service_check_expected": True,
+                    "service_check_ok": False,
+                    "service_file_exists": False,
+                    "confirm_gate_ok": False,
+                    "relaunch_policy_ok": False,
                     "confirmed_os_mutation": False,
+                    "operator_must_update_after_service_check": True,
                 },
                 "self_check": {
                     "copy_only": True,
@@ -1056,7 +1061,12 @@ def operator_local_loop_admission_packet(
             "after": {
                 "verify_command": service_verify,
                 "service_check_expected": True,
+                "service_check_ok": False,
+                "service_file_exists": False,
+                "confirm_gate_ok": False,
+                "relaunch_policy_ok": False,
                 "confirmed_os_mutation": False,
+                "operator_must_update_after_service_check": True,
             },
             "self_check": {
                 "copy_only": True,

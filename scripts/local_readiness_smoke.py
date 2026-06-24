@@ -217,6 +217,8 @@ def validate(payload: dict) -> None:
     service_managed_commands = service_managed_loop.get("commands") or {}
     require(str(service_managed_commands.get("record_control_readback") or "").startswith("agentops operator record-control-readback"), f"service-managed control-readback command missing: {service_managed_loop}")
     require("--confirm-record" in str(service_managed_commands.get("record_control_readback") or ""), f"service-managed control-readback command should be explicit-confirm: {service_managed_loop}")
+    require("service_check_ok" in str(service_managed_commands.get("record_control_readback") or ""), f"service-managed control-readback command should carry service-check proof fields: {service_managed_loop}")
+    require("operator_must_update_after_service_check" in str(service_managed_commands.get("record_control_readback") or ""), f"service-managed control-readback command should warn operators to update readback after service-check: {service_managed_loop}")
     require((service_managed_loop.get("safety") or {}).get("server_executes_shell") is False, f"service-managed server-shell proof missing: {service_managed_loop}")
     require((service_managed_loop.get("safety") or {}).get("loads_service") is False, f"service-managed load boundary missing: {service_managed_loop}")
     require((service_managed_loop.get("safety") or {}).get("token_omitted") is True, f"service-managed token omission missing: {service_managed_loop}")
@@ -239,7 +241,7 @@ def validate(payload: dict) -> None:
 def exercise_service_control_receipt_readback(base_url: str, payload: dict) -> dict:
     local_run_path = payload.get("local_run_path") or []
     service_step = next((step for step in local_run_path if step.get("step_id") == "preview_worker_service_control"), {})
-    receipt_status, receipt_payload = http_post_json(base_url, "/api/operator/action-receipts", {
+    receipt_body = {
         "action_command": service_step.get("command"),
         "verify_command": service_step.get("verify_command"),
         "action_id": service_step.get("step_id"),
@@ -247,7 +249,8 @@ def exercise_service_control_receipt_readback(base_url: str, payload: dict) -> d
         "source": service_step.get("source") or "local_readiness.service_control_preview",
         "status": "verified",
         "result_summary": "Worker service-control preview inspected and service-check reviewed.",
-    })
+    }
+    receipt_status, receipt_payload = http_post_json(base_url, "/api/operator/action-receipts", receipt_body)
     require(receipt_status == 201, f"service-control receipt record failed: {receipt_status} {receipt_payload}")
     receipt = receipt_payload.get("receipt") or {}
     receipt_id = receipt.get("receipt_id")
@@ -266,7 +269,12 @@ def exercise_service_control_receipt_readback(base_url: str, payload: dict) -> d
             "after": {
                 "verify_command": service_step.get("verify_command"),
                 "service_check_expected": True,
+                "service_check_ok": False,
+                "service_file_exists": False,
+                "confirm_gate_ok": False,
+                "relaunch_policy_ok": False,
                 "confirmed_os_mutation": False,
+                "operator_must_update_after_service_check": True,
             },
             "self_check": {
                 "copy_only": True,
@@ -281,6 +289,49 @@ def exercise_service_control_receipt_readback(base_url: str, payload: dict) -> d
         },
     })
     require(readback_status == 201, f"service-control readback record failed: {readback_status} {readback_payload}")
+    status_code, failed_readback_payload = http_json(base_url, "/api/local/readiness")
+    require(status_code == 200, f"local readiness reread after failed service-check failed: {status_code} {failed_readback_payload}")
+    validate(failed_readback_payload)
+    failed_service_loop = failed_readback_payload.get("service_managed_loop") or {}
+    require(failed_service_loop.get("service_managed_loop_ready") is False, f"service-managed loop should not be ready when service_check_ok=false: {failed_service_loop}")
+    require(failed_service_loop.get("checked_status") == "service_check_failed", f"failed service-check readback should be explicit: {failed_service_loop}")
+
+    receipt_status, receipt_payload = http_post_json(base_url, "/api/operator/action-receipts", receipt_body)
+    require(receipt_status == 201, f"service-control second receipt record failed: {receipt_status} {receipt_payload}")
+    receipt = receipt_payload.get("receipt") or {}
+    receipt_id = receipt.get("receipt_id")
+    require(str(receipt_id or ""), f"service-control second receipt id missing: {receipt_payload}")
+    readback_status, readback_payload = http_post_json(base_url, "/api/operator/action-receipts/control-readback", {
+        "receipt_id": receipt_id,
+        "source": "local_readiness.service_control_preview.control_readback",
+        "control_readback": {
+            "before": {
+                "step_id": service_step.get("step_id"),
+                "status": service_step.get("status"),
+                "service_control_preview": True,
+            },
+            "after": {
+                "verify_command": service_step.get("verify_command"),
+                "service_check_expected": True,
+                "service_check_ok": True,
+                "service_file_exists": True,
+                "confirm_gate_ok": True,
+                "relaunch_policy_ok": True,
+                "confirmed_os_mutation": False,
+            },
+            "self_check": {
+                "copy_only": True,
+                "server_executes_shell": False,
+                "live_execution_performed": False,
+                "token_omitted": True,
+            },
+            "cache": {
+                "refresh_cache_required_after_receipt": True,
+            },
+            "token_omitted": True,
+        },
+    })
+    require(readback_status == 201, f"service-control passing readback record failed: {readback_status} {readback_payload}")
     status_code, reread_payload = http_json(base_url, "/api/local/readiness")
     require(status_code == 200, f"local readiness reread failed: {status_code} {reread_payload}")
     validate(reread_payload)
@@ -292,7 +343,11 @@ def exercise_service_control_receipt_readback(base_url: str, payload: dict) -> d
     service_managed_loop = reread_payload.get("service_managed_loop") or {}
     require(service_managed_loop.get("service_managed_loop_ready") is True, f"service-managed loop not ready after readback: {service_managed_loop}")
     require(service_managed_loop.get("installed_status") == "operator_verified_service_check", f"service-managed install status not verified: {service_managed_loop}")
-    require(service_managed_loop.get("checked_status") == "operator_readback_attached", f"service-managed checked status not attached: {service_managed_loop}")
+    require(service_managed_loop.get("checked_status") == "operator_verified_service_check", f"service-managed checked status not verified: {service_managed_loop}")
+    require(service_managed_loop.get("service_check_ok") is True, f"service-managed service_check_ok not read back: {service_managed_loop}")
+    require(service_managed_loop.get("service_file_exists") is True, f"service-managed service_file_exists not read back: {service_managed_loop}")
+    require(service_managed_loop.get("service_confirm_gate_ok") is True, f"service-managed confirm gate not read back: {service_managed_loop}")
+    require(service_managed_loop.get("service_relaunch_policy_ok") is True, f"service-managed relaunch policy not read back: {service_managed_loop}")
     require(str(service_managed_loop.get("control_readback_hash") or ""), f"service-managed readback hash missing: {service_managed_loop}")
     return reread_payload
 

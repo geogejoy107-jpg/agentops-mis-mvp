@@ -18573,6 +18573,7 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
             "receipt_id": (matched or {}).get("receipt_id"),
             "receipt_hash": receipt_hash,
             "control_readback_attached": bool((matched or {}).get("control_readback")),
+            "control_readback": (matched or {}).get("control_readback") if isinstance((matched or {}).get("control_readback"), dict) else None,
             "control_readback_id": (matched or {}).get("control_readback_id"),
             "control_readback_hash": (matched or {}).get("control_readback_hash"),
             "evaluation_id": (matched or {}).get("evaluation_id") or evaluation.get("evaluation_id"),
@@ -18596,11 +18597,48 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         {},
     )
     service_receipt_state = service_control_step.get("receipt_state") if isinstance(service_control_step.get("receipt_state"), dict) else {}
+    service_control_readback = service_receipt_state.get("control_readback") if isinstance(service_receipt_state.get("control_readback"), dict) else {}
+    service_control_readback_after = service_control_readback.get("after") if isinstance(service_control_readback.get("after"), dict) else {}
+    service_check_readback = service_control_readback_after.get("service_check") if isinstance(service_control_readback_after.get("service_check"), dict) else {}
+    service_file_readback = service_check_readback.get("service_file") if isinstance(service_check_readback.get("service_file"), dict) else {}
+    service_check_ok = (
+        service_control_readback_after.get("service_check_ok") is True
+        or service_check_readback.get("ok") is True
+    )
+    service_file_exists = (
+        service_control_readback_after.get("service_file_exists") is True
+        or service_file_readback.get("exists") is True
+    )
+    service_confirm_gate_ok = (
+        service_control_readback_after.get("confirm_gate_ok") is True
+        or service_file_readback.get("confirm_gate_ok") is True
+    )
+    service_relaunch_policy_ok = (
+        service_control_readback_after.get("relaunch_policy_ok") is True
+        or service_file_readback.get("relaunch_policy_ok") is True
+    )
+    service_control_readback_verified = bool(
+        service_receipt_state.get("verified") is True
+        and service_receipt_state.get("control_readback_attached") is True
+        and service_check_ok
+        and service_file_exists
+        and service_confirm_gate_ok
+        and service_relaunch_policy_ok
+    )
+    service_checked_status = (
+        "operator_verified_service_check"
+        if service_control_readback_verified
+        else (
+            "service_check_failed"
+            if service_receipt_state.get("control_readback_attached") is True
+            else "missing_readback"
+        )
+    )
     service_managed_loop = {
         "operation": "local_service_managed_loop_readiness",
         "status": (
             "ready"
-            if service_receipt_state.get("verified") is True and service_receipt_state.get("control_readback_attached") is True
+            if service_control_readback_verified
             else "attention"
         ),
         "adapter": recommended_adapter,
@@ -18617,16 +18655,18 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "control_readback_attached": bool(service_receipt_state.get("control_readback_attached")),
         "control_readback_id": service_receipt_state.get("control_readback_id"),
         "control_readback_hash": service_receipt_state.get("control_readback_hash"),
-        "service_managed_loop_ready": bool(
-            service_receipt_state.get("verified") is True
-            and service_receipt_state.get("control_readback_attached") is True
-        ),
+        "service_check_ok": bool(service_check_ok),
+        "service_file_exists": bool(service_file_exists),
+        "service_confirm_gate_ok": bool(service_confirm_gate_ok),
+        "service_relaunch_policy_ok": bool(service_relaunch_policy_ok),
+        "readback_verification_status": "passed" if service_control_readback_verified else service_checked_status,
+        "service_managed_loop_ready": service_control_readback_verified,
         "installed_status": (
             "operator_verified_service_check"
-            if service_receipt_state.get("verified") is True and service_receipt_state.get("control_readback_attached") is True
+            if service_control_readback_verified
             else "unverified"
         ),
-        "checked_status": "operator_readback_attached" if service_receipt_state.get("control_readback_attached") is True else "missing_readback",
+        "checked_status": service_checked_status,
         "commands": {
             "service_install_preview": f"agentops worker service-install --manager launchd --adapter {recommended_adapter} --agent-id agt_worker_daemon_{recommended_adapter}{' --confirm-run' if recommended_adapter in {'hermes', 'openclaw'} else ''}",
             "service_install_confirm": f"agentops worker service-install --manager launchd --adapter {recommended_adapter} --agent-id agt_worker_daemon_{recommended_adapter}{' --confirm-run' if recommended_adapter in {'hermes', 'openclaw'} else ''} --confirm-install",
@@ -18647,7 +18687,12 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
                     "after": {
                         "verify_command": service_control_verify_command,
                         "service_check_expected": True,
+                        "service_check_ok": False,
+                        "service_file_exists": False,
+                        "confirm_gate_ok": False,
+                        "relaunch_policy_ok": False,
                         "confirmed_os_mutation": False,
+                        "operator_must_update_after_service_check": True,
                     },
                     "self_check": {
                         "copy_only": True,
