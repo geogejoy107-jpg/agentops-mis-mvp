@@ -2534,6 +2534,7 @@ export interface OperatorLoopSupervisionItemPayload {
       adapter?: string | null;
       service_managed_loop_ready?: boolean;
       status?: string;
+      commands?: Record<string, string | null | undefined>;
       token_omitted?: boolean;
     };
     token_omitted?: boolean;
@@ -7261,6 +7262,7 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
       const localRunPathRaw = typeof localDeploymentRaw.local_run_path === "object" && localDeploymentRaw.local_run_path !== null ? localDeploymentRaw.local_run_path as Record<string, unknown> : {};
       const localRunSafetyRaw = typeof localRunPathRaw.safety === "object" && localRunPathRaw.safety !== null ? localRunPathRaw.safety as Record<string, unknown> : {};
       const serviceManagedRaw = typeof localDeploymentRaw.service_managed_loop === "object" && localDeploymentRaw.service_managed_loop !== null ? localDeploymentRaw.service_managed_loop as Record<string, unknown> : {};
+      const serviceManagedCommandsRaw = typeof serviceManagedRaw.commands === "object" && serviceManagedRaw.commands !== null ? serviceManagedRaw.commands as Record<string, unknown> : {};
       const runStartAdmissionRaw = typeof item.run_start_admission === "object" && item.run_start_admission !== null ? item.run_start_admission as Record<string, unknown> : {};
       const runStartSafetyRaw = typeof runStartAdmissionRaw.safety === "object" && runStartAdmissionRaw.safety !== null ? runStartAdmissionRaw.safety as Record<string, unknown> : {};
       return {
@@ -7299,6 +7301,7 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
             adapter: serviceManagedRaw.adapter === undefined || serviceManagedRaw.adapter === null ? null : String(serviceManagedRaw.adapter),
             service_managed_loop_ready: serviceManagedRaw.service_managed_loop_ready === undefined ? undefined : boolValue(serviceManagedRaw.service_managed_loop_ready),
             status: serviceManagedRaw.status === undefined || serviceManagedRaw.status === null ? undefined : String(serviceManagedRaw.status),
+            commands: Object.fromEntries(Object.entries(serviceManagedCommandsRaw).map(([key, value]) => [key, value === undefined || value === null ? null : String(value)])),
             token_omitted: serviceManagedRaw.token_omitted === undefined ? undefined : boolValue(serviceManagedRaw.token_omitted),
           } : undefined,
           token_omitted: localDeploymentRaw.token_omitted === undefined ? undefined : boolValue(localDeploymentRaw.token_omitted),

@@ -4944,6 +4944,12 @@ export function AIEmployees() {
                           const localDeploymentServerShell = localRunPath?.safety?.server_executes_shell === true || localDeploymentGate?.server_executes_shell === true;
                           const recommendedAdapter = localRunPath?.recommended_adapter || localDeploymentGate?.recommended_adapter || "missing";
                           const serviceManagedAdapter = serviceManagedLoop?.adapter || localDeploymentGate?.service_managed_adapter || "missing";
+                          const serviceManagedCommands = serviceManagedLoop?.commands || {};
+                          const serviceManagedCommandButtons = [
+                            { label: "service-check", command: serviceManagedCommands.service_check },
+                            { label: "record-receipt", command: serviceManagedCommands.record_verified_receipt },
+                            { label: "record-readback", command: serviceManagedCommands.record_control_readback },
+                          ].filter((entry) => entry.command);
                           const localDeploymentOk = localDeploymentGate?.ok === true
                             && recommendedAdapter === item.adapter
                             && serviceManagedAdapter === item.adapter
@@ -5002,6 +5008,23 @@ export function AIEmployees() {
                                   </div>
                                 ))}
                               </div>
+                              {serviceManagedCommandButtons.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {serviceManagedCommandButtons.map((commandItem) => (
+                                    <button
+                                      key={`${item.adapter}:service-managed-command:${commandItem.label}`}
+                                      type="button"
+                                      onClick={() => void copyIntakeCommand(String(commandItem.command))}
+                                      className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                                      style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                                      title={String(commandItem.command)}
+                                    >
+                                      <Copy size={8} />
+                                      <span className="truncate max-w-[132px]">{copiedIntakeCommand === commandItem.command ? copy.copiedCommand : commandItem.label}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                             {item.run_start_admission && (
                               <div
