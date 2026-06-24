@@ -392,6 +392,31 @@ def build_task_prompt_bundle(task: dict, adapter: str | None = None) -> tuple[st
         f"paths={', '.join(knowledge_paths) if knowledge_paths else 'none'}; "
         "raw_query/snippet/content/prompt/response/token omitted.\n"
     )
+    loop = task.get("_loop_supervision_gate") if isinstance(task.get("_loop_supervision_gate"), dict) else {}
+    service = loop.get("service_managed_loop") if isinstance(loop.get("service_managed_loop"), dict) else {}
+    local_deployment = loop.get("local_deployment") if isinstance(loop.get("local_deployment"), dict) else {}
+    service_context = ""
+    if loop:
+        service_context = (
+            "本地服务循环证据："
+            f"adapter={redact_text(loop.get('adapter') or adapter or 'worker', 40)}; "
+            f"agent_id={redact_text(loop.get('agent_id'), 120)}; "
+            f"task_id={redact_text(loop.get('task_id') or task.get('task_id'), 120)}; "
+            f"gate_status={redact_text(loop.get('status'), 60)}; "
+            f"ready_for_live_dispatch={bool(loop.get('ready_for_live_dispatch'))}; "
+            f"service_managed_loop_ready={bool(service.get('service_managed_loop_ready'))}; "
+            f"service_loaded={bool(service.get('service_loaded'))}; "
+            f"service_active_loop_ready={bool(service.get('service_active_loop_ready'))}; "
+            f"active_status={redact_text(service.get('active_loop_status') or service.get('active_status'), 60)}; "
+            f"manager={redact_text(service.get('manager'), 40)}; "
+            f"receipt_id={redact_text(service.get('receipt_id'), 80)}; "
+            f"control_readback_id={redact_text(service.get('control_readback_id'), 80)}; "
+            f"readback_status={redact_text(service.get('readback_verification_status'), 60)}; "
+            f"supervision_hash={redact_text(loop.get('supervision_hash'), 80)}; "
+            f"local_run_path_present={bool(local_deployment.get('local_run_path_present'))}; "
+            "proof_source=/api/operator/loop-supervision; "
+            "server_shell=false; raw_service_template/prompt/response/token omitted.\n"
+        )
     profile_context = (
         "执行画像："
         f"profile_id={profile['profile_id']}; "
@@ -415,6 +440,7 @@ def build_task_prompt_bundle(task: dict, adapter: str | None = None) -> tuple[st
         f"验收标准：{acceptance}\n"
         f"{profile_context}"
         f"{knowledge_context}"
+        f"{service_context}"
     )
     return prompt, profile
 
@@ -1044,6 +1070,25 @@ def compact_worker_loop_supervision_gate(payload: dict, *, adapter: str, task_id
             "server_executes_shell": local_deployment_safety.get("server_executes_shell") is True,
             "token_omitted": True,
         },
+        "service_managed_loop": {
+            "adapter": service_managed_loop.get("adapter"),
+            "manager": service_managed_loop.get("manager"),
+            "status": service_managed_loop.get("status"),
+            "checked_status": service_managed_loop.get("checked_status"),
+            "active_status": service_managed_loop.get("active_status"),
+            "active_loop_status": service_managed_loop.get("active_loop_status"),
+            "service_managed_loop_ready": service_managed_loop.get("service_managed_loop_ready") is True,
+            "service_loaded": service_managed_loop.get("service_loaded") is True,
+            "service_active_loop_ready": service_managed_loop.get("service_active_loop_ready") is True,
+            "service_check_ok": service_managed_loop.get("service_check_ok") is True,
+            "service_file_exists": service_managed_loop.get("service_file_exists") is True,
+            "receipt_id": service_managed_loop.get("receipt_id"),
+            "receipt_verified": service_managed_loop.get("receipt_verified") is True,
+            "control_readback_id": service_managed_loop.get("control_readback_id"),
+            "control_readback_attached": service_managed_loop.get("control_readback_attached") is True,
+            "readback_verification_status": service_managed_loop.get("readback_verification_status"),
+            "token_omitted": True,
+        },
         "blocked_gate_ids": [gate.get("id") for gate in gates if gate.get("ok") is not True and gate.get("status") == "blocked"],
         "gates": gates,
         "recommended_next": commands.get("recommended_next") or next_commands.get("recommended_next"),
@@ -1071,6 +1116,7 @@ def compact_worker_loop_supervision_gate(payload: dict, *, adapter: str, task_id
         "can_confirm_bounded_loop": core["can_confirm_bounded_loop"],
         "should_record_before_execute": core["should_record_before_execute"],
         "blocked_gate_ids": core["blocked_gate_ids"],
+        "service_managed_loop": core["service_managed_loop"],
         "recommended_next": core["recommended_next"],
     })
     return core
@@ -1324,6 +1370,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "secret_boundary": secret_boundary,
             "token_omitted": True,
         }
+    if loop_supervision_gate:
+        task["_loop_supervision_gate"] = loop_supervision_gate
 
     run_payload = client.post("/api/agent-gateway/runs/start", {
         "workspace_id": client.workspace_id,

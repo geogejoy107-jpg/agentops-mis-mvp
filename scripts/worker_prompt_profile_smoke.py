@@ -92,6 +92,60 @@ def main() -> int:
         require("raw profile prompt body omitted" in prompt, f"{label} prompt missing raw omission boundary", failures)
         prompt_hash_markers += prompt.count("profile_hash=")
 
+    service_task = {
+        "task_id": "tsk_service_context_smoke",
+        "title": "Audit launchd daemon loop proof",
+        "description": "Review local service-loop evidence for a Hermes worker task.",
+        "acceptance_criteria": "The prompt must include only safe service receipt and readback proof.",
+        "risk_level": "low",
+        "_knowledge_retrieval_evidence": {
+            "packet_status": "ready",
+            "packet_hash": "kph_service_context",
+            "query_hash": "kqh_service_context",
+            "paths": ["PROJECT_SPEC.md"],
+            "metrics": {"recall_at_5": 1.0, "mrr": 1.0},
+        },
+        "_loop_supervision_gate": {
+            "adapter": "hermes",
+            "agent_id": "agt_worker_daemon_hermes",
+            "task_id": "tsk_service_context_smoke",
+            "status": "record_first",
+            "ready_for_live_dispatch": True,
+            "supervision_hash": "supervision_hash_smoke",
+            "local_deployment": {"local_run_path_present": True},
+            "service_managed_loop": {
+                "adapter": "hermes",
+                "manager": "launchd",
+                "service_managed_loop_ready": True,
+                "service_loaded": True,
+                "service_active_loop_ready": True,
+                "active_loop_status": "active",
+                "receipt_id": "oar_smoke_receipt",
+                "control_readback_id": "ocr_smoke_readback",
+                "readback_verification_status": "passed",
+            },
+        },
+    }
+    service_prompt, _service_profile = build_task_prompt_bundle(service_task, adapter="hermes")
+    combined_prompt += "\n" + service_prompt
+    service_markers = [
+        "本地服务循环证据",
+        "service_managed_loop_ready=True",
+        "service_loaded=True",
+        "service_active_loop_ready=True",
+        "manager=launchd",
+        "receipt_id=oar_smoke_receipt",
+        "control_readback_id=ocr_smoke_readback",
+        "readback_status=passed",
+        "proof_source=/api/operator/loop-supervision",
+        "server_shell=false",
+        "raw_service_template/prompt/response/token omitted",
+    ]
+    for marker in service_markers:
+        require(marker in service_prompt, f"service-loop prompt missing marker {marker}: {service_prompt}", failures)
+    require("ProgramArguments" not in service_prompt, "service prompt should not expose raw launchd template", failures)
+    require("AGENTOPS_API_KEY" not in service_prompt, "service prompt should not expose API-key env", failures)
+
     worker_source = WORKER.read_text(encoding="utf-8")
     approval_wall_source = APPROVAL_WALL.read_text(encoding="utf-8")
     source_markers = [
@@ -106,6 +160,9 @@ def main() -> int:
         "raw_prompt_omitted",
         "raw_response_omitted",
         "token_omitted",
+        "_loop_supervision_gate",
+        "service_managed_loop",
+        "control_readback_id",
     ]
     for marker in source_markers:
         require(marker in worker_source, f"worker source missing marker: {marker}", failures)
@@ -123,6 +180,7 @@ def main() -> int:
         "profile_ids": profile_ids,
         "profile_count": len(set(profile_ids.values())),
         "approval_wall_profile_metadata_safe": all(marker in approval_wall_source for marker in ["prompt_profile_id", "prompt_profile_version", "prompt_profile_hash"]),
+        "service_loop_context_prompted": all(marker in service_prompt for marker in service_markers),
         "source_markers_checked": len(source_markers),
         "failures": failures,
         "safety": {
