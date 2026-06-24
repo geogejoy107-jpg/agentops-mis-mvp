@@ -1375,6 +1375,9 @@ export interface OperatorActionPlanItem {
   receipt_id?: string | null;
   receipt_hash?: string | null;
   receipt_evaluation?: Record<string, unknown> | null;
+  control_readback_required?: boolean;
+  control_readback_attached?: boolean;
+  control_readback_hash?: string | null;
   receipt_state?: Record<string, unknown>;
 }
 

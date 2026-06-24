@@ -2118,6 +2118,9 @@ export function AIEmployees() {
     lastWorkerRunStartGate?.commands?.record_review ||
     ""
   );
+  const lastWorkerRunStartReceiptAction = lastWorkerDispatch && lastWorkerRunStartGate
+    ? `run-start-gate-readback:${String(lastWorkerRunStartGate.adapter || lastWorkerRunStartGate.runtime_type || lastWorkerDispatch.adapter || "mock")}:${lastWorkerDispatch.task_id}`
+    : "";
   const selectedRouteDetail = executionModeRoute
     ? `${executionModeRoute.readiness || "unknown"} · ${executionModeRoute.trust_status || "trust:unknown"}`
     : customerTaskForm.adapter === "mock"
@@ -2568,6 +2571,9 @@ export function AIEmployees() {
         receiptRecordCommand: item.receipt_record_command,
         receiptRecordConfirmCommand: item.receipt_record_confirm_command,
         receiptVerifyRecordCommand: item.receipt_verify_record_command,
+        controlReadbackRequired: item.control_readback_required,
+        controlReadbackAttached: item.control_readback_attached,
+        controlReadbackHash: item.control_readback_hash,
         remediationWorkflowStepId: workflowStepId,
         remediationWorkflowKind: String(evidence.next_safe_command_kind || ""),
         remediationWorkflowPrerequisite: String(evidence.prerequisite_step || ""),
@@ -2905,6 +2911,84 @@ export function AIEmployees() {
       setDispatchResult(err instanceof Error ? err.message : String(err));
     } finally {
       setReceiptAction(null);
+    }
+  };
+
+  const recordLatestRunStartGateReceipt = async () => {
+    if (!lastWorkerDispatch || !lastWorkerRunStartGate) return;
+    const adapter = String(lastWorkerRunStartGate.adapter || lastWorkerRunStartGate.runtime_type || lastWorkerDispatch.adapter || "mock");
+    const actionKey = `run-start-gate-readback:${adapter}:${lastWorkerDispatch.task_id}`;
+    const statusText = String(lastWorkerRunStartGate.status || (lastWorkerRunStartGate.ok ? "pass" : "blocked"));
+    const noShell = !(lastWorkerRunStartGateSafety.server_executes_shell || lastWorkerRunStartGate.server_executes_shell);
+    const noLive = !(lastWorkerRunStartGateSafety.live_execution_performed || lastWorkerRunStartGate.live_execution_performed);
+    const actionCommand = `agentops operator loop-supervision --adapter ${adapter} --limit 8`;
+    const verifyCommand = "agentops operator loop-audit --limit 20";
+    setReceiptAction(actionKey);
+    setDispatchResult(null);
+    try {
+      const receiptResult = await recordOperatorActionReceipt({
+        action_command: actionCommand,
+        verify_command: verifyCommand,
+        action_id: `run_start_supervision:${adapter}`,
+        action_signature: `run_start_supervision:${adapter}:${lastWorkerRunStartGate.supervision_hash || statusText}`,
+        source: `ui.run_start_loop_supervision_gate:${adapter}`,
+        status: noShell && noLive ? "verified" : "failed",
+        result_summary: [
+          `${adapter} run_start supervision gate ${statusText}`,
+          `hash=${lastWorkerRunStartGateHash}`,
+          `run_start_attempted=${String(lastWorkerDispatch.run_start_attempted !== false)}`,
+          "server_executes_shell=false",
+          "live_execution_performed=false",
+        ].join("; "),
+      });
+      const receiptId = receiptResult.receipt?.receipt_id;
+      if (!receiptId) throw new Error("receipt_id_required");
+      await recordOperatorActionControlReadback({
+        receipt_id: receiptId,
+        source: `ui.run_start_loop_supervision_gate:${adapter}.control_readback`,
+        control_readback: {
+          before: {
+            selected_gate: "run_start_loop_supervision",
+            adapter,
+            task_id: lastWorkerDispatch.task_id,
+            run_id: lastWorkerDispatch.run_id || null,
+            status: statusText,
+            ok: lastWorkerRunStartGate.ok === true,
+            run_start_attempted: lastWorkerDispatch.run_start_attempted !== false,
+            supervision_hash_short: lastWorkerRunStartGateHash,
+          },
+          after: {
+            selected_gate: "run_start_loop_supervision",
+            receipt_recorded: true,
+            verify_command: verifyCommand,
+            recommended_next: lastWorkerRunStartRecommendedNext || actionCommand,
+            no_run_created_on_block: lastWorkerDispatch.run_start_attempted === false,
+          },
+          after_self_check: {
+            selected_gate: "run_start_loop_supervision",
+            selected_status: noShell && noLive ? "verified" : "failed",
+            server_executes_shell: false,
+            live_execution_performed: false,
+            raw_prompt_omitted: true,
+            raw_response_omitted: true,
+            token_omitted: true,
+          },
+          refresh_cache_requested: true,
+          token_omitted: true,
+        },
+      });
+      setDispatchResult(`${copy.controlReadback}: ${receiptResult.status} · ${receiptId}`);
+      await Promise.allSettled([
+        refreshPanel("operator_loop_supervision"),
+        refreshPanel("operator_action_receipts"),
+        refreshPanel("operator_action_plan"),
+        refreshPanel("operator_loop_audit"),
+        refreshPanel("operator_handoff"),
+      ]);
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReceiptAction((current) => current === actionKey ? null : current);
     }
   };
 
@@ -8007,21 +8091,34 @@ export function AIEmployees() {
 	                      {copy.hashBinding}: {lastWorkerRunStartGateHash} · {lastWorkerRunStartGate.operation}
 	                    </div>
 	                  </div>
-	                  {lastWorkerRunStartRecommendedNext && (
-	                    <button
-	                      type="button"
-	                      onClick={() => void copyIntakeCommand(lastWorkerRunStartRecommendedNext)}
+                  <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                  {lastWorkerRunStartRecommendedNext && (
+                    <button
+                      type="button"
+                      onClick={() => void copyIntakeCommand(lastWorkerRunStartRecommendedNext)}
 	                      className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded max-w-full"
 	                      style={{ color: "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
 	                      title={lastWorkerRunStartRecommendedNext}
 	                    >
 	                      <Copy size={10} />
-	                      <span className="truncate max-w-[220px]">{copiedIntakeCommand === lastWorkerRunStartRecommendedNext ? copy.copiedCommand : lastWorkerRunStartRecommendedNext}</span>
-	                    </button>
-	                  )}
-	                </div>
-	              </div>
-	            )}
+                      <span className="truncate max-w-[220px]">{copiedIntakeCommand === lastWorkerRunStartRecommendedNext ? copy.copiedCommand : lastWorkerRunStartRecommendedNext}</span>
+                    </button>
+                  )}
+                    <button
+                      type="button"
+                      onClick={() => void recordLatestRunStartGateReceipt()}
+                      disabled={Boolean(receiptAction)}
+                      className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                      style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.08)", border: "1px solid rgba(45,212,191,0.18)" }}
+                      title={copy.recordVerifyReceipt}
+                    >
+                      {receiptAction === lastWorkerRunStartReceiptAction ? <RefreshCw size={10} /> : <CheckCircle2 size={10} />}
+                      <span>{receiptAction === lastWorkerRunStartReceiptAction ? copy.recordingReceipt : copy.recordVerifyReceipt}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 	          </div>
 	        )}
         <div className="flex gap-2 flex-wrap mt-4">

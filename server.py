@@ -20308,6 +20308,8 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         receipt, receipt_match = latest_receipt_for_action(command, action_id, action_signature)
         receipt_source_value = receipt_source or source or "operator_action_queue"
         receipt_result_summary_value = receipt_result_summary or "Action and verification completed."
+        control_readback_required = operator_receipt_requires_control_readback({"source": receipt_source_value})
+        control_readback_attached = bool(receipt and isinstance(receipt.get("control_readback"), dict) and receipt.get("control_readback"))
         def receipt_record_command(status: str, *, confirm: bool = False, summary: str = "") -> str:
             parts = [
                 "agentops", "operator", "record-action-receipt",
@@ -20362,6 +20364,9 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "receipt_id": (receipt or {}).get("receipt_id"),
             "receipt_hash": receipt_hash,
             "receipt_evaluation": receipt_evaluation,
+            "control_readback_required": control_readback_required,
+            "control_readback_attached": control_readback_attached,
+            "control_readback_hash": (receipt or {}).get("control_readback_hash"),
             "receipt_state": {
                 "required": True,
                 "status": receipt_status,
@@ -20375,6 +20380,9 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
                 "action_hash": (receipt or {}).get("action_hash"),
                 "verify_hash": (receipt or {}).get("verify_hash"),
                 "source": (receipt or {}).get("source"),
+                "control_readback_required": control_readback_required,
+                "control_readback_attached": control_readback_attached,
+                "control_readback_hash": (receipt or {}).get("control_readback_hash"),
                 "priority_boost": receipt_priority_boost,
                 "record_command": redact_text(receipt_record_command("recorded"), 900),
                 "record_confirm_command": redact_text(receipt_record_command("recorded", confirm=True), 900),
@@ -20382,6 +20390,71 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             },
             "token_omitted": True,
         })
+
+    loop_supervision = operator_loop_supervision(
+        conn,
+        headers,
+        {
+            "limit": [str(min(max(limit, 2), 8))],
+            "adapter": ["hermes", "openclaw"],
+            "handoff_mode": ["lightweight"],
+        },
+    )
+    for item in (loop_supervision.get("items") or [])[:2]:
+        if not isinstance(item, dict):
+            continue
+        admission = item.get("run_start_admission") if isinstance(item.get("run_start_admission"), dict) else {}
+        adapter = str(item.get("adapter") or admission.get("runtime_type") or "").strip()
+        if adapter not in {"hermes", "openclaw"} or not admission:
+            continue
+        action_command = f"agentops operator loop-supervision --adapter {adapter} --limit {min(max(limit, 2), 8)}"
+        verify_command = f"agentops operator loop-audit --limit {min(max(limit, 8), 20)}"
+        action_signature = stable_id(
+            "op_action_sig",
+            "run_start_loop_supervision_gate",
+            adapter,
+            "bound_by_agent_gateway_run_start",
+            action_command,
+        )[-18:]
+        add_action(
+            "run_start_supervision",
+            f"{adapter} Agent Gateway run_start supervision gate",
+            action_command,
+            priority=113 if admission.get("would_block_run_start") else 93,
+            severity="blocked" if admission.get("would_block_run_start") else "attention",
+            source="operator_loop_supervision.run_start_gate",
+            summary=(
+                f"Gateway run_start admission {admission.get('status') or item.get('status')}; "
+                f"would_allow={bool(admission.get('would_allow_run_start'))}; "
+                f"no_run_on_block={bool(admission.get('no_run_created_on_block'))}."
+            ),
+            ui_route="/workspace/agents",
+            evidence={
+                "adapter": adapter,
+                "runtime_type": admission.get("runtime_type"),
+                "gateway_endpoint": admission.get("gateway_endpoint"),
+                "status": admission.get("status") or item.get("status"),
+                "would_allow_run_start": admission.get("would_allow_run_start") is True,
+                "would_block_run_start": admission.get("would_block_run_start") is True,
+                "no_run_created_on_block": admission.get("no_run_created_on_block") is True,
+                "agent_plan_required": admission.get("agent_plan_required") is True,
+                "supervision_hash_state": admission.get("supervision_hash_state"),
+                "run_metadata_field": admission.get("run_metadata_field"),
+                "recommended_next": admission.get("recommended_next"),
+                "control_readback_required": True,
+                "server_executes_shell": False,
+                "live_execution_performed": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "raw_content_omitted": True,
+                "token_omitted": True,
+            },
+            verify_command_override=verify_command,
+            action_signature_override=action_signature,
+            action_id_override=f"run_start_supervision:{adapter}",
+            receipt_source=f"operator_loop_supervision.run_start_gate:{adapter}",
+            receipt_result_summary=f"Verified {adapter} run_start supervision gate readback before Agent Gateway execution.",
+        )
 
     def remediation_workflow_stage_action(item: dict) -> dict | None:
         run_id = str(item.get("run_id") or "").strip()
@@ -24960,6 +25033,22 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
             "run_metadata_field": "loop_supervision_hash",
             "recommended_next": recommended_next_command,
             "status": "pass" if would_allow_run_start else "blocked",
+            "receipt_projection": {
+                "source": f"operator_loop_supervision.run_start_gate:{adapter}",
+                "action_id": f"run_start_supervision:{adapter}",
+                "action_signature": stable_id(
+                    "op_action_sig",
+                    "run_start_loop_supervision_gate",
+                    adapter,
+                    "bound_by_agent_gateway_run_start",
+                    f"agentops operator loop-supervision --adapter {adapter} --limit {limit}",
+                )[-18:],
+                "action_command": f"agentops operator loop-supervision --adapter {adapter} --limit {limit}",
+                "verify_command": f"agentops operator loop-audit --limit {min(max(limit, 8), 20)}",
+                "control_readback_required": True,
+                "control_readback_source": f"operator_loop_supervision.run_start_gate:{adapter}.control_readback",
+                "token_omitted": True,
+            },
             "contract": "read-only projection of the Agent Gateway run_start loop-supervision precondition; it does not create runs and hashes are bound only when Gateway consumes the gate during run_start.",
             "safety": {
                 "read_only": True,

@@ -156,6 +156,13 @@ def validate(payload: dict, failures: list[str]) -> None:
         require(run_start_admission.get("no_run_created_on_block") is True, f"{adapter} no-run-on-block proof missing: {run_start_admission}", failures)
         require(run_start_admission.get("agent_plan_required") is True, f"{adapter} Agent Plan precondition missing: {run_start_admission}", failures)
         require(run_start_admission.get("supervision_hash_state") == "bound_by_agent_gateway_run_start", f"{adapter} hash binding state missing: {run_start_admission}", failures)
+        receipt_projection = run_start_admission.get("receipt_projection") or {}
+        require(receipt_projection.get("source") == f"operator_loop_supervision.run_start_gate:{adapter}", f"{adapter} receipt projection source missing: {receipt_projection}", failures)
+        require(receipt_projection.get("action_id") == f"run_start_supervision:{adapter}", f"{adapter} receipt projection action id missing: {receipt_projection}", failures)
+        require(str(receipt_projection.get("action_command") or "").startswith(f"agentops operator loop-supervision --adapter {adapter}"), f"{adapter} receipt projection action command missing: {receipt_projection}", failures)
+        require(str(receipt_projection.get("verify_command") or "").startswith("agentops operator loop-audit"), f"{adapter} receipt projection verify command missing: {receipt_projection}", failures)
+        require(receipt_projection.get("control_readback_required") is True, f"{adapter} receipt projection control readback missing: {receipt_projection}", failures)
+        require(receipt_projection.get("token_omitted") is True, f"{adapter} receipt projection token omission missing: {receipt_projection}", failures)
         run_start_safety = run_start_admission.get("safety") or {}
         require(run_start_safety.get("read_only") is True, f"{adapter} run_start admission read-only proof missing: {run_start_safety}", failures)
         require(run_start_safety.get("ledger_mutated") is False, f"{adapter} run_start admission ledger proof missing: {run_start_safety}", failures)

@@ -90,6 +90,8 @@ def operator_receipt_requires_control_readback(receipt: dict[str, Any]) -> bool:
     return (
         source.startswith("advance_loop:")
         or source == "handoff.evidence_remediation"
+        or source.startswith("operator_loop_supervision.run_start_gate")
+        or source.startswith("ui.run_start_loop_supervision_gate")
         or source.startswith("local_readiness.service_control_preview")
         or source.startswith("ui.local_run_path.service_control_preview")
     )

@@ -293,6 +293,66 @@ def main() -> int:
                 require(int(stale_action.get("receipt_priority_boost") or 0) == 8, f"stale receipt should keep priority boost: {stale_action}", failures)
                 require(stale_action.get("receipt_id") == stale_item.get("receipt_id"), f"stale receipt id mismatch: {stale_action}", failures)
 
+            run_start_action = next((row for row in action_plan.get("actions") or [] if row.get("lane") == "run_start_supervision"), {})
+            require(bool(run_start_action), f"run_start supervision action missing from action-plan: {action_plan.get('actions')}", failures)
+            run_start_receipt_item = {}
+            if run_start_action:
+                run_start_adapter = str(((run_start_action.get("evidence") or {}).get("adapter")) or "hermes")
+                run_start_payload = {
+                    "action_command": str(run_start_action.get("command") or ""),
+                    "verify_command": str(run_start_action.get("verify_command") or "agentops operator loop-audit --limit 20"),
+                    "action_id": str(run_start_action.get("action_id") or f"run_start_supervision:{run_start_adapter}"),
+                    "action_signature": str(run_start_action.get("action_signature") or ""),
+                    "source": f"operator_loop_supervision.run_start_gate:{run_start_adapter}",
+                    "status": "verified",
+                    "result_summary": f"Smoke verified {run_start_adapter} run_start supervision gate before Agent Gateway execution.",
+                }
+                status, run_start_receipt = http_json(base_url, "/api/operator/action-receipts", "POST", run_start_payload)
+                outputs.append(json.dumps(run_start_receipt, ensure_ascii=False))
+                require(status == 201, f"run_start receipt POST status mismatch: {status} {run_start_receipt}", failures)
+                run_start_receipt_item = run_start_receipt.get("receipt") or {}
+                require(run_start_receipt_item.get("source") == run_start_payload["source"], f"run_start receipt source mismatch: {run_start_receipt_item}", failures)
+                require((run_start_receipt.get("evaluation") or {}).get("pass_fail") == "pass", f"run_start receipt evaluation missing: {run_start_receipt}", failures)
+                status, run_start_readback = http_json(base_url, "/api/operator/action-receipts/control-readback", "POST", {
+                    "receipt_id": run_start_receipt_item.get("receipt_id"),
+                    "source": f"operator_loop_supervision.run_start_gate:{run_start_adapter}.control_readback",
+                    "control_readback": {
+                        "before": {
+                            "selected_gate": "run_start_loop_supervision",
+                            "adapter": run_start_adapter,
+                            "status": (run_start_action.get("evidence") or {}).get("status"),
+                            "would_allow_run_start": (run_start_action.get("evidence") or {}).get("would_allow_run_start"),
+                        },
+                        "after": {
+                            "selected_gate": "run_start_loop_supervision",
+                            "receipt_recorded": True,
+                            "verify_command": run_start_payload["verify_command"],
+                        },
+                        "after_self_check": {
+                            "selected_gate": "run_start_loop_supervision",
+                            "selected_status": "verified",
+                            "server_executes_shell": False,
+                            "live_execution_performed": False,
+                            "token_omitted": True,
+                        },
+                        "token_omitted": True,
+                    },
+                })
+                outputs.append(json.dumps(run_start_readback, ensure_ascii=False))
+                require(status == 201, f"run_start control readback POST status mismatch: {status} {run_start_readback}", failures)
+                status, run_start_plan = http_json(base_url, "/api/operator/action-plan?limit=30")
+                outputs.append(json.dumps(run_start_plan, ensure_ascii=False))
+                require(status == 200, f"run_start action-plan status mismatch: {status} {run_start_plan}", failures)
+                run_start_matched = next((row for row in run_start_plan.get("actions") or [] if row.get("lane") == "run_start_supervision" and row.get("command") == run_start_payload["action_command"]), {})
+                if run_start_matched:
+                    require(run_start_matched.get("receipt_verified") is True, f"run_start action receipt not verified: {run_start_matched}", failures)
+                    require(run_start_matched.get("control_readback_required") is True, f"run_start action should require control readback: {run_start_matched}", failures)
+                    require(run_start_matched.get("control_readback_attached") is True, f"run_start action control readback not attached: {run_start_matched}", failures)
+                run_start_coverage = run_start_plan.get("receipt_coverage") or {}
+                require(int(run_start_coverage.get("control_readback_required") or 0) >= 1, f"run_start control readback not counted as required: {run_start_coverage}", failures)
+                require(int(run_start_coverage.get("control_readback_attached") or 0) >= 1, f"run_start control readback not counted as attached: {run_start_coverage}", failures)
+                require(bool(run_start_coverage.get("latest_control_readback_hash")), f"run_start control readback hash missing: {run_start_coverage}", failures)
+
             failed_payload = None
             failed_item = None
             repeated_failure_memory_id = None
@@ -431,9 +491,9 @@ def main() -> int:
                 require(int(record_evidence.get("receipt_evaluation_fail_actions") or 0) >= 1, f"RECORD evidence lacks failed receipt evaluation: {record_evidence}", failures)
 
             after = db_counts(db_path)
-            expected_writes = 1 + (1 if stale_payload else 0) + unrelated_writes + (2 if failed_payload else 0)
+            expected_writes = 1 + (1 if stale_payload else 0) + unrelated_writes + (1 if run_start_receipt_item else 0) + (2 if failed_payload else 0)
             require(after["audit_logs"] == before["audit_logs"] + expected_writes, f"audit count did not increase by {expected_writes}: {before} -> {after}", failures)
-            expected_evaluations = 1 + (1 if stale_payload else 0) + (2 if failed_payload else 0)
+            expected_evaluations = 1 + (1 if stale_payload else 0) + (1 if run_start_receipt_item else 0) + (2 if failed_payload else 0)
             require(after["operator_action_evaluations"] == before["operator_action_evaluations"] + expected_evaluations, f"operator action evaluation count wrong: {before} -> {after}", failures)
             require(after["evaluation_audit_logs"] == before["evaluation_audit_logs"] + expected_evaluations, f"operator action evaluation audit count wrong: {before} -> {after}", failures)
             require(after["runtime_events"] == before["runtime_events"] + expected_writes, f"runtime count did not increase by {expected_writes}: {before} -> {after}", failures)
