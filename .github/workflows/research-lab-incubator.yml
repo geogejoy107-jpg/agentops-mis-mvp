@@ -7,7 +7,8 @@ on:
       - ".github/workflows/research-lab-incubator.yml"
   push:
     branches:
-      - "incubator/research-lab-ssh-v0-3"
+      - "codex/research-lab-ssh-mainline"
+      - "codex/osbi-v1-1-mainline"
     paths:
       - "incubator/research-lab/**"
       - ".github/workflows/research-lab-incubator.yml"
