@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 import sys
+import importlib.util
 from pathlib import Path
 
 
@@ -27,6 +28,15 @@ def require(condition: bool, message: str, failures: list[str]) -> None:
 
 def leaked_secret(text: str) -> bool:
     return any(pattern.search(text or "") for pattern in TOKEN_PATTERNS)
+
+
+def load_demo_module():
+    module_path = ROOT / "scripts" / "live_worker_loop_demo_slice.py"
+    spec = importlib.util.spec_from_file_location("live_worker_loop_demo_slice", module_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
 
 
 def main() -> int:
@@ -58,11 +68,15 @@ def main() -> int:
     require(payload.get("live_execution_performed") is False, f"plan-only executed live work: {payload}", failures)
     require(payload.get("ledger_mutated") is False, f"plan-only mutated ledger: {payload}", failures)
     require(payload.get("confirm_live_required") is True, f"confirm wall missing: {payload}", failures)
+    require(payload.get("confirm_service_closure_required") is True, f"service-closure confirm wall missing: {payload}", failures)
     steps = payload.get("steps") or []
     require(steps and steps[0].get("advisory") is True, f"readiness probe should be advisory: {payload}", failures)
     commands = payload.get("commands") or {}
     require("customer_worker_real_runtime_acceptance.py" in str(commands.get("real_worker_loop")), f"live command missing: {commands}", failures)
     require("--confirm-live" in str(commands.get("real_worker_loop")), f"confirm-live flag missing: {commands}", failures)
+    combined = str(commands.get("service_closure_live_demo") or "")
+    require("live_worker_loop_demo_slice.py" in combined, f"combined service-closure/live command missing: {commands}", failures)
+    require("--confirm-live" in combined and "--confirm-service-closure" in combined, f"combined command confirmation flags missing: {combined}", failures)
     require("v1_5_live_product_readiness_smoke.py" in str(commands.get("live_readback")), f"readback command missing: {commands}", failures)
     require("operator live-product-readiness" in str(commands.get("operator_readback")), f"operator readback command missing: {commands}", failures)
     for adapter in ["hermes", "openclaw"]:
@@ -75,9 +89,64 @@ def main() -> int:
     sequence = payload.get("recommended_sequence") or []
     require("real_worker_loop" in sequence and "live_readback" in sequence, f"recommended sequence missing run/readback: {sequence}", failures)
     require("hermes_service_closure" in sequence and "openclaw_service_closure" in sequence, f"recommended sequence missing service closure: {sequence}", failures)
+    require("service_closure_live_demo" in sequence, f"recommended sequence missing combined demo command: {sequence}", failures)
     safety = payload.get("safety") or {}
     require(safety.get("uses_saved_cli_config") is False, f"saved config should not be used: {safety}", failures)
     require(safety.get("token_omitted") is True, f"token omission proof missing: {safety}", failures)
+    require(safety.get("requires_explicit_confirm_service_closure") is True, f"service-closure safety proof missing: {safety}", failures)
+
+    demo_module = load_demo_module()
+    open_gate_item = {
+        "service_closure": {"required": True, "status": "attention", "step": "confirm_service_control_load"},
+        "local_deployment": {
+            "service_managed_loop": {
+                "receipt_verified": True,
+                "control_readback_attached": True,
+                "service_check_ok": True,
+                "service_file_exists": True,
+                "service_confirm_gate_ok": True,
+                "service_relaunch_policy_ok": True,
+                "service_loaded": False,
+                "service_managed_loop_ready": False,
+                "service_active_loop_ready": False,
+            }
+        },
+    }
+    incomplete_closed_gate_item = {
+        "service_closure": {"required": False, "status": "pass"},
+        "local_deployment": {
+            "service_managed_loop": {
+                "receipt_verified": True,
+                "control_readback_attached": True,
+                "service_check_ok": True,
+                "service_file_exists": True,
+                "service_confirm_gate_ok": True,
+                "service_relaunch_policy_ok": True,
+                "service_loaded": False,
+                "service_managed_loop_ready": True,
+                "service_active_loop_ready": False,
+            }
+        },
+    }
+    closed_gate_item = {
+        "service_closure": {"required": False, "status": "pass"},
+        "local_deployment": {
+            "service_managed_loop": {
+                "receipt_verified": True,
+                "control_readback_attached": True,
+                "service_check_ok": True,
+                "service_file_exists": True,
+                "service_confirm_gate_ok": True,
+                "service_relaunch_policy_ok": True,
+                "service_loaded": True,
+                "service_managed_loop_ready": True,
+                "service_active_loop_ready": True,
+            }
+        },
+    }
+    require(demo_module.service_closure_allows_live(open_gate_item) is False, "open service-closure gate should fail closed", failures)
+    require(demo_module.service_closure_allows_live(incomplete_closed_gate_item) is False, "closed-looking service-closure gate without loaded service should fail closed", failures)
+    require(demo_module.service_closure_allows_live(closed_gate_item) is True, "closed service-closure gate should allow live dispatch", failures)
     require(not leaked_secret(proc.stdout + proc.stderr), "plan-only output leaked token-like material", failures)
     print(json.dumps({
         "operation": "live_worker_loop_demo_slice_smoke",
@@ -89,6 +158,7 @@ def main() -> int:
             "base_url_explicit",
             "no_saved_cli_config",
             "no_token_like_output",
+            "service_closure_fail_closed_helper",
         ],
     }, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if not failures else 1

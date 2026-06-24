@@ -1720,6 +1720,7 @@ Confirmed live path:
 python3 scripts/live_worker_loop_demo_slice.py \
   --base-url http://127.0.0.1:8787 \
   --confirm-live \
+  --confirm-service-closure \
   --adapter hermes \
   --adapter openclaw \
   --request-timeout 720 \
@@ -1732,16 +1733,31 @@ This wraps the existing product path:
 ```text
 local readiness probe
   -> operator start-check --adapter hermes/openclaw
-  -> operator service-closure --fast --run-service-check --confirm-record
+  -> optional confirmed operator service-closure --fast --run-service-check --confirm-record
   -> customer_worker_real_runtime_acceptance.py --confirm-live
   -> v1_5_live_product_readiness_smoke.py readback
   -> local readiness reread
 ```
 
-The output is a compact redacted JSON proof with run/task/artifact/approval and
-plan-evidence ids only. It does not store raw prompts, raw responses, tokens,
-credentials, private messages, or full transcripts in docs or committed state.
-Mock/offline evidence remains CI fallback only.
+`--confirm-service-closure` is intentionally separate from `--confirm-live`.
+It writes the service-control receipt/readback evidence needed by the
+`record_first` gate before runtime dispatch, then rereads loop-supervision and
+requires the service-closure projection to be closed (`required:false`,
+`status:pass`) with receipt, control-readback, service-check, service-file,
+confirm-gate, relaunch-policy, loaded-service, ready-loop, and active-loop
+evidence. If that post-readback closure is still required or only recorded as
+attention, the script fails closed and does not enter the live customer-worker
+run. The output is a compact redacted JSON proof with service-closure
+receipt/readback ids plus run/task/artifact/approval and plan-evidence ids only.
+It does not store raw prompts, raw responses, tokens, credentials, private
+messages, or full transcripts in docs or committed state. Mock/offline evidence
+remains CI fallback only.
+
+Negative isolated validation on a `/tmp` SQLite server showed the wrapper now
+records service-closure receipt/readback evidence but returns
+`*_service_closure_still_required` with `live_execution_performed:false` when
+loop-supervision still projects `record_first` / `attention`; in that state it
+does not call the customer-worker live runtime acceptance script.
 
 ## 2026-06-24 Current-Code Isolated Product Evidence
 
