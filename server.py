@@ -18630,6 +18630,33 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
             "service_check": service_control_verify_command,
             "service_control_preview": service_control_command,
             "record_verified_receipt": service_control_receipt_verify_command,
+            "record_control_readback": " ".join(shlex.quote(str(part)) for part in [
+                "agentops", "operator", "record-control-readback",
+                "--receipt-id", service_receipt_state.get("receipt_id") or "<receipt_id>",
+                "--source", "local_readiness.service_control_preview.control_readback",
+                "--control-readback-json", json.dumps({
+                    "before": {
+                        "step_id": service_control_step.get("step_id") or "preview_worker_service_control",
+                        "status": service_control_step.get("status") or "preview",
+                        "adapter": recommended_adapter,
+                        "service_control_preview": True,
+                    },
+                    "after": {
+                        "verify_command": service_control_verify_command,
+                        "service_check_expected": True,
+                        "confirmed_os_mutation": False,
+                    },
+                    "self_check": {
+                        "copy_only": True,
+                        "server_executes_shell": False,
+                        "writes_ledger_for_service_control": False,
+                        "live_execution_performed": False,
+                        "token_omitted": True,
+                    },
+                    "token_omitted": True,
+                }, separators=(",", ":")),
+                "--confirm-record",
+            ]),
             "receipt_readback": "agentops operator action-receipts --limit 20",
         },
         "safety": {

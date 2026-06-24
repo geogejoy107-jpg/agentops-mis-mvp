@@ -99,6 +99,24 @@ def db_counts(db_path: Path) -> dict:
         conn.close()
 
 
+def db_control_readback_counts(db_path: Path) -> dict:
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.row_factory = sqlite3.Row
+        audit_row = conn.execute(
+            "SELECT COUNT(*) AS c FROM audit_logs WHERE action='operator.action_queue_control_readback'"
+        ).fetchone()
+        runtime_row = conn.execute(
+            "SELECT COUNT(*) AS c FROM runtime_events WHERE event_type='operator.action_queue_control_readback'"
+        ).fetchone()
+        return {
+            "audit_logs": int(audit_row["c"] or 0),
+            "runtime_events": int(runtime_row["c"] or 0),
+        }
+    finally:
+        conn.close()
+
+
 def leaked_secret(text: str) -> bool:
     return any(pattern.search(text) for pattern in SECRET_PATTERNS)
 
@@ -221,12 +239,82 @@ def main() -> int:
             require(evaluation.get("pass_fail") == "pass", f"record evaluation should pass: {evaluation}", failures)
             require(float(evaluation.get("score") or 0) == 1.0, f"record evaluation score wrong: {evaluation}", failures)
 
+            control_payload = {
+                "before": {
+                    "selected_gate": "cli_record_control_readback",
+                    "receipt_id": receipt_id,
+                    "status": receipt.get("status"),
+                },
+                "after": {
+                    "selected_gate": "cli_record_control_readback",
+                    "receipt_recorded": True,
+                    "verify_command": verify_command,
+                },
+                "self_check": {
+                    "server_executes_shell": False,
+                    "live_execution_performed": False,
+                    "token_omitted": True,
+                },
+                "token_omitted": True,
+            }
+            control_preview_argv = [
+                str(CLI), "operator", "record-control-readback",
+                "--receipt-id", str(receipt_id),
+                "--source", "smoke.operator_action_receipt_cli_record.control_readback",
+                "--control-readback-json", json.dumps(control_payload, separators=(",", ":")),
+            ]
+            before_control_preview = db_control_readback_counts(db_path)
+            control_preview_proc = subprocess.run(
+                control_preview_argv,
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=45,
+                check=False,
+            )
+            outputs.extend([control_preview_proc.stdout, control_preview_proc.stderr])
+            control_preview = load_json(control_preview_proc.stdout)
+            after_control_preview = db_control_readback_counts(db_path)
+            require(control_preview_proc.returncode == 0, f"control-readback preview CLI failed: {control_preview_proc.returncode} {control_preview_proc.stderr}", failures)
+            require(control_preview.get("operation") == "operator_control_readback_cli_preview", f"wrong control preview operation: {control_preview}", failures)
+            require(control_preview.get("recorded") is False, f"control preview should not record: {control_preview}", failures)
+            require((control_preview.get("safety") or {}).get("ledger_mutated") is False, f"control preview mutated ledger: {control_preview}", failures)
+            require(before_control_preview == after_control_preview, f"control preview changed counts: {before_control_preview} -> {after_control_preview}", failures)
+
+            control_record_proc = subprocess.run(
+                [*control_preview_argv, "--confirm-record"],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=45,
+                check=False,
+            )
+            outputs.extend([control_record_proc.stdout, control_record_proc.stderr])
+            control_record = load_json(control_record_proc.stdout)
+            after_control_record = db_control_readback_counts(db_path)
+            require(control_record_proc.returncode == 0, f"control-readback record CLI failed: {control_record_proc.returncode} {control_record_proc.stderr}", failures)
+            require(control_record.get("operation") == "operator_action_control_readback", f"wrong control record operation: {control_record}", failures)
+            require(control_record.get("cli_operation") == "operator_record_control_readback", f"control CLI operation marker missing: {control_record}", failures)
+            require(control_record.get("confirm_record") is True, f"control confirm marker missing: {control_record}", failures)
+            control_safety = control_record.get("safety") or {}
+            require(control_safety.get("ledger_mutated") is True, f"control record should mutate ledger: {control_safety}", failures)
+            require(control_safety.get("live_execution_performed") is False, f"control record must not execute commands: {control_safety}", failures)
+            require(after_control_record["audit_logs"] == after_control_preview["audit_logs"] + 1, f"control audit count mismatch: {after_control_preview} -> {after_control_record}", failures)
+            require(after_control_record["runtime_events"] == after_control_preview["runtime_events"] + 1, f"control runtime count mismatch: {after_control_preview} -> {after_control_record}", failures)
+            control_readback = control_record.get("readback") or {}
+            require(control_readback.get("receipt_id") == receipt_id, f"control readback receipt mismatch: {control_readback}", failures)
+            require(bool(control_readback.get("tamper_chain_hash")), f"control readback tamper hash missing: {control_readback}", failures)
+
             status, readback = http_json(base_url, "/api/operator/action-receipts?limit=5")
             outputs.append(json.dumps(readback, ensure_ascii=False))
             require(status == 200, f"readback status mismatch: {status} {readback}", failures)
             readback_receipt = next((row for row in readback.get("receipts") or [] if row.get("receipt_id") == receipt_id), {})
             require(bool(readback_receipt), f"readback missing CLI receipt: {readback}", failures)
             require((readback_receipt.get("evaluation") or {}).get("pass_fail") == "pass", f"readback receipt evaluation missing: {readback_receipt}", failures)
+            require(bool(readback_receipt.get("control_readback")), f"readback receipt missing control readback: {readback_receipt}", failures)
+            require(bool(readback_receipt.get("control_readback_id")), f"readback receipt missing control readback id: {readback_receipt}", failures)
 
             status, verified_plan = http_json(base_url, "/api/operator/action-plan?limit=30")
             outputs.append(json.dumps(verified_plan, ensure_ascii=False))

@@ -585,6 +585,56 @@ def cmd_operator_record_action_receipt(args, client: AgentOpsClient) -> dict:
     }
 
 
+def cmd_operator_record_control_readback(args, client: AgentOpsClient) -> dict:
+    control_readback = parse_json_value(args.control_readback_json, {})
+    if not isinstance(control_readback, dict):
+        raise SystemExit("--control-readback-json must decode to a JSON object")
+    payload = {
+        "workspace_id": client.workspace_id,
+        "actor_id": args.actor_id,
+        "receipt_id": args.receipt_id,
+        "source": args.source,
+        "control_readback": control_readback,
+    }
+    if not args.confirm_record:
+        return {
+            "provider": "agentops-operator",
+            "operation": "operator_control_readback_cli_preview",
+            "status": "preview",
+            "recorded": False,
+            "workspace_id": client.workspace_id,
+            "payload_preview": {
+                "receipt_id": redact_text(args.receipt_id, 160),
+                "source": redact_text(args.source, 160),
+                "control_readback_hash": hashlib.sha256(json.dumps(control_readback, sort_keys=True).encode("utf-8")).hexdigest(),
+                "control_readback_omitted": True,
+                "token_omitted": True,
+            },
+            "next_actions": [
+                "rerun this command with --confirm-record to append an audited control readback",
+                "agentops operator action-receipts --limit 12 --plan-limit 12",
+            ],
+            "contract": "preview-only; does not POST, does not execute commands, and does not mutate the ledger",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }
+    result = client.post("/api/operator/action-receipts/control-readback", payload)
+    return {
+        **result,
+        "cli_operation": "operator_record_control_readback",
+        "confirm_record": True,
+        "contract": "confirmed append-only control readback; CLI never executes action_command or verify_command",
+        "token_omitted": True,
+    }
+
+
 def cmd_operator_propose_receipt_failure_memory(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -3803,6 +3853,13 @@ def build_parser() -> argparse.ArgumentParser:
     operator_record_receipt.add_argument("--actor-id", default="usr_founder")
     operator_record_receipt.add_argument("--confirm-record", action="store_true", help="Actually append runtime/audit receipt evidence. Default is preview only.")
     operator_record_receipt.set_defaults(handler="operator_record_action_receipt")
+    operator_record_readback = operator_sub.add_parser("record-control-readback", help="Preview or append an audited control readback for an Action Queue receipt.")
+    operator_record_readback.add_argument("--receipt-id", required=True, help="Receipt id returned by record-action-receipt.")
+    operator_record_readback.add_argument("--source", default="agentops_cli.operator_record_control_readback")
+    operator_record_readback.add_argument("--control-readback-json", required=True, help="JSON object with before/after/self_check readback evidence.")
+    operator_record_readback.add_argument("--actor-id", default="usr_founder")
+    operator_record_readback.add_argument("--confirm-record", action="store_true", help="Actually append control-readback evidence. Default is preview only.")
+    operator_record_readback.set_defaults(handler="operator_record_control_readback")
     operator_receipt_memory_lane = operator_sub.add_parser("receipt-failure-memories", help="Read repeated failed receipt evaluations that should become memory candidates.")
     operator_receipt_memory_lane.add_argument("--min-failures", type=int, default=2)
     operator_receipt_memory_lane.add_argument("--limit", type=int, default=8)
@@ -4827,6 +4884,7 @@ HANDLERS = {
     "operator_action_plan": cmd_operator_action_plan,
     "operator_action_receipts": cmd_operator_action_receipts,
     "operator_record_action_receipt": cmd_operator_record_action_receipt,
+    "operator_record_control_readback": cmd_operator_record_control_readback,
     "operator_receipt_failure_memories": cmd_operator_receipt_failure_memories,
     "operator_propose_receipt_failure_memory": cmd_operator_propose_receipt_failure_memory,
     "operator_loop_audit": cmd_operator_loop_audit,

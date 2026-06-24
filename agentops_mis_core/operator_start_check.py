@@ -916,7 +916,7 @@ def operator_local_loop_admission_packet(
         "current_code_check": current_code_command,
         "service_check": service_managed_commands.get("service_check") or service_verify,
         "service_control_receipt": service_managed_commands.get("record_verified_receipt") or acceptance_commands.get("receipt_readback"),
-        "service_control_readback": service_managed_commands.get("receipt_readback") or acceptance_commands.get("receipt_readback"),
+        "service_control_readback": service_managed_commands.get("record_control_readback") or service_managed_commands.get("receipt_readback") or acceptance_commands.get("receipt_readback"),
         "agent_plan_create": agent_commands.get("agent_plan_create"),
         "knowledge_search": agent_commands.get("knowledge_search"),
         "base_reference": agent_commands.get("base_reference"),

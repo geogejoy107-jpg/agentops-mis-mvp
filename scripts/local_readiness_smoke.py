@@ -210,6 +210,9 @@ def validate(payload: dict) -> None:
     require(service_managed_loop.get("service_control_preview_available") is True, f"service-managed control preview missing: {service_managed_loop}")
     require(service_managed_loop.get("receipt_required") is True, f"service-managed receipt requirement missing: {service_managed_loop}")
     require(service_managed_loop.get("control_readback_required") is True, f"service-managed readback requirement missing: {service_managed_loop}")
+    service_managed_commands = service_managed_loop.get("commands") or {}
+    require(str(service_managed_commands.get("record_control_readback") or "").startswith("agentops operator record-control-readback"), f"service-managed control-readback command missing: {service_managed_loop}")
+    require("--confirm-record" in str(service_managed_commands.get("record_control_readback") or ""), f"service-managed control-readback command should be explicit-confirm: {service_managed_loop}")
     require((service_managed_loop.get("safety") or {}).get("server_executes_shell") is False, f"service-managed server-shell proof missing: {service_managed_loop}")
     require((service_managed_loop.get("safety") or {}).get("loads_service") is False, f"service-managed load boundary missing: {service_managed_loop}")
     require((service_managed_loop.get("safety") or {}).get("token_omitted") is True, f"service-managed token omission missing: {service_managed_loop}")

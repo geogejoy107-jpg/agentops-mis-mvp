@@ -253,6 +253,7 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     require({"service_managed_loop_ready", "agent_plan_required", "knowledge_retrieval_required", "customer_worker_dispatch", "plan_evidence_required", "review_queue_required"}.issubset(managed_execution_gate_ids), f"{adapter} managed execution gates missing: {managed_execution_path}", failures)
     managed_dispatch = str(managed_execution_commands.get("customer_worker_dispatch") or "")
     require(managed_dispatch.startswith(("agentops workflow run-task", "agentops workflow customer-worker-task")), f"{adapter} managed dispatch command missing: {managed_execution_path}", failures)
+    require(str(managed_execution_commands.get("service_control_readback") or "").startswith("agentops operator record-control-readback"), f"{adapter} managed control-readback command missing: {managed_execution_path}", failures)
     require(str(managed_execution_commands.get("evidence_report") or "").startswith("agentops operator evidence-report --run-id"), f"{adapter} managed evidence command missing: {managed_execution_path}", failures)
     require(str(managed_execution_commands.get("review_queue") or "").startswith("agentops review queue"), f"{adapter} managed review command missing: {managed_execution_path}", failures)
     require((managed_execution_path.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} managed execution server-shell proof missing: {managed_execution_path}", failures)

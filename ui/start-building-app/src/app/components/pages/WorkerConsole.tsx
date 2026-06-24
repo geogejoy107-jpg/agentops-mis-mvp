@@ -453,6 +453,11 @@ export function WorkerConsole() {
     { label: copy.installedStatus, value: String(serviceManagedLoop.installed_status || "unverified"), status: serviceManagedReady ? "pass" : "attention" },
     { label: copy.checkedStatus, value: String(serviceManagedLoop.checked_status || "missing_readback"), status: serviceReadbackAttached ? "pass" : "attention" },
   ];
+  const managedExecutionNextCommand = managedExecutionReady
+    ? managedExecutionCommands.customer_worker_dispatch
+    : serviceReceiptVerified
+      ? managedExecutionCommands.service_control_readback
+      : managedExecutionCommands.service_control_receipt;
 
   const recordServiceControlReceipt = (step: LocalRunPathStep) => runAction(`service-receipt:${step.step_id}`, async () => {
     setReceiptAction(`service-receipt:${step.step_id}`);
@@ -805,7 +810,7 @@ export function WorkerConsole() {
                   </div>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-3">
                     {[
-                      { label: copy.nextManagedStep, command: managedExecutionFirstSafe[0] || managedExecutionCommands.service_control_receipt },
+                      { label: copy.nextManagedStep, command: managedExecutionNextCommand || managedExecutionFirstSafe[0] || managedExecutionCommands.service_control_receipt },
                       { label: copy.dispatchCommand, command: managedExecutionCommands.customer_worker_dispatch },
                       { label: copy.evidenceReport, command: managedExecutionCommands.evidence_report || managedExecutionVerify[0] },
                       { label: copy.reviewQueue, command: managedExecutionCommands.review_queue || managedExecutionVerify[1] },

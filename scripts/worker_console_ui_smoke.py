@@ -67,6 +67,7 @@ EXPECTED = {
     "managed_execution_path_panel": (CONSOLE, 'data-testid="worker-managed-execution-path"'),
     "managed_execution_commands": (CONSOLE, "managedExecutionPath.commands"),
     "managed_execution_gates": (CONSOLE, "managedExecutionPath.gates"),
+    "managed_execution_next_command": (CONSOLE, "const managedExecutionNextCommand"),
     "managed_execution_dispatch": (CONSOLE, "managedExecutionCommands.customer_worker_dispatch"),
     "managed_execution_evidence": (CONSOLE, "managedExecutionCommands.evidence_report"),
     "fleet_hygiene_apply_api": (CONSOLE, "applyWorkerFleetHygiene({"),
