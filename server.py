@@ -24686,6 +24686,9 @@ def build_agent_loop_handoff_consumer(
     decision = acceptance.get("decision") if isinstance(acceptance.get("decision"), dict) else {}
     start_safety = start_check.get("safety") if isinstance(start_check.get("safety"), dict) else {}
     agent_loop = start_check.get("agent_loop_packet") if isinstance(start_check.get("agent_loop_packet"), dict) else {}
+    local_loop_admission = start_check.get("local_loop_admission_packet") if isinstance(start_check.get("local_loop_admission_packet"), dict) else {}
+    local_loop_deployment = local_loop_admission.get("local_deployment") if isinstance(local_loop_admission.get("local_deployment"), dict) else {}
+    managed_execution_path = local_loop_deployment.get("managed_execution_path") if isinstance(local_loop_deployment.get("managed_execution_path"), dict) else {}
     method_gates = agent_loop.get("method_gates") if isinstance(agent_loop.get("method_gates"), list) else []
     method_gate_ids = [gate.get("id") for gate in method_gates if isinstance(gate, dict) and gate.get("id")]
     phase_commands = agent_loop.get("phase_commands") if isinstance(agent_loop.get("phase_commands"), dict) else {}
@@ -24754,6 +24757,7 @@ def build_agent_loop_handoff_consumer(
         "local_deployment": {
             "local_run_path": local_run_path,
             "service_managed_loop": service_managed_loop,
+            "managed_execution_path": managed_execution_path,
             "token_omitted": True,
         },
         "live_product_readiness": live_adapter,

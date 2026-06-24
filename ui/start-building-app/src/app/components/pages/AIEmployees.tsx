@@ -4941,18 +4941,33 @@ export function AIEmployees() {
                           const localDeploymentGate = item.gates.find((gate) => gate.id === "local_deployment");
                           const localRunPath = item.local_deployment?.local_run_path;
                           const serviceManagedLoop = item.local_deployment?.service_managed_loop;
-                          const localDeploymentServerShell = localRunPath?.safety?.server_executes_shell === true || localDeploymentGate?.server_executes_shell === true;
+                          const managedExecutionPath = item.local_deployment?.managed_execution_path;
+                          const localDeploymentServerShell = localRunPath?.safety?.server_executes_shell === true
+                            || localDeploymentGate?.server_executes_shell === true
+                            || managedExecutionPath?.safety?.server_executes_shell === true;
                           const recommendedAdapter = localRunPath?.recommended_adapter || localDeploymentGate?.recommended_adapter || "missing";
                           const serviceManagedAdapter = serviceManagedLoop?.adapter || localDeploymentGate?.service_managed_adapter || "missing";
+                          const managedExecutionAdapter = managedExecutionPath?.adapter || "missing";
                           const serviceManagedCommands = serviceManagedLoop?.commands || {};
+                          const managedExecutionCommands = managedExecutionPath?.commands || {};
                           const serviceManagedCommandButtons = [
                             { label: "service-check", command: serviceManagedCommands.service_check },
                             { label: "record-receipt", command: serviceManagedCommands.record_verified_receipt },
                             { label: "record-readback", command: serviceManagedCommands.record_control_readback },
                           ].filter((entry) => entry.command);
+                          const managedExecutionCommandButtons = [
+                            { label: "agent-plan", command: managedExecutionCommands.agent_plan_create },
+                            { label: "knowledge-search", command: managedExecutionCommands.knowledge_search },
+                            { label: "base-reference", command: managedExecutionCommands.base_reference },
+                            { label: "dispatch-task", command: managedExecutionCommands.customer_worker_dispatch },
+                            { label: "evidence-report", command: managedExecutionCommands.evidence_report },
+                            { label: "live-readiness", command: item.commands.live_product_readiness },
+                            { label: "review-queue", command: managedExecutionCommands.review_queue || item.commands.record_review },
+                          ].filter((entry) => entry.command);
                           const localDeploymentOk = localDeploymentGate?.ok === true
                             && recommendedAdapter === item.adapter
                             && serviceManagedAdapter === item.adapter
+                            && managedExecutionAdapter === item.adapter
                             && !localDeploymentServerShell;
                           return (
                           <div key={`loop-supervision-item:${item.adapter}`} className="rounded p-1.5 min-w-0" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
@@ -4996,7 +5011,7 @@ export function AIEmployees() {
                                 {[
                                   { label: copy.deploymentRecommendedAdapter, value: String(recommendedAdapter), status: recommendedAdapter === item.adapter ? "pass" : "blocked" },
                                   { label: copy.serviceManagedAdapter, value: String(serviceManagedAdapter), status: serviceManagedAdapter === item.adapter ? "pass" : "blocked" },
-                                  { label: "Run path", value: localRunPath?.operation || "missing", status: localRunPath?.operation ? "pass" : "blocked" },
+                                  { label: "Managed path", value: managedExecutionPath?.operation || "missing", status: managedExecutionAdapter === item.adapter ? "pass" : "blocked" },
                                   { label: copy.serverShellBoundary, value: String(localDeploymentServerShell), status: localDeploymentServerShell ? "blocked" : "pass" },
                                 ].map((metric) => (
                                   <div key={`${item.adapter}:local-deployment:${metric.label}`} className="rounded px-1.5 py-0.5 min-w-0" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
@@ -5017,6 +5032,23 @@ export function AIEmployees() {
                                       onClick={() => void copyIntakeCommand(String(commandItem.command))}
                                       className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
                                       style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                                      title={String(commandItem.command)}
+                                    >
+                                      <Copy size={8} />
+                                      <span className="truncate max-w-[132px]">{copiedIntakeCommand === commandItem.command ? copy.copiedCommand : commandItem.label}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                              {managedExecutionCommandButtons.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {managedExecutionCommandButtons.map((commandItem) => (
+                                    <button
+                                      key={`${item.adapter}:managed-execution-command:${commandItem.label}`}
+                                      type="button"
+                                      onClick={() => void copyIntakeCommand(String(commandItem.command))}
+                                      className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                                      style={{ color: "var(--mis-green)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
                                       title={String(commandItem.command)}
                                     >
                                       <Copy size={8} />

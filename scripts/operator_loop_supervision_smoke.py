@@ -168,12 +168,23 @@ def validate(payload: dict, failures: list[str]) -> None:
         local_run_path = local_deployment.get("local_run_path") or {}
         service_managed = local_deployment.get("service_managed_loop") or {}
         service_commands = service_managed.get("commands") or {}
+        managed_execution = local_deployment.get("managed_execution_path") or {}
+        managed_commands = managed_execution.get("commands") or {}
         require(local_run_path.get("operation") == "local_run_path_compact", f"{adapter} local run path missing: {local_deployment}", failures)
         require(local_run_path.get("recommended_adapter") == adapter, f"{adapter} local run path adapter mismatch: {local_run_path}", failures)
         require((local_run_path.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} local run path shell proof missing: {local_run_path}", failures)
         require(service_managed.get("adapter") == adapter, f"{adapter} service-managed adapter mismatch: {service_managed}", failures)
         for key in ["service_check", "service_control_preview", "record_verified_receipt", "record_control_readback"]:
             require_adapter_command(service_commands.get(key), adapter, f"{adapter} service-managed {key}", failures)
+        require(managed_execution.get("operation") == "operator_service_managed_execution_path", f"{adapter} managed execution path missing: {managed_execution}", failures)
+        require(managed_execution.get("adapter") == adapter, f"{adapter} managed execution adapter mismatch: {managed_execution}", failures)
+        require((managed_execution.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} managed execution shell proof missing: {managed_execution}", failures)
+        require_adapter_command(managed_commands.get("service_check"), adapter, f"{adapter} managed service_check", failures)
+        require_adapter_command(managed_commands.get("service_control_receipt"), adapter, f"{adapter} managed service_control_receipt", failures)
+        require_adapter_command(managed_commands.get("service_control_readback"), adapter, f"{adapter} managed service_control_readback", failures)
+        require_adapter_command(managed_commands.get("customer_worker_dispatch"), adapter, f"{adapter} managed customer dispatch", failures)
+        require(str(managed_commands.get("evidence_report") or "").startswith("agentops operator evidence-report --run-id"), f"{adapter} managed evidence command missing: {managed_execution}", failures)
+        require(str(managed_commands.get("review_queue") or "").startswith("agentops review queue"), f"{adapter} managed review command missing: {managed_execution}", failures)
         run_start_admission = item.get("run_start_admission") or {}
         require(run_start_admission.get("operation") == "operator_loop_supervision_run_start_admission", f"{adapter} run_start admission operation missing: {run_start_admission}", failures)
         require(run_start_admission.get("gateway_endpoint") == "POST /api/agent-gateway/runs/start", f"{adapter} gateway endpoint missing: {run_start_admission}", failures)

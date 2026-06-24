@@ -2537,6 +2537,23 @@ export interface OperatorLoopSupervisionItemPayload {
       commands?: Record<string, string | null | undefined>;
       token_omitted?: boolean;
     };
+    managed_execution_path?: {
+      operation?: string;
+      status?: string;
+      adapter?: string | null;
+      service_managed_loop_ready?: boolean;
+      recommended_before_dispatch?: string | null;
+      commands?: Record<string, string | null | undefined>;
+      first_safe_commands?: string[];
+      confirm_required_commands?: string[];
+      verify_commands?: string[];
+      safety?: {
+        server_executes_shell?: boolean;
+        live_execution_performed?: boolean;
+        token_omitted?: boolean;
+      };
+      token_omitted?: boolean;
+    };
     token_omitted?: boolean;
   };
   next_commands: {
@@ -7263,6 +7280,9 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
       const localRunSafetyRaw = typeof localRunPathRaw.safety === "object" && localRunPathRaw.safety !== null ? localRunPathRaw.safety as Record<string, unknown> : {};
       const serviceManagedRaw = typeof localDeploymentRaw.service_managed_loop === "object" && localDeploymentRaw.service_managed_loop !== null ? localDeploymentRaw.service_managed_loop as Record<string, unknown> : {};
       const serviceManagedCommandsRaw = typeof serviceManagedRaw.commands === "object" && serviceManagedRaw.commands !== null ? serviceManagedRaw.commands as Record<string, unknown> : {};
+      const managedExecutionRaw = typeof localDeploymentRaw.managed_execution_path === "object" && localDeploymentRaw.managed_execution_path !== null ? localDeploymentRaw.managed_execution_path as Record<string, unknown> : {};
+      const managedExecutionCommandsRaw = typeof managedExecutionRaw.commands === "object" && managedExecutionRaw.commands !== null ? managedExecutionRaw.commands as Record<string, unknown> : {};
+      const managedExecutionSafetyRaw = typeof managedExecutionRaw.safety === "object" && managedExecutionRaw.safety !== null ? managedExecutionRaw.safety as Record<string, unknown> : {};
       const runStartAdmissionRaw = typeof item.run_start_admission === "object" && item.run_start_admission !== null ? item.run_start_admission as Record<string, unknown> : {};
       const runStartSafetyRaw = typeof runStartAdmissionRaw.safety === "object" && runStartAdmissionRaw.safety !== null ? runStartAdmissionRaw.safety as Record<string, unknown> : {};
       return {
@@ -7303,6 +7323,23 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
             status: serviceManagedRaw.status === undefined || serviceManagedRaw.status === null ? undefined : String(serviceManagedRaw.status),
             commands: Object.fromEntries(Object.entries(serviceManagedCommandsRaw).map(([key, value]) => [key, value === undefined || value === null ? null : String(value)])),
             token_omitted: serviceManagedRaw.token_omitted === undefined ? undefined : boolValue(serviceManagedRaw.token_omitted),
+          } : undefined,
+          managed_execution_path: Object.keys(managedExecutionRaw).length ? {
+            operation: managedExecutionRaw.operation === undefined || managedExecutionRaw.operation === null ? undefined : String(managedExecutionRaw.operation),
+            status: managedExecutionRaw.status === undefined || managedExecutionRaw.status === null ? undefined : String(managedExecutionRaw.status),
+            adapter: managedExecutionRaw.adapter === undefined || managedExecutionRaw.adapter === null ? null : String(managedExecutionRaw.adapter),
+            service_managed_loop_ready: managedExecutionRaw.service_managed_loop_ready === undefined ? undefined : boolValue(managedExecutionRaw.service_managed_loop_ready),
+            recommended_before_dispatch: managedExecutionRaw.recommended_before_dispatch === undefined || managedExecutionRaw.recommended_before_dispatch === null ? null : String(managedExecutionRaw.recommended_before_dispatch),
+            commands: Object.fromEntries(Object.entries(managedExecutionCommandsRaw).map(([key, value]) => [key, value === undefined || value === null ? null : String(value)])),
+            first_safe_commands: asArray<unknown>(managedExecutionRaw.first_safe_commands).map(String).filter(Boolean),
+            confirm_required_commands: asArray<unknown>(managedExecutionRaw.confirm_required_commands).map(String).filter(Boolean),
+            verify_commands: asArray<unknown>(managedExecutionRaw.verify_commands).map(String).filter(Boolean),
+            safety: {
+              server_executes_shell: managedExecutionSafetyRaw.server_executes_shell === undefined ? undefined : boolValue(managedExecutionSafetyRaw.server_executes_shell),
+              live_execution_performed: managedExecutionSafetyRaw.live_execution_performed === undefined ? undefined : boolValue(managedExecutionSafetyRaw.live_execution_performed),
+              token_omitted: managedExecutionSafetyRaw.token_omitted === undefined ? undefined : boolValue(managedExecutionSafetyRaw.token_omitted),
+            },
+            token_omitted: managedExecutionRaw.token_omitted === undefined ? undefined : boolValue(managedExecutionRaw.token_omitted),
           } : undefined,
           token_omitted: localDeploymentRaw.token_omitted === undefined ? undefined : boolValue(localDeploymentRaw.token_omitted),
         } : undefined,
