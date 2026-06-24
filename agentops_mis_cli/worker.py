@@ -1062,7 +1062,13 @@ def compact_worker_loop_supervision_gate(payload: dict, *, adapter: str, task_id
     status = str(item.get("status") or payload.get("status") or "unavailable")
     can_confirm = item.get("can_confirm_bounded_loop") is True
     server_shell = safety.get("server_executes_shell") is True
-    ok = bool(can_confirm and not server_shell and not blockers and status not in {"blocked", "attention", "preview_only", "record_first", "unavailable"})
+    ok = bool(
+        can_confirm
+        and not server_shell
+        and not blockers
+        and plan_quality_issue_count == 0
+        and status not in {"blocked", "attention", "preview_only", "unavailable"}
+    )
     core = {
         "operation": "worker_loop_supervision_gate",
         "source_operation": payload.get("operation"),

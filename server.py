@@ -26574,7 +26574,13 @@ def customer_worker_loop_supervision_readback(
     server_shell = safety.get("server_executes_shell") is True
     blockers = [str(entry) for entry in (item.get("blockers") or []) if entry]
     status = str(item.get("status") or supervision.get("status") or "unavailable")
-    ok = bool(can_confirm and not server_shell and not blockers and status not in {"blocked", "attention", "preview_only", "record_first", "unavailable"})
+    ok = bool(
+        can_confirm
+        and not server_shell
+        and not blockers
+        and plan_quality_issue_count == 0
+        and status not in {"blocked", "attention", "preview_only", "unavailable"}
+    )
     return {
         "operation": "customer_worker_loop_supervision_gate",
         "source_operation": supervision.get("operation"),
