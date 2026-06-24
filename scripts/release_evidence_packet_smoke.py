@@ -359,7 +359,7 @@ TEST_COMMANDS = [
     {
         "id": "operator_service_closure_cli",
         "command": "python3 scripts/operator_service_closure_cli_smoke.py",
-        "summary": "Hermes/OpenClaw service-managed loop closure CLI previews receipt/readback work without mutating ledgers, requires explicit service-check JSON before confirmed recording, and moves service closure from required to ready without executing service-control, service-check, shell, or live adapter work.",
+        "summary": "Hermes/OpenClaw service-managed loop closure CLI previews receipt/readback work without mutating ledgers, consumes either explicit service-check JSON or an explicit local read-only --run-service-check, and moves service closure from required to ready without executing service-control, server shell, or live adapter work.",
         "ci_step": "Offline safety smokes",
     },
     {

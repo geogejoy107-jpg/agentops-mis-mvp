@@ -129,6 +129,35 @@ def service_check_fixture(adapter: str) -> dict:
     }
 
 
+def write_launchd_service_fixture(path: Path, adapter: str, base_url: str) -> None:
+    path.write_text(
+        f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.agentops.worker.{adapter}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>agentops-worker</string>
+    <string>--adapter</string>
+    <string>{adapter}</string>
+    <string>--confirm-run</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AGENTOPS_BASE_URL</key>
+    <string>{base_url}</string>
+  </dict>
+  <key>KeepAlive</key>
+  <true/>
+</dict>
+</plist>
+""",
+        encoding="utf-8",
+    )
+
+
 def supervision_item(base_url: str, adapter: str, failures: list[str], outputs: list[str]) -> dict:
     status, payload = http_json(
         base_url,
@@ -197,6 +226,76 @@ def main() -> int:
                 )
                 require(blocked.get("status") == "blocked", f"{adapter} confirm without readback should block: {blocked}", failures)
                 require("service_check_json" in (blocked.get("missing") or []), f"{adapter} missing service_check_json not reported: {blocked}", failures)
+
+                service_path = tmp_path / f"{adapter}.plist"
+                write_launchd_service_fixture(service_path, adapter, base_url)
+                before_auto_preview = supervision_item(base_url, adapter, failures, outputs)
+                auto_preview = run_cli(
+                    [
+                        "--base-url",
+                        base_url,
+                        "operator",
+                        "service-closure",
+                        "--adapter",
+                        adapter,
+                        "--run-service-check",
+                        "--service-path",
+                        str(service_path),
+                    ],
+                    env,
+                    failures,
+                    outputs,
+                )
+                after_auto_preview = supervision_item(base_url, adapter, failures, outputs)
+                require(auto_preview.get("status") == "preview", f"{adapter} auto-check preview status mismatch: {auto_preview}", failures)
+                require(auto_preview.get("recorded") is False, f"{adapter} auto-check preview should not record: {auto_preview}", failures)
+                require((auto_preview.get("safety") or {}).get("ledger_mutated") is False, f"{adapter} auto-check preview mutated ledger: {auto_preview}", failures)
+                require((auto_preview.get("safety") or {}).get("local_cli_service_check_performed") is True, f"{adapter} auto-check preview did not run local check: {auto_preview}", failures)
+                auto_preview_check = auto_preview.get("service_check") if isinstance(auto_preview.get("service_check"), dict) else {}
+                require(auto_preview_check.get("source") == "local_cli_service_check", f"{adapter} auto-check source missing: {auto_preview_check}", failures)
+                require(auto_preview_check.get("service_file_exists") is True, f"{adapter} auto-check service file missing: {auto_preview_check}", failures)
+                require(auto_preview_check.get("service_loaded") in {True, False}, f"{adapter} auto-check loaded state should be boolean: {auto_preview_check}", failures)
+                require((before_auto_preview.get("service_closure") or {}).get("required") == (after_auto_preview.get("service_closure") or {}).get("required"), f"{adapter} auto-check preview changed closure state", failures)
+
+                auto_record = run_cli(
+                    [
+                        "--base-url",
+                        base_url,
+                        "operator",
+                        "service-closure",
+                        "--adapter",
+                        adapter,
+                        "--run-service-check",
+                        "--service-path",
+                        str(service_path),
+                        "--actor-id",
+                        "usr_service_closure_auto_smoke",
+                        "--confirm-record",
+                    ],
+                    env,
+                    failures,
+                    outputs,
+                )
+                require(auto_record.get("status") == "recorded", f"{adapter} auto-check record status mismatch: {auto_record}", failures)
+                require((auto_record.get("safety") or {}).get("ledger_mutated") is True, f"{adapter} auto-check record should mutate ledger: {auto_record}", failures)
+                require((auto_record.get("safety") or {}).get("local_cli_service_check_performed") is True, f"{adapter} auto-check record did not report local check: {auto_record}", failures)
+                auto_readback = auto_record.get("control_readback_preview") if isinstance(auto_record.get("control_readback_preview"), dict) else {}
+                auto_after = auto_readback.get("after") if isinstance(auto_readback.get("after"), dict) else {}
+                require(auto_after.get("service_check_ok") is True, f"{adapter} auto-check should pass file/service policy checks: {auto_after}", failures)
+                require(auto_after.get("service_file_exists") is True, f"{adapter} auto-check readback lacks file proof: {auto_after}", failures)
+                require(auto_after.get("service_loaded") in {True, False}, f"{adapter} auto-check should report boolean loaded state: {auto_after}", failures)
+                activation_needed = supervision_item(base_url, adapter, failures, outputs)
+                activation_closure = activation_needed.get("service_closure") if isinstance(activation_needed.get("service_closure"), dict) else {}
+                activation_loop = ((activation_needed.get("local_deployment") or {}).get("service_managed_loop") or {})
+                require(activation_loop.get("receipt_verified") is True, f"{adapter} auto-check receipt should be verified: {activation_loop}", failures)
+                require(activation_loop.get("control_readback_attached") is True, f"{adapter} auto-check readback should attach: {activation_loop}", failures)
+                if activation_loop.get("service_loaded") is True:
+                    require(activation_closure.get("required") is False, f"{adapter} loaded service should close service closure: {activation_closure}", failures)
+                    require(activation_closure.get("status") == "pass", f"{adapter} loaded service should pass closure: {activation_closure}", failures)
+                    require(activation_loop.get("service_managed_loop_ready") is True, f"{adapter} loaded service should make loop ready: {activation_loop}", failures)
+                else:
+                    require(activation_closure.get("required") is True, f"{adapter} unloaded service should still require activation: {activation_closure}", failures)
+                    require(activation_closure.get("step") == "confirm_service_control_load", f"{adapter} auto-check should advance to load confirmation: {activation_closure}", failures)
 
                 fixture_path = tmp_path / f"{adapter}-service-check.json"
                 fixture_path.write_text(json.dumps(service_check_fixture(adapter), ensure_ascii=False), encoding="utf-8")

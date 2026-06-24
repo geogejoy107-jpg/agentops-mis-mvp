@@ -1313,6 +1313,44 @@ def _service_check_readback(adapter: str, service_check: dict, *, verify_command
     }
 
 
+def _local_service_check_from_command(args, client: AgentOpsClient, command: str, *, manager: str = "") -> tuple[dict, list[str]]:
+    from . import worker as worker_mod
+
+    command = command or ""
+    missing: list[str] = []
+    parsed_manager = args.service_check_manager or _shell_option(command, "--manager", manager or "launchd")
+    if parsed_manager not in {"launchd", "systemd"}:
+        missing.append("service_check_manager")
+    agent_id = args.service_check_agent_id or _shell_option(command, "--agent-id", client.agent_id or worker_mod.DEFAULT_AGENT_ID)
+    adapter = _shell_option(command, "--adapter", args.adapter)
+    if adapter and adapter != args.adapter:
+        missing.append("service_check_adapter_match")
+    try:
+        timeout = int(_shell_option(command, "--timeout", str(args.service_check_timeout)))
+    except ValueError:
+        timeout = args.service_check_timeout
+    if missing:
+        return {}, missing
+    check_args = argparse.Namespace(
+        manager=parsed_manager,
+        workspace_id=client.workspace_id,
+        agent_id=agent_id,
+        adapter=args.adapter,
+        label=args.service_label or _shell_option(command, "--label", ""),
+        service_path=args.service_path or _shell_option(command, "--service-path", ""),
+        api_key_placeholder=args.api_key_placeholder,
+        timeout=timeout,
+    )
+    payload = worker_mod.check_service_installation(check_args)
+    payload["command"] = "agentops worker service-check"
+    payload["source_command"] = redact_text(command, 500)
+    payload["local_cli_service_check_performed"] = True
+    payload["server_executes_shell"] = False
+    payload["live_execution_performed"] = False
+    payload["token_omitted"] = True
+    return payload, []
+
+
 def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
     supervision = client.get(
         "/api/operator/loop-supervision",
@@ -1352,6 +1390,17 @@ def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
         "token_omitted": True,
     }
     service_check = read_json_argument(args.service_check_json, label="--service-check-json")
+    auto_service_check_missing: list[str] = []
+    service_check_source = "json_argument" if service_check else None
+    if not service_check and args.run_service_check:
+        service_check_command = args.service_check_command or verify_command or commands.get("service_check") or ""
+        service_check, auto_service_check_missing = _local_service_check_from_command(
+            args,
+            client,
+            service_check_command,
+            manager=str(service_managed_loop.get("manager") or "launchd"),
+        )
+        service_check_source = "local_cli_service_check" if service_check else None
     after = _service_check_readback(args.adapter, service_check, verify_command=verify_command) if service_check else None
     control_readback = {
         "before": before,
@@ -1362,6 +1411,7 @@ def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
             "writes_ledger_for_service_control": False,
             "live_execution_performed": False,
             "raw_service_check_omitted": True,
+            "local_cli_service_check_performed": bool(args.run_service_check and service_check_source == "local_cli_service_check"),
             "token_omitted": True,
         },
         "token_omitted": True,
@@ -1396,6 +1446,18 @@ def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
             "action_signature": action_signature,
             "source": source,
             "status": args.receipt_status,
+            "service_check_source": service_check_source,
+            "token_omitted": True,
+        },
+        "service_check": {
+            "source": service_check_source,
+            "ok": service_check.get("ok") is True if service_check else None,
+            "manager": service_check.get("manager") if service_check else None,
+            "service_file_exists": ((service_check.get("service_file") or {}).get("exists") is True) if service_check else None,
+            "service_loaded": ((service_check.get("service_status") or {}).get("loaded") is True) if service_check else None,
+            "local_cli_service_check_performed": bool(args.run_service_check and service_check_source == "local_cli_service_check"),
+            "missing": auto_service_check_missing,
+            "raw_content_omitted": True,
             "token_omitted": True,
         },
         "control_readback_preview": control_readback,
@@ -1403,14 +1465,17 @@ def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
             commands.get("service_check"),
             "agentops operator service-closure --adapter "
             f"{args.adapter} --service-check-json <service-check.json> --confirm-record",
+            "agentops operator service-closure --adapter "
+            f"{args.adapter} --run-service-check --confirm-record",
             "agentops operator action-receipts --limit 20",
         ],
-        "contract": "preview-only by default; --confirm-record appends receipt and control-readback evidence, but never executes service-control, service-check, shell, or live adapter work",
+        "contract": "preview-only by default; --confirm-record appends receipt and control-readback evidence; --run-service-check performs only the local CLI read-only service-check in this process and never executes service-control, shell, server-side commands, or live adapter work",
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
             "live_execution_performed": False,
             "server_executes_shell": False,
+            "local_cli_service_check_performed": bool(args.run_service_check and service_check_source == "local_cli_service_check"),
             "token_omitted": True,
         },
         "token_omitted": True,
@@ -1425,7 +1490,7 @@ def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
             "service_check_json": service_check,
         }.items()
         if not value
-    ]
+    ] + auto_service_check_missing
     if missing:
         return {
             **preview,
@@ -1469,6 +1534,7 @@ def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
             "ledger_mutated": True,
             "live_execution_performed": False,
             "server_executes_shell": False,
+            "local_cli_service_check_performed": bool(args.run_service_check and service_check_source == "local_cli_service_check"),
             "token_omitted": True,
         },
     }
@@ -4125,6 +4191,14 @@ def build_parser() -> argparse.ArgumentParser:
     operator_service_closure = operator_sub.add_parser("service-closure", help="Preview or record service-managed loop receipt/readback closure for Hermes/OpenClaw.")
     operator_service_closure.add_argument("--adapter", choices=["hermes", "openclaw"], required=True)
     operator_service_closure.add_argument("--service-check-json", default="", help="Path to JSON from agentops worker service-check, or '-' for stdin.")
+    operator_service_closure.add_argument("--run-service-check", action="store_true", help="Run the local read-only worker service-check in this CLI process when no JSON file is supplied.")
+    operator_service_closure.add_argument("--service-check-command", default="", help="Optional exact worker service-check command to parse for --run-service-check.")
+    operator_service_closure.add_argument("--service-check-manager", choices=["launchd", "systemd"], default=None)
+    operator_service_closure.add_argument("--service-check-agent-id", default="")
+    operator_service_closure.add_argument("--service-path", default="", help="Optional service file path override for --run-service-check.")
+    operator_service_closure.add_argument("--service-label", default="", help="Optional service label override for --run-service-check.")
+    operator_service_closure.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    operator_service_closure.add_argument("--service-check-timeout", type=int, default=5)
     operator_service_closure.add_argument("--receipt-command", default="", help="Optional exact record-action-receipt command to parse; defaults to loop-supervision command.")
     operator_service_closure.add_argument("--receipt-status", default="verified", choices=["verified", "failed", "recorded", "skipped"])
     operator_service_closure.add_argument("--result-summary", default="")
