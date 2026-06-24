@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import urllib.parse
@@ -73,6 +74,18 @@ def run_json(command: list[str], env: dict[str, str], timeout: int) -> tuple[boo
     return proc.returncode == 0 and payload.get("ok", True) is not False, {"returncode": proc.returncode, "payload": payload}
 
 
+def shell_join(parts: list[Any]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in parts)
+
+
+def env_command(base_url: str, parts: list[Any]) -> str:
+    return f"AGENTOPS_BASE_URL={shlex.quote(base_url)} {shell_join(parts)}"
+
+
+def service_path_from_template(template: str, adapter: str) -> str:
+    return template.format(adapter=adapter) if template else ""
+
+
 def planned_commands(
     base_url: str,
     adapters: list[str],
@@ -81,42 +94,111 @@ def planned_commands(
     hermes_max_tokens: int,
     service_control_manager: str,
     service_control_action: str,
+    service_control_timeout: int,
+    service_control_service_path_template: str,
 ) -> dict[str, str]:
-    adapter_flags = " ".join(f"--adapter {adapter}" for adapter in adapters)
-    require_flags = " ".join(f"--require-adapter {adapter}" for adapter in adapters)
-    env_prefix = f"AGENTOPS_BASE_URL={base_url}"
+    adapter_flags = [item for adapter in adapters for item in ["--adapter", adapter]]
+    require_flags = [item for adapter in adapters for item in ["--require-adapter", adapter]]
+    service_control_flags: list[Any] = [
+        "--service-control-manager",
+        service_control_manager,
+        "--service-control-action",
+        service_control_action,
+        "--service-control-timeout",
+        service_control_timeout,
+    ]
+    if service_control_service_path_template:
+        service_control_flags.extend(["--service-control-service-path-template", service_control_service_path_template])
     commands = {
-        "readiness": f"{env_prefix} ./scripts/agentops local readiness --require-current-code",
-        "service_closure_live_demo": (
-            f"{env_prefix} python3 scripts/live_worker_loop_demo_slice.py "
-            f"--base-url {base_url} --confirm-live --confirm-service-control --confirm-service-closure {adapter_flags} "
-            f"--request-timeout {request_timeout} --hermes-timeout {hermes_timeout} "
-            f"--hermes-max-tokens {hermes_max_tokens}"
-        ),
-        "real_worker_loop": (
-            f"{env_prefix} python3 scripts/customer_worker_real_runtime_acceptance.py "
-            f"--base-url {base_url} --confirm-live {adapter_flags} "
-            f"--request-timeout {request_timeout} --hermes-timeout {hermes_timeout} "
-            f"--hermes-max-tokens {hermes_max_tokens}"
-        ),
-        "live_readback": f"{env_prefix} python3 scripts/v1_5_live_product_readiness_smoke.py --base-url {base_url} {require_flags}",
-        "operator_readback": f"{env_prefix} ./scripts/agentops operator live-product-readiness {require_flags}",
+        "readiness": env_command(base_url, ["./scripts/agentops", "local", "readiness", "--require-current-code"]),
+        "service_closure_live_demo": env_command(base_url, [
+            "python3",
+            "scripts/live_worker_loop_demo_slice.py",
+            "--base-url",
+            base_url,
+            "--confirm-live",
+            "--confirm-service-control",
+            "--confirm-service-closure",
+            *adapter_flags,
+            "--request-timeout",
+            request_timeout,
+            "--hermes-timeout",
+            hermes_timeout,
+            "--hermes-max-tokens",
+            hermes_max_tokens,
+            *service_control_flags,
+        ]),
+        "real_worker_loop": env_command(base_url, [
+            "python3",
+            "scripts/customer_worker_real_runtime_acceptance.py",
+            "--base-url",
+            base_url,
+            "--confirm-live",
+            *adapter_flags,
+            "--request-timeout",
+            request_timeout,
+            "--hermes-timeout",
+            hermes_timeout,
+            "--hermes-max-tokens",
+            hermes_max_tokens,
+        ]),
+        "live_readback": env_command(base_url, [
+            "python3",
+            "scripts/v1_5_live_product_readiness_smoke.py",
+            "--base-url",
+            base_url,
+            *require_flags,
+        ]),
+        "operator_readback": env_command(base_url, [
+            "./scripts/agentops",
+            "operator",
+            "live-product-readiness",
+            *require_flags,
+        ]),
     }
     for adapter in adapters:
-        commands[f"{adapter}_start_check"] = f"{env_prefix} ./scripts/agentops operator start-check --adapter {adapter} --limit 8"
-        commands[f"{adapter}_service_control"] = (
-            f"{env_prefix} ./scripts/agentops worker service-control "
-            f"--manager {service_control_manager} --action {service_control_action} "
-            f"--adapter {adapter} --agent-id agt_worker_daemon_{adapter} --confirm-control"
-        )
-        commands[f"{adapter}_service_closure"] = (
-            f"{env_prefix} ./scripts/agentops operator service-closure "
-            f"--adapter {adapter} --fast --run-service-check --confirm-record"
-        )
-        commands[f"{adapter}_loop_driver_auto_service_closure"] = (
-            f"{env_prefix} ./scripts/agentops operator loop-driver "
-            f"--adapter {adapter} --max-steps 1 --limit 8 --confirm-loop --auto-service-closure"
-        )
+        service_control_command: list[Any] = [
+            "./scripts/agentops",
+            "worker",
+            "service-control",
+            "--manager",
+            service_control_manager,
+            "--action",
+            service_control_action,
+            "--adapter",
+            adapter,
+            "--agent-id",
+            f"agt_worker_daemon_{adapter}",
+            "--confirm-control",
+        ]
+        service_path = service_path_from_template(service_control_service_path_template, adapter)
+        if service_path:
+            service_control_command.extend(["--service-path", service_path])
+        commands[f"{adapter}_start_check"] = env_command(base_url, ["./scripts/agentops", "operator", "start-check", "--adapter", adapter, "--limit", 8])
+        commands[f"{adapter}_service_control"] = env_command(base_url, service_control_command)
+        commands[f"{adapter}_service_closure"] = env_command(base_url, [
+            "./scripts/agentops",
+            "operator",
+            "service-closure",
+            "--adapter",
+            adapter,
+            "--fast",
+            "--run-service-check",
+            "--confirm-record",
+        ])
+        commands[f"{adapter}_loop_driver_auto_service_closure"] = env_command(base_url, [
+            "./scripts/agentops",
+            "operator",
+            "loop-driver",
+            "--adapter",
+            adapter,
+            "--max-steps",
+            1,
+            "--limit",
+            8,
+            "--confirm-loop",
+            "--auto-service-closure",
+        ])
     return commands
 
 
@@ -310,6 +392,11 @@ def main() -> int:
     parser.add_argument("--service-control-manager", choices=["launchd", "systemd"], default="launchd")
     parser.add_argument("--service-control-action", choices=["load", "restart"], default="load")
     parser.add_argument("--service-control-timeout", type=int, default=30)
+    parser.add_argument(
+        "--service-control-service-path-template",
+        default="",
+        help="Optional service path template for service-control. Use {adapter} to render adapter-specific paths.",
+    )
     parser.add_argument("--service-closure-timeout", type=int, default=30)
     parser.add_argument("--probe-timeout", type=int, default=5)
     args = parser.parse_args()
@@ -324,6 +411,8 @@ def main() -> int:
         args.hermes_max_tokens,
         args.service_control_manager,
         args.service_control_action,
+        args.service_control_timeout,
+        args.service_control_service_path_template,
     )
     env = os.environ.copy()
     env["AGENTOPS_BASE_URL"] = base_url
@@ -401,6 +490,9 @@ def main() -> int:
                 f"agt_worker_daemon_{adapter}",
                 "--confirm-control",
             ]
+            service_path = service_path_from_template(args.service_control_service_path_template, adapter)
+            if service_path:
+                control_command.extend(["--service-path", service_path])
             service_control_attempted = True
             ok, result = run_json(control_command, env, args.service_control_timeout)
             payload = result.get("payload") if isinstance(result.get("payload"), dict) else {}
