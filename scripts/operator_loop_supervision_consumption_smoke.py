@@ -39,28 +39,54 @@ def leaked(text: str) -> bool:
     return any(pattern.search(text) for pattern in TOKEN_PATTERNS)
 
 
-def blocked_supervision(adapter: str, *, task_id: str | None = None, agent_id: str | None = None) -> dict:
+def blocked_supervision(
+    adapter: str,
+    *,
+    task_id: str | None = None,
+    agent_id: str | None = None,
+    plan_quality_attention: bool = False,
+) -> dict:
+    status = "record_first" if plan_quality_attention else "blocked"
+    can_confirm = True if plan_quality_attention else False
+    recommended_next = (
+        f"agentops operator evidence-report --task-id {task_id or '<task_id>'} --limit 8"
+        if plan_quality_attention
+        else f"agentops operator loop-supervision --adapter {adapter} --task-id {task_id or '<task_id>'}"
+    )
+    blockers = [] if plan_quality_attention else ["smoke_blocked_supervision"]
+    attention = ["agent_plan_quality_attention"] if plan_quality_attention else []
     return {
         "provider": "agentops-operator",
         "operation": "operator_loop_supervision",
-        "status": "blocked",
+        "status": status,
         "summary": {
             "items": 1,
             "current_code_ok": True,
-            "can_confirm_all": False,
-            "record_required": False,
+            "can_confirm_all": can_confirm,
+            "record_required": plan_quality_attention,
+            "agent_plan_quality_status": "attention" if plan_quality_attention else "not_applicable",
+            "agent_plan_quality_attention": 1 if plan_quality_attention else 0,
+            "agent_plan_quality_blocked": 0,
+            "agent_plan_quality_min_score": 67 if plan_quality_attention else None,
         },
         "items": [
             {
                 "operation": "operator_loop_supervision_item",
                 "adapter": adapter,
-                "status": "blocked",
+                "status": status,
                 "can_preview_loop": True,
-                "can_confirm_bounded_loop": False,
+                "can_confirm_bounded_loop": can_confirm,
                 "should_record_before_execute": False,
                 "ready_for_live_dispatch": False,
-                "blockers": ["smoke_blocked_supervision"],
-                "attention": [],
+                "blockers": blockers,
+                "attention": attention,
+                "plan_quality": {
+                    "status": "attention" if plan_quality_attention else "not_applicable",
+                    "issue_count": 1 if plan_quality_attention else 0,
+                    "command": recommended_next,
+                    "hard_run_start_gate": False,
+                    "token_omitted": True,
+                },
                 "review_pressure": {"token_omitted": True},
                 "local_deployment": {
                     "local_run_path": {
@@ -87,19 +113,28 @@ def blocked_supervision(adapter: str, *, task_id: str | None = None, agent_id: s
                     "token_omitted": True,
                 },
                 "gates": [
-                    {"id": "bounded_confirm", "ok": False, "status": "blocked", "confirm_required": True, "token_omitted": True},
+                    {"id": "bounded_confirm", "ok": can_confirm, "status": "pass" if can_confirm else "blocked", "confirm_required": True, "token_omitted": True},
+                    {
+                        "id": "plan_quality",
+                        "ok": not plan_quality_attention,
+                        "status": "attention" if plan_quality_attention else "pass",
+                        "quality_status": "attention" if plan_quality_attention else "not_applicable",
+                        "command": recommended_next,
+                        "hard_run_start_gate": False,
+                        "token_omitted": True,
+                    },
                     {"id": "local_deployment", "ok": True, "status": "pass", "recommended_adapter": adapter, "service_managed_adapter": adapter, "server_executes_shell": False, "token_omitted": True},
                     {"id": "server_shell_boundary", "ok": True, "status": "pass", "server_executes_shell": False, "token_omitted": True},
                 ],
                 "commands": {
-                    "recommended_next": f"agentops operator loop-supervision --adapter {adapter} --task-id {task_id or '<task_id>'}",
+                    "recommended_next": recommended_next,
                     "record_review": "agentops review queue --limit 20",
                 },
                 "next_commands": {
                     "safe_read_commands": [f"agentops operator start-check --adapter {adapter} --limit 8"],
                     "preview_commands": [],
                     "confirm_required_commands": [],
-                    "recommended_next": f"agentops operator loop-supervision --adapter {adapter} --task-id {task_id or '<task_id>'}",
+                    "recommended_next": recommended_next,
                     "token_omitted": True,
                 },
                 "safety": {
@@ -134,7 +169,7 @@ def verify_server_customer_worker_consumption(failures: list[str]) -> dict:
             adapter = ((qs or {}).get("adapter") or ["hermes"])[0]
             task_id = ((qs or {}).get("task_id") or [None])[0]
             agent_id = ((qs or {}).get("agent_id") or [None])[0]
-            return blocked_supervision(adapter, task_id=task_id, agent_id=agent_id)
+            return blocked_supervision(adapter, task_id=task_id, agent_id=agent_id, plan_quality_attention=True)
 
         def fake_adapter_ready(conn, refresh: bool = True):
             return {
@@ -185,7 +220,11 @@ def verify_server_customer_worker_consumption(failures: list[str]) -> dict:
         require(blocked_payload.get("reason") == "loop_supervision_blocked", f"server wrong block reason: {blocked_payload}", failures)
         require(blocked_payload.get("live_execution_performed") is False, f"server block should not execute live runtime: {blocked_payload}", failures)
         require(gate.get("operation") == "customer_worker_loop_supervision_gate", f"server gate missing: {blocked_payload}", failures)
-        require(gate.get("ok") is False and gate.get("can_confirm_bounded_loop") is False, f"server gate should fail confirm: {gate}", failures)
+        require(gate.get("ok") is False and gate.get("can_confirm_bounded_loop") is True, f"server gate should block record_first without losing confirm readiness: {gate}", failures)
+        require(gate.get("status") == "record_first", f"server gate should preserve record_first status: {gate}", failures)
+        plan_quality = gate.get("plan_quality") or {}
+        require(plan_quality.get("status") == "attention" and plan_quality.get("issue_count") == 1, f"server gate lost plan quality attention: {gate}", failures)
+        require(plan_quality.get("hard_run_start_gate") is False, f"server plan quality should remain non-hard gate: {gate}", failures)
         require(task is not None and task["status"] == "blocked", f"server blocked task missing: {blocked_payload}", failures)
         require(audit_count >= 1, "server block audit missing", failures)
 
@@ -260,7 +299,7 @@ class FakeWorkerClient:
                 },
             }
         if path == "/api/operator/loop-supervision":
-            return blocked_supervision("hermes", task_id="tsk_worker_supervision_smoke", agent_id=self.agent_id)
+            return blocked_supervision("hermes", task_id="tsk_worker_supervision_smoke", agent_id=self.agent_id, plan_quality_attention=True)
         if path.startswith("/api/agent-gateway/agent-plans/") and path.endswith("/verify"):
             return {"verification": {"pass": True, "token_omitted": True}}
         raise AssertionError(f"unexpected GET {path} {query}")
@@ -312,7 +351,12 @@ def verify_worker_consumption(failures: list[str]) -> dict:
     require(result.get("live_execution_performed") is False, f"worker should not execute live runtime: {result}", failures)
     require(result.get("run_start_attempted") is False, f"worker should report pre-run_start block: {result}", failures)
     require(gate.get("operation") == "worker_loop_supervision_gate", f"worker gate missing: {result}", failures)
-    require(gate.get("ok") is False and gate.get("can_confirm_bounded_loop") is False, f"worker gate should block confirm: {gate}", failures)
+    require(gate.get("ok") is False and gate.get("can_confirm_bounded_loop") is True, f"worker gate should block record_first without losing confirm readiness: {gate}", failures)
+    require(gate.get("status") == "record_first", f"worker gate should preserve record_first status: {gate}", failures)
+    plan_quality = gate.get("plan_quality") or {}
+    require(plan_quality.get("status") == "attention" and plan_quality.get("issue_count") == 1, f"worker gate lost plan quality attention: {gate}", failures)
+    require(plan_quality.get("gate_status") == "attention", f"worker gate lost plan quality gate status: {gate}", failures)
+    require(plan_quality.get("hard_run_start_gate") is False, f"worker plan quality should remain non-hard gate: {gate}", failures)
     worker_local = gate.get("local_deployment") or {}
     require(worker_local.get("local_run_path_present") is True, f"worker gate lost local run path summary: {gate}", failures)
     require(worker_local.get("service_managed_loop_present") is True, f"worker gate lost service-managed summary: {gate}", failures)

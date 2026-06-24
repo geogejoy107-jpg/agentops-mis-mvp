@@ -353,7 +353,7 @@ TEST_COMMANDS = [
     {
         "id": "operator_loop_supervision_consumption",
         "command": "python3 scripts/operator_loop_supervision_consumption_smoke.py",
-        "summary": "Customer-worker and installable worker live Hermes/OpenClaw entry points consume loop-supervision before runtime execution, audit the gate, and block when bounded confirm is not ready.",
+        "summary": "Customer-worker and installable worker live Hermes/OpenClaw entry points consume loop-supervision before runtime execution, audit the gate, and block when bounded confirm is not ready or Agent Plan quality attention requires record-first closure.",
         "ci_step": "Offline safety smokes",
     },
     {

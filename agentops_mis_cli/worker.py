@@ -1042,6 +1042,10 @@ def compact_worker_loop_supervision_gate(payload: dict, *, adapter: str, task_id
     local_run_path = local_deployment.get("local_run_path") if isinstance(local_deployment.get("local_run_path"), dict) else {}
     service_managed_loop = local_deployment.get("service_managed_loop") if isinstance(local_deployment.get("service_managed_loop"), dict) else {}
     local_deployment_safety = local_run_path.get("safety") if isinstance(local_run_path.get("safety"), dict) else {}
+    plan_quality = item.get("plan_quality") if isinstance(item.get("plan_quality"), dict) else {}
+    plan_quality_gate = next((gate for gate in item.get("gates") or [] if isinstance(gate, dict) and gate.get("id") == "plan_quality"), {})
+    plan_quality_command = plan_quality.get("command") or plan_quality_gate.get("command")
+    plan_quality_issue_count = int(plan_quality.get("issue_count") or 0)
     gates = [
         {
             "id": gate.get("id"),
@@ -1058,7 +1062,7 @@ def compact_worker_loop_supervision_gate(payload: dict, *, adapter: str, task_id
     status = str(item.get("status") or payload.get("status") or "unavailable")
     can_confirm = item.get("can_confirm_bounded_loop") is True
     server_shell = safety.get("server_executes_shell") is True
-    ok = bool(can_confirm and not server_shell and not blockers and status not in {"blocked", "attention", "preview_only", "unavailable"})
+    ok = bool(can_confirm and not server_shell and not blockers and status not in {"blocked", "attention", "preview_only", "record_first", "unavailable"})
     core = {
         "operation": "worker_loop_supervision_gate",
         "source_operation": payload.get("operation"),
@@ -1103,6 +1107,15 @@ def compact_worker_loop_supervision_gate(payload: dict, *, adapter: str, task_id
             "readback_verification_status": service_managed_loop.get("readback_verification_status"),
             "token_omitted": True,
         },
+        "plan_quality": {
+            "status": plan_quality.get("status") or plan_quality_gate.get("quality_status") or "not_applicable",
+            "issue_count": plan_quality_issue_count,
+            "gate_status": plan_quality_gate.get("status"),
+            "gate_ok": plan_quality_gate.get("ok") is True,
+            "command": plan_quality_command,
+            "hard_run_start_gate": plan_quality.get("hard_run_start_gate") is True,
+            "token_omitted": True,
+        },
         "blocked_gate_ids": [gate.get("id") for gate in gates if gate.get("ok") is not True and gate.get("status") == "blocked"],
         "gates": gates,
         "recommended_next": commands.get("recommended_next") or next_commands.get("recommended_next"),
@@ -1131,6 +1144,7 @@ def compact_worker_loop_supervision_gate(payload: dict, *, adapter: str, task_id
         "should_record_before_execute": core["should_record_before_execute"],
         "blocked_gate_ids": core["blocked_gate_ids"],
         "service_managed_loop": core["service_managed_loop"],
+        "plan_quality": core["plan_quality"],
         "recommended_next": core["recommended_next"],
     })
     return core

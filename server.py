@@ -26554,6 +26554,10 @@ def customer_worker_loop_supervision_readback(
     safety = item.get("safety") if isinstance(item.get("safety"), dict) else {}
     next_commands = item.get("next_commands") if isinstance(item.get("next_commands"), dict) else {}
     commands = item.get("commands") if isinstance(item.get("commands"), dict) else {}
+    plan_quality = item.get("plan_quality") if isinstance(item.get("plan_quality"), dict) else {}
+    plan_quality_gate = next((gate for gate in item.get("gates") or [] if isinstance(gate, dict) and gate.get("id") == "plan_quality"), {})
+    plan_quality_command = plan_quality.get("command") or plan_quality_gate.get("command")
+    plan_quality_issue_count = int(plan_quality.get("issue_count") or 0)
     gates = [
         {
             "id": gate.get("id"),
@@ -26570,7 +26574,7 @@ def customer_worker_loop_supervision_readback(
     server_shell = safety.get("server_executes_shell") is True
     blockers = [str(entry) for entry in (item.get("blockers") or []) if entry]
     status = str(item.get("status") or supervision.get("status") or "unavailable")
-    ok = bool(can_confirm and not server_shell and not blockers and status not in {"blocked", "attention", "preview_only", "unavailable"})
+    ok = bool(can_confirm and not server_shell and not blockers and status not in {"blocked", "attention", "preview_only", "record_first", "unavailable"})
     return {
         "operation": "customer_worker_loop_supervision_gate",
         "source_operation": supervision.get("operation"),
@@ -26586,6 +26590,15 @@ def customer_worker_loop_supervision_readback(
         "blockers": blockers,
         "attention": [str(entry) for entry in (item.get("attention") or []) if entry],
         "review_pressure": item.get("review_pressure") if isinstance(item.get("review_pressure"), dict) else {},
+        "plan_quality": {
+            "status": plan_quality.get("status") or plan_quality_gate.get("quality_status") or "not_applicable",
+            "issue_count": plan_quality_issue_count,
+            "gate_status": plan_quality_gate.get("status"),
+            "gate_ok": plan_quality_gate.get("ok") is True,
+            "command": plan_quality_command,
+            "hard_run_start_gate": plan_quality.get("hard_run_start_gate") is True,
+            "token_omitted": True,
+        },
         "gates": gates,
         "commands": {
             "recommended_next": commands.get("recommended_next") or next_commands.get("recommended_next"),
