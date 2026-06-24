@@ -845,6 +845,20 @@ def operator_local_loop_admission_packet(
     service_verify = service_step.get("verify_command") if service_matches_adapter else None
     dispatch_command = dispatch_step.get("command") if dispatch_matches_adapter else None
     dispatch_verify = dispatch_step.get("verify_command") if dispatch_matches_adapter else None
+    service_agent_id = f"agt_worker_daemon_{adapter}"
+    service_install_confirm_run = " --confirm-run" if live_required else ""
+    launchd_service_install_preview = (
+        "agentops worker service-install "
+        f"--manager launchd --adapter {adapter} --agent-id {service_agent_id}"
+        f"{service_install_confirm_run}"
+    )
+    launchd_service_install_confirm = f"{launchd_service_install_preview} --confirm-install"
+    systemd_service_install_preview = (
+        "agentops worker service-install "
+        f"--manager systemd --adapter {adapter} --agent-id {service_agent_id}"
+        f"{service_install_confirm_run}"
+    )
+    systemd_service_install_confirm = f"{systemd_service_install_preview} --confirm-install"
     if live_required:
         start_worker_command = start_worker_command or f"agentops worker start --adapter {adapter} --confirm-run --poll-interval 5 --max-tasks 0"
         service_command = service_command or f"agentops worker service-control --manager launchd --action restart --adapter {adapter} --agent-id agt_worker_daemon_{adapter}"
@@ -878,12 +892,14 @@ def operator_local_loop_admission_packet(
         agent_commands.get("base_reference"),
         acceptance_commands.get("adapter_preflight"),
         acceptance_commands.get("runtime_doctor"),
+        launchd_service_install_preview,
         loop_commands.get("preview") or agent_commands.get("preview_loop"),
         service_verify,
         acceptance_commands.get("receipt_readback"),
     ]
     confirm_commands = [
         loop_commands.get("confirm_loop") if can_confirm_loop else None,
+        launchd_service_install_confirm,
         start_worker_command,
         service_command,
         dispatch_command,
@@ -902,6 +918,7 @@ def operator_local_loop_admission_packet(
             "current_code_ok": current_code_gate.get("ok") is True,
             "current_code_status": current_code_gate.get("status"),
             "can_start_worker": bool(start_worker_command) and (not live_required or "--confirm-run" in str(start_worker_command)),
+            "can_preview_service_install": True,
             "can_preview_service_control": bool(service_command) and service_step.get("service_control_preview") is True,
             "live_dispatch_allowed": decision.get("live_dispatch_allowed") is True,
             "live_dispatch_requires_confirm_run": bool(live_required),
@@ -924,6 +941,31 @@ def operator_local_loop_admission_packet(
                 "live_execution": bool(start_worker_step.get("live_execution")) or live_required,
                 "server_executes_shell": False if live_required else bool(start_worker_step.get("server_executes_shell")),
                 "token_omitted": True,
+            },
+            "service_install": {
+                "recommended_manager": "launchd",
+                "preview_command": launchd_service_install_preview,
+                "confirm_command": launchd_service_install_confirm,
+                "verify_command": service_verify,
+                "confirm_required": True,
+                "writes_service_file": True,
+                "loads_service": False,
+                "preview_only_by_default": True,
+                "server_executes_shell": False,
+                "raw_template_omitted": True,
+                "token_omitted": True,
+                "launchd": {
+                    "preview_command": launchd_service_install_preview,
+                    "confirm_command": launchd_service_install_confirm,
+                    "verify_command": service_verify,
+                    "token_omitted": True,
+                },
+                "systemd": {
+                    "preview_command": systemd_service_install_preview,
+                    "confirm_command": systemd_service_install_confirm,
+                    "verify_command": f"agentops worker service-check --manager systemd --adapter {adapter} --agent-id {service_agent_id}",
+                    "token_omitted": True,
+                },
             },
             "service_control_preview": {
                 "command": service_command,
@@ -955,6 +997,8 @@ def operator_local_loop_admission_packet(
             "preview_loop": loop_commands.get("preview") or agent_commands.get("preview_loop"),
             "confirm_loop": loop_commands.get("confirm_loop") if can_confirm_loop else None,
             "worker_start": start_worker_command,
+            "service_install_preview": launchd_service_install_preview,
+            "service_install_confirm": launchd_service_install_confirm,
             "service_check": service_verify,
             "service_control_preview": service_command,
             "customer_worker_dispatch": dispatch_command,
@@ -972,7 +1016,7 @@ def operator_local_loop_admission_packet(
             "loop_driver_entry": loop_driver_entry.get("operation"),
             "token_omitted": True,
         },
-        "contract": "single copy-only local loop admission packet for Hermes/OpenClaw/Codex; it combines method gates, local deployment previews, worker start, service-control preview, dispatch template, and ledger verification without executing shell or live work on the server",
+        "contract": "single copy-only local loop admission packet for Hermes/OpenClaw/Codex; it combines method gates, local deployment previews, service-install, worker start, service-control preview, dispatch template, and ledger verification without executing shell or live work on the server",
         "safety": {
             "read_only": True,
             "ledger_mutated": False,

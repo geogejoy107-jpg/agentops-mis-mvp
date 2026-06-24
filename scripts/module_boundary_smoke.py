@@ -1936,6 +1936,12 @@ def main() -> int:
     require(admission_packet.get("operation") == "operator_local_loop_admission_packet", "operator local loop admission operation failed", failures)
     require((admission_packet.get("admission") or {}).get("method_gate_count") >= 8, "operator local loop admission method gates failed", failures)
     require(((admission_packet.get("local_deployment") or {}).get("service_control_preview") or {}).get("preview_only") is True, "operator local loop admission service preview failed", failures)
+    service_install = ((admission_packet.get("local_deployment") or {}).get("service_install") or {})
+    require(service_install.get("preview_only_by_default") is True, "operator local loop admission service install preview failed", failures)
+    require(service_install.get("loads_service") is False, "operator local loop admission service install load boundary failed", failures)
+    require(service_install.get("server_executes_shell") is False, "operator local loop admission service install server-shell proof failed", failures)
+    require("--confirm-run" in str(service_install.get("preview_command") or ""), "operator local loop admission service install confirm-run failed", failures)
+    require("--confirm-install" in str(service_install.get("confirm_command") or ""), "operator local loop admission service install confirm command failed", failures)
     require((admission_packet.get("safety") or {}).get("server_executes_shell") is False, "operator local loop admission server-shell proof failed", failures)
     loop_control = operator_loop_control_summary_from_handoff(
         {

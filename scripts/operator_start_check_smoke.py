@@ -248,6 +248,7 @@ def validate(payload: dict, adapter: str) -> None:
     admission = admission_packet.get("admission") or {}
     deployment = admission_packet.get("local_deployment") or {}
     service_preview = deployment.get("service_control_preview") or {}
+    service_install = deployment.get("service_install") or {}
     admission_current_code = deployment.get("current_code_gate") or {}
     worker_start = deployment.get("worker_start") or {}
     customer_dispatch = deployment.get("customer_worker_dispatch") or {}
@@ -260,7 +261,14 @@ def validate(payload: dict, adapter: str) -> None:
     require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(admission_packet.get("phase_commands") or {})), f"admission phase commands missing: {admission_packet}")
     require(service_preview.get("preview_only") is True, f"service-control preview proof missing: {admission_packet}")
     require(service_preview.get("server_executes_shell") is False, f"service-control server shell proof missing: {admission_packet}")
+    require(service_install.get("preview_only_by_default") is True, f"service-install preview proof missing: {admission_packet}")
+    require(service_install.get("loads_service") is False, f"service-install must not load service: {admission_packet}")
+    require(service_install.get("server_executes_shell") is False, f"service-install server shell proof missing: {admission_packet}")
+    require(str(service_install.get("preview_command") or "").startswith("agentops worker service-install --manager launchd"), f"service-install preview command missing: {admission_packet}")
+    require("--confirm-install" in str(service_install.get("confirm_command") or ""), f"service-install confirm command missing: {admission_packet}")
     require(str(admission_commands.get("service_check") or "").startswith("agentops worker service-check"), f"service-check command missing: {admission_packet}")
+    require(str(admission_commands.get("service_install_preview") or "").startswith("agentops worker service-install"), f"admission service-install preview command missing: {admission_packet}")
+    require("--confirm-install" in str(admission_commands.get("service_install_confirm") or ""), f"admission service-install confirm command missing: {admission_packet}")
     require("--require-current-code" in str(admission_commands.get("current_code_check") or ""), f"admission current-code command missing: {admission_packet}")
     require(admission_current_code.get("operation") == "local_current_code_gate", f"admission current-code deployment proof missing: {admission_packet}")
     require(str(admission_commands.get("preview_loop") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"admission preview command missing: {admission_packet}")
@@ -282,6 +290,7 @@ def validate(payload: dict, adapter: str) -> None:
         require(str(packet_commands.get("live_product_readiness") or "").endswith(f"--require-adapter {adapter}"), f"acceptance live readiness command missing: {acceptance_packet}")
         require(admission.get("live_dispatch_requires_confirm_run") is True, f"admission confirm wall missing: {admission_packet}")
         require("--confirm-run" in str(worker_start.get("command") or ""), f"admission worker start confirm missing: {admission_packet}")
+        require("--confirm-run" in str(service_install.get("preview_command") or ""), f"admission service install confirm-run missing: {admission_packet}")
         require(customer_dispatch.get("requires_confirm_run_flag") is True, f"admission dispatch confirm missing: {admission_packet}")
         require("--confirm-run" in str(customer_dispatch.get("command") or ""), f"admission dispatch command confirm missing: {admission_packet}")
 

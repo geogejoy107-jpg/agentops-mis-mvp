@@ -225,6 +225,7 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     deployment = admission_packet.get("local_deployment") or {}
     admission_current_code = deployment.get("current_code_gate") or {}
     service_preview = deployment.get("service_control_preview") or {}
+    service_install = deployment.get("service_install") or {}
     worker_start = deployment.get("worker_start") or {}
     customer_dispatch = deployment.get("customer_worker_dispatch") or {}
     admission_commands = admission_packet.get("commands") or {}
@@ -236,7 +237,14 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(admission_packet.get("phase_commands") or {})), f"{adapter} admission phase commands missing: {admission_packet}", failures)
     require(service_preview.get("preview_only") is True, f"{adapter} service-control preview proof missing: {admission_packet}", failures)
     require(service_preview.get("server_executes_shell") is False, f"{adapter} service-control server-shell proof missing: {admission_packet}", failures)
+    require(service_install.get("preview_only_by_default") is True, f"{adapter} service-install preview proof missing: {admission_packet}", failures)
+    require(service_install.get("loads_service") is False, f"{adapter} service-install must not load service: {admission_packet}", failures)
+    require(service_install.get("server_executes_shell") is False, f"{adapter} service-install server-shell proof missing: {admission_packet}", failures)
+    require(str(service_install.get("preview_command") or "").startswith("agentops worker service-install --manager launchd"), f"{adapter} service-install preview command missing: {admission_packet}", failures)
+    require("--confirm-install" in str(service_install.get("confirm_command") or ""), f"{adapter} service-install confirm command missing: {admission_packet}", failures)
     require(str(admission_commands.get("service_check") or "").startswith("agentops worker service-check"), f"{adapter} service-check command missing: {admission_packet}", failures)
+    require(str(admission_commands.get("service_install_preview") or "").startswith("agentops worker service-install"), f"{adapter} admission service-install preview command missing: {admission_packet}", failures)
+    require("--confirm-install" in str(admission_commands.get("service_install_confirm") or ""), f"{adapter} admission service-install confirm command missing: {admission_packet}", failures)
     require("--require-current-code" in str(admission_commands.get("current_code_check") or ""), f"{adapter} admission current-code command missing: {admission_packet}", failures)
     require(admission_current_code.get("operation") == "local_current_code_gate", f"{adapter} admission current-code deployment proof missing: {admission_packet}", failures)
     require(str(admission_commands.get("preview_loop") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"{adapter} admission preview command missing: {admission_packet}", failures)
@@ -258,6 +266,7 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
         require(str(packet_commands.get("live_product_readiness") or "").endswith(f"--require-adapter {adapter}"), f"{adapter} acceptance live readiness command missing: {acceptance_packet}", failures)
         require(admission.get("live_dispatch_requires_confirm_run") is True, f"{adapter} admission confirm wall missing: {admission_packet}", failures)
         require("--confirm-run" in str(worker_start.get("command") or ""), f"{adapter} admission worker start confirm missing: {admission_packet}", failures)
+        require("--confirm-run" in str(service_install.get("preview_command") or ""), f"{adapter} admission service install confirm-run missing: {admission_packet}", failures)
         require(customer_dispatch.get("requires_confirm_run_flag") is True, f"{adapter} admission dispatch confirm missing: {admission_packet}", failures)
         require("--confirm-run" in str(customer_dispatch.get("command") or ""), f"{adapter} admission dispatch command confirm missing: {admission_packet}", failures)
         live = payload.get("live_product_readiness") or {}

@@ -5018,10 +5018,10 @@ export function AIEmployees() {
                           const admission = (typeof admissionPacket.admission === "object" && admissionPacket.admission !== null ? admissionPacket.admission : {}) as Record<string, unknown>;
                           const admissionSafety = (typeof admissionPacket.safety === "object" && admissionPacket.safety !== null ? admissionPacket.safety : {}) as Record<string, unknown>;
                           const firstSafeCommands = Array.isArray(admissionPacket.first_safe_commands)
-                            ? admissionPacket.first_safe_commands.map(String).filter(Boolean).slice(0, 4)
+                            ? admissionPacket.first_safe_commands.map(String).filter(Boolean).slice(0, 8)
                             : [];
                           const confirmRequiredCommands = Array.isArray(admissionPacket.confirm_required_commands)
-                            ? admissionPacket.confirm_required_commands.map(String).filter(Boolean).slice(0, 4)
+                            ? admissionPacket.confirm_required_commands.map(String).filter(Boolean).slice(0, 6)
                             : [];
                           return (
                           <div key={`loop-driver-packet:${packet.adapter}`} className="rounded p-1.5 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
