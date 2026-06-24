@@ -603,6 +603,11 @@ Must be true:
   evidence, retention/export gates, SSO hooks, and private connector policy
   through read-only MIS proxy loaders; restore remains CLI-confirmed and is not
   exposed as a browser write.
+- The same deployment route consumes `storage.runtime_write_gate` from
+  `/api/storage/backend-status` so the commercial UI shows the fixed Postgres
+  Hermes/OpenClaw prepared-action write contracts, the row-gated approval
+  decision route, exact-resume proof, and non-fixed runtime fail-closed state
+  instead of leaving that evidence buried in backend smoke output.
 - `byoc_deployment_acceptance_v1` runs a local isolated recovery and audit
   export drill: backup create/verify/restore, restore confirmation guard,
   overwrite safety copy, signed audit export with a customer key, raw metadata

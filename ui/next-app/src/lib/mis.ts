@@ -968,6 +968,8 @@ export type StorageBackendStatus = {
   fallback_performed?: boolean;
   token_omitted?: boolean;
   contract?: string;
+  contracts?: string[];
+  write_allowlist?: StorageBackendWriteRoute[];
   next_proof?: string;
   sqlite?: {
     db_path?: string;
@@ -980,9 +982,31 @@ export type StorageBackendStatus = {
     required_edition?: string;
     server_backend_routable?: boolean;
     read_only_http_routable?: boolean;
+    write_http_routable?: boolean;
     free_local_dependency?: boolean;
   };
+  runtime_write_gate?: {
+    status?: string;
+    required_backend?: string;
+    contracts?: string[];
+    allowlisted_routes?: StorageBackendWriteRoute[];
+    required_action_types?: Array<{
+      provider?: string;
+      action_type?: string;
+    }>;
+    exact_resume_required?: boolean;
+    approval_decision?: string;
+    non_fixed_runtime_writes?: string;
+    live_execution_performed?: boolean;
+    token_omitted?: boolean;
+  };
   checks?: Record<string, boolean>;
+};
+
+export type StorageBackendWriteRoute = {
+  method?: string;
+  path?: string;
+  row_gated?: boolean;
 };
 
 export type CustomerTaskTemplate = {

@@ -111,6 +111,21 @@ def main() -> int:
         failures.append(f"default_sqlite_not_active:{default_status}")
     if default_status.get("fallback_performed") is not False:
         failures.append("default_sqlite_fallback_flag_not_false")
+    default_runtime_gate = default_status.get("runtime_write_gate") or {}
+    if default_runtime_gate.get("status") != "not_selected":
+        failures.append(f"default_runtime_write_gate_status:{default_runtime_gate}")
+    if "postgres_http_runtime_prepared_action_write_v1" not in set(default_runtime_gate.get("contracts") or []):
+        failures.append("default_runtime_prepared_action_contract_missing")
+    if "postgres_http_runtime_approval_decision_write_v1" not in set(default_runtime_gate.get("contracts") or []):
+        failures.append("default_runtime_approval_decision_contract_missing")
+    if default_runtime_gate.get("exact_resume_required") is not True:
+        failures.append("default_runtime_exact_resume_proof_missing")
+    if default_runtime_gate.get("approval_decision") != "row_gated_prepared_action_only":
+        failures.append("default_runtime_approval_row_gate_missing")
+    if default_runtime_gate.get("non_fixed_runtime_writes") != "blocked":
+        failures.append("default_runtime_non_fixed_block_missing")
+    if default_runtime_gate.get("live_execution_performed") is not False:
+        failures.append("default_runtime_live_execution_flag_not_false")
 
     with tempfile.TemporaryDirectory(prefix="agentops-storage-backend-") as temp_dir:
         db_path = Path(temp_dir) / "should_not_exist.db"

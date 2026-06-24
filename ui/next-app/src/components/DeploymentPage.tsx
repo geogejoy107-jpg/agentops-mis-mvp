@@ -40,6 +40,10 @@ function shortPath(value?: string) {
   return parts.slice(-2).join("/") || value;
 }
 
+function routeKey(route: { method?: string; path?: string }) {
+  return `${route.method || ""} ${route.path || ""}`.trim();
+}
+
 function GateList({ gates }: Readonly<{ gates?: ReadinessGate[] }>) {
   const rows = (gates || []).slice(0, 7);
   if (!rows.length) return <p className="empty">No deployment gates loaded.</p>;
@@ -96,6 +100,23 @@ export function DeploymentParityPage({
   const connectorGate = gateFor(entitlements, "custom_connector_sdk");
   const storageChecks = Object.entries(storage.checks || {});
   const storageContract = storage.contract || (storage.selected_backend === "postgres" ? "postgres backend gate" : "sqlite free local");
+  const storageContracts = storage.contracts || [];
+  const runtimeWriteGate = storage.runtime_write_gate || {};
+  const runtimeWriteContracts = runtimeWriteGate.contracts || [];
+  const expectedRuntimeContracts = [
+    "postgres_http_runtime_prepared_action_write_v1",
+    "postgres_http_runtime_approval_decision_write_v1",
+  ];
+  const expectedRuntimeRoutes = [
+    { method: "POST", path: "/api/integrations/openclaw/probe", label: "OpenClaw probe" },
+    { method: "POST", path: "/api/integrations/hermes/run-task", label: "Hermes run-task" },
+    { method: "POST", path: "/api/approvals/:approval_id/approve", label: "Row-gated approval approve" },
+  ];
+  const runtimeRoutes = runtimeWriteGate.allowlisted_routes || storage.write_allowlist || [];
+  const runtimeRouteKeys = new Set(runtimeRoutes.map(routeKey));
+  const runtimeContractReady = expectedRuntimeContracts.every((contractId) => runtimeWriteContracts.includes(contractId) || storageContracts.includes(contractId));
+  const runtimeRoutesReady = expectedRuntimeRoutes.every((route) => runtimeRouteKeys.has(routeKey(route)));
+  const runtimeWriteGateStatus = runtimeWriteGate.status || (runtimeContractReady && runtimeRoutesReady ? "ready" : "gated");
   const retention = deployment.retention || {};
   const enterpriseControls = deployment.enterprise_controls || {};
   const retentionPolicyDetails = retentionPolicy?.policy || {};
@@ -226,6 +247,44 @@ export function DeploymentParityPage({
               <span>requires {storage.postgres?.required_edition || storage.required_edition || "enterprise_byoc"}</span>
             </div>
           </div>
+          <div className="storageGateBlock storage-runtime-write-contracts">
+            <div className="subHeader">
+              <h2>Fixed runtime prepared-action writes</h2>
+              <span className={statusClass(runtimeWriteGateStatus === "active" ? "ready" : runtimeWriteGateStatus)}>{runtimeWriteGateStatus}</span>
+            </div>
+            <div className="proofStrip">
+              <span>exact resume {boolText(runtimeWriteGate.exact_resume_required)}</span>
+              <span>approval {runtimeWriteGate.approval_decision || "row_gated_prepared_action_only"}</span>
+              <span>non-fixed runtime {runtimeWriteGate.non_fixed_runtime_writes || "blocked"}</span>
+              <span>write http {boolText(storage.postgres?.write_http_routable)}</span>
+              <span>routes {runtimeRoutesReady ? "fixed allowlist" : "gated"}</span>
+              <span>live execution {boolText(runtimeWriteGate.live_execution_performed)}</span>
+            </div>
+          </div>
+        </div>
+        <div className="adapterGrid">
+          {expectedRuntimeContracts.map((contractId) => (
+            <article className="adapterCard" key={contractId}>
+              <div>
+                <strong>{contractId}</strong>
+                <span>Postgres runtime write contract for Hermes/OpenClaw prepared-action exact resume</span>
+              </div>
+              <span className={statusClass((runtimeWriteContracts.includes(contractId) || storageContracts.includes(contractId)) ? "ready" : "attention")}>
+                {(runtimeWriteContracts.includes(contractId) || storageContracts.includes(contractId)) ? "present" : "missing"}
+              </span>
+            </article>
+          ))}
+          {expectedRuntimeRoutes.map((route) => (
+            <article className="adapterCard" key={routeKey(route)}>
+              <div>
+                <strong>{route.label}</strong>
+                <span>{routeKey(route)}</span>
+              </div>
+              <span className={statusClass(runtimeRouteKeys.has(routeKey(route)) ? "ready" : "gated")}>
+                {runtimeRouteKeys.has(routeKey(route)) ? "allowlisted" : "closed"}
+              </span>
+            </article>
+          ))}
         </div>
         {storageChecks.length ? (
           <div className="adapterGrid">

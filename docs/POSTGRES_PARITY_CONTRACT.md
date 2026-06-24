@@ -288,8 +288,9 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   `POST /api/agents` blocked at `503`, proved fixed OpenClaw and Hermes prepare
   -> premature resume blocked -> row-gated approve -> hash mismatch blocked ->
   exact resume consumed -> replay blocked with provider call count exactly one,
-  kept non-prepared approval decisions blocked at `503`, kept
-  `free_local_dependencies=[]`, and
+  kept non-prepared approval decisions blocked at `503`, exposed the same
+  contract through `storage_backend_status.runtime_write_gate` for CLI/API/Next
+  deployment readback, kept `free_local_dependencies=[]`, and
   did not fall back to SQLite.
 - `postgres_cli_write_parity_v1`,
   `postgres_cli_gateway_task_write_v1`,

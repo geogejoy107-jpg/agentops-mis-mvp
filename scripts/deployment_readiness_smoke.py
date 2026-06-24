@@ -258,6 +258,16 @@ def validate(payload: dict, label: str) -> None:
     require(safety.get("raw_metadata_omitted") is True, f"{label} safety.raw_metadata_omitted missing")
     require(safety.get("signing_key_omitted") is True, f"{label} signing key omission missing")
     require(safety.get("delete_performed") is False, f"{label} retention delete safety missing")
+    storage = payload.get("storage") or {}
+    runtime_gate = storage.get("runtime_write_gate") or {}
+    runtime_contracts = set(runtime_gate.get("contracts") or []) | set(storage.get("contracts") or [])
+    require("postgres_http_runtime_prepared_action_write_v1" in runtime_contracts, f"{label} runtime prepared-action contract missing: {runtime_gate}")
+    require("postgres_http_runtime_approval_decision_write_v1" in runtime_contracts, f"{label} runtime approval-decision contract missing: {runtime_gate}")
+    require(runtime_gate.get("exact_resume_required") is True, f"{label} runtime exact-resume proof missing: {runtime_gate}")
+    require(runtime_gate.get("approval_decision") == "row_gated_prepared_action_only", f"{label} runtime approval row gate missing: {runtime_gate}")
+    require(runtime_gate.get("non_fixed_runtime_writes") == "blocked", f"{label} non-fixed runtime write block missing: {runtime_gate}")
+    require(runtime_gate.get("live_execution_performed") is False, f"{label} runtime write gate must stay read-only: {runtime_gate}")
+    require(runtime_gate.get("token_omitted") is True, f"{label} runtime write gate token omission missing: {runtime_gate}")
     require("deployment_readiness_v1" in set(payload.get("contracts") or []), f"{label} contract list missing")
     require("audit_retention_policy_v1" in set(payload.get("contracts") or []), f"{label} retention contract list missing")
     require("audit_retention_controls_v1" in set(payload.get("contracts") or []), f"{label} retention controls contract list missing")

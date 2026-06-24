@@ -73,6 +73,15 @@ POSTGRES_HTTP_PREPARED_ACTION_DECISION_TYPES = {
     ("hermes", "runtime.hermes_run_task"),
     ("openclaw", "runtime.openclaw_probe"),
 }
+POSTGRES_HTTP_RUNTIME_WRITE_ROUTES = {
+    ("POST", "/api/approvals/:approval_id/approve"),
+    ("POST", "/api/integrations/hermes/run-task"),
+    ("POST", "/api/integrations/openclaw/probe"),
+}
+POSTGRES_HTTP_RUNTIME_WRITE_CONTRACTS = [
+    "postgres_http_runtime_prepared_action_write_v1",
+    "postgres_http_runtime_approval_decision_write_v1",
+]
 
 RISKY_TOOLS = {
     "shell.exec",
@@ -359,6 +368,31 @@ def enterprise_byoc_controls(headers) -> dict:
     }
 
 
+def postgres_runtime_write_gate_payload(status: str, write_http: bool = False) -> dict:
+    return {
+        "status": status,
+        "required_backend": "postgres",
+        "contracts": list(POSTGRES_HTTP_RUNTIME_WRITE_CONTRACTS),
+        "allowlisted_routes": [
+            {
+                "method": method,
+                "path": path,
+                "row_gated": path == "/api/approvals/:approval_id/approve",
+            }
+            for method, path in sorted(POSTGRES_HTTP_RUNTIME_WRITE_ROUTES)
+        ] if write_http else [],
+        "required_action_types": [
+            {"provider": provider, "action_type": action_type}
+            for provider, action_type in sorted(POSTGRES_HTTP_PREPARED_ACTION_DECISION_TYPES)
+        ],
+        "exact_resume_required": True,
+        "approval_decision": "row_gated_prepared_action_only",
+        "non_fixed_runtime_writes": "blocked",
+        "live_execution_performed": False,
+        "token_omitted": True,
+    }
+
+
 def storage_backend_status(headers=None) -> dict:
     selected = STORAGE_BACKEND
     if selected not in {"sqlite", "postgres"}:
@@ -389,7 +423,9 @@ def storage_backend_status(headers=None) -> dict:
                 "required_edition": "enterprise_byoc",
                 "server_backend_routable": False,
                 "read_only_http_routable": False,
+                "write_http_routable": False,
             },
+            "runtime_write_gate": postgres_runtime_write_gate_payload("not_selected", write_http=False),
             "fallback_performed": False,
             "token_omitted": True,
         }
@@ -448,6 +484,7 @@ def storage_backend_status(headers=None) -> dict:
                 "write_http_routable": bool(write_http),
                 "free_local_dependency": False,
             },
+            "runtime_write_gate": postgres_runtime_write_gate_payload("active" if write_http else "read_only", write_http=write_http),
             "fallback_performed": False,
             "token_omitted": True,
             "contract": "postgres_http_write_task_parity_v1" if write_http else "postgres_http_read_parity_v1",
@@ -464,8 +501,7 @@ def storage_backend_status(headers=None) -> dict:
                 "postgres_http_gateway_run_heartbeat_write_v1",
                 "postgres_http_gateway_run_completion_heartbeat_write_v1",
                 "postgres_http_gateway_memory_write_v1",
-                "postgres_http_runtime_prepared_action_write_v1",
-                "postgres_http_runtime_approval_decision_write_v1",
+                *POSTGRES_HTTP_RUNTIME_WRITE_CONTRACTS,
             ] if write_http else ["postgres_http_read_parity_v1"],
         }
     return {
@@ -482,6 +518,7 @@ def storage_backend_status(headers=None) -> dict:
             "AGENTOPS_ENABLE_POSTGRES_STORAGE=1",
             "AGENTOPS_POSTGRES_READ_ONLY_HTTP=1",
         ],
+        "runtime_write_gate": postgres_runtime_write_gate_payload("blocked", write_http=False),
         "next_proof": "Run selected HTTP/CLI requests against a temporary Postgres-backed server adapter, then widen the routed helper set.",
         "fallback_performed": False,
         "token_omitted": True,
@@ -519,9 +556,9 @@ def postgres_read_only_write_block(method: str, path: str) -> dict:
             "postgres_http_gateway_run_heartbeat_write_v1",
             "postgres_http_gateway_run_completion_heartbeat_write_v1",
             "postgres_http_gateway_memory_write_v1",
-            "postgres_http_runtime_prepared_action_write_v1",
-            "postgres_http_runtime_approval_decision_write_v1",
+            *POSTGRES_HTTP_RUNTIME_WRITE_CONTRACTS,
         ],
+        "runtime_write_gate": postgres_runtime_write_gate_payload("blocked", write_http=True),
     }
 
 
@@ -13396,8 +13433,12 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
             "status": storage.get("status"),
             "selected_backend": storage.get("selected_backend"),
             "active_backend": storage.get("active_backend"),
+            "mode": storage.get("mode"),
             "reason": storage.get("reason"),
             "contract": storage.get("contract"),
+            "contracts": storage.get("contracts") or [storage.get("contract") or "sqlite_free_local_default"],
+            "write_allowlist": storage.get("write_allowlist") or [],
+            "runtime_write_gate": storage.get("runtime_write_gate") or postgres_runtime_write_gate_payload("unknown"),
             "fallback_performed": storage.get("fallback_performed"),
             "writes_allowed": storage.get("writes_allowed"),
         },

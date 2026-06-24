@@ -1804,6 +1804,33 @@ def main() -> int:
                 failures.append("read_only_audit_write_created_row")
             if write_status_code != 200 or write_backend.get("mode") != "experimental_write_http" or write_backend.get("writes_allowed") is not True:
                 failures.append(f"write_backend_mismatch:{write_backend}")
+            read_only_runtime_gate = read_only_backend.get("runtime_write_gate") or {}
+            if read_only_runtime_gate.get("status") != "read_only" or read_only_runtime_gate.get("allowlisted_routes"):
+                failures.append(f"read_only_runtime_write_gate_mismatch:{read_only_runtime_gate}")
+            write_runtime_gate = write_backend.get("runtime_write_gate") or {}
+            write_runtime_contracts = set(write_runtime_gate.get("contracts") or []) | set(write_backend.get("contracts") or [])
+            expected_runtime_contracts = {
+                "postgres_http_runtime_prepared_action_write_v1",
+                "postgres_http_runtime_approval_decision_write_v1",
+            }
+            if write_runtime_gate.get("status") != "active" or not expected_runtime_contracts.issubset(write_runtime_contracts):
+                failures.append(f"write_runtime_gate_contract_mismatch:{write_runtime_gate}")
+            expected_runtime_routes = {
+                "POST /api/integrations/openclaw/probe",
+                "POST /api/integrations/hermes/run-task",
+                "POST /api/approvals/:approval_id/approve",
+            }
+            runtime_routes = {
+                f"{route.get('method')} {route.get('path')}"
+                for route in write_runtime_gate.get("allowlisted_routes") or []
+                if isinstance(route, dict)
+            }
+            if runtime_routes != expected_runtime_routes:
+                failures.append(f"write_runtime_gate_routes_mismatch:{sorted(runtime_routes)}")
+            if write_runtime_gate.get("approval_decision") != "row_gated_prepared_action_only" or write_runtime_gate.get("non_fixed_runtime_writes") != "blocked":
+                failures.append(f"write_runtime_gate_safety_mismatch:{write_runtime_gate}")
+            if write_runtime_gate.get("exact_resume_required") is not True or write_runtime_gate.get("live_execution_performed") is not False:
+                failures.append(f"write_runtime_gate_resume_or_live_mismatch:{write_runtime_gate}")
             if create_status != 201 or create_payload.get("task_id") != TASK_ID or create_payload.get("token_omitted") is not True:
                 failures.append(f"task_create_payload_mismatch:{create_status}:{create_payload}")
             if readback_status != 200 or readback_payload.get("task", {}).get("task_id") != TASK_ID:
@@ -2310,9 +2337,11 @@ def main() -> int:
                 "image": args.image,
                 "driver_status": driver_status,
                 "read_only_backend_mode": read_only_backend.get("mode"),
+                "read_only_runtime_write_gate": (read_only_backend.get("runtime_write_gate") or {}).get("status"),
                 "read_only_write_block_status": blocked_status,
                 "write_backend_mode": write_backend.get("mode"),
                 "write_allowlist": write_backend.get("write_allowlist"),
+                "write_runtime_write_gate": write_backend.get("runtime_write_gate"),
                 "task_create_status": create_status,
                 "task_readback_status": readback_status,
                 "gateway_read_only_write_block_status": gateway_blocked_status,
