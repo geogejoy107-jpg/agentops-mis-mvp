@@ -585,6 +585,18 @@ export function AIEmployees() {
   const operatorCommandCenterSummary = operatorCommandCenter?.summary;
   const operatorCommandCenterActions = operatorCommandCenter?.next_actions || [];
   const operatorCommandCenterResearchConsumption = operatorCommandCenter?.research_lab_consumption;
+  const operatorCommandCenterBoundedAdvance = operatorCommandCenter?.bounded_advance;
+  const operatorCommandCenterBoundedSummary = operatorCommandCenterBoundedAdvance?.summary || {};
+  const operatorCommandCenterBoundedSelected = operatorCommandCenterBoundedAdvance?.selected_item || {};
+  const operatorCommandCenterBoundedSafety = operatorCommandCenterBoundedAdvance?.safety || {};
+  const operatorCommandCenterBoundedGate = String(operatorCommandCenterBoundedSummary.selected_gate || operatorCommandCenterBoundedSelected.gate_id || "—");
+  const operatorCommandCenterBoundedStatus = String(operatorCommandCenterBoundedSummary.selected_status || operatorCommandCenterBoundedSelected.gate_status || operatorCommandCenterBoundedAdvance?.status || "unknown");
+  const operatorCommandCenterBoundedPreviewCommand = String(operatorCommandCenterBoundedAdvance?.preview_command || "agentops operator advance-loop --limit 8");
+  const operatorCommandCenterBoundedConfirmCommand = String(operatorCommandCenterBoundedAdvance?.confirm_command || `${operatorCommandCenterBoundedPreviewCommand} --confirm-advance`);
+  const operatorCommandCenterBoundedSafeToConfirm = Boolean(operatorCommandCenterBoundedSummary.safe_to_confirm);
+  const operatorCommandCenterBoundedPolicyId = String(operatorCommandCenterBoundedSummary.policy_id || "advance_loop_local_bounded_v1");
+  const operatorCommandCenterBoundedPolicyVersion = String(operatorCommandCenterBoundedSummary.policy_version || "unknown");
+  const operatorCommandCenterBoundedServerShell = Boolean(operatorCommandCenterBoundedSummary.server_executes_shell || operatorCommandCenterBoundedSafety.server_shell_execution);
   const operatorCommandCenterResearchSummary = operatorCommandCenterResearchConsumption?.summary || {};
   const operatorCommandCenterResearchMissing = Number(
     operatorCommandCenterResearchSummary.missing ??
@@ -4787,10 +4799,11 @@ export function AIEmployees() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-11 gap-3 mt-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-12 gap-3 mt-4">
           {[
             { label: copy.operatorCommandCenterTitle, value: operatorCommandCenterSummary?.next_actions ?? operatorCommandCenterActions.length, status: operatorCommandCenter?.status || "unknown" },
             { label: copy.researchLabConsumption, value: operatorCommandCenterResearchMissing, status: operatorCommandCenterResearchMissing > 0 ? "attention" : "pass" },
+            { label: copy.advanceLoopTitle, value: operatorCommandCenterBoundedGate, status: operatorCommandCenterBoundedSafeToConfirm ? "attention" : operatorCommandCenterBoundedStatus },
             { label: copy.loopControlTitle, value: loopControlSelectedGate, status: operatorLoopControl?.status || loopControlGateStatus },
             { label: copy.runtimeDoctorTitle, value: runtimeDoctorSummary?.evidence_chain_status || operatorRuntimeDoctor?.status || "—", status: operatorRuntimeDoctor?.status || "unknown" },
             { label: copy.operatorHealthTitle, value: `${operatorHealth?.score ?? 0}/100`, status: operatorHealth?.status || "unknown" },
@@ -4810,6 +4823,47 @@ export function AIEmployees() {
             </div>
           ))}
         </div>
+
+        {operatorCommandCenterBoundedAdvance && (
+          <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Terminal size={13} style={{ color: "var(--mis-cyan)" }} />
+                  <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.advanceLoopTitle}</div>
+                  <StatusBadge status={operatorCommandCenterBoundedAdvance.status || "unknown"} />
+                  <StatusBadge status={operatorCommandCenterBoundedSafeToConfirm ? "attention" : "pass"} label={`${copy.confirmRequired}: ${operatorCommandCenterBoundedSafeToConfirm ? copy.yes : copy.no}`} />
+                  <StatusBadge status={operatorCommandCenterBoundedServerShell ? "blocked" : "pass"} label={operatorCommandCenterBoundedServerShell ? "server shell" : "copy-only"} />
+                  <StatusBadge status={operatorCommandCenterBoundedSafety.live_execution_performed ? "blocked" : "pass"} label={operatorCommandCenterBoundedSafety.live_execution_performed ? "live executed" : copy.liveExecutionProof} />
+                </div>
+                <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                  {copy.nextGateAction}: {operatorCommandCenterBoundedGate} · {operatorCommandCenterBoundedStatus}
+                </div>
+                <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
+                  {copy.advanceLoopPolicyLabel}: {operatorCommandCenterBoundedPolicyId} · {operatorCommandCenterBoundedPolicyVersion}
+                </div>
+              </div>
+              <div className="flex flex-wrap xl:justify-end gap-1.5 shrink-0 xl:max-w-[520px]">
+                {[
+                  { label: copy.previewAdvanceLoop, command: operatorCommandCenterBoundedPreviewCommand, color: "var(--mis-cyan)" },
+                  { label: copy.confirmAdvanceLoop, command: operatorCommandCenterBoundedConfirmCommand, color: "var(--mis-success)" },
+                  { label: copy.verifyAfterAction, command: String(operatorCommandCenterBoundedSelected.verify_command || ""), color: "var(--mis-warning)" },
+                ].filter(item => item.command).map((item) => (
+                  <button
+                    key={`command-center-bounded-advance:${item.label}:${item.command}`}
+                    onClick={() => void copyIntakeCommand(item.command)}
+                    className="inline-flex items-center gap-1 text-[9px] px-2 py-1 rounded max-w-full"
+                    style={{ color: item.color, background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                    title={item.command}
+                  >
+                    <Copy size={10} />
+                    <span className="truncate max-w-[132px]">{copiedIntakeCommand === item.command ? copy.copiedCommand : item.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {operatorLoopControl && (
           <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
