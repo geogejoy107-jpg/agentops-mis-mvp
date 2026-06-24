@@ -1,0 +1,25 @@
+{
+  "schema_version": "agentops-entitlements/v0",
+  "edition": "free_local",
+  "notes": "Copy to a local, gitignored path and point AGENTOPS_ENTITLEMENTS_PATH at it when testing another edition. This example contains no secrets and does not enable billing.",
+  "billing": {
+    "provider": "none",
+    "billing_call_enabled": false,
+    "checkout_enabled": false,
+    "metering_export_enabled": false
+  },
+  "capabilities": {
+    "sqlite_ledger": true,
+    "local_worker_loop": true,
+    "agent_gateway": true,
+    "pixel_office": true,
+    "notion_dry_run_export": true,
+    "confirmed_external_export": false,
+    "report_templates": false,
+    "postgres_adapter": false,
+    "sso_hooks": false,
+    "multi_workspace": false,
+    "hosted_mode": false
+  },
+  "overrides": {}
+}
