@@ -1727,6 +1727,7 @@ python3 scripts/live_worker_loop_demo_slice.py \
   --confirm-service-closure \
   --adapter hermes \
   --adapter openclaw \
+  --service-control-service-path-template "$HOME/Library/LaunchAgents/local.agentops.worker.agt_worker_daemon_{adapter}.plist" \
   --request-timeout 720 \
   --hermes-timeout 600 \
   --hermes-max-tokens 512
@@ -1749,7 +1750,11 @@ local readiness probe
 launchd/systemd state on the operator machine. It runs the existing preview-first
 `agentops worker service-control --confirm-control` path for each selected
 adapter before service-closure. If service-control fails or the service file is
-missing/unsafe, the wrapper stops before receipt recording or live dispatch.
+missing/unsafe, the wrapper stops before receipt recording or live dispatch. For
+recording or isolated tests, `--service-control-service-path-template` can pass
+adapter-specific reviewed service files into that control step by rendering
+`{adapter}` for each selected runtime; otherwise the normal worker service path
+is used.
 `--confirm-service-closure` then writes the service-control receipt/readback
 evidence needed by the `record_first` gate before runtime dispatch, rereads
 loop-supervision, and requires the service-closure projection to be closed
