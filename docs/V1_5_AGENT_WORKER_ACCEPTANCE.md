@@ -1753,6 +1753,12 @@ It does not store raw prompts, raw responses, tokens, credentials, private
 messages, or full transcripts in docs or committed state. Mock/offline evidence
 remains CI fallback only.
 
+Negative isolated validation on a `/tmp` SQLite server showed the wrapper now
+records service-closure receipt/readback evidence but returns
+`*_service_closure_still_required` with `live_execution_performed:false` when
+loop-supervision still projects `record_first` / `attention`; in that state it
+does not call the customer-worker live runtime acceptance script.
+
 ## 2026-06-24 Current-Code Isolated Product Evidence
 
 Latest current-code evidence used an isolated `/tmp` SQLite database and a
