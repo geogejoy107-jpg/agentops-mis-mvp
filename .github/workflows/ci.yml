@@ -81,6 +81,7 @@ jobs:
           python3 scripts/automatic_plan_evidence_workflow_smoke.py
           python3 scripts/knowledge_retrieval_quality_smoke.py
           python3 scripts/worker_knowledge_evidence_consumption_smoke.py
+          python3 scripts/worker_intake_auto_plan_smoke.py
           python3 scripts/worker_prompt_profile_smoke.py
           python3 scripts/commander_repo_map_smoke.py
           python3 scripts/commander_coding_project_template_smoke.py

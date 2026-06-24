@@ -219,6 +219,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "worker_intake_auto_plan",
+        "command": "python3 scripts/worker_intake_auto_plan_smoke.py",
+        "summary": "Agent worker can safely create or verify a READ/PLAN/RETRIEVE/COMPARE Agent Plan for its own low/medium-risk intake-blocked task without starting runs or executing live runtimes.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "worker_prompt_profile",
         "command": "python3 scripts/worker_prompt_profile_smoke.py",
         "summary": "Agent worker selects task-to-runtime prompt profiles and records profile id/version/hash in tool, evaluation, audit and worker result evidence without raw prompt storage.",

@@ -417,6 +417,19 @@ def build_task_prompt_bundle(task: dict, adapter: str | None = None) -> tuple[st
             "proof_source=/api/operator/loop-supervision; "
             "server_shell=false; raw_service_template/prompt/response/token omitted.\n"
         )
+    intake_plan = task.get("_intake_plan_evidence") if isinstance(task.get("_intake_plan_evidence"), dict) else {}
+    intake_plan_context = ""
+    if intake_plan:
+        intake_plan_context = (
+            "执行前计划证据："
+            f"plan_id={redact_text(intake_plan.get('plan_id'), 80)}; "
+            f"plan_verified={bool(intake_plan.get('plan_verified'))}; "
+            f"plan_reused_from_intake={bool(intake_plan.get('plan_reused_from_intake'))}; "
+            f"source={redact_text(intake_plan.get('source'), 80)}; "
+            f"verification_source={redact_text(intake_plan.get('verification_source'), 120)}; "
+            f"auto_plan_intake_supported={bool(intake_plan.get('auto_plan_intake_supported'))}; "
+            "raw_plan_body/prompt/response/token omitted.\n"
+        )
     profile_context = (
         "执行画像："
         f"profile_id={profile['profile_id']}; "
@@ -441,6 +454,7 @@ def build_task_prompt_bundle(task: dict, adapter: str | None = None) -> tuple[st
         f"{profile_context}"
         f"{knowledge_context}"
         f"{service_context}"
+        f"{intake_plan_context}"
     )
     return prompt, profile
 
@@ -1194,6 +1208,167 @@ def create_worker_agent_plan(client: AgentOpsClient, task: dict, args, knowledge
     return client.post("/api/agent-gateway/agent-plans", payload)
 
 
+def intake_blocked_task_for_agent(intake: dict, agent_id: str) -> dict | None:
+    for item in intake.get("blocked_tasks") or []:
+        if not isinstance(item, dict):
+            continue
+        assigned = item.get("assigned_agent_ids") or []
+        if agent_id in assigned:
+            return item
+    return None
+
+
+def load_task_for_intake_plan(client: AgentOpsClient, blocked_task: dict) -> dict:
+    task_id = str(blocked_task.get("task_id") or "").strip()
+    task = {
+        "task_id": task_id,
+        "title": blocked_task.get("title") or task_id,
+        "description": blocked_task.get("description") or "",
+        "acceptance_criteria": blocked_task.get("acceptance_criteria") or "",
+        "risk_level": blocked_task.get("risk_level") or "medium",
+        "status": blocked_task.get("status"),
+        "priority": blocked_task.get("priority"),
+    }
+    if not task_id:
+        return task
+    try:
+        detail = client.get(f"/api/agent-gateway/tasks/{task_id}")
+        loaded = detail.get("task") if isinstance(detail.get("task"), dict) else {}
+        if loaded:
+            task.update({key: value for key, value in loaded.items() if value is not None})
+    except Exception:
+        pass
+    return task
+
+
+def audit_intake_auto_plan(client: AgentOpsClient, *, task_id: str, plan_id: str | None, status: str, metadata: dict) -> None:
+    try:
+        client.post("/api/agent-gateway/audit", {
+            "workspace_id": client.workspace_id,
+            "agent_id": client.agent_id,
+            "action": "agent_worker.intake_auto_plan",
+            "entity_type": "tasks",
+            "entity_id": task_id,
+            "task_id": task_id,
+            "metadata": {
+                "plan_id": plan_id,
+                "status": status,
+                "live_execution_performed": False,
+                "run_start_attempted": False,
+                "auto_plan_intake": True,
+                **metadata,
+                **worker_secret_boundary_metadata(),
+            },
+        }, timeout=20)
+    except Exception:
+        pass
+
+
+def maybe_auto_plan_intake_block(client: AgentOpsClient, args, intake: dict) -> dict | None:
+    if not getattr(args, "auto_plan_intake", True):
+        return None
+    blocked_task = intake_blocked_task_for_agent(intake, client.agent_id)
+    if not blocked_task:
+        return None
+    task_id = str(blocked_task.get("task_id") or "").strip()
+    failed_gate_ids = set(blocked_task.get("failed_gate_ids") or [])
+    risk = str(blocked_task.get("risk_level") or "medium")
+    if risk in {"high", "critical"} and not args.allow_high_risk:
+        return {
+            "processed": False,
+            "ok": False,
+            "reason": "intake_auto_plan_risk_blocked",
+            "task_id": task_id,
+            "risk_level": risk,
+            "live_execution_performed": False,
+            "run_start_attempted": False,
+            "token_omitted": True,
+        }
+    plan_id = blocked_task.get("plan_id")
+    if plan_id and "verified_agent_plan" in failed_gate_ids:
+        verified_plan = client.get(f"/api/agent-gateway/agent-plans/{plan_id}/verify")
+        passed = bool((verified_plan.get("verification") or {}).get("pass"))
+        audit_intake_auto_plan(client, task_id=task_id, plan_id=plan_id, status="verified_existing" if passed else "verify_failed", metadata={
+            "mode": "verify_existing_plan",
+            "verification_pass": passed,
+            "failed_gate_ids": sorted(failed_gate_ids),
+            "token_omitted": True,
+        })
+        return {
+            "processed": False,
+            "ok": passed,
+            "reason": "intake_plan_verified" if passed else "intake_plan_verify_failed",
+            "task_id": task_id,
+            "plan_id": plan_id,
+            "verification_pass": passed,
+            "live_execution_performed": False,
+            "run_start_attempted": False,
+            "token_omitted": True,
+        }
+    if "agent_plan" not in failed_gate_ids or not task_id:
+        return None
+    task = load_task_for_intake_plan(client, blocked_task)
+    task["risk_level"] = task.get("risk_level") or risk
+    knowledge_evidence = fetch_worker_knowledge_evidence(client, task, adapter=args.adapter)
+    plan_payload = create_worker_agent_plan(client, task, args, knowledge_evidence)
+    plan_id = (plan_payload.get("agent_plan") or {}).get("plan_id")
+    if not plan_id:
+        raise RuntimeError("intake auto-plan create did not return plan_id")
+    verified_plan = client.get(f"/api/agent-gateway/agent-plans/{plan_id}/verify")
+    verification = verified_plan.get("verification") or {}
+    passed = bool(verification.get("pass"))
+    audit_intake_auto_plan(client, task_id=task_id, plan_id=plan_id, status="created_verified" if passed else "created_verify_failed", metadata={
+        "mode": "create_plan",
+        "verification_pass": passed,
+        "failed_gate_ids": sorted(failed_gate_ids),
+        "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+        "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
+        "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
+        "knowledge_retrieval_status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    })
+    return {
+        "processed": False,
+        "ok": passed,
+        "reason": "intake_auto_planned" if passed else "intake_auto_plan_failed",
+        "task_id": task_id,
+        "plan_id": plan_id,
+        "verification_pass": passed,
+        "failed_checks": verification.get("failed_checks") or [],
+        "knowledge_retrieval_evidence": {
+            "consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+            "packet_hash": knowledge_evidence.get("packet_hash"),
+            "query_hash": knowledge_evidence.get("query_hash"),
+            "status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+            "paths": knowledge_evidence.get("paths") or [],
+            "query_omitted": True,
+            "snippet_omitted": True,
+            "raw_content_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "live_execution_performed": False,
+        "run_start_attempted": False,
+        "next_action": "Next worker iteration can pull the task once intake sees the verified Agent Plan.",
+        "token_omitted": True,
+    }
+
+
+def verified_intake_plan_for_task(client: AgentOpsClient, task: dict) -> tuple[str | None, dict | None]:
+    intake = task.get("intake") if isinstance(task.get("intake"), dict) else {}
+    plan_id = str(intake.get("plan_id") or "").strip()
+    if not plan_id or intake.get("plan_verified") is not True:
+        return None, None
+    verified_plan = client.get(f"/api/agent-gateway/agent-plans/{plan_id}/verify")
+    if (verified_plan.get("verification") or {}).get("pass"):
+        return plan_id, verified_plan
+    return None, verified_plan
+
+
 def create_worker_plan_manifest(client: AgentOpsClient, plan_id: str, run_id: str, tool_call_id: str | None, evaluation_id: str | None, artifact_id: str | None) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -1289,6 +1464,17 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     if not tasks:
         intake = pulled.get("intake") or {}
         if intake.get("blocked"):
+            auto_plan_result = maybe_auto_plan_intake_block(client, args, intake)
+            if auto_plan_result:
+                return {
+                    **auto_plan_result,
+                    "intake": {
+                        "blocked": intake.get("blocked", 0),
+                        "next_actions": intake.get("next_actions") or [],
+                        "blocked_tasks": intake.get("blocked_tasks") or [],
+                        "token_omitted": True,
+                    },
+                }
             return {
                 "processed": False,
                 "reason": "intake_blocked",
@@ -1321,13 +1507,32 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     knowledge_evidence = fetch_worker_knowledge_evidence(client, task, adapter=args.adapter)
     task = dict(task)
     task["_knowledge_retrieval_evidence"] = knowledge_evidence
-    plan_payload = create_worker_agent_plan(client, task, args, knowledge_evidence)
-    plan_id = (plan_payload.get("agent_plan") or {}).get("plan_id")
+    plan_reused = False
+    plan_id, verified_plan = verified_intake_plan_for_task(client, task)
+    if plan_id:
+        plan_reused = True
+    else:
+        plan_payload = create_worker_agent_plan(client, task, args, knowledge_evidence)
+        plan_id = (plan_payload.get("agent_plan") or {}).get("plan_id")
+        verified_plan = None
     if not plan_id:
         raise RuntimeError("agent plan create did not return plan_id")
-    verified_plan = client.get(f"/api/agent-gateway/agent-plans/{plan_id}/verify")
+    if verified_plan is None:
+        verified_plan = client.get(f"/api/agent-gateway/agent-plans/{plan_id}/verify")
     if not (verified_plan.get("verification") or {}).get("pass"):
         raise RuntimeError(f"agent plan verification failed before run_start: {json_dumps(verified_plan.get('verification') or {})}")
+    task["_intake_plan_evidence"] = {
+        "plan_id": plan_id,
+        "plan_verified": True,
+        "plan_reused_from_intake": plan_reused,
+        "source": "task_pull.intake" if plan_reused else "worker.created_plan",
+        "verification_source": f"/api/agent-gateway/agent-plans/{plan_id}/verify",
+        "auto_plan_intake_supported": bool(getattr(args, "auto_plan_intake", True)),
+        "raw_plan_body_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
 
     capability = adapter_capability_profile(args.adapter)
     secret_boundary = worker_secret_boundary_metadata()
@@ -1623,6 +1828,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "task_id": task_id,
         "run_id": run_id,
         "plan_id": plan_id,
+        "plan_reused_from_intake": plan_reused,
         "plan_evidence_manifest_id": manifest.get("manifest_id"),
         "plan_evidence_status": manifest.get("status"),
         "plan_evidence_pass": manifest_verification.get("pass"),
@@ -1676,6 +1882,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-id", default=os.environ.get("AGENTOPS_TASK_ID", ""), help="Optional exact task id to pull and process.")
     parser.add_argument("--status", action="append", default=["planned"], help="Task status to pull. Repeatable.")
     parser.add_argument("--enforce-intake", action=argparse.BooleanOptionalAction, default=True, help="Require Agent Plan / knowledge / base-reference / risk intake gates before pulling tasks.")
+    parser.add_argument("--auto-plan-intake", action=argparse.BooleanOptionalAction, default=True, help="When intake blocks an assigned low/medium-risk task for missing/unverified Agent Plan, create or verify the plan before the next poll.")
     parser.add_argument("--once", action="store_true", help="Process at most one task and exit.")
     parser.add_argument("--poll-interval", type=float, default=5.0)
     parser.add_argument("--idle-backoff-max", type=float, default=30.0, help="Maximum sleep seconds after consecutive no-task polls.")
@@ -2474,6 +2681,9 @@ def main(argv: list[str] | None = None) -> int:
             if result.get("processed"):
                 sleep_sec = max(args.poll_interval, 0.0)
                 sleep_reason = "post_task"
+            elif result.get("reason") in {"intake_auto_planned", "intake_plan_verified"}:
+                sleep_sec = max(args.poll_interval, 0.0)
+                sleep_reason = "post_intake_auto_plan"
             else:
                 sleep_sec = backoff_sleep(args.poll_interval, args.idle_backoff_max, int(state.data.get("consecutive_idle") or 1), args.backoff_factor)
                 sleep_reason = "idle_backoff"

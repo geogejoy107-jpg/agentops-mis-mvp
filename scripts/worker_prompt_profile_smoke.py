@@ -125,6 +125,18 @@ def main() -> int:
                 "readback_verification_status": "passed",
             },
         },
+        "_intake_plan_evidence": {
+            "plan_id": "plan_auto_intake_smoke",
+            "plan_verified": True,
+            "plan_reused_from_intake": True,
+            "source": "task_pull.intake",
+            "verification_source": "/api/agent-gateway/agent-plans/plan_auto_intake_smoke/verify",
+            "auto_plan_intake_supported": True,
+            "raw_plan_body_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
     }
     service_prompt, _service_profile = build_task_prompt_bundle(service_task, adapter="hermes")
     combined_prompt += "\n" + service_prompt
@@ -140,11 +152,19 @@ def main() -> int:
         "proof_source=/api/operator/loop-supervision",
         "server_shell=false",
         "raw_service_template/prompt/response/token omitted",
+        "执行前计划证据",
+        "plan_id=plan_auto_intake_smoke",
+        "plan_verified=True",
+        "plan_reused_from_intake=True",
+        "source=task_pull.intake",
+        "auto_plan_intake_supported=True",
+        "raw_plan_body/prompt/response/token omitted",
     ]
     for marker in service_markers:
         require(marker in service_prompt, f"service-loop prompt missing marker {marker}: {service_prompt}", failures)
     require("ProgramArguments" not in service_prompt, "service prompt should not expose raw launchd template", failures)
     require("AGENTOPS_API_KEY" not in service_prompt, "service prompt should not expose API-key env", failures)
+    require("task_understanding" not in service_prompt, "intake plan prompt should not expose raw plan body", failures)
 
     worker_source = WORKER.read_text(encoding="utf-8")
     approval_wall_source = APPROVAL_WALL.read_text(encoding="utf-8")
@@ -163,6 +183,9 @@ def main() -> int:
         "_loop_supervision_gate",
         "service_managed_loop",
         "control_readback_id",
+        "_intake_plan_evidence",
+        "plan_reused_from_intake",
+        "auto_plan_intake_supported",
     ]
     for marker in source_markers:
         require(marker in worker_source, f"worker source missing marker: {marker}", failures)
