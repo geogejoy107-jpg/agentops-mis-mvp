@@ -473,6 +473,96 @@ export type WorkerAdapterReadinessSummary = {
   token_omitted?: boolean;
 };
 
+export type WorkerFleetLane = {
+  lane_id?: string;
+  lane_type?: string;
+  adapter?: string | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  workspace_id?: string | null;
+  runtime_type?: string | null;
+  status?: string;
+  health?: string;
+  heartbeat_state?: string | null;
+  session_state?: string | null;
+  active_session_count?: number;
+  last_seen_at?: string | null;
+  expires_at?: string | null;
+  scope_count?: number;
+  workload?: Record<string, unknown>;
+  next_action?: string;
+  safe_ref?: string | null;
+  token_omitted?: boolean;
+  session_id_omitted?: boolean;
+  token_id_omitted?: boolean;
+};
+
+export type WorkerFleetPayload = {
+  provider?: string;
+  operation?: string;
+  status?: string;
+  summary?: {
+    lane_count?: number;
+    lane_counts?: Record<string, number>;
+    health_counts?: Record<string, number>;
+    local_daemon_count?: number;
+    running_local_daemons?: number;
+    remote_worker_count?: number;
+    fresh_remote_enrollments?: number;
+    stale_remote_enrollments?: number;
+    never_seen_remote_enrollments?: number;
+    active_remote_sessions?: number;
+    stuck_worker_tasks?: number;
+    stuck_workflow_jobs?: number;
+    recommended_adapter?: string;
+  };
+  lanes?: WorkerFleetLane[];
+  next_actions?: string[];
+  contract?: string;
+  safety?: {
+    read_only?: boolean;
+    live_execution_performed?: boolean;
+    token_omitted?: boolean;
+    session_id_omitted?: boolean;
+    raw_prompt_omitted?: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+  error?: string;
+};
+
+export type WorkerFleetHygienePayload = {
+  provider?: string;
+  operation?: string;
+  status?: string;
+  threshold_sec?: number;
+  enrollment_age_sec?: number;
+  summary?: {
+    stuck_tasks?: number;
+    stale_never_seen_enrollments?: number;
+    actions_available?: number;
+    released_tasks?: number;
+    revoked_enrollments?: number;
+    errors?: number;
+  };
+  stuck_tasks?: WorkerStuckTask[];
+  stale_never_seen_enrollments?: AgentGatewayEnrollmentSummary[];
+  recommended_actions?: string[];
+  safety?: {
+    read_only?: boolean;
+    requires_confirm_cleanup?: boolean;
+    live_execution_performed?: boolean;
+    token_omitted?: boolean;
+  };
+  applied?: boolean;
+  released_tasks?: { task_id?: string; released_runs?: string[] }[];
+  revoked_enrollments?: { token_id?: string; token_ref?: string; agent_id?: string | null; sessions_revoked?: number }[];
+  errors?: Record<string, unknown>[];
+  error?: string;
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+};
+
 export type WorkerDispatchResult = {
   provider?: string;
   dry_run?: boolean;
@@ -528,6 +618,7 @@ export type AgentGatewaySessionSummary = {
   session_id_omitted?: boolean;
   parent_token_id?: string;
   parent_token_ref?: string;
+  parent_token_id_omitted?: boolean;
   workspace_id?: string;
   agent_id?: string;
   status?: string;
@@ -553,6 +644,7 @@ export type AgentGatewayEnrollmentSummary = {
   token_ref?: string;
   workspace_id?: string;
   agent_id?: string;
+  runtime_type?: string;
   scopes?: string[];
   scope_count?: number;
   status?: string;
@@ -1205,6 +1297,23 @@ export async function loadWorkerStatus(): Promise<WorkerStatusSummary> {
 
 export async function loadWorkerAdapterReadiness(): Promise<WorkerAdapterReadinessSummary> {
   return misJson<WorkerAdapterReadinessSummary>("/workers/adapter-readiness");
+}
+
+export async function loadWorkerFleet(): Promise<WorkerFleetPayload> {
+  return misJson<WorkerFleetPayload>("/workers/fleet");
+}
+
+export async function loadWorkerFleetHygiene(options: {
+  threshold_sec?: number;
+  enrollment_age_sec?: number;
+  limit?: number;
+} = {}): Promise<WorkerFleetHygienePayload> {
+  const params = new URLSearchParams();
+  if (options.threshold_sec !== undefined) params.set("threshold_sec", String(options.threshold_sec));
+  if (options.enrollment_age_sec !== undefined) params.set("enrollment_age_sec", String(options.enrollment_age_sec));
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return misJson<WorkerFleetHygienePayload>(`/workers/fleet/hygiene${suffix}`);
 }
 
 export async function loadAgentGatewayEnrollments(): Promise<AgentGatewayEnrollmentListPayload> {

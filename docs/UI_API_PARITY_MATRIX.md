@@ -61,12 +61,15 @@ route retirement:
   customer-worker prepared-action exact resume, and ledger-derived resume
   readback. Vite remains canonical until an explicit route retirement commit
   preserves `/workspace/pixel-office` deep links and reruns browser evidence.
-- Worker console is only partially represented in Next.js. Next now proves
-  production safety/readiness, safe mock worker controls, approval-gated
-  enrollment request, and Agent Gateway session hygiene readback while blocking
-  token/session lifecycle writes. Vite/CLI remain canonical for direct token
-  issuance, rotate/revoke/session mutation, live worker controls, and detailed
-  operator controls.
+- Worker console is still partial but now has a focused Next.js
+  `/workspace/workers` surface. Next proves worker status, `/workers/fleet`
+  lane readback, `/workers/fleet/hygiene` read-only cleanup preview, adapter
+  readiness, local readiness, safe Agent Gateway session refs, and visible
+  fail-closed lifecycle boundaries while blocking token/session lifecycle
+  writes. Execution-mode readback is explicitly pending on this branch.
+  Vite/CLI remain canonical for direct token issuance, rotate/revoke/session
+  mutation, live worker controls, cleanup mutation, and detailed operator
+  controls.
 - Admin-only Vite routes for the full template/base-switching console are
   deferred. Tool calls, evaluation room, runtime connectors, Notion external
   base, and agent detail now have Next parity at `/workspace/tool-calls`,
@@ -156,6 +159,7 @@ python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
 python3 scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
+python3 scripts/nextjs_worker_console_parity_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -279,6 +283,14 @@ the safe `mock` daemon, proves `/workspace/agents/daemon-control` form fallback
 can start/restart/stop the same daemon, and proves non-mock or confirm/live
 daemon attempts fail closed with `mock_daemon_only_next_parity` and
 `live_worker_daemon_not_allowed_next_parity`.
+
+`python3 scripts/nextjs_worker_console_parity_smoke.py`
+(`nextjs_worker_console_parity_v1`) starts isolated MIS API and Next.js
+servers, opens `/workspace/workers`, verifies `/api/mis/workers/fleet`,
+`/api/mis/workers/fleet/hygiene`, and safe session readback stay token/session
+redacted and read-only, and proves the focused Worker Console shows fleet,
+hygiene, adapter readiness, session hygiene, and fail-closed lifecycle boundary
+evidence without pretending execution-mode parity exists on this branch.
 
 `python3 scripts/nextjs_enrollment_request_smoke.py`
 (`nextjs_enrollment_request_v1`) starts isolated MIS API and Next.js servers,

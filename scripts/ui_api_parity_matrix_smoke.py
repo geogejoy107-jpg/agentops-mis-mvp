@@ -151,6 +151,7 @@ def main() -> int:
     require("nextjs_enrollment_request_v1" in route_contracts, "matrix policy must include the Next enrollment request contract")
     require("nextjs_worker_gateway_lifecycle_guard_v1" in route_contracts, "matrix policy must include the Next worker gateway lifecycle guard contract")
     require("nextjs_worker_daemon_control_v1" in route_contracts, "matrix policy must include the Next worker daemon control contract")
+    require("nextjs_worker_console_parity_v1" in route_contracts, "matrix policy must include the focused Next Worker Console parity contract")
 
     entries = matrix.get("entries")
     require(isinstance(entries, list) and entries, "matrix entries must be a non-empty list")
@@ -245,7 +246,14 @@ def main() -> int:
     require("python3 scripts/nextjs_enrollment_request_smoke.py" in worker_console_evidence, "worker_console must include Next approval-gated enrollment request evidence")
     require("python3 scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py" in worker_console_evidence, "worker_console must include Next gateway lifecycle guard evidence")
     require("python3 scripts/nextjs_worker_daemon_control_smoke.py" in worker_console_evidence, "worker_console must include Next mock worker daemon control evidence")
+    require("python3 scripts/nextjs_worker_console_parity_smoke.py" in worker_console_evidence, "worker_console must include focused Next Worker Console parity evidence")
+    assert_entry_routes(entries_by_id.get("worker_console"), "worker_console", ["/workspace/agents"], ["/workspace/agents", "/workspace/agents/dispatch-once", "/workspace/agents/release-task", "/workspace/agents/enrollment-request", "/workspace/agents/daemon-control", "/workspace/workers"])
+    worker_console_contracts = entries_by_id.get("worker_console", {}).get("api_contracts") or []
+    require("GET /workers/fleet" in worker_console_contracts, "worker_console must include worker fleet API readback")
+    require("GET /workers/fleet/hygiene" in worker_console_contracts, "worker_console must include worker fleet hygiene readback")
     worker_console_gate = str(entries_by_id.get("worker_console", {}).get("retirement_gate") or "")
+    require("worker_console_read_model_parity" in worker_console_gate, "worker_console retirement gate must record focused Next read-model parity")
+    require("fleet hygiene read-only" in worker_console_gate, "worker_console retirement gate must record read-only fleet hygiene evidence")
     require("mock_only_next_parity" in worker_console_gate, "worker_console retirement gate must record non-mock dispatch fail-closed evidence")
     require("mock_daemon_only_next_parity" in worker_console_gate, "worker_console retirement gate must record non-mock daemon fail-closed evidence")
     require("live_worker_daemon_not_allowed_next_parity" in worker_console_gate, "worker_console retirement gate must record live daemon fail-closed evidence")

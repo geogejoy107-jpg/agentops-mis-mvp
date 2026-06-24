@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import sqlite3
 import sys
 import urllib.error
@@ -14,7 +15,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DB_PATH = ROOT / "agentops_mis.db"
+DB_PATH = Path(os.environ.get("AGENTOPS_DB_PATH", str(ROOT / "agentops_mis.db")))
 
 
 def now_stamp() -> str:
@@ -51,6 +52,10 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def ref_tail(value: str | None) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isalnum())[-12:]
+
+
 def make_stale(task_id: str, run_id: str, token_id: str) -> None:
     stale_at = old_iso()
     with sqlite3.connect(DB_PATH) as conn:
@@ -58,6 +63,26 @@ def make_stale(task_id: str, run_id: str, token_id: str) -> None:
         conn.execute("UPDATE runs SET started_at=?, created_at=? WHERE run_id=?", (stale_at, stale_at, run_id))
         conn.execute("UPDATE agent_gateway_tokens SET created_at=?, last_used_at=NULL, last_heartbeat_at=NULL WHERE token_id=?", (stale_at, token_id))
         conn.commit()
+
+
+def submit_verified_agent_plan(base_url: str, token: str, task_id: str, agent_id: str) -> str:
+    status, payload = http_json("POST", base_url, "/api/agent-gateway/agent-plans", {
+        "task_id": task_id,
+        "task_understanding": "Verify worker fleet hygiene can plan and apply stale task recovery.",
+        "referenced_specs": ["docs/AGENT_GATEWAY_CLI_SPEC.md"],
+        "referenced_memories": ["worker fleet hygiene smoke fixture"],
+        "referenced_bases": ["Agent Gateway verified plan gate"],
+        "execution_steps": ["claim stale worker task", "start a run", "age the run", "apply hygiene cleanup"],
+        "verification_plan": "Read the hygiene plan, require confirmation, release the stale task, and revoke the never-seen enrollment.",
+        "rollback_plan": "Revoke the temporary enrollment token and leave the task released back to the queue.",
+        "risk_level": "low",
+    }, token=token)
+    require(status == 201, f"agent plan create failed: {status} {payload}")
+    plan_id = (payload.get("agent_plan") or {}).get("plan_id")
+    require(plan_id, f"agent plan id missing: {payload}")
+    status, verified = http_json("GET", base_url, f"/api/agent-gateway/agent-plans/{plan_id}/verify", token=token)
+    require(status == 200 and (verified.get("verification") or {}).get("pass") is True, f"agent plan verify failed for {agent_id}: {status} {verified}")
+    return str(plan_id)
 
 
 def smoke(base_url: str, stamp: str) -> dict:
@@ -70,7 +95,7 @@ def smoke(base_url: str, stamp: str) -> dict:
             "name": "Fleet Hygiene Smoke",
             "runtime_type": "mock",
             "workspace_id": "local-demo",
-            "scopes": ["agents:heartbeat", "tasks:read", "tasks:claim", "runs:write", "audit:write"],
+            "scopes": ["agents:heartbeat", "tasks:read", "tasks:claim", "agent_plans:read", "agent_plans:write", "runs:write", "audit:write"],
             "ttl_days": 1,
             "heartbeat_timeout_sec": 60,
         })
@@ -91,9 +116,10 @@ def smoke(base_url: str, stamp: str) -> dict:
         })
         require(status == 201, f"task create failed: {status} {task}")
 
+        plan_id = submit_verified_agent_plan(base_url, token, task_id, agent_id)
         status, claim = http_json("POST", base_url, f"/api/agent-gateway/tasks/{task_id}/claim", {"runtime_type": "mock"}, token=token)
         require(status == 200, f"claim failed: {status} {claim}")
-        status, start = http_json("POST", base_url, "/api/agent-gateway/runs/start", {"task_id": task_id, "runtime_type": "mock"}, token=token)
+        status, start = http_json("POST", base_url, "/api/agent-gateway/runs/start", {"task_id": task_id, "runtime_type": "mock", "plan_id": plan_id}, token=token)
         require(status in {200, 201}, f"run start failed: {status} {start}")
         run_id = (start.get("run") or {}).get("run_id")
         require(run_id, f"missing run id: {start}")
@@ -129,7 +155,9 @@ def smoke(base_url: str, stamp: str) -> dict:
             "agent_id": agent_id,
             "task_id": task_id,
             "run_id": run_id,
-            "token_id": token_id,
+            "plan_id": plan_id,
+            "token_ref": f"token_ref_{ref_tail(token_id)}",
+            "token_id_omitted": True,
             "planned_stuck_tasks": plan.get("summary", {}).get("stuck_tasks"),
             "planned_stale_enrollments": plan.get("summary", {}).get("stale_never_seen_enrollments"),
             "released_tasks": len(applied.get("released_tasks", [])),

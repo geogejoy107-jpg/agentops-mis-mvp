@@ -397,9 +397,19 @@ def main() -> int:
             and file_contains("scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py", "nextjs_worker_gateway_lifecycle_guard_v1")
             and file_contains("scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py", "/api/mis/agent-gateway/session/create")
             and file_contains("scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py", "gateway_lifecycle_write_not_allowed_next_parity")
+            and file_contains("scripts/nextjs_worker_console_parity_smoke.py", "nextjs_worker_console_parity_v1")
+            and file_contains("scripts/nextjs_worker_console_parity_smoke.py", "/workspace/workers")
+            and file_contains("scripts/nextjs_worker_console_parity_smoke.py", "/api/mis/workers/fleet")
+            and file_contains("scripts/nextjs_worker_console_parity_smoke.py", "/api/mis/workers/fleet/hygiene")
             and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "isGatewayLifecycleWritePath")
             and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "safeGatewaySessionsPayload")
             and file_contains("ui/next-app/src/components/AgentsParityPage.tsx", "agent-gateway-session-hygiene")
+            and file_contains("ui/next-app/src/components/WorkerConsolePage.tsx", "worker_console_read_model_parity")
+            and file_contains("ui/next-app/src/components/WorkerConsolePage.tsx", "worker-console-hygiene-plan")
+            and file_contains("ui/next-app/src/components/WorkerConsolePage.tsx", "execution-mode endpoint pending")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "loadServerWorkerFleet")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "loadServerWorkerFleetHygiene")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "safeGatewaySessionsPayload")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_worker_dispatch_once_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_pixel_office_floor_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_local_brief_v1")
@@ -409,7 +419,9 @@ def main() -> int:
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_worker_daemon_control_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_enrollment_request_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_worker_gateway_lifecycle_guard_v1")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_worker_console_parity_v1")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "verify_dispatch_template_run_success")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "/workspace/workers")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "/workspace/pixel-office")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", 'write_entitlement_fixture(entitlement_path, "pro_workspace")')
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "Customer project started")
@@ -433,6 +445,8 @@ def main() -> int:
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "dispatch" / "customer-worker-job" / "route.ts").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "agents" / "release-task" / "route.ts").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "agents" / "daemon-control" / "route.ts").exists()
+            and (ROOT / "ui" / "next-app" / "app" / "workspace" / "workers" / "page.tsx").exists()
+            and (ROOT / "ui" / "next-app" / "src" / "components" / "WorkerConsolePage.tsx").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "agents" / "enrollment-request" / "route.ts").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "evaluations" / "page.tsx").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "connectors" / "page.tsx").exists()
@@ -457,8 +471,9 @@ def main() -> int:
             and (ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_enrollment_request_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_worker_gateway_lifecycle_guard_smoke.py").exists()
+            and (ROOT / "scripts" / "nextjs_worker_console_parity_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py").exists(),
-            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, CLI worker dogfood proof through the Next proxy, read-only Pixel Operating Map parity, local brief prepared-action exact resume with approval/hash/replay guards, worker mock dispatch, customer-worker prepared-action exact resume for Hermes/OpenClaw plus ledger-derived safe resume readback, async customer-worker prepared-action submit/resume plus mock job status readback, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, Agent Gateway session/enrollment lifecycle writes blocked at the Next proxy with safe session hygiene readback, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
+            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, CLI worker dogfood proof through the Next proxy, read-only Pixel Operating Map parity, local brief prepared-action exact resume with approval/hash/replay guards, worker mock dispatch, focused Worker Console read-model parity for fleet/hygiene/readiness/session safety, customer-worker prepared-action exact resume for Hermes/OpenClaw plus ledger-derived safe resume readback, async customer-worker prepared-action submit/resume plus mock job status readback, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, Agent Gateway session/enrollment lifecycle writes blocked at the Next proxy with safe session hygiene readback, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
         ),
         check(
             "pixel_office_dispatch_retirement_evidence_surface_exists",
@@ -971,6 +986,7 @@ def main() -> int:
                 "python3 scripts/nextjs_worker_daemon_control_smoke.py",
                 "python3 scripts/nextjs_enrollment_request_smoke.py",
                 "python3 scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py",
+                "python3 scripts/nextjs_worker_console_parity_smoke.py",
                 "python3 scripts/vite_playwright_snapshot_smoke.py",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py",
             ],

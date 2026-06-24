@@ -25,6 +25,9 @@ import type {
   StorageBackendStatus,
   TaskDetailPayload,
   TaskSummary,
+  WorkerAdapterReadinessSummary,
+  WorkerFleetHygienePayload,
+  WorkerFleetPayload,
   WorkerStatusSummary,
   AuditSummary,
   RunSummary,
@@ -46,6 +49,31 @@ async function serverMisJson<T>(path: string): Promise<T> {
     throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
   }
   return response.json() as Promise<T>;
+}
+
+function refTail(value: unknown) {
+  return String(value || "").replace(/[^A-Za-z0-9]/g, "").slice(-12);
+}
+
+function safeGatewaySessionsPayload(payload: AgentGatewaySessionsPayload): AgentGatewaySessionsPayload {
+  return {
+    ...payload,
+    sessions: (payload.sessions || []).map((session) => {
+      const sessionTail = refTail(session.session_id || session.session_ref);
+      const parentTail = refTail(session.parent_token_id || session.parent_token_ref);
+      const { session_id, parent_token_id, ...rest } = session;
+      void session_id;
+      void parent_token_id;
+      return {
+        ...rest,
+        session_ref: session.session_ref || (sessionTail ? `session_ref_${sessionTail}` : ""),
+        session_id_omitted: true,
+        parent_token_ref: session.parent_token_ref || (parentTail ? `token_ref_${parentTail}` : ""),
+        parent_token_id_omitted: true,
+      };
+    }),
+    token_omitted: true,
+  };
 }
 
 export async function loadServerApprovals(): Promise<ServerLoadResult<ApprovalSummary[]>> {
@@ -192,9 +220,73 @@ export async function loadServerWorkerStatus(): Promise<ServerLoadResult<WorkerS
   }
 }
 
+export async function loadServerWorkerFleet(): Promise<ServerLoadResult<WorkerFleetPayload>> {
+  try {
+    return { data: await serverMisJson<WorkerFleetPayload>("/workers/fleet"), error: null };
+  } catch (err) {
+    return {
+      data: {
+        provider: "agentops-worker",
+        operation: "fleet_view",
+        status: "unavailable",
+        summary: {},
+        lanes: [],
+        next_actions: [],
+        safety: {
+          read_only: true,
+          live_execution_performed: false,
+          token_omitted: true,
+          session_id_omitted: true,
+          raw_prompt_omitted: true,
+        },
+        token_omitted: true,
+        live_execution_performed: false,
+      },
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function loadServerWorkerFleetHygiene(limit = 8): Promise<ServerLoadResult<WorkerFleetHygienePayload>> {
+  try {
+    return { data: await serverMisJson<WorkerFleetHygienePayload>(`/workers/fleet/hygiene?limit=${encodeURIComponent(String(limit))}`), error: null };
+  } catch (err) {
+    return {
+      data: {
+        provider: "agentops-worker",
+        operation: "fleet_hygiene",
+        status: "unavailable",
+        threshold_sec: 900,
+        enrollment_age_sec: 900,
+        summary: { stuck_tasks: 0, stale_never_seen_enrollments: 0, actions_available: 0 },
+        stuck_tasks: [],
+        stale_never_seen_enrollments: [],
+        recommended_actions: [],
+        safety: {
+          read_only: true,
+          requires_confirm_cleanup: true,
+          live_execution_performed: false,
+          token_omitted: true,
+        },
+        token_omitted: true,
+        live_execution_performed: false,
+      },
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function loadServerWorkerAdapterReadiness(): Promise<ServerLoadResult<WorkerAdapterReadinessSummary>> {
+  try {
+    return { data: await serverMisJson<WorkerAdapterReadinessSummary>("/workers/adapter-readiness"), error: null };
+  } catch (err) {
+    return { data: { adapters: {}, token_omitted: true, live_execution_performed: false }, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function loadServerGatewaySessions(): Promise<ServerLoadResult<AgentGatewaySessionsPayload>> {
   try {
-    return { data: await serverMisJson<AgentGatewaySessionsPayload>("/agent-gateway/sessions"), error: null };
+    return { data: safeGatewaySessionsPayload(await serverMisJson<AgentGatewaySessionsPayload>("/agent-gateway/sessions")), error: null };
   } catch (err) {
     return { data: { sessions: [] }, error: err instanceof Error ? err.message : String(err) };
   }

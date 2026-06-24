@@ -34,6 +34,7 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "agents" / "release-task" / "route.ts",
         NEXT_APP / "app" / "workspace" / "agents" / "enrollment-request" / "route.ts",
         NEXT_APP / "app" / "workspace" / "agents" / "daemon-control" / "route.ts",
+        NEXT_APP / "app" / "workspace" / "workers" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "commercial" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "governance" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "deployment" / "page.tsx",
@@ -70,6 +71,7 @@ def main() -> int:
         NEXT_APP / "app" / "api" / "mis" / "[...path]" / "route.ts",
         NEXT_APP / "src" / "components" / "AppFrame.tsx",
         NEXT_APP / "src" / "components" / "AgentsParityPage.tsx",
+        NEXT_APP / "src" / "components" / "WorkerConsolePage.tsx",
         NEXT_APP / "src" / "components" / "AgentDetailPage.tsx",
         NEXT_APP / "src" / "components" / "CommercialPage.tsx",
         NEXT_APP / "src" / "components" / "GovernancePage.tsx",
@@ -108,6 +110,7 @@ def main() -> int:
         ROOT / "scripts" / "nextjs_enrollment_request_smoke.py",
         ROOT / "scripts" / "nextjs_worker_gateway_lifecycle_guard_smoke.py",
         ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py",
+        ROOT / "scripts" / "nextjs_worker_console_parity_smoke.py",
         ROOT / "scripts" / "audit_retention_policy_smoke.py",
         ROOT / "scripts" / "audit_retention_controls_smoke.py",
         ROOT / "docs" / "UI_NAVIGATION_INVENTORY.json",
@@ -140,6 +143,7 @@ def main() -> int:
     admin_run_alias_text = read_text(NEXT_APP / "app" / "admin" / "runs" / "[runId]" / "page.tsx")
     app_frame_text = read_text(NEXT_APP / "src" / "components" / "AppFrame.tsx")
     agents_page_text = read_text(NEXT_APP / "src" / "components" / "AgentsParityPage.tsx")
+    worker_console_page_text = read_text(NEXT_APP / "src" / "components" / "WorkerConsolePage.tsx")
     agent_detail_page_text = read_text(NEXT_APP / "src" / "components" / "AgentDetailPage.tsx")
     commercial_page_text = read_text(NEXT_APP / "src" / "components" / "CommercialPage.tsx")
     governance_page_text = read_text(NEXT_APP / "src" / "components" / "GovernancePage.tsx")
@@ -176,6 +180,7 @@ def main() -> int:
     enrollment_request_smoke_text = read_text(ROOT / "scripts" / "nextjs_enrollment_request_smoke.py")
     worker_gateway_lifecycle_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_gateway_lifecycle_guard_smoke.py")
     worker_daemon_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py")
+    worker_console_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_console_parity_smoke.py")
     route_parity_smoke_text = read_text(ROOT / "scripts" / "ui_task_run_route_parity_smoke.py")
     route_alias_smoke_text = read_text(ROOT / "scripts" / "ui_legacy_route_alias_smoke.py")
     navigation_inventory_smoke_text = read_text(ROOT / "scripts" / "ui_navigation_inventory_smoke.py")
@@ -264,6 +269,19 @@ def main() -> int:
     require("/api/mis/workers/local/start" in worker_daemon_smoke_text and "/api/mis/workers/local/restart" in worker_daemon_smoke_text and "/api/mis/workers/local/stop" in worker_daemon_smoke_text, "Next worker daemon smoke must exercise start/restart/stop proxy routes")
     require("/workspace/agents/daemon-control" in worker_daemon_smoke_text, "Next worker daemon smoke must exercise the form fallback route")
     require("mock_daemon_only_next_parity" in worker_daemon_smoke_text and "live_worker_daemon_not_allowed_next_parity" in worker_daemon_smoke_text, "Next worker daemon smoke must prove live daemon controls fail closed")
+    require("Workers" in app_frame_text and "/workspace/workers" in app_frame_text, "Next navigation must expose the focused Worker Console route")
+    require("WorkerConsolePage" in read_text(NEXT_APP / "app" / "workspace" / "workers" / "page.tsx"), "Worker route must render the Worker Console page")
+    require("Worker Console" in worker_console_page_text and "worker-console-route" in worker_console_page_text, "Worker Console route marker is missing")
+    require("worker-console-read-model" in worker_console_page_text and "worker_console_read_model_parity" in worker_console_page_text, "Worker Console must expose read-model parity proof")
+    require("worker-console-live-boundary" in worker_console_page_text and "live daemon blocked" in worker_console_page_text and "direct token issue blocked" in worker_console_page_text, "Worker Console must expose live lifecycle fail-closed proof")
+    require("worker-console-fleet-lanes" in worker_console_page_text and "Worker fleet lanes" in worker_console_page_text and "/workers/fleet" in worker_console_page_text, "Worker Console must expose fleet lane readback")
+    require("worker-console-hygiene-plan" in worker_console_page_text and "Fleet hygiene plan" in worker_console_page_text and "/workers/fleet/hygiene" in worker_console_page_text, "Worker Console must expose read-only hygiene plan")
+    require("worker-console-session-hygiene" in worker_console_page_text and "session token omitted" in worker_console_page_text and "session id hidden" in worker_console_page_text, "Worker Console must expose session hygiene without raw ids")
+    require("worker-adapter-readiness-proof" in worker_console_page_text and "Adapter readiness" in worker_console_page_text, "Worker Console must expose adapter readiness proof")
+    require("execution-mode endpoint pending" in worker_console_page_text, "Worker Console must not pretend execution-mode parity exists on this branch")
+    require("nextjs_worker_console_parity_v1" in worker_console_smoke_text, "Next Worker Console parity smoke contract is missing")
+    require("/workspace/workers" in worker_console_smoke_text and "/api/mis/workers/fleet" in worker_console_smoke_text and "/api/mis/workers/fleet/hygiene" in worker_console_smoke_text, "Next Worker Console smoke must exercise route plus fleet/hygiene APIs")
+    require("mock_daemon_only_next_parity" in worker_console_smoke_text and "gateway_lifecycle_write_not_allowed_next_parity" in worker_console_smoke_text, "Next Worker Console smoke must prove lifecycle writes fail closed")
     require("AGENTOPS_API_BASE" in server_lib_text and "loadServerApprovals" in server_lib_text, "server-side first paint loaders are missing")
     require("/dashboard/metrics" in lib_text, "workspace parity data must include dashboard metrics")
     require("/tasks" in lib_text and "/runs" in lib_text and "/approvals" in lib_text, "workspace parity data misses core ledgers")
@@ -275,6 +293,12 @@ def main() -> int:
     require("/integrations/notion/dry-run-export" in lib_text and "/integrations/notion/export-confirmed" in lib_text, "Notion external base export actions are missing")
     require("/memories" in lib_text and "/audit?limit=120" in lib_text, "governance parity data misses memory or audit ledgers")
     require("/workers/status" in lib_text and "/workers/adapter-readiness" in lib_text, "agent-control parity data misses worker readiness")
+    require("/workers/fleet" in lib_text and "loadWorkerFleet" in lib_text, "agent-control parity data misses worker fleet readback")
+    require("/workers/fleet/hygiene" in lib_text and "loadWorkerFleetHygiene" in lib_text, "agent-control parity data misses worker fleet hygiene readback")
+    require("loadServerWorkerFleet" in server_lib_text and "/workers/fleet" in server_lib_text, "server-side Worker Console loaders must include fleet readback")
+    require("loadServerWorkerFleetHygiene" in server_lib_text and "/workers/fleet/hygiene" in server_lib_text, "server-side Worker Console loaders must include hygiene readback")
+    require("loadServerWorkerAdapterReadiness" in server_lib_text and "/workers/adapter-readiness" in server_lib_text, "server-side Worker Console loaders must include adapter readiness")
+    require("safeGatewaySessionsPayload" in server_lib_text and "parent_token_id_omitted" in server_lib_text, "server-side session loader must safe-project gateway sessions")
     require("/agent-gateway/enrollments" in lib_text and "loadAgentGatewayEnrollments" in lib_text, "agent-control parity data misses enrollment readback")
     require("/agent-gateway/sessions" in lib_text and "loadAgentGatewaySessions" in lib_text, "agent-control parity data misses session hygiene readback")
     require("/agent-gateway/enrollment/policy-preview" in lib_text and "previewAgentGatewayEnrollmentPolicy" in lib_text, "agent-control parity data misses enrollment policy preview")
@@ -444,6 +468,7 @@ def main() -> int:
             "/workspace/agents/release-task",
             "/workspace/agents/enrollment-request",
             "/workspace/agents/daemon-control",
+            "/workspace/workers",
             "/workspace/commercial",
             "/workspace/governance",
             "/workspace/deployment",
@@ -489,6 +514,7 @@ def main() -> int:
             "nextjs_enrollment_request_v1",
             "nextjs_worker_gateway_lifecycle_guard_v1",
             "nextjs_worker_daemon_control_v1",
+            "nextjs_worker_console_parity_v1",
         ],
         "stack": {
             "next": dependencies.get("next"),
