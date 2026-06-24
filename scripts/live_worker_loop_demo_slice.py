@@ -315,6 +315,54 @@ def service_closure_allows_live(item: dict[str, Any]) -> bool:
     )
 
 
+def service_control_command_args(
+    base_url: str,
+    adapter: str,
+    manager: str,
+    action: str,
+    service_path_template: str,
+    *,
+    confirm_control: bool,
+) -> list[str]:
+    command = [
+        str(ROOT / "scripts" / "agentops"),
+        "--base-url",
+        base_url,
+        "worker",
+        "service-control",
+        "--manager",
+        manager,
+        "--action",
+        action,
+        "--adapter",
+        adapter,
+        "--agent-id",
+        f"agt_worker_daemon_{adapter}",
+    ]
+    if confirm_control:
+        command.append("--confirm-control")
+    service_path = service_path_from_template(service_path_template, adapter)
+    if service_path:
+        command.extend(["--service-path", service_path])
+    return command
+
+
+def service_closure_readback_step(base_url: str, adapter: str, timeout: int) -> tuple[bool, bool, dict[str, Any]]:
+    readback_ok, readback = http_get_json_query(
+        base_url,
+        "/api/operator/loop-supervision",
+        {
+            "adapter": adapter,
+            "limit": 8,
+            "include_codex": "false",
+        },
+        timeout,
+    )
+    if not readback_ok:
+        return False, False, readback
+    return True, service_closure_allows_live(service_closure_item(readback, adapter)), compact_service_closure_readback(adapter, readback)
+
+
 def compact_service_closure_readback(adapter: str, payload: dict[str, Any]) -> dict[str, Any]:
     item = service_closure_item(payload, adapter)
     closure = item.get("service_closure") if isinstance(item.get("service_closure"), dict) else {}
@@ -375,6 +423,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run or preview the local Hermes/OpenClaw worker-loop demo slice.")
     parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
     parser.add_argument("--adapter", action="append", choices=["hermes", "openclaw"], default=None)
+    parser.add_argument(
+        "--preflight",
+        action="store_true",
+        help="Run non-mutating service-control preview and loop-supervision readback before any live confirmation.",
+    )
     parser.add_argument("--confirm-live", action="store_true", help="Run real local Hermes/OpenClaw customer-worker acceptance.")
     parser.add_argument(
         "--confirm-service-control",
@@ -427,6 +480,80 @@ def main() -> int:
     failures: list[str] = []
     live_attempted = False
 
+    if args.preflight and not args.confirm_live:
+        failures: list[str] = []
+        for adapter in adapters:
+            control_command = service_control_command_args(
+                base_url,
+                adapter,
+                args.service_control_manager,
+                args.service_control_action,
+                args.service_control_service_path_template,
+                confirm_control=False,
+            )
+            ok, result = run_json(control_command, env, args.service_control_timeout)
+            payload = result.get("payload") if isinstance(result.get("payload"), dict) else {}
+            steps.append({
+                "name": f"{adapter}_service_control_preflight",
+                "ok": ok,
+                "summary": compact_service_control(adapter, payload),
+            })
+            if not ok:
+                failures.append(f"{adapter}_service_control_preflight_failed")
+            readback_request_ok, _readback_allows_live, readback_summary = service_closure_readback_step(base_url, adapter, args.probe_timeout)
+            steps.append({
+                "name": f"{adapter}_service_closure_readback_preflight",
+                "ok": readback_request_ok,
+                "advisory": True,
+                "summary": readback_summary,
+            })
+
+        output = {
+            "operation": "live_worker_loop_demo_slice",
+            "ok": not failures,
+            "mode": "preflight",
+            "base_url": base_url,
+            "adapters": adapters,
+            "live_execution_performed": False,
+            "service_control_attempted": True,
+            "service_control_mutated": False,
+            "service_closure_attempted": False,
+            "ledger_mutated": False,
+            "confirm_live_required": True,
+            "confirm_service_control_required": True,
+            "confirm_service_closure_required": True,
+            "commands": commands,
+            "recommended_sequence": [
+                "readiness",
+                *[f"{adapter}_start_check" for adapter in adapters],
+                *[f"{adapter}_service_control" for adapter in adapters],
+                *[f"{adapter}_service_closure" for adapter in adapters],
+                "service_closure_live_demo",
+                "real_worker_loop",
+                "live_readback",
+                "operator_readback",
+            ],
+            "steps": steps,
+            "failures": failures,
+            "safety": {
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+                "uses_saved_cli_config": False,
+                "requires_explicit_confirm_live": True,
+                "requires_explicit_confirm_service_control": True,
+                "requires_explicit_confirm_service_closure": True,
+                "preflight_only": True,
+            },
+            "token_omitted": True,
+        }
+        serialized = json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True)
+        if token_leaked(serialized):
+            print(json.dumps({"ok": False, "error": "token_like_output_detected"}, ensure_ascii=False, indent=2), file=sys.stderr)
+            return 1
+        print(serialized)
+        return 0
+
     if not args.confirm_live:
         output = {
             "operation": "live_worker_loop_demo_slice",
@@ -474,25 +601,14 @@ def main() -> int:
     service_control_mutated = False
     if args.confirm_service_control:
         for adapter in adapters:
-            control_command = [
-                str(ROOT / "scripts" / "agentops"),
-                "--base-url",
+            control_command = service_control_command_args(
                 base_url,
-                "worker",
-                "service-control",
-                "--manager",
                 args.service_control_manager,
-                "--action",
                 args.service_control_action,
-                "--adapter",
                 adapter,
-                "--agent-id",
-                f"agt_worker_daemon_{adapter}",
-                "--confirm-control",
-            ]
-            service_path = service_path_from_template(args.service_control_service_path_template, adapter)
-            if service_path:
-                control_command.extend(["--service-path", service_path])
+                args.service_control_service_path_template,
+                confirm_control=True,
+            )
             service_control_attempted = True
             ok, result = run_json(control_command, env, args.service_control_timeout)
             payload = result.get("payload") if isinstance(result.get("payload"), dict) else {}
@@ -532,22 +648,11 @@ def main() -> int:
             if not ok:
                 failures.append(f"{adapter}_service_closure_failed")
                 continue
-            readback_ok, readback = http_get_json_query(
-                base_url,
-                "/api/operator/loop-supervision",
-                {
-                    "adapter": adapter,
-                    "limit": 8,
-                    "include_codex": "false",
-                },
-                args.probe_timeout,
-            )
-            readback_item = service_closure_item(readback, adapter) if readback_ok else {}
-            readback_allows_live = service_closure_allows_live(readback_item)
+            readback_ok, readback_allows_live, readback_summary = service_closure_readback_step(base_url, adapter, args.probe_timeout)
             steps.append({
                 "name": f"{adapter}_service_closure_readback",
                 "ok": readback_ok and readback_allows_live,
-                "summary": compact_service_closure_readback(adapter, readback) if readback_ok else readback,
+                "summary": readback_summary,
             })
             if not readback_ok:
                 failures.append(f"{adapter}_service_closure_readback_failed")
