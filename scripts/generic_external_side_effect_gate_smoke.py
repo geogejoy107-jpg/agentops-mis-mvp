@@ -144,6 +144,70 @@ def main() -> int:
     require(status in {200, 201}, f"worker runtime evidence should not require prepared action: {status} {worker_runtime_evidence}", failures)
     require((worker_runtime_evidence.get("tool_call") or {}).get("status") == "completed", f"worker runtime evidence should be completed: {worker_runtime_evidence}", failures)
 
+    status, realistic_runtime_evidence = http_json(args.base_url, "/api/agent-gateway/tool-calls", {
+        "workspace_id": "local-demo",
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "tool_name": "agent_worker.hermes",
+        "tool_category": "custom",
+        "risk_level": "medium",
+        "status": "completed",
+        "target_resource": "http://127.0.0.1:8642/v1/chat/completions",
+        "args": {
+            "task_id": task_id,
+            "adapter": "hermes",
+            "prompt_hash": "1" * 64,
+            "prompt_profile_id": "review_quality_gate_summary",
+            "prompt_profile_version": "worker_prompt_profiles_v1",
+            "prompt_profile_hash": "2" * 64,
+            "attempt_count": 1,
+            "max_attempts": 1,
+            "retry_history": [
+                {
+                    "attempt": 1,
+                    "ok": True,
+                    "error_type": None,
+                    "retryable": False,
+                    "summary": "Runtime summary says to write run/tool/evaluation/runtime/audit evidence, but the worker only records local ledger evidence.",
+                }
+            ],
+            "observation_level": "ledger_summary_only",
+            "risk_floor": "medium",
+            "effective_risk_level": "medium",
+            "commercial_readiness": "restricted_until_runtime_tool_events",
+            "requires_prepared_action_for_external_write": True,
+            "worker_runtime_event_id": f"rte_worker_summary_{stamp}",
+            "worker_runtime_event_summary_recorded": True,
+            "runtime_internal_tools_remain_opaque": True,
+            "hermes_max_tokens": 512,
+            "knowledge_retrieval_evidence_consumed": True,
+            "knowledge_retrieval_packet_hash": "3" * 64,
+            "knowledge_retrieval_query_hash": "4" * 64,
+            "knowledge_retrieval_status": "ok",
+            "knowledge_retrieval_task_context": {"task_id": task_id, "task_found": True, "task_text_omitted": True},
+            "knowledge_retrieval_ids": [],
+            "knowledge_retrieval_paths": [],
+            "knowledge_retrieval_source_hashes": [],
+            "knowledge_retrieval_metrics": {},
+            "knowledge_retrieval_omissions": {
+                "query_omitted": True,
+                "snippet_omitted": True,
+                "raw_content_omitted": True,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
+            "raw_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "result_summary": "Local Hermes runtime produced a ledger summary; raw prompt and response are omitted.",
+    })
+    outputs.append(json.dumps(realistic_runtime_evidence, ensure_ascii=False))
+    require(status in {200, 201}, f"realistic runtime evidence summary should not require prepared action: {status} {realistic_runtime_evidence}", failures)
+    require((realistic_runtime_evidence.get("tool_call") or {}).get("status") == "completed", f"realistic runtime evidence should be completed: {realistic_runtime_evidence}", failures)
+
     generic_external = {
         "workspace_id": "local-demo",
         "run_id": run_id,
