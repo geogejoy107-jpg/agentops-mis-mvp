@@ -49,6 +49,10 @@ def main() -> int:
             "http://127.0.0.1:9",
             "--probe-timeout",
             "1",
+            "--service-control-timeout",
+            "12",
+            "--service-control-service-path-template",
+            "/tmp/agentops-live/{adapter}.plist",
         ],
         cwd=ROOT,
         capture_output=True,
@@ -78,6 +82,8 @@ def main() -> int:
     combined = str(commands.get("service_closure_live_demo") or "")
     require("live_worker_loop_demo_slice.py" in combined, f"combined service-closure/live command missing: {commands}", failures)
     require("--confirm-live" in combined and "--confirm-service-control" in combined and "--confirm-service-closure" in combined, f"combined command confirmation flags missing: {combined}", failures)
+    require("--service-control-timeout 12" in combined, f"combined service-control timeout missing: {combined}", failures)
+    require("--service-control-service-path-template '/tmp/agentops-live/{adapter}.plist'" in combined, f"combined service-path template missing or unquoted: {combined}", failures)
     require("v1_5_live_product_readiness_smoke.py" in str(commands.get("live_readback")), f"readback command missing: {commands}", failures)
     require("operator live-product-readiness" in str(commands.get("operator_readback")), f"operator readback command missing: {commands}", failures)
     for adapter in ["hermes", "openclaw"]:
@@ -85,6 +91,7 @@ def main() -> int:
         control = str(commands.get(f"{adapter}_service_control") or "")
         require(f"worker service-control --manager launchd --action load --adapter {adapter}" in control, f"{adapter} service-control command missing: {commands}", failures)
         require("--confirm-control" in control and f"--agent-id agt_worker_daemon_{adapter}" in control, f"{adapter} service-control flags missing: {control}", failures)
+        require(f"--service-path /tmp/agentops-live/{adapter}.plist" in control, f"{adapter} service path not rendered: {control}", failures)
         closure = str(commands.get(f"{adapter}_service_closure") or "")
         require(f"operator service-closure --adapter {adapter}" in closure, f"{adapter} service-closure command missing: {commands}", failures)
         require("--fast" in closure and "--run-service-check" in closure and "--confirm-record" in closure, f"{adapter} service-closure flags missing: {closure}", failures)
