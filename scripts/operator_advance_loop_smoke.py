@@ -225,6 +225,13 @@ def main() -> int:
             require(int(research_summary.get("consumed") or 0) >= 1, f"command-center should read back consumed research packet: {research_readback_payload}", failures)
             require(int(research_summary.get("missing") or 0) >= 1, f"one unadvanced research adapter should remain visible: {research_readback_payload}", failures)
 
+            missing_source = run_cli(["operator", "advance-loop", "--source", "definitely_missing_source", "--limit", "10"], base_url, outputs)
+            missing_source_payload = load_json(missing_source.stdout)
+            require(missing_source.returncode == 0, f"missing-source advance should fail closed without CLI error: {missing_source.stderr or missing_source.stdout}", failures)
+            require(missing_source_payload.get("status") == "empty", f"missing-source advance should be empty: {missing_source_payload}", failures)
+            require(missing_source_payload.get("advanced") is False, f"missing-source advance must not execute fallback: {missing_source_payload}", failures)
+            require("fall back" in str(missing_source_payload.get("message") or ""), f"missing-source message should explain no fallback: {missing_source_payload}", failures)
+
             global_preview = run_cli(["operator", "advance-loop", "--limit", "10"], base_url, outputs)
             global_preview_payload = load_json(global_preview.stdout)
             require(global_preview.returncode == 0, f"global advance preview failed: {global_preview.stderr or global_preview.stdout}", failures)

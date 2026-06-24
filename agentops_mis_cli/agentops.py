@@ -3671,6 +3671,48 @@ def select_command_center_advance_item(command_center: dict, source_filter: str)
             "advance_policy": policy,
             "token_omitted": True,
         }
+    action_plan = command_center.get("action_plan") if isinstance(command_center.get("action_plan"), dict) else {}
+    for item in action_plan.get("actions") or []:
+        if not isinstance(item, dict):
+            continue
+        lane = str(item.get("lane") or "general")
+        source = f"operator_action_plan:{lane}"
+        if source_filter not in source and source_filter != lane:
+            continue
+        command = str(item.get("command") or "").strip()
+        if not command:
+            continue
+        policy = advance_loop_command_policy(command, phase="action")
+        if not policy.get("allowed"):
+            continue
+        evidence_payload = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        return {
+            "package_id": f"operator_command_center:{source}",
+            "action_id": item.get("action_id"),
+            "action_signature": item.get("action_signature") or item.get("action_id"),
+            "gate_id": lane,
+            "gate_label": item.get("title") or source,
+            "gate_status": item.get("receipt_status") or item.get("severity") or "missing",
+            "source": "operator_command_center",
+            "action_command": command,
+            "verify_command": item.get("verify_command") or "agentops operator command-center --limit 12",
+            "receipt_verify_record_command": item.get("receipt_verify_record_command"),
+            "receipt_source": evidence_payload.get("receipt_source") or source,
+            "evidence": {
+                "command_center_source": source,
+                "title": item.get("title"),
+                "priority": item.get("priority"),
+                "receipt_status": item.get("receipt_status"),
+                "receipt_verified": item.get("receipt_verified"),
+                "control_readback_required": item.get("control_readback_required"),
+                "evidence": evidence_payload,
+                "operation": command_center.get("operation"),
+                "status": command_center.get("status"),
+                "token_omitted": True,
+            },
+            "advance_policy": policy,
+            "token_omitted": True,
+        }
     return {}
 
 
@@ -3701,13 +3743,36 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
     handoff = client.get(control_endpoint, query={"limit": args.limit, "loop_id": args.loop_id or None})
     before_control = compact_loop_control(handoff)
     selected = {}
+    policy_summary = advance_loop_policy_summary()
     source_filter = str(getattr(args, "source", "") or "").strip()
     if source_filter:
         command_center = client.get("/api/operator/command-center", query={"limit": args.limit})
         selected = select_command_center_advance_item(command_center, source_filter)
+        if not selected:
+            return {
+                "provider": "agentops-operator",
+                "operation": "operator_advance_loop",
+                "status": "empty",
+                "advanced": False,
+                "message": f"No allowlisted command-center action matched --source {source_filter!r}; explicit source filters do not fall back to unrelated gates.",
+                "source": source_filter,
+                "handoff_status": handoff.get("status"),
+                "control_readback": {
+                    "before": before_control,
+                    "after": None,
+                    "token_omitted": True,
+                },
+                "policy": policy_summary,
+                "safety": {
+                    "read_only": True,
+                    "ledger_mutated": False,
+                    "live_execution_performed": False,
+                    "token_omitted": True,
+                },
+                "token_omitted": True,
+            }
     if not selected:
         selected = select_advance_loop_item(handoff)
-    policy_summary = advance_loop_policy_summary()
     if not selected:
         return {
             "provider": "agentops-operator",
