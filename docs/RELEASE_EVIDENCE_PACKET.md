@@ -122,6 +122,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/commander_team_board_ui_smoke.py`
 - `python3 scripts/operator_advance_loop_smoke.py`
 - `python3 scripts/operator_loop_control_smoke.py`
+- `python3 scripts/operator_loop_bootstrap_smoke.py`
 - `python3 scripts/operator_loop_driver_smoke.py`
 - `python3 scripts/operator_loop_launch_packet_smoke.py`
 - `python3 scripts/operator_agent_loop_handoff_smoke.py`

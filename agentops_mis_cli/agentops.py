@@ -1540,6 +1540,310 @@ def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
     }
 
 
+def _append_cli_option(command: str, name: str, value: str | None) -> str:
+    command = str(command or "").strip()
+    if not command or not value or name in command:
+        return command
+    return f"{command} {name} {shlex.quote(str(value))}"
+
+
+def _with_requested_manager(command: str, manager: str) -> str:
+    command = str(command or "").strip()
+    if manager in {"launchd", "systemd"} and command:
+        command = command.replace("--manager launchd", f"--manager {manager}")
+        command = command.replace("--manager=launchd", f"--manager={manager}")
+    return command
+
+
+def _bootstrap_command_map(start_check: dict, supervision_item: dict, args) -> dict:
+    admission = start_check.get("local_loop_admission_packet") if isinstance(start_check.get("local_loop_admission_packet"), dict) else {}
+    deployment = admission.get("local_deployment") if isinstance(admission.get("local_deployment"), dict) else {}
+    service_install = deployment.get("service_install") if isinstance(deployment.get("service_install"), dict) else {}
+    manager_options = service_install.get("manager_options") if isinstance(service_install.get("manager_options"), dict) else {}
+    manager_install = manager_options.get(args.manager) if isinstance(manager_options.get(args.manager), dict) else {}
+    service_managed_loop = deployment.get("service_managed_loop") if isinstance(deployment.get("service_managed_loop"), dict) else {}
+    managed_execution = deployment.get("managed_execution_path") if isinstance(deployment.get("managed_execution_path"), dict) else {}
+    admission_commands = admission.get("commands") if isinstance(admission.get("commands"), dict) else {}
+    managed_commands = managed_execution.get("commands") if isinstance(managed_execution.get("commands"), dict) else {}
+    loop_driver_entry = start_check.get("loop_driver_entry") if isinstance(start_check.get("loop_driver_entry"), dict) else {}
+    loop_commands = loop_driver_entry.get("commands") if isinstance(loop_driver_entry.get("commands"), dict) else {}
+    service_closure = supervision_item.get("service_closure") if isinstance(supervision_item.get("service_closure"), dict) else {}
+    service_check = (
+        admission_commands.get("service_check")
+        or managed_commands.get("service_check")
+        or (service_managed_loop.get("commands") or {}).get("service_check")
+        or f"agentops worker service-check --manager {args.manager} --adapter {args.adapter} --agent-id agt_worker_daemon_{args.adapter}"
+    )
+    service_install_preview = (
+        manager_install.get("preview_command")
+        or service_install.get("preview_command")
+        or admission_commands.get("service_install_preview")
+        or f"agentops worker service-install --manager {args.manager} --adapter {args.adapter} --agent-id agt_worker_daemon_{args.adapter}"
+    )
+    service_install_confirm = (
+        manager_install.get("confirm_command")
+        or service_install.get("confirm_command")
+        or admission_commands.get("service_install_confirm")
+        or f"{service_install_preview} --confirm-install"
+    )
+    service_control_load = (
+        managed_commands.get("service_control_load_confirm")
+        or (service_managed_loop.get("commands") or {}).get("service_control_load_confirm")
+        or f"agentops worker service-control --manager {args.manager} --action load --adapter {args.adapter} --agent-id agt_worker_daemon_{args.adapter} --confirm-control"
+    )
+    service_closure_record = " ".join(shlex.quote(str(part)) for part in [
+        "agentops",
+        "operator",
+        "service-closure",
+        "--adapter",
+        args.adapter,
+        "--run-service-check",
+        "--confirm-record",
+    ])
+    loop_confirm = loop_commands.get("confirm_loop") or f"agentops operator loop-driver --adapter {args.adapter} --max-steps {args.max_steps} --limit {args.limit} --confirm-loop"
+    if "--auto-service-closure" not in loop_confirm:
+        loop_confirm = f"{loop_confirm} --auto-service-closure"
+    service_check = _with_requested_manager(service_check, args.manager)
+    service_install_preview = _with_requested_manager(service_install_preview, args.manager)
+    service_install_confirm = _with_requested_manager(service_install_confirm, args.manager)
+    service_control_load = _with_requested_manager(service_control_load, args.manager)
+    if args.service_path:
+        service_check = _append_cli_option(service_check, "--service-path", args.service_path)
+        service_install_preview = _append_cli_option(service_install_preview, "--service-path", args.service_path)
+        service_install_confirm = _append_cli_option(service_install_confirm, "--service-path", args.service_path)
+        service_control_load = _append_cli_option(service_control_load, "--service-path", args.service_path)
+        service_closure_record = _append_cli_option(service_closure_record, "--service-path", args.service_path)
+        loop_confirm = _append_cli_option(loop_confirm, "--service-path", args.service_path)
+    if args.service_label:
+        service_check = _append_cli_option(service_check, "--label", args.service_label)
+        service_install_preview = _append_cli_option(service_install_preview, "--label", args.service_label)
+        service_install_confirm = _append_cli_option(service_install_confirm, "--label", args.service_label)
+        service_control_load = _append_cli_option(service_control_load, "--label", args.service_label)
+        service_closure_record = _append_cli_option(service_closure_record, "--service-label", args.service_label)
+        loop_confirm = _append_cli_option(loop_confirm, "--service-label", args.service_label)
+    return {
+        "start_check": f"agentops operator start-check --adapter {args.adapter} --limit {args.limit}",
+        "current_code_check": ((start_check.get("local_loop_admission_packet") or {}).get("commands") or {}).get("current_code_check")
+        or "agentops local readiness --require-current-code",
+        "service_install_preview": service_install_preview,
+        "service_install_confirm": service_install_confirm,
+        "service_check": service_check,
+        "service_closure_record": service_closure_record,
+        "service_control_load_confirm": service_control_load,
+        "loop_driver_auto_service_closure": loop_confirm,
+        "action_receipts": "agentops operator action-receipts --limit 20",
+        "loop_supervision": f"agentops operator loop-supervision --adapter {args.adapter} --limit {args.limit} --no-codex",
+        "service_closure_recommended": service_closure.get("command"),
+    }
+
+
+def cmd_operator_loop_bootstrap(args, client: AgentOpsClient) -> dict:
+    start_check = client.get(
+        "/api/operator/start-check",
+        query={
+            "adapter": args.adapter,
+            "limit": args.limit,
+            "loop_id": args.loop_id,
+            "task_id": args.task_id,
+            "agent_id": args.agent_id,
+            "q": args.query,
+            "handoff_mode": args.handoff_mode,
+            "full_handoff": "true" if args.full_handoff else None,
+        },
+    )
+    supervision = client.get(
+        "/api/operator/loop-supervision",
+        query={
+            "adapter": args.adapter,
+            "limit": args.limit,
+            "task_id": args.task_id,
+            "agent_id": args.agent_id,
+            "q": args.query,
+            "handoff_mode": args.handoff_mode,
+            "full_handoff": "true" if args.full_handoff else None,
+            "include_codex": "false",
+        },
+    )
+    items = supervision.get("items") if isinstance(supervision.get("items"), list) else []
+    supervision_item = next((row for row in items if isinstance(row, dict) and row.get("adapter") == args.adapter), {})
+    admission = start_check.get("local_loop_admission_packet") if isinstance(start_check.get("local_loop_admission_packet"), dict) else {}
+    admission_state = admission.get("admission") if isinstance(admission.get("admission"), dict) else {}
+    deployment = admission.get("local_deployment") if isinstance(admission.get("local_deployment"), dict) else {}
+    service_managed_loop = deployment.get("service_managed_loop") if isinstance(deployment.get("service_managed_loop"), dict) else {}
+    service_closure = supervision_item.get("service_closure") if isinstance(supervision_item.get("service_closure"), dict) else {}
+    commands = _bootstrap_command_map(start_check, supervision_item, args)
+    service_check_result = None
+    service_check_missing: list[str] = []
+    if args.run_service_check:
+        check_args = argparse.Namespace(
+            adapter=args.adapter,
+            service_check_manager=args.manager,
+            service_check_agent_id=args.service_check_agent_id or "",
+            service_path=args.service_path or "",
+            service_label=args.service_label or "",
+            api_key_placeholder=args.api_key_placeholder,
+            service_check_timeout=args.service_check_timeout,
+        )
+        service_check_result, service_check_missing = _local_service_check_from_command(
+            check_args,
+            client,
+            commands.get("service_check") or "",
+            manager=args.manager,
+        )
+    current_code_ok = admission_state.get("current_code_ok") is True
+    service_closure_required = service_closure.get("required") is True
+    service_loaded = (
+        ((service_check_result or {}).get("service_status") or {}).get("loaded") is True
+        if service_check_result
+        else service_managed_loop.get("service_loaded") is True
+    )
+    if start_check.get("status") == "blocked" or not current_code_ok:
+        status = "blocked"
+        next_action = commands["current_code_check"]
+    elif service_check_result and service_check_result.get("ok") is not True:
+        status = "attention"
+        next_action = commands["service_install_preview"]
+    elif service_closure_required:
+        status = "attention"
+        next_action = commands["service_closure_record"]
+    elif service_managed_loop.get("service_active_loop_ready") is not True and not service_loaded:
+        status = "attention"
+        next_action = commands["service_check"]
+    else:
+        status = "ready"
+        next_action = commands["loop_driver_auto_service_closure"]
+    bootstrap_steps = [
+        {
+            "id": "read_start_check",
+            "phase": "READ",
+            "status": start_check.get("status"),
+            "command": commands["start_check"],
+            "confirm_required": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "verify_current_code",
+            "phase": "READ",
+            "status": "pass" if current_code_ok else "blocked",
+            "command": commands["current_code_check"],
+            "confirm_required": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "preview_service_install",
+            "phase": "PREFLIGHT",
+            "status": "ready",
+            "command": commands["service_install_preview"],
+            "confirm_required": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "confirm_service_install",
+            "phase": "PREFLIGHT",
+            "status": "manual_confirm_required",
+            "command": commands["service_install_confirm"],
+            "confirm_required": True,
+            "loads_service": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "run_service_check",
+            "phase": "VERIFY",
+            "status": "checked" if service_check_result else "ready",
+            "command": commands["service_check"],
+            "confirm_required": False,
+            "local_cli_service_check_performed": bool(service_check_result),
+            "ok": service_check_result.get("ok") if service_check_result else None,
+            "missing": service_check_missing,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "record_service_closure",
+            "phase": "RECORD",
+            "status": "attention" if service_closure_required else "ready",
+            "command": commands["service_closure_record"],
+            "confirm_required": True,
+            "service_closure_step": service_closure.get("step"),
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "confirm_service_activation",
+            "phase": "PREFLIGHT",
+            "status": "manual_confirm_required" if service_closure.get("step") == "confirm_service_control_load" else "not_required",
+            "command": commands["service_control_load_confirm"],
+            "confirm_required": True,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "confirm_bounded_loop",
+            "phase": "EXECUTE",
+            "status": "ready" if status == "ready" else "waiting",
+            "command": commands["loop_driver_auto_service_closure"],
+            "confirm_required": True,
+            "uses_auto_service_closure": True,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+    ]
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_loop_bootstrap",
+        "status": status,
+        "adapter": args.adapter,
+        "workspace_id": client.workspace_id,
+        "task_id": args.task_id,
+        "agent_id": args.agent_id or client.agent_id or None,
+        "next_action": next_action,
+        "summary": {
+            "start_check_status": start_check.get("status"),
+            "current_code_ok": current_code_ok,
+            "service_closure_required": service_closure_required,
+            "service_closure_step": service_closure.get("step"),
+            "service_managed_loop_ready": service_managed_loop.get("service_managed_loop_ready") is True,
+            "service_active_loop_ready": service_managed_loop.get("service_active_loop_ready") is True,
+            "service_loaded": service_loaded,
+            "local_cli_service_check_performed": bool(service_check_result),
+            "can_confirm_bounded_loop": ((start_check.get("acceptance_packet") or {}).get("decision") or {}).get("can_confirm_bounded_loop") is True,
+        },
+        "bootstrap_steps": bootstrap_steps,
+        "commands": commands,
+        "service_check": {
+            "performed": bool(service_check_result),
+            "ok": service_check_result.get("ok") if service_check_result else None,
+            "manager": service_check_result.get("manager") if service_check_result else args.manager,
+            "service_file_exists": ((service_check_result.get("service_file") or {}).get("exists") is True) if service_check_result else None,
+            "service_loaded": ((service_check_result.get("service_status") or {}).get("loaded") is True) if service_check_result else None,
+            "missing": service_check_missing,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "service_closure": service_closure,
+        "local_loop_admission_packet": admission,
+        "supervision": {
+            "status": supervision_item.get("status"),
+            "primary_next_action": supervision_item.get("primary_next_action"),
+            "service_closure": service_closure,
+            "token_omitted": True,
+        },
+        "contract": "read-only local loop bootstrap packet for Hermes/OpenClaw; it orders service install/check/closure/activation and bounded loop-driver commands, optionally performs only local read-only service-check, and never mutates ledgers, loads services, executes server shell, or runs live adapters",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "local_cli_service_check_performed": bool(service_check_result),
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def compact_loop_supervision_work_packets(payload: dict) -> dict:
     work_packets = [
         item
@@ -4423,6 +4727,24 @@ def build_parser() -> argparse.ArgumentParser:
     operator_loop_supervision.add_argument("--no-codex", dest="include_codex", action="store_false", help="Omit Codex handoff context from the source handoff.")
     operator_loop_supervision.add_argument("--work-packet", action="store_true", help="Return only the compact machine-consumable loop work-packet bundle.")
     operator_loop_supervision.set_defaults(handler="operator_loop_supervision")
+    operator_loop_bootstrap = operator_sub.add_parser("loop-bootstrap", help="Build a read-only local loop bootstrap packet for Hermes/OpenClaw service deployment and bounded loop start.")
+    operator_loop_bootstrap.add_argument("--adapter", choices=["hermes", "openclaw"], required=True)
+    operator_loop_bootstrap.add_argument("--manager", choices=["launchd", "systemd"], default="launchd")
+    operator_loop_bootstrap.add_argument("--max-steps", type=int, default=3)
+    operator_loop_bootstrap.add_argument("--limit", type=int, default=8)
+    operator_loop_bootstrap.add_argument("--loop-id", default=None)
+    operator_loop_bootstrap.add_argument("--task-id", default=None)
+    operator_loop_bootstrap.add_argument("--agent-id", default=None)
+    operator_loop_bootstrap.add_argument("--query", default="READ PLAN RETRIEVE COMPARE VERIFY RECORD")
+    operator_loop_bootstrap.add_argument("--handoff-mode", choices=["lightweight", "full"], default="lightweight")
+    operator_loop_bootstrap.add_argument("--full-handoff", action="store_true")
+    operator_loop_bootstrap.add_argument("--run-service-check", action="store_true", help="Perform only local read-only worker service-check while building the packet.")
+    operator_loop_bootstrap.add_argument("--service-check-agent-id", default="")
+    operator_loop_bootstrap.add_argument("--service-path", default="")
+    operator_loop_bootstrap.add_argument("--service-label", default="")
+    operator_loop_bootstrap.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    operator_loop_bootstrap.add_argument("--service-check-timeout", type=int, default=5)
+    operator_loop_bootstrap.set_defaults(handler="operator_loop_bootstrap")
     operator_loop_driver = operator_sub.add_parser("loop-driver", help="Preview or run a bounded multi-step local loop for Hermes/OpenClaw/Codex.")
     operator_loop_driver.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     operator_loop_driver.add_argument("--max-steps", type=int, default=3, help="Maximum bounded advance-loop steps to run; capped at 5.")
@@ -5353,6 +5675,7 @@ HANDLERS = {
     "operator_start_check": cmd_operator_start_check,
     "operator_agent_loop_handoff": cmd_operator_agent_loop_handoff,
     "operator_loop_supervision": cmd_operator_loop_supervision,
+    "operator_loop_bootstrap": cmd_operator_loop_bootstrap,
     "operator_service_closure": cmd_operator_service_closure,
     "operator_loop_driver": cmd_operator_loop_driver,
     "operator_remediate_evidence_gap": cmd_operator_remediate_evidence_gap,

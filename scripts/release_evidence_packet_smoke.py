@@ -327,6 +327,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "operator_loop_bootstrap",
+        "command": "python3 scripts/operator_loop_bootstrap_smoke.py",
+        "summary": "Hermes/OpenClaw local loop bootstrap packet orders service install, service-check, service closure, optional service activation, and loop-driver auto service closure commands without mutating ledgers, loading services, executing server shell, or running live adapters.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "operator_loop_driver",
         "command": "python3 scripts/operator_loop_driver_smoke.py",
         "summary": "Hermes/OpenClaw/Codex loop driver consumes start-check acceptance gates, returns machine-readable agent loop packets, previews compact launch briefs, can explicitly auto-close local service readback receipts before bounded advance, and confirms bounded multi-step advance-loop receipts without live execution.",

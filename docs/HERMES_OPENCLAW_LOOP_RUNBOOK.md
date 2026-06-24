@@ -160,12 +160,24 @@ agentops operator loop-audit --limit 20
 Bounded local loop-driver for Hermes/OpenClaw:
 
 ```bash
+agentops operator loop-bootstrap --adapter hermes --limit 8
+agentops operator loop-bootstrap --adapter hermes --limit 8 --run-service-check
 agentops operator loop-driver --adapter hermes --max-steps 3 --limit 8
-agentops operator loop-driver --adapter hermes --max-steps 3 --limit 8 --confirm-loop
+agentops operator loop-driver --adapter hermes --max-steps 3 --limit 8 --confirm-loop --auto-service-closure
 
+agentops operator loop-bootstrap --adapter openclaw --limit 8
+agentops operator loop-bootstrap --adapter openclaw --limit 8 --run-service-check
 agentops operator loop-driver --adapter openclaw --max-steps 3 --limit 8
-agentops operator loop-driver --adapter openclaw --max-steps 3 --limit 8 --confirm-loop
+agentops operator loop-driver --adapter openclaw --max-steps 3 --limit 8 --confirm-loop --auto-service-closure
 ```
+
+`loop-bootstrap` is the first local deployment packet to hand to Hermes or
+OpenClaw. It is read-only by default and returns the ordered current-code,
+service-install preview/confirm, service-check, service-closure record,
+service-activation confirm, and bounded loop-driver commands. With
+`--run-service-check` it performs only the local read-only worker
+`service-check` in the CLI process; it does not write receipts, load services,
+execute server shell, or run a live adapter.
 
 `loop-driver` is the local copy-only wrapper for repeated loop progress. Without
 `--confirm-loop` it returns a compact `acceptance_gate` from

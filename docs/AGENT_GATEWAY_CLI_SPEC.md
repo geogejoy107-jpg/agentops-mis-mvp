@@ -2113,8 +2113,10 @@ agentops operator advance-loop --fast-control --limit 8
 agentops operator advance-loop --loop-id loop_123 --limit 10 --confirm-advance
 agentops operator advance-loop-policy
 agentops operator loop-control --limit 8
+agentops operator loop-bootstrap --adapter hermes --limit 8
+agentops operator loop-bootstrap --adapter openclaw --limit 8 --run-service-check
 agentops operator loop-driver --adapter hermes --max-steps 3
-agentops operator loop-driver --adapter openclaw --max-steps 3 --confirm-loop
+agentops operator loop-driver --adapter openclaw --max-steps 3 --confirm-loop --auto-service-closure
 ```
 
 Reads `GET /api/operator/handoff` and selects the first non-passing loop action
@@ -2150,6 +2152,13 @@ operators and UI can show exactly why a command can or cannot be auto-advanced.
 `operator loop-control` is read-only and returns the lightweight copy-only
 selected item, preview command, confirm command, bounded evidence counts, and
 policy id for fast local loop steering.
+`operator loop-bootstrap` is the local service and loop startup packet for
+Hermes/OpenClaw. It reads start-check and loop-supervision, then orders
+current-code verification, service-install preview/confirm, service-check,
+service-closure record, optional service-control load confirmation, and
+`loop-driver --confirm-loop --auto-service-closure`. It is read-only by default;
+`--run-service-check` performs only local worker service-check and still does
+not mutate ledgers, load services, execute server shell, or run live adapters.
 `operator handoff` exposes the same `work_order.advance_loop` preview/confirm
 commands, and `/workspace/agents` renders copy buttons for those local CLI
 commands without letting the browser or server execute shell.
