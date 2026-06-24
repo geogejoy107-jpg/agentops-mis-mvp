@@ -247,6 +247,7 @@ python3 scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
 python3 scripts/nextjs_worker_console_parity_smoke.py
 python3 scripts/operator_execution_mode_smoke.py
+python3 scripts/nextjs_template_switching_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -277,6 +278,15 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   exercises the Next Dispatch owner task dry-run and template async job form
   fallbacks with team/risk/priority forwarding, task/job readback through the
   Next proxy, and token/raw-prompt omission.
+
+  `python3 scripts/nextjs_template_switching_smoke.py`
+  (`nextjs_template_switching_parity_v1`) starts isolated MIS API and Next.js
+  servers, proves `/workspace/templates` renders live `/template-packages`,
+  `/template-bindings`, `/bases`, and `/migration/preview` evidence, exercises
+  the migration-preview form fallback, and keeps the transcript free of
+  token-like material. This covers the former full template/base-switching gap
+  while keeping Vite `/admin/templates` retirement blocked until an explicit
+  route retirement commit.
 
   `python3 scripts/nextjs_local_brief_smoke.py` (`nextjs_local_brief_v1`)
   starts isolated MIS API and Next.js servers, proves the Next
@@ -453,6 +463,8 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/workspace/pixel-office/local-brief/route.ts`
   - `ui/next-app/app/workspace/dispatch/page.tsx`
   - `ui/next-app/app/workspace/dispatch/template-run/route.ts`
+  - `ui/next-app/app/workspace/templates/page.tsx`
+  - `ui/next-app/app/workspace/templates/migration-preview/route.ts`
   - `ui/next-app/app/workspace/evidence/[manifestId]/page.tsx`
   - `ui/next-app/app/workspace/tasks/page.tsx`
   - `ui/next-app/app/workspace/tasks/[taskId]/page.tsx`
@@ -493,6 +505,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/src/components/DeploymentPage.tsx`
   - `ui/next-app/src/components/PixelOfficePage.tsx`
   - `ui/next-app/src/components/DispatchPage.tsx`
+  - `ui/next-app/src/components/TemplateSwitchingPage.tsx`
   - `ui/next-app/src/components/DeliveryPages.tsx`
   - `ui/next-app/src/styles/globals.css`
   - `scripts/nextjs_parity_smoke.py`
@@ -500,6 +513,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py`
   - `scripts/nextjs_worker_dispatch_once_smoke.py`
   - `scripts/nextjs_pixel_office_floor_smoke.py`
+  - `scripts/nextjs_template_switching_smoke.py`
   - `scripts/local_brief_prepared_action_smoke.py`
   - `scripts/nextjs_local_brief_smoke.py`
   - `scripts/nextjs_customer_worker_dispatch_smoke.py`

@@ -71,11 +71,15 @@ route retirement:
   Vite/CLI remain canonical for direct token issuance, rotate/revoke/session
   mutation, live worker controls, cleanup mutation, and detailed operator
   controls.
-- Admin-only Vite routes for the full template/base-switching console are
-  deferred. Tool calls, evaluation room, runtime connectors, Notion external
-  base, and agent detail now have Next parity at `/workspace/tool-calls`,
-  `/workspace/evaluations`, `/workspace/connectors`,
-  `/workspace/external-bases/notion`, and `/workspace/agents/:agentId`.
+- Template/base switching is now covered by `/workspace/templates`, backed by
+  live `/template-packages`, `/template-bindings`, `/bases`, and
+  `/migration/preview` readback/preview evidence. Vite `/admin/templates`
+  remains until a separate explicit route retirement commit preserves deep
+  links and reruns side-by-side browser evidence. Tool calls, evaluation room,
+  runtime connectors, Notion external base, and agent detail now have Next
+  parity at `/workspace/tool-calls`, `/workspace/evaluations`,
+  `/workspace/connectors`, `/workspace/external-bases/notion`, and
+  `/workspace/agents/:agentId`.
 - Several `covered` routes still need a route-level Vite/Next data-shape diff
   before a retirement decision. Browser snapshot evidence is necessary but not
   sufficient.
@@ -162,6 +166,7 @@ python3 scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
 python3 scripts/nextjs_worker_console_parity_smoke.py
 python3 scripts/operator_execution_mode_smoke.py
+python3 scripts/nextjs_template_switching_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -300,6 +305,13 @@ and `agentops operator execution-mode` expose the same read-only adapter route,
 confirm-run wall, prepared-action wall, pending approval/job counts, and
 omission proof without mutating SQLite, starting daemons, or executing live
 adapters.
+
+`python3 scripts/nextjs_template_switching_smoke.py`
+(`nextjs_template_switching_parity_v1`) starts isolated MIS API and Next.js
+servers, opens `/workspace/templates`, verifies `/api/mis/template-packages`,
+`/api/mis/template-bindings`, `/api/mis/bases`, and
+`/api/mis/migration/preview`, exercises the migration-preview form fallback,
+and checks the template/base switching transcript for token-like leakage.
 
 `python3 scripts/nextjs_enrollment_request_smoke.py`
 (`nextjs_enrollment_request_v1`) starts isolated MIS API and Next.js servers,

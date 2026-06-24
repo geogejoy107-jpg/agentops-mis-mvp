@@ -61,6 +61,7 @@ ROUTES = [
     ("/workspace/governance", ["Governance", "Production readiness", "Session governance"]),
     ("/workspace/deployment", ["Deployment", "Deployment readiness verdict", "Storage backend migration gate", "Storage and retention", "audit_retention_policy_v1", "audit_retention_controls_v1"]),
     ("/workspace/pixel-office", ["Pixel Office", "Pixel Operating Map", "Owner dispatch workflow", "Local brief controls", "commercial-safe geometry", "live runtime disabled"]),
+    ("/workspace/templates", ["Template Switching", "Template packages", "Base switching plan", "Core ledger protection", "/migration/preview"]),
     ("/workspace/tasks", ["Tasks", "running", "planned"]),
     ("/workspace/runs", ["Run Ledger", "Run", "Status"]),
     ("/workspace/tool-calls", ["Tool Call Ledger", "high-risk", "Run"]),

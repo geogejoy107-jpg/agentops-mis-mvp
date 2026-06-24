@@ -46,6 +46,8 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "dispatch" / "template-job" / "route.ts",
         NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker" / "route.ts",
         NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker-job" / "route.ts",
+        NEXT_APP / "app" / "workspace" / "templates" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "templates" / "migration-preview" / "route.ts",
         NEXT_APP / "app" / "workspace" / "evidence" / "[manifestId]" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "tasks" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "tasks" / "[taskId]" / "page.tsx",
@@ -78,6 +80,7 @@ def main() -> int:
         NEXT_APP / "src" / "components" / "DeploymentPage.tsx",
         NEXT_APP / "src" / "components" / "PixelOfficePage.tsx",
         NEXT_APP / "src" / "components" / "DispatchPage.tsx",
+        NEXT_APP / "src" / "components" / "TemplateSwitchingPage.tsx",
         NEXT_APP / "src" / "components" / "EvidencePage.tsx",
         NEXT_APP / "src" / "components" / "LedgerDetailPages.tsx",
         NEXT_APP / "src" / "components" / "DeliveryPages.tsx",
@@ -112,6 +115,7 @@ def main() -> int:
         ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py",
         ROOT / "scripts" / "nextjs_worker_console_parity_smoke.py",
         ROOT / "scripts" / "operator_execution_mode_smoke.py",
+        ROOT / "scripts" / "nextjs_template_switching_smoke.py",
         ROOT / "scripts" / "audit_retention_policy_smoke.py",
         ROOT / "scripts" / "audit_retention_controls_smoke.py",
         ROOT / "docs" / "UI_NAVIGATION_INVENTORY.json",
@@ -132,6 +136,8 @@ def main() -> int:
     template_job_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "template-job" / "route.ts")
     customer_worker_dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker" / "route.ts")
     customer_worker_job_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker-job" / "route.ts")
+    template_switching_page_route_text = read_text(NEXT_APP / "app" / "workspace" / "templates" / "page.tsx")
+    template_switching_preview_route_text = read_text(NEXT_APP / "app" / "workspace" / "templates" / "migration-preview" / "route.ts")
     local_brief_route_text = read_text(NEXT_APP / "app" / "workspace" / "pixel-office" / "local-brief" / "route.ts")
     connector_trust_route_text = read_text(NEXT_APP / "app" / "workspace" / "connectors" / "trust" / "route.ts")
     notion_export_route_text = read_text(NEXT_APP / "app" / "workspace" / "external-bases" / "notion" / "export" / "route.ts")
@@ -151,6 +157,7 @@ def main() -> int:
     deployment_page_text = read_text(NEXT_APP / "src" / "components" / "DeploymentPage.tsx")
     pixel_office_page_text = read_text(NEXT_APP / "src" / "components" / "PixelOfficePage.tsx")
     dispatch_page_text = read_text(NEXT_APP / "src" / "components" / "DispatchPage.tsx")
+    template_switching_page_text = read_text(NEXT_APP / "src" / "components" / "TemplateSwitchingPage.tsx")
     evidence_page_text = read_text(NEXT_APP / "src" / "components" / "EvidencePage.tsx")
     ledger_detail_pages_text = read_text(NEXT_APP / "src" / "components" / "LedgerDetailPages.tsx")
     delivery_pages_text = read_text(NEXT_APP / "src" / "components" / "DeliveryPages.tsx")
@@ -183,6 +190,7 @@ def main() -> int:
     worker_daemon_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py")
     worker_console_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_console_parity_smoke.py")
     operator_execution_mode_smoke_text = read_text(ROOT / "scripts" / "operator_execution_mode_smoke.py")
+    template_switching_smoke_text = read_text(ROOT / "scripts" / "nextjs_template_switching_smoke.py")
     route_parity_smoke_text = read_text(ROOT / "scripts" / "ui_task_run_route_parity_smoke.py")
     route_alias_smoke_text = read_text(ROOT / "scripts" / "ui_legacy_route_alias_smoke.py")
     navigation_inventory_smoke_text = read_text(ROOT / "scripts" / "ui_navigation_inventory_smoke.py")
@@ -248,6 +256,15 @@ def main() -> int:
     require("/workflows/customer-task" in customer_task_route_text and "selected_agent_ids" in customer_task_route_text, "Customer task form route must forward owner task payload and selected team")
     require("/workflows/customer-task-templates/submit" in template_job_route_text and "template_job_status" in template_job_route_text, "Template async job form route must submit through the MIS workflow job API")
     require("Owner task composer" in dispatch_page_text and "/workspace/dispatch/customer-task" in dispatch_page_text and "/workspace/dispatch/template-job" in dispatch_page_text, "Dispatch page must expose owner dry-run/confirm and template async job controls")
+    require("TemplateSwitchingPage" in template_switching_page_route_text and "loadServerTemplatePackages" in template_switching_page_route_text and "loadServerBases" in template_switching_page_route_text, "Template switching route must server-load live template/base data")
+    require("/migration/preview" in template_switching_preview_route_text and "preview_status" in template_switching_preview_route_text, "Template switching preview form must call MIS migration preview and redirect with proof")
+    require("Template Switching" in template_switching_page_text and "template-switching-live-read-model" in template_switching_page_text, "Template switching page must expose live read-model proof")
+    require("template-package-catalog" in template_switching_page_text and "/template-packages" in template_switching_page_text, "Template switching page must expose template package catalog")
+    require("template-base-switching-plan" in template_switching_page_text and "/bases" in template_switching_page_text, "Template switching page must expose base switching plan")
+    require("template-core-ledger-protection" in template_switching_page_text and "Core ledger protection" in template_switching_page_text, "Template switching page must expose local ledger protection")
+    require("template-field-mapping" in template_switching_page_text and "/migration/preview" in template_switching_page_text, "Template switching page must expose migration field mapping")
+    require("nextjs_template_switching_parity_v1" in template_switching_smoke_text and "/workspace/templates" in template_switching_smoke_text, "Next template switching smoke contract is missing")
+    require("/api/mis/template-packages" in template_switching_smoke_text and "/api/mis/bases" in template_switching_smoke_text and "/api/mis/migration/preview" in template_switching_smoke_text, "Next template switching smoke must exercise template/base/preview APIs")
     require("loadServerAgents" in read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "page.tsx"), "Dispatch page must load agents for owner team selection")
     require("Prepared worker actions" in dispatch_page_text and "customer-worker-prepared-actions" in dispatch_page_text, "Dispatch page must expose the ledger-derived prepared-action queue")
     require("Resume approved worker" in dispatch_page_text and "Resume approved job" in dispatch_page_text, "Dispatch page must expose prepared-action resume controls")
@@ -300,6 +317,9 @@ def main() -> int:
     require("/workers/fleet" in lib_text and "loadWorkerFleet" in lib_text, "agent-control parity data misses worker fleet readback")
     require("/workers/fleet/hygiene" in lib_text and "loadWorkerFleetHygiene" in lib_text, "agent-control parity data misses worker fleet hygiene readback")
     require("/operator/execution-mode" in lib_text and "loadOperatorExecutionMode" in lib_text, "agent-control parity data misses operator execution-mode readback")
+    require("/template-packages" in lib_text and "loadTemplatePackages" in lib_text, "template package parity data is missing")
+    require("/template-bindings" in lib_text and "loadTemplateBindings" in lib_text, "template binding parity data is missing")
+    require("/bases" in lib_text and "loadBases" in lib_text, "base switching parity data is missing")
     require("loadServerWorkerFleet" in server_lib_text and "/workers/fleet" in server_lib_text, "server-side Worker Console loaders must include fleet readback")
     require("loadServerWorkerFleetHygiene" in server_lib_text and "/workers/fleet/hygiene" in server_lib_text, "server-side Worker Console loaders must include hygiene readback")
     require("loadServerWorkerAdapterReadiness" in server_lib_text and "/workers/adapter-readiness" in server_lib_text, "server-side Worker Console loaders must include adapter readiness")
@@ -351,6 +371,7 @@ def main() -> int:
     require("/workspace/governance" in app_frame_text, "Next.js nav must expose governance control route")
     require("/workspace/deployment" in app_frame_text, "Next.js nav must expose deployment/BYOC route")
     require("/workspace/dispatch" in app_frame_text, "Next.js nav must expose dispatch parity route")
+    require("/workspace/templates" in app_frame_text, "Next.js nav must expose template/base switching parity route")
     require("/workspace/agents" in app_frame_text, "Next.js nav must expose agents parity route")
     require("loadAgentControlSnapshot" in agents_page_text and "Production security" in agents_page_text, "agents parity page must expose safety/readiness control plane")
     require("dispatchLocalWorkerOnce" in agents_page_text and "Run mock once" in agents_page_text, "agents parity page must expose safe mock worker dispatch")
@@ -485,6 +506,8 @@ def main() -> int:
             "/workspace/dispatch/template-job",
             "/workspace/dispatch/customer-worker",
             "/workspace/dispatch/customer-worker-job",
+            "/workspace/templates",
+            "/workspace/templates/migration-preview",
             "/workspace/evidence/[manifestId]",
             "/workspace/tasks",
             "/workspace/tasks/[taskId]",
@@ -522,6 +545,7 @@ def main() -> int:
             "nextjs_worker_daemon_control_v1",
             "nextjs_worker_console_parity_v1",
             "operator_execution_mode_v1",
+            "nextjs_template_switching_parity_v1",
         ],
         "stack": {
             "next": dependencies.get("next"),

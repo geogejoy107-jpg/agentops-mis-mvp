@@ -153,6 +153,7 @@ def main() -> int:
     require("nextjs_worker_daemon_control_v1" in route_contracts, "matrix policy must include the Next worker daemon control contract")
     require("nextjs_worker_console_parity_v1" in route_contracts, "matrix policy must include the focused Next Worker Console parity contract")
     require("operator_execution_mode_v1" in route_contracts, "matrix policy must include the operator execution-mode readback contract")
+    require("nextjs_template_switching_parity_v1" in route_contracts, "matrix policy must include the Next template switching parity contract")
 
     entries = matrix.get("entries")
     require(isinstance(entries, list) and entries, "matrix entries must be a non-empty list")
@@ -286,6 +287,19 @@ def main() -> int:
     require("explicit route retirement commit" in pixel_dispatch_gate, "pixel_office_and_dispatch retirement gate must still require an explicit route retirement commit")
     pixel_dispatch_contracts = entries_by_id.get("pixel_office_and_dispatch", {}).get("api_contracts") or []
     require("GET /workflows/customer-worker-prepared-actions" in pixel_dispatch_contracts, "pixel_office_and_dispatch must include customer-worker prepared-action readback API")
+    assert_entry_routes(entries_by_id.get("template_switching"), "template_switching", ["/admin/templates"], ["/workspace/dispatch", "/workspace/templates", "/workspace/templates/migration-preview"])
+    require(entries_by_id.get("template_switching", {}).get("status") == "covered", "template_switching should be covered once Next template/base switching readback exists")
+    template_switching_evidence = entries_by_id.get("template_switching", {}).get("evidence_commands") or []
+    require("python3 scripts/nextjs_template_switching_smoke.py" in template_switching_evidence, "template_switching must include focused Next template switching evidence")
+    require("python3 scripts/nextjs_parity_smoke.py" in template_switching_evidence, "template_switching must include Next static parity evidence")
+    require("python3 scripts/nextjs_playwright_snapshot_smoke.py" in template_switching_evidence, "template_switching must include Next browser evidence")
+    template_switching_contracts = entries_by_id.get("template_switching", {}).get("api_contracts") or []
+    for contract in ["GET /template-packages", "GET /template-bindings", "GET /bases", "POST /migration/preview"]:
+        require(contract in template_switching_contracts, f"template_switching must include {contract}")
+    template_switching_gate = str(entries_by_id.get("template_switching", {}).get("retirement_gate") or "")
+    require("/workspace/templates live template/base switching" in template_switching_gate, "template_switching gate must record Next live readback")
+    require("/migration/preview" in template_switching_gate and "preview-only" in template_switching_gate, "template_switching gate must record preview-only migration evidence")
+    require("explicit route retirement commit" in template_switching_gate, "template_switching gate must still require explicit route retirement")
     assert_entry_routes(entries_by_id.get("tool_calls"), "tool_calls", ["/admin/toolcalls"], ["/workspace/tool-calls"])
     tool_call_evidence = entries_by_id.get("tool_calls", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_parity_smoke.py" in tool_call_evidence, "tool_calls must include Next static parity evidence")

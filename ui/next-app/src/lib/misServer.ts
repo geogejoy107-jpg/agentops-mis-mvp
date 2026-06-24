@@ -4,6 +4,7 @@ import type {
   AuditRetentionPolicyPayload,
   AgentGatewaySessionsPayload,
   AgentSummary,
+  BasesPayload,
   CommercialEntitlementStatus,
   CustomerDeliveryBoardPayload,
   CustomerWorkerPreparedActionListPayload,
@@ -26,6 +27,8 @@ import type {
   StorageBackendStatus,
   TaskDetailPayload,
   TaskSummary,
+  TemplateBinding,
+  TemplatePackage,
   WorkerAdapterReadinessSummary,
   WorkerFleetHygienePayload,
   WorkerFleetPayload,
@@ -354,6 +357,30 @@ export async function loadServerCustomerTaskTemplates(): Promise<ServerLoadResul
     return { data: await serverMisJson<CustomerTaskTemplateListPayload>("/workflows/customer-task-templates"), error: null };
   } catch (err) {
     return { data: { templates: [] }, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerBases(): Promise<ServerLoadResult<BasesPayload>> {
+  try {
+    return { data: await serverMisJson<BasesPayload>("/bases"), error: null };
+  } catch (err) {
+    return { data: { bases: [], capabilities: [] }, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerTemplatePackages(): Promise<ServerLoadResult<TemplatePackage[]>> {
+  try {
+    return { data: await serverMisJson<TemplatePackage[]>("/template-packages"), error: null };
+  } catch (err) {
+    return { data: [], error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerTemplateBindings(): Promise<ServerLoadResult<TemplateBinding[]>> {
+  try {
+    return { data: await serverMisJson<TemplateBinding[]>("/template-bindings"), error: null };
+  } catch (err) {
+    return { data: [], error: err instanceof Error ? err.message : String(err) };
   }
 }
 

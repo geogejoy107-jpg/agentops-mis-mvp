@@ -990,6 +990,80 @@ export type CustomerTaskTemplateListPayload = {
   safe_defaults?: Record<string, unknown>;
 };
 
+export type BaseRecord = {
+  base_id: string;
+  provider?: string;
+  category?: string;
+  storage_mode?: string;
+  status?: string;
+  display_name?: string;
+  description?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type BaseCapability = {
+  base_id: string;
+  tasks?: number | boolean;
+  comments?: number | boolean;
+  artifacts?: number | boolean;
+  metrics?: number | boolean;
+  webhooks?: number | boolean;
+  oauth?: number | boolean;
+  writeback?: number | boolean;
+  permissions?: number | boolean;
+  audit?: number | boolean;
+  realtime?: number | boolean;
+  notes?: string | null;
+};
+
+export type BasesPayload = {
+  bases: BaseRecord[];
+  capabilities: BaseCapability[];
+};
+
+export type TemplatePackage = {
+  template_id: string;
+  name?: string;
+  scenario?: string;
+  description?: string;
+  status?: string;
+  default_bases_json?: string;
+  swappable_bases_json?: string;
+  agent_roles_json?: string;
+  task_schema_json?: string;
+  memory_schema_json?: string;
+  quality_gates_json?: string;
+  approval_policy_json?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type TemplateBinding = {
+  binding_id?: string;
+  template_id?: string;
+  base_id?: string;
+  workspace_id?: string;
+  status?: string;
+  mapping_json?: string;
+  created_at?: string;
+};
+
+export type MigrationPreviewPayload = {
+  template_id?: string;
+  from_base?: BaseRecord | null;
+  to_base?: BaseRecord | null;
+  template?: TemplatePackage | null;
+  migratable_objects?: string[];
+  non_migratable_objects?: string[];
+  field_downgrades?: Array<{ field?: string; strategy?: string }>;
+  permission_changes?: string[];
+  requires_human_confirmation?: string[];
+  rollback?: string[];
+  token_omitted?: boolean;
+  error?: string;
+};
+
 export type WorkflowJob = {
   job_id: string;
   workspace_id?: string;
@@ -1498,6 +1572,18 @@ export async function loadStorageBackendStatus(): Promise<StorageBackendStatus> 
 
 export async function loadCustomerTaskTemplates(): Promise<CustomerTaskTemplateListPayload> {
   return misJson<CustomerTaskTemplateListPayload>("/workflows/customer-task-templates");
+}
+
+export async function loadBases(): Promise<BasesPayload> {
+  return misJson<BasesPayload>("/bases");
+}
+
+export async function loadTemplatePackages(): Promise<TemplatePackage[]> {
+  return misJson<TemplatePackage[]>("/template-packages");
+}
+
+export async function loadTemplateBindings(): Promise<TemplateBinding[]> {
+  return misJson<TemplateBinding[]>("/template-bindings");
 }
 
 export async function loadWorkflowJobs(limit = 8): Promise<WorkflowJobListPayload> {

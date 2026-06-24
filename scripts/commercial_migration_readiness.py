@@ -340,8 +340,36 @@ def main() -> int:
             and file_contains("ui/next-app/src/components/DispatchPage.tsx", "Owner task composer")
             and file_contains("ui/next-app/src/components/DispatchPage.tsx", "/workspace/dispatch/customer-task")
             and file_contains("ui/next-app/src/components/DispatchPage.tsx", "/workspace/dispatch/template-job")
+            and file_contains("ui/next-app/app/workspace/templates/page.tsx", "TemplateSwitchingPage")
+            and file_contains("ui/next-app/app/workspace/templates/page.tsx", "loadServerTemplatePackages")
+            and file_contains("ui/next-app/app/workspace/templates/page.tsx", "loadServerBases")
+            and file_contains("ui/next-app/app/workspace/templates/migration-preview/route.ts", "/migration/preview")
+            and file_contains("ui/next-app/src/components/TemplateSwitchingPage.tsx", "Template Switching")
+            and file_contains("ui/next-app/src/components/TemplateSwitchingPage.tsx", "template-switching-live-read-model")
+            and file_contains("ui/next-app/src/components/TemplateSwitchingPage.tsx", "template-base-switching-plan")
+            and file_contains("ui/next-app/src/components/TemplateSwitchingPage.tsx", "template-core-ledger-protection")
+            and file_contains("ui/next-app/src/components/TemplateSwitchingPage.tsx", "/template-packages")
+            and file_contains("ui/next-app/src/components/TemplateSwitchingPage.tsx", "/bases")
+            and file_contains("ui/next-app/src/components/TemplateSwitchingPage.tsx", "/migration/preview")
+            and file_contains("ui/next-app/src/lib/mis.ts", "loadTemplatePackages")
+            and file_contains("ui/next-app/src/lib/mis.ts", "loadTemplateBindings")
+            and file_contains("ui/next-app/src/lib/mis.ts", "loadBases")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "loadServerTemplatePackages")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "loadServerTemplateBindings")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "loadServerBases")
+            and file_contains("ui/next-app/src/components/AppFrame.tsx", "/workspace/templates")
+            and file_contains("scripts/nextjs_template_switching_smoke.py", "nextjs_template_switching_parity_v1")
+            and file_contains("scripts/nextjs_template_switching_smoke.py", "/workspace/templates")
+            and file_contains("scripts/nextjs_template_switching_smoke.py", "/api/mis/template-packages")
+            and file_contains("scripts/nextjs_template_switching_smoke.py", "/api/mis/bases")
+            and file_contains("scripts/nextjs_template_switching_smoke.py", "/api/mis/migration/preview")
             and file_contains("scripts/nextjs_pixel_office_dispatch_smoke.py", "nextjs_pixel_office_dispatch_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_pixel_office_dispatch_v1")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_template_switching_parity_v1")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "GET /template-packages")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "GET /template-bindings")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "GET /bases")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "POST /migration/preview")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "pixel_office_dispatch_retirement_evidence_v1")
             and file_contains("scripts/local_brief_prepared_action_smoke.py", "local_brief_prepared_action_v1")
             and file_contains("scripts/nextjs_local_brief_smoke.py", "nextjs_local_brief_v1")
@@ -450,6 +478,9 @@ def main() -> int:
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "agents" / "dispatch-once" / "route.ts").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "dispatch" / "customer-task" / "route.ts").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "dispatch" / "template-job" / "route.ts").exists()
+            and (ROOT / "ui" / "next-app" / "app" / "workspace" / "templates" / "page.tsx").exists()
+            and (ROOT / "ui" / "next-app" / "app" / "workspace" / "templates" / "migration-preview" / "route.ts").exists()
+            and (ROOT / "ui" / "next-app" / "src" / "components" / "TemplateSwitchingPage.tsx").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "dispatch" / "customer-worker" / "route.ts").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "dispatch" / "customer-worker-job" / "route.ts").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "agents" / "release-task" / "route.ts").exists()
@@ -468,6 +499,7 @@ def main() -> int:
             and (ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_pixel_office_dispatch_smoke.py").exists()
+            and (ROOT / "scripts" / "nextjs_template_switching_smoke.py").exists()
             and (ROOT / "scripts" / "pixel_office_dispatch_retirement_evidence_smoke.py").exists()
             and (ROOT / "docs" / "PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.json").exists()
             and (ROOT / "docs" / "PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.md").exists()
@@ -483,7 +515,7 @@ def main() -> int:
             and (ROOT / "scripts" / "nextjs_worker_console_parity_smoke.py").exists()
             and (ROOT / "scripts" / "operator_execution_mode_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py").exists(),
-            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, CLI worker dogfood proof through the Next proxy, read-only Pixel Operating Map parity, local brief prepared-action exact resume with approval/hash/replay guards, worker mock dispatch, focused Worker Console read-model parity for fleet/hygiene/readiness/session safety plus operator execution-mode readback, customer-worker prepared-action exact resume for Hermes/OpenClaw plus ledger-derived safe resume readback, async customer-worker prepared-action submit/resume plus mock job status readback, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, Agent Gateway session/enrollment lifecycle writes blocked at the Next proxy with safe session hygiene readback, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
+            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, CLI worker dogfood proof through the Next proxy, read-only Pixel Operating Map parity, template/base switching readback for /template-packages, /template-bindings, /bases, and /migration/preview, local brief prepared-action exact resume with approval/hash/replay guards, worker mock dispatch, focused Worker Console read-model parity for fleet/hygiene/readiness/session safety plus operator execution-mode readback, customer-worker prepared-action exact resume for Hermes/OpenClaw plus ledger-derived safe resume readback, async customer-worker prepared-action submit/resume plus mock job status readback, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, Agent Gateway session/enrollment lifecycle writes blocked at the Next proxy with safe session hygiene readback, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
         ),
         check(
             "pixel_office_dispatch_retirement_evidence_surface_exists",
@@ -987,6 +1019,7 @@ def main() -> int:
                 "python3 scripts/nextjs_worker_dispatch_once_smoke.py",
                 "python3 scripts/nextjs_pixel_office_floor_smoke.py",
                 "python3 scripts/nextjs_pixel_office_dispatch_smoke.py",
+                "python3 scripts/nextjs_template_switching_smoke.py",
                 "python3 scripts/local_brief_prepared_action_smoke.py",
                 "python3 scripts/nextjs_local_brief_smoke.py",
                 "python3 scripts/nextjs_customer_worker_dispatch_smoke.py",

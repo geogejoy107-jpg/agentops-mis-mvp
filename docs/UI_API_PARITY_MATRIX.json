@@ -27,7 +27,8 @@
         "nextjs_worker_gateway_lifecycle_guard_v1",
         "nextjs_worker_daemon_control_v1",
         "nextjs_worker_console_parity_v1",
-        "operator_execution_mode_v1"
+        "operator_execution_mode_v1",
+        "nextjs_template_switching_parity_v1"
       ],
     "retirement_rule": "A Vite route can be retired only after the matrix marks its capability covered, Vite and Next browser evidence both pass, API contracts match, and the route has an explicit retirement decision."
   },
@@ -712,15 +713,21 @@
     {
       "id": "template_switching",
       "capability": "Template catalog and base switching administration.",
-      "status": "partial",
+      "status": "covered",
       "gate4_required": false,
       "vite_routes": [
         "/admin/templates"
       ],
       "next_routes": [
-        "/workspace/dispatch"
+        "/workspace/dispatch",
+        "/workspace/templates",
+        "/workspace/templates/migration-preview"
       ],
       "api_contracts": [
+        "GET /template-packages",
+        "GET /template-bindings",
+        "GET /bases",
+        "POST /migration/preview",
         "GET /workflows/customer-task-templates",
         "POST /workflows/customer-task-templates/run",
         "POST /workflows/customer-task-templates/submit"
@@ -731,14 +738,20 @@
       ],
       "next_files": [
         "ui/next-app/app/workspace/dispatch/page.tsx",
-        "ui/next-app/src/components/DispatchPage.tsx"
+        "ui/next-app/app/workspace/templates/page.tsx",
+        "ui/next-app/app/workspace/templates/migration-preview/route.ts",
+        "ui/next-app/src/components/DispatchPage.tsx",
+        "ui/next-app/src/components/TemplateSwitchingPage.tsx",
+        "ui/next-app/src/lib/mis.ts",
+        "ui/next-app/src/lib/misServer.ts"
       ],
       "evidence_commands": [
+        "python3 scripts/nextjs_template_switching_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Next covers Free Local template dispatch blocking plus isolated Pro template dispatch that creates the six-task KB bot project, six runs, report artifact, six Agent Plans, and five verified manifests; it does not cover the full admin template/base-switching surface."
+      "retirement_gate": "Next now covers template dispatch plus /workspace/templates live template/base switching readback from /template-packages, /template-bindings, /bases, and /migration/preview with local-ledger protection and preview-only external base migration evidence. Vite /admin/templates remains until an explicit route retirement commit preserves deep links, reruns Vite/Next browser evidence, and keeps Agent Gateway CLI/API/MCP unchanged."
     },
     {
       "id": "audit",
