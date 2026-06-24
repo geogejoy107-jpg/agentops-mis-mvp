@@ -17,9 +17,6 @@ concurrency:
 
 env:
   AGENTOPS_DEPLOYMENT_MODE: local
-  AGENTOPS_HOST: 127.0.0.1
-  AGENTOPS_PORT: "8787"
-  AGENTOPS_BASE_URL: http://127.0.0.1:8787
   AGENTOPS_SKIP_SEED_EXPORTS: "1"
   HERMES_ALLOW_REAL_RUN: "false"
   HERMES_REQUIRE_CONFIRM_RUN: "true"
@@ -45,6 +42,7 @@ jobs:
       - name: Syntax and static checks
         run: |
           set -euo pipefail
+          python3 -m py_compile server.py
           python3 -m compileall -q scripts agentops_mis_cli agentops_mis_storage
           git diff --check
 

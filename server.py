@@ -9322,14 +9322,19 @@ def customer_project_report(conn, project_id: str) -> tuple[dict, int]:
     for task in tasks:
         task_runs = runs_by_task.get(task["task_id"], [])
         task_approvals = approvals_by_task.get(task["task_id"], [])
+        run_refs = ", ".join(f"`{run['run_id']}`" for run in task_runs) if task_runs else "none"
+        approval_refs = ", ".join(
+            f"`{approval['approval_id']}` ({approval['decision']})"
+            for approval in task_approvals
+        ) if task_approvals else "none"
         lines.extend([
             f"### {task['title']}",
             f"- Task ID: `{task['task_id']}`",
             f"- Owner: `{task['owner_agent_id']}`",
             f"- Status: `{task['status']}`",
             f"- Risk: `{task['risk_level']}`",
-            f"- Runs: {', '.join(f'`{run['run_id']}`' for run in task_runs) if task_runs else 'none'}",
-            f"- Approvals: {', '.join(f'`{approval['approval_id']}` ({approval['decision']})' for approval in task_approvals) if task_approvals else 'none'}",
+            f"- Runs: {run_refs}",
+            f"- Approvals: {approval_refs}",
             f"- Output: {redact_text((task_runs[-1].get('output_summary') if task_runs else task.get('description')) or '', 260)}",
             "",
         ])
