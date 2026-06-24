@@ -2159,6 +2159,10 @@ service-closure record, optional service-control load confirmation, and
 `loop-driver --confirm-loop --auto-service-closure`. It is read-only by default;
 `--run-service-check` performs only local worker service-check and still does
 not mutate ledgers, load services, execute server shell, or run live adapters.
+If the selected local MIS is stale or missing a required loop endpoint,
+`loop-bootstrap` returns a structured blocked packet with
+`error_type=stale_server_or_missing_endpoint`, current-code/restart/retry
+commands, token omission proof, and no ledger or service side effects.
 `GET /api/operator/loop-bootstrap` exposes the same read-only startup packet to
 the local MIS and AI Employees console. The API never performs service-check or
 service-control itself; operators copy the returned CLI commands and run them

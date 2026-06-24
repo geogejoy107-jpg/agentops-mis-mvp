@@ -1555,6 +1555,90 @@ def _with_requested_manager(command: str, manager: str) -> str:
     return command
 
 
+def _operator_loop_bootstrap_stale_endpoint(args, client: AgentOpsClient, *, endpoint: str, error: Exception) -> dict:
+    local_probe = local_demo_default_probe(client.base_url)
+    current_code_command = f"AGENTOPS_BASE_URL={client.base_url} agentops local readiness --require-current-code"
+    repair_commands = [
+        current_code_command,
+        f"python3 scripts/run_local_stack.py --install-ui",
+        f"AGENTOPS_BASE_URL={client.base_url} agentops operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check",
+    ]
+    if not local_probe.get("same_as_target") and local_probe.get("ready"):
+        probe_url = str(local_probe.get("base_url") or LOCAL_DEMO_DEFAULT_URL)
+        repair_commands.insert(0, f"AGENTOPS_BASE_URL={probe_url} agentops operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check")
+        repair_commands.append(f"agentops login --base-url {probe_url}")
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_loop_bootstrap",
+        "status": "blocked",
+        "ok": False,
+        "adapter": args.adapter,
+        "workspace_id": client.workspace_id,
+        "target_base_url": client.base_url,
+        "error_type": "stale_server_or_missing_endpoint",
+        "missing_endpoint": endpoint,
+        "error": redact_text(str(error), 800),
+        "diagnostic": {
+            "configured_target": client.base_url,
+            "base_url_source": client.sources.get("base_url") or "unknown",
+            "config_path": str(CONFIG_PATH),
+            "local_demo_probe": local_probe,
+            "current_code_command": current_code_command,
+            "restart_current_code_command": "python3 scripts/run_local_stack.py --install-ui",
+            "repair_commands": repair_commands,
+            "reason": "The selected MIS server is reachable but does not expose the loop-bootstrap dependency endpoint, or the saved CLI target points at an older/stopped local server.",
+            "token_omitted": True,
+        },
+        "next_action": repair_commands[0] if repair_commands else current_code_command,
+        "bootstrap_steps": [
+            {
+                "id": "verify_current_code",
+                "phase": "READ",
+                "status": "blocked",
+                "command": current_code_command,
+                "confirm_required": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            {
+                "id": "restart_current_mis",
+                "phase": "PREFLIGHT",
+                "status": "manual_action_required",
+                "command": "python3 scripts/run_local_stack.py --install-ui",
+                "confirm_required": True,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            {
+                "id": "retry_loop_bootstrap",
+                "phase": "READ",
+                "status": "waiting",
+                "command": f"AGENTOPS_BASE_URL={client.base_url} agentops operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check",
+                "confirm_required": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+        ],
+        "commands": {
+            "current_code_check": current_code_command,
+            "restart_current_mis": "python3 scripts/run_local_stack.py --install-ui",
+            "retry_loop_bootstrap": f"AGENTOPS_BASE_URL={client.base_url} agentops operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check",
+        },
+        "contract": "blocked bootstrap recovery packet for Hermes/OpenClaw when the selected local MIS is stale or lacks loop-bootstrap dependency endpoints; it never executes shell, service-control, service-check, live adapters, or ledger writes",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "local_cli_service_check_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+        "_exit_code": 2,
+    }
+
+
 def _bootstrap_command_map(start_check: dict, supervision_item: dict, args) -> dict:
     admission = start_check.get("local_loop_admission_packet") if isinstance(start_check.get("local_loop_admission_packet"), dict) else {}
     deployment = admission.get("local_deployment") if isinstance(admission.get("local_deployment"), dict) else {}
@@ -1638,32 +1722,42 @@ def _bootstrap_command_map(start_check: dict, supervision_item: dict, args) -> d
 
 
 def cmd_operator_loop_bootstrap(args, client: AgentOpsClient) -> dict:
-    start_check = client.get(
-        "/api/operator/start-check",
-        query={
-            "adapter": args.adapter,
-            "limit": args.limit,
-            "loop_id": args.loop_id,
-            "task_id": args.task_id,
-            "agent_id": args.agent_id,
-            "q": args.query,
-            "handoff_mode": args.handoff_mode,
-            "full_handoff": "true" if args.full_handoff else None,
-        },
-    )
-    supervision = client.get(
-        "/api/operator/loop-supervision",
-        query={
-            "adapter": args.adapter,
-            "limit": args.limit,
-            "task_id": args.task_id,
-            "agent_id": args.agent_id,
-            "q": args.query,
-            "handoff_mode": args.handoff_mode,
-            "full_handoff": "true" if args.full_handoff else None,
-            "include_codex": "false",
-        },
-    )
+    try:
+        start_check = client.get(
+            "/api/operator/start-check",
+            query={
+                "adapter": args.adapter,
+                "limit": args.limit,
+                "loop_id": args.loop_id,
+                "task_id": args.task_id,
+                "agent_id": args.agent_id,
+                "q": args.query,
+                "handoff_mode": args.handoff_mode,
+                "full_handoff": "true" if args.full_handoff else None,
+            },
+        )
+    except RuntimeError as exc:
+        if "/api/operator/start-check" in str(exc) and ("404" in str(exc) or "unknown endpoint" in str(exc)):
+            return _operator_loop_bootstrap_stale_endpoint(args, client, endpoint="/api/operator/start-check", error=exc)
+        raise
+    try:
+        supervision = client.get(
+            "/api/operator/loop-supervision",
+            query={
+                "adapter": args.adapter,
+                "limit": args.limit,
+                "task_id": args.task_id,
+                "agent_id": args.agent_id,
+                "q": args.query,
+                "handoff_mode": args.handoff_mode,
+                "full_handoff": "true" if args.full_handoff else None,
+                "include_codex": "false",
+            },
+        )
+    except RuntimeError as exc:
+        if "/api/operator/loop-supervision" in str(exc) and ("404" in str(exc) or "unknown endpoint" in str(exc)):
+            return _operator_loop_bootstrap_stale_endpoint(args, client, endpoint="/api/operator/loop-supervision", error=exc)
+        raise
     items = supervision.get("items") if isinstance(supervision.get("items"), list) else []
     supervision_item = next((row for row in items if isinstance(row, dict) and row.get("adapter") == args.adapter), {})
     admission = start_check.get("local_loop_admission_packet") if isinstance(start_check.get("local_loop_admission_packet"), dict) else {}

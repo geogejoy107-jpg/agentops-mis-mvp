@@ -179,6 +179,12 @@ service-activation confirm, and bounded loop-driver commands. With
 `service-check` in the CLI process; it does not write receipts, load services,
 execute server shell, or run a live adapter.
 
+If Hermes/OpenClaw are pointed at an older local MIS process, the bootstrap
+command fails closed as JSON instead of a bare 404. The blocked packet uses
+`error_type=stale_server_or_missing_endpoint` and includes current-code,
+restart, and retry commands so the agent can repair the local target before
+continuing.
+
 The same packet is available inside the local MIS through
 `GET /api/operator/loop-bootstrap?limit=8` and the AI Employees page. That API
 surface is copy-only: it reads start-check plus loop-supervision, renders the

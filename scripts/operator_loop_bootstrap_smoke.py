@@ -10,9 +10,11 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -92,12 +94,14 @@ def stop_server(proc: subprocess.Popen) -> None:
         log_fh.close()
 
 
-def run_cli(args: list[str], base_url: str, outputs: list[str], timeout: int = 60) -> subprocess.CompletedProcess[str]:
+def run_cli(args: list[str], base_url: str, outputs: list[str], timeout: int = 60, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["AGENTOPS_BASE_URL"] = base_url
     env["AGENTOPS_WORKSPACE_ID"] = "local-demo"
     env.pop("AGENTOPS_API_KEY", None)
     env.pop("AGENTOPS_AGENT_ID", None)
+    if extra_env:
+        env.update(extra_env)
     proc = subprocess.run([str(CLI), *args], cwd=ROOT, env=env, capture_output=True, text=True, timeout=timeout, check=False)
     outputs.extend([proc.stdout, proc.stderr])
     return proc
@@ -147,6 +151,89 @@ def write_launchd_service_fixture(path: Path, adapter: str, base_url: str) -> No
 """,
         encoding="utf-8",
     )
+
+
+class LegacyBootstrapHandler(BaseHTTPRequestHandler):
+    def log_message(self, format: str, *args) -> None:  # noqa: A002 - stdlib signature
+        return
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib hook
+        if self.path.startswith("/api/operator/start-check"):
+            payload = {
+                "operation": "operator_start_check",
+                "status": "attention",
+                "local_loop_admission_packet": {
+                    "operation": "operator_local_loop_admission_packet",
+                    "admission": {"current_code_ok": False},
+                    "commands": {"current_code_check": "agentops local readiness --require-current-code"},
+                },
+                "acceptance_packet": {
+                    "decision": {"can_confirm_bounded_loop": False},
+                    "safety": {"server_executes_shell": False, "token_omitted": True},
+                },
+                "token_omitted": True,
+            }
+            raw = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
+        if self.path.startswith("/api/operator/loop-supervision"):
+            payload = {"error": "unknown endpoint"}
+            raw = json.dumps(payload).encode("utf-8")
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
+        if self.path == "/api/agent-gateway/status":
+            payload = {"status": "ready", "auth": {"mode": "local_dev_no_token"}, "token_omitted": True}
+            raw = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
+        if self.path == "/api/local/readiness":
+            payload = {
+                "operation": "local_readiness",
+                "status": "attention",
+                "running_instance": {"status": "stale", "current": False},
+                "token_omitted": True,
+            }
+            raw = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
+        self.send_response(404)
+        self.end_headers()
+
+
+def validate_stale_endpoint(payload: dict, failures: list[str]) -> None:
+    require(payload.get("operation") == "operator_loop_bootstrap", f"stale endpoint operation mismatch: {payload}", failures)
+    require(payload.get("status") == "blocked", f"stale endpoint should block: {payload}", failures)
+    require(payload.get("error_type") == "stale_server_or_missing_endpoint", f"stale endpoint error type missing: {payload}", failures)
+    require(payload.get("missing_endpoint") == "/api/operator/loop-supervision", f"missing endpoint mismatch: {payload}", failures)
+    diagnostic = payload.get("diagnostic") or {}
+    require("local_demo_probe" in diagnostic, f"local demo probe missing: {payload}", failures)
+    require("repair_commands" in diagnostic and diagnostic["repair_commands"], f"repair commands missing: {payload}", failures)
+    commands = payload.get("commands") or {}
+    require("local readiness --require-current-code" in str(commands.get("current_code_check")), f"current-code command missing: {payload}", failures)
+    steps = payload.get("bootstrap_steps") or []
+    require({step.get("id") for step in steps} >= {"verify_current_code", "restart_current_mis", "retry_loop_bootstrap"}, f"recovery steps missing: {payload}", failures)
+    safety = payload.get("safety") or {}
+    require(safety.get("read_only") is True, f"stale endpoint read-only proof missing: {payload}", failures)
+    require(safety.get("ledger_mutated") is False, f"stale endpoint ledger proof missing: {payload}", failures)
+    require(safety.get("server_executes_shell") is False, f"stale endpoint shell proof missing: {payload}", failures)
+    require(safety.get("live_execution_performed") is False, f"stale endpoint live proof missing: {payload}", failures)
+    require(payload.get("token_omitted") is True, f"stale endpoint token proof missing: {payload}", failures)
 
 
 def validate_bootstrap(payload: dict, adapter: str, failures: list[str], *, service_check_performed: bool) -> None:
@@ -211,6 +298,24 @@ def validate_bootstrap(payload: dict, adapter: str, failures: list[str], *, serv
 def main() -> int:
     failures: list[str] = []
     outputs: list[str] = []
+    legacy_port = free_port()
+    legacy_url = f"http://127.0.0.1:{legacy_port}"
+    legacy_server = ThreadingHTTPServer(("127.0.0.1", legacy_port), LegacyBootstrapHandler)
+    legacy_thread = threading.Thread(target=legacy_server.serve_forever, daemon=True)
+    legacy_thread.start()
+    try:
+        stale = run_cli(
+            ["operator", "loop-bootstrap", "--adapter", "hermes", "--limit", "5", "--run-service-check"],
+            legacy_url,
+            outputs,
+            extra_env={"AGENTOPS_LOCAL_DEMO_DEFAULT_URL": legacy_url},
+        )
+        stale_payload = load_json(stale.stdout)
+        require(stale.returncode == 2, f"stale endpoint should return rc=2: rc={stale.returncode} stdout={stale.stdout} stderr={stale.stderr}", failures)
+        validate_stale_endpoint(stale_payload, failures)
+    finally:
+        legacy_server.shutdown()
+        legacy_server.server_close()
     with tempfile.TemporaryDirectory(prefix="agentops-loop-bootstrap-") as tmp:
         tmp_path = Path(tmp)
         db_path = tmp_path / "agentops_mis.db"
