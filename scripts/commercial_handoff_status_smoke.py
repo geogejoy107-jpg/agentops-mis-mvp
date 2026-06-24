@@ -18,6 +18,7 @@ CONTRACT_ID = "commercial_handoff_status_v1"
 
 REQUIRED_STRINGS = {
     "commercial_handoff_status_v1",
+    "commercial_release_promotion_preflight_v1",
     "commercial_evidence_receipts_v1",
     "commercial_current_evidence_status_v1",
     "commercial_release_evidence_packet_v1",
@@ -41,6 +42,9 @@ REQUIRED_STRINGS = {
     "python3 scripts/commercial_evidence_receipts_smoke.py",
     "python3 scripts/commercial_handoff_status.py",
     "python3 scripts/commercial_handoff_status_smoke.py",
+    "python3 scripts/commercial_release_promotion_preflight.py",
+    "python3 scripts/commercial_release_promotion_preflight_smoke.py",
+    "python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready",
     "python3 scripts/commercial_current_evidence_status.py",
     "python3 scripts/commercial_current_evidence_status_smoke.py",
     "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
@@ -56,6 +60,7 @@ REQUIRED_SOURCES = {
     "docs/COMMERCIAL_HANDOFF_STATUS.md": REQUIRED_STRINGS,
     "scripts/commercial_handoff_status.py": {
         "commercial_handoff_status_v1",
+        "commercial_release_promotion_preflight_v1",
         "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
         "gates_with_local_receipts",
@@ -67,6 +72,30 @@ REQUIRED_SOURCES = {
         "current_evidence_status",
         "phase_gate_statuses",
         "--require-handoff-ready",
+    },
+    "docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json": {
+        "commercial_release_promotion_preflight_v1",
+        "blocked_release_promotion_required",
+        "release_promotion_allowed",
+        "release_grade_update_allowed",
+    },
+    "docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.md": {
+        "commercial_release_promotion_preflight_v1",
+        "commercial_release_promotion_preflight.py",
+        "commercial_release_promotion_preflight_smoke.py",
+        "--require-promotion-ready",
+    },
+    "scripts/commercial_release_promotion_preflight.py": {
+        "commercial_release_promotion_preflight_v1",
+        "--require-promotion-ready",
+        "remote_sync_verified",
+        "clean_worktree_verified",
+        "exact_head_ci_verified",
+    },
+    "scripts/commercial_release_promotion_preflight_smoke.py": {
+        "commercial_release_promotion_preflight_v1",
+        "blocked_release_promotion_required",
+        "release_grade_receipts_empty",
     },
     "docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json": {
         "python3 scripts/commercial_evidence_receipts.py",
@@ -224,8 +253,11 @@ def main() -> int:
     static_gates = {str(item.get("id")): str(item.get("status")) for item in status.get("phase_gate_statuses") or [] if isinstance(item, dict)}
     require(static_gates == EXPECTED_GATE_STATUSES, f"static gate statuses mismatch: {static_gates}")
     require("release_complete_false_until_all_phase_gates_have_current_evidence" in set(status.get("explicit_blockers") or []), "release blocker missing")
+    require("release_promotion_preflight_not_ready" in set(status.get("explicit_blockers") or []), "promotion preflight blocker missing")
     require("python3 scripts/commercial_handoff_status.py" in set(status.get("required_commands") or []), "operator command missing")
     require("python3 scripts/commercial_handoff_status_smoke.py" in set(status.get("required_commands") or []), "smoke command missing")
+    require("python3 scripts/commercial_release_promotion_preflight.py" in set(status.get("required_commands") or []), "promotion preflight command missing")
+    require("python3 scripts/commercial_release_promotion_preflight_smoke.py" in set(status.get("required_commands") or []), "promotion preflight smoke missing")
     require("python3 scripts/commercial_current_evidence_status.py" in set(status.get("required_commands") or []), "current evidence command missing")
     require("python3 scripts/commercial_current_evidence_status_smoke.py" in set(status.get("required_commands") or []), "current evidence smoke missing")
     require("--skip-postgres-if-unavailable" in set(status.get("must_not_use") or []), "Postgres skip ban missing")

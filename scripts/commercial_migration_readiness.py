@@ -820,9 +820,30 @@ def main() -> int:
             "Commercial current evidence status makes per-gate evidence freshness gaps machine-readable without executing heavy/live checks",
         ),
         check(
+            "commercial_release_promotion_preflight_surface_exists",
+            file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", "commercial_release_promotion_preflight_v1")
+            and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", "blocked_release_promotion_required")
+            and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", "release_promotion_allowed")
+            and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", "release_grade_update_allowed")
+            and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.md", "commercial_release_promotion_preflight_v1")
+            and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.md", "--require-promotion-ready")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "commercial_release_promotion_preflight_v1")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "commercial_release_promotion_preflight_v1")
+            and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "commercial_release_promotion_preflight_v1")
+            and file_contains("docs/MERGE_READINESS_STATUS.json", "commercial_release_promotion_preflight_v1")
+            and file_contains("scripts/commercial_release_promotion_preflight.py", "commercial_release_promotion_preflight_v1")
+            and file_contains("scripts/commercial_release_promotion_preflight.py", "--require-promotion-ready")
+            and file_contains("scripts/commercial_release_promotion_preflight_smoke.py", "commercial_release_promotion_preflight_v1")
+            and file_contains("scripts/commercial_release_promotion_preflight_smoke.py", "release_grade_receipts_empty")
+            and (ROOT / "scripts" / "commercial_release_promotion_preflight.py").exists()
+            and (ROOT / "scripts" / "commercial_release_promotion_preflight_smoke.py").exists(),
+            "Commercial release promotion preflight makes exact-head CI, remote sync, clean worktree, and release-grade receipt blockers machine-readable",
+        ),
+        check(
             "release_freeze_protocol_surface_exists",
             file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "release_freeze_protocol_v1")
             and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "freeze_active_not_release_complete")
+            and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "commercial_release_promotion_preflight_v1")
             and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "commercial_release_evidence_packet_v1")
             and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture")
             and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "nextjs_playwright_snapshot_smoke.py --postgres-write-fixture")
@@ -839,6 +860,7 @@ def main() -> int:
             "merge_readiness_status_surface_exists",
             file_contains("docs/MERGE_READINESS_STATUS.json", "merge_readiness_status_v1")
             and file_contains("docs/MERGE_READINESS_STATUS.json", "blocked_release_evidence_required")
+            and file_contains("docs/MERGE_READINESS_STATUS.json", "commercial_release_promotion_preflight_v1")
             and file_contains("docs/MERGE_READINESS_STATUS.json", '"merge_allowed": false')
             and file_contains("docs/MERGE_READINESS_STATUS.json", '"commercial_handoff_allowed": false')
             and file_contains("docs/MERGE_READINESS_STATUS.json", "release_freeze_protocol_v1")

@@ -612,7 +612,7 @@ Must be true:
   `python3 scripts/commercial_handoff_status.py`; verify the surface with
   `python3 scripts/commercial_handoff_status_smoke.py`.
 - `commercial_evidence_receipts_v1` is the local hash/ref-only receipt ledger
-  for verified commands. Gate 5 can have local receipts while still not being
+  for verified commands. Gates 1-5 can have local receipts while still not being
   release-grade until exact-head CI, remote sync, clean worktree, and all phase
   gates are current. Verify it with
   `python3 scripts/commercial_evidence_receipts_smoke.py`.
@@ -622,6 +622,13 @@ Must be true:
   evidence classes, and forbidden evidence without executing Docker, browser,
   Postgres, or live runtime checks.
   Verify with `python3 scripts/commercial_current_evidence_status_smoke.py`.
+- `commercial_release_promotion_preflight_v1` is the CI-safe promotion preflight
+  between local receipts and release-grade evidence. It reads git/docs state and
+  blocks promotion until local receipts, release-grade receipts, clean worktree,
+  remote sync, exact-head CI, handoff, and merge readiness are all current.
+  Verify with `python3 scripts/commercial_release_promotion_preflight_smoke.py`;
+  strict promotion uses
+  `python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready`.
 - `release_freeze_protocol_v1` keeps commercial handoff in
   `freeze_active_not_release_complete`, and `merge_readiness_status_v1` keeps
   merge status at `blocked_release_evidence_required` until release evidence,

@@ -1,0 +1,51 @@
+# Commercial Release Promotion Preflight
+
+Contract: `commercial_release_promotion_preflight_v1`
+
+Current status: `blocked_release_promotion_required`.
+
+This is the CI-safe preflight for promoting local commercial evidence receipts
+to release-grade evidence. It reads git state and the commercial evidence
+packets, but it does not push, mutate receipt JSON, run browsers, run Docker, or
+run live Hermes/OpenClaw.
+
+Run the preflight:
+
+```bash
+python3 scripts/commercial_release_promotion_preflight.py
+```
+
+Verify the preflight contract:
+
+```bash
+python3 scripts/commercial_release_promotion_preflight_smoke.py
+```
+
+Strict promotion assertions must fail until all promotion requirements are true:
+
+```bash
+python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready
+```
+
+Promotion requires:
+
+```text
+all_local_receipts_complete=true
+gates_with_release_grade_receipts_complete=true
+clean_worktree_verified=true
+remote_sync_verified=true
+exact_head_ci_verified=true
+release_complete=true
+commercial_handoff_allowed=true
+ready_to_merge=true
+```
+
+The runtime payload exposes `release_promotion_allowed`,
+`release_grade_update_allowed`, `clean_worktree_verified`,
+`remote_sync_verified`, and `exact_head_ci_verified` so release operators can
+see which blocker still prevents promotion.
+
+Invalid promotion evidence includes `manual_receipt_promotion_without_ci`,
+`uncommitted_dirty_promotion`, `local_only_release_grade_claim`,
+`mock_only_product_claim`, raw prompts, raw responses, private transcripts, and
+token values.

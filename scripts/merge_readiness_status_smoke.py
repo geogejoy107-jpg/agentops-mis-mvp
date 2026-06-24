@@ -27,6 +27,9 @@ EXPECTED_GATE_STATUSES = {
 }
 
 REQUIRED_COMMANDS = {
+    "python3 scripts/commercial_release_promotion_preflight.py",
+    "python3 scripts/commercial_release_promotion_preflight_smoke.py",
+    "python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready",
     "python3 scripts/commercial_evidence_receipts_smoke.py",
     "python3 scripts/commercial_current_evidence_status_smoke.py",
     "python3 scripts/commercial_handoff_status_smoke.py",
@@ -41,6 +44,7 @@ REQUIRED_COMMANDS = {
 }
 
 REQUIRED_CONTRACTS = {
+    "commercial_release_promotion_preflight_v1",
     "commercial_evidence_receipts_v1",
     "commercial_current_evidence_status_v1",
     "commercial_handoff_status_v1",
@@ -117,6 +121,7 @@ def main() -> int:
     require(status.get("commercial_handoff_allowed") is False, "commercial_handoff_allowed must remain false until final audit")
     require(status.get("release_complete") is False, "release_complete must remain false until final audit")
     blockers = set(status.get("explicit_blockers") or [])
+    require("release_promotion_preflight_not_ready" in blockers, "promotion preflight blocker missing")
     require("release_complete_false_until_all_phase_gates_have_current_evidence" in blockers, "release-complete blocker missing")
     require("exact_head_ci_not_checked_in_this_worktree" in blockers, "exact-head CI blocker missing")
     require("remote_sync_not_checked_in_this_worktree" in blockers, "remote-sync blocker missing")
@@ -127,6 +132,7 @@ def main() -> int:
         "clean_worktree",
         "upstream_synced",
         "exact_head_ci_green",
+        "release_promotion_preflight_ready",
         "gate_5_byoc_postgres_handoff_verified",
         "real_hermes_openclaw_acceptance_verified",
     ]:

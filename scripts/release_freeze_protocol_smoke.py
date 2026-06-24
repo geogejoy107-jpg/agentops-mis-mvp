@@ -17,6 +17,8 @@ RELEASE_SMOKE = ROOT / "scripts" / "release_evidence_packet_smoke.py"
 CONTRACT_ID = "release_freeze_protocol_v1"
 
 REQUIRED_COMMANDS = {
+    "python3 scripts/commercial_release_promotion_preflight.py",
+    "python3 scripts/commercial_release_promotion_preflight_smoke.py",
     "python3 scripts/commercial_evidence_receipts_smoke.py",
     "python3 scripts/commercial_current_evidence_status_smoke.py",
     "python3 scripts/commercial_handoff_status_smoke.py",
@@ -30,6 +32,7 @@ REQUIRED_COMMANDS = {
 }
 
 REQUIRED_CONTRACTS = {
+    "commercial_release_promotion_preflight_v1",
     "commercial_evidence_receipts_v1",
     "commercial_current_evidence_status_v1",
     "commercial_handoff_status_v1",
@@ -42,6 +45,9 @@ REQUIRED_CONTRACTS = {
 }
 
 FORBIDDEN_EVIDENCE = {
+    "manual_receipt_promotion_without_ci",
+    "uncommitted_dirty_promotion",
+    "local_only_release_grade_claim",
     "--skip-postgres-if-unavailable",
     "mock_only_product_claim",
     "release_complete_true",

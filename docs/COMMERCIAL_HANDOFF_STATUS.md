@@ -8,8 +8,9 @@ This is the operator-facing status surface for the commercial migration lane. It
 aggregates `commercial_release_evidence_packet_v1`,
 `release_evidence_packet_v1`, `release_freeze_protocol_v1`, and
 `merge_readiness_status_v1`, plus `commercial_evidence_receipts_v1` and the
-`commercial_current_evidence_status_v1` evidence coverage map, without running
-Docker, browsers, or live agents.
+`commercial_current_evidence_status_v1` evidence coverage map and
+`commercial_release_promotion_preflight_v1`, without running Docker, browsers,
+or live agents.
 Passing the default check means the handoff status is internally consistent; it
 does not mean the product is release-complete.
 The embedded current-evidence summary exposes `gates_with_local_receipts` and
@@ -24,6 +25,7 @@ Read the current handoff status:
 
 ```bash
 python3 scripts/commercial_handoff_status.py
+python3 scripts/commercial_release_promotion_preflight.py
 python3 scripts/commercial_evidence_receipts.py
 python3 scripts/commercial_current_evidence_status.py
 ```
@@ -32,6 +34,7 @@ Verify the status contract:
 
 ```bash
 python3 scripts/commercial_handoff_status_smoke.py
+python3 scripts/commercial_release_promotion_preflight_smoke.py
 python3 scripts/commercial_evidence_receipts_smoke.py
 python3 scripts/commercial_current_evidence_status_smoke.py
 ```
@@ -40,6 +43,7 @@ Strict handoff assertions must fail while the status remains blocked:
 
 ```bash
 python3 scripts/commercial_handoff_status.py --require-handoff-ready
+python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready
 python3 scripts/commercial_handoff_status_smoke.py --require-handoff-ready
 ```
 
@@ -52,6 +56,9 @@ Required evidence commands include:
 ```bash
 python3 scripts/commercial_handoff_status.py
 python3 scripts/commercial_handoff_status_smoke.py
+python3 scripts/commercial_release_promotion_preflight.py
+python3 scripts/commercial_release_promotion_preflight_smoke.py
+python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready
 python3 scripts/commercial_evidence_receipts.py
 python3 scripts/commercial_evidence_receipts_smoke.py
 python3 scripts/commercial_current_evidence_status.py

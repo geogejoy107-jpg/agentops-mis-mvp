@@ -37,6 +37,11 @@
       "path": "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json",
       "contract_id": "commercial_current_evidence_status_v1",
       "expected_status": "current_evidence_required"
+    },
+    {
+      "path": "docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json",
+      "contract_id": "commercial_release_promotion_preflight_v1",
+      "expected_status": "blocked_release_promotion_required"
     }
   ],
   "current_evidence_status": {
@@ -98,6 +103,7 @@
     }
   ],
   "explicit_blockers": [
+    "release_promotion_preflight_not_ready",
     "release_complete_false_until_all_phase_gates_have_current_evidence",
     "exact_head_ci_not_checked_in_this_worktree",
     "remote_sync_not_checked_in_this_worktree",
@@ -106,6 +112,9 @@
   "required_commands": [
     "python3 scripts/commercial_handoff_status.py",
     "python3 scripts/commercial_handoff_status_smoke.py",
+    "python3 scripts/commercial_release_promotion_preflight.py",
+    "python3 scripts/commercial_release_promotion_preflight_smoke.py",
+    "python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready",
     "python3 scripts/commercial_evidence_receipts.py",
     "python3 scripts/commercial_evidence_receipts_smoke.py",
     "python3 scripts/commercial_current_evidence_status.py",
@@ -122,6 +131,7 @@
   ],
   "required_contracts": [
     "commercial_handoff_status_v1",
+    "commercial_release_promotion_preflight_v1",
     "commercial_evidence_receipts_v1",
     "commercial_current_evidence_status_v1",
     "commercial_release_evidence_packet_v1",
@@ -134,6 +144,9 @@
     "real_hermes_openclaw_acceptance"
   ],
   "must_not_use": [
+    "manual_receipt_promotion_without_ci",
+    "uncommitted_dirty_promotion",
+    "local_only_release_grade_claim",
     "--skip-postgres-if-unavailable",
     "mock_only_product_claim",
     "release_complete_true",

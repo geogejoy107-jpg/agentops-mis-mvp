@@ -48,6 +48,11 @@ SOURCE_SPECS = [
         "contract_id": "commercial_current_evidence_status_v1",
         "expected_status": "current_evidence_required",
     },
+    {
+        "path": "docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json",
+        "contract_id": "commercial_release_promotion_preflight_v1",
+        "expected_status": "blocked_release_promotion_required",
+    },
 ]
 
 
@@ -114,6 +119,8 @@ def build_payload() -> dict[str, Any]:
     required_commands = [
         "python3 scripts/commercial_handoff_status.py",
         "python3 scripts/commercial_handoff_status_smoke.py",
+        "python3 scripts/commercial_release_promotion_preflight.py",
+        "python3 scripts/commercial_release_promotion_preflight_smoke.py",
         "python3 scripts/commercial_evidence_receipts.py",
         "python3 scripts/commercial_evidence_receipts_smoke.py",
         "python3 scripts/commercial_current_evidence_status.py",

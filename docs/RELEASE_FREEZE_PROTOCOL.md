@@ -10,12 +10,15 @@ Current status: `freeze_active_not_release_complete`.
 Verify the freeze gate:
 
 ```bash
+python3 scripts/commercial_release_promotion_preflight.py
+python3 scripts/commercial_release_promotion_preflight_smoke.py
 python3 scripts/release_freeze_protocol_smoke.py
 ```
 
 Final local review can additionally require a clean worktree:
 
 ```bash
+python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready
 python3 scripts/release_freeze_protocol_smoke.py --require-clean
 ```
 
@@ -27,6 +30,8 @@ and mock-only product claims are not valid release evidence.
 Required freeze evidence commands:
 
 ```bash
+python3 scripts/commercial_release_promotion_preflight.py
+python3 scripts/commercial_release_promotion_preflight_smoke.py
 python3 scripts/commercial_evidence_receipts_smoke.py
 python3 scripts/commercial_current_evidence_status_smoke.py
 python3 scripts/commercial_handoff_status_smoke.py
