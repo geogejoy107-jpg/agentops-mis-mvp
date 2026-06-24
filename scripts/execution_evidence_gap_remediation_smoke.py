@@ -71,6 +71,34 @@ def load_json(proc: subprocess.CompletedProcess[str]) -> dict:
         return {}
 
 
+def run_agentops_command(base_url: str, command: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    parts = shlex.split(command)
+    if parts and parts[0] == "agentops":
+        parts = parts[1:]
+    return run_cli(base_url, parts, env)
+
+
+def command_center_workflow_item(base_url: str, run_id: str, step_id: str, outputs: list[str], failures: list[str]) -> tuple[dict, dict]:
+    status, payload = http_json(base_url, "GET", "/api/operator/command-center?limit=20&refresh_cache=true")
+    outputs.append(json.dumps(payload, ensure_ascii=False))
+    require(status == 200, f"command-center readback failed: {status} {payload}", failures)
+    workflow = payload.get("evidence_remediation_workflow") or {}
+    item = next((
+        row for row in workflow.get("items") or []
+        if row.get("run_id") == run_id and row.get("step_id") == step_id
+    ), {})
+    return item, payload
+
+
+def handoff_remediation_item(base_url: str, run_id: str, env: dict[str, str], outputs: list[str]) -> tuple[dict, dict]:
+    handoff = run_cli(base_url, ["operator", "handoff", "--limit", "12"], env)
+    outputs.extend([handoff.stdout, handoff.stderr])
+    payload = load_json(handoff)
+    items = ((((payload.get("work_order") or {}).get("evidence_report") or {}).get("remediation_chain") or {}).get("items") or [])
+    item = next((row for row in items if row.get("run_id") == run_id), {})
+    return item, payload
+
+
 def leaked_secret(text: str) -> bool:
     return any(pattern.search(text) for pattern in SECRET_PATTERNS)
 
@@ -158,6 +186,26 @@ def main() -> int:
         require(cli_preview.returncode == 0, f"CLI preview failed: {cli_preview.stderr or cli_preview.stdout}", failures)
         require(cli_preview_payload.get("status") == "preview", f"CLI preview status wrong: {cli_preview_payload}", failures)
 
+        handoff_item, handoff_payload = handoff_remediation_item(args.base_url, run_id, env, outputs)
+        preview_step = handoff_item.get("next_workflow_step") or {}
+        require(handoff_item.get("run_id") == run_id, f"handoff remediation item missing for run: {handoff_payload}", failures)
+        require(preview_step.get("id") == "preview" or preview_step.get("step_id") == "preview", f"handoff should start at preview step: {handoff_item}", failures)
+        preview_receipt_command = str(preview_step.get("receipt_verify_record_command") or "")
+        require("record-action-receipt" in preview_receipt_command and "--confirm-record" in preview_receipt_command, f"preview receipt command missing: {preview_step}", failures)
+        if preview_receipt_command:
+            preview_receipt = run_agentops_command(args.base_url, preview_receipt_command, env)
+            outputs.extend([preview_receipt.stdout, preview_receipt.stderr])
+            preview_receipt_payload = load_json(preview_receipt)
+            require(preview_receipt.returncode == 0, f"preview receipt record failed: {preview_receipt.stderr or preview_receipt.stdout}", failures)
+            require(((preview_receipt_payload.get("receipt") or {}).get("source") == "handoff.evidence_remediation"), f"preview receipt source mismatch: {preview_receipt_payload}", failures)
+
+        create_workflow_item, create_command_center = command_center_workflow_item(args.base_url, run_id, "create_task", outputs, failures)
+        create_receipt_command = str(create_workflow_item.get("receipt_verify_record_command") or "")
+        require(create_workflow_item.get("run_id") == run_id, f"command-center did not surface create_task after preview receipt: {create_command_center}", failures)
+        require(create_workflow_item.get("preview_receipt_verified") is True, f"create_task should prove preview receipt first: {create_workflow_item}", failures)
+        require(str(create_workflow_item.get("command") or "").endswith("--confirm-create"), f"create_task command must be explicit confirmation: {create_workflow_item}", failures)
+        require(create_workflow_item.get("mutating") is True and create_workflow_item.get("confirm_required") is True, f"create_task mutation boundary missing: {create_workflow_item}", failures)
+
         cli_create = run_cli(args.base_url, ["operator", "remediate-evidence-gap", "--run-id", run_id, "--confirm-create"], env)
         outputs.extend([cli_create.stdout, cli_create.stderr])
         create_payload = load_json(cli_create)
@@ -168,6 +216,18 @@ def main() -> int:
         require(create_payload.get("task_id") == task_id, f"created task id not stable: {create_payload} vs {task_id}", failures)
         if create_payload.get("status") == "created":
             require(create_payload.get("safety", {}).get("ledger_mutated") is True, f"create did not report ledger mutation: {create_payload}", failures)
+        if create_receipt_command:
+            create_receipt = run_agentops_command(args.base_url, create_receipt_command, env)
+            outputs.extend([create_receipt.stdout, create_receipt.stderr])
+            create_receipt_payload = load_json(create_receipt)
+            require(create_receipt.returncode == 0, f"create_task receipt record failed: {create_receipt.stderr or create_receipt.stdout}", failures)
+            require(((create_receipt_payload.get("receipt") or {}).get("source") == "handoff.evidence_remediation.create_task"), f"create_task receipt source mismatch: {create_receipt_payload}", failures)
+
+        dispatch_workflow_item, dispatch_command_center = command_center_workflow_item(args.base_url, run_id, "dispatch_package", outputs, failures)
+        require(dispatch_workflow_item.get("run_id") == run_id, f"command-center did not surface dispatch_package after create_task: {dispatch_command_center}", failures)
+        require(dispatch_workflow_item.get("step_id") == "dispatch_package", f"dispatch workflow step mismatch: {dispatch_workflow_item}", failures)
+        require("commander dispatch-package" in str(dispatch_workflow_item.get("command") or ""), f"dispatch workflow command missing: {dispatch_workflow_item}", failures)
+        require(dispatch_workflow_item.get("mutating") is True, f"dispatch workflow should be marked mutating: {dispatch_workflow_item}", failures)
 
         cli_repeat = run_cli(args.base_url, ["operator", "remediate-evidence-gap", "--run-id", run_id, "--confirm-create"], env)
         outputs.extend([cli_repeat.stdout, cli_repeat.stderr])
@@ -184,6 +244,20 @@ def main() -> int:
         dispatch_evidence = dispatch_payload.get("evidence") or {}
         for key in ["tool_calls", "evaluations", "artifacts", "audit_logs", "plan_evidence_manifests"]:
             require(int(dispatch_evidence.get(key) or 0) >= 1, f"dispatch evidence missing {key}: {dispatch_payload}", failures)
+
+        post_dispatch_status, post_dispatch_center = http_json(args.base_url, "GET", "/api/operator/command-center?limit=20&refresh_cache=true")
+        outputs.append(json.dumps(post_dispatch_center, ensure_ascii=False))
+        post_dispatch_items = (post_dispatch_center.get("evidence_remediation_workflow") or {}).get("items") or []
+        post_dispatch_item = next((row for row in post_dispatch_items if row.get("run_id") == run_id), {})
+        post_dispatch_step = str(post_dispatch_item.get("step_id") or "")
+        post_dispatch_command = str(post_dispatch_item.get("command") or "")
+        require(post_dispatch_status == 200, f"post-dispatch command-center failed: {post_dispatch_status} {post_dispatch_center}", failures)
+        require(post_dispatch_item.get("run_id") == run_id, f"command-center did not surface next workflow step after dispatch: {post_dispatch_center}", failures)
+        require(post_dispatch_step in {"plan_evidence", "synthesize"}, f"unexpected post-dispatch workflow step: {post_dispatch_item}", failures)
+        if post_dispatch_step == "plan_evidence":
+            require("plan-evidence" in post_dispatch_command, f"plan evidence workflow command missing: {post_dispatch_item}", failures)
+        else:
+            require("commander synthesize" in post_dispatch_command, f"synthesize workflow command missing: {post_dispatch_item}", failures)
 
     package_status, packages = http_json(args.base_url, "GET", f"/api/commander/work-packages?project_id={project_id}&limit=5")
     outputs.append(json.dumps(packages, ensure_ascii=False))
