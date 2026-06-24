@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -27,6 +28,15 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import server  # noqa: E402
+import storage_postgres_container_smoke as container_smoke  # noqa: E402
+import storage_postgres_contract_smoke as pg_contract  # noqa: E402
+from agentops_mis_storage.postgres import PostgresAdapter  # noqa: E402
+from storage_postgres_optional_adapter_smoke import BUNDLED_PYTHON, ensure_psycopg, mapped_port  # noqa: E402
+
 NEXT_APP = ROOT / "ui" / "next-app"
 PWCLI = Path.home() / ".codex" / "skills" / "playwright" / "scripts" / "playwright_cli.sh"
 NEXT_ENV = NEXT_APP / "next-env.d.ts"
@@ -93,6 +103,42 @@ def run(cmd: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None, 
     )
 
 
+def reexec_postgres_fixture_with_stable_python_if_needed(*, install_driver: bool) -> None:
+    if not install_driver or os.environ.get("AGENTOPS_NEXT_PG_FIXTURE_REEXEC") == "1":
+        return
+    try:
+        import psycopg  # noqa: F401
+        return
+    except ModuleNotFoundError:
+        pass
+
+    candidates = []
+    if os.environ.get("AGENTOPS_NEXT_PG_FIXTURE_PYTHON"):
+        candidates.append(Path(os.environ["AGENTOPS_NEXT_PG_FIXTURE_PYTHON"]))
+    candidates.extend([BUNDLED_PYTHON, Path("/opt/homebrew/bin/python3.12"), Path("/opt/homebrew/bin/python3.11")])
+    current = Path(sys.executable).resolve()
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            if candidate.resolve() == current:
+                continue
+        except OSError:
+            continue
+        expat = run(
+            [
+                str(candidate),
+                "-c",
+                "import ast, pathlib, xml.parsers.expat; ast.parse(pathlib.Path('server.py').read_text())",
+            ],
+            timeout=15,
+        )
+        pip = run([str(candidate), "-m", "pip", "--version"], timeout=15)
+        if expat.returncode == 0 and pip.returncode == 0:
+            os.environ["AGENTOPS_NEXT_PG_FIXTURE_REEXEC"] = "1"
+            os.execv(str(candidate), [str(candidate), str(Path(__file__).resolve()), *sys.argv[1:]])
+
+
 def start_process(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.Popen[str]:
     return subprocess.Popen(
         cmd,
@@ -119,8 +165,12 @@ def wait_http(url: str, timeout_sec: int = 45) -> None:
 
 
 def http_json(url: str) -> object:
-    with urllib.request.urlopen(url, timeout=10) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"GET {url} failed: {exc.code} {body[:1200]}") from exc
 
 
 def http_json_status(method: str, url: str, payload: dict | None = None) -> tuple[int, object]:
@@ -174,9 +224,6 @@ def read_only_ledger_hash(path: str) -> str:
 
 
 def prepare_minimal_sqlite_db(path: Path) -> None:
-    sys.path.insert(0, str(ROOT))
-    import server  # noqa: PLC0415
-
     with sqlite3.connect(path) as conn:
         conn.executescript(server.SCHEMA_SQL)
         now = "2026-06-23T00:00:00+00:00"
@@ -205,6 +252,49 @@ def prepare_minimal_sqlite_db(path: Path) -> None:
             ),
         )
         conn.commit()
+
+
+def seed_minimal_postgres_db(adapter: PostgresAdapter) -> None:
+    now = "2026-06-23T00:00:00+00:00"
+    adapter.execute(
+        "INSERT INTO users(user_id,name,email,role,created_at) VALUES(:user_id,:name,:email,:role,:created_at)",
+        {
+            "user_id": "usr_next_pg_deployment",
+            "name": "Next Postgres Deployment",
+            "email": "next-postgres-deployment@example.local",
+            "role": "admin",
+            "created_at": now,
+        },
+    )
+    adapter.execute(
+        """INSERT INTO agents(agent_id,name,role,description,runtime_type,model_provider,model_name,status,permission_level,allowed_tools,budget_limit_usd,owner_user_id,created_at,updated_at)
+        VALUES(:agent_id,:name,:role,:description,:runtime_type,:model_provider,:model_name,:status,:permission_level,:allowed_tools,:budget_limit_usd,:owner_user_id,:created_at,:updated_at)""",
+        {
+            "agent_id": "agt_next_pg_deployment",
+            "name": "Next Postgres Deployment Agent",
+            "role": "Auditor",
+            "description": "Minimal Postgres fixture agent for Next deployment runtime write-gate browser smoke.",
+            "runtime_type": "mock",
+            "model_provider": "mock",
+            "model_name": "mock-model",
+            "status": "idle",
+            "permission_level": "standard",
+            "allowed_tools": "[]",
+            "budget_limit_usd": 0,
+            "owner_user_id": "usr_next_pg_deployment",
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+    adapter.commit()
+
+
+def postgres_ledger_counts(adapter: PostgresAdapter) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for table in READ_ONLY_LEDGER_TABLES:
+        row = adapter.fetchone(f"SELECT COUNT(*) AS c FROM {table}")
+        counts[table] = int((row or {}).get("c") or 0)
+    return counts
 
 
 def seed_customer_project_fixture(db_path: str) -> str:
@@ -930,6 +1020,40 @@ def gate_status(payload: dict, gate_id: str) -> str | None:
     return None
 
 
+def runtime_route_keys(gate: dict) -> set[str]:
+    return {
+        f"{route.get('method')} {route.get('path')}"
+        for route in gate.get("allowlisted_routes") or []
+        if isinstance(route, dict)
+    }
+
+
+def require_postgres_runtime_write_gate(gate: dict, label: str) -> None:
+    contracts = set(gate.get("contracts") or [])
+    routes = runtime_route_keys(gate)
+    action_types = {
+        (item.get("provider"), item.get("action_type"))
+        for item in gate.get("required_action_types") or []
+        if isinstance(item, dict)
+    }
+    require(gate.get("status") == "active", f"{label} runtime write gate should be active: {gate}")
+    require(gate.get("required_backend") == "postgres", f"{label} runtime write gate backend mismatch: {gate}")
+    require("postgres_http_runtime_prepared_action_write_v1" in contracts, f"{label} prepared-action write contract missing: {gate}")
+    require("postgres_http_runtime_approval_decision_write_v1" in contracts, f"{label} approval-decision write contract missing: {gate}")
+    require(routes == {
+        "POST /api/approvals/:approval_id/approve",
+        "POST /api/integrations/hermes/run-task",
+        "POST /api/integrations/openclaw/probe",
+    }, f"{label} fixed runtime route set mismatch: {routes}")
+    require(("hermes", "runtime.hermes_run_task") in action_types, f"{label} Hermes action type missing: {gate}")
+    require(("openclaw", "runtime.openclaw_probe") in action_types, f"{label} OpenClaw action type missing: {gate}")
+    require(gate.get("exact_resume_required") is True, f"{label} exact resume proof missing: {gate}")
+    require(gate.get("approval_decision") == "row_gated_prepared_action_only", f"{label} row-gated approval proof missing: {gate}")
+    require(gate.get("non_fixed_runtime_writes") == "blocked", f"{label} non-fixed runtime block missing: {gate}")
+    require(gate.get("live_execution_performed") is False, f"{label} should not execute live runtime: {gate}")
+    require(gate.get("token_omitted") is True, f"{label} token omission proof missing: {gate}")
+
+
 def verify_deployment_configured_retention(
     next_base: str,
     entitlement_path: Path,
@@ -1063,11 +1187,93 @@ def verify_deployment_configured_retention(
     }
 
 
+def verify_deployment_postgres_write_gate(next_base: str, adapter: PostgresAdapter, env: dict[str, str]) -> dict:
+    before_counts = postgres_ledger_counts(adapter)
+    storage = http_json(f"{next_base}/api/mis/storage/backend-status")
+    deployment = http_json(f"{next_base}/api/mis/deployment/readiness")
+    non_allowlisted_status, non_allowlisted_payload = http_json_status("POST", f"{next_base}/api/mis/agents", {
+        "agent_id": "agt_next_pg_blocked",
+        "name": "Blocked Next Postgres agent",
+    })
+    require(isinstance(storage, dict), f"Storage backend status did not return an object: {storage!r}")
+    require(isinstance(deployment, dict), f"Deployment readiness did not return an object: {deployment!r}")
+    require(storage.get("status") == "active", f"Postgres storage should be active: {storage}")
+    require(storage.get("selected_backend") == "postgres" and storage.get("active_backend") == "postgres", f"Postgres backend selection mismatch: {storage}")
+    require(storage.get("mode") == "experimental_write_http", f"Postgres storage mode should be write HTTP: {storage}")
+    require(storage.get("writes_allowed") is True, f"Postgres write flag missing: {storage}")
+    require((storage.get("postgres") or {}).get("write_http_routable") is True, f"Postgres write route proof missing: {storage}")
+    require(storage.get("fallback_performed") is False, f"Postgres storage should not fall back: {storage}")
+    require(storage.get("token_omitted") is True, f"Storage token omission missing: {storage}")
+    require_postgres_runtime_write_gate(storage.get("runtime_write_gate") or {}, "storage/backend-status")
+
+    deployment_storage = deployment.get("storage") or {}
+    require(deployment.get("contract_id") == "deployment_readiness_v1", f"Deployment readiness contract mismatch: {deployment}")
+    require(deployment.get("edition") == "enterprise_byoc", f"Deployment readiness should see enterprise_byoc: {deployment}")
+    require(deployment_storage.get("selected_backend") == "postgres", f"Deployment storage should select Postgres: {deployment_storage}")
+    require(deployment_storage.get("mode") == "experimental_write_http", f"Deployment storage mode mismatch: {deployment_storage}")
+    require(deployment_storage.get("writes_allowed") is True, f"Deployment storage writes_allowed missing: {deployment_storage}")
+    require_postgres_runtime_write_gate(deployment_storage.get("runtime_write_gate") or {}, "deployment/readiness")
+
+    require(non_allowlisted_status == 503, f"Non-allowlisted Next/MIS write should be blocked: {non_allowlisted_status} {non_allowlisted_payload}")
+    require(isinstance(non_allowlisted_payload, dict) and non_allowlisted_payload.get("error") == "postgres_read_only_backend", f"Non-allowlisted block payload mismatch: {non_allowlisted_payload}")
+
+    target = next_base.rstrip("/") + "/workspace/deployment"
+    goto = playwright(env, "goto", target)
+    require(goto.returncode == 0, f"Playwright goto failed for Postgres deployment page: {goto.stderr or goto.stdout}")
+    snapshot = wait_for_snapshot_text(
+        env,
+        "/workspace/deployment",
+        lambda text: (
+            "Fixed runtime prepared-action writes" in text
+            and "active" in text
+            and "exact resume true" in text
+            and "approval row_gated_prepared_action_only" in text
+            and "postgres_http_runtime_prepared_action_write_v1" in text
+            and "postgres_http_runtime_approval_decision_write_v1" in text
+            and "OpenClaw probe" in text
+            and "POST /api/integrations/openclaw/probe" in text
+            and "Hermes run-task" in text
+            and "POST /api/integrations/hermes/run-task" in text
+            and "Row-gated approval approve" in text
+            and "POST /api/approvals/:approval_id/approve" in text
+            and "write http true" in text
+            and "routes fixed allowlist" in text
+            and "non-fixed runtime blocked" in text
+        ),
+        "deployment page to render active Postgres runtime write gate",
+        timeout_sec=18,
+    )
+    after_counts = postgres_ledger_counts(adapter)
+    require(before_counts == after_counts, f"Postgres deployment page/proxy mutated ledger tables: before={before_counts} after={after_counts}")
+    combined = "\n".join([
+        json.dumps(storage, ensure_ascii=False, sort_keys=True),
+        json.dumps(deployment, ensure_ascii=False, sort_keys=True),
+        json.dumps(non_allowlisted_payload, ensure_ascii=False, sort_keys=True),
+        snapshot,
+    ])
+    require(not leaked_secret(combined), "Postgres deployment write-gate fixture leaked token-like material")
+    return {
+        "storage_status": storage.get("status"),
+        "storage_mode": storage.get("mode"),
+        "deployment_status": deployment.get("status"),
+        "deployment_storage_mode": deployment_storage.get("mode"),
+        "runtime_write_gate_status": (storage.get("runtime_write_gate") or {}).get("status"),
+        "runtime_contracts": sorted((storage.get("runtime_write_gate") or {}).get("contracts") or []),
+        "runtime_routes": sorted(runtime_route_keys(storage.get("runtime_write_gate") or {})),
+        "non_allowlisted_write_status": non_allowlisted_status,
+        "postgres_counts_unchanged": True,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Next.js Playwright snapshot smoke.")
     parser.add_argument("--api-port", type=int, default=0)
     parser.add_argument("--next-port", type=int, default=0)
     parser.add_argument("--configured-retention-fixture", action="store_true", help="Run only the isolated pro_workspace deployment retention controls browser fixture.")
+    parser.add_argument("--postgres-write-fixture", action="store_true", help="Run only the isolated Postgres write-mode deployment runtime write-gate browser fixture.")
+    parser.add_argument("--postgres-image", default=container_smoke.DEFAULT_IMAGE, help="Postgres Docker image to use for --postgres-write-fixture.")
+    parser.add_argument("--skip-postgres-if-unavailable", action="store_true", help="Return success with skipped=true when Docker/Postgres/psycopg is unavailable for --postgres-write-fixture.")
+    parser.add_argument("--no-install-postgres-driver", action="store_true", help="Do not install psycopg into a temporary target for --postgres-write-fixture.")
     args = parser.parse_args()
 
     if not PWCLI.exists():
@@ -1078,6 +1284,14 @@ def main() -> int:
         return 1
     if args.configured_retention_fixture:
         return run_configured_retention_fixture(args.api_port, args.next_port)
+    if args.postgres_write_fixture:
+        return run_postgres_write_fixture(
+            args.api_port,
+            args.next_port,
+            image=args.postgres_image,
+            skip_if_unavailable=args.skip_postgres_if_unavailable,
+            install_driver=not args.no_install_postgres_driver,
+        )
 
     api_port = args.api_port or free_port()
     next_port = args.next_port or free_port()
@@ -1260,6 +1474,160 @@ def run_configured_retention_fixture(api_port_arg: int, next_port_arg: int) -> i
                     proc.kill()
                     proc.wait(timeout=10)
         run(["bash", "-lc", f"lsof -tiTCP:{next_port} -sTCP:LISTEN | xargs -r kill"], timeout=10)
+        run(["rm", "-rf", str(NEXT_APP / ".next")], timeout=10)
+        restore_next_env()
+
+
+def run_postgres_write_fixture(
+    api_port_arg: int,
+    next_port_arg: int,
+    *,
+    image: str,
+    skip_if_unavailable: bool,
+    install_driver: bool,
+) -> int:
+    api_port = api_port_arg or free_port()
+    next_port = next_port_arg or free_port()
+    api_base = f"http://127.0.0.1:{api_port}"
+    next_base = f"http://127.0.0.1:{next_port}"
+    session = f"agentops-next-postgres-write-{uuid.uuid4().hex[:8]}"
+    processes: list[subprocess.Popen[str]] = []
+    container = ""
+    adapter: PostgresAdapter | None = None
+    try:
+        early = container_smoke.docker_available(skip_if_unavailable)
+        if early is not None:
+            return early
+        early = container_smoke.ensure_image(image, skip_if_unavailable)
+        if early is not None:
+            return early
+        with tempfile.TemporaryDirectory(prefix="agentops-next-postgres-write-") as tmp:
+            tmp_path = Path(tmp)
+            reexec_postgres_fixture_with_stable_python_if_needed(install_driver=install_driver)
+            driver_ok, driver_status = ensure_psycopg(tmp_path, install=install_driver)
+            if not driver_ok:
+                payload = {
+                    "ok": bool(skip_if_unavailable),
+                    "skipped": bool(skip_if_unavailable),
+                    "contract": "nextjs_deployment_postgres_runtime_write_fixture_v1",
+                    "reason": f"Optional psycopg driver unavailable: {driver_status}",
+                }
+                print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+                return 0 if skip_if_unavailable else 1
+
+            container = f"agentops-next-pg-write-{uuid.uuid4().hex[:12]}"
+            pg_auth = uuid.uuid4().hex
+            started = container_smoke.run(
+                [
+                    "docker",
+                    "run",
+                    "-d",
+                    "--rm",
+                    "--name",
+                    container,
+                    "-p",
+                    "127.0.0.1::5432",
+                    "-e",
+                    "POSTGRES_USER=agentops",
+                    "-e",
+                    "POSTGRES_DB=agentops",
+                    "-e",
+                    f"POSTGRES_PASSWORD={pg_auth}",
+                    image,
+                ],
+                timeout=60,
+            )
+            if started.returncode != 0:
+                payload = {
+                    "ok": bool(skip_if_unavailable),
+                    "skipped": bool(skip_if_unavailable),
+                    "contract": "nextjs_deployment_postgres_runtime_write_fixture_v1",
+                    "reason": (started.stderr or started.stdout or "Postgres container failed to start").strip(),
+                }
+                print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+                return 0 if skip_if_unavailable else 1
+            require(container_smoke.wait_for_postgres(container), "Postgres container did not become ready before timeout")
+            port = mapped_port(container)
+            dsn = f"postgresql://agentops:{pg_auth}@127.0.0.1:{port}/agentops"
+            adapter = PostgresAdapter.connect(dsn)
+            adapter.executescript(pg_contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
+            seed_minimal_postgres_db(adapter)
+
+            pythonpath_parts = [str(ROOT)]
+            package_target = tmp_path / "python-packages"
+            if package_target.exists():
+                pythonpath_parts.insert(0, str(package_target))
+            if os.environ.get("PYTHONPATH"):
+                pythonpath_parts.append(os.environ["PYTHONPATH"])
+            pythonpath = os.pathsep.join(pythonpath_parts)
+
+            api_env = os.environ.copy()
+            api_env.update({
+                "AGENTOPS_STORAGE_BACKEND": "postgres",
+                "AGENTOPS_EDITION": "enterprise_byoc",
+                "AGENTOPS_POSTGRES_DSN": dsn,
+                "AGENTOPS_ENABLE_POSTGRES_STORAGE": "1",
+                "AGENTOPS_POSTGRES_READ_ONLY_HTTP": "1",
+                "AGENTOPS_POSTGRES_WRITE_HTTP": "1",
+                "AGENTOPS_BASE_URL": api_base,
+                "PYTHONPATH": pythonpath,
+                "PYTHONDONTWRITEBYTECODE": "1",
+            })
+            api_env.pop("AGENTOPS_DB_PATH", None)
+            api_env.pop("AGENTOPS_API_KEY", None)
+            api_env.pop("AGENTOPS_ENTITLEMENTS_PATH", None)
+            api_proc = start_process([sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(api_port)], cwd=ROOT, env=api_env)
+            processes.append(api_proc)
+            wait_http(f"{api_base}/api/storage/backend-status")
+
+            next_env = os.environ.copy()
+            next_env["AGENTOPS_API_BASE"] = f"{api_base}/api"
+            next_proc = start_process(["npx", "next", "dev", "-p", str(next_port)], cwd=NEXT_APP, env=next_env)
+            processes.append(next_proc)
+            wait_http(f"{next_base}/workspace/deployment")
+
+            pw_env = os.environ.copy()
+            pw_env["PLAYWRIGHT_CLI_SESSION"] = session
+            opened = playwright(pw_env, "open", f"{next_base}/workspace/deployment")
+            require(opened.returncode == 0, f"Playwright open failed: {opened.stderr or opened.stdout}")
+            resized = playwright(pw_env, "resize", "1365", "900")
+            require(resized.returncode == 0, f"Playwright resize failed: {resized.stderr or resized.stdout}")
+            result = verify_deployment_postgres_write_gate(next_base, adapter, pw_env)
+            try:
+                playwright(pw_env, "close", timeout=10)
+            except subprocess.TimeoutExpired:
+                playwright(pw_env, "kill-all", timeout=20)
+            print(json.dumps({
+                "ok": True,
+                "contract": "nextjs_deployment_postgres_runtime_write_fixture_v1",
+                "api_base": api_base,
+                "next_base": next_base,
+                "postgres_driver_status": driver_status,
+                "deployment_postgres_runtime_write_gate": result,
+                "secret_leaked": False,
+            }, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True), file=sys.stderr)
+        return 1
+    finally:
+        for proc in reversed(processes):
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=10)
+        if adapter is not None:
+            try:
+                adapter.close()
+            except Exception:
+                pass
+        if container:
+            container_smoke.run(["docker", "rm", "-f", container], timeout=30)
+        run(["bash", "-lc", f"lsof -tiTCP:{next_port} -sTCP:LISTEN | xargs -r kill"], timeout=10)
+        run(["bash", "-lc", f"lsof -tiTCP:{api_port} -sTCP:LISTEN | xargs -r kill"], timeout=10)
         run(["rm", "-rf", str(NEXT_APP / ".next")], timeout=10)
         restore_next_env()
 

@@ -11623,9 +11623,20 @@ def demo_readiness(conn: sqlite3.Connection, headers) -> dict:
     }
 
 
+def first_scalar(row, default=0):
+    if not row:
+        return default
+    if isinstance(row, dict):
+        return next(iter(row.values()), default)
+    try:
+        return row[0]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
 def scalar_count(conn: sqlite3.Connection, sql: str, params=()) -> int:
     row = conn.execute(sql, params).fetchone()
-    return int((row[0] if row else 0) or 0)
+    return int(first_scalar(row, 0) or 0)
 
 
 def status_counts(conn: sqlite3.Connection, table: str, valid_statuses: set[str] | None = None) -> dict:
@@ -12240,7 +12251,7 @@ def commander_age_sec(*values) -> int | None:
 
 
 def commander_count(conn: sqlite3.Connection, sql: str, params=()) -> int:
-    return int((conn.execute(sql, params).fetchone() or [0])[0] or 0)
+    return int(first_scalar(conn.execute(sql, params).fetchone(), 0) or 0)
 
 
 def commander_evidence_counts(conn: sqlite3.Connection, task_id=None, run_id=None, artifact_id=None) -> dict:

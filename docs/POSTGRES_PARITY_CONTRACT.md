@@ -89,6 +89,9 @@ The first Postgres adapter must preserve these invariants:
   `status`, `approved_at`, `consumed_at`, and `result_json`.
 - Translate DB-API `?` placeholders into Postgres `$1`, `$2`, ... placeholders
   without touching literal question marks inside SQL strings.
+- Preserve SQL string literals containing `%` patterns, such as
+  `LIKE '%example%'`, by escaping them for psycopg while keeping the server-side
+  SQL semantics unchanged.
 - Translate SQLite `INSERT OR IGNORE` helper statements into Postgres
   `ON CONFLICT DO NOTHING` without changing Free Local behavior.
 - Exclude SQLite-only runtime features from Postgres DDL generation, including
@@ -206,7 +209,8 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   and `free_local_dependencies=[]`.
 - `postgres_optional_psycopg_adapter_v1` passed against `postgres:16-alpine`
   with a temporary psycopg target, `free_local_dependencies=[]`, qmark/named
-  SQL execution, dict-like row shape, and zero cross-workspace rows.
+  SQL execution, literal question mark and `LIKE '%...%'` percent-pattern SQL
+  literals, dict-like row shape, and zero cross-workspace rows.
 - `postgres_boundary_fixture_parity_v1` passed against `postgres:16-alpine`
   with shared fixture `storage_boundary_shared_fixture_v1`, identical SQLite
   and Postgres snapshot hash
@@ -292,6 +296,14 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   contract through `storage_backend_status.runtime_write_gate` for CLI/API/Next
   deployment readback, kept `free_local_dependencies=[]`, and
   did not fall back to SQLite.
+- `nextjs_deployment_postgres_runtime_write_fixture_v1` passed against a
+  temporary Postgres-backed MIS API in `experimental_write_http` mode and a
+  Next.js server pointed at it. The browser fixture proves
+  `/workspace/deployment` renders `runtime_write_gate=active`, the fixed
+  OpenClaw/Hermes prepared-action contracts, exact-resume and row-gated approval
+  proofs, all three fixed write routes, and the non-fixed runtime write block;
+  it also confirms the Next proxy cannot mutate read-only ledger tables while
+  rendering the deployment page.
 - `postgres_cli_write_parity_v1`,
   `postgres_cli_gateway_task_write_v1`,
   `postgres_cli_gateway_execution_start_write_v1`,

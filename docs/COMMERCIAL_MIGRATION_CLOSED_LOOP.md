@@ -608,6 +608,13 @@ Must be true:
   Hermes/OpenClaw prepared-action write contracts, the row-gated approval
   decision route, exact-resume proof, and non-fixed runtime fail-closed state
   instead of leaving that evidence buried in backend smoke output.
+- `nextjs_deployment_postgres_runtime_write_fixture_v1` starts a temporary
+  Postgres-backed MIS API in explicit `experimental_write_http` mode and a
+  Next.js server pointed at it, then verifies `/workspace/deployment` renders
+  `runtime_write_gate=active`, the two fixed runtime write contracts, OpenClaw
+  probe, Hermes run-task, row-gated approval approve, exact-resume proof, and
+  non-fixed runtime writes blocked at the proxy. Verify with
+  `python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture`.
 - `byoc_deployment_acceptance_v1` runs a local isolated recovery and audit
   export drill: backup create/verify/restore, restore confirmation guard,
   overwrite safety copy, signed audit export with a customer key, raw metadata

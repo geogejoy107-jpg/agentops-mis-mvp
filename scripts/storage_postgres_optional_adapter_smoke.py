@@ -242,6 +242,10 @@ def main() -> int:
                 "SELECT '?' AS literal_value, task_id FROM tasks WHERE task_id=?",
                 ["tsk_optional_pg"],
             )
+            percent_literal = adapter.fetchone(
+                "SELECT COUNT(*) AS count FROM tasks WHERE workspace_id=? AND title LIKE '%Optional%'",
+                ["ws_optional_pg"],
+            )
             cross = adapter.fetchall(
                 "SELECT * FROM tasks WHERE workspace_id=? AND task_id=?",
                 ["ws_optional_pg", "missing_other_workspace"],
@@ -251,6 +255,8 @@ def main() -> int:
                 raise AssertionError(f"task row shape/status mismatch: {task}")
             if literal.get("literal_value") != "?":
                 raise AssertionError(f"literal question mark translation failed: {literal}")
+            if int((percent_literal or {}).get("count") or 0) != 1:
+                raise AssertionError(f"literal percent LIKE translation failed: {percent_literal}")
             if cross:
                 raise AssertionError(f"cross-workspace lookup returned rows: {cross}")
             output = {
@@ -263,6 +269,7 @@ def main() -> int:
                 "row_shape": sorted(task.keys()),
                 "workspace_filter_rows": len(cross),
                 "literal_question_mark": literal.get("literal_value"),
+                "literal_percent_like": int((percent_literal or {}).get("count") or 0),
                 "next_proof": "Run the full storage-boundary fixture through this optional adapter.",
             }
             print(json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True))

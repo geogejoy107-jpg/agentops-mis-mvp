@@ -56,6 +56,10 @@ def _scan_placeholders(sql: str, *, named: bool) -> tuple[str, list[str] | int]:
             in_single = not in_single
             i += 1
             continue
+        if char == "%" and in_single:
+            output.append("%%")
+            i += 1
+            continue
         if named and char == ":" and not in_single:
             match = re.match(r":([A-Za-z_][A-Za-z0-9_]*)", sql[i:])
             if match:

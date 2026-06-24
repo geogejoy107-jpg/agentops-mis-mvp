@@ -700,6 +700,8 @@ def main() -> int:
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_container_parity_v1")
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_adapter_sql_contract_v1")
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_optional_psycopg_adapter_v1")
+            and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "LIKE '%...%'")
+            and file_contains("scripts/storage_postgres_optional_adapter_smoke.py", "literal_percent_like")
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_boundary_fixture_parity_v1")
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_route_read_model_parity_v1")
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "storage_backend_selection_fail_closed_v1")
@@ -1016,6 +1018,13 @@ def main() -> int:
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "deployment_configured_retention_controls")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "--configured-retention-fixture")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "nextjs_deployment_configured_retention_fixture_v1")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "--postgres-write-fixture")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "nextjs_deployment_postgres_runtime_write_fixture_v1")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "verify_deployment_postgres_write_gate")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "runtime_write_gate")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "POST /api/integrations/openclaw/probe")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "POST /api/integrations/hermes/run-task")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "POST /api/approvals/:approval_id/approve")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "enterprise_byoc_controls_v1")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "enterprise_byoc")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "sso_connector_policy")
@@ -1136,6 +1145,7 @@ def main() -> int:
                 "python3 scripts/audit_retention_controls_smoke.py --configured-fixture",
                 "python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py --configured-retention-fixture",
+                "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
                 "python3 scripts/byoc_deployment_acceptance_smoke.py",
                 "backup/restore and signed export checks",
             ],
