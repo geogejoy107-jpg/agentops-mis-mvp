@@ -174,6 +174,29 @@ def assert_command_center(payload: dict, failures: list[str]) -> None:
         require(action.get("control_readback_required") is True, f"research action control readback missing: {action}", failures)
         require((action.get("evidence") or {}).get("server_executes_shell") is False, f"research action shell proof missing: {action}", failures)
         require("advance-loop --source research_lab_consumption" in str((action.get("evidence") or {}).get("advance_command") or ""), f"research action advance command missing: {action}", failures)
+    bounded_advance = payload.get("bounded_advance") or {}
+    bounded_summary = bounded_advance.get("summary") or {}
+    bounded_safety = bounded_advance.get("safety") or {}
+    require(bounded_advance.get("operation") == "operator_command_center_bounded_advance", f"bounded advance lane missing: {payload}", failures)
+    require("advance-loop" in str(bounded_advance.get("preview_command") or ""), f"bounded advance preview command missing: {bounded_advance}", failures)
+    require("--confirm-advance" in str(bounded_advance.get("confirm_command") or ""), f"bounded advance confirm command missing: {bounded_advance}", failures)
+    require(bounded_summary.get("policy_id") == "advance_loop_local_bounded_v1", f"bounded advance policy id missing: {bounded_advance}", failures)
+    require(bounded_summary.get("server_executes_shell") is False, f"bounded advance shell proof missing: {bounded_advance}", failures)
+    require(bounded_safety.get("read_only") is True, f"bounded advance must be read-only in command center: {bounded_advance}", failures)
+    require(bounded_safety.get("ledger_mutated") is False, f"bounded advance command-center lane mutated ledger: {bounded_advance}", failures)
+    require(bounded_safety.get("live_execution_performed") is False, f"bounded advance live proof missing: {bounded_advance}", failures)
+    bounded_actions = [
+        item for item in payload.get("next_actions") or []
+        if str(item.get("source") or "").startswith("advance_loop:")
+    ]
+    if bounded_summary.get("safe_to_confirm"):
+        require(bounded_actions, f"safe bounded advance should be surfaced as next action: {payload.get('next_actions')}", failures)
+        for action in bounded_actions:
+            require("--confirm-advance" in str(action.get("command") or ""), f"bounded action must use confirm-advance: {action}", failures)
+            require(action.get("receipt_required") is True, f"bounded action receipt_required missing: {action}", failures)
+            require(action.get("control_readback_required") is True, f"bounded action control readback missing: {action}", failures)
+            require((action.get("evidence") or {}).get("policy_id") == "advance_loop_local_bounded_v1", f"bounded action policy evidence missing: {action}", failures)
+            require((action.get("evidence") or {}).get("server_executes_shell") is False, f"bounded action shell proof missing: {action}", failures)
     require(((payload.get("commander") or {}).get("raw_source_omitted") is True), f"raw source omission missing: {payload}", failures)
     require(((payload.get("commander") or {}).get("raw_patch_omitted") is True), f"raw patch omission missing: {payload}", failures)
     for item in payload.get("next_actions") or []:

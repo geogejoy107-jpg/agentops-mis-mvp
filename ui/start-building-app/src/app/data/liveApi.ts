@@ -1560,6 +1560,20 @@ export interface OperatorCommandCenterPayload {
     safety?: Record<string, unknown>;
     token_omitted?: boolean;
   };
+  bounded_advance?: {
+    operation?: string;
+    status?: string;
+    source_operation?: string;
+    summary?: Record<string, unknown>;
+    selected_item?: Record<string, unknown> | null;
+    preview_command?: string;
+    confirm_command?: string;
+    action_policy?: Record<string, unknown>;
+    verify_policy?: Record<string, unknown>;
+    next_actions?: string[];
+    safety?: Record<string, unknown>;
+    token_omitted?: boolean;
+  };
   next_actions: OperatorCommandCenterNextAction[];
   contract?: string;
   safety: {
@@ -6000,6 +6014,32 @@ export async function loadOperatorCommandCenter(limit = 12, projectId = ""): Pro
       },
       token_omitted: true,
     },
+    bounded_advance: {
+      operation: "operator_command_center_bounded_advance",
+      status: "unavailable",
+      source_operation: "operator_handoff",
+      summary: {
+        policy_id: "advance_loop_local_bounded_v1",
+        safe_to_confirm: false,
+        server_executes_shell: false,
+      },
+      selected_item: null,
+      preview_command: "agentops operator advance-loop --limit 8",
+      confirm_command: "agentops operator advance-loop --limit 8 --confirm-advance",
+      action_policy: {},
+      verify_policy: {},
+      next_actions: ["agentops operator advance-loop --limit 8"],
+      safety: {
+        read_only: true,
+        ledger_mutated: false,
+        live_execution_performed: false,
+        server_shell_execution: false,
+        raw_prompt_omitted: true,
+        raw_response_omitted: true,
+        token_omitted: true,
+      },
+      token_omitted: true,
+    },
     next_actions: [],
     contract: "read-only command-center BFF unavailable fallback",
     safety: {
@@ -6026,6 +6066,7 @@ export async function loadOperatorCommandCenter(limit = 12, projectId = ""): Pro
   const workersRaw = typeof raw.workers === "object" && raw.workers !== null ? raw.workers as Record<string, unknown> : {};
   const operatorPlanRaw = typeof raw.operator_action_plan === "object" && raw.operator_action_plan !== null ? raw.operator_action_plan as Record<string, unknown> : {};
   const researchConsumptionRaw = typeof raw.research_lab_consumption === "object" && raw.research_lab_consumption !== null ? raw.research_lab_consumption as Record<string, unknown> : {};
+  const boundedAdvanceRaw = typeof raw.bounded_advance === "object" && raw.bounded_advance !== null ? raw.bounded_advance as Record<string, unknown> : {};
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
   return {
     provider: String(raw.provider || "agentops-operator"),
@@ -6096,6 +6137,20 @@ export async function loadOperatorCommandCenter(limit = 12, projectId = ""): Pro
       ).map(([key, value]) => [key, String(value || "")]).filter(([, value]) => value)),
       safety: typeof researchConsumptionRaw.safety === "object" && researchConsumptionRaw.safety !== null ? researchConsumptionRaw.safety as Record<string, unknown> : undefined,
       token_omitted: researchConsumptionRaw.token_omitted === undefined ? true : boolValue(researchConsumptionRaw.token_omitted),
+    },
+    bounded_advance: {
+      operation: boundedAdvanceRaw.operation ? String(boundedAdvanceRaw.operation) : "operator_command_center_bounded_advance",
+      status: boundedAdvanceRaw.status ? String(boundedAdvanceRaw.status) : "unknown",
+      source_operation: boundedAdvanceRaw.source_operation ? String(boundedAdvanceRaw.source_operation) : undefined,
+      summary: typeof boundedAdvanceRaw.summary === "object" && boundedAdvanceRaw.summary !== null ? boundedAdvanceRaw.summary as Record<string, unknown> : {},
+      selected_item: typeof boundedAdvanceRaw.selected_item === "object" && boundedAdvanceRaw.selected_item !== null ? boundedAdvanceRaw.selected_item as Record<string, unknown> : null,
+      preview_command: boundedAdvanceRaw.preview_command ? String(boundedAdvanceRaw.preview_command) : undefined,
+      confirm_command: boundedAdvanceRaw.confirm_command ? String(boundedAdvanceRaw.confirm_command) : undefined,
+      action_policy: typeof boundedAdvanceRaw.action_policy === "object" && boundedAdvanceRaw.action_policy !== null ? boundedAdvanceRaw.action_policy as Record<string, unknown> : {},
+      verify_policy: typeof boundedAdvanceRaw.verify_policy === "object" && boundedAdvanceRaw.verify_policy !== null ? boundedAdvanceRaw.verify_policy as Record<string, unknown> : {},
+      next_actions: asArray<unknown>(boundedAdvanceRaw.next_actions).map(String).filter(Boolean),
+      safety: typeof boundedAdvanceRaw.safety === "object" && boundedAdvanceRaw.safety !== null ? boundedAdvanceRaw.safety as Record<string, unknown> : undefined,
+      token_omitted: boundedAdvanceRaw.token_omitted === undefined ? true : boolValue(boundedAdvanceRaw.token_omitted),
     },
     next_actions: asArray<Record<string, unknown>>(raw.next_actions).map((item) => ({
       action_id: String(item.action_id || item.command || ""),

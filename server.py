@@ -156,7 +156,12 @@ from agentops_mis_core.workflow_jobs import (
     workflow_job_public,
     workflow_job_stuck_projection,
 )
-from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
+from agentops_mis_cli.advance_loop_policy import (
+    ADVANCE_LOOP_POLICY_ID,
+    ADVANCE_LOOP_POLICY_VERSION,
+    advance_loop_command_policy,
+    advance_loop_policy_summary,
+)
 from agentops_mis_cli.redaction import redact_full_text as shared_redact_full_text
 from agentops_mis_cli.redaction import redact_text as shared_redact_text
 from agentops_mis_runtime.capabilities import (
@@ -27193,6 +27198,81 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
     action_plan = operator_action_plan(conn, effective_headers, {"limit": [str(limit)]})
     action_plan_summary = action_plan.get("summary") or {}
     action_plan_actions = action_plan.get("actions") or []
+    handoff_limit = min(limit, 8)
+    operator_handoff_payload = operator_handoff(conn, effective_headers, {"limit": [str(handoff_limit)]}, auth_ctx=auth_ctx)
+    handoff_advance_loop = ((operator_handoff_payload.get("work_order") or {}).get("advance_loop") or {})
+    handoff_advance_selected = handoff_advance_loop.get("selected_item") or {}
+    handoff_advance_summary = handoff_advance_loop.get("summary") or {}
+    handoff_advance_preview_command = handoff_advance_loop.get("preview_command") or f"agentops operator advance-loop --limit {handoff_limit}"
+    handoff_advance_confirm_command = handoff_advance_loop.get("confirm_command") or f"{handoff_advance_preview_command} --confirm-advance"
+    handoff_advance_action_command = str(handoff_advance_selected.get("action_command") or "").strip()
+    handoff_advance_verify_command = str(handoff_advance_selected.get("verify_command") or "agentops operator handoff --limit 8").strip()
+    handoff_advance_action_policy = (
+        advance_loop_command_policy(handoff_advance_action_command, phase="action")
+        if handoff_advance_action_command
+        else {
+            "allowed": False,
+            "reason": "no bounded advance action selected",
+            "argv": [],
+            "policy_id": ADVANCE_LOOP_POLICY_ID,
+            "policy_version": ADVANCE_LOOP_POLICY_VERSION,
+            "phase": "action",
+            "token_omitted": True,
+        }
+    )
+    handoff_advance_verify_policy = (
+        advance_loop_command_policy(handoff_advance_verify_command, phase="verify")
+        if handoff_advance_verify_command
+        else {"allowed": True, "reason": "no verify command supplied", "argv": [], "token_omitted": True}
+    )
+    handoff_advance_safe_to_confirm = bool(
+        handoff_advance_selected
+        and handoff_advance_action_policy.get("allowed")
+        and handoff_advance_verify_policy.get("allowed")
+    )
+    bounded_advance = {
+        "operation": "operator_command_center_bounded_advance",
+        "status": "attention" if handoff_advance_safe_to_confirm else "empty",
+        "source_operation": operator_handoff_payload.get("operation") or "operator_handoff",
+        "summary": {
+            "selected_gate": handoff_advance_summary.get("selected_gate") or handoff_advance_selected.get("gate_id"),
+            "selected_status": handoff_advance_summary.get("selected_status") or handoff_advance_selected.get("gate_status"),
+            "policy_id": (handoff_advance_loop.get("policy") or {}).get("policy_id") or ADVANCE_LOOP_POLICY_ID,
+            "policy_version": (handoff_advance_loop.get("policy") or {}).get("policy_version") or ADVANCE_LOOP_POLICY_VERSION,
+            "safe_to_confirm": handoff_advance_safe_to_confirm,
+            "action_allowed": handoff_advance_action_policy.get("allowed") is True,
+            "verify_allowed": handoff_advance_verify_policy.get("allowed") is True,
+            "server_executes_shell": False,
+        },
+        "selected_item": {
+            "package_id": handoff_advance_selected.get("package_id"),
+            "action_id": handoff_advance_selected.get("action_id"),
+            "action_signature": handoff_advance_selected.get("action_signature"),
+            "gate_id": handoff_advance_selected.get("gate_id"),
+            "gate_label": handoff_advance_selected.get("gate_label"),
+            "gate_status": handoff_advance_selected.get("gate_status"),
+            "source": handoff_advance_selected.get("source"),
+            "action_command": redact_text(handoff_advance_action_command, 500) if handoff_advance_action_command else None,
+            "verify_command": redact_text(handoff_advance_verify_command, 500) if handoff_advance_verify_command else None,
+            "run_id": handoff_advance_selected.get("run_id"),
+            "token_omitted": True,
+        } if handoff_advance_selected else None,
+        "preview_command": redact_text(handoff_advance_preview_command, 500),
+        "confirm_command": redact_text(handoff_advance_confirm_command, 500),
+        "action_policy": {**handoff_advance_action_policy, "argv": handoff_advance_action_policy.get("argv", [])[:4]},
+        "verify_policy": {**handoff_advance_verify_policy, "argv": handoff_advance_verify_policy.get("argv", [])[:4]},
+        "next_actions": [handoff_advance_preview_command, handoff_advance_confirm_command] if handoff_advance_selected else [handoff_advance_preview_command],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_shell_execution": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
     worker = worker_status(conn)
     worker_health = worker.get("fleet_health") or {}
     review = human_review_queue(conn, limit=max(limit, 12))
@@ -27472,6 +27552,34 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             control_readback_required=True,
             control_readback_attached=False,
         )
+    if handoff_advance_safe_to_confirm:
+        add_next_action(
+            f"advance_loop:{handoff_advance_selected.get('gate_id') or 'selected'}",
+            handoff_advance_confirm_command,
+            title=f"Bounded advance: {handoff_advance_selected.get('gate_label') or handoff_advance_selected.get('gate_id') or 'selected loop action'}",
+            priority=126,
+            verify_command=handoff_advance_verify_command,
+            evidence={
+                "preview_command": handoff_advance_preview_command,
+                "selected_gate": handoff_advance_selected.get("gate_id"),
+                "selected_status": handoff_advance_selected.get("gate_status"),
+                "source": handoff_advance_selected.get("source"),
+                "action_policy_allowed": handoff_advance_action_policy.get("allowed") is True,
+                "verify_policy_allowed": handoff_advance_verify_policy.get("allowed") is True,
+                "policy_id": ADVANCE_LOOP_POLICY_ID,
+                "server_executes_shell": False,
+                "live_execution_performed": False,
+                "control_readback_required": True,
+            },
+            action_signature=handoff_advance_selected.get("action_signature") or f"advance_loop:{handoff_advance_selected.get('gate_id') or 'selected'}",
+            receipt_required=True,
+            receipt_status="missing",
+            receipt_verified=False,
+            receipt_record_command=handoff_advance_confirm_command,
+            receipt_verify_record_command=handoff_advance_verify_command,
+            control_readback_required=True,
+            control_readback_attached=False,
+        )
 
     next_actions = sorted(next_actions, key=lambda item: int(item.get("priority") or 0), reverse=True)[:limit]
     status = command_center_status(
@@ -27505,6 +27613,7 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             "research_lab_consumption_adapters": research_consumption_summary["adapters"],
             "research_lab_consumed": research_consumption_summary["consumed"],
             "research_lab_consumption_missing": research_consumption_summary["missing"],
+            "bounded_advance_safe_to_confirm": 1 if handoff_advance_safe_to_confirm else 0,
             "next_actions": len(next_actions),
         },
         "projects": project_rows,
@@ -27568,8 +27677,9 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             },
             "token_omitted": True,
         },
+        "bounded_advance": bounded_advance,
         "next_actions": next_actions,
-        "contract": "read-only command-center BFF for operator UI/CLI; aggregates projects, blocked runs, approvals, deliveries, stale workers, Commander coding gates, Research Lab consumption, and next actions without executing commands or mutating ledgers",
+        "contract": "read-only command-center BFF for operator UI/CLI; aggregates projects, blocked runs, approvals, deliveries, stale workers, Commander coding gates, Research Lab consumption, bounded advance-loop, and next actions without executing commands or mutating ledgers",
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
