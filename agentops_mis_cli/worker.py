@@ -64,6 +64,7 @@ def default_worker_cwd() -> Path:
 
 DEFAULT_RUNTIME_DIR = default_runtime_dir()
 DEFAULT_WORKER_CWD = default_worker_cwd()
+DEFAULT_API_KEY_PLACEHOLDER = "<paste one-time token here>"
 
 
 SHOULD_STOP = False
@@ -1658,16 +1659,35 @@ def service_label(agent_id: str) -> str:
     return f"local.agentops.worker.{safe or 'agent'}"
 
 
+def resolve_worker_entrypoint(args) -> list[str]:
+    configured = str(getattr(args, "worker_command", "") or "").strip()
+    if configured:
+        return shlex.split(configured)
+    installed = shutil.which("agentops-worker")
+    if installed:
+        return [installed]
+    return [sys.executable, "-m", "agentops_mis_cli.worker"]
+
+
+def service_env_values(args) -> dict[str, str]:
+    env_values = {
+        "AGENTOPS_BASE_URL": args.base_url,
+        "AGENTOPS_WORKSPACE_ID": args.workspace_id,
+        "AGENTOPS_AGENT_ID": args.agent_id,
+        "AGENTOPS_WORKER_RUNTIME_DIR": args.runtime_dir,
+        "AGENTOPS_WORKER_CWD": args.working_directory,
+    }
+    api_key_placeholder = str(args.api_key_placeholder or "").strip()
+    if api_key_placeholder and api_key_placeholder != DEFAULT_API_KEY_PLACEHOLDER:
+        env_values["AGENTOPS_API_KEY"] = api_key_placeholder
+    return env_values
+
+
 def build_worker_command(args) -> list[str]:
     command = [
-        "agentops-worker",
+        *resolve_worker_entrypoint(args),
         "--adapter",
         args.adapter,
-        "--use-session",
-        "--session-ttl-sec",
-        str(args.session_ttl_sec),
-        "--session-refresh-margin-sec",
-        str(args.session_refresh_margin_sec),
         "--poll-interval",
         str(args.poll_interval),
         "--max-tasks",
@@ -1676,6 +1696,15 @@ def build_worker_command(args) -> list[str]:
         "--write-state",
         "--jsonl-log",
     ]
+    api_key_placeholder = str(args.api_key_placeholder or "").strip()
+    if getattr(args, "use_session", False) or api_key_placeholder not in {"", DEFAULT_API_KEY_PLACEHOLDER}:
+        command.extend([
+            "--use-session",
+            "--session-ttl-sec",
+            str(args.session_ttl_sec),
+            "--session-refresh-margin-sec",
+            str(args.session_refresh_margin_sec),
+        ])
     if args.confirm_run:
         command.append("--confirm-run")
     return command
@@ -1684,15 +1713,9 @@ def build_worker_command(args) -> list[str]:
 def render_launchd_template(args) -> str:
     label = args.label or service_label(args.agent_id)
     runtime_dir = args.runtime_dir or "~/Library/Application Support/AgentOpsMIS/workers"
-    log_path = args.log_path or f"~/Library/Logs/{label}.log"
-    env_values = {
-        "AGENTOPS_BASE_URL": args.base_url,
-        "AGENTOPS_WORKSPACE_ID": args.workspace_id,
-        "AGENTOPS_AGENT_ID": args.agent_id,
-        "AGENTOPS_API_KEY": args.api_key_placeholder,
-        "AGENTOPS_WORKER_RUNTIME_DIR": runtime_dir,
-        "AGENTOPS_WORKER_CWD": args.working_directory,
-    }
+    log_path = str(Path(args.log_path or f"~/Library/Logs/{label}.log").expanduser())
+    args.runtime_dir = runtime_dir
+    env_values = service_env_values(args)
     program_args = ["/usr/bin/env", *build_worker_command(args)]
     arg_items = "\n".join(f"    <string>{html.escape(item)}</string>" for item in program_args)
     env_items = "\n".join(
@@ -1713,6 +1736,8 @@ def render_launchd_template(args) -> str:
   <dict>
 {env_items}
   </dict>
+  <key>WorkingDirectory</key>
+  <string>{html.escape(args.working_directory)}</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -1730,14 +1755,8 @@ def render_systemd_template(args) -> str:
     label = args.label or service_label(args.agent_id)
     runtime_dir = args.runtime_dir or "%h/.agentops/workers"
     log_path = args.log_path or "%h/.agentops/agentops-worker.log"
-    env_values = {
-        "AGENTOPS_BASE_URL": args.base_url,
-        "AGENTOPS_WORKSPACE_ID": args.workspace_id,
-        "AGENTOPS_AGENT_ID": args.agent_id,
-        "AGENTOPS_API_KEY": args.api_key_placeholder,
-        "AGENTOPS_WORKER_RUNTIME_DIR": runtime_dir,
-        "AGENTOPS_WORKER_CWD": args.working_directory,
-    }
+    args.runtime_dir = runtime_dir
+    env_values = service_env_values(args)
     env_lines = "\n".join(f"Environment={shlex.quote(f'{key}={value}')}" for key, value in env_values.items())
     command = " ".join(shlex.quote(part) for part in build_worker_command(args))
     return f"""[Unit]
@@ -1748,6 +1767,7 @@ After=network-online.target
 Type=simple
 {env_lines}
 ExecStart=/usr/bin/env {command}
+WorkingDirectory={shlex.quote(args.working_directory)}
 Restart=always
 RestartSec=5
 StandardOutput=append:{log_path}
@@ -1766,6 +1786,7 @@ def build_service_template_parser() -> argparse.ArgumentParser:
     parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
     parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     parser.add_argument("--confirm-run", action="store_true")
+    parser.add_argument("--use-session", action="store_true", help="Render a session-minting worker command for remote/scoped tokens. Local loopback services omit this by default.")
     parser.add_argument("--session-ttl-sec", type=int, default=900)
     parser.add_argument("--session-refresh-margin-sec", type=float, default=60)
     parser.add_argument("--poll-interval", type=float, default=5.0)
@@ -1773,7 +1794,8 @@ def build_service_template_parser() -> argparse.ArgumentParser:
     parser.add_argument("--working-directory", default=str(DEFAULT_WORKER_CWD))
     parser.add_argument("--runtime-dir", default="")
     parser.add_argument("--log-path", default="")
-    parser.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    parser.add_argument("--api-key-placeholder", default=DEFAULT_API_KEY_PLACEHOLDER)
+    parser.add_argument("--worker-command", default="", help="Worker executable command for service templates. Defaults to installed agentops-worker or python -m fallback.")
     return parser
 
 
@@ -1897,9 +1919,19 @@ def check_service_installation(args) -> dict:
     exists, content = read_service_file(service_path)
     token_like_detected = bool(re.search(r"(agtok_|agtsess_|sk-|ntn_)", content))
     placeholder_present = args.api_key_placeholder in content if exists else False
-    command_has_worker = "agentops-worker" in content
+    command_has_worker = "agentops-worker" in content or "agentops_mis_cli.worker" in content
     adapter_present = args.adapter in content
     use_session_present = "--use-session" in content
+    if args.manager == "launchd":
+        local_dev_no_token = bool(
+            not re.search(r"AGENTOPS_API_KEY", content)
+            and re.search(r"AGENTOPS_BASE_URL</key>\s*<string>http://127\.0\.0\.1:", content)
+        )
+    else:
+        local_dev_no_token = bool(
+            not re.search(r"AGENTOPS_API_KEY", content)
+            and re.search(r"(?m)^Environment=AGENTOPS_BASE_URL=http://127\.0\.0\.1:", content)
+        )
     if args.manager == "launchd":
         launchd_keepalive = bool(re.search(r"<key>KeepAlive</key>\s*<true/>", content))
         relaunch_policy = {
@@ -1924,7 +1956,7 @@ def check_service_installation(args) -> dict:
     else:
         unit = service_path.name
         service_status = systemd_status(unit, args.timeout)
-    ok = bool(exists and command_has_worker and adapter_present and use_session_present and confirm_gate_ok and relaunch_policy["enabled"] and not token_like_detected)
+    ok = bool(exists and command_has_worker and adapter_present and (use_session_present or local_dev_no_token) and confirm_gate_ok and relaunch_policy["enabled"] and not token_like_detected)
     hints = []
     if not exists:
         hints.append("Render a template with agentops-worker service-template and write it to service_path.")
@@ -1934,6 +1966,8 @@ def check_service_installation(args) -> dict:
         hints.append("Replace raw tokens with a local environment-only secret flow; do not commit service files with real tokens.")
     if args.adapter != "mock" and not confirm_gate_ok:
         hints.append("Hermes/OpenClaw services need --confirm-run only when the operator intentionally allows live execution.")
+    if exists and not use_session_present and not local_dev_no_token:
+        hints.append("Remote/shared service files should use --use-session with a scoped token source; local loopback can run without a session token.")
     if exists and not service_status.get("loaded"):
         hints.append("Service file exists but does not appear loaded; load it manually on the agent machine after review.")
     return {
@@ -1951,6 +1985,7 @@ def check_service_installation(args) -> dict:
             "command_has_worker": command_has_worker,
             "adapter_present": adapter_present,
             "use_session_present": use_session_present,
+            "local_dev_no_token": local_dev_no_token,
             "relaunch_policy_ok": relaunch_policy["enabled"],
             "confirm_gate_ok": confirm_gate_ok,
             "placeholder_present": placeholder_present,
@@ -1973,7 +2008,7 @@ def build_service_check_parser() -> argparse.ArgumentParser:
     parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     parser.add_argument("--label", default="")
     parser.add_argument("--service-path", default="")
-    parser.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    parser.add_argument("--api-key-placeholder", default=DEFAULT_API_KEY_PLACEHOLDER)
     parser.add_argument("--timeout", type=int, default=5)
     return parser
 
@@ -2010,6 +2045,7 @@ def install_service_file(args) -> dict:
         label=label,
         service_path=str(service_path),
         api_key_placeholder=args.api_key_placeholder,
+        worker_command=args.worker_command,
         timeout=args.timeout,
     )
     service_check = check_service_installation(check_args) if service_path.exists() else {
@@ -2072,6 +2108,7 @@ def build_service_install_parser() -> argparse.ArgumentParser:
     parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
     parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     parser.add_argument("--confirm-run", action="store_true")
+    parser.add_argument("--use-session", action="store_true", help="Render a session-minting worker command for remote/scoped tokens. Local loopback services omit this by default.")
     parser.add_argument("--session-ttl-sec", type=int, default=900)
     parser.add_argument("--session-refresh-margin-sec", type=float, default=60)
     parser.add_argument("--poll-interval", type=float, default=5.0)
@@ -2079,7 +2116,8 @@ def build_service_install_parser() -> argparse.ArgumentParser:
     parser.add_argument("--working-directory", default=str(DEFAULT_WORKER_CWD))
     parser.add_argument("--runtime-dir", default="")
     parser.add_argument("--log-path", default="")
-    parser.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    parser.add_argument("--api-key-placeholder", default=DEFAULT_API_KEY_PLACEHOLDER)
+    parser.add_argument("--worker-command", default="", help="Worker executable command for service templates. Defaults to installed agentops-worker or python -m fallback.")
     parser.add_argument("--service-path", default="")
     parser.add_argument("--confirm-install", action="store_true", help="Write the service file. Default is dry-run.")
     parser.add_argument("--overwrite", action="store_true", help="Replace an existing service file after local review.")
@@ -2192,7 +2230,7 @@ def build_service_control_parser() -> argparse.ArgumentParser:
     parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     parser.add_argument("--label", default="")
     parser.add_argument("--service-path", default="")
-    parser.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    parser.add_argument("--api-key-placeholder", default=DEFAULT_API_KEY_PLACEHOLDER)
     parser.add_argument("--timeout", type=int, default=10)
     parser.add_argument("--confirm-control", action="store_true", help="Actually call launchctl/systemctl. Default is preview only.")
     return parser

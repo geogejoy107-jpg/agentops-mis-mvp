@@ -168,6 +168,25 @@ def main() -> int:
             cwd=tmp_path,
             env=env,
         )
+        launchd_session_run = run(
+            [
+                str(worker),
+                "service-template",
+                "--manager",
+                "launchd",
+                "--adapter",
+                "mock",
+                "--agent-id",
+                "agt_worker_package_smoke",
+                "--base-url",
+                base_url,
+                "--use-session",
+                "--api-key-placeholder",
+                "ENV_ONLY_TOKEN_PLACEHOLDER",
+            ],
+            cwd=tmp_path,
+            env=env,
+        )
 
         once_payload = {}
         try:
@@ -207,11 +226,20 @@ def main() -> int:
             and launchd_run.returncode == 0
             and "KeepAlive" in launchd_run.stdout
             and "agentops-worker" in launchd_run.stdout
-            and "paste one-time token here" in launchd_run.stdout
+            and "AGENTOPS_API_KEY" not in launchd_run.stdout
+            and "--use-session" not in launchd_run.stdout
+            and "WorkingDirectory" in launchd_run.stdout
+            and "~/Library/Logs" not in launchd_run.stdout
             and systemd_run.returncode == 0
             and "Restart=always" in systemd_run.stdout
             and "agentops-worker" in systemd_run.stdout
-            and "paste one-time token here" in systemd_run.stdout
+            and "AGENTOPS_API_KEY" not in systemd_run.stdout
+            and "--use-session" not in systemd_run.stdout
+            and "WorkingDirectory=" in systemd_run.stdout
+            and launchd_session_run.returncode == 0
+            and "AGENTOPS_API_KEY" in launchd_session_run.stdout
+            and "--use-session" in launchd_session_run.stdout
+            and "ENV_ONLY_TOKEN_PLACEHOLDER" in launchd_session_run.stdout
         )
         print(json.dumps({
             "ok": ok,
@@ -221,6 +249,7 @@ def main() -> int:
             "once_returncode": once_run.returncode,
             "launchd_template_returncode": launchd_run.returncode,
             "systemd_template_returncode": systemd_run.returncode,
+            "launchd_session_template_returncode": launchd_session_run.returncode,
             "command": str(worker),
             "state_path": str(state_path),
             "state_written": state_path.exists(),
@@ -238,6 +267,7 @@ def main() -> int:
             print("once stderr:", once_run.stderr[-1200:], file=sys.stderr)
             print("launchd stderr:", launchd_run.stderr[-1200:], file=sys.stderr)
             print("systemd stderr:", systemd_run.stderr[-1200:], file=sys.stderr)
+            print("launchd session stderr:", launchd_session_run.stderr[-1200:], file=sys.stderr)
         server.shutdown()
         return 0 if ok else 1
 

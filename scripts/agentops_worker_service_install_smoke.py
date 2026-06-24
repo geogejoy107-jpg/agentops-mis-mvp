@@ -74,6 +74,13 @@ def main() -> int:
         require(install.returncode == 0, f"confirmed install failed: {install_payload}", failures)
         require(install_payload.get("wrote") is True and service_path.exists(), f"confirmed install did not write file: {install_payload}", failures)
         require(install_payload.get("service_check", {}).get("ok") is True, f"installed file failed service check: {install_payload}", failures)
+        install_text = service_path.read_text(encoding="utf-8")
+        require("AGENTOPS_API_KEY" not in install_text, "default service install should not persist API-key placeholder", failures)
+        require("--use-session" not in install_text, "default local service install should not require session minting", failures)
+        require("WorkingDirectory" in install_text, "launchd service should set repo working directory", failures)
+        require("~/Library/Logs" not in install_text, "launchd service install should expand log path", failures)
+        require(("agentops-worker" in install_text) or ("agentops_mis_cli.worker" in install_text), "service install missing worker entrypoint", failures)
+        require(install_payload.get("service_check", {}).get("service_file", {}).get("local_dev_no_token") is True, f"local dev no-token proof missing: {install_payload}", failures)
         mode = stat.S_IMODE(service_path.stat().st_mode)
         require(mode == 0o600, f"service file mode should be 0600, got {oct(mode)}", failures)
 
@@ -114,6 +121,11 @@ def main() -> int:
         require(wrapper.returncode == 0, f"wrapper service-install failed: {wrapper_payload}", failures)
         require(wrapper_payload.get("command") == "agentops worker service-install", f"wrong wrapper command: {wrapper_payload}", failures)
         require(wrapper_payload.get("wrote") is True and wrapper_path.exists(), f"wrapper did not write file: {wrapper_payload}", failures)
+        wrapper_text = wrapper_path.read_text(encoding="utf-8")
+        require("AGENTOPS_API_KEY" not in wrapper_text, "wrapper install should not persist API-key placeholder", failures)
+        require("--use-session" not in wrapper_text, "wrapper local service install should not require session minting", failures)
+        require("WorkingDirectory" in wrapper_text, "wrapper launchd service should set repo working directory", failures)
+        require("~/Library/Logs" not in wrapper_text, "wrapper launchd service install should expand log path", failures)
 
         unsafe = run([
             sys.executable,

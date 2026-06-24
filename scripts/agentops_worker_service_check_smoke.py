@@ -46,6 +46,11 @@ def main() -> int:
             "mock",
         ])
         require(template.returncode == 0, f"service-template failed: {template.stderr}", failures)
+        require("AGENTOPS_API_KEY" not in template.stdout, "default launchd template should omit API-key placeholder env", failures)
+        require("--use-session" not in template.stdout, "default local launchd template should not require session minting", failures)
+        require("WorkingDirectory" in template.stdout, "default launchd template should set WorkingDirectory", failures)
+        require("~/Library/Logs" not in template.stdout, "launchd log path should be expanded before service install", failures)
+        require(("agentops-worker" in template.stdout) or ("agentops_mis_cli.worker" in template.stdout), "launchd template missing worker entrypoint", failures)
         service_path.write_text(template.stdout, encoding="utf-8")
 
         direct = run([
@@ -67,6 +72,7 @@ def main() -> int:
         require(direct_payload.get("ok") is True, f"service-check should be ok for generated template: {direct_payload}", failures)
         require(direct_payload.get("service_file", {}).get("raw_content_omitted") is True, f"raw content should be omitted: {direct_payload}", failures)
         require(direct_payload.get("service_file", {}).get("token_like_detected") is False, f"token-like value detected unexpectedly: {direct_payload}", failures)
+        require(direct_payload.get("service_file", {}).get("local_dev_no_token") is True, f"local dev no-token proof missing: {direct_payload}", failures)
         require(direct_payload.get("service_file", {}).get("relaunch_policy_ok") is True, f"launchd relaunch policy flag missing: {direct_payload}", failures)
         require(direct_payload.get("relaunch_policy", {}).get("enabled") is True, f"launchd relaunch policy not detected: {direct_payload}", failures)
         require(direct_payload.get("relaunch_policy", {}).get("policy") == "KeepAlive=true", f"launchd policy not machine-readable: {direct_payload}", failures)
@@ -103,6 +109,9 @@ def main() -> int:
             "mock",
         ])
         require(systemd_template.returncode == 0, f"systemd service-template failed: {systemd_template.stderr}", failures)
+        require("AGENTOPS_API_KEY" not in systemd_template.stdout, "default systemd template should omit API-key placeholder env", failures)
+        require("--use-session" not in systemd_template.stdout, "default local systemd template should not require session minting", failures)
+        require("WorkingDirectory=" in systemd_template.stdout, "default systemd template should set WorkingDirectory", failures)
         systemd_path.write_text(systemd_template.stdout, encoding="utf-8")
         systemd = run([
             sys.executable,

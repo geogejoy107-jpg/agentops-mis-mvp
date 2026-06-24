@@ -3606,6 +3606,7 @@ def cmd_worker_service_install(args, client: AgentOpsClient) -> dict:
         agent_id=args.agent_id or client.agent_id or worker_mod.DEFAULT_AGENT_ID,
         adapter=args.adapter,
         confirm_run=bool(args.confirm_run),
+        use_session=bool(args.use_session),
         session_ttl_sec=args.session_ttl_sec,
         session_refresh_margin_sec=args.session_refresh_margin_sec,
         poll_interval=args.poll_interval,
@@ -3614,6 +3615,7 @@ def cmd_worker_service_install(args, client: AgentOpsClient) -> dict:
         runtime_dir=args.runtime_dir or "",
         log_path=args.log_path or "",
         api_key_placeholder=args.api_key_placeholder,
+        worker_command=args.worker_command or "",
         service_path=args.service_path or "",
         confirm_install=bool(args.confirm_install),
         overwrite=bool(args.overwrite),
@@ -4790,6 +4792,7 @@ def build_parser() -> argparse.ArgumentParser:
     worker_service_install.add_argument("--agent-id", default=None)
     worker_service_install.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     worker_service_install.add_argument("--confirm-run", action="store_true")
+    worker_service_install.add_argument("--use-session", action="store_true", help="Render a session-minting worker command for remote/scoped tokens. Local loopback services omit this by default.")
     worker_service_install.add_argument("--session-ttl-sec", type=int, default=900)
     worker_service_install.add_argument("--session-refresh-margin-sec", type=float, default=60)
     worker_service_install.add_argument("--poll-interval", type=float, default=5.0)
@@ -4798,6 +4801,7 @@ def build_parser() -> argparse.ArgumentParser:
     worker_service_install.add_argument("--runtime-dir", default="")
     worker_service_install.add_argument("--log-path", default="")
     worker_service_install.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    worker_service_install.add_argument("--worker-command", default="", help="Worker executable command for service templates. Defaults to installed agentops-worker or python -m fallback.")
     worker_service_install.add_argument("--service-path", default="")
     worker_service_install.add_argument("--confirm-install", action="store_true", help="Write the service file. Default is dry-run.")
     worker_service_install.add_argument("--overwrite", action="store_true")
