@@ -160,6 +160,8 @@ def validate(payload: dict, failures: list[str]) -> None:
         require(primary_next.get("receipt_required") in {True, False}, f"{adapter} work packet primary receipt flag missing: {primary_next}", failures)
         require(primary_next.get("safe_to_auto_continue") in {True, False}, f"{adapter} work packet safe-to-auto flag missing: {primary_next}", failures)
         require(primary_next.get("requires_human_before_effect") in {True, False}, f"{adapter} work packet human gate flag missing: {primary_next}", failures)
+        if primary_next.get("requires_human_before_effect") is True:
+            require(primary_next.get("safe_to_auto_continue") is False, f"{adapter} human-gated primary action must not auto-continue: {primary_next}", failures)
         require(primary_next.get("verify_command"), f"{adapter} work packet primary verify command missing: {primary_next}", failures)
         require(work_packet.get("loop_protocol") == ["READ", "PLAN", "RETRIEVE", "COMPARE", "PREFLIGHT", "EXECUTE", "VERIFY", "RECORD"], f"{adapter} loop protocol missing: {work_packet}", failures)
         work_phase_commands = work_packet.get("phase_commands") or {}

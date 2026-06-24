@@ -25122,7 +25122,7 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
     elif recommended_next_command == commands.get("start_check"):
         primary_phase = "READ"
     primary_next_action = {
-        "id": stable_id("loop_next", adapter, status, recommended_next_command or "none")[-18:],
+        "id": stable_id("loop_next", adapter, status, stable_hash(recommended_next_command or "none")[:12]),
         "status": status,
         "phase": primary_phase,
         "command": recommended_next_command,
@@ -25135,7 +25135,7 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
             or "agentops operator loop-audit --limit 20"
         ),
         "control_readback_source": run_start_receipt_projection.get("control_readback_source") if primary_confirm_required else None,
-        "safe_to_auto_continue": bool(recommended_next_command) and not primary_confirm_required and not server_shell,
+        "safe_to_auto_continue": bool(recommended_next_command) and not primary_confirm_required and not should_record and not server_shell,
         "requires_human_before_effect": bool(primary_confirm_required or should_record),
         "blockers": blockers
         + ([f"missing_method_gate:{gate}" for gate in missing_method_gates] if missing_method_gates else [])
