@@ -175,6 +175,28 @@ def validate_recorded(payload: dict, packet_hash: str, failures: list[str]) -> N
     require(not leaked(json.dumps(payload, ensure_ascii=False)), "recorded response leaked secret-like text", failures)
 
 
+def validate_loop_consumed(payload: dict, packet_hash: str, failures: list[str]) -> None:
+    require(payload.get("operation") == "operator_loop_work_packet_bundle", f"loop bundle operation mismatch: {payload}", failures)
+    summary = payload.get("summary") or {}
+    require(summary.get("research_lab_consumptions") == 1, f"loop bundle consumption summary missing: {summary}", failures)
+    require(summary.get("research_lab_consumed") == 1, f"loop bundle should read back one consumed packet: {summary}", failures)
+    require(summary.get("research_lab_consumption_missing") == 0, f"loop bundle should not report missing consumption after confirm: {summary}", failures)
+    packets = payload.get("work_packets") or []
+    require(len(packets) == 1, f"expected one adapter work packet: {payload}", failures)
+    packet = packets[0] if packets else {}
+    contract = (packet.get("evidence_contract") or {}).get("research_lab_consumption") or {}
+    require(contract.get("status") == "consumed", f"consumption contract should be consumed: {contract}", failures)
+    require(contract.get("consumed") is True, f"consumption contract consumed flag missing: {contract}", failures)
+    require(contract.get("packet_hash") == packet_hash, f"consumption contract hash mismatch: {contract}", failures)
+    require(contract.get("receipt_verified") is True, f"consumption receipt should be verified: {contract}", failures)
+    require(contract.get("evaluation_pass") is True, f"consumption evaluation should pass: {contract}", failures)
+    require(contract.get("memory_recorded") is True, f"consumption memory readback missing: {contract}", failures)
+    require(contract.get("server_executes_shell") is False, f"consumption contract shell proof missing: {contract}", failures)
+    gate = next((item for item in (packet.get("gates") or []) if item.get("id") == "research_lab_consumption"), {})
+    require(gate.get("status") == "pass" and gate.get("ok") is True, f"work packet consumption gate should pass: {gate}", failures)
+    require(not leaked(json.dumps(payload, ensure_ascii=False)), "loop consumption readback leaked secret-like text", failures)
+
+
 def validate_ledger(db_path: Path, before: dict, after: dict, failures: list[str]) -> None:
     for table in ["memories", "audit_logs", "runtime_events", "operator_action_evaluations"]:
         require(after.get(table, 0) > before.get(table, 0), f"{table} did not increase: before={before} after={after}", failures)
@@ -242,6 +264,10 @@ def exercise(base_url: str, env: dict, failures: list[str], db_path: Path | None
     require(not leaked(cli.stdout + cli.stderr), "CLI confirm leaked secret-like text", failures)
     recorded = load_json(cli.stdout)
     validate_recorded(recorded, packet_hash, failures)
+    loop_cli = run_cli(base_url, env, ["operator", "loop-supervision", "--adapter", "openclaw", "--limit", "8", "--work-packet"])
+    require(loop_cli.returncode == 0, f"loop-supervision readback failed: stdout={loop_cli.stdout} stderr={loop_cli.stderr}", failures)
+    require(not leaked(loop_cli.stdout + loop_cli.stderr), "loop-supervision readback leaked secret-like text", failures)
+    validate_loop_consumed(load_json(loop_cli.stdout), packet_hash, failures)
     if db_path:
         after_record = db_fingerprint(db_path)
         validate_ledger(db_path, before_record or {}, after_record, failures)

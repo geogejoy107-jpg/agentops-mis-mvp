@@ -19300,6 +19300,152 @@ def operator_research_lab_packet(conn: sqlite3.Connection, headers, qs=None, aut
     return packet
 
 
+def operator_research_lab_consumption_status(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    adapter: str,
+    packet_hash: str,
+    limit: int = 8,
+) -> dict:
+    safe_packet_hash = redact_text(packet_hash or "", 180)
+    source = f"operator.research_lab_consumption:{adapter}"
+    action_id = f"research_lab_packet_consumption:{adapter}"
+    preview_command = f"agentops operator research-lab-consumption --adapter {adapter} --limit {limit}"
+    confirm_command = f"{preview_command} --packet-hash {safe_packet_hash} --confirm-record" if safe_packet_hash else preview_command
+    audit_row = None
+    audit_payload: dict = {}
+    if safe_packet_hash:
+        audit_row = conn.execute(
+            """SELECT audit_id, actor_id, entity_id, metadata_json, tamper_chain_hash, created_at
+               FROM audit_logs
+               WHERE action='operator.research_lab_consumption'
+                 AND entity_type='research_lab_packet'
+                 AND entity_id=?
+               ORDER BY created_at DESC
+               LIMIT 1""",
+            (safe_packet_hash,),
+        ).fetchone()
+        if audit_row:
+            try:
+                parsed = json.loads(audit_row["metadata_json"] or "{}")
+            except Exception:
+                parsed = {}
+            audit_payload = parsed if isinstance(parsed, dict) else {}
+    receipt_id = str(audit_payload.get("receipt_id") or "")
+    receipt = None
+    evaluation = None
+    if not receipt_id and audit_row:
+        receipt_rows = conn.execute(
+            """SELECT audit_id, actor_id, entity_id, metadata_json, tamper_chain_hash, created_at
+               FROM audit_logs
+               WHERE action='operator.action_queue_receipt'
+                 AND entity_type='operator_action_receipts'
+               ORDER BY created_at DESC
+               LIMIT 100""",
+        ).fetchall()
+        for row in receipt_rows:
+            candidate = operator_action_receipt_public(row)
+            if (
+                candidate.get("workspace_id") == workspace_id
+                and candidate.get("source") == source
+                and candidate.get("action_id") == action_id
+            ):
+                receipt = candidate
+                receipt_id = str(candidate.get("receipt_id") or "")
+                break
+    if receipt_id:
+        if receipt is None:
+            receipt_row = conn.execute(
+                """SELECT audit_id, actor_id, entity_id, metadata_json, tamper_chain_hash, created_at
+                   FROM audit_logs
+                   WHERE action='operator.action_queue_receipt'
+                     AND entity_type='operator_action_receipts'
+                     AND entity_id=?
+                   ORDER BY created_at DESC
+                   LIMIT 1""",
+                (receipt_id,),
+            ).fetchone()
+            receipt = operator_action_receipt_public(receipt_row) if receipt_row else None
+        if receipt:
+            evaluation_row = conn.execute(
+                """SELECT *
+                   FROM operator_action_evaluations
+                   WHERE workspace_id=? AND receipt_id=?
+                   ORDER BY created_at DESC
+                   LIMIT 1""",
+                (workspace_id, receipt_id),
+            ).fetchone()
+            evaluation = operator_action_evaluation_public(evaluation_row) if evaluation_row else None
+    memory = None
+    if safe_packet_hash:
+        memory_row = conn.execute(
+            """SELECT memory_id, review_status, confidence, source_ref, created_at, updated_at
+               FROM memories
+               WHERE source_ref=?
+               ORDER BY updated_at DESC
+               LIMIT 1""",
+            (f"research_lab_packet://{safe_packet_hash}",),
+        ).fetchone()
+        if memory_row:
+            memory = {
+                "memory_id": memory_row["memory_id"],
+                "review_status": memory_row["review_status"],
+                "confidence": memory_row["confidence"],
+                "source_ref": memory_row["source_ref"],
+                "created_at": memory_row["created_at"],
+                "updated_at": memory_row["updated_at"],
+                "token_omitted": True,
+            }
+    receipt_verified = bool(receipt and receipt.get("status") == "verified")
+    evaluation_pass = bool(evaluation and evaluation.get("pass_fail") == "pass")
+    audit_recorded = bool(audit_row)
+    memory_recorded = bool(memory)
+    consumed = receipt_verified and evaluation_pass and audit_recorded and memory_recorded
+    status = "consumed" if consumed else "recorded" if audit_recorded or receipt else "missing"
+    return {
+        "operation": "operator_research_lab_consumption_status",
+        "status": status,
+        "workspace_id": workspace_id,
+        "adapter": adapter,
+        "packet_hash": safe_packet_hash,
+        "required": True,
+        "consumed": consumed,
+        "receipt_id": receipt_id or None,
+        "receipt_status": receipt.get("status") if isinstance(receipt, dict) else None,
+        "receipt_verified": receipt_verified,
+        "receipt_source": receipt.get("source") if isinstance(receipt, dict) else source,
+        "receipt_action_id": receipt.get("action_id") if isinstance(receipt, dict) else action_id,
+        "evaluation_id": evaluation.get("evaluation_id") if isinstance(evaluation, dict) else None,
+        "evaluation_pass_fail": evaluation.get("pass_fail") if isinstance(evaluation, dict) else None,
+        "evaluation_pass": evaluation_pass,
+        "memory_id": memory.get("memory_id") if isinstance(memory, dict) else None,
+        "memory_review_status": memory.get("review_status") if isinstance(memory, dict) else None,
+        "memory_recorded": memory_recorded,
+        "audit_recorded": audit_recorded,
+        "audit_id": audit_row["audit_id"] if audit_row else None,
+        "latest_at": (audit_row["created_at"] if audit_row else (receipt or {}).get("created_at") if isinstance(receipt, dict) else None),
+        "preview_command": preview_command,
+        "record_command": confirm_command,
+        "verify_command": f"agentops operator loop-supervision --adapter {adapter} --limit {limit} --work-packet",
+        "blockers": [] if consumed else ["research_lab_packet_consumption_missing" if not audit_recorded else "research_lab_packet_consumption_incomplete"],
+        "contract": "read-only consumption readback for the embedded Research Lab packet; it reads receipts, evaluations, audit, and memory candidates without executing Research Lab, SSH, network, shell, or live adapters",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "ssh_command_executed": False,
+            "network_probe_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
 def operator_research_lab_consumption(conn: sqlite3.Connection, body: dict, headers=None) -> tuple[dict, int]:
     headers = headers or {}
     workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
@@ -19489,6 +19635,12 @@ def operator_research_lab_consumption(conn: sqlite3.Connection, body: dict, head
         "raw_content_omitted": True,
         "token_omitted": True,
     }, {
+        "workspace_id": workspace_id,
+        "adapter": adapter,
+        "packet_hash": packet_hash,
+        "work_packet_hash": work_packet.get("packet_hash"),
+        "receipt_id": ((receipt_payload.get("receipt") or {}).get("receipt_id") if isinstance(receipt_payload.get("receipt"), dict) else None),
+        "memory_id": memory_id,
         "ledger_mutated": True,
         "live_execution_performed": False,
         "server_executes_shell": False,
@@ -25472,6 +25624,7 @@ def loop_supervision_item(
     start_check_payload: dict | None = None,
     plan_quality_evidence: dict | None = None,
     research_lab_packet: dict | None = None,
+    research_lab_consumption: dict | None = None,
 ) -> dict:
     adapter = str(consumer.get("adapter") or "mock")
     start_check = consumer.get("start_check") if isinstance(consumer.get("start_check"), dict) else {}
@@ -25505,6 +25658,20 @@ def loop_supervision_item(
     research_lab_read_command = research_lab_phase_commands.get("READ") or f"agentops operator research-lab-packet --adapter {adapter} --limit {limit}"
     research_lab_verify_command = research_lab_phase_commands.get("VERIFY") or "python3 scripts/operator_research_lab_packet_smoke.py"
     research_lab_record_command = research_lab_phase_commands.get("RECORD") or "agentops plan-evidence create --agent-plan-id <agent_plan_id> --evidence-kind research_lab_packet"
+    research_lab_consumption = research_lab_consumption if isinstance(research_lab_consumption, dict) else {}
+    research_lab_consumed = research_lab_consumption.get("consumed") is True
+    research_lab_consumption_record_command = (
+        research_lab_consumption.get("record_command")
+        or f"agentops operator research-lab-consumption --adapter {adapter} --limit {limit} --packet-hash {research_lab_packet.get('packet_hash') or '<packet_hash>'} --confirm-record"
+    )
+    research_lab_consumption_preview_command = (
+        research_lab_consumption.get("preview_command")
+        or f"agentops operator research-lab-consumption --adapter {adapter} --limit {limit}"
+    )
+    research_lab_consumption_verify_command = (
+        research_lab_consumption.get("verify_command")
+        or f"agentops operator loop-supervision --adapter {adapter} --limit {limit} --work-packet"
+    )
     local_deployment_safety = local_run_path.get("safety") if isinstance(local_run_path.get("safety"), dict) else {}
     local_deployment_adapter_ok = (
         adapter not in {"hermes", "openclaw"}
@@ -25590,6 +25757,9 @@ def loop_supervision_item(
     elif can_confirm and service_closure_required:
         status = "record_first"
         recommended_next_command = service_closure_command
+    elif can_confirm and research_lab_ready and not research_lab_consumed:
+        status = "record_first"
+        recommended_next_command = research_lab_consumption_record_command
     elif can_confirm and should_record:
         status = "record_first"
         recommended_next_command = review_pressure["record_command"]
@@ -25702,6 +25872,24 @@ def loop_supervision_item(
             "network_probe_performed": research_lab_safety.get("network_probe_performed") is True,
             "token_omitted": True,
         },
+        {
+            "id": "research_lab_consumption",
+            "ok": research_lab_consumed,
+            "status": "pass" if research_lab_consumed else "attention",
+            "packet_hash": research_lab_packet.get("packet_hash"),
+            "receipt_id": research_lab_consumption.get("receipt_id"),
+            "receipt_verified": research_lab_consumption.get("receipt_verified") is True,
+            "evaluation_pass": research_lab_consumption.get("evaluation_pass") is True,
+            "memory_recorded": research_lab_consumption.get("memory_recorded") is True,
+            "memory_review_status": research_lab_consumption.get("memory_review_status"),
+            "command": research_lab_consumption_record_command,
+            "verify_command": research_lab_consumption_verify_command,
+            "hard_run_start_gate": False,
+            "server_executes_shell": False,
+            "ssh_command_executed": False,
+            "network_probe_performed": False,
+            "token_omitted": True,
+        },
     ]
     would_allow_run_start = bool(can_confirm and not server_shell)
     phase_commands = method.get("phase_commands") if isinstance(method.get("phase_commands"), dict) else {}
@@ -25730,6 +25918,8 @@ def loop_supervision_item(
         primary_phase = "VERIFY"
     elif service_closure_required and recommended_next_command == service_closure_command:
         primary_phase = service_closure_phase
+    elif recommended_next_command == research_lab_consumption_record_command:
+        primary_phase = "RECORD"
     elif recommended_next_command == commands.get("loop_driver_confirm"):
         primary_phase = "EXECUTE"
     elif recommended_next_command == commands.get("loop_driver_preview"):
@@ -25739,6 +25929,8 @@ def loop_supervision_item(
     primary_verify_command = (
         service_commands.get("receipt_readback") or "agentops operator action-receipts --limit 20"
         if service_closure_required and recommended_next_command == service_closure_command
+        else research_lab_consumption_verify_command
+        if recommended_next_command == research_lab_consumption_record_command
         else run_start_receipt_projection.get("verify_command")
         if primary_confirm_required
         else managed_execution_commands.get("evidence_report")
@@ -25801,6 +25993,7 @@ def loop_supervision_item(
                     plan_quality_command,
                     review_pressure["record_command"],
                     research_lab_read_command,
+                    research_lab_consumption_preview_command,
                     "agentops operator loop-audit --limit 20",
                     "agentops operator action-receipts --limit 20",
                 ]
@@ -25817,6 +26010,7 @@ def loop_supervision_item(
                     research_lab_phase_commands.get("COMPARE"),
                     service_commands.get("record_verified_receipt"),
                     service_commands.get("record_control_readback"),
+                    research_lab_consumption_record_command,
                 ]
                 if command
             ],
@@ -25835,6 +26029,7 @@ def loop_supervision_item(
                     managed_execution_commands.get("review_queue"),
                     research_lab_verify_command,
                     "python3 scripts/operator_research_lab_packet_smoke.py",
+                    research_lab_consumption_verify_command,
                     commands.get("live_product_readiness"),
                     "agentops operator loop-audit --limit 20",
                     "agentops operator action-receipts --limit 20",
@@ -25905,6 +26100,24 @@ def loop_supervision_item(
                 "network_probe_performed": research_lab_safety.get("network_probe_performed") is True,
                 "token_omitted": True,
             },
+            "research_lab_consumption_required": True,
+            "research_lab_consumption": {
+                "status": research_lab_consumption.get("status") or "missing",
+                "consumed": research_lab_consumed,
+                "packet_hash": research_lab_packet.get("packet_hash"),
+                "receipt_id": research_lab_consumption.get("receipt_id"),
+                "receipt_verified": research_lab_consumption.get("receipt_verified") is True,
+                "evaluation_pass": research_lab_consumption.get("evaluation_pass") is True,
+                "memory_recorded": research_lab_consumption.get("memory_recorded") is True,
+                "memory_review_status": research_lab_consumption.get("memory_review_status"),
+                "record_command": research_lab_consumption_record_command,
+                "verify_command": research_lab_consumption_verify_command,
+                "hard_run_start_gate": False,
+                "server_executes_shell": False,
+                "ssh_command_executed": False,
+                "network_probe_performed": False,
+                "token_omitted": True,
+            },
             "plan_evidence_required": True,
             "review_queue_required": True,
             "audit_ledger_required": True,
@@ -25941,7 +26154,8 @@ def loop_supervision_item(
         "attention": attention
         + (["record_before_execute"] if should_record else [])
         + (["agent_plan_quality_attention"] if plan_quality_attention_required else [])
-        + ([f"service_managed_loop:{service_closure_step}"] if service_closure_required and service_closure_step else []),
+        + ([f"service_managed_loop:{service_closure_step}"] if service_closure_required and service_closure_step else [])
+        + ([] if research_lab_consumed else ["research_lab_packet_consumption_missing"]),
         "plan_quality": {
             "status": plan_quality_evidence.get("status") or "not_applicable",
             "issue_count": plan_quality_issue_count,
@@ -25955,6 +26169,7 @@ def loop_supervision_item(
         "local_deployment": local_deployment,
         "agent_loop_packet": start_check_payload.get("agent_loop_packet") if isinstance(start_check_payload.get("agent_loop_packet"), dict) else None,
         "research_lab_packet": research_lab_packet,
+        "research_lab_consumption": research_lab_consumption,
         "agent_work_packet": agent_work_packet,
         "next_commands": {
             "safe_read_commands": [
@@ -25965,6 +26180,7 @@ def loop_supervision_item(
                     commands.get("adapter_preflight"),
                     commands.get("live_product_readiness"),
                     review_pressure["record_command"],
+                    research_lab_consumption_preview_command,
                     "agentops operator loop-audit --limit 20",
                     "agentops operator action-receipts --limit 20",
                 ]
@@ -26078,23 +26294,37 @@ def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_c
         "hard_run_start_gate": False,
         "token_omitted": True,
     }
-    items = [
-        loop_supervision_item(
+    workspace_id = normalize_workspace_id(handoff.get("workspace_id") or effective_headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    items = []
+    for consumer in consumers:
+        if not isinstance(consumer, dict):
+            continue
+        adapter = str(consumer.get("adapter") or "mock")
+        research_packet = build_research_lab_packet(
+            ROOT,
+            adapter=adapter,
+            limit=min(limit, 8),
+            profile=research_profile,
+        )
+        research_consumption = operator_research_lab_consumption_status(
+            conn,
+            workspace_id=workspace_id,
+            adapter=adapter,
+            packet_hash=str(research_packet.get("packet_hash") or ""),
+            limit=limit,
+        )
+        items.append(loop_supervision_item(
             consumer,
             current_code=current_code,
             limit=limit,
             plan_quality_evidence=plan_quality_evidence,
-            research_lab_packet=build_research_lab_packet(
-                ROOT,
-                adapter=str(consumer.get("adapter") or "mock"),
-                limit=min(limit, 8),
-                profile=research_profile,
-            ),
+            research_lab_packet=research_packet,
+            research_lab_consumption=research_consumption,
             start_check_payload=operator_start_check(
                 conn,
                 headers,
                 {
-                    "adapter": [str(consumer.get("adapter") or "mock")],
+                    "adapter": [adapter],
                     "limit": [str(limit)],
                     "loop_id": qs.get("loop_id") or [],
                     "task_id": qs.get("task_id") or [],
@@ -26106,10 +26336,7 @@ def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_c
                 },
                 auth_ctx,
             ),
-        )
-        for consumer in consumers
-        if isinstance(consumer, dict)
-    ]
+        ))
     status_order = {"blocked": 4, "record_first": 3, "attention": 2, "preview_only": 1, "ready_to_confirm": 0}
     worst_status = max((item.get("status") for item in items), key=lambda value: status_order.get(str(value), 2), default="attention")
     next_actions = []
@@ -26126,6 +26353,12 @@ def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_c
         packet.get("research_lab_packet")
         for packet in work_packets
         if isinstance(packet.get("research_lab_packet"), dict)
+    ]
+    research_lab_consumptions = [
+        packet.get("evidence_contract", {}).get("research_lab_consumption")
+        for packet in work_packets
+        if isinstance(packet.get("evidence_contract"), dict)
+        and isinstance(packet.get("evidence_contract", {}).get("research_lab_consumption"), dict)
     ]
     return {
         "provider": "agentops-operator",
@@ -26146,8 +26379,11 @@ def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_c
             "agent_plan_quality_min_score": plan_quality_evidence.get("min_score"),
             "research_lab_packets": len(research_lab_packets),
             "research_lab_packet_hashes": [item.get("packet_hash") for item in research_lab_packets if item.get("packet_hash")],
+            "research_lab_consumptions": len(research_lab_consumptions),
+            "research_lab_consumed": sum(1 for item in research_lab_consumptions if item.get("consumed") is True),
+            "research_lab_consumption_missing": sum(1 for item in research_lab_consumptions if item.get("consumed") is not True),
             "can_confirm_all": bool(items) and all(item.get("can_confirm_bounded_loop") for item in items),
-            "record_required": any(item.get("should_record_before_execute") for item in items),
+            "record_required": any(item.get("should_record_before_execute") or item.get("status") == "record_first" for item in items),
             "current_code_ok": current_code.get("ok") is True,
         },
         "items": items,
