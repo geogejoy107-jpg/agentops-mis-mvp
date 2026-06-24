@@ -1273,9 +1273,12 @@ def cmd_operator_loop_supervision(args, client: AgentOpsClient) -> dict:
             "full_handoff": "true" if args.full_handoff else None,
             "freshness_hours": args.freshness_hours,
             "include_codex": "true" if args.include_codex else "false",
+            "work_packet": "true" if getattr(args, "work_packet", False) else None,
         },
     )
     if getattr(args, "work_packet", False):
+        if payload.get("operation") == "operator_loop_work_packet_bundle":
+            return payload
         return compact_loop_supervision_work_packets(payload)
     return payload
 
