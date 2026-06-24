@@ -144,6 +144,12 @@ export function WorkerConsole() {
       recordControlReadback: "Record control readback",
       serviceManagedLoop: "Service-managed loop",
       managedLoopReady: "managed loop ready",
+      managedExecutionPath: "Managed execution path",
+      managedExecutionSummary: "Service-managed readiness, Agent Plan, knowledge retrieval, dispatch, evidence report and review queue in one copy-only packet.",
+      nextManagedStep: "Next managed step",
+      dispatchCommand: "Dispatch command",
+      evidenceReport: "Evidence report",
+      reviewQueue: "Review queue",
       installedStatus: "installed",
       checkedStatus: "checked",
       receiptProof: "receipt",
@@ -238,6 +244,12 @@ export function WorkerConsole() {
       recordControlReadback: "记录控制回读",
       serviceManagedLoop: "服务托管 Loop",
       managedLoopReady: "托管 loop 就绪",
+      managedExecutionPath: "托管执行路径",
+      managedExecutionSummary: "把服务就绪、Agent Plan、知识检索、派发、证据报告和 review queue 收进同一个只读 packet。",
+      nextManagedStep: "下一步托管动作",
+      dispatchCommand: "派发命令",
+      evidenceReport: "证据报告",
+      reviewQueue: "Review Queue",
       installedStatus: "安装状态",
       checkedStatus: "检查状态",
       receiptProof: "回执",
@@ -386,6 +398,23 @@ export function WorkerConsole() {
   const serviceManagedLoop = (typeof localDeployment.service_managed_loop === "object" && localDeployment.service_managed_loop !== null
     ? localDeployment.service_managed_loop
     : {}) as Record<string, unknown>;
+  const managedExecutionPath = (typeof localDeployment.managed_execution_path === "object" && localDeployment.managed_execution_path !== null
+    ? localDeployment.managed_execution_path
+    : {}) as Record<string, unknown>;
+  const managedExecutionCommands = (typeof managedExecutionPath.commands === "object" && managedExecutionPath.commands !== null
+    ? managedExecutionPath.commands
+    : {}) as Record<string, unknown>;
+  const managedExecutionFirstSafe = Array.isArray(managedExecutionPath.first_safe_commands)
+    ? managedExecutionPath.first_safe_commands.map(String).filter(Boolean)
+    : [];
+  const managedExecutionVerify = Array.isArray(managedExecutionPath.verify_commands)
+    ? managedExecutionPath.verify_commands.map(String).filter(Boolean)
+    : [];
+  const managedExecutionGates = Array.isArray(managedExecutionPath.gates)
+    ? managedExecutionPath.gates.filter((gate): gate is Record<string, unknown> => typeof gate === "object" && gate !== null)
+    : [];
+  const managedExecutionStatus = String(managedExecutionPath.status || "attention");
+  const managedExecutionReady = managedExecutionPath.service_managed_loop_ready === true;
   const serviceInstallCommands = [
     { label: copy.serviceInstallPreview, command: serviceInstall.preview_command, status: serviceInstall.preview_command ? "pass" : "attention", confirm: false },
     { label: copy.confirmInstall, command: serviceInstall.confirm_command, status: serviceInstall.confirm_command ? "attention" : "blocked", confirm: true },
@@ -756,6 +785,51 @@ export function WorkerConsole() {
                   <StatusBadge status={serviceManagedLoop.loads_service ? "attention" : "pass"} label={copy.noServiceLoad} />
                   <StatusBadge status={(serviceManagedLoop.safety as Record<string, unknown> | undefined)?.server_executes_shell === false ? "pass" : "attention"} label={copy.noServerShell} />
                   <StatusBadge status={serviceManagedLoop.token_omitted === false ? "attention" : "pass"} label={copy.tokenOmitted} />
+                </div>
+                <div data-testid="worker-managed-execution-path" className="rounded p-3 mt-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <ShieldCheck size={12} style={{ color: managedExecutionReady ? "var(--mis-success)" : "var(--mis-warning)" }} />
+                        <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.managedExecutionPath}</div>
+                        <StatusBadge status={managedExecutionStatus} />
+                        <StatusBadge status={managedExecutionReady ? "pass" : "attention"} label={copy.managedLoopReady} />
+                      </div>
+                      <p className="text-[9px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>{copy.managedExecutionSummary}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {managedExecutionGates.slice(0, 8).map((gate) => (
+                        <StatusBadge key={String(gate.id || gate.proof)} status={String(gate.status || "required")} label={String(gate.id || "gate")} />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-3">
+                    {[
+                      { label: copy.nextManagedStep, command: managedExecutionFirstSafe[0] || managedExecutionCommands.service_control_receipt },
+                      { label: copy.dispatchCommand, command: managedExecutionCommands.customer_worker_dispatch },
+                      { label: copy.evidenceReport, command: managedExecutionCommands.evidence_report || managedExecutionVerify[0] },
+                      { label: copy.reviewQueue, command: managedExecutionCommands.review_queue || managedExecutionVerify[1] },
+                    ].map((item) => (
+                      <button
+                        key={item.label}
+                        type="button"
+                        onClick={() => void copyCommand(String(item.command || ""))}
+                        disabled={!item.command}
+                        className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0 disabled:opacity-40"
+                        style={{ color: "var(--mis-text)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                        title={String(item.command || "")}
+                      >
+                        <Copy size={9} />
+                        <span className="text-[9px] font-semibold shrink-0">{item.label}</span>
+                        <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{item.command ? (copiedCommand === item.command ? copy.copied : String(item.command)) : copy.noCommand}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <StatusBadge status={(managedExecutionPath.safety as Record<string, unknown> | undefined)?.server_executes_shell === false ? "pass" : "attention"} label={copy.noServerShell} />
+                    <StatusBadge status={(managedExecutionPath.safety as Record<string, unknown> | undefined)?.live_execution_performed ? "attention" : "pass"} label={copy.noLiveExecution} />
+                    <StatusBadge status={(managedExecutionPath.safety as Record<string, unknown> | undefined)?.token_omitted === false ? "attention" : "pass"} label={copy.tokenOmitted} />
+                  </div>
                 </div>
               </div>
             )}

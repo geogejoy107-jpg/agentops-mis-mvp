@@ -227,6 +227,9 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     service_preview = deployment.get("service_control_preview") or {}
     service_install = deployment.get("service_install") or {}
     service_managed_loop = deployment.get("service_managed_loop") or {}
+    managed_execution_path = deployment.get("managed_execution_path") or {}
+    managed_execution_commands = managed_execution_path.get("commands") or {}
+    managed_execution_gate_ids = {str(gate.get("id")) for gate in managed_execution_path.get("gates") or [] if isinstance(gate, dict)}
     worker_start = deployment.get("worker_start") or {}
     customer_dispatch = deployment.get("customer_worker_dispatch") or {}
     admission_commands = admission_packet.get("commands") or {}
@@ -245,6 +248,14 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     require(service_managed_loop.get("control_readback_required") is True, f"{adapter} service-managed readback requirement missing: {admission_packet}", failures)
     require((service_managed_loop.get("safety") or {}).get("loads_service") is False, f"{adapter} service-managed load boundary missing: {admission_packet}", failures)
     require((service_managed_loop.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} service-managed server-shell proof missing: {admission_packet}", failures)
+    require(managed_execution_path.get("operation") == "operator_service_managed_execution_path", f"{adapter} managed execution path missing: {admission_packet}", failures)
+    require(managed_execution_path.get("service_managed_loop_ready") in {True, False}, f"{adapter} managed execution readiness missing: {managed_execution_path}", failures)
+    require({"service_managed_loop_ready", "agent_plan_required", "knowledge_retrieval_required", "customer_worker_dispatch", "plan_evidence_required", "review_queue_required"}.issubset(managed_execution_gate_ids), f"{adapter} managed execution gates missing: {managed_execution_path}", failures)
+    require(str(managed_execution_commands.get("customer_worker_dispatch") or "").startswith("agentops workflow run-task"), f"{adapter} managed dispatch command missing: {managed_execution_path}", failures)
+    require(str(managed_execution_commands.get("evidence_report") or "").startswith("agentops operator evidence-report --run-id"), f"{adapter} managed evidence command missing: {managed_execution_path}", failures)
+    require(str(managed_execution_commands.get("review_queue") or "").startswith("agentops review queue"), f"{adapter} managed review command missing: {managed_execution_path}", failures)
+    require((managed_execution_path.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} managed execution server-shell proof missing: {managed_execution_path}", failures)
+    require(managed_execution_path.get("live_execution_performed") is False, f"{adapter} managed execution live proof missing: {managed_execution_path}", failures)
     require(service_install.get("preview_only_by_default") is True, f"{adapter} service-install preview proof missing: {admission_packet}", failures)
     require(service_install.get("loads_service") is False, f"{adapter} service-install must not load service: {admission_packet}", failures)
     require(service_install.get("server_executes_shell") is False, f"{adapter} service-install server-shell proof missing: {admission_packet}", failures)

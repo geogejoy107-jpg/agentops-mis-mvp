@@ -908,6 +908,129 @@ def operator_local_loop_admission_packet(
         dispatch_command,
         acceptance_step.get("command"),
     ]
+    service_managed_commands = service_managed_loop.get("commands") if isinstance(service_managed_loop.get("commands"), dict) else {}
+    service_managed_ready = service_managed_loop.get("service_managed_loop_ready") is True
+    evidence_report_command = "agentops operator evidence-report --run-id <run_id> --limit 1"
+    managed_execution_commands = {
+        "read_start_check": acceptance_commands.get("start_check"),
+        "current_code_check": current_code_command,
+        "service_check": service_managed_commands.get("service_check") or service_verify,
+        "service_control_receipt": service_managed_commands.get("record_verified_receipt") or acceptance_commands.get("receipt_readback"),
+        "service_control_readback": service_managed_commands.get("receipt_readback") or acceptance_commands.get("receipt_readback"),
+        "agent_plan_create": agent_commands.get("agent_plan_create"),
+        "knowledge_search": agent_commands.get("knowledge_search"),
+        "base_reference": agent_commands.get("base_reference"),
+        "adapter_preflight": acceptance_commands.get("adapter_preflight"),
+        "customer_worker_dispatch": dispatch_command,
+        "evidence_report": evidence_report_command,
+        "review_queue": acceptance_commands.get("review_queue") or agent_commands.get("review_queue"),
+    }
+    managed_execution_path = {
+        "operation": "operator_service_managed_execution_path",
+        "status": "ready" if service_managed_ready else "attention",
+        "adapter": adapter,
+        "workspace_id": workspace_id,
+        "service_managed_loop_ready": service_managed_ready,
+        "recommended_before_dispatch": (
+            "record_service_control_receipt_and_readback"
+            if not service_managed_ready
+            else "dispatch_customer_worker_task"
+        ),
+        "gates": [
+            {
+                "id": "service_managed_loop_ready",
+                "required": True,
+                "status": "pass" if service_managed_ready else "attention",
+                "proof": "verified service-control receipt and control readback are attached before treating local loop as service-managed",
+            },
+            {
+                "id": "current_code_ok",
+                "required": True,
+                "status": "pass" if current_code_gate.get("ok") is True else "blocked",
+                "proof": "running MIS instance matches the current source checkout before live adapter execution",
+            },
+            {
+                "id": "agent_plan_required",
+                "required": True,
+                "status": "required",
+                "proof": "each dispatched task must bind to an Agent Plan before adapter execution",
+            },
+            {
+                "id": "knowledge_retrieval_required",
+                "required": True,
+                "status": "required",
+                "proof": "Agent Plan must cite knowledge/memory/base context before execution",
+            },
+            {
+                "id": "adapter_preflight_required",
+                "required": True,
+                "status": "required",
+                "proof": "Hermes/OpenClaw route readiness and trust are checked before dispatch",
+            },
+            {
+                "id": "customer_worker_dispatch",
+                "required": True,
+                "status": "confirm_required" if live_required else "ready",
+                "proof": "live adapters require --confirm-run and dispatch writes normal MIS ledger evidence",
+            },
+            {
+                "id": "plan_evidence_required",
+                "required": True,
+                "status": "required",
+                "proof": "run must read back a verified plan_evidence_manifest or remain blocked for delivery",
+            },
+            {
+                "id": "review_queue_required",
+                "required": True,
+                "status": "required",
+                "proof": "memory candidates, approvals, and delivery acceptance close through review queue",
+            },
+        ],
+        "commands": {key: value for key, value in managed_execution_commands.items() if value},
+        "first_safe_commands": [
+            command
+            for command in (
+                _safe_text(managed_execution_commands.get("read_start_check"), 700),
+                _safe_text(managed_execution_commands.get("current_code_check"), 700),
+                _safe_text(managed_execution_commands.get("service_check"), 700),
+                _safe_text(managed_execution_commands.get("service_control_receipt"), 700),
+                _safe_text(managed_execution_commands.get("service_control_readback"), 700),
+                _safe_text(managed_execution_commands.get("agent_plan_create"), 700),
+                _safe_text(managed_execution_commands.get("knowledge_search"), 700),
+                _safe_text(managed_execution_commands.get("base_reference"), 700),
+                _safe_text(managed_execution_commands.get("adapter_preflight"), 700),
+            )
+            if command
+        ],
+        "confirm_required_commands": [
+            command
+            for command in (
+                _safe_text(managed_execution_commands.get("customer_worker_dispatch"), 700),
+            )
+            if command
+        ],
+        "verify_commands": [
+            command
+            for command in (
+                _safe_text(managed_execution_commands.get("evidence_report"), 700),
+                _safe_text(managed_execution_commands.get("review_queue"), 700),
+            )
+            if command
+        ],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "loads_service": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
     return {
         "operation": "operator_local_loop_admission_packet",
         "status": status,
@@ -980,6 +1103,7 @@ def operator_local_loop_admission_packet(
                 "token_omitted": True,
             },
             "service_managed_loop": service_managed_loop,
+            "managed_execution_path": managed_execution_path,
             "customer_worker_dispatch": {
                 "command": dispatch_command,
                 "verify_command": dispatch_verify,
@@ -1005,6 +1129,9 @@ def operator_local_loop_admission_packet(
             "service_install_confirm": launchd_service_install_confirm,
             "service_check": service_verify,
             "service_control_preview": service_command,
+            "managed_execution_next": (managed_execution_path.get("first_safe_commands") or [None])[0],
+            "managed_execution_dispatch": dispatch_command,
+            "managed_execution_evidence": evidence_report_command,
             "customer_worker_dispatch": dispatch_command,
             "live_acceptance": acceptance_step.get("command") or acceptance_commands.get("live_product_readiness"),
             "receipt_readback": acceptance_commands.get("receipt_readback") or agent_commands.get("receipt_readback"),
