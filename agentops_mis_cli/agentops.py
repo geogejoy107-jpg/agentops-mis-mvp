@@ -36,10 +36,41 @@ LOCAL_DEMO_DEFAULT_URL = os.environ.get("AGENTOPS_LOCAL_DEMO_DEFAULT_URL", DEFAU
 DEFAULT_WORKSPACE_ID = "local-demo"
 DEFAULT_REQUEST_TIMEOUT = 30
 CONFIG_PATH = Path(os.environ.get("AGENTOPS_CONFIG", "~/.agentops/config.json")).expanduser()
+REORDERABLE_GLOBAL_OPTIONS = {
+    "--base-url": True,
+    "--api-key": True,
+}
 
 
 def eprint(*parts):
     print(*parts, file=sys.stderr)
+
+
+def normalize_reorderable_global_options(argv: list[str] | None) -> list[str] | None:
+    """Allow connection flags after subcommands without changing command semantics."""
+    if argv is None:
+        return None
+    global_items: list[str] = []
+    rest: list[str] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token in REORDERABLE_GLOBAL_OPTIONS:
+            if index + 1 >= len(argv):
+                rest.append(token)
+                index += 1
+                continue
+            global_items.extend([token, argv[index + 1]])
+            index += 2
+            continue
+        matched = next((name for name in REORDERABLE_GLOBAL_OPTIONS if token.startswith(name + "=")), None)
+        if matched:
+            global_items.append(token)
+            index += 1
+            continue
+        rest.append(token)
+        index += 1
+    return [*global_items, *rest]
 
 
 def load_config() -> dict:
@@ -4552,7 +4583,7 @@ HANDLERS = {
 
 def main(argv=None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(normalize_reorderable_global_options(argv if argv is not None else sys.argv[1:]))
     context = resolved_context(args)
     client = AgentOpsClient(context)
     try:

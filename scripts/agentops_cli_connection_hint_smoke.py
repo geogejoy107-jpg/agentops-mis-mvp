@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SMOKE_GIT_HEAD = ""
 
 
 def require(condition: bool, message: str, failures: list[str]) -> None:
@@ -32,6 +33,7 @@ class ProbeHandler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib hook
+        git_head = SMOKE_GIT_HEAD
         if self.path == "/api/local/readiness":
             payload = {
                 "operation": "local_readiness",
@@ -39,7 +41,8 @@ class ProbeHandler(BaseHTTPRequestHandler):
                 "running_instance": {
                     "current": True,
                     "status": "current",
-                    "git_head_short": "probehead",
+                    "git_head_sha": git_head,
+                    "git_head_short": git_head[:12] if git_head else "probehead",
                     "server_started_after_source_mtime": True,
                 },
                 "token_omitted": True,
@@ -64,6 +67,7 @@ class ProbeHandler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
+    global SMOKE_GIT_HEAD
     failures: list[str] = []
     with tempfile.TemporaryDirectory(prefix="agentops-cli-connection-hint-") as tmp:
         probe_port = free_port()
@@ -88,6 +92,11 @@ def main() -> int:
         env = os.environ.copy()
         env["AGENTOPS_CONFIG"] = str(config_path)
         env["AGENTOPS_LOCAL_DEMO_DEFAULT_URL"] = probe_url
+        SMOKE_GIT_HEAD = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            text=True,
+        ).strip()
         env.pop("AGENTOPS_BASE_URL", None)
         proc = subprocess.run(
             [sys.executable, "-m", "agentops_mis_cli.agentops", "status"],
@@ -129,6 +138,32 @@ def main() -> int:
         require(doctor_probe.get("current_code_ok") is True and doctor_probe.get("current_code_status") == "current", f"doctor current-code probe missing: {doctor_payload}", failures)
         require(any("local demo default is ready" in str(item) for item in (doctor_payload.get("setup_hints") or [])), f"doctor repair hint missing: {doctor_payload}", failures)
         require("fake_token_should_not_print" not in doctor.stdout and "fake_token_should_not_print" not in doctor.stderr, "doctor leaked raw token", failures)
+        late_base_url = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "agentops_mis_cli.agentops",
+                "local",
+                "readiness",
+                "--base-url",
+                probe_url,
+                "--require-current-code",
+            ],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        try:
+            late_payload = json.loads(late_base_url.stdout)
+        except json.JSONDecodeError:
+            late_payload = {}
+        require(late_base_url.returncode == 0, f"late --base-url should parse after subcommands: rc={late_base_url.returncode} stdout={late_base_url.stdout} stderr={late_base_url.stderr}", failures)
+        require(late_payload.get("operation") == "local_readiness", f"late --base-url local readiness payload wrong: {late_payload}", failures)
+        require((late_payload.get("local_code_check") or {}).get("ok") is True, f"late --base-url current-code proof missing: {late_payload}", failures)
+        require("fake_token_should_not_print" not in late_base_url.stdout and "fake_token_should_not_print" not in late_base_url.stderr, "late --base-url path leaked raw token", failures)
         probe_server.shutdown()
         probe_server.server_close()
 
@@ -145,6 +180,7 @@ def main() -> int:
                     "local demo current-code probe",
                     "saved config repair hint",
                     "doctor stale-config probe",
+                    "late --base-url after subcommands",
                     "token omission",
                 ],
                 "failures": failures,
