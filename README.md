@@ -2,6 +2,13 @@
 
 这是一个面向“一人公司 / 小团队”的 **AgentOps MIS（AI 数字员工管理信息系统）** 本地原型包。它不是 LLM runtime、不是 agent builder；它是运行在 agent runtime 之上的管理控制面。默认本地优先、外部写入关闭，只有显式确认后才会尝试 Notion 导出或固定安全 runtime probe。
 
+Public claim boundary: v1.5 is for loopback local use, classroom demonstration,
+controlled dogfood and single-customer validation with explicit confirmation.
+It does not claim hosted SaaS, full multi-tenant RBAC, billing or universal
+runtime per-action governance. See
+`docs/PUBLIC_CLAIMS_AND_LIMITATIONS.md` before writing demos, release notes or
+customer-facing descriptions.
+
 - Agent Registry
 - Task Management
 - Run Ledger
@@ -79,10 +86,11 @@ npm run build
 4. 进入任务详情点击 `Start mock run`。
 5. 查看 `/runs` 和 `/tool-calls`。
 6. 如果生成高风险 tool call，进入 `/approvals` 批准或拒绝。
-7. Run 完成后查看 `/evaluations`。
-8. 查看 `/memory` 中的候选组织记忆，并批准/拒绝。
-9. 查看 `/audit` 的审计记录。
-10. 打开 `/integrations`，运行 OpenClaw 本地导入、OpenClaw 手动 probe、Hermes 手动 probe，并查看 Notion dry-run/export。
+7. 注意普通审批是账本/交付/审核决策；只有带 `prepared_action` 的审批才代表批准后可按 action hash 精确恢复，并且仍需要单独 resume。
+8. Run 完成后查看 `/evaluations`。
+9. 查看 `/memory` 中的候选组织记忆，并批准/拒绝。
+10. 查看 `/audit` 的审计记录。
+11. 打开 `/integrations`，运行 OpenClaw 本地导入、OpenClaw 手动 probe、Hermes 手动 probe，并查看 Notion dry-run/export。
 
 ## v1.2.1 可录屏复现路径
 
@@ -107,6 +115,25 @@ python3 scripts/demo_acceptance.py --start-server
 - Bases、connectors、template packages、migration preview。
 - SQLite 中 audit/runtime/template/bases 基础数据存在。
 
+除 Dify / Notion 之外的本地 runtime live 验收：
+
+```bash
+HERMES_ALLOW_REAL_RUN=true \
+HERMES_REQUIRE_CONFIRM_RUN=true \
+AGNESFALLBACK_GATEWAY_URL=http://127.0.0.1:8642 \
+python3 server.py
+
+python3 scripts/local_runtime_acceptance.py \
+  --live-openclaw \
+  --live-hermes \
+  --live-agnesfallback \
+  --live-agnesfallback-api \
+  --require-hermes-api \
+  --require-agnesfallback-api
+```
+
+这条验收会跑 Agent Gateway CLI smoke、OpenClaw import/probe、Hermes default gateway fixed run-task、Agnesfallback CLI fixed probe 和 Agnesfallback OpenAI-compatible fixed probe。它不会调用 Dify 或 Notion 写入路径。
+
 ## Local live recording mode
 
 默认可复现 demo 仍然是 dry-run，这是 GitHub clone 后最安全的行为。录制本机视频时，如果要展示一次真实 Agnesfallback fixed probe，可以按 `docs/LIVE_DEMO_RUNBOOK.md` 显式开启 live mode：
@@ -118,12 +145,13 @@ python3 scripts/demo_acceptance.py --start-server
 
 ## Pixel Office Demo Mode
 
-v1.3 增加了可选的 Star-Office-UI demo visualizer 适配层，用于把 AgentOps MIS 的 agents / runs / approvals / memory / audit 状态映射到本地像素办公室。
+v1.3 当前默认使用原创 React/CSS Pixel Operating Map，不复制 Star-Office-UI 资产。它把 AgentOps MIS 的 agents / tasks / runs / approvals / memory / audit 状态映射到一个可点击运营大厅。
 
-当前本地 demo 分两层：
+当前本地 demo 主入口：
 
-- `http://127.0.0.1:19000/workspace`：Pixel Office 前台。房间里会显示多个从 AgentOps MIS 映射出来的 Agent，并按运行量、成功率、失败数、审批数进入执行/同步/报警等区域。
-- `http://127.0.0.1:19001/workspace`：MIS 管理工作台。保留原 Figma/Vite UI 的任务、审批、Run Ledger、Memory、Connectors、Audit 等后台管理入口。
+- `http://127.0.0.1:19001/workspace/pixel-office`：原生 Pixel Office 前台。顾客可以提交任务、选择 AI 员工，并跳转到正式 MIS 页面。
+- `http://127.0.0.1:19001/admin`：MIS 后台管理端。查看控制塔、Run Ledger、Tool Calls、Evaluations、Connectors、External Bases 和 Audit。
+- `http://127.0.0.1:19000/workspace`：可选 legacy Star-Office visualizer，仅当你单独启动 Star-Office-UI 时使用。
 
 重要边界：
 
@@ -136,6 +164,404 @@ v1.3 增加了可选的 Star-Office-UI demo visualizer 适配层，用于把 Age
 
 - `docs/STAR_OFFICE_UI_DEMO_INTEGRATION.md`
 - `docs/PIXEL_OFFICE_ASSET_REPLACEMENT_PLAN.md`
+
+## Agent Gateway Customer Task Demo
+
+v1.4 增加了最小 Agent Gateway/API slice，用于让本机或远程 AI 员工通过 CLI/API/MCP 写入 MIS，而不是让 agent 操作浏览器 UI。
+
+客户本地部署、运维、远程 agent 接入、备份/恢复路径见：
+
+- `docs/CUSTOMER_LOCAL_DEPLOYMENT_RUNBOOK.md`
+- `docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md`
+
+本地 CLI wrapper / 可安装 CLI：
+
+```bash
+./scripts/agentops --help
+python3 scripts/install_agentops_cli.py
+agentops --help
+python3 -m pip install -e .
+python3 -m pip install .
+agentops doctor
+agentops status
+agentops demo readiness
+agentops local readiness
+agentops review queue
+agentops workflow delivery-board
+./scripts/agentops login --base-url http://127.0.0.1:8787 --workspace-id local-demo --agent-id agt_local_worker
+./scripts/agentops agent register --id agt_local_worker --name "Local Worker" --role "AI Digital Employee"
+./scripts/agentops task create \
+  --title "客户提交的 AI 知识库任务" \
+  --description "清洗资料、建立知识库、返回可验收的问答机器人交付摘要。" \
+  --owner-agent-id agt_local_worker \
+  --acceptance "必须写入 run/tool/evaluation/audit 证据。"
+./scripts/agentops task pull --agent-id agt_local_worker
+```
+
+`scripts/install_agentops_cli.py` installs a small local shim at `~/.local/bin/agentops`. It does not store tokens; auth remains env/config based.
+
+`pyproject.toml` also exposes the same command through a Python console script:
+
+```bash
+python3 -m pip install -e .
+# or, for a source-package style install:
+python3 -m pip install .
+agentops --help
+agentops doctor
+agentops status
+```
+
+This install path is intended for local/remote agent machines that already have a Python environment. It keeps the same JSON output contract and still reads auth from env/config; it does not create tokens by itself.
+The package uses a tiny offline build backend, so `python3 -m pip install .` does not need to download setuptools or wheel during local source installs.
+`agentops doctor` is a deployment gate as well as a diagnostic: local loopback
+demo mode returns exit code 0, but unsafe shared/production targets without a
+Gateway token return a non-zero exit code while still printing redacted JSON.
+
+已支持：
+
+```text
+agentops login
+agentops doctor
+agentops status
+agentops enrollment create/list/revoke/rotate
+agentops agent register
+agentops agent heartbeat
+agentops task create
+agentops task pull
+agentops task claim
+agentops run start
+agentops run heartbeat
+agentops toolcall record
+agentops artifact record
+agentops approval list
+agentops approval request
+agentops approval approve/reject
+agentops memory list
+agentops memory propose
+agentops memory approve/reject
+agentops eval submit
+agentops audit emit
+agentops review queue
+agentops workflow run-task
+```
+
+远程/外部 agent 最小接入：
+
+```bash
+./scripts/agentops enrollment create \
+  --agent-id agt_remote_builder \
+  --name "Remote Builder" \
+  --runtime openclaw \
+  --save-token
+
+./scripts/agentops agent heartbeat --id agt_remote_builder --status idle
+./scripts/agentops task pull --agent-id agt_remote_builder
+./scripts/agentops enrollment rotate --agent-id agt_remote_builder --ttl-days 30
+```
+
+远程 token + worker 完整 smoke：
+
+```bash
+python3 scripts/remote_agent_token_worker_smoke.py
+python3 scripts/enrollment_rotation_smoke.py
+python3 scripts/workspace_isolation_smoke.py
+python3 scripts/agentops_pip_install_smoke.py
+python3 scripts/agentops_doctor_smoke.py
+python3 scripts/agentops_worker_status_smoke.py
+python3 scripts/agentops_task_create_cli_smoke.py
+python3 scripts/agent_gateway_task_create_scope_smoke.py
+python3 scripts/agentops_workflow_run_task_smoke.py
+```
+
+它会创建 scoped token、创建一个普通 MIS 任务、用 token 跑 `scripts/agent_worker.py --once`、验证 run/tool/eval 证据，并默认吊销 token。
+Rotation smoke 会验证 API/CLI token 轮换：旧 token 变为 revoked，新 token active，输出不包含原始 token。
+Workspace isolation smoke 会验证：token 绑定 workspace A 后，只能 pull/claim/start/write workspace A 的任务和 run；header/query/body 伪造 workspace B 会返回 403。
+
+注意：
+
+- enrollment token 只在创建响应里显示一次，MIS 只存 hash。
+- token 绑定 `agent_id`，不能冒充其他 agent。
+- token 绑定 `workspace_id`，不能通过 header/query/body 切换到其他 workspace。
+- API 会检查 endpoint scope，例如 `tasks:create`、`tasks:read`、`runs:write`、`audit:write`。
+- `./scripts/agentops demo readiness` 可查看 v1.5 录屏主路径是否齐备：local readiness、安全边界、worker fleet lanes、async inbox、客户任务闭环和 run ledger 证据。它只读，不启动 worker、不写账本、不触发 live runtime。
+- `./scripts/agentops commander plan --goal "..."` 可把一个客户/项目目标预览拆成多条 AI 团队工作包；加 `--confirm-create` 后才写入 planned MIS tasks，并记录 commander runtime/audit evidence。`./scripts/agentops commander packages` 可读回持久化工作包状态、最新 run 和 evidence counts。浏览器入口在 `/workspace/agents` 的 Commander Work Package Planner，详见 `docs/COMMANDER_WORK_PACKAGE_PLANNER.md`。
+- `./scripts/agentops worker status` 可从命令行查看 worker fleet、daemon、pending task 和 stuck task 状态。
+- `./scripts/agentops worker hygiene` 默认只读，会列出 stuck worker tasks 和超过阈值仍 never-seen 的 enrollment；只有加 `--apply --confirm-cleanup` 才释放任务、吊销 stale token，并写入 audit/runtime evidence。
+- `./scripts/agentops local readiness` 可查看单机开源版闭环体检：Agent Gateway、worker route、memory/knowledge、approval、task->run->tool/eval/audit/artifact 证据、runbook 是否齐备。它只读，不启动 worker、不拉任务、不触发 Hermes/OpenClaw live runtime。返回里的 `local_run_path` 会给出可复制的启动、预检、worker、service-control 预览、派活和验收命令；这些命令只展示给操作者复制执行，server 不会代替用户执行 shell。
+- `./scripts/agentops worker preflight --adapter mock|hermes|openclaw` 可从主 CLI 执行只读 Gateway/adapter 预检，不拉任务、不写账本、不触发 live runtime。
+- `./scripts/agentops worker start|stop|logs` 可从命令行控制本地 worker daemon；Hermes/OpenClaw start 必须显式 `--confirm-run`。
+- `./scripts/agentops enrollment revoke --agent-id agt_remote_builder` 可吊销该 agent 的 active token。
+- `/admin/connectors` 可把 runtime connector 标记为 trusted / review_required / blocked；blocked 的 Hermes/OpenClaw connector 会阻止 confirmed customer worker live execution，并写入 runtime event 与 audit。
+
+知识库机器人客户任务演示：
+
+```bash
+python3 scripts/run_kb_bot_demo.py
+python3 scripts/kb_bot_demo_smoke.py
+python3 scripts/kb_bot_workflow_api_smoke.py
+python3 scripts/customer_worker_task_workflow_smoke.py
+python3 scripts/customer_worker_live_dogfood.py --adapter hermes
+python3 scripts/customer_worker_live_dogfood.py --adapter openclaw
+```
+
+CLI 方式从客户/外部 agent 侧派发 worker 任务：
+
+```bash
+./scripts/agentops workflow customer-worker-task \
+  --adapter mock \
+  --title "优化 AgentOps MIS 客户工作台" \
+  --description "以客户视角审视任务创建、AI 执行、审批、评估、审计和交付报告闭环。" \
+  --acceptance "必须返回 run、tool、evaluation、audit 和 artifact 证据。"
+```
+
+交付完成后，用只读看板确认客户结果确实进入 MIS 管理账本：
+
+```bash
+./scripts/agentops review queue --limit 12
+./scripts/agentops workflow delivery-board --limit 10
+./scripts/agentops approval list --decision pending --limit 10
+./scripts/agentops approval approve --approval-id ap_...
+./scripts/agentops memory list --status candidate --limit 10
+./scripts/agentops memory approve --memory-id mem_...
+curl -fsS http://127.0.0.1:8787/api/workflows/customer-delivery-board?limit=10 | jq .
+curl -fsS http://127.0.0.1:8787/api/review/queue?limit=12 | jq .
+```
+
+这个看板聚合 delivery artifact、task、run、approval、evaluation、audit evidence 和下一步动作；它不启动 worker、不写账本、不触发 live runtime。交付审批可以继续走浏览器 `/workspace/approvals`，也可以用 `agentops approval approve/reject` 在 CLI 里完成；项目记忆候选同理可在 `/memory` 或 `agentops memory approve/reject` 审核。
+`agentops review queue` 是更高层的人类审核队列：它把待审批 gate、候选记忆和客户交付状态合到一个只读列表里，适合总指挥在多个 worker/子线程速度不同的时候先处理已返回的工作。浏览器/本地 UI 保留 `GET /api/review/queue`；CLI/远程 agent 使用 scoped Agent Gateway 路径 `GET /api/agent-gateway/review/queue`，token 需要 `tasks:read`，并且只返回该 token 绑定 workspace/agent 可见的队列项。
+`agentops approval list` 和 `agentops memory list` 也走 scoped Agent Gateway 读路径；远程 agent 可以看见自己可见任务/运行关联的审核项，但 approve/reject 仍是人类/管理员决策，不给 agent token 自动越权。
+
+更底层的 agent/API 方式是先创建普通 MIS 任务，再由 worker 拉取执行：
+
+```bash
+./scripts/agentops task create \
+  --title "优化 AgentOps MIS 客户工作台" \
+  --description "以客户视角审视任务创建、AI 执行、审批、评估、审计和交付报告闭环。" \
+  --owner-agent-id agt_local_worker \
+  --priority high \
+  --risk medium
+
+agentops-worker --once --adapter mock --agent-id agt_local_worker
+```
+
+这条路径用于本地或远程 agent 接入：浏览器 UI 给人看、审批和复盘；agent 使用 CLI/API 创建/拉取/认领任务并写回证据。
+
+也可以用一条 CLI 命令完成“创建普通任务并执行一次 worker”：
+
+```bash
+./scripts/agentops workflow run-task \
+  --adapter mock \
+  --worker-agent-id agt_local_worker \
+  --title "优化 AgentOps MIS 客户工作台" \
+  --description "以客户视角审视任务创建、AI 执行、审批、评估、审计和交付报告闭环。"
+```
+
+Hermes/OpenClaw 真实执行仍必须显式加 `--confirm-run`。
+
+预定义客户项目模板也可以不经过浏览器，直接给本地/远程 agent 或脚本调用：
+
+```bash
+./scripts/agentops workflow templates
+./scripts/agentops workflow run-template --template-id tpl_customer_kb_qa_bot
+```
+
+这会走 `GET /api/workflows/customer-task-templates` 和 `POST /api/workflows/customer-task-templates/run`，返回 project/task/run/artifact/approval/report URL 等账本证据。
+
+如果要让模板真的调用本地/远程 agent worker，而不是只走模板默认安全工作流，可以显式指定 adapter：
+
+```bash
+./scripts/agentops workflow run-template \
+  --template-id tpl_customer_ui_review \
+  --adapter openclaw \
+  --confirm-run \
+  --request-timeout 420
+```
+
+`mock` 会立即写真实账本；`hermes` / `openclaw` 必须加 `--confirm-run`，否则只创建 planned task。长任务可用 `--request-timeout` 或 `AGENTOPS_REQUEST_TIMEOUT`。
+
+更像产品/远程 agent 的用法是异步提交再轮询：
+
+```bash
+./scripts/agentops workflow run-template \
+  --template-id tpl_customer_ui_review \
+  --adapter hermes \
+  --confirm-run \
+  --async-job
+
+./scripts/agentops workflow job-status --job-id wfjob_... --wait --timeout 420
+```
+
+这避免真实 Hermes/OpenClaw 长任务占住一个同步 HTTP 请求，同时仍然回写 run、tool、evaluation、audit、artifact、memory 和 approval。
+
+它会模拟 AI 团队完成“正式 AI 知识库 / 问答机器人”项目：
+
+- 注册 Project Planner、Document Cleaner、Knowledge Base Builder、Q&A Evaluator、Customer Report Writer。
+- 创建并认领任务。
+- 写入 Run Ledger、Tool Calls、Runtime Events、Evaluations、Memories 和 Audit。
+- 通过 Agent Gateway 登记一份客户交付摘要 artifact，可从任务/运行详情看到。
+- 对 Dify / OpenAI File Search / AnythingLLM 外部上传创建 pending approval，不上传原始资料、不保存凭证。
+- 也可以从 Pixel Office 里的“一键生成知识库机器人项目”按钮触发同一条浏览器工作流，后端接口是 `POST /api/workflows/kb-bot-project`。
+- Pixel Office 的客户派活面板也能触发 `POST /api/workflows/customer-worker-task`：客户任务进入 Agent Gateway worker，mock/Hermes/OpenClaw adapter 执行后写回 run、tool call、evaluation、audit、`customer_worker_result` artifact、`agent_plan` 和 verified `plan_evidence_manifest`。交付审批只会在 manifest 门禁通过后生成；Hermes/OpenClaw 仍需显式确认。
+
+## v1.5 Local Agent Worker Loop
+
+`agentops-worker` 是可安装的 worker daemon 命令。它通过 Agent Gateway API 拉取普通 MIS 任务，认领后调用 adapter，并把 run/tool/eval/artifact/audit、`agent_plan` 和 `plan_evidence_manifest` 写回 MIS。`scripts/agent_worker.py` 仍保留为 repo-local 兼容 wrapper，供本地 UI/smoke 继续使用。
+
+Hermes/OpenClaw 监督 loop 也可以作为 MIS workflow 运行：
+
+```bash
+agentops workflow hermes-openclaw-loop \
+  --topic "Review the next AgentOps MIS loop guardrail" \
+  --rounds 1
+
+agentops workflow hermes-openclaw-loop --readback --loop-id loop_...
+```
+
+这条 lane 默认 dry-run，live Hermes/OpenClaw 需要 `--confirm-live`。运行时写入 parent/child task/run、tool/eval/artifact/audit、每条 lane 的 `agent_plan` 和 `plan_evidence_manifest`；`--resume` 会复用 `.agentops_runtime/loops/` 里的 gitignored JSONL 继续缺失轮次，blocked lane 会保留 blocked manifest 供 operator 回读。
+
+8 点产品闭环目标与总 spec 见 `docs/V1_5_EIGHT_PRODUCT_CLOSURE_SPEC.md`。
+
+客户/远程机器安装后运行：
+
+```bash
+python3 -m pip install .
+agentops doctor
+agentops worker preflight --adapter mock --agent-id agt_worker_local
+agentops-worker preflight --adapter mock --agent-id agt_worker_local
+agentops-worker --once --adapter mock --agent-id agt_worker_local
+agentops-worker --adapter mock --poll-interval 5 --max-tasks 0 --continue-on-error --write-state --jsonl-log
+agentops-worker service-template --manager launchd --adapter mock --agent-id agt_worker_local > ~/Library/LaunchAgents/local.agentops.worker.agt_worker_local.plist
+agentops-worker service-install --manager launchd --adapter mock --agent-id agt_worker_local
+agentops-worker service-install --manager launchd --adapter mock --agent-id agt_worker_local --confirm-install
+agentops-worker service-template --manager systemd --adapter mock --agent-id agt_worker_local > ~/.config/systemd/user/agentops-worker-agt_worker_local.service
+agentops-worker service-check --manager launchd --adapter mock --agent-id agt_worker_local
+agentops worker service-check --manager launchd --adapter mock --agent-id agt_worker_local
+agentops worker service-install --manager launchd --adapter mock --agent-id agt_worker_local
+agentops worker service-control --manager launchd --action restart --adapter mock --agent-id agt_worker_local
+```
+
+安装版 worker 默认把 state 写入 `~/.agentops/workers`；repo 内 wrapper 默认写入 `.agentops_runtime/workers`。可用 `AGENTOPS_WORKER_RUNTIME_DIR` 覆盖 state 目录，用 `AGENTOPS_WORKER_CWD` 覆盖 OpenClaw adapter 的执行目录。
+`service-template` 只生成带 token placeholder 的 launchd/systemd 模板，不会自动安装、加载服务，也不会写入真实 token。
+`agentops-worker service-install` 和 `agentops worker service-install` 默认只做 dry-run；加 `--confirm-install` 后才把安全模板写到 launchd/systemd 路径，文件权限为 `0600`，仍不会写入真实 token、不会加载服务、不会启动 worker。
+`agentops worker preflight` 和 `agentops-worker preflight` 都是只读 adapter 预检：检查 Gateway/adapter 可用性，不执行真实任务、不写账本、不保存 prompt/response。
+`agentops-worker service-check` 和 `agentops worker service-check` 是只读服务诊断：检查 launchd/systemd 模板文件、adapter 参数、session/confirm-run 保护、自动重启策略（launchd `KeepAlive=true` / systemd `Restart=always`）、服务加载状态和 token-like 泄露风险，不会安装、加载、重启服务，也不会打印服务文件原文。
+`agentops-worker service-control` 和 `agentops worker service-control` 默认只预览 launchd/systemd load/unload/restart 命令；只有加 `--confirm-control` 才调用本机服务管理器。Hermes/OpenClaw 服务模板如果缺少 `--confirm-run` 会拒绝 load/restart，含 token-like 内容的服务文件也会被拦截。
+完整本地/远程 worker 运维路径见 `docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md`。
+
+单轮 mock：
+
+```bash
+python3 scripts/agent_worker.py --once --adapter mock --agent-id agt_worker_local
+```
+
+本地闭环体检：
+
+```bash
+curl -fsS http://127.0.0.1:8787/api/local/readiness | jq .
+./scripts/agentops local readiness
+python3 scripts/local_readiness_smoke.py
+```
+
+这条检查会汇总 `/workspace/agents`、Agent Gateway CLI/API、memory/knowledge、approval、run/tool/eval/audit/artifact 证据链和本地 runbook；它不执行任务，也不会打印 token。
+
+单轮 Hermes live adapter：
+
+```bash
+python3 scripts/agent_worker.py \
+  --once \
+  --adapter hermes \
+  --confirm-run \
+  --agent-id agt_worker_local \
+  --hermes-gateway-url http://127.0.0.1:8642
+```
+
+单轮 OpenClaw live adapter：
+
+```bash
+python3 scripts/agent_worker.py \
+  --once \
+  --adapter openclaw \
+  --confirm-run \
+  --agent-id agt_worker_local
+```
+
+循环模式：
+
+```bash
+python3 scripts/agent_worker.py --adapter mock --poll-interval 5 --max-tasks 10
+python3 scripts/agent_worker.py --adapter mock --poll-interval 5 --max-tasks 0 --continue-on-error --max-errors 5 --write-state --jsonl-log
+```
+
+浏览器派发：
+
+- `/workspace/agents` 现在有 “本地 Worker 循环 / Local Worker Loop” 面板。
+- `/workspace/agents` 现在也有 “客户任务派发 / Customer Task Dispatch” 面板：用户填写一个正常业务任务，选择 mock/Hermes/OpenClaw adapter，系统通过 `POST /api/workflows/customer-worker-task` 创建任务、执行 worker，并显示 task/run/artifact/evidence/plan-evidence 链接。
+- 它可以从页面触发一次 `mock`、`Hermes` 或 `OpenClaw` worker run。
+- 它也可以启动/停止本地 mock / Hermes / OpenClaw daemon，让 worker 持续拉取普通 MIS 任务。
+- 它可以查看 “Worker Fleet 观测 / Worker Fleet Telemetry”，包括 daemon 状态计数、错误计数、state 文件路径、日志尾部和最近 Agent Gateway runtime events。
+- 它也包含 “远程 Agent 接入 / Remote Agent Enrollment” 面板，可以用权限预设创建、查看、轮换和吊销 scoped enrollment token；原始 token 只在创建/轮换后显示一次。
+- 后端会先创建普通 MIS 任务，再调用 `scripts/agent_worker.py --once`，结果写入 Run Ledger、Tool Calls、Evaluations 和 Audit。
+- Hermes/OpenClaw 页面派发仍会带显式确认，不改变默认安全策略。
+
+Worker API：
+
+```bash
+curl -fsS http://127.0.0.1:8787/api/workers/status | jq .
+curl -fsS -X POST http://127.0.0.1:8787/api/workers/local/dispatch-once \
+  -H "Content-Type: application/json" \
+  -d '{"adapter":"mock"}' | jq .
+curl -fsS -X POST http://127.0.0.1:8787/api/workers/local/start \
+  -H "Content-Type: application/json" \
+  -d '{"adapter":"mock","poll_interval":2,"max_tasks":0}' | jq .
+curl -fsS -X POST http://127.0.0.1:8787/api/workers/local/stop \
+  -H "Content-Type: application/json" \
+  -d '{"adapter":"all"}' | jq .
+python3 scripts/worker_daemon_resilience_smoke.py
+```
+
+边界：
+
+- 不调用 Dify / Notion。
+- 不保存完整 prompt、raw response、credentials、transcripts。
+- Hermes/OpenClaw 真实执行必须显式传 `--confirm-run`。
+- 页面 daemon 控制是本地录屏/自用 supervisor；现在有 state/JSONL/error counters 和 bounded continue-on-error，但仍不是 launchd/systemd 或远程 fleet manager。
+- worker 已可通过 Python source package 安装为 `agentops-worker`，也保留 repo-local wrapper；远程 enrollment 已有 MVP UI/API/CLI、scope preset、token rotation、short-lived session 和最小 workspace isolation，但还不是完整 RBAC、hosted 多租户产品或签名安装器。
+
+Dify 可以作为本地或客户服务器上的 agent 工具层，而不是 MIS 的替代品。MIS 负责记录任务、运行、工具、审批、评估和审计；Dify 负责知识库/工作流/问答应用。查看 Dify 当前信任域和配置：
+
+```bash
+curl -fsS http://127.0.0.1:8787/api/integrations/dify/status | jq .
+```
+
+本地 agent 触发一次安全 dry-run：
+
+```bash
+python3 scripts/dify_local_agent_demo.py
+```
+
+本地/私有 Dify 真正上传需要显式环境变量和确认：
+
+```bash
+export DIFY_API_BASE_URL="http://127.0.0.1:8088/v1"
+export DIFY_KB_API_KEY="..."
+export DIFY_DATASET_ID="..."
+export DIFY_ALLOW_REAL_UPLOAD=true
+python3 scripts/dify_local_agent_demo.py --confirm-upload
+```
+
+云端或跨信任域 Dify 默认还需要传入已批准的 `approval_id`。不管 dry-run 还是真实上传，MIS 都不会保存 API key 或完整文档正文。
+
+录屏可看：
+
+- `/workspace/pixel-office`
+- `/workspace/tasks`
+- `/admin/runs`
+- `/admin/toolcalls`
+- `/workspace/approvals`
+- `/admin/evaluations`
+- `/admin/audit`
+
+详情见 `docs/AI_KNOWLEDGE_BASE_BOT_DEMO.md`。
 
 Dry-run 预览 payload：
 

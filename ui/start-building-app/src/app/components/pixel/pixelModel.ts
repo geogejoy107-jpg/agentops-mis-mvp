@@ -1,6 +1,8 @@
 import type { Agent, Approval, AuditLog, Memory, Run, Task } from "../../data/mockData";
 import type { DashboardMetrics } from "../../data/liveApi";
 
+export type PixelLocale = "en" | "zh";
+
 export type PixelZoneId =
   | "control_tower"
   | "agent_lobby"
@@ -237,6 +239,118 @@ export const PIXEL_ZONE_BY_ID = PIXEL_ZONES.reduce<Record<PixelZoneId, PixelZone
   acc[zone.id] = zone;
   return acc;
 }, {} as Record<PixelZoneId, PixelZoneDefinition>);
+
+const ZONE_COPY: Record<PixelZoneId, { zh: { label: string; description: string; metricLabel: string }; en: { label: string; description: string; metricLabel: string } }> = {
+  control_tower: {
+    en: { label: "Control Tower", description: "KPI, runtime health, cost, risk and incident overview.", metricLabel: "KPI" },
+    zh: { label: "控制塔", description: "查看 KPI、运行时健康、成本、风险和故障概览。", metricLabel: "指标" },
+  },
+  agent_lobby: {
+    en: { label: "Agent Lobby", description: "Agent identity, role, permission, owner and runtime status.", metricLabel: "agents" },
+    zh: { label: "代理大厅", description: "管理 AI 员工身份、角色、权限、负责人和运行状态。", metricLabel: "代理" },
+  },
+  task_hall: {
+    en: { label: "Task Hall", description: "Task queue, dispatch, assignment, priority and risk triage.", metricLabel: "tasks" },
+    zh: { label: "派活大厅", description: "客户任务队列、派工、优先级、风险和验收标准。", metricLabel: "任务" },
+  },
+  run_stream: {
+    en: { label: "Run Stream", description: "Run ledger, delegation chain, runtime history and replay entry.", metricLabel: "runs" },
+    zh: { label: "运行流水", description: "查看运行账本、父子代理链路、历史记录和复盘入口。", metricLabel: "运行" },
+  },
+  runtime_lab: {
+    en: { label: "Runtime Lab", description: "OpenClaw, Hermes, Agnesfallback and OpenAI-compatible runtime connectors.", metricLabel: "runtime" },
+    zh: { label: "运行时实验室", description: "管理 OpenClaw、Hermes、Agnesfallback 和 OpenAI-compatible 接口。", metricLabel: "连接器" },
+  },
+  tool_workshop: {
+    en: { label: "Tool Workshop", description: "GitHub, shell, browser, API, Notion and other tool-call execution evidence.", metricLabel: "tools" },
+    zh: { label: "工具工坊", description: "追踪 GitHub、Shell、浏览器、API、Notion 等工具调用证据。", metricLabel: "工具" },
+  },
+  approval_gate: {
+    en: { label: "Approval Gate", description: "High-risk action approval, rejection, escalation and evidence capture.", metricLabel: "pending" },
+    zh: { label: "审批闸口", description: "处理高风险动作的批准、拒绝、升级和证据留存。", metricLabel: "待审" },
+  },
+  evaluation_room: {
+    en: { label: "Evaluation Room", description: "Quality gates, evaluator scores, pass/fail reasons and improvement loops.", metricLabel: "quality" },
+    zh: { label: "质量评估室", description: "查看质量门、评分、通过/失败原因和改进闭环。", metricLabel: "质量" },
+  },
+  memory_archive: {
+    en: { label: "Memory Archive", description: "SOPs, decisions, memory candidates, failure cases and provenance review.", metricLabel: "memory" },
+    zh: { label: "记忆档案馆", description: "审核 SOP、决策、候选记忆、失败案例和来源证据。", metricLabel: "记忆" },
+  },
+  external_base_dock: {
+    en: { label: "External Base Dock", description: "Notion, W&B, Plane, Docmost and Mattermost sync configuration.", metricLabel: "sync" },
+    zh: { label: "外部库码头", description: "配置 Notion、W&B、Plane、Docmost、Mattermost 等外部库同步。", metricLabel: "同步" },
+  },
+  audit_vault: {
+    en: { label: "Audit Vault", description: "Append-only audit events, hash-chain proof, actor/action/entity evidence.", metricLabel: "audit" },
+    zh: { label: "审计保险库", description: "保存追加式审计事件、哈希链证明和操作者证据。", metricLabel: "审计" },
+  },
+  incident_corner: {
+    en: { label: "Incident Corner", description: "Failed runs, blocked tasks, runtime errors and recovery pointers.", metricLabel: "failed" },
+    zh: { label: "故障角", description: "集中处理失败运行、阻塞任务、运行时错误和恢复线索。", metricLabel: "故障" },
+  },
+  template_market: {
+    en: { label: "Template Market", description: "Template packages, base binding previews and safe migration checks.", metricLabel: "templates" },
+    zh: { label: "模板市场", description: "管理模板包、外部库绑定预览和安全迁移检查。", metricLabel: "模板" },
+  },
+};
+
+const TASK_GROUP_COPY: Record<PixelTaskGroup, { en: string; zh: string }> = {
+  "New / Planned": { en: "New / Planned", zh: "新建 / 已计划" },
+  Running: { en: "Running", zh: "运行中" },
+  "Waiting Approval": { en: "Waiting Approval", zh: "等待审批" },
+  Completed: { en: "Completed", zh: "已完成" },
+  "Failed / Blocked": { en: "Failed / Blocked", zh: "失败 / 阻塞" },
+};
+
+const STATUS_COPY: Record<string, { en: string; zh: string }> = {
+  running: { en: "Running", zh: "运行中" },
+  completed: { en: "Completed", zh: "已完成" },
+  planned: { en: "Planned", zh: "已计划" },
+  backlog: { en: "Backlog", zh: "待排期" },
+  waiting_approval: { en: "Waiting approval", zh: "等待审批" },
+  pending_approval: { en: "Pending approval", zh: "待审批" },
+  failed: { en: "Failed", zh: "失败" },
+  blocked: { en: "Blocked", zh: "阻塞" },
+  error: { en: "Error", zh: "错误" },
+  idle: { en: "Idle", zh: "空闲" },
+  unavailable: { en: "Unavailable", zh: "不可用" },
+  candidate_review: { en: "Candidate review", zh: "候选审核" },
+  syncing: { en: "Syncing", zh: "同步中" },
+  auditing: { en: "Auditing", zh: "审计中" },
+};
+
+export function zoneDisplay(zone: PixelZoneDefinition, locale: PixelLocale) {
+  return ZONE_COPY[zone.id]?.[locale] || {
+    label: zone.label,
+    description: zone.description,
+    metricLabel: zone.metricLabel,
+  };
+}
+
+export function taskGroupDisplay(group: PixelTaskGroup, locale: PixelLocale) {
+  return TASK_GROUP_COPY[group]?.[locale] || group;
+}
+
+export function statusDisplay(status: string, locale: PixelLocale) {
+  return STATUS_COPY[status]?.[locale] || status.replaceAll("_", " ");
+}
+
+export function externalSyncDisplay(value: string, locale: PixelLocale) {
+  if (locale !== "zh") return value;
+  if (value === "review queue") return "审核队列";
+  if (value === "Notion dry-run ready") return "Notion 安全预演就绪";
+  return value;
+}
+
+export function runtimeHealthDisplay(value: string, locale: PixelLocale) {
+  if (locale !== "zh") return value;
+  if (value === "ready") return "就绪";
+  if (value === "mixed") return "混合";
+  if (value === "demo-safe") return "演示安全";
+  if (value === "unavailable") return "不可用";
+  return value;
+}
 
 export const DEMO_AGENTS: PixelAgent[] = [
   {
@@ -495,34 +609,35 @@ export function derivePixelMetrics(input: {
   };
 }
 
-export function formatZoneMetric(zoneId: PixelZoneId, metrics: PixelMetrics): string {
+export function formatZoneMetric(zoneId: PixelZoneId, metrics: PixelMetrics, locale: PixelLocale = "en"): string {
+  const zh = locale === "zh";
   switch (zoneId) {
     case "agent_lobby":
       return String(metrics.totalAgents);
     case "task_hall":
       return String(metrics.blockedTasks + metrics.activeRuns);
     case "runtime_lab":
-      return metrics.runtimeHealth;
+      return runtimeHealthDisplay(metrics.runtimeHealth, locale);
     case "tool_workshop":
-      return `${metrics.activeRuns} active`;
+      return zh ? `${metrics.activeRuns} 个活跃` : `${metrics.activeRuns} active`;
     case "approval_gate":
-      return `${metrics.pendingApprovals} pending`;
+      return zh ? `${metrics.pendingApprovals} 个待审` : `${metrics.pendingApprovals} pending`;
     case "evaluation_room":
-      return `${metrics.failedQualityGates} failed`;
+      return zh ? `${metrics.failedQualityGates} 个失败` : `${metrics.failedQualityGates} failed`;
     case "memory_archive":
-      return `${metrics.memoryCandidates} candidates`;
+      return zh ? `${metrics.memoryCandidates} 条候选` : `${metrics.memoryCandidates} candidates`;
     case "audit_vault":
-      return `${metrics.auditEvents} events`;
+      return zh ? `${metrics.auditEvents} 条事件` : `${metrics.auditEvents} events`;
     case "external_base_dock":
-      return metrics.externalSyncState;
+      return externalSyncDisplay(metrics.externalSyncState, locale);
     case "run_stream":
-      return `${metrics.totalRuns} runs`;
+      return zh ? `${metrics.totalRuns} 次运行` : `${metrics.totalRuns} runs`;
     case "incident_corner":
-      return `${metrics.failedRuns + metrics.blockedTasks} open`;
+      return zh ? `${metrics.failedRuns + metrics.blockedTasks} 个未解` : `${metrics.failedRuns + metrics.blockedTasks} open`;
     case "template_market":
-      return "packages";
+      return zh ? "模板包" : "packages";
     case "control_tower":
     default:
-      return "live MIS";
+      return zh ? "实时 MIS" : "live MIS";
   }
 }

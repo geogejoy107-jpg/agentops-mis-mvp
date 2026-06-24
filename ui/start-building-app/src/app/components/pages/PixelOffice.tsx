@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { ArrowRight, ExternalLink, Map, MonitorCog, ShieldCheck, Sparkles } from "lucide-react";
 import { OperationsBar } from "../pixel/OperationsBar";
+import { CustomerDispatchPanel } from "../pixel/CustomerDispatchPanel";
 import { PixelOperatingMap } from "../pixel/PixelOperatingMap";
 import {
   derivePixelAgents,
@@ -9,6 +10,7 @@ import {
   deriveTaskCards,
   PIXEL_ZONES,
   type PixelMetrics,
+  zoneDisplay,
 } from "../pixel/pixelModel";
 import {
   loadAgents,
@@ -139,6 +141,7 @@ export function PixelOffice() {
       boundaryTitle: "Asset and authority boundary",
       boundaryBody: "This v1.3 map uses original React/CSS geometry only. No Star-Office, paid tileset or third-party sprite assets are copied into the product UI.",
       authority: "AgentOps MIS remains the authority system for state, permissions, evaluations and audit.",
+      zones: "Mapped rooms",
     },
     zh: {
       title: "Agent-MIS 像素运营大厅",
@@ -152,12 +155,13 @@ export function PixelOffice() {
       routingTitle: "区域路由契约",
       routingBody: "每个房间都对应一个已有 MIS 页面。运营大厅负责定位和导航，不重复替代正式账本。",
       stateTitle: "状态来源",
-      stateBody: "代理位置来自 AgentOps MIS 的 agents、tasks、runs、approvals、memories 和 audit events。只有实时数据不足时才使用演示 sprite。",
+      stateBody: "代理位置来自 AgentOps MIS 的正式账本：代理、任务、运行、审批、记忆和审计事件。只有实时数据不足时才使用演示占位角色。",
       agentsPlaced: "已放置代理",
       taskCards: "任务卡片",
       boundaryTitle: "资产与权威边界",
       boundaryBody: "v1.3 地图只使用原创 React/CSS 几何结构，不把 Star-Office、付费 tileset 或第三方 sprite 资产复制进产品 UI。",
       authority: "AgentOps MIS 仍然是状态、权限、评估和审计的权威系统。",
+      zones: "已映射房间",
     },
   });
 
@@ -293,9 +297,11 @@ export function PixelOffice() {
         </div>
       </div>
 
-      <OperationsBar metrics={pixelMetrics} loading={loading} error={error} onRefresh={refresh} />
+      <CustomerDispatchPanel agents={snapshot.agents} locale={locale} onRefresh={refresh} />
 
-      <PixelOperatingMap agents={pixelAgents} taskCards={taskCards} metrics={pixelMetrics} onOpenRoute={openRoute} />
+      <OperationsBar metrics={pixelMetrics} loading={loading} error={error} onRefresh={refresh} locale={locale} />
+
+      <PixelOperatingMap agents={pixelAgents} taskCards={taskCards} metrics={pixelMetrics} onOpenRoute={openRoute} locale={locale} />
 
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="rounded-lg p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
@@ -315,7 +321,7 @@ export function PixelOffice() {
                 className="rounded px-2 py-1 text-[10px] hover:opacity-80"
                 style={{ background: "var(--mis-surface2)", color: "var(--mis-muted)", border: "1px solid rgba(148,163,184,0.14)" }}
               >
-                {zone.label}
+                {zoneDisplay(zone, locale).label}
               </button>
             ))}
           </div>
@@ -328,7 +334,7 @@ export function PixelOffice() {
           <p className="mt-2 text-[11px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>
             {copy.stateBody}
           </p>
-          <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+          <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
             <div className="rounded p-2" style={{ background: "var(--mis-surface2)" }}>
               <div style={{ color: "var(--mis-muted)" }}>{copy.agentsPlaced}</div>
               <div className="text-base font-semibold" style={{ color: "var(--mis-text)" }}>{pixelAgents.length}</div>
@@ -336,6 +342,10 @@ export function PixelOffice() {
             <div className="rounded p-2" style={{ background: "var(--mis-surface2)" }}>
               <div style={{ color: "var(--mis-muted)" }}>{copy.taskCards}</div>
               <div className="text-base font-semibold" style={{ color: "var(--mis-text)" }}>{taskCards.length}</div>
+            </div>
+            <div className="rounded p-2" style={{ background: "var(--mis-surface2)" }}>
+              <div style={{ color: "var(--mis-muted)" }}>{copy.zones}</div>
+              <div className="text-base font-semibold" style={{ color: "var(--mis-text)" }}>{PIXEL_ZONES.length}</div>
             </div>
           </div>
         </div>

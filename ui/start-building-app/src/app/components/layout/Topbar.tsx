@@ -1,5 +1,8 @@
-import { Search, Bell, ChevronDown, Radio, Moon, Sun, Languages } from "lucide-react";
+import { Search, Bell, ChevronDown, Radio, Moon, Sun, Languages, Palette } from "lucide-react";
 import { pick, usePreferences } from "../../context/PreferencesContext";
+import type { ThemeMode } from "../../context/PreferencesContext";
+
+const themeOrder: ThemeMode[] = ["enterprise", "ops", "workforce"];
 
 export function Topbar() {
   const { theme, locale, setTheme, setLocale } = usePreferences();
@@ -9,9 +12,9 @@ export function Topbar() {
       workspaceName: "AgentOps Demo",
       search: "Search agents, tasks, runs...",
       live: "Live",
-      themeLabel: theme === "dark" ? "Dark" : "Light",
+      themeLabel: theme === "enterprise" ? "Enterprise" : theme === "ops" ? "Ops" : "Workforce",
       languageLabel: "EN",
-      switchTheme: "Switch theme",
+      switchTheme: "Switch visual style",
       switchLanguage: "Switch language",
     },
     zh: {
@@ -19,12 +22,17 @@ export function Topbar() {
       workspaceName: "AgentOps 演示",
       search: "搜索代理、任务、运行...",
       live: "实时",
-      themeLabel: theme === "dark" ? "暗色" : "亮色",
+      themeLabel: theme === "enterprise" ? "企业版" : theme === "ops" ? "控制面" : "员工 OS",
       languageLabel: "中",
-      switchTheme: "切换主题",
+      switchTheme: "切换视觉风格",
       switchLanguage: "切换语言",
     },
   });
+
+  const cycleTheme = () => {
+    const nextIndex = (themeOrder.indexOf(theme) + 1) % themeOrder.length;
+    setTheme(themeOrder[nextIndex]);
+  };
 
   return (
     <header
@@ -67,10 +75,10 @@ export function Topbar() {
         <button
           className="h-7 px-2 rounded flex items-center gap-1.5 text-[11px] hover:opacity-80"
           style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }}
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          onClick={cycleTheme}
           title={copy.switchTheme}
         >
-          {theme === "dark" ? <Moon size={13} /> : <Sun size={13} />}
+          {theme === "enterprise" ? <Sun size={13} /> : theme === "ops" ? <Moon size={13} /> : <Palette size={13} />}
           <span className="hidden lg:inline">{copy.themeLabel}</span>
         </button>
 

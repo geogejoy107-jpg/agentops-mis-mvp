@@ -6,6 +6,7 @@ import {
   Bot,
   Brain,
   CheckCircle,
+  ClipboardCheck,
   ExternalLink,
   Map,
   Play,
@@ -40,7 +41,7 @@ function formatRuntime(value: unknown) {
 export function WorkspaceHome() {
   const [briefResult, setBriefResult] = useState<LocalBriefResult | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
-  const { data, loading, error, refresh } = useLiveData(async () => {
+  const { data, setData, loading, error, refresh } = useLiveData(async () => {
     const [metrics, tasks, approvals, runs, memories] = await Promise.all([
       loadDashboard(),
       loadTasks(),
@@ -78,8 +79,11 @@ export function WorkspaceHome() {
   const handleApproval = async (id: string, decision: "approve" | "reject") => {
     setActionBusy(`${decision}:${id}`);
     try {
-      await decideApproval(id, decision);
-      await refresh();
+      const updatedApproval = await decideApproval(id, decision);
+      setData((current) => current ? {
+        ...current,
+        approvals: current.approvals.map((approval) => approval.approval_id === updatedApproval.approval_id ? updatedApproval : approval),
+      } : current);
     } finally {
       setActionBusy(null);
     }
@@ -112,12 +116,12 @@ export function WorkspaceHome() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Link
-            to="/workspace/pixel-office"
+            to="/workspace/dispatch"
             className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded"
             style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
           >
-            <Map size={13} />
-            Open Pixel Office
+            <ClipboardCheck size={13} />
+            Dispatch customer task
           </Link>
           <button
             onClick={refresh}
@@ -132,6 +136,45 @@ export function WorkspaceHome() {
 
       {loading && <p className="text-xs" style={{ color: "var(--mis-muted)" }}>Loading live MIS state...</p>}
       {error && <p className="text-xs" style={{ color: "#F87171" }}>Live backend unavailable: {error}</p>}
+
+      <section className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {[
+          {
+            to: "/workspace/dispatch",
+            icon: <ClipboardCheck size={15} />,
+            title: "Dispatch a customer task",
+            body: "Submit a real customer-style brief, choose AI workers, and generate ledger-backed delivery evidence.",
+            color: "var(--mis-cyan)",
+          },
+          {
+            to: "/workspace/pixel-office",
+            icon: <Map size={15} />,
+            title: "Open operating map",
+            body: "Use the Pixel Office map to navigate zones, agents, task hall, and formal MIS ledgers.",
+            color: "var(--mis-success)",
+          },
+          {
+            to: "/workspace/workers",
+            icon: <TerminalSquare size={15} />,
+            title: "Check worker readiness",
+            body: "Operate mock, Hermes, and OpenClaw workers with live/dry-run and approval boundaries visible.",
+            color: "var(--mis-purple)",
+          },
+        ].map((item) => (
+          <Link
+            key={item.to}
+            to={item.to}
+            className="rounded-lg p-3 hover:opacity-85"
+            style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+          >
+            <div className="flex items-center gap-2 text-xs font-semibold" style={{ color: "var(--mis-text)" }}>
+              <span style={{ color: item.color }}>{item.icon}</span>
+              {item.title}
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>{item.body}</p>
+          </Link>
+        ))}
+      </section>
 
       <div className="grid grid-cols-12 gap-4 items-start">
         <section
@@ -333,6 +376,9 @@ export function WorkspaceHome() {
               <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>Pending Approvals</h2>
               <Link to="/workspace/approvals" className="text-[11px]" style={{ color: "var(--mis-cyan)" }}>Review all</Link>
             </div>
+            <p className="text-[11px] mb-2" style={{ color: "var(--mis-muted)" }}>
+              Ledger/delivery decisions; exact tool-action resume is shown only for prepared actions.
+            </p>
             <div className="space-y-2">
               {pendingApprovals.length === 0 && <p className="text-xs" style={{ color: "var(--mis-muted)" }}>No pending approvals.</p>}
               {pendingApprovals.map(ap => (

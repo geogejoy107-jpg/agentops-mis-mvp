@@ -1,5 +1,8 @@
 import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
+import { Link } from "react-router";
 import { dashboardMetrics, agents, tasks, evaluations } from "../../data/mockData";
+import { loadCustomerDeliveryBoard, loadCustomerProjects, useLiveData } from "../../data/liveApi";
+import { usePreferences } from "../../context/PreferencesContext";
 
 const taskStatusDist = [
   { name: "Running",          value: tasks.filter(t => t.status === "running").length,          color: "#22D3EE" },
@@ -24,11 +27,216 @@ const evalScores = evaluations.map(e => ({
 }));
 
 export function Reports() {
+  const { locale } = usePreferences();
+  const zh = locale === "zh";
+  const customerProjects = useLiveData(() => loadCustomerProjects(8), []);
+  const customerDeliveryBoard = useLiveData(() => loadCustomerDeliveryBoard(12), []);
+  const projects = customerProjects.data?.projects || [];
+  const deliveries = customerDeliveryBoard.data?.deliveries || [];
+  const deliverySummary = customerDeliveryBoard.data?.summary;
+
+  const statusLabel = (status: string) => {
+    const zhLabels: Record<string, string> = {
+      ready: "可交付",
+      waiting_approval: "待审批",
+      in_progress: "进行中",
+      needs_attention: "需处理",
+      attention: "注意",
+      empty: "暂无",
+    };
+    const enLabels: Record<string, string> = {
+      ready: "Ready",
+      waiting_approval: "Waiting approval",
+      in_progress: "In progress",
+      needs_attention: "Needs attention",
+      attention: "Attention",
+      empty: "Empty",
+    };
+    return (zh ? zhLabels : enLabels)[status] || status;
+  };
+  const gateLabel = (delivery: (typeof deliveries)[number]) => {
+    const gate = delivery.delivery_approval_gate;
+    if (!gate?.required) return zh ? "不需要" : "Not required";
+    if (gate.pass) return zh ? "计划证据已验证" : "Plan evidence verified";
+    if (gate.manifest_id) return zh ? "计划证据未通过" : "Plan evidence blocked";
+    return zh ? "缺少计划证据" : "Plan evidence missing";
+  };
+  const gateColor = (delivery: (typeof deliveries)[number]) => {
+    const gate = delivery.delivery_approval_gate;
+    if (!gate?.required || gate.pass) return "var(--mis-success)";
+    return gate.manifest_id ? "var(--mis-warning)" : "#F87171";
+  };
+
   return (
     <div className="space-y-6 w-full">
       <div>
-        <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>Reports</h1>
-        <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>Sprint summary · June 2026</p>
+        <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>{zh ? "报告" : "Reports"}</h1>
+        <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>{zh ? "客户交付报告 · 运行绩效 · 质量评估" : "Customer delivery reports · runtime performance · quality evaluation"}</p>
+      </div>
+
+      <div className="rounded-xl p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>{zh ? "客户交付看板" : "Customer delivery board"}</div>
+            <div className="text-[11px] mt-0.5 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
+              {zh ? "按客户视角聚合最近交付：artifact、task、run、审批、评估、审计证据和下一步动作。只读，不触发真实运行。"
+                : "Customer-facing readback of recent deliveries: artifact, task, run, approvals, evaluations, audit evidence, and next action. Read-only; no live execution."}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <span className="rounded px-2 py-1 text-[10px]" style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.10)", border: "1px solid rgba(45,212,191,0.18)" }}>
+              {zh ? "只读" : "Read-only"}: {customerDeliveryBoard.data?.safety?.read_only ? (zh ? "是" : "yes") : "—"}
+            </span>
+            <span className="rounded px-2 py-1 text-[10px]" style={{ color: "var(--mis-cyan)", background: "rgba(34,211,238,0.10)", border: "1px solid rgba(34,211,238,0.18)" }}>
+              {zh ? "未触发真实执行" : "No live execution"}: {customerDeliveryBoard.data?.safety?.live_execution_performed === false ? (zh ? "是" : "yes") : "—"}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3">
+          {[
+            { label: zh ? "交付总数" : "Deliveries", value: deliverySummary?.deliveries ?? 0, color: "var(--mis-cyan)" },
+            { label: zh ? "可交付" : "Ready", value: deliverySummary?.ready ?? 0, color: "var(--mis-success)" },
+            { label: zh ? "待审批" : "Waiting approval", value: deliverySummary?.waiting_approval ?? 0, color: "var(--mis-warning)" },
+            { label: zh ? "需处理" : "Needs attention", value: deliverySummary?.needs_attention ?? 0, color: "#F87171" },
+            { label: zh ? "证据门禁" : "Evidence gates", value: `${deliverySummary?.verified_plan_evidence_manifests ?? 0}/${deliverySummary?.deliveries ?? 0}`, color: "var(--mis-cyan)" },
+          ].map((item) => (
+            <div key={item.label} className="rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+              <div className="text-xl font-semibold mt-1" style={{ color: item.color }}>{item.value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-2">
+          {customerDeliveryBoard.loading && (
+            <div className="text-[11px]" style={{ color: "var(--mis-dim)" }}>{zh ? "正在加载交付..." : "Loading deliveries..."}</div>
+          )}
+          {customerDeliveryBoard.error && (
+            <div className="text-[11px]" style={{ color: "#FCA5A5" }}>{customerDeliveryBoard.error}</div>
+          )}
+          {!customerDeliveryBoard.loading && !customerDeliveryBoard.error && deliveries.length === 0 && (
+            <div className="text-[11px]" style={{ color: "var(--mis-dim)" }}>{zh ? "还没有客户交付。先从 Pixel Office 或 AI 员工页派发一个客户任务。" : "No customer deliveries yet. Dispatch a customer task from Pixel Office or AI Employees first."}</div>
+          )}
+          {deliveries.map((delivery) => (
+            <div key={delivery.delivery_id} className="rounded-lg p-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold truncate" style={{ color: "var(--mis-text)" }}>{delivery.title}</div>
+                  <div className="mt-1 text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{delivery.artifact_id}</div>
+                </div>
+                <span className="rounded px-2 py-1 text-[10px] shrink-0" style={{ color: delivery.status === "needs_attention" ? "#F87171" : delivery.status === "waiting_approval" ? "var(--mis-warning)" : "var(--mis-success)", background: "rgba(148,163,184,0.10)" }}>
+                  {statusLabel(delivery.status)}
+                </span>
+              </div>
+              <div className="mt-2 text-[11px] line-clamp-2" style={{ color: "var(--mis-dim)" }}>{delivery.summary}</div>
+              <div className="mt-2 rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[10px] font-semibold" style={{ color: gateColor(delivery) }}>{gateLabel(delivery)}</span>
+                  <span className="text-[9px] truncate max-w-[13rem]" style={{ color: "var(--mis-muted)" }}>
+                    {delivery.delivery_approval_gate?.manifest_id || (zh ? "暂无 manifest" : "no manifest")}
+                  </span>
+                </div>
+                <div className="text-[9px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>
+                  {delivery.delivery_approval_gate?.message || delivery.next_action || (zh ? "交付审批会读取这个门禁。" : "Delivery approval consumes this gate.")}
+                </div>
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-2 text-[10px]" style={{ color: "var(--mis-dim)" }}>
+                <div>{zh ? "审批" : "Approvals"}<br /><span style={{ color: "var(--mis-text)" }}>{delivery.pending_approval_ids?.length || 0}</span></div>
+                <div>{zh ? "评估" : "Evals"}<br /><span style={{ color: "var(--mis-text)" }}>{delivery.evaluation_summary?.count || 0}</span></div>
+                <div>{zh ? "审计" : "Audit"}<br /><span style={{ color: "var(--mis-text)" }}>{delivery.evidence?.audit_logs || 0}</span></div>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1 text-[9px]" style={{ color: "var(--mis-muted)" }}>
+                {delivery.artifact_link?.api_url && (
+                  <span className="rounded px-1.5 py-0.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    {zh ? "Artifact" : "Artifact"}: {delivery.artifact_id}
+                  </span>
+                )}
+                {(delivery.approval_links || []).slice(0, 2).map((link) => (
+                  <Link key={`approval-${link.approval_id}`} to={link.url || "/workspace/approvals"} className="rounded px-1.5 py-0.5" style={{ background: "rgba(251,191,36,0.10)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.18)" }}>
+                    {zh ? "审批" : "Approval"} {link.approval_id}
+                  </Link>
+                ))}
+                {(delivery.evaluation_links || []).slice(0, 2).map((link) => (
+                  <Link key={`evaluation-${link.evaluation_id}`} to={link.url || "/admin/evaluations"} className="rounded px-1.5 py-0.5" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>
+                    {zh ? "评估" : "Eval"} {link.evaluation_id}
+                  </Link>
+                ))}
+                {(delivery.audit_links || []).slice(0, 2).map((link) => (
+                  <Link key={`audit-${link.audit_id}`} to={link.url || "/admin/audit"} className="rounded px-1.5 py-0.5" style={{ background: "rgba(148,163,184,0.10)", color: "var(--mis-muted)", border: "1px solid var(--mis-border)" }}>
+                    {zh ? "审计" : "Audit"} {link.audit_id}
+                  </Link>
+                ))}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {delivery.task_id && (
+                  <Link to={`/admin/tasks/${delivery.task_id}`} className="text-[10px] rounded px-2 py-1" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>
+                    {zh ? "打开任务" : "Open task"}
+                  </Link>
+                )}
+                {delivery.run_id && (
+                  <Link to={`/admin/runs/${delivery.run_id}`} className="text-[10px] rounded px-2 py-1" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>
+                    {zh ? "打开 Run" : "Open run"}
+                  </Link>
+                )}
+                {delivery.ui_report_url && (
+                  <Link to={delivery.ui_report_url} className="text-[10px] rounded px-2 py-1" style={{ background: "rgba(251,191,36,0.10)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.20)" }}>
+                    {zh ? "打开报告" : "Open report"}
+                  </Link>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-xl p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>{zh ? "客户项目报告" : "Customer project reports"}</div>
+            <div className="text-[11px] mt-0.5" style={{ color: "var(--mis-muted)" }}>
+              {zh ? "从 MIS 账本推导，可打开交付报告并查看是否已归档。" : "Derived from the MIS ledger. Open delivery reports and see whether they are archived."}
+            </div>
+          </div>
+          <Link to="/workspace/pixel-office" className="text-[11px] rounded px-3 py-1.5" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}>
+            {zh ? "创建新项目" : "Create project"}
+          </Link>
+        </div>
+        <div className="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-2">
+          {customerProjects.loading && (
+            <div className="text-[11px]" style={{ color: "var(--mis-dim)" }}>{zh ? "正在加载项目..." : "Loading projects..."}</div>
+          )}
+          {customerProjects.error && (
+            <div className="text-[11px]" style={{ color: "#FCA5A5" }}>{customerProjects.error}</div>
+          )}
+          {!customerProjects.loading && !customerProjects.error && projects.length === 0 && (
+            <div className="text-[11px]" style={{ color: "var(--mis-dim)" }}>{zh ? "还没有客户项目。" : "No customer projects yet."}</div>
+          )}
+          {projects.map((project) => (
+            <Link
+              key={project.project_id}
+              to={project.ui_report_url}
+              className="rounded-lg p-3 hover:opacity-85"
+              style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>{project.title}</div>
+                  <div className="mt-1 text-[10px]" style={{ color: "var(--mis-muted)" }}>{project.project_id}</div>
+                </div>
+                <span className="rounded px-2 py-1 text-[10px]" style={{ color: project.status === "waiting_approval" ? "var(--mis-warning)" : "var(--mis-success)", background: "rgba(148,163,184,0.10)" }}>
+                  {project.status}
+                </span>
+              </div>
+              <div className="mt-2 grid grid-cols-4 gap-2 text-[10px]" style={{ color: "var(--mis-dim)" }}>
+                <div>{zh ? "任务" : "Tasks"}<br /><span style={{ color: "var(--mis-text)" }}>{project.task_count}</span></div>
+                <div>{zh ? "运行" : "Runs"}<br /><span style={{ color: "var(--mis-text)" }}>{project.run_count}</span></div>
+                <div>{zh ? "审批" : "Approvals"}<br /><span style={{ color: "var(--mis-text)" }}>{project.pending_approvals}</span></div>
+                <div>{zh ? "归档" : "Archive"}<br /><span style={{ color: "var(--mis-text)" }}>{project.report_artifact_id ? "yes" : "no"}</span></div>
+              </div>
+            </Link>
+          ))}
+        </div>
       </div>
 
       {/* Summary strip */}

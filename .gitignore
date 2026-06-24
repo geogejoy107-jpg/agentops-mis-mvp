@@ -1,10 +1,17 @@
 .DS_Store
 __pycache__/
 *.py[cod]
+*.egg-info/
+build/
 
 # Local runtime state and imported personal run ledgers.
 agentops_mis.db
+*.db-journal
+*.db-shm
+*.db-wal
+.agentops_runtime/
 .playwright-cli/
+mis-project/
 
 # Downloaded / generated UI runtime artifacts.
 node_modules/

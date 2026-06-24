@@ -1,4 +1,4 @@
-import type { PixelAgent, PixelZoneDefinition } from "./pixelModel";
+import type { PixelAgent, PixelLocale, PixelZoneDefinition } from "./pixelModel";
 import { PIXEL_ZONE_BY_ID, zoneCenter } from "./pixelModel";
 
 interface AgentSpriteProps {
@@ -6,6 +6,7 @@ interface AgentSpriteProps {
   index: number;
   active: boolean;
   onSelect: (agent: PixelAgent) => void;
+  locale?: PixelLocale;
 }
 
 const riskColor: Record<PixelAgent["risk"], string> = {
@@ -23,7 +24,7 @@ function agentPosition(zone: PixelZoneDefinition, index: number) {
   };
 }
 
-export function AgentSprite({ agent, index, active, onSelect }: AgentSpriteProps) {
+export function AgentSprite({ agent, index, active, onSelect, locale = "en" }: AgentSpriteProps) {
   const targetZone = PIXEL_ZONE_BY_ID[agent.targetZone] || PIXEL_ZONE_BY_ID.agent_lobby;
   const position = agentPosition(targetZone, index);
   const color = riskColor[agent.risk] || riskColor.low;
@@ -37,7 +38,7 @@ export function AgentSprite({ agent, index, active, onSelect }: AgentSpriteProps
         event.stopPropagation();
         onSelect(agent);
       }}
-      aria-label={`Inspect ${agent.name}`}
+      aria-label={locale === "zh" ? `查看 ${agent.name}` : `Inspect ${agent.name}`}
       title={`${agent.name} · ${agent.status}`}
     >
       <span className="sr-only">{agent.name}</span>
@@ -80,7 +81,7 @@ export function AgentSprite({ agent, index, active, onSelect }: AgentSpriteProps
             className="absolute -left-3 top-0 rounded px-1 text-[8px] uppercase tracking-wide"
             style={{ background: "rgba(168,85,247,0.2)", color: "var(--mis-purple)", border: "1px solid rgba(168,85,247,0.35)" }}
           >
-            demo
+            {locale === "zh" ? "演示" : "demo"}
           </div>
         )}
       </div>

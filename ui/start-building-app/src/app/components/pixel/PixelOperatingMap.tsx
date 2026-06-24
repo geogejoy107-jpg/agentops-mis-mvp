@@ -4,8 +4,8 @@ import { AgentSprite } from "./AgentSprite";
 import { PixelZone } from "./PixelZone";
 import { TaskCardSprite } from "./TaskCardSprite";
 import { ZoneInspector } from "./ZoneInspector";
-import type { PixelAgent, PixelMetrics, PixelTaskCard, PixelZoneDefinition } from "./pixelModel";
-import { PIXEL_ZONES, PIXEL_ZONE_BY_ID } from "./pixelModel";
+import type { PixelAgent, PixelLocale, PixelMetrics, PixelTaskCard, PixelZoneDefinition } from "./pixelModel";
+import { PIXEL_ZONES, PIXEL_ZONE_BY_ID, zoneDisplay } from "./pixelModel";
 
 interface PixelOperatingMapProps {
   agents: PixelAgent[];
@@ -13,13 +13,15 @@ interface PixelOperatingMapProps {
   metrics: PixelMetrics;
   onOpenRoute: (route: string) => void;
   compact?: boolean;
+  locale?: PixelLocale;
 }
 
 function zoneAgentsCount(agents: PixelAgent[], zone: PixelZoneDefinition) {
   return agents.filter((agent) => agent.targetZone === zone.id).length;
 }
 
-export function PixelOperatingMap({ agents, taskCards, metrics, onOpenRoute, compact = false }: PixelOperatingMapProps) {
+export function PixelOperatingMap({ agents, taskCards, metrics, onOpenRoute, compact = false, locale = "en" }: PixelOperatingMapProps) {
+  const zh = locale === "zh";
   const [selectedZone, setSelectedZone] = useState<PixelZoneDefinition | null>(PIXEL_ZONE_BY_ID.control_tower);
   const [hoveredZone, setHoveredZone] = useState<PixelZoneDefinition | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<PixelAgent | null>(null);
@@ -68,11 +70,11 @@ export function PixelOperatingMap({ agents, taskCards, metrics, onOpenRoute, com
           <div>
             <div className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px] uppercase tracking-wide" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}>
               <Layers3 size={12} />
-              Native React / CSS floor
+              {zh ? "原生 React / CSS 工作台" : "Native React / CSS floor"}
             </div>
             {!compact && (
               <p className="mt-1 text-[11px]" style={{ color: "var(--mis-dim)" }}>
-                Click once to inspect a zone. Double-click a zone, task card or agent trail to open the formal MIS page.
+                {zh ? "单击查看区域，双击房间、任务卡或代理轨迹进入正式 MIS 页面。" : "Click once to inspect a zone. Double-click a zone, task card or agent trail to open the formal MIS page."}
               </p>
             )}
           </div>
@@ -86,7 +88,7 @@ export function PixelOperatingMap({ agents, taskCards, metrics, onOpenRoute, com
                   className="rounded px-2 py-1 hover:opacity-80"
                   style={{ background: "var(--mis-surface2)", border: "1px solid rgba(148,163,184,0.16)" }}
                 >
-                  {zone.label}: <span style={{ color: "var(--mis-cyan)" }}>{count}</span>
+                  {zoneDisplay(zone, locale).label}: <span style={{ color: "var(--mis-cyan)" }}>{count}</span>
                 </button>
               ))}
             </div>
@@ -152,10 +154,11 @@ export function PixelOperatingMap({ agents, taskCards, metrics, onOpenRoute, com
               onSelect={handleSelectZone}
               onOpen={(targetZone) => onOpenRoute(targetZone.route)}
               showLabels={!compact || ["task_hall", "approval_gate", "incident_corner", "control_tower"].includes(zone.id)}
+              locale={locale}
             />
           ))}
 
-          {!compact && taskCards.map((task, index) => <TaskCardSprite key={task.id} task={task} index={index} onOpen={onOpenRoute} />)}
+          {!compact && taskCards.map((task, index) => <TaskCardSprite key={task.id} task={task} index={index} onOpen={onOpenRoute} locale={locale} />)}
 
           {agents.map((agent, index) => (
             <AgentSprite
@@ -164,15 +167,16 @@ export function PixelOperatingMap({ agents, taskCards, metrics, onOpenRoute, com
               index={index}
               active={selectedAgent?.id === agent.id}
               onSelect={handleSelectAgent}
+              locale={locale}
             />
           ))}
 
           <div className="absolute left-3 bottom-3 right-3 z-30 flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2" style={{ background: "rgba(2,6,23,0.72)", border: "1px solid rgba(148,163,184,0.16)", backdropFilter: "blur(8px)" }}>
             <div className="flex flex-wrap items-center gap-2 text-[10px]" style={{ color: "var(--mis-muted)" }}>
-              <span className="inline-flex items-center gap-1"><span className="h-2 w-2" style={{ background: "var(--mis-cyan)" }} /> Running</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2 w-2" style={{ background: "#FBBF24" }} /> Approval</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2 w-2" style={{ background: "#F87171" }} /> Incident</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2 w-2" style={{ background: "var(--mis-purple)" }} /> Memory / audit</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2 w-2" style={{ background: "var(--mis-cyan)" }} /> {zh ? "运行中" : "Running"}</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2 w-2" style={{ background: "#FBBF24" }} /> {zh ? "审批" : "Approval"}</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2 w-2" style={{ background: "#F87171" }} /> {zh ? "故障" : "Incident"}</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2 w-2" style={{ background: "var(--mis-purple)" }} /> {zh ? "记忆 / 审计" : "Memory / audit"}</span>
             </div>
             {!compact && selectedZone && (
               <button
@@ -185,7 +189,7 @@ export function PixelOperatingMap({ agents, taskCards, metrics, onOpenRoute, com
                 style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.25)" }}
               >
                 <Route size={12} />
-                Open formal page
+                {zh ? "打开正式页面" : "Open formal page"}
                 <ArrowRight size={12} />
               </button>
             )}
@@ -203,6 +207,7 @@ export function PixelOperatingMap({ agents, taskCards, metrics, onOpenRoute, com
             agents={agents}
             taskCards={taskCards}
             onOpenRoute={onOpenRoute}
+            locale={locale}
           />
         </div>
       )}

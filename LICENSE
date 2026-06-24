@@ -1,0 +1,20 @@
+AgentOps MIS Proprietary Local MVP License
+
+Copyright (c) 2026 AgentOps MIS contributors.
+All rights reserved.
+
+This repository is distributed as a proprietary local MVP workspace unless a
+separate written license or contract says otherwise. You may use, evaluate and
+modify it inside the local AgentOps MIS development environment controlled by
+the repository owner.
+
+You may not sell, sublicense, publicly host, redistribute, repackage or use this
+repository as a commercial product without explicit written permission from the
+owner.
+
+Third-party packages, references and integrations keep their own licenses. This
+license does not grant additional rights to third-party code, data, brands,
+icons, art, sprites, tilesets or other assets.
+
+No warranty is provided. The software is provided "as is" for local development
+and evaluation.

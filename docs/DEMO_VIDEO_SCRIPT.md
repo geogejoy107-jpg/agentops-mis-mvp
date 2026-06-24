@@ -2,68 +2,98 @@
 
 ## 0:00-0:30 Positioning
 
-AgentOps MIS is not another agent builder. It is a management information system for AI digital employees: identity, tasks, tools, runs, approvals, memory, quality and audit.
+AgentOps MIS is not another agent builder. It is a local-first management information system for AI digital employees: identity, tasks, tools, async jobs, runs, approvals, memory, quality and audit.
 
-## 0:30-1:20 Dashboard
+## 0:30-1:25 Commander Console
 
-Open `/dashboard`. Show total agents, task states, runtime health, OpenClaw import summary, recent runs and agent performance.
+Open `/workspace/agents`. Show:
 
-## 1:20-2:10 Agent And Task Management
+- Demo readiness: a read-only canonical v1.5 recording checklist that ties together local readiness, security boundary, worker fleet lanes, async inbox, customer task loop and run ledger evidence.
+- Local readiness: a read-only proof that the local workspace has Agent Gateway, worker, adapter route, approval, memory and evidence-chain coverage without starting live work.
+- Commander project board / worker fleet view: current worker health, adapter readiness, pending/stuck work and recommended next CLI/API action.
+- Async workflow jobs: long Hermes/OpenClaw work can be submitted, polled and recovered instead of held open in a brittle synchronous request.
+- Async Integration Inbox: explain it as the commander review queue for returned worker results, slower lanes, stale jobs, blocked work and memory-review items.
+
+Key point: the browser is for command, supervision, approval and review. Agents execute through Agent Gateway CLI/API.
+
+## 1:25-2:15 Agent And Task Management
 
 Open `/agents`, then one agent detail page. Show performance card. Open `/tasks` and explain task ownership, risk, status and acceptance criteria.
 
-## 2:10-3:10 Run Ledger
+## 2:15-3:15 Run Ledger
 
-Open `/runs`. Pick a recent run. Show parent run, delegation id, child/sibling graph, tool calls and evaluations.
+Open `/runs`. Pick recent live proof runs:
 
-## 3:10-4:00 Human Approval And Memory
+- OpenClaw `run_gw_5f4a3320a4d3`
+- Hermes `run_gw_f7fe3a78cadb`
 
-Open `/approvals` and `/memory`. Explain high-risk action governance and reviewed organizational memory.
+Show status, linked task, tool calls, evaluations, audit evidence and delivery artifacts. Do not show raw prompts, raw model responses, credentials or private transcripts.
 
-## 4:00-5:20 Integrations
+## 3:15-4:05 Human Approval And Memory
 
-Open `/integrations`. Show:
+Open `/approvals` and `/memory`. Explain high-risk action governance, delivery acceptance and reviewed organizational memory. The same review loop is available through CLI: `agentops approval list/approve/reject` and `agentops memory list/approve/reject`.
 
-- OpenClaw status/import/probe.
-- Hermes unavailable as a recorded health state, not a crash.
-- Agnesfallback fixed probe dry-run plan first, to show the default safety posture.
-- Local live recording mode: enable `HERMES_ALLOW_REAL_RUN=true`, call `confirm_run:true`, then show the real fixed probe result.
-- Notion preview and dry-run export.
+## 4:05-5:15 Customer Worker Dispatch
+
+From `/workspace/agents` or Pixel Office, submit a customer worker task through mock first, then explain confirmed Hermes/OpenClaw live mode:
+
+- Mock is safe by default.
+- Hermes/OpenClaw require explicit confirmation and adapter readiness.
+- Long work uses async jobs plus `agentops workflow job-status --wait`.
+- Results return as run/tool/evaluation/audit/artifact evidence, then move to human approval.
+- Open the Customer Delivery Board in `/workspace/agents` or `/workspace/reports` to show the customer-facing readback: delivery artifact, linked task/run, approvals, evaluations, audit counts and next action.
 
 Suggested narration:
 
-> 这里不是说 Hermes 做不到，而是 default Hermes gateway 没开 8642 API server，所以 MIS 记录 unavailable health state。Agnesfallback profile 已经可以真实运行。现在我显式开启 live-demo 模式，并用 `confirm_run:true` 触发一次 fixed probe。运行成功后，它不会只停留在命令行，而是进入 Run Ledger、Runtime Event、Evaluation 和 Audit Log。
+> 这里的重点不是让 agent 点浏览器，而是让真实 Hermes / OpenClaw 通过 Agent Gateway CLI/API 接活、执行、写回证据。浏览器是 commander console：看 readiness、看 async job、审批交付、复盘 run ledger。
 
 Recording steps:
 
 ```bash
-python3 scripts/live_demo_verify.py before
-curl -s -X POST http://127.0.0.1:8787/api/integrations/hermes/cli-probe \
-  -H "Content-Type: application/json" \
-  -d '{}' | jq .
-curl -s -X POST http://127.0.0.1:8787/api/integrations/hermes/cli-probe \
-  -H "Content-Type: application/json" \
-  -d '{"confirm_run": true}' | jq .
-python3 scripts/live_demo_verify.py after
+./scripts/agentops demo readiness
+./scripts/agentops local readiness
+./scripts/agentops security production-readiness
+./scripts/agentops worker fleet
+./scripts/agentops commander inbox --bucket ready_for_review --limit 5
+./scripts/agentops workflow customer-worker-task --adapter mock
+./scripts/agentops review queue --limit 12
+./scripts/agentops workflow delivery-board --limit 10
+./scripts/agentops approval list --decision pending --limit 10
+./scripts/agentops approval inspect --approval-id <approval_id>
+./scripts/agentops approval approve --approval-id <approval_id>
+./scripts/agentops memory list --status candidate --limit 10
+./scripts/agentops memory approve --memory-id <memory_id>
+./scripts/agentops workflow customer-worker-task --adapter openclaw --confirm-run --async-job
+./scripts/agentops workflow job-status --job-id <job_id> --wait
+./scripts/agentops review queue --limit 12
+./scripts/agentops workflow delivery-board --limit 10
 ```
 
 Then return to:
 
-- `/runs`: latest Agnesfallback run.
-- `/api/runtime-events` or audit page: runtime event for the fixed probe.
+- `/workspace/agents`: Human Review Queue / 人工审核队列 shows pending approvals, memory candidates, customer deliveries and recommended CLI actions in one operator queue. Approval and memory items can be approved/rejected inline; those decisions intentionally write audit/ledger evidence.
+- `/workspace/reports`: customer delivery board and report links.
+- `/workspace/approvals`: approval gate, or show the same evidence-first decision flow through `agentops approval inspect` followed by explicit `approve/reject`.
+- `/memory`: memory candidate review, or show the same decision through `agentops memory approve/reject`.
+- `/runs`: latest worker run.
 - `/evaluations`: rule result.
-- `/audit`: confirmed runtime probe audit.
+- `/audit`: confirmed worker/audit trail.
+- `/workspace/approvals`: delivery acceptance approval.
 
 Key point: this is not just an API call. It enters the AgentOps MIS management ledger.
 
-## 5:20-6:10 Base Switching
+## 5:15-5:55 Integrations And Base Boundary
+
+Open `/integrations`. Show OpenClaw/Hermes health, connector trust, Notion dry-run/export preview and base switching.
 
 Use API or docs to show `/api/bases`, `/api/template-packages` and `/api/migration/preview`. Explain local base remains canonical while external bases are adapters.
 
-## 6:10-6:40 Safety
+Do not claim Dify live sync or Notion bidirectional sync in this demo. Do not claim hosted SaaS, billing or production multi-tenant fleet management.
+
+## 5:55-6:35 Safety
 
 Mention no credentials, private messages, full transcripts or raw prompts are stored. Summaries are redacted and hashed.
 
-## 6:40-7:00 Close
+## 6:35-7:00 Close
 
-This is a strong local MVP for classroom demonstration. Next step is product alpha: adapter hardening, RBAC, ledger trust and connector registry.
+This is a strong local MVP for classroom demonstration: commander readiness, async worker management, integration inbox, CLI/API-first execution and real Hermes/OpenClaw dogfood evidence. Next step is product alpha: adapter hardening, RBAC, ledger trust and connector registry.

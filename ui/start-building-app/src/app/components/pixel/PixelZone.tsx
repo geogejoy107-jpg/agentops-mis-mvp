@@ -1,5 +1,5 @@
-import type { PixelMetrics, PixelZoneDefinition } from "./pixelModel";
-import { formatZoneMetric } from "./pixelModel";
+import type { PixelLocale, PixelMetrics, PixelZoneDefinition } from "./pixelModel";
+import { formatZoneMetric, zoneDisplay } from "./pixelModel";
 
 interface PixelZoneProps {
   zone: PixelZoneDefinition;
@@ -10,6 +10,7 @@ interface PixelZoneProps {
   onSelect: (zone: PixelZoneDefinition) => void;
   onOpen: (zone: PixelZoneDefinition) => void;
   showLabels: boolean;
+  locale?: PixelLocale;
 }
 
 const toneStyle: Record<PixelZoneDefinition["tone"], { border: string; bg: string; glow: string; light: string }> = {
@@ -57,9 +58,10 @@ const toneStyle: Record<PixelZoneDefinition["tone"], { border: string; bg: strin
   },
 };
 
-export function PixelZone({ zone, metrics, selected, hovered, onHover, onSelect, onOpen, showLabels }: PixelZoneProps) {
+export function PixelZone({ zone, metrics, selected, hovered, onHover, onSelect, onOpen, showLabels, locale = "en" }: PixelZoneProps) {
   const tone = toneStyle[zone.tone];
   const active = selected || hovered;
+  const copy = zoneDisplay(zone, locale);
 
   return (
     <button
@@ -91,8 +93,8 @@ export function PixelZone({ zone, metrics, selected, hovered, onHover, onSelect,
         imageRendering: "pixelated",
         clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))",
       }}
-      aria-label={`Open ${zone.label}`}
-      title={`${zone.label}: ${zone.description}`}
+      aria-label={locale === "zh" ? `打开${copy.label}` : `Open ${copy.label}`}
+      title={`${copy.label}: ${copy.description}`}
     >
       <div
         className="absolute inset-0 opacity-25"
@@ -106,9 +108,9 @@ export function PixelZone({ zone, metrics, selected, hovered, onHover, onSelect,
         <div className="flex items-start justify-between gap-2">
           {showLabels && (
             <div className="min-w-0">
-              <div className="text-[11px] font-semibold leading-tight truncate">{zone.label}</div>
+              <div className="text-[11px] font-semibold leading-tight truncate">{copy.label}</div>
               <div className="text-[9px] leading-tight mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
-                {zone.metricLabel}
+                {copy.metricLabel}
               </div>
             </div>
           )}
@@ -122,7 +124,7 @@ export function PixelZone({ zone, metrics, selected, hovered, onHover, onSelect,
             className="self-start rounded px-1.5 py-0.5 text-[9px] font-mono"
             style={{ background: "rgba(2, 6, 23, 0.58)", color: tone.light }}
           >
-            {formatZoneMetric(zone.id, metrics)}
+            {formatZoneMetric(zone.id, metrics, locale)}
           </div>
         )}
       </div>

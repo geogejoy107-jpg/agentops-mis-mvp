@@ -155,6 +155,14 @@ export interface RuntimeConnector {
   last_checked: string;
   real_run_enabled: boolean;
   confirm_required: boolean;
+  trust_status?: string;
+  trust_note?: string;
+  trust_updated_at?: string;
+  observation_level?: string;
+  risk_floor?: string;
+  commercial_readiness?: string;
+  capability_policy_hash?: string;
+  capability_manifest?: Record<string, unknown>;
   endpoint: string;
   import_count?: number;
   last_event?: string;
@@ -1006,6 +1014,14 @@ export const templatePackages: TemplatePackage[] = [
     agent_roles: ['Researcher', 'Writer', 'Reviewer'],
     base_bindings: ['Agent-MIS Local', 'Notion', 'Docmost'],
     status: 'planned',
+  },
+  {
+    template_id: 'tpl_ai_knowledge_base_bot',
+    name: 'AI Knowledge Base / Q&A Bot',
+    description: 'Document cleaning, Dify/OpenAI File Search/AnythingLLM connector choice, chunking, embeddings, citations, evaluation and approval-gated upload.',
+    agent_roles: ['Planner', 'Document Cleaner', 'Knowledge Builder', 'Evaluator', 'Reporter'],
+    base_bindings: ['Agent-MIS Local', 'Dify', 'OpenAI File Search', 'AnythingLLM'],
+    status: 'active',
   },
   {
     template_id: 'tpl_one_person_ops',

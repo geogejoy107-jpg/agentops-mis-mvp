@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
-export type ThemeMode = "dark" | "light";
+export type ThemeMode = "enterprise" | "ops" | "workforce";
 export type LocaleMode = "en" | "zh";
 
 interface PreferencesContextValue {
@@ -18,12 +18,15 @@ const LOCALE_KEY = "agentops-mis-locale";
 
 function readTheme(): ThemeMode {
   const stored = localStorage.getItem(THEME_KEY);
-  return stored === "light" ? "light" : "dark";
+  if (stored === "light" || stored === "enterprise") return "enterprise";
+  if (stored === "workforce") return "workforce";
+  return "ops";
 }
 
 function readLocale(): LocaleMode {
   const stored = localStorage.getItem(LOCALE_KEY);
-  return stored === "zh" ? "zh" : "en";
+  if (stored === "en" || stored === "zh") return stored;
+  return "zh";
 }
 
 export function PreferencesProvider({ children }: { children: ReactNode }) {
@@ -41,7 +44,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
+    document.documentElement.classList.toggle("dark", theme !== "enterprise");
+    document.documentElement.dataset.agentopsTheme = theme;
   }, [theme]);
 
   const value = useMemo(

@@ -35,7 +35,7 @@ curl -s -X POST http://127.0.0.1:8787/api/integrations/hermes/cli-probe \
   -d '{}' | jq .
 ```
 
-5. Then run the explicit confirmed probe:
+5. Then request the explicit live probe. This prepares the exact action and does not call Agnesfallback yet:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8787/api/integrations/hermes/cli-probe \
@@ -43,7 +43,25 @@ curl -s -X POST http://127.0.0.1:8787/api/integrations/hermes/cli-probe \
   -d '{"confirm_run": true}' | jq .
 ```
 
-6. Record the after counts:
+Copy `approval_id` and `prepared_action_id` from the response.
+
+6. Approve the prepared action:
+
+```bash
+curl -s -X POST "http://127.0.0.1:8787/api/approvals/$APPROVAL_ID/approve" \
+  -H "Content-Type: application/json" \
+  -d '{}' | jq .
+```
+
+7. Resume the exact approved probe:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/integrations/hermes/cli-probe \
+  -H "Content-Type: application/json" \
+  -d "{\"confirm_run\": true, \"prepared_action_id\": \"$PREPARED_ACTION_ID\"}" | jq .
+```
+
+8. Record the after counts:
 
 ```bash
 python3 scripts/live_demo_verify.py after
@@ -51,7 +69,9 @@ python3 scripts/live_demo_verify.py after
 
 Expected result:
 
-- Response shows `dry_run:false`.
+- The first confirmed response shows `reason: runtime_probe_prepared_action_required`.
+- The resumed response shows `dry_run:false`.
+- The resumed response includes a consumed `prepared_action`.
 - `ok` is `true` when Agnesfallback returns the fixed expected text.
 - `output_summary` says the CLI returned `AGNESFALLBACK_OK`, or clearly states the probe result.
 - `runs` increases.
@@ -98,7 +118,7 @@ python3 scripts/live_demo_verify.py before
 curl -s http://127.0.0.1:8787/api/integrations/hermes/models | jq .
 ```
 
-6. Run the explicit confirmed OpenAI-compatible probe:
+6. Request the explicit OpenAI-compatible live probe. This prepares the exact action and does not call the gateway yet:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8787/api/integrations/hermes/chat-completion-probe \
@@ -106,7 +126,25 @@ curl -s -X POST http://127.0.0.1:8787/api/integrations/hermes/chat-completion-pr
   -d '{"confirm_run": true}' | jq .
 ```
 
-7. Record the after counts:
+Copy `approval_id` and `prepared_action_id` from the response.
+
+7. Approve the prepared action:
+
+```bash
+curl -s -X POST "http://127.0.0.1:8787/api/approvals/$APPROVAL_ID/approve" \
+  -H "Content-Type: application/json" \
+  -d '{}' | jq .
+```
+
+8. Resume the exact approved probe:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/integrations/hermes/chat-completion-probe \
+  -H "Content-Type: application/json" \
+  -d "{\"confirm_run\": true, \"prepared_action_id\": \"$PREPARED_ACTION_ID\"}" | jq .
+```
+
+9. Record the after counts:
 
 ```bash
 python3 scripts/live_demo_verify.py after
@@ -114,7 +152,9 @@ python3 scripts/live_demo_verify.py after
 
 Expected result:
 
-- Response shows `dry_run:false`.
+- The first confirmed response shows `reason: runtime_probe_prepared_action_required`.
+- The resumed response shows `dry_run:false`.
+- The resumed response includes a consumed `prepared_action`.
 - `ok` is `true` when the gateway returns the fixed expected text.
 - `output_summary` says the API returned `HERMES_AGNES_API_OK`, or clearly states the probe result.
 - `runs` increases.

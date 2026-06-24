@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Smoke test `agentops worker status` without printing token secrets."""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+CLI = ROOT / "scripts" / "agentops"
+
+
+def run(cmd: list[str], *, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+
+
+def load_json(proc: subprocess.CompletedProcess[str]) -> dict:
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return {}
+
+
+def leaked_secret(text: str) -> bool:
+    return bool(re.search(
+        r"(AGENTOPS_API_KEY|Authorization:|Bearer |agtok_[A-Za-z0-9_-]{16,}|agtsess_[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9_-]{16,}|ntn_[A-Za-z0-9_-]{16,})",
+        text,
+    ))
+
+
+def main() -> int:
+    with tempfile.TemporaryDirectory(prefix="agentops-worker-status-") as tmp:
+        env = os.environ.copy()
+        env["AGENTOPS_CONFIG"] = str(Path(tmp) / "config.json")
+        env.pop("AGENTOPS_API_KEY", None)
+
+        proc = run([str(CLI), "worker", "status"], env=env)
+        payload = load_json(proc)
+        text = proc.stdout + proc.stderr
+        ok = (
+            proc.returncode == 0
+            and payload.get("provider") == "agentops-worker"
+            and payload.get("status") in {"ready", "running", "attention"}
+            and payload.get("fleet_health", {}).get("overall") in {"ready", "attention", "blocked"}
+            and payload.get("fleet_health", {}).get("token_omitted") is True
+            and isinstance(payload.get("fleet_health", {}).get("gates"), list)
+            and bool(payload.get("fleet_health", {}).get("gates"))
+            and isinstance(payload.get("fleet_health", {}).get("recommended_actions"), list)
+            and bool(payload.get("fleet_health", {}).get("recommended_actions"))
+            and "CLI/API" in (payload.get("fleet_health", {}).get("contract") or "")
+            and isinstance(payload.get("daemons"), list)
+            and isinstance(payload.get("workers"), list)
+            and isinstance(payload.get("remote_worker_health"), dict)
+            and isinstance(payload.get("remote_worker_count"), int)
+            and payload.get("remote_worker_health", {}).get("token_omitted") is True
+            and (payload.get("adapter_readiness") or {}).get("recommended_adapter") in {"mock", "hermes", "openclaw"}
+            and not leaked_secret(text)
+        )
+        print(json.dumps({
+            "ok": ok,
+            "returncode": proc.returncode,
+            "provider": payload.get("provider"),
+            "status": payload.get("status"),
+            "worker_count": payload.get("worker_count"),
+            "running_workers": payload.get("running_workers"),
+            "pending_worker_tasks": payload.get("pending_worker_tasks"),
+            "stuck_worker_tasks": payload.get("stuck_worker_tasks"),
+            "remote_worker_count": payload.get("remote_worker_count"),
+            "stale_remote_enrollments": payload.get("stale_remote_enrollments"),
+            "active_remote_sessions": payload.get("active_remote_sessions"),
+            "fleet_overall": payload.get("fleet_health", {}).get("overall"),
+            "fleet_gate_count": len(payload.get("fleet_health", {}).get("gates") or []),
+            "fleet_actions": payload.get("fleet_health", {}).get("recommended_actions"),
+            "recommended_adapter": (payload.get("adapter_readiness") or {}).get("recommended_adapter"),
+            "daemon_count": len(payload.get("daemons") or []),
+            "secret_leaked": leaked_secret(text),
+        }, ensure_ascii=False, indent=2, sort_keys=True))
+        if not ok:
+            print("stdout:", proc.stdout[-1600:], file=sys.stderr)
+            print("stderr:", proc.stderr[-1600:], file=sys.stderr)
+        return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

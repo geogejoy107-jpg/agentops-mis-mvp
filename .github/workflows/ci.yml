@@ -1,0 +1,209 @@
+name: AgentOps MIS CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "codex/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentops-mis-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-deterministic:
+    name: Backend deterministic smokes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AGENTOPS_DB_PATH: /tmp/agentops_ci.db
+      AGENTOPS_HOST: 127.0.0.1
+      AGENTOPS_PORT: "8787"
+      AGENTOPS_BASE_URL: http://127.0.0.1:8787
+      AGENTOPS_SKIP_SEED_EXPORTS: "1"
+      AGENTOPS_DEPLOYMENT_MODE: local
+      HERMES_ALLOW_REAL_RUN: "false"
+      HERMES_REQUIRE_CONFIRM_RUN: "true"
+      DIFY_ALLOW_REAL_UPLOAD: "false"
+      NOTION_TOKEN: ""
+      NOTION_PARENT_PAGE_ID: ""
+      NOTION_DATABASE_ID: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax and diff checks
+        run: |
+          set -euo pipefail
+          python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py
+          git diff --check
+
+      - name: Offline safety smokes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/redaction_policy_smoke.py
+          python3 scripts/sqlite_pragmas_smoke.py
+          python3 scripts/sqlite_reliability_smoke.py
+          python3 scripts/sqlite_concurrency_smoke.py
+          python3 scripts/migration_rollback_smoke.py
+          python3 scripts/release_branch_control_smoke.py
+          python3 scripts/release_freeze_protocol_smoke.py
+          python3 scripts/github_ci_evidence_smoke.py
+          python3 scripts/clean_machine_rc_smoke.py
+          python3 scripts/release_evidence_packet_smoke.py
+          python3 scripts/merge_readiness_status_smoke.py
+          python3 scripts/v1_5_product_closure_evidence_smoke.py
+          python3 scripts/enrollment_hosted_policy_ui_smoke.py
+          python3 scripts/agent_gateway_scope_effects_ui_smoke.py
+          python3 scripts/runtime_connector_trust_ui_smoke.py
+          python3 scripts/customer_worker_hermes_retry_gateway_smoke.py
+          python3 scripts/module_boundary_smoke.py
+          python3 scripts/read_model_cache_smoke.py
+          python3 scripts/open_source_adoption_boundary_smoke.py
+          python3 scripts/external_connector_runtime_inventory_smoke.py
+          python3 scripts/secret_scan_smoke.py
+          python3 scripts/license_provenance_smoke.py
+          python3 scripts/public_claims_release_gate_smoke.py
+          python3 scripts/redaction_fuzz_smoke.py
+          python3 scripts/shared_mode_local_write_guard_smoke.py
+          python3 scripts/approval_semantics_boundary_smoke.py
+          python3 scripts/automatic_plan_evidence_workflow_smoke.py
+          python3 scripts/knowledge_retrieval_quality_smoke.py
+          python3 scripts/worker_knowledge_evidence_consumption_smoke.py
+          python3 scripts/worker_prompt_profile_smoke.py
+          python3 scripts/commander_repo_map_smoke.py
+          python3 scripts/commander_coding_project_template_smoke.py
+          python3 scripts/commander_coding_workspace_smoke.py
+          python3 scripts/operator_command_center_smoke.py
+          python3 scripts/ai_employees_responsiveness_smoke.py
+          python3 scripts/operator_action_queue_ui_smoke.py
+          python3 scripts/worker_console_ui_smoke.py
+          python3 scripts/customer_dispatch_desk_ui_smoke.py
+          python3 scripts/commander_team_board_ui_smoke.py
+          python3 scripts/task_detail_evidence_ui_smoke.py
+          python3 scripts/run_detail_evidence_ui_smoke.py
+          python3 scripts/startup_security_guard_smoke.py
+          python3 scripts/operator_loop_audit_closed_loop_smoke.py
+          python3 scripts/operator_advance_loop_smoke.py
+          python3 scripts/operator_loop_control_smoke.py
+          python3 scripts/operator_loop_driver_smoke.py
+          python3 scripts/operator_loop_launch_packet_smoke.py
+          python3 scripts/operator_live_product_readiness_smoke.py
+          python3 scripts/agentops_worker_service_check_smoke.py
+          python3 scripts/agentops_worker_service_control_smoke.py
+          python3 scripts/local_runtime_identity_smoke.py
+          python3 scripts/agentops_cli_connection_hint_smoke.py
+          python3 scripts/worker_log_rotation_smoke.py
+
+      - name: Start isolated local server
+        run: |
+          set -euo pipefail
+          python3 server.py --host 127.0.0.1 --port 8787 > "$RUNNER_TEMP/agentops-server.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/agentops-server.pid"
+          for attempt in $(seq 1 60); do
+            if curl -fsS "$AGENTOPS_BASE_URL/api/agent-gateway/status" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/agentops-server.log"
+          exit 1
+
+      - name: Server-backed smoke suite
+        run: |
+          set -euo pipefail
+          python3 scripts/security_production_readiness_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/agentops_doctor_smoke.py
+          python3 scripts/agent_plan_integrity_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/run_start_plan_gate_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/operator_evidence_report_smoke.py
+          python3 scripts/safe_closure_evidence_packet_smoke.py
+          python3 scripts/delivery_approval_manifest_gate_smoke.py
+          python3 scripts/protected_live_runtime_ids_smoke.py
+          python3 scripts/collaborator_exact_scope_smoke.py "$AGENTOPS_BASE_URL"
+          python3 scripts/operator_task_intake_smoke.py
+          python3 scripts/operator_action_plan_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/operator_action_receipt_smoke.py
+          python3 scripts/operator_action_receipts_cli_smoke.py
+          python3 scripts/operator_action_receipt_cli_record_smoke.py
+          python3 scripts/operator_handoff_smoke.py
+          python3 scripts/operator_runtime_doctor_smoke.py
+          python3 scripts/operator_start_check_api_smoke.py
+          python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --adapter hermes --adapter openclaw
+          python3 scripts/operator_execution_mode_smoke.py
+          python3 scripts/commander_work_package_plan_smoke.py
+          python3 scripts/commander_work_package_dispatch_smoke.py
+          python3 scripts/commander_integration_inbox_smoke.py --base-url "$AGENTOPS_BASE_URL" --db-path "$AGENTOPS_DB_PATH"
+          python3 scripts/local_coding_project_template_smoke.py
+          python3 scripts/operator_health_smoke.py
+          python3 scripts/runtime_capability_manifest_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/runtime_connector_trust_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/worker_adapter_readiness_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/enrollment_launch_steps_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/remote_launch_packet_worker_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/worker_fleet_hygiene_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/worker_secret_boundary_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/prepared_action_approval_wall_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/worker_external_write_preflight_gate_smoke.py
+          python3 scripts/runtime_probe_prepared_action_gate_smoke.py
+          python3 scripts/customer_worker_external_write_gate_smoke.py
+          python3 scripts/generic_external_side_effect_gate_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/agent_gateway_runtime_event_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/worker_adapter_retry_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/agent_gateway_scope_matrix_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/agent_gateway_scoped_read_smoke.py
+          python3 scripts/agent_gateway_reviewable_lists_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/knowledge_scope_policy_smoke.py
+          python3 scripts/agent_gateway_knowledge_scope_smoke.py
+          python3 scripts/task_claim_conflict_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/workspace_isolation_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/v1_5_local_product_acceptance.py --base-url "$AGENTOPS_BASE_URL"
+
+      - name: Stop local server
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/agentops-server.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/agentops-server.pid")" 2>/dev/null || true
+          fi
+
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentops-server-log
+          path: ${{ runner.temp }}/agentops-server.log
+          if-no-files-found: ignore
+
+  ui-build:
+    name: UI build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/start-building-app/package-lock.json
+
+      - name: Install and build
+        working-directory: ui/start-building-app
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build

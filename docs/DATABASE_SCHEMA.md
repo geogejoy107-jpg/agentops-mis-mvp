@@ -116,10 +116,40 @@ CREATE TABLE IF NOT EXISTS approvals (
     FOREIGN KEY(approver_user_id) REFERENCES users(user_id)
 );
 
+CREATE TABLE IF NOT EXISTS prepared_actions (
+    action_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+    task_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    tool_call_id TEXT,
+    approval_id TEXT NOT NULL,
+    requested_by_agent_id TEXT NOT NULL,
+    action_type TEXT NOT NULL,
+    normalized_args_json TEXT NOT NULL DEFAULT '{}',
+    target_resource TEXT,
+    risk_level TEXT NOT NULL CHECK(risk_level IN ('low','medium','high','critical')),
+    policy_version TEXT NOT NULL DEFAULT 'approval-wall-v1',
+    checkpoint_json TEXT NOT NULL DEFAULT '{}',
+    action_hash TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('prepared','approved','rejected','consumed','expired')),
+    provider_side_effect_id TEXT,
+    result_summary TEXT,
+    created_at TEXT NOT NULL,
+    approved_at TEXT,
+    consumed_at TEXT,
+    expires_at TEXT,
+    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+    FOREIGN KEY(run_id) REFERENCES runs(run_id),
+    FOREIGN KEY(tool_call_id) REFERENCES tool_calls(tool_call_id),
+    FOREIGN KEY(approval_id) REFERENCES approvals(approval_id),
+    FOREIGN KEY(requested_by_agent_id) REFERENCES agents(agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS memories (
     memory_id TEXT PRIMARY KEY,
     scope TEXT NOT NULL CHECK(scope IN ('task','project','org')),
-    memory_type TEXT NOT NULL CHECK(memory_type IN ('policy','sop','decision','commitment','risk','failure_case','project_context','customer_preference','agent_lesson','artifact_summary')),
+    memory_type TEXT NOT NULL CHECK(memory_type IN ('policy','sop','decision','commitment','risk','failure_case','project_context','customer_preference','agent_lesson','artifact_summary','loop_record')),
     canonical_text TEXT NOT NULL,
     source_type TEXT NOT NULL CHECK(source_type IN ('chat','email','meeting','github','notion','run_log','manual')),
     source_ref TEXT,
@@ -154,6 +184,46 @@ CREATE TABLE IF NOT EXISTS evaluations (
     FOREIGN KEY(task_id) REFERENCES tasks(task_id),
     FOREIGN KEY(run_id) REFERENCES runs(run_id),
     FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
+);
+
+CREATE TABLE IF NOT EXISTS evaluation_case_candidates (
+    case_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+    source_type TEXT NOT NULL CHECK(source_type IN ('evaluation','customer_delivery','run','artifact','manual','commander_synthesis')),
+    source_ref TEXT,
+    task_id TEXT,
+    run_id TEXT,
+    artifact_id TEXT,
+    evaluation_id TEXT,
+    agent_id TEXT,
+    case_type TEXT NOT NULL CHECK(case_type IN ('regression','golden','safety','quality','cost','tool_use','memory')),
+    title TEXT NOT NULL,
+    input_summary TEXT,
+    expected_output_summary TEXT,
+    rubric_json TEXT NOT NULL DEFAULT '{}',
+    failure_mode TEXT,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    review_status TEXT NOT NULL CHECK(review_status IN ('candidate','approved','rejected','stale','superseded')),
+    created_by_agent_id TEXT,
+    owner_user_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS evaluation_case_runs (
+    case_run_id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+    run_id TEXT NOT NULL,
+    evaluation_id TEXT NOT NULL,
+    artifact_id TEXT,
+    runner_type TEXT NOT NULL CHECK(runner_type IN ('rule','llm_mock')),
+    status TEXT NOT NULL CHECK(status IN ('preview','completed','skipped')),
+    score REAL NOT NULL DEFAULT 0,
+    pass_fail TEXT NOT NULL CHECK(pass_fail IN ('pass','fail')),
+    checks_json TEXT NOT NULL DEFAULT '{}',
+    created_by_agent_id TEXT,
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -215,5 +285,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id
 | `template_packages` | 用例模板：agent roles、task schema、memory schema、quality gates、approval policy。 |
 | `template_bindings` | 模板与 base/workspace 的绑定。 |
 | `migration_runs` | base/template switching preview 和未来迁移结果。 |
+| `agent_plans` | Agent 执行前的 READ/PLAN/RETRIEVE/COMPARE 计划账本。 |
+| `plan_evidence_manifests` | Agent 执行后的计划证据绑定：plan、run、tool call、evaluation、artifact、audit 证据与验证状态。 |
+| `knowledge_documents` | Markdown 知识文件的索引元数据、hash、分类和摘要。 |
+| `knowledge_chunks` | Markdown 知识文件按 heading 切分后的章节级检索元数据、hash、标题路径和短摘要。 |
+| `knowledge_fts` | SQLite FTS5 虚拟表，用于兼容旧的整篇文档检索和手动插入的私有知识行。 |
+| `knowledge_chunk_fts` | SQLite FTS5 虚拟表，用于优先返回 heading-aware chunk 检索结果。 |
 
 隐私边界保持不变：这些扩展表记录结构化状态、短摘要、hash、连接器状态和迁移预览，不存 credentials、私聊正文、完整 transcript 或真实 prompt 原文。

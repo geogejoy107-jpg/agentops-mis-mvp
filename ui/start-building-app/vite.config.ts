@@ -33,7 +33,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/mis-api': {
-        target: 'http://127.0.0.1:8787',
+        target: process.env.VITE_AGENTOPS_PROXY_TARGET || 'http://127.0.0.1:8787',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/mis-api/, '/api'),
       },

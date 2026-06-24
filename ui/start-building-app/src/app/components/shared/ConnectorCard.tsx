@@ -1,6 +1,7 @@
 import { ExternalLink, RefreshCw, AlertTriangle, CheckCircle, XCircle, Clock } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import type { RuntimeConnector } from "../../data/mockData";
+import { pick, usePreferences } from "../../context/PreferencesContext";
 
 interface ConnectorCardProps {
   connector: RuntimeConnector;
@@ -14,6 +15,34 @@ function StatusIcon({ status }: { status: string }) {
 }
 
 export function ConnectorCard({ connector }: ConnectorCardProps) {
+  const { locale } = usePreferences();
+  const copy = pick(locale, {
+    en: {
+      mode: "Mode",
+      endpoint: "Endpoint",
+      lastChecked: "Last checked",
+      realRun: "Real run",
+      enabled: "Enabled",
+      disabled: "Disabled",
+      confirmRequired: "Explicit confirmation required before real run",
+      lastEvent: "Last event",
+      probe: "Probe",
+      viewLedger: "View Ledger",
+    },
+    zh: {
+      mode: "模式",
+      endpoint: "端点",
+      lastChecked: "上次检查",
+      realRun: "真实运行",
+      enabled: "已开启",
+      disabled: "已关闭",
+      confirmRequired: "真实运行前必须显式确认",
+      lastEvent: "最近事件",
+      probe: "探测",
+      viewLedger: "查看账本",
+    },
+  });
+
   return (
     <div
       className="rounded-xl p-5 flex flex-col gap-4"
@@ -38,10 +67,10 @@ export function ConnectorCard({ connector }: ConnectorCardProps) {
       {/* Details grid */}
       <div className="grid grid-cols-2 gap-2">
         {[
-          { label: "Mode", value: connector.mode },
-          { label: "Endpoint", value: connector.endpoint.length > 24 ? connector.endpoint.slice(0, 24) + "…" : connector.endpoint },
-          { label: "Last checked", value: new Date(connector.last_checked).toLocaleTimeString() },
-          { label: "Real run", value: connector.real_run_enabled ? "Enabled" : "Disabled" },
+          { label: copy.mode, value: connector.mode },
+          { label: copy.endpoint, value: connector.endpoint.length > 24 ? connector.endpoint.slice(0, 24) + "…" : connector.endpoint },
+          { label: copy.lastChecked, value: new Date(connector.last_checked).toLocaleTimeString(locale === "zh" ? "zh-CN" : "en-US") },
+          { label: copy.realRun, value: connector.real_run_enabled ? copy.enabled : copy.disabled },
         ].map(({ label, value }) => (
           <div key={label}>
             <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>{label}</div>
@@ -57,14 +86,14 @@ export function ConnectorCard({ connector }: ConnectorCardProps) {
           style={{ background: "rgba(251,191,36,0.08)", color: "#FBBF24", border: "1px solid rgba(251,191,36,0.2)" }}
         >
           <AlertTriangle size={12} />
-          Explicit confirmation required before real run
+          {copy.confirmRequired}
         </div>
       )}
 
       {/* Last event */}
       {connector.last_event && (
         <div className="text-[11px] rounded px-3 py-2" style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)" }}>
-          <span style={{ color: "var(--mis-muted)" }}>Last event: </span>
+          <span style={{ color: "var(--mis-muted)" }}>{copy.lastEvent}: </span>
           {connector.last_event}
         </div>
       )}
@@ -76,14 +105,14 @@ export function ConnectorCard({ connector }: ConnectorCardProps) {
           style={{ background: "rgba(46,134,171,0.15)", color: "var(--mis-primary)", border: "1px solid rgba(46,134,171,0.2)" }}
         >
           <RefreshCw size={11} />
-          Probe
+          {copy.probe}
         </button>
         <button
           className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded transition-opacity hover:opacity-80"
           style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)" }}
         >
           <ExternalLink size={11} />
-          View Ledger
+          {copy.viewLedger}
         </button>
       </div>
     </div>

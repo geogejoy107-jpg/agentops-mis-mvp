@@ -1,54 +1,77 @@
+import { pick, usePreferences } from "../../context/PreferencesContext";
+
 interface StatusBadgeProps {
   status: string;
   size?: "sm" | "md";
+  label?: string;
 }
 
-const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
+const statusConfig: Record<string, { label: { en: string; zh: string }; color: string; bg: string }> = {
+  // generic health/readiness
+  unknown:           { label: { en: "Unknown", zh: "未知" },                      color: "var(--mis-dim)",     bg: "rgba(107,114,128,0.1)" },
+  healthy:           { label: { en: "Healthy", zh: "健康" },                      color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
+  ok:                { label: { en: "OK", zh: "正常" },                           color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
+  attention:         { label: { en: "Attention", zh: "需处理" },                  color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
+  warn:              { label: { en: "Warn", zh: "警告" },                         color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
+  degraded:          { label: { en: "Degraded", zh: "降级" },                     color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
   // agent status
-  idle:              { label: "Idle",             color: "var(--mis-dim)",     bg: "rgba(107,114,128,0.15)" },
-  running:           { label: "Running",          color: "var(--mis-cyan)",    bg: "rgba(34,211,238,0.12)" },
-  paused:            { label: "Paused",           color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
-  error:             { label: "Error",            color: "var(--mis-warning)", bg: "rgba(231,111,81,0.15)" },
-  disabled:          { label: "Disabled",         color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
+  idle:              { label: { en: "Idle", zh: "空闲" },                         color: "var(--mis-dim)",     bg: "rgba(107,114,128,0.15)" },
+  running:           { label: { en: "Running", zh: "运行中" },                     color: "var(--mis-cyan)",    bg: "rgba(34,211,238,0.12)" },
+  paused:            { label: { en: "Paused", zh: "已暂停" },                      color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
+  error:             { label: { en: "Error", zh: "错误" },                         color: "var(--mis-warning)", bg: "rgba(231,111,81,0.15)" },
+  disabled:          { label: { en: "Disabled", zh: "已禁用" },                    color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
+  active:            { label: { en: "Active", zh: "已启用" },                      color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
+  inactive:          { label: { en: "Inactive", zh: "未活跃" },                   color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
   // task status
-  backlog:           { label: "Backlog",          color: "var(--mis-dim)",     bg: "rgba(107,114,128,0.1)" },
-  planned:           { label: "Planned",          color: "var(--mis-primary)", bg: "rgba(46,134,171,0.15)" },
-  waiting_approval:  { label: "Awaiting Approval",color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
-  blocked:           { label: "Blocked",          color: "var(--mis-warning)", bg: "rgba(231,111,81,0.15)" },
-  completed:         { label: "Completed",        color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
-  failed:            { label: "Failed",           color: "#F87171",            bg: "rgba(248,113,113,0.15)" },
-  canceled:          { label: "Canceled",         color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
+  backlog:           { label: { en: "Backlog", zh: "待排期" },                    color: "var(--mis-dim)",     bg: "rgba(107,114,128,0.1)" },
+  planned:           { label: { en: "Planned", zh: "已计划" },                    color: "var(--mis-primary)", bg: "rgba(46,134,171,0.15)" },
+  queued:            { label: { en: "Queued", zh: "队列中" },                     color: "var(--mis-primary)", bg: "rgba(46,134,171,0.15)" },
+  waiting_approval:  { label: { en: "Awaiting Approval", zh: "等待审批" },        color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
+  approval_required: { label: { en: "Approval Required", zh: "需审批" },          color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
+  blocked:           { label: { en: "Blocked", zh: "已阻塞" },                    color: "var(--mis-warning)", bg: "rgba(231,111,81,0.15)" },
+  completed:         { label: { en: "Completed", zh: "已完成" },                  color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
+  failed:            { label: { en: "Failed", zh: "失败" },                       color: "#F87171",            bg: "rgba(248,113,113,0.15)" },
+  canceled:          { label: { en: "Canceled", zh: "已取消" },                   color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
   // approval
-  pending:           { label: "Pending",          color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
-  approved:          { label: "Approved",         color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
-  rejected:          { label: "Rejected",         color: "#F87171",            bg: "rgba(248,113,113,0.15)" },
-  expired:           { label: "Expired",          color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
+  pending:           { label: { en: "Pending", zh: "待处理" },                    color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
+  approved:          { label: { en: "Approved", zh: "已批准" },                   color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
+  rejected:          { label: { en: "Rejected", zh: "已拒绝" },                   color: "#F87171",            bg: "rgba(248,113,113,0.15)" },
+  expired:           { label: { en: "Expired", zh: "已过期" },                    color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
+  issued:            { label: { en: "Issued", zh: "已签发" },                     color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
   // memory
-  candidate:         { label: "Candidate",        color: "var(--mis-cyan)",    bg: "rgba(34,211,238,0.1)" },
-  stale:             { label: "Stale",            color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
-  superseded:        { label: "Superseded",       color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
+  candidate:         { label: { en: "Candidate", zh: "候选" },                    color: "var(--mis-cyan)",    bg: "rgba(34,211,238,0.1)" },
+  stale:             { label: { en: "Stale", zh: "已陈旧" },                      color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
+  superseded:        { label: { en: "Superseded", zh: "已替代" },                 color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
+  fresh:             { label: { en: "Fresh", zh: "心跳正常" },                    color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
+  never_seen:        { label: { en: "Never Seen", zh: "未连接" },                 color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
+  revoked:           { label: { en: "Revoked", zh: "已撤销" },                    color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
   // connector
-  ready:             { label: "Ready",            color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
-  unavailable:       { label: "Unavailable",      color: "#F87171",            bg: "rgba(248,113,113,0.15)" },
-  live:              { label: "Live",             color: "var(--mis-cyan)",    bg: "rgba(34,211,238,0.12)" },
-  dry_run:           { label: "Dry-run",          color: "var(--mis-primary)", bg: "rgba(46,134,171,0.15)" },
-  pending_approval:  { label: "Pending Approval", color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
+  ready:             { label: { en: "Ready", zh: "就绪" },                        color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
+  available:         { label: { en: "Available", zh: "可用" },                    color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
+  review_required:   { label: { en: "Review Required", zh: "需复核" },            color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
+  trusted:           { label: { en: "Trusted", zh: "可信" },                      color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
+  unavailable:       { label: { en: "Unavailable", zh: "不可用" },                color: "#F87171",            bg: "rgba(248,113,113,0.15)" },
+  live:              { label: { en: "Live", zh: "实时" },                         color: "var(--mis-cyan)",    bg: "rgba(34,211,238,0.12)" },
+  dry_run:           { label: { en: "Dry-run", zh: "安全预演" },                  color: "var(--mis-primary)", bg: "rgba(46,134,171,0.15)" },
+  pending_approval:  { label: { en: "Pending Approval", zh: "等待审批" },         color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
   // pass/fail
-  pass:              { label: "Pass",             color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
-  fail:              { label: "Fail",             color: "#F87171",            bg: "rgba(248,113,113,0.15)" },
+  pass:              { label: { en: "Pass", zh: "通过" },                         color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
+  verified:          { label: { en: "Verified", zh: "已验收" },                    color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
+  fail:              { label: { en: "Fail", zh: "未通过" },                       color: "#F87171",            bg: "rgba(248,113,113,0.15)" },
 };
 
-export function StatusBadge({ status, size = "sm" }: StatusBadgeProps) {
-  const cfg = statusConfig[status] ?? { label: status, color: "var(--mis-dim)", bg: "rgba(107,114,128,0.1)" };
+export function StatusBadge({ status, size = "sm", label }: StatusBadgeProps) {
+  const { locale } = usePreferences();
+  const cfg = statusConfig[status] ?? { label: { en: status, zh: status }, color: "var(--mis-dim)", bg: "rgba(107,114,128,0.1)" };
   const px = size === "md" ? "px-2.5 py-1" : "px-2 py-0.5";
   const fs = size === "md" ? "text-xs" : "text-[11px]";
 
   return (
     <span
-      className={`inline-flex items-center rounded font-medium ${px} ${fs}`}
+      className={`inline-flex shrink-0 items-center whitespace-nowrap rounded font-medium ${px} ${fs}`}
       style={{ color: cfg.color, background: cfg.bg }}
     >
-      {cfg.label}
+      {label || pick(locale, cfg.label)}
     </span>
   );
 }
