@@ -29,6 +29,10 @@ def main() -> int:
     require(default_payload.get("release_complete") is False, "release status must not claim release completion")
     require(default_payload.get("commercial_handoff_allowed") is False, "release status must not allow handoff")
     require(default_payload.get("ready_to_merge") is False, "release status must not claim merge readiness")
+    packet = default_payload.get("promotion_packet") or {}
+    require(packet.get("contract_id") == "commercial_release_promotion_packet_v1", "promotion packet contract missing from release status")
+    require(packet.get("read_only") is True, "promotion packet must be read-only")
+    require("python3 scripts/commercial_release_promotion_packet.py --include-external-ci-evidence" in set(default_payload.get("commands", {}).values()), "promotion packet command missing")
 
     original = server.commercial_release_external_ci_evidence
 

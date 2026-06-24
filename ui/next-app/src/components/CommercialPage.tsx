@@ -1,4 +1,4 @@
-import { GitBranch, ListChecks, LockKeyhole, Rocket, ShieldAlert, ShieldCheck, ToggleLeft } from "lucide-react";
+import { ClipboardCheck, GitBranch, ListChecks, LockKeyhole, Rocket, ShieldAlert, ShieldCheck, ToggleLeft } from "lucide-react";
 import { AppFrame } from "./AppFrame";
 import type { CommercialEntitlementStatus, CommercialReleaseStatusPayload } from "@/lib/mis";
 
@@ -40,6 +40,7 @@ export function CommercialParityPage({
   const enabledCount = capabilities.filter(([, enabled]) => enabled).length;
   const release = releaseStatus || {};
   const preflight = release.promotion_preflight || {};
+  const promotionPacket = release.promotion_packet || {};
   const currentEvidence = release.current_evidence_status || {};
   const exactHead = release.external_exact_head_ci || {};
   const blockers = release.blockers?.length ? release.blockers : preflight.known_blockers || [];
@@ -148,6 +149,30 @@ export function CommercialParityPage({
                 <div>
                   <strong>{contract}</strong>
                   <span>source contract</span>
+                </div>
+                <span className="status statusWarn">required</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="panel" data-smoke="commercial-promotion-packet">
+          <div className="panelHeader">
+            <h2><ClipboardCheck size={14} /> Promotion packet</h2>
+            <span>{compactStatus(promotionPacket.status)}</span>
+          </div>
+          <div className="proofStrip">
+            <span>{promotionPacket.contract_id || "commercial_release_promotion_packet_v1"}</span>
+            <span>read only {boolText(promotionPacket.read_only)}</span>
+            <span>CI safe {boolText(promotionPacket.ci_safe)}</span>
+          </div>
+          <p className="subtle"><code>{release.commands?.promotion_packet || "python3 scripts/commercial_release_promotion_packet.py --include-external-ci-evidence"}</code></p>
+          <div className="list compactList">
+            {displayList(Object.keys(promotionPacket.packet_requires || {}), 4).map((requirement) => (
+              <div className="row" key={requirement}>
+                <div>
+                  <strong>{titleize(requirement)}</strong>
+                  <span>packet requirement</span>
                 </div>
                 <span className="status statusWarn">required</span>
               </div>

@@ -638,6 +638,15 @@ Must be true:
   `python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head`,
   then uses
   `python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence --require-promotion-ready`.
+- `commercial_release_promotion_packet_v1` is the operator-facing promotion
+  packet over the preflight. It defaults to offline/read-only aggregation, can
+  explicitly read exact-head CI, and can consume a freshly generated
+  `local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api`
+  JSON file without mutating receipt JSON or flipping handoff/merge. Verify with
+  `python3 scripts/commercial_release_promotion_packet_smoke.py`; strict packet
+  readiness uses
+  `python3 scripts/commercial_release_promotion_packet.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence --require-promotion-packet-ready`
+  and must remain blocked until every release-grade condition is true.
 - `release_freeze_protocol_v1` keeps commercial handoff in
   `freeze_active_not_release_complete`, and `merge_readiness_status_v1` keeps
   merge status at `blocked_release_evidence_required` until release evidence,

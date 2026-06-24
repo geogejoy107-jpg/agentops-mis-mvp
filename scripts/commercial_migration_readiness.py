@@ -595,6 +595,8 @@ def main() -> int:
             "nextjs_commercial_release_status_surface_exists",
             file_contains("server.py", "/api/commercial/release-status")
             and file_contains("server.py", "commercial_release_status_api_v1")
+            and file_contains("server.py", "COMMERCIAL_RELEASE_PROMOTION_PACKET.json")
+            and file_contains("server.py", "commercial_release_promotion_packet.py --include-external-ci-evidence")
             and file_contains("server.py", "commercial_release_external_ci_evidence")
             and file_contains("server.py", "include_external_ci_evidence")
             and file_contains("server.py", "network_called")
@@ -607,19 +609,27 @@ def main() -> int:
             and file_contains("ui/next-app/app/workspace/commercial/page.tsx", "exact_head_ci")
             and file_contains("ui/next-app/src/components/CommercialPage.tsx", "Release promotion")
             and file_contains("ui/next-app/src/components/CommercialPage.tsx", "Exact-head CI")
+            and file_contains("ui/next-app/src/components/CommercialPage.tsx", "Promotion packet")
             and file_contains("ui/next-app/src/components/CommercialPage.tsx", "Check exact-head CI")
             and file_contains("ui/next-app/src/components/CommercialPage.tsx", "Current evidence")
             and file_contains("ui/next-app/src/components/CommercialPage.tsx", "commercial-release-status")
             and file_contains("ui/next-app/src/components/CommercialPage.tsx", "commercial-release-promotion-preflight")
+            and file_contains("ui/next-app/src/components/CommercialPage.tsx", "commercial-promotion-packet")
             and file_contains("ui/next-app/src/components/CommercialPage.tsx", "commercial-exact-head-ci-command")
             and file_contains("ui/next-app/src/components/CommercialPage.tsx", "commercial-external-ci-readback-form")
             and file_contains("ui/next-app/src/components/CommercialPage.tsx", "commercial-current-evidence-gates")
             and file_contains("scripts/commercial_release_status_api_smoke.py", "commercial_release_status_api_v1")
+            and file_contains("scripts/commercial_release_promotion_packet.py", "commercial_release_promotion_packet_v1")
+            and file_contains("scripts/commercial_release_promotion_packet_smoke.py", "commercial_release_promotion_packet_v1")
             and file_contains(".github/workflows/commercial-migration-ci.yml", "commercial_release_status_api_smoke.py")
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "commercial_release_promotion_packet_smoke.py")
             and file_contains("scripts/nextjs_parity_smoke.py", "commercial_release_status_api_v1")
+            and file_contains("scripts/nextjs_parity_smoke.py", "commercial_release_promotion_packet_v1")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "Release promotion")
+            and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PACKET.json", "commercial_release_promotion_packet_v1")
+            and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PACKET.md", "commercial_release_promotion_packet_v1")
             and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "/api/commercial/release-status"),
-            "Next commercial page renders read-only release promotion, exact-head CI command, and current-evidence blockers from the MIS API without network/live execution",
+            "Next commercial page renders read-only release promotion, exact-head CI command, promotion packet, and current-evidence blockers from the MIS API without network/live execution",
         ),
         check(
             "vite_browser_snapshot_surface_exists",

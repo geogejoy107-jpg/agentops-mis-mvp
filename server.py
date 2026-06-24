@@ -405,6 +405,7 @@ def commercial_release_status(headers, qs=None) -> dict:
     handoff = read_json_file(docs_dir / "COMMERCIAL_HANDOFF_STATUS.json", {})
     current = read_json_file(docs_dir / "COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", {})
     preflight = read_json_file(docs_dir / "COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", {})
+    promotion_packet = read_json_file(docs_dir / "COMMERCIAL_RELEASE_PROMOTION_PACKET.json", {})
     receipts = read_json_file(docs_dir / "COMMERCIAL_EVIDENCE_RECEIPTS.json", {})
     current_summary = current.get("evidence_summary") if isinstance(current.get("evidence_summary"), dict) else {}
     receipt_summary = receipts.get("receipt_summary") if isinstance(receipts.get("receipt_summary"), dict) else {}
@@ -422,6 +423,7 @@ def commercial_release_status(headers, qs=None) -> dict:
         {"path": "docs/COMMERCIAL_HANDOFF_STATUS.json", "contract_id": handoff.get("contract_id"), "status": handoff.get("status")},
         {"path": "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", "contract_id": current.get("contract_id"), "status": current.get("status")},
         {"path": "docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", "contract_id": preflight.get("contract_id"), "status": preflight.get("status")},
+        {"path": "docs/COMMERCIAL_RELEASE_PROMOTION_PACKET.json", "contract_id": promotion_packet.get("contract_id"), "status": promotion_packet.get("status")},
         {"path": "docs/COMMERCIAL_EVIDENCE_RECEIPTS.json", "contract_id": receipts.get("contract_id"), "status": receipts.get("status")},
     ]
     return {
@@ -448,6 +450,16 @@ def commercial_release_status(headers, qs=None) -> dict:
             "known_blockers": list(preflight.get("known_blockers") or []),
             "required_commands": list(preflight.get("required_commands") or []),
             "must_not_use": list(preflight.get("must_not_use") or []),
+        },
+        "promotion_packet": {
+            "contract_id": promotion_packet.get("contract_id"),
+            "status": promotion_packet.get("status"),
+            "ci_safe": bool(promotion_packet.get("ci_safe")),
+            "read_only": bool(promotion_packet.get("read_only")),
+            "packet_requires": promotion_packet.get("packet_requires") if isinstance(promotion_packet.get("packet_requires"), dict) else {},
+            "source_contracts": list(promotion_packet.get("source_contracts") or []),
+            "required_commands": list(promotion_packet.get("required_commands") or []),
+            "must_not_use": list(promotion_packet.get("must_not_use") or []),
         },
         "current_evidence_status": {
             "contract_id": current.get("contract_id"),
@@ -481,6 +493,8 @@ def commercial_release_status(headers, qs=None) -> dict:
             "include_external_ci_evidence": "python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence",
             "strict_promotion": strict_promotion_command,
             "exact_head_ci": exact_head_command,
+            "promotion_packet": "python3 scripts/commercial_release_promotion_packet.py --include-external-ci-evidence",
+            "strict_promotion_packet": "python3 scripts/commercial_release_promotion_packet.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence --require-promotion-packet-ready",
             "release_status_external_ci_api": "/api/commercial/release-status?include_external_ci_evidence=1",
         },
         "blockers": list(handoff.get("explicit_blockers") or preflight.get("known_blockers") or []),
