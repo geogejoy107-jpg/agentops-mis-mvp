@@ -455,7 +455,7 @@ def compact_runtime_current_code_gate(local: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def compact_start_check_local_run_path(local: dict[str, Any]) -> dict[str, Any]:
+def compact_start_check_local_run_path(local: dict[str, Any], *, adapter: str | None = None) -> dict[str, Any]:
     steps = local.get("local_run_path") if isinstance(local.get("local_run_path"), list) else []
     compact_steps: list[dict[str, Any]] = []
     for step in steps[:8]:
@@ -484,6 +484,122 @@ def compact_start_check_local_run_path(local: dict[str, Any]) -> dict[str, Any]:
             "source": step.get("source"),
             "token_omitted": step.get("token_omitted", True) is not False,
         })
+    requested_adapter = adapter if adapter in {"mock", "hermes", "openclaw"} else None
+    service_managed_loop = local.get("service_managed_loop") if isinstance(local.get("service_managed_loop"), dict) else {}
+    if requested_adapter:
+        live_adapter = requested_adapter in {"hermes", "openclaw"}
+        service_agent_id = f"agt_worker_daemon_{requested_adapter}"
+        service_control_command = f"agentops worker service-control --manager launchd --action restart --adapter {requested_adapter} --agent-id {service_agent_id}"
+        service_verify_command = f"agentops worker service-check --manager launchd --adapter {requested_adapter} --agent-id {service_agent_id}"
+        service_action_signature = hashlib.sha256(
+            f"local_readiness.service_control_preview:{requested_adapter}:{service_control_command}:{service_verify_command}".encode("utf-8")
+        ).hexdigest()
+        service_receipt_verified = " ".join(shlex.quote(str(part)) for part in [
+            "agentops", "operator", "record-action-receipt",
+            "--action-command", service_control_command,
+            "--verify-command", service_verify_command,
+            "--action-id", f"local_readiness.service_control_preview.{requested_adapter}",
+            "--action-signature", service_action_signature,
+            "--source", f"local_readiness.service_control_preview.{requested_adapter}",
+            "--status", "verified",
+            "--result-summary", f"{requested_adapter} worker service-control preview inspected and service-check reviewed.",
+            "--confirm-record",
+        ])
+        service_control_readback = " ".join(shlex.quote(str(part)) for part in [
+            "agentops", "operator", "record-control-readback",
+            "--receipt-id", str(service_managed_loop.get("receipt_id") or "<receipt_id>"),
+            "--source", f"local_readiness.service_control_preview.{requested_adapter}.control_readback",
+            "--control-readback-json", json.dumps({
+                "before": {
+                    "step_id": "preview_worker_service_control",
+                    "status": "preview",
+                    "adapter": requested_adapter,
+                    "service_control_preview": True,
+                },
+                "after": {
+                    "verify_command": service_verify_command,
+                    "service_check_expected": True,
+                    "confirmed_os_mutation": False,
+                },
+                "self_check": {
+                    "copy_only": True,
+                    "server_executes_shell": False,
+                    "writes_ledger_for_service_control": False,
+                    "live_execution_performed": False,
+                    "token_omitted": True,
+                },
+                "token_omitted": True,
+            }, separators=(",", ":")),
+            "--confirm-record",
+        ])
+        for step in compact_steps:
+            step_id = step.get("step_id")
+            if step_id == "select_worker_adapter":
+                step["adapter"] = requested_adapter
+                step["verify_command"] = f"agentops worker preflight --adapter {requested_adapter}"
+            elif step_id == "start_selected_worker":
+                step["adapter"] = requested_adapter
+                step["command"] = (
+                    f"agentops worker start --adapter {requested_adapter} --confirm-run --poll-interval 5 --max-tasks 0"
+                    if live_adapter
+                    else "agentops worker start --adapter mock --poll-interval 5 --max-tasks 0"
+                )
+                step["confirm_required"] = live_adapter
+                step["live_execution"] = live_adapter
+            elif step_id == "preview_worker_service_control":
+                step["adapter"] = requested_adapter
+                step["command"] = service_control_command
+                step["verify_command"] = service_verify_command
+                step["action_signature"] = service_action_signature
+                step["source"] = f"local_readiness.service_control_preview.{requested_adapter}"
+                step["receipt_record_command"] = service_receipt_verified.replace(" --status verified", " --status recorded")
+                step["receipt_verify_record_command"] = service_receipt_verified
+            elif step_id == "dispatch_customer_task":
+                step["adapter"] = requested_adapter
+                step["command"] = (
+                    f"agentops workflow customer-worker-task --adapter {requested_adapter} --confirm-run --title '<customer task>' --description '<safe task brief>'"
+                    if live_adapter
+                    else "agentops workflow customer-worker-task --adapter mock --title '<customer task>' --description '<safe task brief>'"
+                )
+                step["verify_command"] = (
+                    f"agentops operator live-product-readiness --require-adapter {requested_adapter}"
+                    if live_adapter
+                    else "agentops local readiness"
+                )
+                step["confirm_required"] = live_adapter
+                step["live_execution"] = live_adapter
+            elif step_id == "prove_live_product_readiness":
+                step["adapter"] = requested_adapter if live_adapter else None
+                step["command"] = (
+                    f"agentops operator live-product-readiness --require-adapter {requested_adapter}"
+                    if live_adapter
+                    else "agentops local readiness"
+                )
+                step["verify_command"] = step["command"]
+                step["confirm_required"] = False
+                step["live_execution"] = False
+                step["writes_ledger"] = False
+        service_managed_loop = {
+            **service_managed_loop,
+            "adapter": requested_adapter,
+            "manager": service_managed_loop.get("manager") or "launchd",
+            "commands": {
+                "service_install_preview": (
+                    f"agentops worker service-install --manager launchd --adapter {requested_adapter} --agent-id {service_agent_id}"
+                    f"{' --confirm-run' if live_adapter else ''}"
+                ),
+                "service_install_confirm": (
+                    f"agentops worker service-install --manager launchd --adapter {requested_adapter} --agent-id {service_agent_id}"
+                    f"{' --confirm-run' if live_adapter else ''} --confirm-install"
+                ),
+                "service_check": service_verify_command,
+                "service_control_preview": service_control_command,
+                "record_verified_receipt": service_receipt_verified,
+                "record_control_readback": service_control_readback,
+                "receipt_readback": "agentops operator action-receipts --limit 20",
+            },
+            "token_omitted": True,
+        }
     service_step = next((step for step in compact_steps if step.get("step_id") == "preview_worker_service_control"), None)
     current_code_gate = compact_runtime_current_code_gate(local)
     commands = [str(current_code_gate.get("strict_command") or current_code_gate.get("command") or "").strip()]
@@ -494,12 +610,11 @@ def compact_start_check_local_run_path(local: dict[str, Any]) -> dict[str, Any]:
     ])
     commands = [command for command in dict.fromkeys(commands) if command]
     summary = local.get("summary") if isinstance(local.get("summary"), dict) else {}
-    service_managed_loop = local.get("service_managed_loop") if isinstance(local.get("service_managed_loop"), dict) else {}
     return {
         "operation": "local_run_path_compact",
         "source_operation": local.get("operation") or "local_readiness",
         "status": local.get("status"),
-        "recommended_adapter": summary.get("recommended_adapter"),
+        "recommended_adapter": requested_adapter or summary.get("recommended_adapter"),
         "current_code_gate": current_code_gate,
         "steps": compact_steps,
         "commands": commands,

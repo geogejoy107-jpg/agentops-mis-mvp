@@ -1321,7 +1321,7 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str, local_readiness: 
         "agentops operator action-receipts --limit 20",
     ]
     local_readiness = local_readiness if isinstance(local_readiness, dict) else {}
-    local_run_path = compact_start_check_local_run_path(local_readiness)
+    local_run_path = compact_start_check_local_run_path(local_readiness, adapter=adapter)
     compact_local_steps = local_run_path.get("steps") if isinstance(local_run_path.get("steps"), list) else []
     service_step = local_run_path.get("service_control_preview") if isinstance(local_run_path.get("service_control_preview"), dict) else {}
     current_code_gate = local_run_path.get("current_code_gate") if isinstance(local_run_path.get("current_code_gate"), dict) else {}

@@ -245,6 +245,12 @@ def validate(payload: dict, adapter: str) -> None:
     require((agent_loop_packet.get("safety") or {}).get("server_executes_shell") is False, f"agent loop server shell proof missing: {agent_loop_packet}")
     require(agent_loop_packet.get("live_execution_performed") is False, f"agent loop live proof missing: {agent_loop_packet}")
     admission_packet = payload.get("local_loop_admission_packet") or {}
+    local_run_path = payload.get("local_run_path") or {}
+    local_steps = local_run_path.get("steps") or []
+    local_adapter_steps = [step for step in local_steps if isinstance(step, dict) and step.get("adapter") in {"mock", "hermes", "openclaw"}]
+    require(local_run_path.get("recommended_adapter") == adapter, f"top-level local run path adapter mismatch: {local_run_path}")
+    require(bool(local_adapter_steps), f"top-level local run path adapter steps missing: {local_run_path}")
+    require(all(step.get("adapter") == adapter for step in local_adapter_steps), f"top-level local run path contains wrong adapter step: {local_adapter_steps}")
     admission = admission_packet.get("admission") or {}
     deployment = admission_packet.get("local_deployment") or {}
     service_preview = deployment.get("service_control_preview") or {}

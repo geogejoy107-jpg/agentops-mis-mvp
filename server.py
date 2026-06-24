@@ -24210,7 +24210,7 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
         },
         auth_ctx,
     )
-    local_run_path = compact_start_check_local_run_path(local)
+    local_run_path = compact_start_check_local_run_path(local, adapter=adapter)
     launch_brief = compact_start_check_launch_brief(launch_packet, adapter=adapter, local_run_path=local_run_path)
     loop_driver_review = human_review_queue(
         conn,

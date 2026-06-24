@@ -298,6 +298,10 @@ def validate_brief(payload: dict, label: str, task_id: str, agent_id: str, adapt
     local_run_path = payload.get("local_run_path") or {}
     require(local_run_path.get("operation") == "local_run_path_compact", f"{label} local run path missing: {local_run_path}", failures)
     require(len(local_run_path.get("steps") or []) >= 8, f"{label} local run path too short: {local_run_path}", failures)
+    require(local_run_path.get("recommended_adapter") == adapter, f"{label} local run path adapter mismatch: {local_run_path}", failures)
+    adapter_steps = [step for step in (local_run_path.get("steps") or []) if isinstance(step, dict) and step.get("adapter") in {"hermes", "openclaw", "mock"}]
+    require(bool(adapter_steps), f"{label} local run path adapter steps missing: {local_run_path}", failures)
+    require(all(step.get("adapter") == adapter for step in adapter_steps), f"{label} local run path contains wrong adapter step: {adapter_steps}", failures)
     current_code_gate = local_run_path.get("current_code_gate") or {}
     require(current_code_gate.get("operation") == "local_current_code_gate", f"{label} current-code gate missing: {local_run_path}", failures)
     require(current_code_gate.get("ok") is True and current_code_gate.get("current") is True, f"{label} current-code gate should pass: {current_code_gate}", failures)
@@ -309,8 +313,17 @@ def validate_brief(payload: dict, label: str, task_id: str, agent_id: str, adapt
     require((current_code_gate.get("safety") or {}).get("server_executes_shell") is False, f"{label} current-code gate server-shell boundary missing: {current_code_gate}", failures)
     service_step = local_run_path.get("service_control_preview") or {}
     require(service_step.get("step_id") == "preview_worker_service_control", f"{label} service-control local step missing: {local_run_path}", failures)
+    require(service_step.get("adapter") == adapter, f"{label} service-control adapter mismatch: {service_step}", failures)
     require("service-control" in str(service_step.get("command") or ""), f"{label} service-control command wrong: {service_step}", failures)
+    require(f"--adapter {adapter}" in str(service_step.get("command") or ""), f"{label} service-control command adapter wrong: {service_step}", failures)
+    require(f"--adapter {adapter}" in str(service_step.get("verify_command") or ""), f"{label} service-control verify adapter wrong: {service_step}", failures)
     require(service_step.get("server_executes_shell") is False, f"{label} service-control step should not use server shell: {service_step}", failures)
+    service_managed_loop = local_run_path.get("service_managed_loop") or {}
+    service_managed_commands = service_managed_loop.get("commands") or {}
+    require(service_managed_loop.get("adapter") == adapter, f"{label} service-managed adapter mismatch: {service_managed_loop}", failures)
+    require(f"--adapter {adapter}" in str(service_managed_commands.get("service_check") or ""), f"{label} service-managed check adapter wrong: {service_managed_loop}", failures)
+    require(f"--adapter {adapter}" in str(service_managed_commands.get("record_verified_receipt") or ""), f"{label} service-managed receipt adapter wrong: {service_managed_loop}", failures)
+    require(f"--adapter {adapter}" in str(service_managed_commands.get("record_control_readback") or ""), f"{label} service-managed readback adapter wrong: {service_managed_loop}", failures)
     require((local_run_path.get("safety") or {}).get("server_executes_shell") is False, f"{label} local run path server-shell boundary missing: {local_run_path}", failures)
     require((local_run_path.get("safety") or {}).get("live_execution_performed") is False, f"{label} local run path should be read-only in brief: {local_run_path}", failures)
     workflow_recovery = payload.get("workflow_job_recovery") or {}

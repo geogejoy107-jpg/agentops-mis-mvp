@@ -221,6 +221,12 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     require((agent_loop_packet.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} agent loop server-shell proof missing: {agent_loop_packet}", failures)
     require(agent_loop_packet.get("live_execution_performed") is False, f"{adapter} agent loop live proof missing: {agent_loop_packet}", failures)
     admission_packet = payload.get("local_loop_admission_packet") or {}
+    local_run_path = payload.get("local_run_path") or {}
+    local_steps = local_run_path.get("steps") or []
+    local_adapter_steps = [step for step in local_steps if isinstance(step, dict) and step.get("adapter") in {"mock", "hermes", "openclaw"}]
+    require(local_run_path.get("recommended_adapter") == adapter, f"{adapter} top-level local run path adapter mismatch: {local_run_path}", failures)
+    require(bool(local_adapter_steps), f"{adapter} top-level local run path adapter steps missing: {local_run_path}", failures)
+    require(all(step.get("adapter") == adapter for step in local_adapter_steps), f"{adapter} top-level local run path contains wrong adapter step: {local_adapter_steps}", failures)
     admission = admission_packet.get("admission") or {}
     deployment = admission_packet.get("local_deployment") or {}
     admission_current_code = deployment.get("current_code_gate") or {}
