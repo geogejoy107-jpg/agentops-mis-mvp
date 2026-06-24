@@ -857,6 +857,7 @@ def run_postgres_write_fixture(*, image: str, skip_if_unavailable: bool, install
                 "runtime_contracts": sorted(runtime_gate.get("contracts") or []),
                 "runtime_routes": sorted(runtime_route_keys(runtime_gate)),
                 "non_allowlisted_write_status": blocked_status,
+                "non_allowlisted_write_error": blocked_payload.get("error"),
                 "postgres_counts_unchanged": True,
                 "driver_status": driver_status,
                 "skipped": False,

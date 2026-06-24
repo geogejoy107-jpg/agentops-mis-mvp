@@ -933,8 +933,15 @@ def main() -> int:
             "byoc_deployment_acceptance_surface_exists",
             file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "byoc_deployment_acceptance_v1")
             and file_contains("docs/CUSTOMER_LOCAL_DEPLOYMENT_RUNBOOK.md", "agentops_signed_audit_export.py")
-            and file_contains("docs/CUSTOMER_LOCAL_DEPLOYMENT_RUNBOOK.md", "byoc_deployment_acceptance_smoke.py")
+            and file_contains("docs/CUSTOMER_LOCAL_DEPLOYMENT_RUNBOOK.md", "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture")
             and file_contains("scripts/byoc_deployment_acceptance_smoke.py", "byoc_deployment_acceptance_v1")
+            and file_contains("scripts/byoc_deployment_acceptance_smoke.py", "--postgres-readiness-fixture")
+            and file_contains("scripts/byoc_deployment_acceptance_smoke.py", "deployment_readiness_postgres_runtime_write_fixture_v1")
+            and file_contains("scripts/byoc_deployment_acceptance_smoke.py", "runtime_write_gate_status")
+            and file_contains("scripts/byoc_deployment_acceptance_smoke.py", "experimental_write_http")
+            and file_contains("scripts/byoc_deployment_acceptance_smoke.py", "postgres_read_only_backend")
+            and file_contains("scripts/byoc_deployment_acceptance_smoke.py", "postgres_counts_unchanged")
             and file_contains("scripts/byoc_deployment_acceptance_smoke.py", "signed_audit_export")
             and file_contains("scripts/byoc_deployment_acceptance_smoke.py", "tamper_detected")
             and file_contains("scripts/agentops_signed_audit_export.py", "signed_audit_export_v1")
@@ -944,9 +951,11 @@ def main() -> int:
             and file_contains("server.py", "signed_export_tamper_detection")
             and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "Recovery drill")
             and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "Signed export")
+            and file_contains("ui/next-app/README.md", "deployment_readiness_smoke.py --postgres-write-fixture")
+            and file_contains("ui/next-app/README.md", "nextjs_playwright_snapshot_smoke.py --postgres-write-fixture")
             and (ROOT / "scripts" / "agentops_signed_audit_export.py").exists()
             and (ROOT / "scripts" / "byoc_deployment_acceptance_smoke.py").exists(),
-            "Gate 5 BYOC deployment acceptance covers backup/restore confirmation, pre-restore safety copy, signed audit export key requirement, tamper detection, raw metadata omission, and Next.js deployment readiness",
+            "Gate 5 BYOC deployment acceptance covers backup/restore confirmation, pre-restore safety copy, signed audit export key requirement, tamper detection, raw metadata omission, Postgres runtime write-gate readiness, and Next.js deployment readiness",
         ),
         check(
             "deployment_readiness_surface_exists",
@@ -1156,7 +1165,7 @@ def main() -> int:
                 "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py --configured-retention-fixture",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
-                "python3 scripts/byoc_deployment_acceptance_smoke.py",
+                "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
                 "backup/restore and signed export checks",
             ],
         },

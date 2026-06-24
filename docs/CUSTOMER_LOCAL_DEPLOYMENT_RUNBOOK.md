@@ -212,7 +212,7 @@ python3 scripts/audit_retention_controls_smoke.py --configured-fixture
 python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture
 python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture
 python3 scripts/agentops_local_backup_smoke.py
-python3 scripts/byoc_deployment_acceptance_smoke.py
+python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture
 python3 scripts/enrollment_policy_preview_smoke.py
 python3 scripts/agentops_worker_restart_smoke.py
 python3 scripts/v1_5_demo_readiness_smoke.py --base-url http://127.0.0.1:8787
@@ -226,6 +226,11 @@ Expected state:
 - Local product acceptance passes without live execution.
 - Backup smoke creates and restores an isolated temp DB only.
 - BYOC deployment smoke verifies restore confirmation, overwrite safety copy,
-  signed audit export, and tamper detection in an isolated temp DB only.
+  signed audit export, tamper detection, and the Postgres runtime write gate in
+  isolated temp stores only.
+- Handoff Postgres readiness shows `storage.runtime_write_gate=active`,
+  `experimental_write_http`, OpenClaw/Hermes/row-gated approval routes,
+  exact-resume proof, non-fixed write blocking, no SQLite fallback, and
+  unchanged ledger counts.
 - UI `/workspace/agents` shows readiness, customer dispatch, fleet hygiene,
   daemon restart, enrollment policy, and remote agent controls.

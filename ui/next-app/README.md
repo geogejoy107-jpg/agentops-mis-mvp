@@ -33,6 +33,8 @@ python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
+python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture
+python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture
 ```
 
 The Playwright smoke starts an isolated MIS API provider and Next.js dev server,

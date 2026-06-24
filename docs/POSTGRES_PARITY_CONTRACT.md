@@ -311,6 +311,11 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   all three fixed write routes, exact-resume and row-gated approval proofs,
   non-allowlisted writes blocked at `503`, token omission, no SQLite fallback,
   and unchanged Postgres ledger counts.
+- `byoc_deployment_acceptance_v1` handoff mode now runs
+  `python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture`
+  so recovery/export acceptance is paired with the backend Postgres
+  `deployment_readiness_postgres_runtime_write_fixture_v1` proof before BYOC
+  handoff.
 - `postgres_cli_write_parity_v1`,
   `postgres_cli_gateway_task_write_v1`,
   `postgres_cli_gateway_execution_start_write_v1`,

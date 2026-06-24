@@ -626,8 +626,13 @@ Must be true:
 - `byoc_deployment_acceptance_v1` runs a local isolated recovery and audit
   export drill: backup create/verify/restore, restore confirmation guard,
   overwrite safety copy, signed audit export with a customer key, raw metadata
-  omission, and tamper detection. Verify with
-  `python3 scripts/byoc_deployment_acceptance_smoke.py`.
+  omission, and tamper detection. Its `--postgres-readiness-fixture` handoff
+  mode also invokes the backend Postgres deployment readiness fixture and
+  requires `runtime_write_gate=active`, `experimental_write_http`, the
+  fixed OpenClaw/Hermes/row-gated approval routes, `postgres_read_only_backend`
+  blocking for non-allowlisted writes, and unchanged Postgres ledger counts.
+  Verify with
+  `python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture`.
 - `enterprise_byoc_controls_v1` exposes a read-only, metadata-only Enterprise
   controls proof through `GET /api/deployment/enterprise-controls` and
   `agentops deployment enterprise-controls`. It summarizes configured SSO
