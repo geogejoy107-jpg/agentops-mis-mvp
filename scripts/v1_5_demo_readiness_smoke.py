@@ -14,6 +14,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "agentops"
+AI_EMPLOYEES = ROOT / "ui" / "start-building-app" / "src" / "app" / "components" / "pages" / "AIEmployees.tsx"
+LIVE_API = ROOT / "ui" / "start-building-app" / "src" / "app" / "data" / "liveApi.ts"
 SECRET_MARKERS = ["Authorization:", "Bearer ", "agtok_", "agtsess_", "sk-", "ntn_", "AGENTOPS_API_KEY="]
 REQUIRED_SHOTS = {
     "local_readiness",
@@ -23,6 +25,14 @@ REQUIRED_SHOTS = {
     "customer_task_loop",
     "live_acceptance_freshness",
     "run_ledger_evidence",
+}
+REQUIRED_PRODUCT_EVIDENCE_PHASES = {
+    "readiness",
+    "non_live_acceptance",
+    "current_code_product_evidence",
+    "real_runtime_acceptance",
+    "live_readback",
+    "remote_worker_fallback",
 }
 
 
@@ -83,8 +93,52 @@ def validate(payload: dict, label: str) -> None:
     live = payload.get("live_acceptance_readiness") or {}
     require(live.get("operation") == "live_acceptance_readiness", f"{label} live acceptance readiness missing: {live}")
     require((live.get("safety") or {}).get("read_only") is True, f"{label} live acceptance read-only proof missing: {live}")
+    packet = payload.get("product_evidence_packet") or {}
+    require(packet.get("operation") == "product_evidence_packet", f"{label} product evidence packet missing: {packet}")
+    require("read-only" in (packet.get("contract") or ""), f"{label} product evidence read-only contract missing")
+    packet_safety = packet.get("safety") or {}
+    for key in ["read_only", "token_omitted", "raw_prompt_omitted", "requires_confirm_live", "requires_isolated_db_for_live"]:
+        require(packet_safety.get(key) is True, f"{label} product evidence safety {key} missing")
+    for key in ["ledger_mutated", "live_execution_performed"]:
+        require(packet_safety.get(key) is False, f"{label} product evidence safety {key} must be false")
+    phases = packet.get("phases") or []
+    phase_ids = {phase.get("id") for phase in phases if isinstance(phase, dict)}
+    require(REQUIRED_PRODUCT_EVIDENCE_PHASES.issubset(phase_ids), f"{label} missing product evidence phases: {sorted(REQUIRED_PRODUCT_EVIDENCE_PHASES - phase_ids)}")
+    for phase in phases:
+        require(phase.get("command"), f"{label} product evidence phase missing command: {phase}")
+        require(isinstance(phase.get("requires_confirm_live"), bool), f"{label} product evidence phase confirm-live flag must be bool: {phase}")
+        require(isinstance(phase.get("requires_isolated_db"), bool), f"{label} product evidence phase isolated-db flag must be bool: {phase}")
+    packet_summary = packet.get("summary") or {}
+    require(packet_summary.get("phase_count") == len(phases), f"{label} product evidence phase_count mismatch")
+    current_code_phase = next((phase for phase in phases if phase.get("id") == "current_code_product_evidence"), {})
+    require(current_code_phase.get("requires_confirm_live") is True, f"{label} current-code phase must require confirm-live")
+    require(current_code_phase.get("requires_isolated_db") is True, f"{label} current-code phase must require isolated db")
+    require("v1_5_current_code_product_evidence.py" in (current_code_phase.get("command") or ""), f"{label} current-code command missing")
     require(isinstance(payload.get("next_actions"), list) and payload.get("next_actions"), f"{label} next_actions missing")
     require("read-only" in (payload.get("contract") or ""), f"{label} read-only contract missing")
+
+
+def validate_ui_contract() -> None:
+    ai_text = AI_EMPLOYEES.read_text(encoding="utf-8")
+    api_text = LIVE_API.read_text(encoding="utf-8")
+    required_ai_markers = [
+        "productEvidencePacket",
+        "product_evidence_packet",
+        "copyIntakeCommand(phase.command)",
+        "requires_confirm_live",
+        "requires_isolated_db",
+    ]
+    required_api_markers = [
+        "DemoProductEvidencePacket",
+        "product_evidence_packet",
+        "requires_confirm_live",
+        "requires_isolated_db_for_live",
+        "manual_live_phase_count",
+    ]
+    for marker in required_ai_markers:
+        require(marker in ai_text, f"AIEmployees missing product evidence UI marker: {marker}")
+    for marker in required_api_markers:
+        require(marker in api_text, f"liveApi missing product evidence parser marker: {marker}")
 
 
 def main() -> int:
@@ -109,6 +163,7 @@ def main() -> int:
             cli_payload = json.loads(proc.stdout)
             validate(cli_payload, "cli")
 
+        validate_ui_contract()
         require(not leaked_secret("\n".join(outputs)), "demo readiness leaked token-like material")
         print(json.dumps({
             "ok": True,

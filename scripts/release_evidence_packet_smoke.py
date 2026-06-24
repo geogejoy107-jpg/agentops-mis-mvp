@@ -329,7 +329,7 @@ TEST_COMMANDS = [
     {
         "id": "operator_loop_bootstrap",
         "command": "python3 scripts/operator_loop_bootstrap_smoke.py",
-        "summary": "Hermes/OpenClaw local loop bootstrap packet orders service install, service-check, service closure, optional service activation, loop-driver auto service closure, and stale-server recovery commands without mutating ledgers, loading services, executing server shell, or running live adapters.",
+        "summary": "Hermes/OpenClaw local loop bootstrap packet orders service install, service-check, service closure, optional service activation, loop-driver auto service closure, stale-server recovery, endpoint-timeout fast fallback, and explicit fast startup commands without mutating ledgers, loading services, executing server shell, or running live adapters.",
         "ci_step": "Offline safety smokes",
     },
     {
@@ -372,6 +372,12 @@ TEST_COMMANDS = [
         "id": "operator_service_closure_cli",
         "command": "python3 scripts/operator_service_closure_cli_smoke.py",
         "summary": "Hermes/OpenClaw service-managed loop closure CLI previews receipt/readback work without mutating ledgers, consumes either explicit service-check JSON or an explicit local read-only --run-service-check, and moves service closure from required to ready without executing service-control, server shell, or live adapter work.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "operator_service_closure_fast",
+        "command": "python3 scripts/operator_service_closure_fast_smoke.py",
+        "summary": "Fast service-closure records canonical service-check receipt/readback without a loop-supervision pre-read, then proves the existing loop-supervision surface recognizes the receipt while preserving no-shell/no-live boundaries.",
         "ci_step": "Offline safety smokes",
     },
     {

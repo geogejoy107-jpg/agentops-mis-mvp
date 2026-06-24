@@ -216,6 +216,34 @@ class LegacyBootstrapHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
 
+class SlowBootstrapHandler(BaseHTTPRequestHandler):
+    def log_message(self, format: str, *args) -> None:  # noqa: A002 - stdlib signature
+        return
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib hook
+        if self.path.startswith("/api/operator/start-check"):
+            time.sleep(2.0)
+            payload = {"operation": "operator_start_check", "status": "attention", "token_omitted": True}
+            raw = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
+        if self.path == "/api/agent-gateway/status":
+            payload = {"status": "ready", "auth": {"mode": "local_dev_no_token"}, "token_omitted": True}
+            raw = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
+        self.send_response(404)
+        self.end_headers()
+
+
 def validate_stale_endpoint(payload: dict, failures: list[str]) -> None:
     require(payload.get("operation") == "operator_loop_bootstrap", f"stale endpoint operation mismatch: {payload}", failures)
     require(payload.get("status") == "blocked", f"stale endpoint should block: {payload}", failures)
@@ -234,6 +262,38 @@ def validate_stale_endpoint(payload: dict, failures: list[str]) -> None:
     require(safety.get("server_executes_shell") is False, f"stale endpoint shell proof missing: {payload}", failures)
     require(safety.get("live_execution_performed") is False, f"stale endpoint live proof missing: {payload}", failures)
     require(payload.get("token_omitted") is True, f"stale endpoint token proof missing: {payload}", failures)
+
+
+def validate_fast_bootstrap(payload: dict, adapter: str, failures: list[str], *, timeout_fallback: bool = False) -> None:
+    require(payload.get("operation") == "operator_loop_bootstrap", f"fast operation mismatch: {payload}", failures)
+    require(payload.get("mode") == "fast", f"fast mode missing: {payload}", failures)
+    require(payload.get("adapter") == adapter, f"fast adapter mismatch: {payload}", failures)
+    if timeout_fallback:
+        require(payload.get("status") == "blocked", f"timeout fast packet should block: {payload}", failures)
+        require(payload.get("error_type") == "local_mis_endpoint_timeout", f"timeout error type missing: {payload}", failures)
+    else:
+        require(payload.get("status") in {"attention", "blocked"}, f"fast status mismatch: {payload}", failures)
+    summary = payload.get("summary") or {}
+    require(summary.get("deep_verification_required") is True, f"fast deep verification proof missing: {payload}", failures)
+    require(summary.get("can_confirm_bounded_loop") is False, f"fast packet must not allow confirm-loop: {payload}", failures)
+    commands = payload.get("commands") or {}
+    for key in ["current_code_check", "service_install_preview", "service_check", "service_closure_record", "loop_supervision", "loop_driver_auto_service_closure"]:
+        require(commands.get(key), f"fast command {key} missing: {payload}", failures)
+    require("--fast" in str(commands.get("service_closure_record")), f"fast service-closure command missing --fast: {commands}", failures)
+    require("--run-service-check" in str(commands.get("service_closure_record")), f"fast service-closure command missing local check: {commands}", failures)
+    require("--confirm-record" in str(commands.get("service_closure_record")), f"fast service-closure command missing confirm record: {commands}", failures)
+    require("--confirm-loop" in str(commands.get("loop_driver_auto_service_closure")), f"fast loop confirm command missing: {commands}", failures)
+    steps = payload.get("bootstrap_steps") or []
+    step_ids = {step.get("id") for step in steps}
+    require({"fast_bootstrap_packet", "verify_current_code", "read_deep_loop_supervision", "confirm_bounded_loop"}.issubset(step_ids), f"fast steps missing: {payload}", failures)
+    confirm_step = next((step for step in steps if step.get("id") == "confirm_bounded_loop"), {})
+    require(confirm_step.get("status") == "blocked_until_start_check_and_supervision", f"fast confirm step should stay blocked: {payload}", failures)
+    safety = payload.get("safety") or {}
+    require(safety.get("read_only") is True, f"fast read-only proof missing: {payload}", failures)
+    require(safety.get("ledger_mutated") is False, f"fast ledger proof missing: {payload}", failures)
+    require(safety.get("server_executes_shell") is False, f"fast shell proof missing: {payload}", failures)
+    require(safety.get("live_execution_performed") is False, f"fast live proof missing: {payload}", failures)
+    require(payload.get("token_omitted") is True, f"fast token proof missing: {payload}", failures)
 
 
 def validate_bootstrap(payload: dict, adapter: str, failures: list[str], *, service_check_performed: bool) -> None:
@@ -298,6 +358,16 @@ def validate_bootstrap(payload: dict, adapter: str, failures: list[str], *, serv
 def main() -> int:
     failures: list[str] = []
     outputs: list[str] = []
+    fast = run_cli(
+        ["operator", "loop-bootstrap", "--adapter", "hermes", "--limit", "5", "--fast"],
+        "http://127.0.0.1:9",
+        outputs,
+        timeout=10,
+    )
+    fast_payload = load_json(fast.stdout)
+    require(fast.returncode == 0, f"fast bootstrap should not require server: rc={fast.returncode} stdout={fast.stdout} stderr={fast.stderr}", failures)
+    validate_fast_bootstrap(fast_payload, "hermes", failures)
+
     legacy_port = free_port()
     legacy_url = f"http://127.0.0.1:{legacy_port}"
     legacy_server = ThreadingHTTPServer(("127.0.0.1", legacy_port), LegacyBootstrapHandler)
@@ -316,6 +386,25 @@ def main() -> int:
     finally:
         legacy_server.shutdown()
         legacy_server.server_close()
+    slow_port = free_port()
+    slow_url = f"http://127.0.0.1:{slow_port}"
+    slow_server = ThreadingHTTPServer(("127.0.0.1", slow_port), SlowBootstrapHandler)
+    slow_thread = threading.Thread(target=slow_server.serve_forever, daemon=True)
+    slow_thread.start()
+    try:
+        timed_out = run_cli(
+            ["--request-timeout", "1", "operator", "loop-bootstrap", "--adapter", "openclaw", "--limit", "5", "--run-service-check"],
+            slow_url,
+            outputs,
+            timeout=10,
+            extra_env={"AGENTOPS_LOCAL_DEMO_DEFAULT_URL": slow_url},
+        )
+        timeout_payload = load_json(timed_out.stdout)
+        require(timed_out.returncode == 2, f"timeout endpoint should return rc=2: rc={timed_out.returncode} stdout={timed_out.stdout} stderr={timed_out.stderr}", failures)
+        validate_fast_bootstrap(timeout_payload, "openclaw", failures, timeout_fallback=True)
+    finally:
+        slow_server.shutdown()
+        slow_server.server_close()
     with tempfile.TemporaryDirectory(prefix="agentops-loop-bootstrap-") as tmp:
         tmp_path = Path(tmp)
         db_path = tmp_path / "agentops_mis.db"
