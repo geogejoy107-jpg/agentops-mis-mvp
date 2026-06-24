@@ -99,6 +99,7 @@ jobs:
           python3 scripts/operator_loop_control_smoke.py
           python3 scripts/operator_loop_driver_smoke.py
           python3 scripts/operator_loop_launch_packet_smoke.py
+          python3 scripts/operator_agent_loop_handoff_smoke.py
           python3 scripts/operator_live_product_readiness_smoke.py
           python3 scripts/agentops_worker_service_check_smoke.py
           python3 scripts/agentops_worker_service_control_smoke.py

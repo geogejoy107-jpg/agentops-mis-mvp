@@ -327,6 +327,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "operator_agent_loop_handoff",
+        "command": "python3 scripts/operator_agent_loop_handoff_smoke.py",
+        "summary": "Compact Hermes/OpenClaw/Codex loop handoff aggregates current-code readiness, live ledger proof, start-check gates, launch briefs, Method Block phase commands and no-server-shell safety without mutating ledgers.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "operator_evidence_report",
         "command": "python3 scripts/operator_evidence_report_smoke.py",
         "summary": "Run-level evidence report checks Agent Plan binding, approval, verified plan evidence, tool/eval/artifact/audit rows, memory review closure, worker knowledge retrieval, worker runtime summary events, raw memory/runtime omission and read-only DB stability.",

@@ -30,6 +30,8 @@ The loop harness lets Codex ask Hermes and OpenClaw for alternating proposals, c
 Quick loop-control brief for a live local adapter:
 
 ```bash
+agentops operator agent-loop-handoff --limit 8
+
 agentops operator start-check --adapter hermes --limit 8
 agentops worker preflight --adapter hermes
 agentops operator live-acceptance --limit 8
@@ -40,6 +42,18 @@ agentops worker preflight --adapter openclaw
 agentops operator live-acceptance --limit 8
 agentops operator loop-launch-packet --brief --adapter openclaw --limit 8
 ```
+
+`agent-loop-handoff` is the preferred first machine read when Hermes,
+OpenClaw, and Codex need the same loop state. It composes current-code proof,
+fresh live ledger proof, per-adapter start-check decisions, compact launch
+briefs, Method Block `phase_commands`, method gate ids, and Codex supervisor
+commands into one read-only matrix. It may return `attention` when review or
+memory pressure remains, but `ready_for_handoff:true` means the consumer has the
+copyable commands and safety proofs needed to continue without guessing or
+bypassing Agent Plan, retrieval, base comparison, verification, receipt, or
+memory-review gates. It never executes shell on the server, starts live
+runtimes, mutates ledgers, approves reviews, or exposes raw prompts/responses/
+tokens.
 
 `start-check` is the preferred first read for a local loop. The CLI reads
 `GET /api/operator/start-check`, so Hermes/OpenClaw/Codex can use either the
