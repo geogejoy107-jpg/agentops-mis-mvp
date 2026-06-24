@@ -2116,7 +2116,9 @@ agentops operator loop-control --limit 8
 agentops operator loop-bootstrap --adapter hermes --limit 8
 agentops operator loop-bootstrap --adapter openclaw --limit 8 --run-service-check
 agentops operator loop-supervision --adapter hermes --adapter openclaw --limit 8 --work-packet
+agentops operator loop-supervision --adapter hermes --adapter openclaw --limit 8 --decision
 curl 'http://127.0.0.1:8787/api/operator/loop-supervision?adapter=hermes&adapter=openclaw&limit=8&work_packet=1'
+curl 'http://127.0.0.1:8787/api/operator/loop-supervision?adapter=hermes&adapter=openclaw&limit=8&decision=1'
 agentops operator service-closure --adapter hermes --fast --run-service-check --confirm-record
 agentops operator loop-driver --adapter hermes --max-steps 3
 agentops operator loop-driver --adapter openclaw --max-steps 3 --confirm-loop --auto-service-closure
@@ -2187,6 +2189,14 @@ contains adapter-scoped `agent_work_packet_v1` entries, phase commands, packet
 hashes, primary next actions, service-closure receipt/readback gates, Research
 Lab packet evidence, and the same no-server-shell/no-live/no-token safety
 proofs as the full supervision read model.
+`operator loop-supervision --decision` and HTTP `decision=1` expose a still
+smaller `agent_work_packet_decision_v1` projection for local Hermes/OpenClaw
+callers that only need the next consumption decision. The decision layer
+classifies each adapter packet as `plan_first`, `service_closure_first`,
+`record_research_consumption_first`, `record_first`, `review_first`,
+`preview_first`, `confirm_ready`, `safe_read_or_preview`, `blocked`, or `stop`,
+then repeats the command, verify command, confirm/receipt requirements, and
+server-may-execute=false safety proof.
 `operator service-closure --fast --run-service-check --confirm-record` is the
 standalone RECORD command for service-managed loop readback when the packet
 asks for it; verify with `operator action-receipts` and then re-read the compact

@@ -529,6 +529,24 @@ def main() -> int:
             require(all((item.get("safety") or {}).get("live_execution_performed") is False for item in http_packet_items), f"HTTP work packet live safety missing: {http_packet_items}", failures)
             require(all(item.get("packet_hash") for item in http_packet_items), f"HTTP work packet hashes missing: {http_packet_items}", failures)
             require(all(((item.get("evidence_contract") or {}).get("agent_plan_quality") or {}).get("status") == "attention" for item in http_packet_items), f"HTTP work packet quality attention missing: {http_packet_items}", failures)
+            http_decision_status, http_decision_payload = http_json(base_url, f"/api/operator/loop-supervision?limit=5&task_id={fixture_task_id}&decision=1")
+            outputs.append(json.dumps(http_decision_payload, ensure_ascii=False))
+            require(http_decision_status == 200, f"HTTP loop-supervision decision status {http_decision_status}: {http_decision_payload}", failures)
+            require(http_decision_payload.get("operation") == "operator_loop_work_packet_decision", f"HTTP decision operation mismatch: {http_decision_payload}", failures)
+            require(http_decision_payload.get("schema_version") == "agent_work_packet_decision_v1", f"HTTP decision schema mismatch: {http_decision_payload}", failures)
+            http_decision_summary = http_decision_payload.get("summary") or {}
+            http_decisions = http_decision_payload.get("decisions") or []
+            require(http_decision_payload.get("source_operation") == "operator_loop_work_packet_bundle", f"HTTP decision source mismatch: {http_decision_payload}", failures)
+            require(http_decision_summary.get("decisions") == 2, f"HTTP decision summary missing: {http_decision_summary}", failures)
+            require(http_decision_summary.get("server_may_execute") is False, f"HTTP decision server execution proof missing: {http_decision_summary}", failures)
+            require(len(http_decisions) == 2, f"HTTP decisions missing: {http_decision_payload}", failures)
+            require({"hermes", "openclaw"}.issubset({item.get("adapter") for item in http_decisions}), f"HTTP decision adapters missing: {http_decisions}", failures)
+            require(all(item.get("packet_hash") for item in http_decisions), f"HTTP decision packet hashes missing: {http_decisions}", failures)
+            require(all(item.get("decision") in {"stop", "blocked", "plan_first", "service_closure_first", "record_research_consumption_first", "record_first", "review_first", "confirm_ready", "safe_read_or_preview", "preview_first"} for item in http_decisions), f"HTTP decision enum drift: {http_decisions}", failures)
+            require(all((item.get("safety") or {}).get("server_executes_shell") is False for item in http_decisions), f"HTTP decision shell safety missing: {http_decisions}", failures)
+            require(all((item.get("safety") or {}).get("live_execution_performed") is False for item in http_decisions), f"HTTP decision live safety missing: {http_decisions}", failures)
+            require(all((item.get("policy") or {}).get("server_may_execute") is False for item in http_decisions), f"HTTP decision policy server boundary missing: {http_decisions}", failures)
+            require(all((item.get("policy") or {}).get("token_omitted") is True for item in http_decisions), f"HTTP decision token omission missing: {http_decisions}", failures)
             cli_env = env.copy()
             cli_env["AGENTOPS_BASE_URL"] = base_url
             result = subprocess.run(
@@ -603,6 +621,30 @@ def main() -> int:
             require(all((item.get("evidence_contract") or {}).get("research_lab_consumption_required") is True for item in packet_items), f"work packet bundle Research Lab consumption contract flag missing: {packet_items}", failures)
             require(all(((item.get("evidence_contract") or {}).get("research_lab_consumption") or {}).get("status") == "missing" for item in packet_items), f"work packet bundle Research Lab consumption status missing: {packet_items}", failures)
             require(all("--confirm-record" in str(((item.get("evidence_contract") or {}).get("research_lab_consumption") or {}).get("record_command") or "") for item in packet_items), f"work packet bundle Research Lab consumption record commands missing: {packet_items}", failures)
+            decision_result = subprocess.run(
+                [str(CLI), "operator", "loop-supervision", "--limit", "5", "--task-id", fixture_task_id, "--decision"],
+                cwd=ROOT,
+                env=cli_env,
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
+            )
+            outputs.extend([decision_result.stdout, decision_result.stderr])
+            require(decision_result.returncode == 0, f"loop-supervision --decision failed: {decision_result.stderr or decision_result.stdout}", failures)
+            decision_payload = json.loads(decision_result.stdout or "{}")
+            require(decision_payload.get("operation") == "operator_loop_work_packet_decision", f"decision operation mismatch: {decision_payload}", failures)
+            require(decision_payload.get("schema_version") == "agent_work_packet_decision_v1", f"decision schema mismatch: {decision_payload}", failures)
+            require(decision_payload.get("source_operation") == http_decision_payload.get("source_operation"), f"CLI/HTTP decision source drift: cli={decision_payload.get('source_operation')} http={http_decision_payload.get('source_operation')}", failures)
+            decision_summary = decision_payload.get("summary") or {}
+            require(decision_summary.get("decisions") == http_decision_summary.get("decisions"), f"CLI/HTTP decision count drift: cli={decision_summary} http={http_decision_summary}", failures)
+            require(decision_summary.get("server_may_execute") is False, f"CLI decision server execution proof missing: {decision_summary}", failures)
+            decisions = decision_payload.get("decisions") or []
+            require(len(decisions) == 2, f"CLI decisions missing: {decision_payload}", failures)
+            require({"hermes", "openclaw"}.issubset({item.get("adapter") for item in decisions}), f"CLI decision adapters missing: {decisions}", failures)
+            require(all((item.get("policy") or {}).get("server_may_execute") is False for item in decisions), f"CLI decision policy server boundary missing: {decisions}", failures)
+            require(all((item.get("safety") or {}).get("server_executes_shell") is False for item in decisions), f"CLI decision shell safety missing: {decisions}", failures)
+            require(all((item.get("safety") or {}).get("live_execution_performed") is False for item in decisions), f"CLI decision live safety missing: {decisions}", failures)
             after = db_counts(db_path)
             require(before == after, f"loop-supervision mutated ledger: before={before} after={after}", failures)
             require(not leaked("\n".join(outputs)), "loop-supervision leaked token-like material", failures)
