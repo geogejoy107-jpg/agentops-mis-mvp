@@ -41,6 +41,7 @@ def main() -> int:
     require(rerun_bundle.get("contract_id") == "commercial_release_grade_rerun_bundle_v1", "release-grade rerun bundle contract missing from release status")
     require(rerun_bundle.get("read_only") is True, "release-grade rerun bundle must be read-only")
     require("python3 scripts/commercial_release_grade_rerun_bundle.py --include-external-ci-evidence" in set(default_payload.get("commands", {}).values()), "release-grade rerun bundle command missing")
+    require(default_payload.get("commands", {}).get("release_grade_rerun_bundle_api") == "/api/commercial/release-grade-rerun-bundle", "release-grade rerun bundle API command missing")
 
     original = server.commercial_release_external_ci_evidence
 

@@ -1,6 +1,6 @@
 import { ClipboardCheck, GitBranch, ListChecks, LockKeyhole, Rocket, ShieldAlert, ShieldCheck, ToggleLeft } from "lucide-react";
 import { AppFrame } from "./AppFrame";
-import type { CommercialEntitlementStatus, CommercialReleaseStatusPayload } from "@/lib/mis";
+import type { CommercialEntitlementStatus, CommercialReleaseGradeRerunBundlePayload, CommercialReleaseStatusPayload } from "@/lib/mis";
 
 function boolText(value: unknown) {
   if (value === true) return "true";
@@ -29,11 +29,15 @@ export function CommercialParityPage({
   error,
   releaseStatus,
   releaseError,
+  rerunBundle,
+  rerunBundleError,
 }: Readonly<{
   entitlements: CommercialEntitlementStatus;
   error?: string | null;
   releaseStatus?: CommercialReleaseStatusPayload;
   releaseError?: string | null;
+  rerunBundle?: CommercialReleaseGradeRerunBundlePayload;
+  rerunBundleError?: string | null;
 }>) {
   const capabilities = Object.entries(entitlements.capabilities || {}).sort(([left], [right]) => left.localeCompare(right));
   const gates = [...(entitlements.gates || [])].sort((left, right) => String(left.capability || "").localeCompare(String(right.capability || "")));
@@ -42,7 +46,10 @@ export function CommercialParityPage({
   const preflight = release.promotion_preflight || {};
   const promotionPacket = release.promotion_packet || {};
   const receiptPlan = release.release_grade_receipt_plan || {};
-  const rerunBundle = release.release_grade_rerun_bundle || {};
+  const rerunBundleSpec = release.release_grade_rerun_bundle || {};
+  const rerunBundleDetail = rerunBundle || {};
+  const rerunBundleSummary = rerunBundleDetail.bundle_summary || {};
+  const gateRerunBundles = (rerunBundleDetail.phase_gate_rerun_bundles || []).slice(0, 5);
   const currentEvidence = release.current_evidence_status || {};
   const exactHead = release.external_exact_head_ci || {};
   const blockers = release.blockers?.length ? release.blockers : preflight.known_blockers || [];
@@ -62,6 +69,7 @@ export function CommercialParityPage({
 
       {error ? <div className="banner error">Entitlements unavailable: {error}</div> : null}
       {releaseError ? <div className="banner error">Release status unavailable: {releaseError}</div> : null}
+      {rerunBundleError ? <div className="banner error">Rerun bundle unavailable: {rerunBundleError}</div> : null}
 
       <section className="metrics six">
         {[
@@ -242,16 +250,30 @@ export function CommercialParityPage({
         <div className="panel" data-smoke="commercial-release-grade-rerun-bundle">
           <div className="panelHeader">
             <h2><ClipboardCheck size={14} /> Receipt rerun bundle</h2>
-            <span>{compactStatus(rerunBundle.status)}</span>
+            <span>{compactStatus(rerunBundleDetail.status || rerunBundleSpec.status)}</span>
           </div>
           <div className="proofStrip">
-            <span>{rerunBundle.contract_id || "commercial_release_grade_rerun_bundle_v1"}</span>
-            <span>read only {boolText(rerunBundle.read_only)}</span>
-            <span>CI safe {boolText(rerunBundle.ci_safe)}</span>
+            <span>{rerunBundleDetail.contract_id || rerunBundleSpec.contract_id || "commercial_release_grade_rerun_bundle_v1"}</span>
+            <span>read only {boolText(rerunBundleDetail.read_only ?? rerunBundleSpec.read_only)}</span>
+            <span>CI safe {boolText(rerunBundleDetail.ci_safe ?? rerunBundleSpec.ci_safe)}</span>
+            <span>mutating writes {String(rerunBundleSummary.mutating_write_count ?? 0)}</span>
           </div>
-          <p className="subtle"><code>{release.commands?.release_grade_rerun_bundle || "python3 scripts/commercial_release_grade_rerun_bundle.py --include-external-ci-evidence"}</code></p>
+          <p className="subtle"><code>{release.commands?.release_grade_rerun_bundle_api || "/api/commercial/release-grade-rerun-bundle"}</code></p>
+          <div className="proofStrip">
+            <span>Gate reruns {String(rerunBundleSummary.bundles_requiring_rerun ?? gateRerunBundles.length)}</span>
+            <span>write previews {String(rerunBundleSummary.write_preview_count ?? 0)}</span>
+            <span>commands {String(rerunBundleSummary.command_count ?? 0)}</span>
+          </div>
           <div className="list compactList">
-            {displayList(Object.keys(rerunBundle.bundle_requires || {}), 4).map((requirement) => (
+            {gateRerunBundles.length ? gateRerunBundles.map((bundle) => (
+              <div className="row" data-smoke="commercial-rerun-bundle-gate-detail" key={bundle.gate_id || bundle.bundle_id}>
+                <div>
+                  <strong>{titleize(String(bundle.gate_id || bundle.bundle_id || "gate"))}</strong>
+                  <span>{String((bundle.rerun_commands || []).length)} commands / {String(((bundle.write_preview || {}).diff_preview || []).length)} write-preview fields</span>
+                </div>
+                <span className={statusClass(bundle.state === "release_grade_receipt_current_preview")}>{compactStatus(bundle.state)}</span>
+              </div>
+            )) : displayList(Object.keys(rerunBundleSpec.bundle_requires || {}), 4).map((requirement) => (
               <div className="row" key={requirement}>
                 <div>
                   <strong>{titleize(requirement)}</strong>

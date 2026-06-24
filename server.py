@@ -523,6 +523,7 @@ def commercial_release_status(headers, qs=None) -> dict:
             "strict_release_grade_receipt_plan": "python3 scripts/commercial_release_grade_receipt_plan.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence --require-plan-ready",
             "release_grade_rerun_bundle": "python3 scripts/commercial_release_grade_rerun_bundle.py --include-external-ci-evidence",
             "strict_release_grade_rerun_bundle": "python3 scripts/commercial_release_grade_rerun_bundle.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence --require-bundle-ready",
+            "release_grade_rerun_bundle_api": "/api/commercial/release-grade-rerun-bundle",
             "release_status_external_ci_api": "/api/commercial/release-status?include_external_ci_evidence=1",
         },
         "blockers": list(handoff.get("explicit_blockers") or preflight.get("known_blockers") or []),
@@ -11762,6 +11763,45 @@ def worker_fleet_view(conn) -> dict:
     }
 
 
+def commercial_release_grade_rerun_bundle_status(headers, qs=None) -> dict:
+    scripts_dir = ROOT / "scripts"
+    inserted = False
+    scripts_path = str(scripts_dir)
+    if scripts_path not in sys.path:
+        sys.path.insert(0, scripts_path)
+        inserted = True
+    try:
+        from commercial_release_grade_rerun_bundle import build_bundle
+
+        include_external_ci = qs_flag(qs, "include_external_ci_evidence") or qs_flag(qs, "external_ci") or qs_flag(qs, "exact_head_ci")
+        require_external_ci = qs_flag(qs, "require_external_ci_evidence")
+        payload = build_bundle(
+            include_external_ci=include_external_ci,
+            require_external_ci=require_external_ci,
+            external_ci_run_id=qs_first(qs, "external_ci_run_id"),
+        )
+    finally:
+        if inserted:
+            try:
+                sys.path.remove(scripts_path)
+            except ValueError:
+                pass
+
+    result = dict(payload)
+    result["provider"] = "agentops-commercial"
+    result["operation"] = "commercial_release_grade_rerun_bundle"
+    result["contract_id"] = payload.get("contract") or "commercial_release_grade_rerun_bundle_v1"
+    result["workspace_id"] = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo") if headers else "local-demo"
+    result["generated_at"] = now_iso()
+    result["external_ci_requested"] = bool(qs_flag(qs, "include_external_ci_evidence") or qs_flag(qs, "external_ci") or qs_flag(qs, "exact_head_ci"))
+    result["bundle_summary"] = dict(payload.get("bundle_summary") or {})
+    result["phase_gate_rerun_bundles"] = list(payload.get("phase_gate_rerun_bundles") or [])
+    result["blockers"] = list(payload.get("blockers") or [])
+    result["token_omitted"] = True
+    result["live_execution_performed"] = False
+    return result
+
+
 def demo_readiness(conn: sqlite3.Connection, headers) -> dict:
     local = local_readiness(conn, headers)
     conn.rollback()
@@ -14808,6 +14848,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/commercial/release-status":
                 payload = commercial_release_status(self.headers, qs)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/commercial/release-grade-rerun-bundle":
+                payload = commercial_release_grade_rerun_bundle_status(self.headers, qs)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/demo/readiness":

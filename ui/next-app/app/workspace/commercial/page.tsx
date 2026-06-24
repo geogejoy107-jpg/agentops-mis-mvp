@@ -1,5 +1,5 @@
 import { CommercialParityPage } from "@/components/CommercialPage";
-import { loadServerCommercialEntitlements, loadServerCommercialReleaseStatus } from "@/lib/misServer";
+import { loadServerCommercialEntitlements, loadServerCommercialReleaseGradeRerunBundle, loadServerCommercialReleaseStatus } from "@/lib/misServer";
 
 export const dynamic = "force-dynamic";
 
@@ -20,11 +20,17 @@ function queryFlag(value: string | string[] | undefined) {
 
 export default async function CommercialPage({ searchParams }: PageProps) {
   const params = await (searchParams || Promise.resolve({} as SearchParams));
-  const [entitlements, releaseStatus] = await Promise.all([
+  const includeExternalCi = queryFlag(params.exact_head_ci) || queryFlag(params.include_external_ci_evidence);
+  const externalCiRunId = one(params.external_ci_run_id);
+  const [entitlements, releaseStatus, rerunBundle] = await Promise.all([
     loadServerCommercialEntitlements(),
     loadServerCommercialReleaseStatus({
-      includeExternalCi: queryFlag(params.exact_head_ci) || queryFlag(params.include_external_ci_evidence),
-      externalCiRunId: one(params.external_ci_run_id),
+      includeExternalCi,
+      externalCiRunId,
+    }),
+    loadServerCommercialReleaseGradeRerunBundle({
+      includeExternalCi,
+      externalCiRunId,
     }),
   ]);
   return (
@@ -33,6 +39,8 @@ export default async function CommercialPage({ searchParams }: PageProps) {
       error={entitlements.error}
       releaseStatus={releaseStatus.data}
       releaseError={releaseStatus.error}
+      rerunBundle={rerunBundle.data}
+      rerunBundleError={rerunBundle.error}
     />
   );
 }

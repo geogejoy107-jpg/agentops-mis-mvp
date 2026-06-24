@@ -954,6 +954,93 @@ export type CommercialEntitlementStatus = {
   live_execution_performed?: boolean;
 };
 
+export type CommercialReleaseGradeRerunBundleItem = {
+  gate_id?: string;
+  bundle_id?: string;
+  state?: string;
+  current_head?: string;
+  previous_verified_head?: string;
+  receipt_head_current?: boolean;
+  local_receipt_current?: boolean;
+  release_grade_current?: boolean;
+  missing_commands?: string[];
+  rerun_commands?: string[];
+  executes_rerun_commands?: boolean;
+  write_preview?: {
+    target?: string;
+    operation?: string;
+    path?: string;
+    mutates_receipts?: boolean;
+    write_before?: Record<string, boolean | string | number | null>;
+    would_set?: Record<string, boolean | string | number | null>;
+    diff_preview?: {
+      field?: string;
+      before?: boolean | string | number | null;
+      after?: boolean | string | number | null;
+    }[];
+  };
+  blockers?: string[];
+};
+
+export type CommercialReleaseGradeRerunBundlePayload = {
+  provider?: string;
+  operation?: string;
+  contract?: string;
+  contract_id?: string;
+  status?: string;
+  workspace_id?: string;
+  generated_at?: string;
+  ci_safe?: boolean;
+  read_only?: boolean;
+  current_git_head?: string;
+  external_ci_requested?: boolean;
+  source_contracts?: string[];
+  release_grade_receipt_plan?: {
+    contract?: string;
+    status?: string;
+    blockers?: string[];
+    plan_checks?: Record<string, boolean | string | number | null>;
+  };
+  bundle_checks?: Record<string, boolean | string | number | null>;
+  bundle_requires?: Record<string, boolean | string | number | null>;
+  plan_summary?: {
+    gate_count?: number;
+    gates_requiring_rerun?: string[];
+    all_gate_receipts_current_head?: boolean;
+    exact_head_ci_verified?: boolean;
+    real_runtime_acceptance_verified?: boolean;
+    current_runtime_evidence_supplied?: boolean;
+  };
+  bundle_summary?: {
+    gate_count?: number;
+    bundle_count?: number;
+    bundles_requiring_rerun?: number;
+    write_preview_count?: number;
+    mutating_write_count?: number;
+    command_count?: number;
+  };
+  phase_gate_rerun_bundles?: CommercialReleaseGradeRerunBundleItem[];
+  blockers?: string[];
+  required_commands?: string[];
+  must_not_use?: string[];
+  safety?: {
+    read_only?: boolean;
+    ci_safe?: boolean;
+    network_called?: boolean;
+    live_execution_performed?: boolean;
+    executes_rerun_commands?: boolean;
+    mutates_receipts?: boolean;
+    allows_handoff_or_merge?: boolean;
+    token_omitted?: boolean;
+    raw_prompt_omitted?: boolean;
+    raw_response_omitted?: boolean;
+    private_transcripts_omitted?: boolean;
+    billing_call_performed?: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+};
+
 export type CommercialReleaseStatusPayload = {
   provider?: string;
   operation?: string;
@@ -1078,6 +1165,7 @@ export type CommercialReleaseStatusPayload = {
     strict_release_grade_receipt_plan?: string;
     release_grade_rerun_bundle?: string;
     strict_release_grade_rerun_bundle?: string;
+    release_grade_rerun_bundle_api?: string;
     release_status_external_ci_api?: string;
   };
   blockers?: string[];
@@ -1758,6 +1846,15 @@ export async function loadCommercialReleaseStatus(input?: { includeExternalCi?: 
   if (input?.externalCiRunId) params.set("external_ci_run_id", input.externalCiRunId);
   const query = params.toString();
   return misJson<CommercialReleaseStatusPayload>(`/commercial/release-status${query ? `?${query}` : ""}`);
+}
+
+export async function loadCommercialReleaseGradeRerunBundle(input?: { includeExternalCi?: boolean; requireExternalCi?: boolean; externalCiRunId?: string }): Promise<CommercialReleaseGradeRerunBundlePayload> {
+  const params = new URLSearchParams();
+  if (input?.includeExternalCi) params.set("include_external_ci_evidence", "1");
+  if (input?.requireExternalCi) params.set("require_external_ci_evidence", "1");
+  if (input?.externalCiRunId) params.set("external_ci_run_id", input.externalCiRunId);
+  const query = params.toString();
+  return misJson<CommercialReleaseGradeRerunBundlePayload>(`/commercial/release-grade-rerun-bundle${query ? `?${query}` : ""}`);
 }
 
 export async function loadStorageBackendStatus(): Promise<StorageBackendStatus> {

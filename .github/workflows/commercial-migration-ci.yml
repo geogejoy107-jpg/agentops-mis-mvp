@@ -55,6 +55,7 @@ jobs:
           python3 scripts/commercial_release_promotion_packet_smoke.py
           python3 scripts/commercial_release_grade_receipt_plan_smoke.py
           python3 scripts/commercial_release_grade_rerun_bundle_smoke.py
+          python3 scripts/commercial_release_grade_rerun_bundle_api_smoke.py
           python3 scripts/commercial_evidence_receipts_smoke.py
           python3 scripts/commercial_current_evidence_status_smoke.py
           python3 scripts/commercial_handoff_status_smoke.py

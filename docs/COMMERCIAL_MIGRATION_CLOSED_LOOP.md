@@ -660,7 +660,10 @@ Must be true:
   the release-grade receipt plan. It materializes one read-only Gate 1-5 rerun
   bundle per receipt, including rerun commands plus the
   `COMMERCIAL_EVIDENCE_RECEIPTS.json` field diff that would be recorded after
-  operator rerun evidence exists. Verify with
+  operator rerun evidence exists. The current bundle details are exposed through
+  read-only `GET /api/commercial/release-grade-rerun-bundle` and rendered on
+  Next `/workspace/commercial` with Gate-level rerun state, command counts,
+  write-preview counts, and `mutating_write_count=0`. Verify with
   `python3 scripts/commercial_release_grade_rerun_bundle_smoke.py`; strict
   bundle readiness uses
   `python3 scripts/commercial_release_grade_rerun_bundle.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence --require-bundle-ready`
