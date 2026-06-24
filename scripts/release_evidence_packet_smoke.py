@@ -347,7 +347,7 @@ TEST_COMMANDS = [
     {
         "id": "operator_loop_supervision",
         "command": "python3 scripts/operator_loop_supervision_smoke.py",
-        "summary": "Pre-confirm Hermes/OpenClaw/Codex loop supervision reads handoff/start-check gates, review pressure, layered next commands and no-server-shell safety without mutating ledgers.",
+        "summary": "Pre-confirm Hermes/OpenClaw/Codex loop supervision reads handoff/start-check gates, Agent Plan quality audit state, review pressure, layered next commands and no-server-shell safety without mutating ledgers.",
         "ci_step": "Offline safety smokes",
     },
     {

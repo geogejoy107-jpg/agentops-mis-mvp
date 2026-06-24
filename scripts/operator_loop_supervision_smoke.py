@@ -105,6 +105,92 @@ def require(condition: bool, message: str, failures: list[str]) -> None:
         failures.append(message)
 
 
+def run_cli(args: list[str], base_url: str, outputs: list[str]) -> dict:
+    env = os.environ.copy()
+    env["AGENTOPS_BASE_URL"] = base_url
+    proc = subprocess.run(
+        [str(CLI), *args],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    outputs.extend([proc.stdout, proc.stderr])
+    if proc.returncode != 0:
+        raise RuntimeError(f"agentops {' '.join(args)} failed: {proc.stderr or proc.stdout}")
+    return json.loads(proc.stdout or "{}")
+
+
+def create_plan_quality_attention_fixture(base_url: str, outputs: list[str]) -> dict:
+    stamp = str(int(time.time() * 1000000))
+    agent_id = f"agt_loop_quality_{stamp}"
+    task_id = f"tsk_loop_quality_{stamp}"
+    run_cli(["agent", "register", "--id", agent_id, "--name", "Loop Quality Agent", "--role", "Builder", "--runtime", "mock"], base_url, outputs)
+    run_cli([
+        "task", "create",
+        "--task-id", task_id,
+        "--title", "Loop supervision plan quality fixture",
+        "--description", "Create a hard-verifying but quality-attention Agent Plan for loop supervision.",
+        "--owner-agent-id", agent_id,
+        "--requester-id", "usr_founder",
+        "--acceptance", "Loop supervision must surface plan quality attention without hard-blocking run_start.",
+        "--risk", "low",
+    ], base_url, outputs)
+    plan_payload = run_cli([
+        "agent-plan", "create",
+        "--agent-id", agent_id,
+        "--task-id", task_id,
+        "--task-understanding", "Build loop-supervision quality fixture with sparse method steps.",
+        "--referenced-specs", "PROJECT_SPEC.md,AGENT_WORKFLOW.md",
+        "--referenced-memories", "knowledge/shared/common_failures.md",
+        "--referenced-bases", "base_local_tasks",
+        "--proposed-files-to-change", "server.py,scripts/operator_loop_supervision_smoke.py",
+        "--risk", "low",
+        "--execution-steps", "READ,PLAN,RETRIEVE,EXECUTE",
+        "--verification-plan", "Run operator_loop_supervision_smoke.py and inspect Agent Plan quality audit readback.",
+        "--rollback-plan", "Stop before bounded/live execution if plan quality attention cannot be inspected.",
+    ], base_url, outputs)
+    plan_id = (plan_payload.get("agent_plan") or {}).get("plan_id")
+    if not plan_id:
+        raise RuntimeError(f"plan missing: {plan_payload}")
+    verified = run_cli(["agent-plan", "verify", "--plan-id", str(plan_id)], base_url, outputs)
+    quality = (verified.get("verification") or {}).get("quality") or {}
+    if quality.get("status") != "attention":
+        raise RuntimeError(f"fixture plan should have quality attention: {quality}")
+    run_payload = run_cli([
+        "run", "start",
+        "--task-id", task_id,
+        "--agent-id", agent_id,
+        "--plan-id", str(plan_id),
+        "--input-summary", "Loop supervision plan quality attention fixture.",
+    ], base_url, outputs)
+    run_id = (run_payload.get("run") or {}).get("run_id")
+    if not run_id:
+        raise RuntimeError(f"run missing: {run_payload}")
+    tool = run_cli(["toolcall", "record", "--run-id", str(run_id), "--agent-id", agent_id, "--tool", "loop.quality.fixture", "--category", "custom", "--risk", "low", "--status", "completed", "--summary", "Fixture tool call completed."], base_url, outputs)
+    evaluation = run_cli(["eval", "submit", "--run-id", str(run_id), "--task-id", task_id, "--agent-id", agent_id, "--gate", "operator_loop_supervision_plan_quality", "--score", "1", "--pass", "--notes", "Fixture evaluation passed."], base_url, outputs)
+    artifact = run_cli(["artifact", "record", "--run-id", str(run_id), "--task-id", task_id, "--agent-id", agent_id, "--type", "loop_supervision_plan_quality_fixture", "--title", "Loop supervision quality fixture", "--summary", "Safe fixture artifact summary.", "--uri", f"run://{run_id}"], base_url, outputs)
+    run_cli(["run", "heartbeat", "--run-id", str(run_id), "--status", "completed", "--summary", "Loop supervision quality fixture completed.", "--duration-ms", "1000"], base_url, outputs)
+    manifest = run_cli([
+        "plan-evidence", "create",
+        "--plan-id", str(plan_id),
+        "--run-id", str(run_id),
+        "--agent-id", agent_id,
+        "--tool-call-ids", str((tool.get("tool_call") or {}).get("tool_call_id") or ""),
+        "--evaluation-ids", str((evaluation.get("evaluation") or {}).get("evaluation_id") or ""),
+        "--artifact-ids", str((artifact.get("artifact") or {}).get("artifact_id") or ""),
+    ], base_url, outputs)
+    if (manifest.get("verification") or {}).get("pass") is not True:
+        raise RuntimeError(f"manifest failed: {manifest}")
+    memory = run_cli(["memory", "propose", "--run-id", str(run_id), "--task-id", task_id, "--agent-id", agent_id, "--scope", "task", "--type", "artifact_summary", "--text", "Loop supervision quality fixture completed with reviewed evidence."], base_url, outputs)
+    memory_id = (memory.get("memory") or {}).get("memory_id")
+    if memory_id:
+        run_cli(["memory", "approve", "--memory-id", str(memory_id)], base_url, outputs)
+    return {"agent_id": agent_id, "task_id": task_id, "run_id": run_id, "plan_id": plan_id, "quality": quality}
+
+
 def require_adapter_command(value: object, adapter: str, label: str, failures: list[str]) -> None:
     text = str(value or "")
     require(
@@ -117,7 +203,7 @@ def require_adapter_command(value: object, adapter: str, label: str, failures: l
         require(f"--require-adapter {other}" not in text, f"{label} leaked {other} live-readiness adapter: {text}", failures)
 
 
-def validate(payload: dict, failures: list[str]) -> None:
+def validate(payload: dict, failures: list[str], *, expect_quality_attention: bool = False) -> None:
     require(payload.get("operation") == "operator_loop_supervision", f"wrong operation: {payload}", failures)
     require(payload.get("provider") == "agentops-operator", f"wrong provider: {payload}", failures)
     require(payload.get("status") in {"ready_to_confirm", "record_first", "preview_only", "blocked", "attention"}, f"bad status: {payload.get('status')}", failures)
@@ -133,6 +219,12 @@ def validate(payload: dict, failures: list[str]) -> None:
     summary = payload.get("summary") or {}
     require(summary.get("items") == 2, f"expected Hermes/OpenClaw items: {summary}", failures)
     require(summary.get("can_confirm_all") is True, f"bounded confirm should be structurally ready: {summary}", failures)
+    require(summary.get("agent_plan_quality_status") in {"pass", "attention", "not_applicable"}, f"plan quality summary missing: {summary}", failures)
+    require(summary.get("agent_plan_quality_attention") is not None, f"plan quality attention count missing: {summary}", failures)
+    require(summary.get("agent_plan_quality_blocked") is not None, f"plan quality blocked count missing: {summary}", failures)
+    if expect_quality_attention:
+        require(summary.get("agent_plan_quality_status") == "attention", f"plan quality summary should be attention: {summary}", failures)
+        require(int(summary.get("agent_plan_quality_attention") or 0) >= 1, f"plan quality attention count should be positive: {summary}", failures)
     work_packets = payload.get("work_packets") or []
     require(len(work_packets) == 2, f"top-level work packets missing: {work_packets}", failures)
     handoff_summary = payload.get("handoff_summary") or {}
@@ -178,6 +270,14 @@ def validate(payload: dict, failures: list[str]) -> None:
         require((receipts.get("run_start_admission") or {}).get("control_readback_required") is True, f"{adapter} work packet run_start receipt missing: {receipts}", failures)
         evidence_contract = work_packet.get("evidence_contract") or {}
         require(evidence_contract.get("agent_plan_required") is True, f"{adapter} work packet Agent Plan contract missing: {evidence_contract}", failures)
+        require(evidence_contract.get("agent_plan_quality_audit_required") is True, f"{adapter} work packet Agent Plan quality audit contract missing: {evidence_contract}", failures)
+        contract_quality = evidence_contract.get("agent_plan_quality") or {}
+        require(contract_quality.get("status") in {"pass", "attention", "not_applicable"}, f"{adapter} work packet quality status missing: {contract_quality}", failures)
+        require(contract_quality.get("hard_run_start_gate") is False, f"{adapter} quality audit must not be hard run_start gate: {contract_quality}", failures)
+        require(str(contract_quality.get("command") or "").startswith("agentops operator evidence-report"), f"{adapter} quality audit command missing: {contract_quality}", failures)
+        if expect_quality_attention:
+            require(contract_quality.get("status") == "attention", f"{adapter} work packet quality should be attention: {contract_quality}", failures)
+            require(int(contract_quality.get("attention") or 0) >= 1, f"{adapter} work packet quality attention count missing: {contract_quality}", failures)
         require(evidence_contract.get("knowledge_retrieval_required") is True, f"{adapter} work packet retrieval contract missing: {evidence_contract}", failures)
         require(evidence_contract.get("audit_ledger_required") is True, f"{adapter} work packet audit contract missing: {evidence_contract}", failures)
         work_safety = work_packet.get("safety") or {}
@@ -189,7 +289,14 @@ def validate(payload: dict, failures: list[str]) -> None:
         require(item_safety.get("ledger_mutated") is False, f"{adapter} ledger safety missing: {item_safety}", failures)
         require(item_safety.get("server_executes_shell") is False, f"{adapter} shell safety missing: {item_safety}", failures)
         gate_ids = {gate.get("id") for gate in (item.get("gates") or [])}
-        require({"handoff_ready", "current_code", "method_gates", "preview_loop", "local_deployment", "bounded_confirm", "record_pressure", "server_shell_boundary"}.issubset(gate_ids), f"{adapter} gates missing: {gate_ids}", failures)
+        require({"handoff_ready", "current_code", "method_gates", "preview_loop", "local_deployment", "bounded_confirm", "plan_quality", "record_pressure", "server_shell_boundary"}.issubset(gate_ids), f"{adapter} gates missing: {gate_ids}", failures)
+        quality_gate = next((gate for gate in (item.get("gates") or []) if gate.get("id") == "plan_quality"), {})
+        require(quality_gate.get("status") in {"pass", "attention"}, f"{adapter} quality gate status missing: {quality_gate}", failures)
+        require(quality_gate.get("hard_run_start_gate") is False, f"{adapter} quality gate should not hard-block run_start: {quality_gate}", failures)
+        require(str(quality_gate.get("command") or "").startswith("agentops operator evidence-report"), f"{adapter} quality gate command missing: {quality_gate}", failures)
+        if expect_quality_attention:
+            require(quality_gate.get("status") == "attention", f"{adapter} quality gate should be attention: {quality_gate}", failures)
+            require(item.get("can_confirm_bounded_loop") is True, f"{adapter} quality attention should not change structural confirm readiness: {item}", failures)
         local_gate = next((gate for gate in (item.get("gates") or []) if gate.get("id") == "local_deployment"), {})
         require(local_gate.get("ok") is True, f"{adapter} local deployment gate not passing: {local_gate}", failures)
         require(local_gate.get("recommended_adapter") == adapter, f"{adapter} local deployment recommended adapter mismatch: {local_gate}", failures)
@@ -291,15 +398,18 @@ def main() -> int:
         )
         try:
             wait_ready(base_url, proc)
+            fixture = create_plan_quality_attention_fixture(base_url, outputs)
+            require(bool(fixture.get("run_id") and fixture.get("plan_id")), f"quality fixture missing ids: {fixture}", failures)
+            fixture_task_id = str(fixture.get("task_id") or "")
             before = db_counts(db_path)
-            http_status, http_payload = http_json(base_url, "/api/operator/loop-supervision?limit=5")
+            http_status, http_payload = http_json(base_url, f"/api/operator/loop-supervision?limit=5&task_id={fixture_task_id}")
             outputs.append(json.dumps(http_payload, ensure_ascii=False))
             require(http_status == 200, f"HTTP loop-supervision status {http_status}: {http_payload}", failures)
-            validate(http_payload, failures)
+            validate(http_payload, failures, expect_quality_attention=True)
             cli_env = env.copy()
             cli_env["AGENTOPS_BASE_URL"] = base_url
             result = subprocess.run(
-                [str(CLI), "operator", "loop-supervision", "--limit", "5"],
+                [str(CLI), "operator", "loop-supervision", "--limit", "5", "--task-id", fixture_task_id],
                 cwd=ROOT,
                 env=cli_env,
                 capture_output=True,
@@ -310,10 +420,10 @@ def main() -> int:
             outputs.extend([result.stdout, result.stderr])
             require(result.returncode == 0, f"loop-supervision CLI failed: {result.stderr or result.stdout}", failures)
             cli_payload = json.loads(result.stdout or "{}")
-            validate(cli_payload, failures)
+            validate(cli_payload, failures, expect_quality_attention=True)
             require(cli_payload.get("summary") == http_payload.get("summary"), f"CLI/HTTP summary drift: cli={cli_payload.get('summary')} http={http_payload.get('summary')}", failures)
             packet_result = subprocess.run(
-                [str(CLI), "operator", "loop-supervision", "--limit", "5", "--work-packet"],
+                [str(CLI), "operator", "loop-supervision", "--limit", "5", "--task-id", fixture_task_id, "--work-packet"],
                 cwd=ROOT,
                 env=cli_env,
                 capture_output=True,
@@ -335,6 +445,7 @@ def main() -> int:
             require(all((item.get("safety") or {}).get("live_execution_performed") is False for item in packet_items), f"work packet bundle live safety missing: {packet_items}", failures)
             require(all(item.get("packet_hash") for item in packet_items), f"work packet bundle hashes missing: {packet_items}", failures)
             require(all((item.get("primary_next_action") or {}).get("command") for item in packet_items), f"work packet bundle primary actions missing: {packet_items}", failures)
+            require(all(((item.get("evidence_contract") or {}).get("agent_plan_quality") or {}).get("status") == "attention" for item in packet_items), f"work packet bundle quality attention missing: {packet_items}", failures)
             after = db_counts(db_path)
             require(before == after, f"loop-supervision mutated ledger: before={before} after={after}", failures)
             require(not leaked("\n".join(outputs)), "loop-supervision leaked token-like material", failures)

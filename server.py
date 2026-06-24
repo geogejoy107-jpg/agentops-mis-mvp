@@ -22469,6 +22469,8 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     qs = qs or {}
     limit = bounded_int((qs.get("limit") or ["12"])[0], 12, 1, 30)
     loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
+    evidence_task_id = redact_text((qs.get("task_id") or [""])[0], 160)
+    evidence_run_id = redact_text((qs.get("run_id") or [""])[0], 160)
     effective_headers = headers
     if agent_gateway_is_bound_auth(auth_ctx):
         effective_headers = dict(headers)
@@ -22476,7 +22478,16 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
     loop_audit = operator_loop_audit(conn, effective_headers, {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]})
     action_plan = operator_action_plan(conn, effective_headers, {"limit": [str(limit)]})
-    evidence_report = operator_evidence_report(conn, effective_headers, {"limit": [str(min(limit, 8))]})
+    evidence_report_qs = {"limit": [str(min(limit, 8))]}
+    evidence_report_command_parts = ["agentops", "operator", "evidence-report"]
+    if evidence_run_id:
+        evidence_report_qs["run_id"] = [evidence_run_id]
+        evidence_report_command_parts.extend(["--run-id", evidence_run_id])
+    elif evidence_task_id:
+        evidence_report_qs["task_id"] = [evidence_task_id]
+        evidence_report_command_parts.extend(["--task-id", evidence_task_id])
+    evidence_report_command_parts.extend(["--limit", str(min(limit, 8))])
+    evidence_report = operator_evidence_report(conn, effective_headers, evidence_report_qs)
     workspace_id = normalize_workspace_id(loop_audit.get("workspace_id") or action_plan.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
     action_package = loop_audit.get("action_package") or {}
     action_package_items = action_package.get("items") or []
@@ -22526,10 +22537,26 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     evidence_report_memory_review_ready = int(evidence_report_summary.get("memory_review_ready") or 0)
     evidence_report_missing_memory_reviews = int(evidence_report_summary.get("missing_memory_reviews") or 0)
     evidence_report_pending_memory_reviews = int(evidence_report_summary.get("pending_memory_reviews") or 0)
+    evidence_report_read_command = " ".join(shlex.quote(str(part)) for part in evidence_report_command_parts)
+    evidence_report_plan_quality_ready = int(evidence_report_summary.get("agent_plan_quality_ready") or 0)
+    evidence_report_plan_quality_attention = int(evidence_report_summary.get("agent_plan_quality_attention") or 0)
+    evidence_report_plan_quality_blocked = int(evidence_report_summary.get("agent_plan_quality_blocked") or 0)
+    evidence_report_plan_quality_issue_count = evidence_report_plan_quality_attention + evidence_report_plan_quality_blocked
+    evidence_report_plan_quality = {
+        "status": "attention" if evidence_report_plan_quality_issue_count else "pass" if evidence_report_plan_quality_ready else "not_applicable",
+        "ready": evidence_report_plan_quality_ready,
+        "attention": evidence_report_plan_quality_attention,
+        "blocked": evidence_report_plan_quality_blocked,
+        "issue_count": evidence_report_plan_quality_issue_count,
+        "min_score": evidence_report_summary.get("agent_plan_quality_min_score"),
+        "avg_score": evidence_report_summary.get("agent_plan_quality_avg_score"),
+        "command": evidence_report_read_command,
+        "contract": "non-blocking Agent Plan quality audit readback; run_start hard gates remain plan verification, approval, and evidence manifests",
+        "token_omitted": True,
+    }
     receipt_rows = operator_action_receipt_rows(conn, workspace_id, 200)
     execution_evidence_gaps = ((action_plan.get("execution_evidence") or {}).get("gaps") or [])
     execution_gap_by_run = {str(item.get("run_id")): item for item in execution_evidence_gaps if item.get("run_id")}
-    evidence_report_read_command = f"agentops operator evidence-report --limit {min(limit, 8)}"
     evidence_report_action_signature = stable_id("op_action_sig", "evidence_report", workspace_id, evidence_report_read_command)[-18:]
     evidence_report_receipt = next((
         receipt for receipt in receipt_rows
@@ -23165,6 +23192,8 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         loop_health_risks.append({"id": "run_evidence_attention", "severity": "attention", "count": evidence_report_attention + evidence_report_missing_manifests + evidence_report_pending_approvals, "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0]})
     if evidence_report_missing_memory_reviews or evidence_report_pending_memory_reviews:
         loop_health_risks.append({"id": "run_memory_review_attention", "severity": "attention", "count": evidence_report_missing_memory_reviews + evidence_report_pending_memory_reviews, "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0]})
+    if evidence_report_plan_quality_issue_count:
+        loop_health_risks.append({"id": "agent_plan_quality_attention", "severity": "attention", "count": evidence_report_plan_quality_issue_count, "next_action": evidence_report_read_command})
     if remediation_workflow_blocked:
         loop_health_risks.append({"id": "evidence_remediation_workflow_blocked", "severity": "blocked", "count": remediation_workflow_blocked, "next_action": (remediation_chain.get("next_actions") or ["agentops operator handoff --limit 12"])[0]})
     elif remediation_workflow_ready or remediation_workflow_receipt_missing:
@@ -23263,7 +23292,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "next_action": (receipt_failure_work_order.get("next_actions") or receipt_failure_memory.get("next_actions") or ["agentops operator receipt-failure-memories --min-failures 2 --limit 8"])[0],
         },
         "evidence_report": {
-            "status": "blocked" if evidence_report_blocked else "attention" if evidence_report_attention or evidence_report_missing_manifests or evidence_report_pending_approvals or evidence_report_missing_memory_reviews or evidence_report_pending_memory_reviews else "pass",
+            "status": "blocked" if evidence_report_blocked else "attention" if evidence_report_attention or evidence_report_missing_manifests or evidence_report_pending_approvals or evidence_report_missing_memory_reviews or evidence_report_pending_memory_reviews or evidence_report_plan_quality_issue_count else "pass",
             "runs": int(evidence_report_summary.get("runs") or 0),
             "ready": int(evidence_report_summary.get("ready") or 0),
             "attention": evidence_report_attention,
@@ -23275,6 +23304,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "memory_review_ready": evidence_report_memory_review_ready,
             "missing_memory_reviews": evidence_report_missing_memory_reviews,
             "pending_memory_reviews": evidence_report_pending_memory_reviews,
+            "agent_plan_quality": evidence_report_plan_quality,
             "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0],
         },
         "workflow_job_recovery": {
@@ -23390,6 +23420,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "evidence_report_memory_review_ready": evidence_report_memory_review_ready,
             "evidence_report_missing_memory_reviews": evidence_report_missing_memory_reviews,
             "evidence_report_pending_memory_reviews": evidence_report_pending_memory_reviews,
+            "evidence_report_agent_plan_quality_ready": evidence_report_plan_quality_ready,
+            "evidence_report_agent_plan_quality_attention": evidence_report_plan_quality_attention,
+            "evidence_report_agent_plan_quality_blocked": evidence_report_plan_quality_blocked,
+            "evidence_report_agent_plan_quality_min_score": evidence_report_plan_quality.get("min_score"),
             "loop_package_items": len(action_package_items),
             "operator_actions": len(action_plan_actions),
             "receipt_required": receipt_coverage.get("required", 0),
@@ -25079,7 +25113,14 @@ def operator_agent_loop_handoff(conn: sqlite3.Connection, headers, qs=None, auth
     }
 
 
-def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, start_check_payload: dict | None = None) -> dict:
+def loop_supervision_item(
+    consumer: dict,
+    *,
+    current_code: dict,
+    limit: int,
+    start_check_payload: dict | None = None,
+    plan_quality_evidence: dict | None = None,
+) -> dict:
     adapter = str(consumer.get("adapter") or "mock")
     start_check = consumer.get("start_check") if isinstance(consumer.get("start_check"), dict) else {}
     commands = consumer.get("commands") if isinstance(consumer.get("commands"), dict) else {}
@@ -25128,6 +25169,10 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
         "pending_approvals": int(review_summary.get("pending_approvals") or 0),
         "memory_candidates": int(review_summary.get("memory_candidates") or 0),
     })
+    plan_quality_evidence = plan_quality_evidence if isinstance(plan_quality_evidence, dict) else {}
+    plan_quality_issue_count = int(plan_quality_evidence.get("issue_count") or 0)
+    plan_quality_attention_required = plan_quality_issue_count > 0
+    plan_quality_command = str(plan_quality_evidence.get("command") or managed_execution_commands.get("evidence_report") or "agentops operator evidence-report --limit 8")
     should_record = bool(
         review_pressure["human_review_required"]
         or review_pressure["memory_review_required"]
@@ -25138,9 +25183,9 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
     if blockers or not current_code_ok or server_shell or missing_method_gates or not local_deployment_adapter_ok:
         status = "blocked"
         recommended_next_command = commands.get("start_check") or f"agentops operator start-check --adapter {adapter} --limit {limit}"
-    elif can_confirm and should_record:
+    elif can_confirm and (should_record or plan_quality_attention_required):
         status = "record_first"
-        recommended_next_command = review_pressure["record_command"]
+        recommended_next_command = plan_quality_command if plan_quality_attention_required else review_pressure["record_command"]
     elif can_confirm:
         status = "ready_to_confirm"
         recommended_next_command = commands.get("loop_driver_confirm")
@@ -25199,6 +25244,20 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
             "token_omitted": True,
         },
         {
+            "id": "plan_quality",
+            "ok": not plan_quality_attention_required,
+            "status": "attention" if plan_quality_attention_required else "pass",
+            "quality_status": plan_quality_evidence.get("status") or "not_applicable",
+            "ready": int(plan_quality_evidence.get("ready") or 0),
+            "attention": int(plan_quality_evidence.get("attention") or 0),
+            "blocked": int(plan_quality_evidence.get("blocked") or 0),
+            "min_score": plan_quality_evidence.get("min_score"),
+            "avg_score": plan_quality_evidence.get("avg_score"),
+            "command": plan_quality_command,
+            "hard_run_start_gate": False,
+            "token_omitted": True,
+        },
+        {
             "id": "record_pressure",
             "ok": not should_record,
             "status": "attention" if should_record else "pass",
@@ -25236,6 +25295,8 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
     primary_phase = "READ"
     if recommended_next_command == review_pressure["record_command"]:
         primary_phase = "RECORD"
+    elif recommended_next_command == plan_quality_command:
+        primary_phase = "VERIFY"
     elif recommended_next_command == commands.get("loop_driver_confirm"):
         primary_phase = "EXECUTE"
     elif recommended_next_command == commands.get("loop_driver_preview"):
@@ -25256,8 +25317,8 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
             or "agentops operator loop-audit --limit 20"
         ),
         "control_readback_source": run_start_receipt_projection.get("control_readback_source") if primary_confirm_required else None,
-        "safe_to_auto_continue": bool(recommended_next_command) and not primary_confirm_required and not should_record and not server_shell,
-        "requires_human_before_effect": bool(primary_confirm_required or should_record),
+        "safe_to_auto_continue": bool(recommended_next_command) and not primary_confirm_required and not should_record and not plan_quality_attention_required and not server_shell,
+        "requires_human_before_effect": bool(primary_confirm_required or should_record or plan_quality_attention_required),
         "blockers": blockers
         + ([f"missing_method_gate:{gate}" for gate in missing_method_gates] if missing_method_gates else [])
         + ([] if local_deployment_adapter_ok else ["local_deployment_adapter_mismatch"]),
@@ -25301,6 +25362,7 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
                     service_commands.get("service_check"),
                     service_commands.get("service_control_preview"),
                     commands.get("live_product_readiness"),
+                    plan_quality_command,
                     review_pressure["record_command"],
                     "agentops operator loop-audit --limit 20",
                     "agentops operator action-receipts --limit 20",
@@ -25369,6 +25431,18 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
         },
         "evidence_contract": {
             "agent_plan_required": True,
+            "agent_plan_quality_audit_required": True,
+            "agent_plan_quality": {
+                "status": plan_quality_evidence.get("status") or "not_applicable",
+                "ready": int(plan_quality_evidence.get("ready") or 0),
+                "attention": int(plan_quality_evidence.get("attention") or 0),
+                "blocked": int(plan_quality_evidence.get("blocked") or 0),
+                "min_score": plan_quality_evidence.get("min_score"),
+                "avg_score": plan_quality_evidence.get("avg_score"),
+                "command": plan_quality_command,
+                "hard_run_start_gate": False,
+                "token_omitted": True,
+            },
             "knowledge_retrieval_required": True,
             "base_reference_required": True,
             "plan_evidence_required": True,
@@ -25403,7 +25477,16 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
         "blockers": blockers
         + ([f"missing_method_gate:{gate}" for gate in missing_method_gates] if missing_method_gates else [])
         + ([] if local_deployment_adapter_ok else ["local_deployment_adapter_mismatch"]),
-        "attention": attention + (["record_before_execute"] if should_record else []),
+        "attention": attention
+        + (["record_before_execute"] if should_record else [])
+        + (["agent_plan_quality_attention"] if plan_quality_attention_required else []),
+        "plan_quality": {
+            "status": plan_quality_evidence.get("status") or "not_applicable",
+            "issue_count": plan_quality_issue_count,
+            "command": plan_quality_command,
+            "hard_run_start_gate": False,
+            "token_omitted": True,
+        },
         "review_pressure": review_pressure,
         "gates": gates,
         "local_deployment": local_deployment,
@@ -25498,11 +25581,44 @@ def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_c
     handoff = operator_agent_loop_handoff(conn, headers, qs, auth_ctx)
     current_code = handoff.get("current_code") if isinstance(handoff.get("current_code"), dict) else {}
     consumers = handoff.get("consumers") if isinstance(handoff.get("consumers"), list) else []
+    effective_headers = headers
+    if agent_gateway_is_bound_auth(auth_ctx):
+        effective_headers = dict(headers)
+        effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
+        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+    evidence_task_id = redact_text((qs.get("task_id") or [""])[0], 160)
+    evidence_run_id = redact_text((qs.get("run_id") or [""])[0], 160)
+    evidence_report_qs = {"limit": [str(min(limit, 8))]}
+    evidence_report_command_parts = ["agentops", "operator", "evidence-report"]
+    if evidence_run_id:
+        evidence_report_qs["run_id"] = [evidence_run_id]
+        evidence_report_command_parts.extend(["--run-id", evidence_run_id])
+    elif evidence_task_id:
+        evidence_report_qs["task_id"] = [evidence_task_id]
+        evidence_report_command_parts.extend(["--task-id", evidence_task_id])
+    evidence_report_command_parts.extend(["--limit", str(min(limit, 8))])
+    evidence_report_summary = (operator_evidence_report(conn, effective_headers, evidence_report_qs).get("summary") or {})
+    plan_quality_ready = int(evidence_report_summary.get("agent_plan_quality_ready") or 0)
+    plan_quality_attention = int(evidence_report_summary.get("agent_plan_quality_attention") or 0)
+    plan_quality_blocked = int(evidence_report_summary.get("agent_plan_quality_blocked") or 0)
+    plan_quality_evidence = {
+        "status": "attention" if plan_quality_attention or plan_quality_blocked else "pass" if plan_quality_ready else "not_applicable",
+        "ready": plan_quality_ready,
+        "attention": plan_quality_attention,
+        "blocked": plan_quality_blocked,
+        "issue_count": plan_quality_attention + plan_quality_blocked,
+        "min_score": evidence_report_summary.get("agent_plan_quality_min_score"),
+        "avg_score": evidence_report_summary.get("agent_plan_quality_avg_score"),
+        "command": " ".join(shlex.quote(str(part)) for part in evidence_report_command_parts),
+        "hard_run_start_gate": False,
+        "token_omitted": True,
+    }
     items = [
         loop_supervision_item(
             consumer,
             current_code=current_code,
             limit=limit,
+            plan_quality_evidence=plan_quality_evidence,
             start_check_payload=operator_start_check(
                 conn,
                 headers,
@@ -25548,6 +25664,10 @@ def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_c
             "record_first": sum(1 for item in items if item.get("status") == "record_first"),
             "preview_only": sum(1 for item in items if item.get("status") == "preview_only"),
             "blocked": sum(1 for item in items if item.get("status") == "blocked"),
+            "agent_plan_quality_status": plan_quality_evidence.get("status") or "not_applicable",
+            "agent_plan_quality_attention": int(plan_quality_evidence.get("attention") or 0),
+            "agent_plan_quality_blocked": int(plan_quality_evidence.get("blocked") or 0),
+            "agent_plan_quality_min_score": plan_quality_evidence.get("min_score"),
             "can_confirm_all": bool(items) and all(item.get("can_confirm_bounded_loop") for item in items),
             "record_required": any(item.get("should_record_before_execute") for item in items),
             "current_code_ok": current_code.get("ok") is True,
