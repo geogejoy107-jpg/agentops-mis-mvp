@@ -230,6 +230,7 @@ python3 scripts/ui_route_naming_decision_smoke.py
 python3 scripts/ui_legacy_route_alias_smoke.py
 python3 scripts/ui_navigation_inventory_smoke.py
 python3 scripts/ui_route_retirement_packet_smoke.py
+python3 scripts/ui_covered_route_retirement_packet_smoke.py
 python3 scripts/pixel_office_dispatch_retirement_evidence_smoke.py
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
@@ -375,6 +376,13 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   exact commit evidence requirements, but `retirement_action` remains
   `not_executed` and `retirement_allowed` remains false until a route-pair
   retirement commit lands.
+
+  The covered-route retirement packet smoke verifies
+  `ui_covered_route_retirement_packet_v1`: Control Tower and Worker Console are
+  covered Next candidates, but Vite `/admin` and `/workspace/agents` remain
+  live. The packet is candidate-only, requires future deep-link compatibility
+  plus rerun Vite/Next browser evidence, and keeps Agent Gateway CLI/API/MCP
+  unchanged before any explicit route retirement commit.
 
   The Vite smoke starts isolated MIS API and Vite dev servers, captures
   canonical Vite route snapshots for workspace, Pixel Office, tasks, agents,
@@ -556,12 +564,15 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `docs/UI_NAVIGATION_INVENTORY.json`
   - `docs/UI_ROUTE_RETIREMENT_PACKET.md`
   - `docs/UI_ROUTE_RETIREMENT_PACKET.json`
+  - `docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.md`
+  - `docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.json`
   - `scripts/ui_api_parity_matrix_smoke.py`
   - `scripts/ui_task_run_route_parity_smoke.py`
   - `scripts/ui_route_naming_decision_smoke.py`
   - `scripts/ui_legacy_route_alias_smoke.py`
   - `scripts/ui_navigation_inventory_smoke.py`
   - `scripts/ui_route_retirement_packet_smoke.py`
+  - `scripts/ui_covered_route_retirement_packet_smoke.py`
 
 ### Gate 5: BYOC / Enterprise Deployment
 

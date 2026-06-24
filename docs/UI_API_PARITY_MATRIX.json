@@ -11,6 +11,7 @@
         "ui_legacy_route_alias_v1",
         "ui_navigation_inventory_v1",
         "ui_route_retirement_packet_v1",
+        "ui_covered_route_retirement_packet_v1",
         "nextjs_agent_gateway_task_proxy_v1",
         "nextjs_agent_gateway_cli_worker_dogfood_v1",
         "nextjs_worker_dispatch_once_v1",
@@ -292,13 +293,14 @@
         "python3 scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py",
         "python3 scripts/nextjs_worker_daemon_control_smoke.py",
         "python3 scripts/nextjs_worker_console_parity_smoke.py",
+        "python3 scripts/ui_covered_route_retirement_packet_smoke.py",
         "python3 scripts/operator_execution_mode_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Next now covers the Worker Console through split routes: /workspace/agents renders agent registry, production security, safe mock worker dispatch, mock daemon start/restart/stop, stuck-task release, approval-gated enrollment request, and Agent Gateway session hygiene readback; /workspace/workers proves worker_console_read_model_parity for worker status, /workers/fleet lanes, /workers/fleet/hygiene fleet hygiene read-only preview, adapter readiness, safe session refs, local readiness proof, and /operator/execution-mode read-only adapter route/confirm-run/prepared-action wall readback. The Worker Console coverage boundary states Agent Gateway CLI/API/MCP remains canonical for token issue/rotate/revoke, session lifecycle, live daemon lifecycle, live dispatch controls, cleanup mutation, and detailed operator mutation. Next rejects non-mock proxy/form dispatch with mock_only_next_parity, rejects non-mock/live daemon controls with mock_daemon_only_next_parity and live_worker_daemon_not_allowed_next_parity, rejects force release with force_release_not_allowed_next_parity, blocks raw enrollment token issue routes with enrollment_token_issue_not_allowed_next_parity, and blocks Agent Gateway session create/session revoke/enrollment revoke lifecycle writes with gateway_lifecycle_write_not_allowed_next_parity. Vite /workspace/agents route retirement remains blocked until an explicit route retirement commit preserves deep links, reruns Vite/Next browser evidence, and keeps Agent Gateway CLI/API/MCP unchanged."
+      "retirement_gate": "Next now covers the Worker Console through split routes: /workspace/agents renders agent registry, production security, safe mock worker dispatch, mock daemon start/restart/stop, stuck-task release, approval-gated enrollment request, and Agent Gateway session hygiene readback; /workspace/workers proves worker_console_read_model_parity for worker status, /workers/fleet lanes, /workers/fleet/hygiene fleet hygiene read-only preview, adapter readiness, safe session refs, local readiness proof, and /operator/execution-mode read-only adapter route/confirm-run/prepared-action wall readback. The Worker Console coverage boundary states Agent Gateway CLI/API/MCP remains canonical for token issue/rotate/revoke, session lifecycle, live daemon lifecycle, live dispatch controls, cleanup mutation, and detailed operator mutation. Next rejects non-mock proxy/form dispatch with mock_only_next_parity, rejects non-mock/live daemon controls with mock_daemon_only_next_parity and live_worker_daemon_not_allowed_next_parity, rejects force release with force_release_not_allowed_next_parity, blocks raw enrollment token issue routes with enrollment_token_issue_not_allowed_next_parity, and blocks Agent Gateway session create/session revoke/enrollment revoke lifecycle writes with gateway_lifecycle_write_not_allowed_next_parity. The ui_covered_route_retirement_packet_v1 packet records this as a candidate-only future same-path ownership cutover requirement while Vite /workspace/agents route retirement remains blocked until an explicit route retirement commit preserves deep links, reruns Vite/Next browser evidence, and keeps Agent Gateway CLI/API/MCP unchanged."
     },
     {
       "id": "agent_detail",
@@ -641,11 +643,12 @@
       ],
       "evidence_commands": [
         "python3 scripts/nextjs_control_tower_parity_smoke.py",
+        "python3 scripts/ui_covered_route_retirement_packet_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Next now has split-route control tower proof: /workspace renders live /dashboard/metrics cockpit readback including runtime health, OpenClaw import, task status, cost leaders, failure/cost/memory/approval KPIs; /workspace/agents carries the agent performance drilldown from GET /agents; /workspace/governance renders production, RBAC, session, and audit evidence; and /workspace/deployment renders BYOC storage, backup, retention, signed export, and connector-policy gates. Vite /admin remains until an explicit route retirement commit preserves deep links, reruns Vite/Next browser evidence, and keeps Agent Gateway CLI/API/MCP unchanged."
+      "retirement_gate": "Next now has split-route control tower proof: /workspace renders live /dashboard/metrics cockpit readback including runtime health, OpenClaw import, task status, cost leaders, failure/cost/memory/approval KPIs; /workspace/agents carries the agent performance drilldown from GET /agents; /workspace/governance renders production, RBAC, session, and audit evidence; and /workspace/deployment renders BYOC storage, backup, retention, signed export, and connector-policy gates. The ui_covered_route_retirement_packet_v1 packet records this as a candidate-only route-retirement packet that still needs an /admin deep-link redirect or alias. Vite /admin remains until an explicit route retirement commit preserves deep links, reruns Vite/Next browser evidence, and keeps Agent Gateway CLI/API/MCP unchanged."
     },
     {
       "id": "runtime_connectors",

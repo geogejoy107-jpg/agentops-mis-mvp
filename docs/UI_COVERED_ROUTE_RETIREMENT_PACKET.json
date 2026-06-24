@@ -1,0 +1,84 @@
+{
+  "contract_id": "ui_covered_route_retirement_packet_v1",
+  "gate": "gate_4_ui_api_parity_before_nextjs",
+  "status": "candidate_ready_no_route_retirement",
+  "updated_at": "2026-06-24",
+  "policy": {
+    "scope": "covered_control_tower_and_worker_console_routes",
+    "retirement_action": "not_executed",
+    "retirement_allowed": false,
+    "candidate_only": true,
+    "requires_explicit_route_retirement_commit": true,
+    "no_breaking_deep_links": true,
+    "agent_gateway_cli_api_mcp_unchanged": true,
+    "verification_command": "python3 scripts/ui_covered_route_retirement_packet_smoke.py"
+  },
+  "candidate_routes": [
+    {
+      "id": "control_tower",
+      "legacy_vite_route": "/admin",
+      "canonical_next_routes": [
+        "/workspace",
+        "/workspace/agents",
+        "/workspace/governance",
+        "/workspace/deployment"
+      ],
+      "next_alias_route": null,
+      "current_state": "covered_split_next_routes_no_admin_alias",
+      "retirement_allowed_now": false,
+      "explicit_commit_required": true,
+      "remaining_cutover_requires": [
+        "admin_deep_link_redirect_or_alias",
+        "explicit_route_retirement_commit"
+      ],
+      "required_commit_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged"
+      ]
+    },
+    {
+      "id": "worker_console",
+      "legacy_vite_route": "/workspace/agents",
+      "canonical_next_routes": [
+        "/workspace/agents",
+        "/workspace/workers"
+      ],
+      "next_alias_route": "/workspace/agents",
+      "current_state": "covered_same_path_plus_focused_worker_console",
+      "retirement_allowed_now": false,
+      "explicit_commit_required": true,
+      "remaining_cutover_requires": [
+        "same_path_ownership_cutover_commit",
+        "explicit_route_retirement_commit"
+      ],
+      "required_commit_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged"
+      ]
+    }
+  ],
+  "evidence_commands": [
+    "python3 scripts/ui_api_parity_matrix_smoke.py",
+    "python3 scripts/ui_covered_route_retirement_packet_smoke.py",
+    "python3 scripts/nextjs_control_tower_parity_smoke.py",
+    "python3 scripts/nextjs_worker_console_parity_smoke.py",
+    "python3 scripts/vite_playwright_snapshot_smoke.py",
+    "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+    "python3 scripts/nextjs_parity_smoke.py",
+    "cd ui/start-building-app && npm run build",
+    "cd ui/next-app && npm run build"
+  ],
+  "retirement_commit_checklist": [
+    "Keep or create every retired Vite deep link with a redirect or alias before removal.",
+    "Update docs/UI_API_PARITY_MATRIX.json for the exact route pair being retired.",
+    "Re-run Vite and Next browser snapshot evidence after the commit.",
+    "Keep Agent Gateway CLI/API/MCP contracts unchanged.",
+    "Do not commit local databases, generated artifacts, raw prompts, raw responses, private transcripts, or secrets."
+  ]
+}

@@ -98,6 +98,7 @@ def main() -> int:
         ROOT / "scripts" / "ui_legacy_route_alias_smoke.py",
         ROOT / "scripts" / "ui_navigation_inventory_smoke.py",
         ROOT / "scripts" / "ui_route_retirement_packet_smoke.py",
+        ROOT / "scripts" / "ui_covered_route_retirement_packet_smoke.py",
         ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py",
         ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py",
         ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py",
@@ -121,6 +122,8 @@ def main() -> int:
         ROOT / "scripts" / "audit_retention_controls_smoke.py",
         ROOT / "docs" / "UI_NAVIGATION_INVENTORY.json",
         ROOT / "docs" / "UI_ROUTE_RETIREMENT_PACKET.json",
+        ROOT / "docs" / "UI_COVERED_ROUTE_RETIREMENT_PACKET.json",
+        ROOT / "docs" / "UI_COVERED_ROUTE_RETIREMENT_PACKET.md",
         ROOT / "docs" / "PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.json",
         ROOT / "docs" / "PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.md",
     ]
@@ -199,6 +202,9 @@ def main() -> int:
     navigation_inventory_text = read_text(ROOT / "docs" / "UI_NAVIGATION_INVENTORY.json")
     retirement_packet_smoke_text = read_text(ROOT / "scripts" / "ui_route_retirement_packet_smoke.py")
     retirement_packet_text = read_text(ROOT / "docs" / "UI_ROUTE_RETIREMENT_PACKET.json")
+    covered_retirement_packet_smoke_text = read_text(ROOT / "scripts" / "ui_covered_route_retirement_packet_smoke.py")
+    covered_retirement_packet_text = read_text(ROOT / "docs" / "UI_COVERED_ROUTE_RETIREMENT_PACKET.json")
+    covered_retirement_packet_doc_text = read_text(ROOT / "docs" / "UI_COVERED_ROUTE_RETIREMENT_PACKET.md")
 
     require(dependencies.get("next") == "16.2.9", "Next.js version is not pinned to the selected migration version")
     require(dependencies.get("react") == "19.2.7", "React version is not pinned to the selected migration version")
@@ -483,6 +489,13 @@ def main() -> int:
     require("redirect_alias_only" in navigation_inventory_text, "navigation inventory must keep legacy admin routes as aliases only")
     require("ui_route_retirement_packet_v1" in retirement_packet_smoke_text, "route retirement packet smoke contract is missing")
     require('"retirement_action": "not_executed"' in retirement_packet_text, "route retirement packet must not execute retirement")
+    require("ui_covered_route_retirement_packet_v1" in covered_retirement_packet_smoke_text, "covered-route retirement packet smoke contract is missing")
+    require('"retirement_action": "not_executed"' in covered_retirement_packet_text, "covered-route retirement packet must not execute retirement")
+    require('"retirement_allowed": false' in covered_retirement_packet_text, "covered-route retirement packet must keep retirement fail-closed")
+    require('"control_tower"' in covered_retirement_packet_text and '"/admin"' in covered_retirement_packet_text, "covered-route packet must name the Control Tower /admin candidate")
+    require('"worker_console"' in covered_retirement_packet_text and '"/workspace/workers"' in covered_retirement_packet_text, "covered-route packet must name the Worker Console candidates")
+    require("agent_gateway_cli_api_mcp_unchanged" in covered_retirement_packet_text, "covered-route packet must preserve Agent Gateway CLI/API/MCP")
+    require("does not retire any Vite route" in covered_retirement_packet_doc_text, "covered-route packet doc must keep route retirement fail-closed")
     require("next/link" in ledger_pages_text, "task/run list parity pages must use Next links")
     require("/workspace/tasks/${encodeURIComponent(task.task_id)}" in ledger_pages_text, "task list rows must link to task detail")
     require("/workspace/runs/${encodeURIComponent(run.run_id)}" in ledger_pages_text, "run list rows must link to run detail")
@@ -560,6 +573,7 @@ def main() -> int:
             "operator_execution_mode_v1",
             "nextjs_template_switching_parity_v1",
             "nextjs_control_tower_parity_v1",
+            "ui_covered_route_retirement_packet_v1",
         ],
         "stack": {
             "next": dependencies.get("next"),

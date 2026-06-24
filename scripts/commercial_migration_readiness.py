@@ -168,6 +168,8 @@ def main() -> int:
         "docs/POSTGRES_PARITY_CONTRACT.md",
         "docs/UI_ROUTE_NAMING_DECISION.md",
         "docs/UI_ROUTE_NAMING_DECISION.json",
+        "docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.md",
+        "docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.json",
     ]
     required_stack = [
         "server.py",
@@ -575,8 +577,9 @@ def main() -> int:
             and file_contains("docs/UI_API_PARITY_MATRIX.md", "scripts/ui_api_parity_matrix_smoke.py")
             and file_contains("scripts/ui_api_parity_matrix_smoke.py", "ui_api_parity_matrix_v1")
             and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "UI_API_PARITY_MATRIX")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "ui_covered_route_retirement_packet_v1")
             and (ROOT / "scripts" / "ui_api_parity_matrix_smoke.py").exists(),
-            "Gate 4 page-by-page Vite/Next route and API parity matrix is present and machine-checkable",
+            "Gate 4 page-by-page Vite/Next route and API parity matrix is present, machine-checkable, and references covered-route retirement candidates",
         ),
         check(
             "ui_task_run_route_parity_surface_exists",
@@ -641,6 +644,27 @@ def main() -> int:
             and file_contains("docs/UI_ROUTE_RETIREMENT_PACKET.json", "\"retirement_allowed\": false")
             and (ROOT / "scripts" / "ui_route_retirement_packet_smoke.py").exists(),
             "Gate 4 task/run legacy route retirement packet is prepared but keeps route retirement fail-closed",
+        ),
+        check(
+            "ui_covered_route_retirement_packet_surface_exists",
+            file_contains("docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.json", "ui_covered_route_retirement_packet_v1")
+            and file_contains("docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.json", '"retirement_action": "not_executed"')
+            and file_contains("docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.json", '"retirement_allowed": false')
+            and file_contains("docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.json", "control_tower")
+            and file_contains("docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.json", "worker_console")
+            and file_contains("docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.json", "admin_deep_link_redirect_or_alias")
+            and file_contains("docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.json", "same_path_ownership_cutover_commit")
+            and file_contains("docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.json", "agent_gateway_cli_api_mcp_unchanged")
+            and file_contains("docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.md", "does not retire any Vite route")
+            and file_contains("scripts/ui_covered_route_retirement_packet_smoke.py", "ui_covered_route_retirement_packet_v1")
+            and file_contains("scripts/ui_covered_route_retirement_packet_smoke.py", "covered_split_next_routes_no_admin_alias")
+            and file_contains("scripts/ui_covered_route_retirement_packet_smoke.py", "covered_same_path_plus_focused_worker_console")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "ui_covered_route_retirement_packet_v1")
+            and file_contains("docs/UI_API_PARITY_MATRIX.md", "ui_covered_route_retirement_packet_v1")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "ui_covered_route_retirement_packet_smoke.py")
+            and file_contains("scripts/nextjs_parity_smoke.py", "ui_covered_route_retirement_packet_v1")
+            and (ROOT / "scripts" / "ui_covered_route_retirement_packet_smoke.py").exists(),
+            "Gate 4 covered Control Tower and Worker Console route retirement candidates are documented while Vite retirement stays fail-closed",
         ),
         check(
             "postgres_is_gated_not_immediate",
@@ -1036,6 +1060,7 @@ def main() -> int:
                 "python3 scripts/ui_legacy_route_alias_smoke.py",
                 "python3 scripts/ui_navigation_inventory_smoke.py",
                 "python3 scripts/ui_route_retirement_packet_smoke.py",
+                "python3 scripts/ui_covered_route_retirement_packet_smoke.py",
                 "python3 scripts/pixel_office_dispatch_retirement_evidence_smoke.py",
                 "python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py",
                 "python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py",

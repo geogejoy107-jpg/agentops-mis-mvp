@@ -5,6 +5,7 @@ contract lives in `docs/UI_API_PARITY_MATRIX.json` and is verified by:
 
 ```bash
 python3 scripts/ui_api_parity_matrix_smoke.py
+python3 scripts/ui_covered_route_retirement_packet_smoke.py
 ```
 
 Contract: `ui_api_parity_matrix_v1`
@@ -86,6 +87,12 @@ route retirement:
   `/workspace/agents` route retirement remains blocked until an explicit route
   retirement commit preserves deep links, reruns browser evidence, and keeps
   Agent Gateway CLI/API/MCP unchanged.
+- Control Tower and Worker Console covered-route retirement candidates now live
+  in `docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.json`
+  (`ui_covered_route_retirement_packet_v1`). This packet is candidate-only:
+  it does not retire any Vite route, keeps `retirement_allowed: false`, and
+  requires a future route-pair commit to preserve deep links, rerun Vite/Next
+  browser evidence, and keep Agent Gateway CLI/API/MCP unchanged.
 - Template/base switching is now covered by `/workspace/templates`, backed by
   live `/template-packages`, `/template-bindings`, `/bases`, and
   `/migration/preview` readback/preview evidence. Vite `/admin/templates`
@@ -161,6 +168,7 @@ python3 scripts/ui_route_naming_decision_smoke.py
 python3 scripts/ui_legacy_route_alias_smoke.py
 python3 scripts/ui_navigation_inventory_smoke.py
 python3 scripts/ui_route_retirement_packet_smoke.py
+python3 scripts/ui_covered_route_retirement_packet_smoke.py
 python3 scripts/pixel_office_dispatch_retirement_evidence_smoke.py
 python3 scripts/nextjs_parity_smoke.py
 cd ui/start-building-app && npm run build
@@ -196,6 +204,14 @@ Dispatch route pair as visually evidenced but not retired. It verifies Vite
 still owns `/workspace/pixel-office`, Next has `/workspace/pixel-office` plus
 Dispatch form fallbacks, browser evidence names both surfaces, omission rules
 stay fail-closed, and any future retirement still needs an explicit commit.
+
+`python3 scripts/ui_covered_route_retirement_packet_smoke.py`
+(`ui_covered_route_retirement_packet_v1`) records Control Tower and Worker
+Console as covered-route retirement candidates without retiring Vite. It
+verifies Vite `/admin` and `/workspace/agents` still exist, Next owns the
+canonical split routes, the matrix remains `retirement_allowed: false`, and any
+future route change still needs an explicit route-pair commit with deep-link
+compatibility and rerun browser evidence.
 
 `python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py`
 (`nextjs_agent_gateway_task_proxy_v1`) starts isolated MIS API and Next.js
