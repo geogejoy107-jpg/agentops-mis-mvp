@@ -159,6 +159,21 @@ def main() -> int:
             require(any(item.get("session_ref") for item in sessions.get("sessions", []) if isinstance(item, dict)), f"Next sessions missing safe refs: {sessions}")
             assert_no_next_secret("Next sessions", sessions)
 
+            mode_status, mode = http_json_status("GET", f"{next_base}/api/mis/operator/execution-mode?adapter=hermes")
+            require(mode_status == 200, f"Next operator execution-mode readback failed: {mode_status} {mode}")
+            require(mode.get("provider") == "agentops-operator", f"wrong execution-mode provider: {mode}")
+            require(mode.get("operation") == "execution_mode", f"wrong execution-mode operation: {mode}")
+            require(mode.get("selected_adapter") == "hermes", f"wrong execution-mode adapter: {mode}")
+            require((mode.get("adapter_route") or {}).get("requires_confirm_run") is True, f"execution-mode confirm wall missing: {mode}")
+            safety = mode.get("safety") or {}
+            require(safety.get("read_only") is True, f"execution-mode read_only missing: {mode}")
+            require(safety.get("ledger_mutated") is False, f"execution-mode ledger mutation reported: {mode}")
+            require(safety.get("daemon_started") is False, f"execution-mode daemon start reported: {mode}")
+            require(safety.get("adapter_executed") is False, f"execution-mode adapter execution reported: {mode}")
+            require(safety.get("live_execution_performed") is False, f"execution-mode live execution reported: {mode}")
+            require(mode.get("token_omitted") is True, f"execution-mode token omission missing: {mode}")
+            assert_no_next_secret("operator execution-mode", mode)
+
             non_mock_status, non_mock = http_json_status("POST", f"{next_base}/api/mis/workers/local/start", {
                 "adapter": "hermes",
                 "confirm_run": True,
@@ -206,13 +221,17 @@ def main() -> int:
                 "live daemon blocked",
                 "direct token issue blocked",
                 "fleet cleanup preview only",
-                "execution-mode endpoint pending",
+                "operator execution-mode readback",
+                "Operator execution mode",
+                "/operator/execution-mode",
+                "adapter not executed",
             ], pw_env)
 
             transcript = json.dumps([
                 fleet,
                 hygiene,
                 sessions,
+                mode,
                 non_mock,
                 confirm_blocked,
                 token_issue,
@@ -232,6 +251,7 @@ def main() -> int:
                 "fleet_route": "/api/mis/workers/fleet",
                 "hygiene_route": "/api/mis/workers/fleet/hygiene",
                 "session_read_route": "/api/mis/agent-gateway/sessions",
+                "execution_mode_route": "/api/mis/operator/execution-mode",
                 "blocked_live_daemon_status": non_mock_status,
                 "blocked_confirm_daemon_status": confirm_status,
                 "blocked_token_issue_status": token_issue_status,

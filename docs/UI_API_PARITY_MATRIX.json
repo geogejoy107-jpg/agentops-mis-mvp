@@ -26,7 +26,8 @@
         "nextjs_enrollment_request_v1",
         "nextjs_worker_gateway_lifecycle_guard_v1",
         "nextjs_worker_daemon_control_v1",
-        "nextjs_worker_console_parity_v1"
+        "nextjs_worker_console_parity_v1",
+        "operator_execution_mode_v1"
       ],
     "retirement_rule": "A Vite route can be retired only after the matrix marks its capability covered, Vite and Next browser evidence both pass, API contracts match, and the route has an explicit retirement decision."
   },
@@ -250,6 +251,7 @@
         "GET /workers/fleet",
         "GET /workers/fleet/hygiene",
         "GET /workers/adapter-readiness",
+        "GET /operator/execution-mode",
         "GET /agent-gateway/enrollments",
         "GET /agent-gateway/sessions",
         "GET /agent-gateway/status",
@@ -288,12 +290,13 @@
         "python3 scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py",
         "python3 scripts/nextjs_worker_daemon_control_smoke.py",
         "python3 scripts/nextjs_worker_console_parity_smoke.py",
+        "python3 scripts/operator_execution_mode_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Next now proves worker_console_read_model_parity on /workspace/workers for worker status, /workers/fleet lanes, /workers/fleet/hygiene fleet hygiene read-only preview, adapter readiness, safe session refs, and local readiness proof; it also proves safe mock worker dispatch, mock daemon start/restart/stop, stuck-task release, approval-gated enrollment request, and Agent Gateway session hygiene readback. It rejects non-mock proxy/form dispatch with mock_only_next_parity, rejects non-mock/live daemon controls with mock_daemon_only_next_parity and live_worker_daemon_not_allowed_next_parity, rejects force release with force_release_not_allowed_next_parity, blocks raw enrollment token issue routes with enrollment_token_issue_not_allowed_next_parity, and blocks Agent Gateway session create/session revoke/enrollment revoke lifecycle writes with gateway_lifecycle_write_not_allowed_next_parity. Execution-mode readback is explicitly pending on this branch, and Vite/CLI live daemon controls, token issuance, rotate/revoke/session controls, live dispatch controls, cleanup mutation, and route retirement remain canonical."
+      "retirement_gate": "Next now proves worker_console_read_model_parity on /workspace/workers for worker status, /workers/fleet lanes, /workers/fleet/hygiene fleet hygiene read-only preview, adapter readiness, safe session refs, local readiness proof, and /operator/execution-mode read-only adapter route/confirm-run/prepared-action wall readback. It also proves safe mock worker dispatch, mock daemon start/restart/stop, stuck-task release, approval-gated enrollment request, and Agent Gateway session hygiene readback. It rejects non-mock proxy/form dispatch with mock_only_next_parity, rejects non-mock/live daemon controls with mock_daemon_only_next_parity and live_worker_daemon_not_allowed_next_parity, rejects force release with force_release_not_allowed_next_parity, blocks raw enrollment token issue routes with enrollment_token_issue_not_allowed_next_parity, and blocks Agent Gateway session create/session revoke/enrollment revoke lifecycle writes with gateway_lifecycle_write_not_allowed_next_parity. Vite/CLI live daemon controls, token issuance, rotate/revoke/session controls, live dispatch controls, cleanup mutation, and route retirement remain canonical."
     },
     {
       "id": "agent_detail",

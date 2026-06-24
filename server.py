@@ -11098,6 +11098,168 @@ def worker_status(conn) -> dict:
     return payload
 
 
+def operator_execution_mode(conn: sqlite3.Connection, headers, qs: dict | None = None) -> dict:
+    qs = qs or {}
+    workspace_id = request_workspace(headers, qs)
+    adapter_readiness = worker_adapter_readiness(conn, refresh=False)
+    summary = adapter_readiness.get("summary") or {}
+    requested_adapter = (qs.get("adapter") or [None])[0] if isinstance(qs.get("adapter"), list) else qs.get("adapter")
+    selected_adapter = coerce_choice(
+        requested_adapter or summary.get("recommended_adapter") or "mock",
+        {"mock", "hermes", "openclaw"},
+        "mock",
+    )
+    adapters = adapter_readiness.get("adapters") or {}
+    selected = dict(adapters.get(selected_adapter) or {})
+    readiness = selected.get("readiness") or "unknown"
+    trust_status = selected.get("trust_status") or "unknown"
+    requires_confirm_run = bool(selected.get("requires_confirm_run")) or selected_adapter in {"hermes", "openclaw"}
+    live_adapter = selected_adapter in {"hermes", "openclaw"}
+    live_ready = live_adapter and readiness == "ready"
+
+    pending_approvals = scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='pending'")
+    prepared_waiting = scalar_count(
+        conn,
+        "SELECT COUNT(*) FROM prepared_actions WHERE COALESCE(workspace_id,'local-demo')=? AND status IN ('prepared','waiting_approval')",
+        (workspace_id,),
+    )
+    prepared_approved = scalar_count(
+        conn,
+        "SELECT COUNT(*) FROM prepared_actions WHERE COALESCE(workspace_id,'local-demo')=? AND status='approved'",
+        (workspace_id,),
+    )
+    active_async_jobs = scalar_count(
+        conn,
+        "SELECT COUNT(*) FROM workflow_jobs WHERE COALESCE(workspace_id,'local-demo')=? AND status IN ('queued','running')",
+        (workspace_id,),
+    )
+    daemons = worker_daemon_status(include_log=False)
+    running_daemons = len([daemon for daemon in daemons if daemon.get("running")])
+    stuck_worker_tasks = len(worker_stuck_tasks(conn))
+    worker_status_value = "attention" if stuck_worker_tasks else "running" if running_daemons else "ready"
+
+    confirm_run_wall = {
+        "required": requires_confirm_run,
+        "satisfied": not requires_confirm_run,
+        "reason": "Hermes/OpenClaw live execution requires explicit confirm_run." if requires_confirm_run else "Mock execution does not require live confirmation.",
+        "flag": "--confirm-run" if requires_confirm_run else "",
+        "server_executes_live_without_confirm": False,
+    }
+    prepared_action_wall = {
+        "required_for_live_customer_worker": live_adapter,
+        "pending_actions": prepared_waiting,
+        "approved_actions": prepared_approved,
+        "resume_command": "agentops workflow customer-worker-task --prepared-action-id <id> --request-hash <hash>" if prepared_approved else "",
+        "server_executes_prepared_action_without_approval": False,
+    }
+    if trust_status == "blocked":
+        selected_status = "blocked"
+        next_action = "agentops worker readiness"
+    elif live_adapter and not live_ready:
+        selected_status = "attention"
+        next_action = f"agentops worker preflight --adapter {selected_adapter}"
+    elif requires_confirm_run:
+        selected_status = "attention"
+        next_action = f"agentops workflow run-task --adapter {selected_adapter} --confirm-run"
+    else:
+        selected_status = "ready"
+        next_action = "agentops workflow run-task --adapter mock"
+
+    gates = [
+        {
+            "id": "read_only",
+            "label": "Read-only execution-mode",
+            "ok": True,
+            "status": "pass",
+            "detail": "This read model does not start daemons, execute adapters, or mutate ledgers.",
+            "next_action": "agentops operator execution-mode",
+        },
+        {
+            "id": "adapter_readiness",
+            "label": f"{selected_adapter} adapter readiness",
+            "ok": readiness in {"ready", "review_required"} if selected_adapter != "mock" else readiness == "ready",
+            "status": "pass" if readiness == "ready" else "warn" if readiness == "review_required" else "fail",
+            "detail": f"readiness={readiness}; trust={trust_status}",
+            "next_action": f"agentops worker preflight --adapter {selected_adapter}",
+        },
+        {
+            "id": "confirm_run_wall",
+            "label": "Live confirm wall",
+            "ok": True,
+            "status": "warn" if requires_confirm_run else "pass",
+            "detail": confirm_run_wall["reason"],
+            "next_action": next_action,
+        },
+        {
+            "id": "prepared_action_wall",
+            "label": "Prepared-action wall",
+            "ok": True,
+            "status": "warn" if live_adapter or prepared_waiting or prepared_approved else "pass",
+            "detail": f"{prepared_waiting} waiting and {prepared_approved} approved prepared actions in {workspace_id}.",
+            "next_action": "agentops workflow customer-worker-task --help",
+        },
+        {
+            "id": "operator_queue",
+            "label": "Operator review queue",
+            "ok": pending_approvals == 0,
+            "status": "pass" if pending_approvals == 0 else "warn",
+            "detail": f"{pending_approvals} pending approvals; {active_async_jobs} active async jobs.",
+            "next_action": "agentops review queue",
+        },
+    ]
+    statuses = {gate["status"] for gate in gates}
+    overall = "blocked" if "fail" in statuses else "attention" if "warn" in statuses else "ready"
+    return {
+        "provider": "agentops-operator",
+        "operation": "execution_mode",
+        "status": overall,
+        "workspace_id": workspace_id,
+        "selected_adapter": selected_adapter,
+        "adapter_route": {
+            "adapter": selected_adapter,
+            "execution_path": "mock_local_worker" if selected_adapter == "mock" else f"{selected_adapter}_live_worker",
+            "readiness": readiness,
+            "trust_status": trust_status,
+            "requires_confirm_run": requires_confirm_run,
+            "live_ready": live_ready,
+            "confirm_run_wall": confirm_run_wall,
+            "prepared_action_wall": prepared_action_wall,
+            "recommended_command": next_action,
+            "connector_id": selected.get("connector_id"),
+            "token_omitted": True,
+        },
+        "summary": {
+            "recommended_adapter": summary.get("recommended_adapter") or selected_adapter,
+            "ready_adapters": summary.get("ready_adapters") or [],
+            "live_ready_adapters": summary.get("live_ready_adapters") or [],
+            "review_required_adapters": summary.get("review_required_adapters") or [],
+            "blocked_adapters": summary.get("blocked_adapters") or [],
+            "unavailable_adapters": summary.get("unavailable_adapters") or [],
+            "pending_approvals": pending_approvals,
+            "active_async_jobs": active_async_jobs,
+            "prepared_actions_waiting_approval": prepared_waiting,
+            "approved_prepared_actions": prepared_approved,
+            "worker_status": worker_status_value,
+            "running_daemons": running_daemons,
+            "stuck_worker_tasks": stuck_worker_tasks,
+        },
+        "gates": gates,
+        "next_actions": [gate["next_action"] for gate in gates if gate.get("status") in {"fail", "warn"}] or [next_action],
+        "contract": "read-only operator execution-mode; CLI/API/MCP remain the execution contract; live adapters require confirm_run or prepared-action approval",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "daemon_started": False,
+            "adapter_executed": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        },
+        "live_execution_performed": False,
+        "token_omitted": True,
+    }
+
+
 def worker_fleet_view(conn) -> dict:
     daemons = worker_daemon_status(include_log=False)
     remote_fleet = worker_remote_fleet_summary(conn)
@@ -12600,7 +12762,7 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
         "docs": doc_status,
         "deployment_checks": deployment_checks,
         "ui_routes": {
-            "worker_console": "/workspace/agents",
+            "worker_console": "/workspace/workers",
             "memory": "/workspace/memory",
             "approvals": "/workspace/approvals",
             "tool_calls": "/admin/toolcalls",
@@ -14649,6 +14811,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runtime_connectors ORDER BY provider, connector_type, profile_name").fetchall()))
             if path == "/api/runtime-events":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runtime_events ORDER BY created_at DESC LIMIT 200").fetchall()))
+            if path == "/api/operator/execution-mode":
+                return self.send_json(operator_execution_mode(conn, self.headers, dict(qs)))
             if path == "/api/workers/status":
                 return self.send_json(worker_status(conn))
             if path == "/api/workers/fleet":

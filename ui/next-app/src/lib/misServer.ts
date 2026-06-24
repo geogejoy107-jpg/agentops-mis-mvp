@@ -17,6 +17,7 @@ import type {
   AgentPlanVerifyPayload,
   LocalReadinessPayload,
   MemorySummary,
+  OperatorExecutionModePayload,
   PlanEvidenceVerifyPayload,
   RunGraphPayload,
   RunDetailPayload,
@@ -281,6 +282,54 @@ export async function loadServerWorkerAdapterReadiness(): Promise<ServerLoadResu
     return { data: await serverMisJson<WorkerAdapterReadinessSummary>("/workers/adapter-readiness"), error: null };
   } catch (err) {
     return { data: { adapters: {}, token_omitted: true, live_execution_performed: false }, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerOperatorExecutionMode(adapter?: string): Promise<ServerLoadResult<OperatorExecutionModePayload>> {
+  try {
+    const suffix = adapter ? `?${new URLSearchParams({ adapter }).toString()}` : "";
+    return { data: await serverMisJson<OperatorExecutionModePayload>(`/operator/execution-mode${suffix}`), error: null };
+  } catch (err) {
+    return {
+      data: {
+        provider: "agentops-operator",
+        operation: "execution_mode",
+        status: "unavailable",
+        selected_adapter: adapter || "mock",
+        adapter_route: {
+          adapter: adapter || "mock",
+          execution_path: "unknown",
+          readiness: "unavailable",
+          trust_status: "unknown",
+          requires_confirm_run: adapter === "hermes" || adapter === "openclaw",
+          live_ready: false,
+          confirm_run_wall: {
+            required: adapter === "hermes" || adapter === "openclaw",
+            satisfied: false,
+            server_executes_live_without_confirm: false,
+          },
+          prepared_action_wall: {
+            required_for_live_customer_worker: adapter === "hermes" || adapter === "openclaw",
+            server_executes_prepared_action_without_approval: false,
+          },
+          token_omitted: true,
+        },
+        summary: {},
+        gates: [],
+        safety: {
+          read_only: true,
+          ledger_mutated: false,
+          daemon_started: false,
+          adapter_executed: false,
+          live_execution_performed: false,
+          token_omitted: true,
+          raw_prompt_omitted: true,
+        },
+        token_omitted: true,
+        live_execution_performed: false,
+      },
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 

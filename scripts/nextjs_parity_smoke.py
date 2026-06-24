@@ -111,6 +111,7 @@ def main() -> int:
         ROOT / "scripts" / "nextjs_worker_gateway_lifecycle_guard_smoke.py",
         ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py",
         ROOT / "scripts" / "nextjs_worker_console_parity_smoke.py",
+        ROOT / "scripts" / "operator_execution_mode_smoke.py",
         ROOT / "scripts" / "audit_retention_policy_smoke.py",
         ROOT / "scripts" / "audit_retention_controls_smoke.py",
         ROOT / "docs" / "UI_NAVIGATION_INVENTORY.json",
@@ -181,6 +182,7 @@ def main() -> int:
     worker_gateway_lifecycle_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_gateway_lifecycle_guard_smoke.py")
     worker_daemon_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py")
     worker_console_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_console_parity_smoke.py")
+    operator_execution_mode_smoke_text = read_text(ROOT / "scripts" / "operator_execution_mode_smoke.py")
     route_parity_smoke_text = read_text(ROOT / "scripts" / "ui_task_run_route_parity_smoke.py")
     route_alias_smoke_text = read_text(ROOT / "scripts" / "ui_legacy_route_alias_smoke.py")
     navigation_inventory_smoke_text = read_text(ROOT / "scripts" / "ui_navigation_inventory_smoke.py")
@@ -278,10 +280,12 @@ def main() -> int:
     require("worker-console-hygiene-plan" in worker_console_page_text and "Fleet hygiene plan" in worker_console_page_text and "/workers/fleet/hygiene" in worker_console_page_text, "Worker Console must expose read-only hygiene plan")
     require("worker-console-session-hygiene" in worker_console_page_text and "session token omitted" in worker_console_page_text and "session id hidden" in worker_console_page_text, "Worker Console must expose session hygiene without raw ids")
     require("worker-adapter-readiness-proof" in worker_console_page_text and "Adapter readiness" in worker_console_page_text, "Worker Console must expose adapter readiness proof")
-    require("execution-mode endpoint pending" in worker_console_page_text, "Worker Console must not pretend execution-mode parity exists on this branch")
+    require("operator-execution-mode-readback" in worker_console_page_text and "Operator execution mode" in worker_console_page_text and "/operator/execution-mode" in worker_console_page_text, "Worker Console must expose operator execution-mode readback")
+    require("adapter not executed" in worker_console_page_text and "ledger not mutated" in worker_console_page_text and "daemon not started" in worker_console_page_text, "Worker Console must expose execution-mode read-only safety proof")
     require("nextjs_worker_console_parity_v1" in worker_console_smoke_text, "Next Worker Console parity smoke contract is missing")
-    require("/workspace/workers" in worker_console_smoke_text and "/api/mis/workers/fleet" in worker_console_smoke_text and "/api/mis/workers/fleet/hygiene" in worker_console_smoke_text, "Next Worker Console smoke must exercise route plus fleet/hygiene APIs")
+    require("/workspace/workers" in worker_console_smoke_text and "/api/mis/workers/fleet" in worker_console_smoke_text and "/api/mis/workers/fleet/hygiene" in worker_console_smoke_text and "/api/mis/operator/execution-mode" in worker_console_smoke_text, "Next Worker Console smoke must exercise route plus fleet/hygiene/execution-mode APIs")
     require("mock_daemon_only_next_parity" in worker_console_smoke_text and "gateway_lifecycle_write_not_allowed_next_parity" in worker_console_smoke_text, "Next Worker Console smoke must prove lifecycle writes fail closed")
+    require("operator_execution_mode_v1" in operator_execution_mode_smoke_text and "/api/operator/execution-mode" in operator_execution_mode_smoke_text and "agentops operator execution-mode" in operator_execution_mode_smoke_text, "Operator execution-mode smoke contract is missing")
     require("AGENTOPS_API_BASE" in server_lib_text and "loadServerApprovals" in server_lib_text, "server-side first paint loaders are missing")
     require("/dashboard/metrics" in lib_text, "workspace parity data must include dashboard metrics")
     require("/tasks" in lib_text and "/runs" in lib_text and "/approvals" in lib_text, "workspace parity data misses core ledgers")
@@ -295,9 +299,11 @@ def main() -> int:
     require("/workers/status" in lib_text and "/workers/adapter-readiness" in lib_text, "agent-control parity data misses worker readiness")
     require("/workers/fleet" in lib_text and "loadWorkerFleet" in lib_text, "agent-control parity data misses worker fleet readback")
     require("/workers/fleet/hygiene" in lib_text and "loadWorkerFleetHygiene" in lib_text, "agent-control parity data misses worker fleet hygiene readback")
+    require("/operator/execution-mode" in lib_text and "loadOperatorExecutionMode" in lib_text, "agent-control parity data misses operator execution-mode readback")
     require("loadServerWorkerFleet" in server_lib_text and "/workers/fleet" in server_lib_text, "server-side Worker Console loaders must include fleet readback")
     require("loadServerWorkerFleetHygiene" in server_lib_text and "/workers/fleet/hygiene" in server_lib_text, "server-side Worker Console loaders must include hygiene readback")
     require("loadServerWorkerAdapterReadiness" in server_lib_text and "/workers/adapter-readiness" in server_lib_text, "server-side Worker Console loaders must include adapter readiness")
+    require("loadServerOperatorExecutionMode" in server_lib_text and "/operator/execution-mode" in server_lib_text, "server-side Worker Console loaders must include execution-mode readback")
     require("safeGatewaySessionsPayload" in server_lib_text and "parent_token_id_omitted" in server_lib_text, "server-side session loader must safe-project gateway sessions")
     require("/agent-gateway/enrollments" in lib_text and "loadAgentGatewayEnrollments" in lib_text, "agent-control parity data misses enrollment readback")
     require("/agent-gateway/sessions" in lib_text and "loadAgentGatewaySessions" in lib_text, "agent-control parity data misses session hygiene readback")
@@ -515,6 +521,7 @@ def main() -> int:
             "nextjs_worker_gateway_lifecycle_guard_v1",
             "nextjs_worker_daemon_control_v1",
             "nextjs_worker_console_parity_v1",
+            "operator_execution_mode_v1",
         ],
         "stack": {
             "next": dependencies.get("next"),

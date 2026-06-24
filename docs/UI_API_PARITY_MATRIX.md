@@ -64,9 +64,10 @@ route retirement:
 - Worker console is still partial but now has a focused Next.js
   `/workspace/workers` surface. Next proves worker status, `/workers/fleet`
   lane readback, `/workers/fleet/hygiene` read-only cleanup preview, adapter
-  readiness, local readiness, safe Agent Gateway session refs, and visible
-  fail-closed lifecycle boundaries while blocking token/session lifecycle
-  writes. Execution-mode readback is explicitly pending on this branch.
+  readiness, local readiness, safe Agent Gateway session refs,
+  `/operator/execution-mode` read-only adapter route/confirm-run/prepared-action
+  wall readback, and visible fail-closed lifecycle boundaries while blocking
+  token/session lifecycle writes.
   Vite/CLI remain canonical for direct token issuance, rotate/revoke/session
   mutation, live worker controls, cleanup mutation, and detailed operator
   controls.
@@ -160,6 +161,7 @@ python3 scripts/nextjs_enrollment_request_smoke.py
 python3 scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
 python3 scripts/nextjs_worker_console_parity_smoke.py
+python3 scripts/operator_execution_mode_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -290,7 +292,14 @@ servers, opens `/workspace/workers`, verifies `/api/mis/workers/fleet`,
 `/api/mis/workers/fleet/hygiene`, and safe session readback stay token/session
 redacted and read-only, and proves the focused Worker Console shows fleet,
 hygiene, adapter readiness, session hygiene, and fail-closed lifecycle boundary
-evidence without pretending execution-mode parity exists on this branch.
+evidence plus `/operator/execution-mode` readback without executing live work.
+
+`python3 scripts/operator_execution_mode_smoke.py`
+(`operator_execution_mode_v1`) verifies `GET /api/operator/execution-mode`
+and `agentops operator execution-mode` expose the same read-only adapter route,
+confirm-run wall, prepared-action wall, pending approval/job counts, and
+omission proof without mutating SQLite, starting daemons, or executing live
+adapters.
 
 `python3 scripts/nextjs_enrollment_request_smoke.py`
 (`nextjs_enrollment_request_v1`) starts isolated MIS API and Next.js servers,

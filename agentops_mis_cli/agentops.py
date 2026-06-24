@@ -346,6 +346,10 @@ def cmd_commercial_entitlements(args, client: AgentOpsClient) -> dict:
     return client.get("/api/commercial/entitlements")
 
 
+def cmd_operator_execution_mode(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/operator/execution-mode", query={"adapter": args.adapter})
+
+
 def cmd_agent_register(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -1407,6 +1411,12 @@ def build_parser() -> argparse.ArgumentParser:
     commercial_entitlements = commercial_sub.add_parser("entitlements", help="Show current edition and capability gates.")
     commercial_entitlements.set_defaults(handler="commercial_entitlements")
 
+    operator = sub.add_parser("operator", help="Read-only operator control-plane commands.")
+    operator_sub = operator.add_subparsers(dest="action", required=True)
+    operator_execution_mode = operator_sub.add_parser("execution-mode", help="Show selected adapter path, confirm wall, prepared-action wall, and live-control safety.")
+    operator_execution_mode.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default=None)
+    operator_execution_mode.set_defaults(handler="operator_execution_mode")
+
     agent = sub.add_parser("agent", help="Agent identity commands.")
     agent_sub = agent.add_subparsers(dest="action", required=True)
     register = agent_sub.add_parser("register", help="Register or update an AI digital employee.")
@@ -1969,6 +1979,7 @@ HANDLERS = {
     "review_queue": cmd_review_queue,
     "security_production_readiness": cmd_security_production_readiness,
     "commercial_entitlements": cmd_commercial_entitlements,
+    "operator_execution_mode": cmd_operator_execution_mode,
     "agent_register": cmd_agent_register,
     "agent_heartbeat": cmd_agent_heartbeat,
     "task_create": cmd_task_create,

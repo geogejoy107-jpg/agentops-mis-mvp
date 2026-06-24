@@ -246,6 +246,7 @@ python3 scripts/nextjs_enrollment_request_smoke.py
 python3 scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
 python3 scripts/nextjs_worker_console_parity_smoke.py
+python3 scripts/operator_execution_mode_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -509,6 +510,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/nextjs_enrollment_request_smoke.py`
   - `scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py`
   - `scripts/nextjs_worker_console_parity_smoke.py`
+  - `scripts/operator_execution_mode_smoke.py`
   - `scripts/nextjs_playwright_snapshot_smoke.py`
   - `scripts/vite_playwright_snapshot_smoke.py`
   - `docs/UI_API_PARITY_MATRIX.md`

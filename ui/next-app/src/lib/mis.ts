@@ -563,6 +563,69 @@ export type WorkerFleetHygienePayload = {
   live_execution_performed?: boolean;
 };
 
+export type OperatorExecutionModePayload = {
+  provider?: string;
+  operation?: string;
+  status?: string;
+  workspace_id?: string;
+  selected_adapter?: string;
+  adapter_route?: {
+    adapter?: string;
+    execution_path?: string;
+    readiness?: string;
+    trust_status?: string;
+    requires_confirm_run?: boolean;
+    live_ready?: boolean;
+    confirm_run_wall?: {
+      required?: boolean;
+      satisfied?: boolean;
+      reason?: string;
+      flag?: string;
+      server_executes_live_without_confirm?: boolean;
+    };
+    prepared_action_wall?: {
+      required_for_live_customer_worker?: boolean;
+      pending_actions?: number;
+      approved_actions?: number;
+      resume_command?: string;
+      server_executes_prepared_action_without_approval?: boolean;
+    };
+    recommended_command?: string;
+    connector_id?: string | null;
+    token_omitted?: boolean;
+  };
+  summary?: {
+    recommended_adapter?: string;
+    ready_adapters?: string[];
+    live_ready_adapters?: string[];
+    review_required_adapters?: string[];
+    blocked_adapters?: string[];
+    unavailable_adapters?: string[];
+    pending_approvals?: number;
+    active_async_jobs?: number;
+    prepared_actions_waiting_approval?: number;
+    approved_prepared_actions?: number;
+    worker_status?: string;
+    running_daemons?: number;
+    stuck_worker_tasks?: number;
+  };
+  gates?: ReadinessGate[];
+  next_actions?: string[];
+  contract?: string;
+  safety?: {
+    read_only?: boolean;
+    ledger_mutated?: boolean;
+    daemon_started?: boolean;
+    adapter_executed?: boolean;
+    live_execution_performed?: boolean;
+    token_omitted?: boolean;
+    raw_prompt_omitted?: boolean;
+  };
+  live_execution_performed?: boolean;
+  token_omitted?: boolean;
+  error?: string;
+};
+
 export type WorkerDispatchResult = {
   provider?: string;
   dry_run?: boolean;
@@ -1314,6 +1377,11 @@ export async function loadWorkerFleetHygiene(options: {
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   const suffix = params.toString() ? `?${params.toString()}` : "";
   return misJson<WorkerFleetHygienePayload>(`/workers/fleet/hygiene${suffix}`);
+}
+
+export async function loadOperatorExecutionMode(adapter?: string): Promise<OperatorExecutionModePayload> {
+  const suffix = adapter ? `?${new URLSearchParams({ adapter }).toString()}` : "";
+  return misJson<OperatorExecutionModePayload>(`/operator/execution-mode${suffix}`);
 }
 
 export async function loadAgentGatewayEnrollments(): Promise<AgentGatewayEnrollmentListPayload> {

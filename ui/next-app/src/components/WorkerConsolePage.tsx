@@ -3,6 +3,7 @@ import { AppFrame } from "./AppFrame";
 import type {
   AgentGatewaySessionsPayload,
   LocalReadinessPayload,
+  OperatorExecutionModePayload,
   WorkerAdapterReadinessSummary,
   WorkerFleetHygienePayload,
   WorkerFleetPayload,
@@ -15,6 +16,7 @@ type WorkerConsoleProps = {
   workerFleet: ServerLoadResult<WorkerFleetPayload>;
   workerHygiene: ServerLoadResult<WorkerFleetHygienePayload>;
   adapterReadiness: ServerLoadResult<WorkerAdapterReadinessSummary>;
+  executionMode: ServerLoadResult<OperatorExecutionModePayload>;
   sessions: ServerLoadResult<AgentGatewaySessionsPayload>;
   localReadiness: ServerLoadResult<LocalReadinessPayload>;
 };
@@ -48,6 +50,7 @@ function errorsFrom(results: WorkerConsoleProps) {
     ["worker fleet", results.workerFleet.error],
     ["fleet hygiene", results.workerHygiene.error],
     ["adapter readiness", results.adapterReadiness.error],
+    ["execution mode", results.executionMode.error],
     ["gateway sessions", results.sessions.error],
     ["local readiness", results.localReadiness.error],
   ].filter(([, error]) => Boolean(error));
@@ -58,6 +61,7 @@ export function WorkerConsolePage(props: Readonly<WorkerConsoleProps>) {
   const workerFleet = props.workerFleet.data;
   const workerHygiene = props.workerHygiene.data;
   const adapterReadiness = props.adapterReadiness.data;
+  const executionMode = props.executionMode.data;
   const sessions = props.sessions.data.sessions || [];
   const localReadiness = props.localReadiness.data;
   const errors = errorsFrom(props);
@@ -68,6 +72,8 @@ export function WorkerConsolePage(props: Readonly<WorkerConsoleProps>) {
   const hygieneSummary = workerHygiene.summary || {};
   const lanes = workerFleet.lanes || [];
   const adapterEntries = Object.entries(adapterReadiness.adapters || {}).sort(([left], [right]) => left.localeCompare(right));
+  const executionRoute = executionMode.adapter_route || {};
+  const executionSummary = executionMode.summary || {};
   const stuckTasks = workerHygiene.stuck_tasks || workerStatus.stuck_tasks || [];
   const staleEnrollments = workerHygiene.stale_never_seen_enrollments || [];
   const sessionStateCounts = sessions.reduce<Record<string, number>>((acc, session) => {
@@ -100,7 +106,7 @@ export function WorkerConsolePage(props: Readonly<WorkerConsoleProps>) {
           ["Running daemons", `${runningDaemons}/${numberValue(daemons.length)}`, <ServerCog key="daemons" size={18} />, runningDaemons ? "running" : "attention"],
           ["Remote sessions", numberValue(fleetSummary.active_remote_sessions ?? sessions.length), <KeyRound key="sessions" size={18} />, sessions.length ? "ready" : "attention"],
           ["Hygiene actions", numberValue(hygieneSummary.actions_available), <Wrench key="hygiene" size={18} />, hygieneSummary.actions_available ? "attention" : "clear"],
-          ["Adapter", adapterReadiness.summary?.recommended_adapter || fleetSummary.recommended_adapter || "mock", <TerminalSquare key="adapter" size={18} />, adapterReadiness.status],
+          ["Execution mode", executionMode.selected_adapter || adapterReadiness.summary?.recommended_adapter || "mock", <TerminalSquare key="adapter" size={18} />, executionMode.status],
         ].map(([label, value, icon, status]) => (
           <div className="metric compactMetric" key={String(label)}>
             <span className="metricIcon">{icon}</span>
@@ -171,11 +177,64 @@ export function WorkerConsolePage(props: Readonly<WorkerConsoleProps>) {
           <span className={statusClass("blocked")}>session revoke blocked</span>
           <span className={statusClass("blocked")}>enrollment revoke blocked</span>
           <span className={statusClass("attention")}>fleet cleanup preview only</span>
-          <span className={statusClass("attention")}>execution-mode endpoint pending</span>
+          <span className={statusClass(executionMode.safety?.read_only)}>operator execution-mode readback</span>
         </div>
         <p className="subtle">
           mock_daemon_only_next_parity · live_worker_daemon_not_allowed_next_parity · gateway_lifecycle_write_not_allowed_next_parity · Vite/CLI remain canonical for live lifecycle mutation.
         </p>
+      </section>
+
+      <section className="panel wide" data-smoke="operator-execution-mode-readback">
+        <div className="panelHeader">
+          <h2><TerminalSquare size={14} /> Operator execution mode</h2>
+          <span>{executionMode.operation || "/operator/execution-mode"}</span>
+        </div>
+        <div className="miniMetrics">
+          <span>adapter <strong>{executionMode.selected_adapter || executionRoute.adapter || "mock"}</strong></span>
+          <span>readiness <strong>{executionRoute.readiness || "unknown"}</strong></span>
+          <span>trust <strong>{titleize(executionRoute.trust_status || "unknown")}</strong></span>
+          <span>pending approvals <strong>{numberValue(executionSummary.pending_approvals)}</strong></span>
+          <span>active jobs <strong>{numberValue(executionSummary.active_async_jobs)}</strong></span>
+          <span>approved actions <strong>{numberValue(executionSummary.approved_prepared_actions)}</strong></span>
+        </div>
+        <div className="proofStrip">
+          <span>/operator/execution-mode</span>
+          <span className={statusClass(executionMode.safety?.read_only)}>read only</span>
+          <span className={statusClass(executionMode.safety?.ledger_mutated === false)}>ledger not mutated</span>
+          <span className={statusClass(executionMode.safety?.daemon_started === false)}>daemon not started</span>
+          <span className={statusClass(executionMode.safety?.adapter_executed === false)}>adapter not executed</span>
+          <span className={statusClass(executionMode.safety?.live_execution_performed === false)}>no live execution</span>
+          <span className={statusClass(executionMode.token_omitted)}>token omitted</span>
+        </div>
+        <div className="grid tightGrid">
+          <article className="row tall">
+            <div>
+              <strong>Confirm-run wall</strong>
+              <span>{executionRoute.confirm_run_wall?.reason || "Live adapters require explicit confirmation before execution."}</span>
+              <p>{executionRoute.recommended_command || "agentops operator execution-mode"}</p>
+            </div>
+            <span className={statusClass(executionRoute.confirm_run_wall?.required ? "attention" : "ready")}>{executionRoute.confirm_run_wall?.required ? "confirm required" : "ready"}</span>
+          </article>
+          <article className="row tall">
+            <div>
+              <strong>Prepared-action wall</strong>
+              <span>{numberValue(executionRoute.prepared_action_wall?.pending_actions)} waiting · {numberValue(executionRoute.prepared_action_wall?.approved_actions)} approved</span>
+              <p>{executionRoute.prepared_action_wall?.resume_command || "agentops workflow customer-worker-task --help"}</p>
+            </div>
+            <span className={statusClass(executionRoute.prepared_action_wall?.required_for_live_customer_worker ? "attention" : "ready")}>{executionRoute.prepared_action_wall?.required_for_live_customer_worker ? "approval wall" : "not required"}</span>
+          </article>
+        </div>
+        <div className="list compact">
+          {(executionMode.gates || []).slice(0, 5).map((gate, index) => (
+            <article className="row" key={`${gate.id || gate.label || "execution-mode"}:${index}`}>
+              <div>
+                <strong>{gate.label || gate.id || "Execution-mode gate"}</strong>
+                <span>{gate.detail || gate.summary || gate.next_action || gate.action || "No detail loaded."}</span>
+              </div>
+              <span className={statusClass(gate.status || gate.ok)}>{gate.status || (gate.ok ? "pass" : "attention")}</span>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section className="grid">
