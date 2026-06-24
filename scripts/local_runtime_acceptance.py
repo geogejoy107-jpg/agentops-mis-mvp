@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -29,7 +30,7 @@ AGENTOPS = ROOT / "scripts" / "agentops"
 
 
 def stamp() -> str:
-    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S")
+    return f"{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d%H%M%S%f')}_{uuid.uuid4().hex[:8]}"
 
 
 def request_json(method: str, base_url: str, path: str, payload=None, query=None):
@@ -53,27 +54,91 @@ def run_prepared_hermes_task(base_url: str) -> dict:
     return run_prepared_runtime_probe(base_url, "/api/integrations/hermes/run-task")
 
 
+def prepared_runtime_status(payload: dict) -> str | None:
+    return payload.get("prepared_action_status") or (payload.get("prepared_action") or {}).get("status")
+
+
+def prepared_runtime_run_id(payload: dict) -> str | None:
+    return payload.get("run_id") or (payload.get("prepared_action") or {}).get("run_id")
+
+
+def prepared_runtime_completed(payload: dict) -> bool:
+    probe = payload.get("probe") or {}
+    action = payload.get("prepared_action") or {}
+    ok = payload.get("ok") is True or probe.get("ok") is True
+    created = payload.get("created") is True or payload.get("live_probe_performed") is True or ok
+    provider_called = (
+        payload.get("provider_call_performed") is True
+        or payload.get("live_probe_performed") is True
+        or bool(action.get("provider_side_effect_id"))
+    )
+    return bool(ok and created and payload.get("dry_run") is False and provider_called and prepared_runtime_run_id(payload))
+
+
+def prepared_runtime_prepare_payload(path: str) -> dict:
+    prefix = path.strip("/").replace("/", "_").replace("-", "_") or "runtime_probe"
+    run_stamp = stamp()
+    return {
+        "confirm_run": True,
+        "task_id": f"tsk_{prefix}_{run_stamp}",
+        "run_id": f"run_{prefix}_{run_stamp}",
+        "tool_call_id": f"tc_{prefix}_{run_stamp}",
+        "approval_id": f"ap_{prefix}_{run_stamp}",
+    }
+
+
 def run_prepared_runtime_probe(base_url: str, path: str) -> dict:
-    prepare = request_json("POST", base_url, path, {"confirm_run": True})
+    prepare = request_json("POST", base_url, path, prepared_runtime_prepare_payload(path))
     prepared_action_id = prepare.get("prepared_action_id")
     approval_id = prepare.get("approval_id")
     if not prepared_action_id:
-        return prepare
+        if prepared_runtime_completed(prepare):
+            return with_prepared_runtime_readback(base_url, prepare)
+        raise RuntimeError(f"Prepared runtime probe did not prepare or complete a real run: {prepare}")
     if not approval_id:
         raise RuntimeError(f"Prepared runtime probe missing approval_id: {prepare}")
     approval = request_json("POST", base_url, f"/api/approvals/{approval_id}/approve", {})
-    if approval.get("decision") != "approved":
+    approval_decision = approval.get("decision") or (approval.get("approval") or {}).get("decision")
+    if approval_decision != "approved":
         raise RuntimeError(f"Prepared runtime probe approval failed: {approval}")
     resume = request_json("POST", base_url, path, {
         "confirm_run": True,
         "prepared_action_id": prepared_action_id,
         "prompt_hash": prepare.get("prompt_hash"),
     })
+    if prepared_runtime_status(resume) != "consumed":
+        raise RuntimeError(f"Prepared runtime probe did not consume the prepared action: {resume}")
+    if not prepared_runtime_completed(resume):
+        raise RuntimeError(f"Prepared runtime probe did not complete as a real run: {resume}")
+    resume = with_prepared_runtime_readback(base_url, resume)
     return {
         **resume,
         "prepared_action_id": prepared_action_id,
         "approval_id": approval_id,
         "prepare_provider_call_performed": prepare.get("provider_call_performed"),
+    }
+
+
+def with_prepared_runtime_readback(base_url: str, payload: dict) -> dict:
+    run_id = prepared_runtime_run_id(payload)
+    if not run_id:
+        raise RuntimeError(f"Prepared runtime probe missing run_id: {payload}")
+    run_detail = request_json("GET", base_url, f"/api/runs/{run_id}")
+    run = run_detail.get("run") or {}
+    if run.get("status") != "completed" or run.get("approval_required") not in (False, 0, "0"):
+        raise RuntimeError(f"Prepared runtime probe run readback is not completed: {run_detail}")
+    return {
+        **payload,
+        "run_id": run_id,
+        "ok": True,
+        "created": True,
+        "dry_run": False,
+        "provider_call_performed": True,
+        "prepared_action_status": prepared_runtime_status(payload),
+        "run_readback": {
+            "status": run.get("status"),
+            "approval_required": run.get("approval_required"),
+        },
     }
 
 
@@ -161,14 +226,100 @@ def run_agent_gateway_cli_smoke(base_url: str) -> dict:
     outputs["task"] = task
     outputs["pull"] = run_cli(["task", "pull", "--agent-id", agent_id, "--limit", "5"], env)
     outputs["claim"] = run_cli(["task", "claim", "--task-id", task_id, "--agent-id", agent_id], env)
-    outputs["run_start"] = run_cli(["run", "start", "--task-id", task_id, "--agent-id", agent_id, "--input-summary", "Acceptance CLI run started"], env)
+    outputs["agent_plan"] = run_cli([
+        "agent-plan",
+        "create",
+        "--agent-id",
+        agent_id,
+        "--task-id",
+        task_id,
+        "--task-understanding",
+        "Verify Agent Gateway CLI runtime acceptance with a plan-bound run and safe ledger evidence.",
+        "--referenced-specs",
+        "PROJECT_SPEC.md,AGENT_WORKFLOW.md,BASE_INDEX.md",
+        "--referenced-memories",
+        "knowledge/shared/common_failures.md",
+        "--referenced-bases",
+        "base_local_tasks,base_local_memory",
+        "--proposed-files-to-change",
+        "scripts/local_runtime_acceptance.py",
+        "--risk",
+        "low",
+        "--execution-steps",
+        "READ,PLAN,RETRIEVE,COMPARE,EXECUTE,VERIFY,RECORD",
+        "--verification-plan",
+        "Run local_runtime_acceptance.py against the local MIS API.",
+        "--rollback-plan",
+        "Revert the local_runtime_acceptance.py acceptance-script change.",
+    ], env)
+    agent_plan_id = (outputs["agent_plan"].get("agent_plan") or {}).get("plan_id")
+    if not agent_plan_id:
+        raise RuntimeError(f"Agent Plan create did not return a plan_id: {outputs['agent_plan']}")
+    outputs["agent_plan_verify"] = run_cli(["agent-plan", "verify", "--plan-id", str(agent_plan_id)], env)
+    if (outputs["agent_plan_verify"].get("verification") or {}).get("pass") is not True:
+        raise RuntimeError(f"Agent Plan verification did not pass: {outputs['agent_plan_verify']}")
+    outputs["run_start"] = run_cli(["run", "start", "--task-id", task_id, "--agent-id", agent_id, "--runtime", "mock", "--input-summary", "Acceptance CLI run started"], env)
     mis_run_id = outputs["run_start"]["run"]["run_id"]
     outputs["toolcall"] = run_cli(["toolcall", "record", "--run-id", mis_run_id, "--agent-id", agent_id, "--tool", "agentops.acceptance.cli", "--category", "custom", "--risk", "low", "--summary", "CLI acceptance toolcall recorded."], env)
+    tool_call_id = (outputs["toolcall"].get("tool_call") or {}).get("tool_call_id") or outputs["toolcall"].get("tool_call_id")
+    if not tool_call_id:
+        raise RuntimeError(f"Tool call record did not return a tool_call_id: {outputs['toolcall']}")
     outputs["run_done"] = run_cli(["run", "heartbeat", "--run-id", mis_run_id, "--status", "completed", "--summary", "Acceptance CLI run completed", "--duration-ms", "777"], env)
     outputs["eval"] = run_cli(["eval", "submit", "--run-id", mis_run_id, "--task-id", task_id, "--agent-id", agent_id, "--gate", "local_runtime_acceptance", "--score", "1", "--pass", "--notes", "Agent Gateway CLI acceptance passed."], env)
+    evaluation_id = (outputs["eval"].get("evaluation") or {}).get("evaluation_id") or outputs["eval"].get("evaluation_id")
+    if not evaluation_id:
+        raise RuntimeError(f"Evaluation submit did not return an evaluation_id: {outputs['eval']}")
+    outputs["artifact"] = run_cli([
+        "artifact",
+        "record",
+        "--run-id",
+        mis_run_id,
+        "--task-id",
+        task_id,
+        "--agent-id",
+        agent_id,
+        "--type",
+        "local_runtime_acceptance",
+        "--title",
+        "Local runtime acceptance CLI evidence",
+        "--summary",
+        "Safe Agent Gateway CLI acceptance evidence summary.",
+        "--uri",
+        f"run://{mis_run_id}",
+    ], env)
+    artifact_id = (outputs["artifact"].get("artifact") or {}).get("artifact_id") or outputs["artifact"].get("artifact_id")
+    if not artifact_id:
+        raise RuntimeError(f"Artifact record did not return an artifact_id: {outputs['artifact']}")
     outputs["memory"] = run_cli(["memory", "propose", "--task-id", task_id, "--run-id", mis_run_id, "--agent-id", agent_id, "--type", "artifact_summary", "--text", "Local runtime acceptance verified Agent Gateway CLI evidence writes."], env)
     outputs["audit"] = run_cli(["audit", "emit", "--agent-id", agent_id, "--action", "local_runtime_acceptance.cli_completed", "--entity-type", "runs", "--entity-id", mis_run_id, "--task-id", task_id, "--run-id", mis_run_id], env)
-    return {"agent_id": agent_id, "task_id": task_id, "run_id": mis_run_id, "outputs": outputs}
+    outputs["plan_evidence"] = run_cli([
+        "plan-evidence",
+        "create",
+        "--plan-id",
+        str(agent_plan_id),
+        "--run-id",
+        mis_run_id,
+        "--mismatch-policy",
+        "block",
+        "--tool-call-ids",
+        str(tool_call_id),
+        "--evaluation-ids",
+        str(evaluation_id),
+        "--artifact-ids",
+        str(artifact_id),
+    ], env)
+    manifest_id = (outputs["plan_evidence"].get("manifest") or {}).get("manifest_id")
+    manifest_verification = outputs["plan_evidence"].get("verification") or {}
+    if not manifest_id or manifest_verification.get("pass") is not True:
+        raise RuntimeError(f"Plan evidence manifest did not verify: {outputs['plan_evidence']}")
+    return {
+        "agent_id": agent_id,
+        "task_id": task_id,
+        "run_id": mis_run_id,
+        "agent_plan_id": agent_plan_id,
+        "plan_evidence_manifest_id": manifest_id,
+        "outputs": outputs,
+    }
 
 
 def main() -> int:

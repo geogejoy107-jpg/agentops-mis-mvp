@@ -221,6 +221,13 @@ Must be true:
   review interactions before a Next.js route is accepted. The canonical Vite
   browser snapshot smoke must keep proving the current product UI while the
   Next.js track advances in parallel.
+- Real Hermes/OpenClaw product-readiness claims must also keep
+  `python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes
+  --require-hermes-api` green against a local MIS API with the runtimes
+  available. That acceptance path must create and verify an Agent Plan before
+  Agent Gateway run start, bind the run to a verified plan-evidence manifest,
+  create unique task/run/prepared-action IDs for each probe, and drive
+  prepared-action exact resume until the live action is consumed.
 - Browser verification is automated by:
 
 ```bash

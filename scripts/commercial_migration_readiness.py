@@ -230,6 +230,20 @@ def main() -> int:
             "Gate 2 workspace/scope governance smokes can start isolated temporary servers and avoid live ledger contamination",
         ),
         check(
+            "local_runtime_acceptance_surface_exists",
+            file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "local_runtime_acceptance.py --live-openclaw --live-hermes")
+            and file_contains("scripts/local_runtime_acceptance.py", '"agent-plan"')
+            and file_contains("scripts/local_runtime_acceptance.py", '"plan-evidence"')
+            and file_contains("scripts/local_runtime_acceptance.py", "Agent Plan verification did not pass")
+            and file_contains("scripts/local_runtime_acceptance.py", "Plan evidence manifest did not verify")
+            and file_contains("scripts/local_runtime_acceptance.py", "prepared_runtime_prepare_payload")
+            and file_contains("scripts/local_runtime_acceptance.py", "prepared_action_status")
+            and file_contains("scripts/local_runtime_acceptance.py", '"prepared_action_id"')
+            and file_contains("scripts/local_runtime_acceptance.py", "Prepared runtime probe did not consume")
+            and (ROOT / "scripts" / "local_runtime_acceptance.py").exists(),
+            "Real Hermes/OpenClaw runtime acceptance requires Agent Plan-gated run start, verified plan-evidence, unique prepared actions, and consumed prepared actions",
+        ),
+        check(
             "entitlement_direction_recorded",
             file_contains("docs/PRICING_AND_ENTITLEMENT_DRAFT.md", "Enterprise / BYOC")
             and file_contains("docs/PRICING_AND_ENTITLEMENT_DRAFT.md", "Free Local"),
