@@ -14296,6 +14296,13 @@ REPO_MAP_INCLUDED_SUFFIXES = {
     ".sh",
 }
 
+REPO_MAP_DEFAULT_MAX_FILE_BYTES = 240_000
+REPO_MAP_CORE_MAX_FILE_BYTES = 2_000_000
+REPO_MAP_LARGE_CORE_FILES = {
+    "server.py",
+    "agentops_mis_cli/agentops.py",
+}
+
 
 def commander_safe_text(value, limit=180) -> str:
     redacted = redact_text(value, limit)
@@ -14330,8 +14337,9 @@ def repo_map_file_allowed(path: Path) -> bool:
         return False
     if path.suffix.lower() not in REPO_MAP_INCLUDED_SUFFIXES:
         return False
+    max_bytes = REPO_MAP_CORE_MAX_FILE_BYTES if rel.as_posix() in REPO_MAP_LARGE_CORE_FILES else REPO_MAP_DEFAULT_MAX_FILE_BYTES
     try:
-        if path.stat().st_size > 240_000:
+        if path.stat().st_size > max_bytes:
             return False
     except OSError:
         return False
@@ -14492,7 +14500,7 @@ def commander_repo_map(qs=None, headers=None) -> dict:
         "ranking": {
             "deterministic": True,
             "sort": "score desc, path asc",
-            "score_version": "repo-map-localizer-v1",
+            "score_version": "repo-map-localizer-v2",
             "token_omitted": True,
         },
         "contract": "read-only repo localization for coding work packages; scans tracked-style repo text paths, returns redacted snippets plus hashes, and does not mutate ledger or execute commands",
