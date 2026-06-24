@@ -2590,6 +2590,7 @@ export interface OperatorLoopSupervisionItemPayload {
     };
     token_omitted?: boolean;
   };
+  agent_work_packet?: Record<string, unknown>;
   next_commands: {
     safe_read_commands: string[];
     preview_commands: string[];
@@ -2629,6 +2630,7 @@ export interface OperatorLoopSupervisionPayload {
     current_code_ok: boolean;
   };
   items: OperatorLoopSupervisionItemPayload[];
+  work_packets?: Record<string, unknown>[];
   next_actions: string[];
   safety: {
     read_only: boolean;
@@ -7273,6 +7275,7 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
       current_code_ok: false,
     },
     items: [],
+    work_packets: [],
     next_actions: [],
     safety: {
       read_only: true,
@@ -7321,6 +7324,7 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
       const runStartAdmissionRaw = typeof item.run_start_admission === "object" && item.run_start_admission !== null ? item.run_start_admission as Record<string, unknown> : {};
       const runStartSafetyRaw = typeof runStartAdmissionRaw.safety === "object" && runStartAdmissionRaw.safety !== null ? runStartAdmissionRaw.safety as Record<string, unknown> : {};
       const runStartReceiptProjectionRaw = typeof runStartAdmissionRaw.receipt_projection === "object" && runStartAdmissionRaw.receipt_projection !== null ? runStartAdmissionRaw.receipt_projection as Record<string, unknown> : {};
+      const agentWorkPacketRaw = typeof item.agent_work_packet === "object" && item.agent_work_packet !== null ? item.agent_work_packet as Record<string, unknown> : {};
       return {
         operation: String(item.operation || "operator_loop_supervision_item"),
         adapter: String(item.adapter || "mock"),
@@ -7403,6 +7407,7 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
           } : undefined,
           token_omitted: localDeploymentRaw.token_omitted === undefined ? undefined : boolValue(localDeploymentRaw.token_omitted),
         } : undefined,
+        agent_work_packet: Object.keys(agentWorkPacketRaw).length ? agentWorkPacketRaw : undefined,
         next_commands: {
           safe_read_commands: asArray<unknown>(nextCommands.safe_read_commands).map(String).filter(Boolean),
           preview_commands: asArray<unknown>(nextCommands.preview_commands).map(String).filter(Boolean),
@@ -7461,6 +7466,7 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
         token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
       };
     }),
+    work_packets: asArray<Record<string, unknown>>(raw.work_packets).filter((item) => typeof item === "object" && item !== null),
     next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
     safety: {
       read_only: safetyRaw.read_only === undefined ? true : boolValue(safetyRaw.read_only),

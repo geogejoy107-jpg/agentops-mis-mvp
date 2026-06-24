@@ -133,6 +133,8 @@ def validate(payload: dict, failures: list[str]) -> None:
     summary = payload.get("summary") or {}
     require(summary.get("items") == 2, f"expected Hermes/OpenClaw items: {summary}", failures)
     require(summary.get("can_confirm_all") is True, f"bounded confirm should be structurally ready: {summary}", failures)
+    work_packets = payload.get("work_packets") or []
+    require(len(work_packets) == 2, f"top-level work packets missing: {work_packets}", failures)
     handoff_summary = payload.get("handoff_summary") or {}
     require(handoff_summary.get("ready_for_handoff") is True, f"handoff source should be ready: {handoff_summary}", failures)
     items = payload.get("items") or []
@@ -145,6 +147,41 @@ def validate(payload: dict, failures: list[str]) -> None:
         require(item.get("can_preview_loop") is True, f"{adapter} preview gate missing: {item}", failures)
         require(item.get("can_confirm_bounded_loop") is True, f"{adapter} confirm gate missing: {item}", failures)
         require(item.get("should_record_before_execute") in {True, False}, f"{adapter} record decision missing: {item}", failures)
+        work_packet = item.get("agent_work_packet") or {}
+        require(work_packet.get("operation") == "operator_loop_supervision_agent_work_packet", f"{adapter} work packet missing: {work_packet}", failures)
+        require(work_packet.get("schema_version") == "agent_work_packet_v1", f"{adapter} work packet schema missing: {work_packet}", failures)
+        require(work_packet.get("adapter") == adapter, f"{adapter} work packet adapter mismatch: {work_packet}", failures)
+        require(work_packet.get("packet_hash"), f"{adapter} work packet hash missing: {work_packet}", failures)
+        primary_next = work_packet.get("primary_next_action") or {}
+        require(primary_next.get("id"), f"{adapter} work packet primary action id missing: {primary_next}", failures)
+        require(primary_next.get("phase") in {"READ", "PLAN", "RETRIEVE", "COMPARE", "PREFLIGHT", "EXECUTE", "VERIFY", "RECORD"}, f"{adapter} work packet primary action phase missing: {primary_next}", failures)
+        require(primary_next.get("command"), f"{adapter} work packet primary action command missing: {primary_next}", failures)
+        require(primary_next.get("confirm_required") in {True, False}, f"{adapter} work packet primary confirm flag missing: {primary_next}", failures)
+        require(primary_next.get("receipt_required") in {True, False}, f"{adapter} work packet primary receipt flag missing: {primary_next}", failures)
+        require(primary_next.get("safe_to_auto_continue") in {True, False}, f"{adapter} work packet safe-to-auto flag missing: {primary_next}", failures)
+        require(primary_next.get("requires_human_before_effect") in {True, False}, f"{adapter} work packet human gate flag missing: {primary_next}", failures)
+        require(primary_next.get("verify_command"), f"{adapter} work packet primary verify command missing: {primary_next}", failures)
+        require(work_packet.get("loop_protocol") == ["READ", "PLAN", "RETRIEVE", "COMPARE", "PREFLIGHT", "EXECUTE", "VERIFY", "RECORD"], f"{adapter} loop protocol missing: {work_packet}", failures)
+        work_phase_commands = work_packet.get("phase_commands") or {}
+        require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(work_phase_commands), f"{adapter} work phase commands missing: {work_phase_commands}", failures)
+        require_adapter_command(work_phase_commands.get("preflight"), adapter, f"{adapter} work packet preflight", failures)
+        require_adapter_command(work_phase_commands.get("execute"), adapter, f"{adapter} work packet execute", failures)
+        require("--confirm-loop" in str(work_phase_commands.get("execute") or ""), f"{adapter} work packet execute must stay confirm-gated: {work_phase_commands}", failures)
+        command_lanes = work_packet.get("command_lanes") or {}
+        require(any(f"--adapter {adapter}" in str(command) for command in command_lanes.get("safe_read") or []), f"{adapter} work packet safe lane missing adapter command: {command_lanes}", failures)
+        require(any("--confirm-run" in str(command) or "--confirm-loop" in str(command) for command in command_lanes.get("confirm_required") or []), f"{adapter} work packet confirm lane missing: {command_lanes}", failures)
+        receipts = work_packet.get("receipts") or {}
+        require((receipts.get("service_control") or {}).get("required") is True, f"{adapter} work packet service receipt missing: {receipts}", failures)
+        require((receipts.get("control_readback") or {}).get("required") is True, f"{adapter} work packet readback missing: {receipts}", failures)
+        require((receipts.get("run_start_admission") or {}).get("control_readback_required") is True, f"{adapter} work packet run_start receipt missing: {receipts}", failures)
+        evidence_contract = work_packet.get("evidence_contract") or {}
+        require(evidence_contract.get("agent_plan_required") is True, f"{adapter} work packet Agent Plan contract missing: {evidence_contract}", failures)
+        require(evidence_contract.get("knowledge_retrieval_required") is True, f"{adapter} work packet retrieval contract missing: {evidence_contract}", failures)
+        require(evidence_contract.get("audit_ledger_required") is True, f"{adapter} work packet audit contract missing: {evidence_contract}", failures)
+        work_safety = work_packet.get("safety") or {}
+        require(work_safety.get("read_only") is True, f"{adapter} work packet read-only safety missing: {work_safety}", failures)
+        require(work_safety.get("server_executes_shell") is False, f"{adapter} work packet shell safety missing: {work_safety}", failures)
+        require(work_safety.get("live_execution_performed") is False, f"{adapter} work packet live safety missing: {work_safety}", failures)
         item_safety = item.get("safety") or {}
         require(item_safety.get("read_only") is True, f"{adapter} read-only safety missing: {item_safety}", failures)
         require(item_safety.get("ledger_mutated") is False, f"{adapter} ledger safety missing: {item_safety}", failures)
@@ -268,6 +305,29 @@ def main() -> int:
             cli_payload = json.loads(result.stdout or "{}")
             validate(cli_payload, failures)
             require(cli_payload.get("summary") == http_payload.get("summary"), f"CLI/HTTP summary drift: cli={cli_payload.get('summary')} http={http_payload.get('summary')}", failures)
+            packet_result = subprocess.run(
+                [str(CLI), "operator", "loop-supervision", "--limit", "5", "--work-packet"],
+                cwd=ROOT,
+                env=cli_env,
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
+            )
+            outputs.extend([packet_result.stdout, packet_result.stderr])
+            require(packet_result.returncode == 0, f"loop-supervision --work-packet failed: {packet_result.stderr or packet_result.stdout}", failures)
+            packet_payload = json.loads(packet_result.stdout or "{}")
+            require(packet_payload.get("operation") == "operator_loop_work_packet_bundle", f"work packet bundle operation mismatch: {packet_payload}", failures)
+            require(packet_payload.get("schema_version") == "agent_work_packet_bundle_v1", f"work packet bundle schema mismatch: {packet_payload}", failures)
+            packet_summary = packet_payload.get("summary") or {}
+            packet_items = packet_payload.get("work_packets") or []
+            require(packet_summary.get("work_packets") == 2, f"work packet bundle summary missing: {packet_summary}", failures)
+            require(len(packet_items) == 2, f"work packet bundle items missing: {packet_payload}", failures)
+            require({"hermes", "openclaw"}.issubset({item.get("adapter") for item in packet_items}), f"work packet bundle adapters missing: {packet_items}", failures)
+            require(all((item.get("safety") or {}).get("server_executes_shell") is False for item in packet_items), f"work packet bundle shell safety missing: {packet_items}", failures)
+            require(all((item.get("safety") or {}).get("live_execution_performed") is False for item in packet_items), f"work packet bundle live safety missing: {packet_items}", failures)
+            require(all(item.get("packet_hash") for item in packet_items), f"work packet bundle hashes missing: {packet_items}", failures)
+            require(all((item.get("primary_next_action") or {}).get("command") for item in packet_items), f"work packet bundle primary actions missing: {packet_items}", failures)
             after = db_counts(db_path)
             require(before == after, f"loop-supervision mutated ledger: before={before} after={after}", failures)
             require(not leaked("\n".join(outputs)), "loop-supervision leaked token-like material", failures)

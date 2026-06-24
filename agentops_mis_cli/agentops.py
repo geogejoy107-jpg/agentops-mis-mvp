@@ -1247,7 +1247,7 @@ def cmd_operator_agent_loop_handoff(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_operator_loop_supervision(args, client: AgentOpsClient) -> dict:
-    return client.get(
+    payload = client.get(
         "/api/operator/loop-supervision",
         query={
             "adapter": list(dict.fromkeys(args.adapter or ["hermes", "openclaw"])),
@@ -1262,6 +1262,49 @@ def cmd_operator_loop_supervision(args, client: AgentOpsClient) -> dict:
             "include_codex": "true" if args.include_codex else "false",
         },
     )
+    if getattr(args, "work_packet", False):
+        return compact_loop_supervision_work_packets(payload)
+    return payload
+
+
+def compact_loop_supervision_work_packets(payload: dict) -> dict:
+    work_packets = [
+        item
+        for item in (payload.get("work_packets") if isinstance(payload.get("work_packets"), list) else [])
+        if isinstance(item, dict)
+    ]
+    if not work_packets:
+        work_packets = [
+            item.get("agent_work_packet")
+            for item in (payload.get("items") if isinstance(payload.get("items"), list) else [])
+            if isinstance(item, dict) and isinstance(item.get("agent_work_packet"), dict)
+        ]
+    return {
+        "provider": payload.get("provider", "agentops-operator"),
+        "operation": "operator_loop_work_packet_bundle",
+        "schema_version": "agent_work_packet_bundle_v1",
+        "source_operation": payload.get("operation", "operator_loop_supervision"),
+        "status": payload.get("status"),
+        "workspace_id": payload.get("workspace_id"),
+        "adapters": payload.get("adapters") or [item.get("adapter") for item in work_packets],
+        "summary": {
+            **(payload.get("summary") if isinstance(payload.get("summary"), dict) else {}),
+            "work_packets": len(work_packets),
+            "packet_hashes": [item.get("packet_hash") for item in work_packets if item.get("packet_hash")],
+        },
+        "work_packets": work_packets,
+        "next_actions": payload.get("next_actions") or [],
+        "contract": "compact machine-consumable loop work-packet bundle for Hermes/OpenClaw/Codex; read-only and copy-only, with live execution still gated by local confirmation, Agent Plan, retrieval, approvals, receipts, evidence and memory review",
+        "safety": payload.get("safety") if isinstance(payload.get("safety"), dict) else {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
 
 
 def compact_loop_launch_packet(payload: dict, *, adapter: str, local_readiness: dict | None = None) -> dict:
@@ -3990,6 +4033,7 @@ def build_parser() -> argparse.ArgumentParser:
     operator_loop_supervision.add_argument("--freshness-hours", type=int, default=72)
     operator_loop_supervision.add_argument("--include-codex", dest="include_codex", action="store_true", default=True, help="Include Codex handoff context in the source handoff. Enabled by default.")
     operator_loop_supervision.add_argument("--no-codex", dest="include_codex", action="store_false", help="Omit Codex handoff context from the source handoff.")
+    operator_loop_supervision.add_argument("--work-packet", action="store_true", help="Return only the compact machine-consumable loop work-packet bundle.")
     operator_loop_supervision.set_defaults(handler="operator_loop_supervision")
     operator_loop_driver = operator_sub.add_parser("loop-driver", help="Preview or run a bounded multi-step local loop for Hermes/OpenClaw/Codex.")
     operator_loop_driver.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")

@@ -24972,6 +24972,8 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
     local_deployment = consumer.get("local_deployment") if isinstance(consumer.get("local_deployment"), dict) else {}
     local_run_path = local_deployment.get("local_run_path") if isinstance(local_deployment.get("local_run_path"), dict) else {}
     service_managed_loop = local_deployment.get("service_managed_loop") if isinstance(local_deployment.get("service_managed_loop"), dict) else {}
+    managed_execution = local_deployment.get("managed_execution_path") if isinstance(local_deployment.get("managed_execution_path"), dict) else {}
+    managed_execution_commands = managed_execution.get("commands") if isinstance(managed_execution.get("commands"), dict) else {}
     local_deployment_safety = local_run_path.get("safety") if isinstance(local_run_path.get("safety"), dict) else {}
     local_deployment_adapter_ok = (
         adapter not in {"hermes", "openclaw"}
@@ -25091,6 +25093,184 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
         },
     ]
     would_allow_run_start = bool(can_confirm and not server_shell)
+    phase_commands = method.get("phase_commands") if isinstance(method.get("phase_commands"), dict) else {}
+    service_commands = service_managed_loop.get("commands") if isinstance(service_managed_loop.get("commands"), dict) else {}
+    run_start_receipt_projection = {
+        "source": f"operator_loop_supervision.run_start_gate:{adapter}",
+        "action_id": f"run_start_supervision:{adapter}",
+        "action_signature": stable_id(
+            "op_action_sig",
+            "run_start_loop_supervision_gate",
+            adapter,
+            "bound_by_agent_gateway_run_start",
+            f"agentops operator loop-supervision --adapter {adapter} --limit {limit}",
+        )[-18:],
+        "action_command": f"agentops operator loop-supervision --adapter {adapter} --limit {limit}",
+        "verify_command": f"agentops operator loop-audit --limit {min(max(limit, 8), 20)}",
+        "control_readback_required": True,
+        "control_readback_source": f"operator_loop_supervision.run_start_gate:{adapter}.control_readback",
+        "token_omitted": True,
+    }
+    primary_confirm_required = "--confirm-" in str(recommended_next_command or "")
+    primary_phase = "READ"
+    if recommended_next_command == review_pressure["record_command"]:
+        primary_phase = "RECORD"
+    elif recommended_next_command == commands.get("loop_driver_confirm"):
+        primary_phase = "EXECUTE"
+    elif recommended_next_command == commands.get("loop_driver_preview"):
+        primary_phase = "PREFLIGHT"
+    elif recommended_next_command == commands.get("start_check"):
+        primary_phase = "READ"
+    primary_next_action = {
+        "id": stable_id("loop_next", adapter, status, recommended_next_command or "none")[-18:],
+        "status": status,
+        "phase": primary_phase,
+        "command": recommended_next_command,
+        "confirm_required": primary_confirm_required,
+        "receipt_required": primary_confirm_required,
+        "verify_command": (
+            run_start_receipt_projection.get("verify_command")
+            if primary_confirm_required
+            else managed_execution_commands.get("evidence_report")
+            or "agentops operator loop-audit --limit 20"
+        ),
+        "control_readback_source": run_start_receipt_projection.get("control_readback_source") if primary_confirm_required else None,
+        "safe_to_auto_continue": bool(recommended_next_command) and not primary_confirm_required and not server_shell,
+        "requires_human_before_effect": bool(primary_confirm_required or should_record),
+        "blockers": blockers
+        + ([f"missing_method_gate:{gate}" for gate in missing_method_gates] if missing_method_gates else [])
+        + ([] if local_deployment_adapter_ok else ["local_deployment_adapter_mismatch"]),
+        "stop_reason": None if not primary_confirm_required else "confirm_required_before_live_or_bounded_execution",
+        "token_omitted": True,
+    }
+    agent_work_packet = {
+        "operation": "operator_loop_supervision_agent_work_packet",
+        "schema_version": "agent_work_packet_v1",
+        "adapter": adapter,
+        "status": status,
+        "recommended_next": recommended_next_command,
+        "primary_next_action": primary_next_action,
+        "work_order": {
+            "adapter": adapter,
+            "task_id": start_check_payload.get("task_id"),
+            "agent_id": start_check_payload.get("agent_id"),
+            "loop_id": start_check_payload.get("loop_id"),
+            "runtime_type": adapter,
+            "live_dispatch_allowed": consumer.get("ready_for_live_dispatch") is True,
+            "token_omitted": True,
+        },
+        "loop_protocol": ["READ", "PLAN", "RETRIEVE", "COMPARE", "PREFLIGHT", "EXECUTE", "VERIFY", "RECORD"],
+        "phase_commands": {
+            "read": phase_commands.get("read") or commands.get("agent_loop_handoff"),
+            "plan": phase_commands.get("plan") or managed_execution_commands.get("agent_plan_create"),
+            "retrieve": phase_commands.get("retrieve") or managed_execution_commands.get("knowledge_search"),
+            "compare": phase_commands.get("compare") or managed_execution_commands.get("base_reference"),
+            "preflight": phase_commands.get("preflight") or commands.get("adapter_preflight"),
+            "execute": phase_commands.get("execute") or commands.get("loop_driver_confirm"),
+            "verify": phase_commands.get("verify") or managed_execution_commands.get("evidence_report"),
+            "record": phase_commands.get("record") or managed_execution_commands.get("review_queue") or review_pressure["record_command"],
+        },
+        "command_lanes": {
+            "safe_read": [
+                command
+                for command in [
+                    commands.get("agent_loop_handoff"),
+                    commands.get("start_check"),
+                    commands.get("adapter_preflight"),
+                    service_commands.get("service_check"),
+                    service_commands.get("service_control_preview"),
+                    commands.get("live_product_readiness"),
+                    review_pressure["record_command"],
+                    "agentops operator loop-audit --limit 20",
+                    "agentops operator action-receipts --limit 20",
+                ]
+                if command
+            ],
+            "prepare": [
+                command
+                for command in [
+                    managed_execution_commands.get("agent_plan_create"),
+                    managed_execution_commands.get("knowledge_search"),
+                    managed_execution_commands.get("base_reference"),
+                    service_commands.get("record_verified_receipt"),
+                    service_commands.get("record_control_readback"),
+                ]
+                if command
+            ],
+            "confirm_required": [
+                command
+                for command in [
+                    commands.get("loop_driver_confirm"),
+                    managed_execution_commands.get("customer_worker_dispatch"),
+                ]
+                if command
+            ],
+            "verify": [
+                command
+                for command in [
+                    managed_execution_commands.get("evidence_report"),
+                    managed_execution_commands.get("review_queue"),
+                    commands.get("live_product_readiness"),
+                    "agentops operator loop-audit --limit 20",
+                    "agentops operator action-receipts --limit 20",
+                ]
+                if command
+            ],
+        },
+        "gates": [
+            {
+                "id": gate.get("id"),
+                "status": gate.get("status"),
+                "ok": gate.get("ok"),
+                "command": gate.get("command"),
+                "confirm_required": gate.get("confirm_required", False),
+                "token_omitted": True,
+            }
+            for gate in gates
+            if isinstance(gate, dict)
+        ],
+        "receipts": {
+            "service_control": {
+                "required": service_managed_loop.get("receipt_required") is True,
+                "verified": service_managed_loop.get("receipt_verified") is True,
+                "receipt_id": service_managed_loop.get("receipt_id"),
+                "record_command": service_commands.get("record_verified_receipt"),
+                "token_omitted": True,
+            },
+            "control_readback": {
+                "required": service_managed_loop.get("control_readback_required") is True,
+                "attached": service_managed_loop.get("control_readback_attached") is True,
+                "control_readback_id": service_managed_loop.get("control_readback_id"),
+                "record_command": service_commands.get("record_control_readback"),
+                "token_omitted": True,
+            },
+            "run_start_admission": run_start_receipt_projection,
+        },
+        "evidence_contract": {
+            "agent_plan_required": True,
+            "knowledge_retrieval_required": True,
+            "base_reference_required": True,
+            "plan_evidence_required": True,
+            "review_queue_required": True,
+            "audit_ledger_required": True,
+            "memory_review_required": review_pressure["memory_candidates"] > 0,
+            "token_omitted": True,
+        },
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "copy_only": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "contract": "machine-consumable Hermes/OpenClaw/Codex loop work packet; agents may read and copy commands, but execution remains gated by Agent Plan, retrieval, approvals, receipts, evidence, memory review, and local human confirmation",
+        "token_omitted": True,
+    }
+    agent_work_packet["packet_hash"] = stable_hash(agent_work_packet)
     return {
         "operation": "operator_loop_supervision_item",
         "adapter": adapter,
@@ -25107,6 +25287,7 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
         "gates": gates,
         "local_deployment": local_deployment,
         "agent_loop_packet": start_check_payload.get("agent_loop_packet") if isinstance(start_check_payload.get("agent_loop_packet"), dict) else None,
+        "agent_work_packet": agent_work_packet,
         "next_commands": {
             "safe_read_commands": [
                 command
@@ -25161,22 +25342,7 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
             "run_metadata_field": "loop_supervision_hash",
             "recommended_next": recommended_next_command,
             "status": "pass" if would_allow_run_start else "blocked",
-            "receipt_projection": {
-                "source": f"operator_loop_supervision.run_start_gate:{adapter}",
-                "action_id": f"run_start_supervision:{adapter}",
-                "action_signature": stable_id(
-                    "op_action_sig",
-                    "run_start_loop_supervision_gate",
-                    adapter,
-                    "bound_by_agent_gateway_run_start",
-                    f"agentops operator loop-supervision --adapter {adapter} --limit {limit}",
-                )[-18:],
-                "action_command": f"agentops operator loop-supervision --adapter {adapter} --limit {limit}",
-                "verify_command": f"agentops operator loop-audit --limit {min(max(limit, 8), 20)}",
-                "control_readback_required": True,
-                "control_readback_source": f"operator_loop_supervision.run_start_gate:{adapter}.control_readback",
-                "token_omitted": True,
-            },
+            "receipt_projection": run_start_receipt_projection,
             "contract": "read-only projection of the Agent Gateway run_start loop-supervision precondition; it does not create runs and hashes are bound only when Gateway consumes the gate during run_start.",
             "safety": {
                 "read_only": True,
@@ -25243,6 +25409,11 @@ def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_c
         command = ((item.get("commands") or {}).get("recommended_next") if isinstance(item.get("commands"), dict) else None)
         if command and command not in next_actions:
             next_actions.append(command)
+    work_packets = [
+        item.get("agent_work_packet")
+        for item in items
+        if isinstance(item.get("agent_work_packet"), dict)
+    ]
     return {
         "provider": "agentops-operator",
         "operation": "operator_loop_supervision",
@@ -25261,8 +25432,9 @@ def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_c
             "current_code_ok": current_code.get("ok") is True,
         },
         "items": items,
+        "work_packets": work_packets,
         "next_actions": next_actions[:8],
-        "contract": "read-only execution supervision projection for Hermes/OpenClaw/Codex after handoff and before confirm-loop; use it to decide whether to preview, record/review first, or copy the bounded confirm command locally",
+        "contract": "read-only execution supervision projection and machine work-packet bundle for Hermes/OpenClaw/Codex after handoff and before confirm-loop; use it to decide whether to preview, record/review first, or copy the bounded confirm command locally",
         "auth": handoff.get("auth") if isinstance(handoff.get("auth"), dict) else {
             "mode": (auth_ctx or {}).get("mode") or "unknown",
             "required_scope": "tasks:read",

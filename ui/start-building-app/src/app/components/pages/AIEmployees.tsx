@@ -5020,6 +5020,18 @@ export function AIEmployees() {
                             { label: "live-readiness", command: item.commands.live_product_readiness },
                             { label: "review-queue", command: managedExecutionCommands.review_queue || item.commands.record_review },
                           ].filter((entry) => entry.command);
+                          const agentWorkPacket = item.agent_work_packet || {};
+                          const primaryNextAction = typeof agentWorkPacket.primary_next_action === "object" && agentWorkPacket.primary_next_action !== null
+                            ? agentWorkPacket.primary_next_action as Record<string, unknown>
+                            : {};
+                          const workPacketSafety = typeof agentWorkPacket.safety === "object" && agentWorkPacket.safety !== null
+                            ? agentWorkPacket.safety as Record<string, unknown>
+                            : {};
+                          const workPacketHash = String(agentWorkPacket.packet_hash || "");
+                          const workPacketSchema = String(agentWorkPacket.schema_version || "missing");
+                          const workPacketPrimaryPhase = String(primaryNextAction.phase || "missing");
+                          const workPacketPrimaryCommand = String(primaryNextAction.command || "");
+                          const workPacketJson = Object.keys(agentWorkPacket).length ? JSON.stringify(agentWorkPacket, null, 2) : "";
                           const localDeploymentOk = localDeploymentGate?.ok === true
                             && recommendedAdapter === item.adapter
                             && serviceManagedAdapter === item.adapter
@@ -5054,6 +5066,64 @@ export function AIEmployees() {
                                 </div>
                               ))}
                             </div>
+                            {Object.keys(agentWorkPacket).length > 0 && (
+                              <div
+                                data-testid="operator-loop-supervision-agent-work-packet"
+                                className="mt-1.5 rounded p-1.5 min-w-0"
+                                style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-1">
+                                  <div className="text-[8px] font-semibold" style={{ color: "var(--mis-text)" }}>Agent work packet</div>
+                                  <div className="flex flex-wrap gap-1">
+                                    <StatusBadge status={workPacketSafety.server_executes_shell ? "blocked" : "pass"} label={workPacketSafety.server_executes_shell ? "server shell" : "no server shell"} />
+                                    <StatusBadge status={workPacketSafety.live_execution_performed ? "blocked" : "pass"} label={workPacketSafety.live_execution_performed ? "live performed" : "no live execution"} />
+                                    <StatusBadge status={primaryNextAction.confirm_required ? "approval_required" : "pass"} label={primaryNextAction.confirm_required ? "confirm" : "copy-only"} />
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-1 mt-1">
+                                  {[
+                                    { label: "Schema", value: workPacketSchema, status: workPacketSchema === "agent_work_packet_v1" ? "pass" : "attention" },
+                                    { label: "Packet hash", value: workPacketHash ? workPacketHash.slice(0, 12) : "missing", status: workPacketHash ? "pass" : "attention" },
+                                    { label: "Primary phase", value: workPacketPrimaryPhase, status: workPacketPrimaryPhase === "EXECUTE" ? "approval_required" : "pass" },
+                                    { label: "Auto continue", value: String(primaryNextAction.safe_to_auto_continue ?? false), status: primaryNextAction.safe_to_auto_continue ? "pass" : "attention" },
+                                  ].map((metric) => (
+                                    <div key={`${item.adapter}:agent-work-packet:${metric.label}`} className="rounded px-1.5 py-0.5 min-w-0" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                                      <div className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{metric.label}</div>
+                                      <div className="flex items-center justify-between gap-1 mt-0.5">
+                                        <span className="text-[8px] font-semibold truncate" style={{ color: "var(--mis-text)" }} title={metric.value}>{metric.value}</span>
+                                        <StatusBadge status={metric.status} />
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {workPacketPrimaryCommand && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void copyIntakeCommand(workPacketPrimaryCommand)}
+                                      className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                                      style={{ color: "var(--mis-green)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                                      title={workPacketPrimaryCommand}
+                                    >
+                                      <Copy size={8} />
+                                      <span className="truncate max-w-[160px]">{copiedIntakeCommand === workPacketPrimaryCommand ? copy.copiedCommand : "primary-next"}</span>
+                                    </button>
+                                  )}
+                                  {workPacketJson && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void copyIntakeCommand(workPacketJson)}
+                                      className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                                      style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                                      title={workPacketJson}
+                                    >
+                                      <Copy size={8} />
+                                      <span className="truncate max-w-[160px]">{copiedIntakeCommand === workPacketJson ? copy.copiedCommand : "copy packet JSON"}</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            )}
                             <div
                               data-testid="operator-loop-supervision-local-deployment"
                               className="mt-1.5 rounded p-1.5 min-w-0"
