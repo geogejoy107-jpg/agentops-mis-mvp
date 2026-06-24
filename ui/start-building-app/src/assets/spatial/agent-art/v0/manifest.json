@@ -27,12 +27,12 @@
       "rows": 2,
       "roles": ["research", "coder", "browser", "memory", "approval", "runtime"],
       "roleRoutes": {
-        "research": "/workspace/research",
+        "research": "/workspace/agents",
         "coder": "/workspace/agents",
-        "browser": "/admin/tools",
+        "browser": "/admin/toolcalls",
         "memory": "/workspace/memory",
         "approval": "/workspace/approvals",
-        "runtime": "/admin/runtimes"
+        "runtime": "/admin/connectors"
       },
       "identityEncoding": ["chassis", "core", "tool-module", "accent-ramp"],
       "humanBody": false,
