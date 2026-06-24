@@ -51,20 +51,17 @@ python -m pip install -e .
 
 Python 3.11 or newer is required. Real SSH execution also requires a system OpenSSH client and approved key/agent-based authentication.
 
-## Validate and run locally
+## Validate locally
 
 ```bash
-research-lab init --db .research-lab/lab.db --workspace .research-lab/workspace
+research-lab inventory --workdir .
 research-lab validate-spec --spec examples/confirmatory_experiment.json
-research-lab submit \
-  --db .research-lab/lab.db \
-  --workspace .research-lab/workspace \
-  --spec examples/confirmatory_experiment.json
-research-lab run \
-  --db .research-lab/lab.db \
-  --workspace .research-lab/workspace \
-  --experiment-id <ID>
+research-lab validate-spec --spec examples/ssh_experiment.json --servers examples/servers.example.json
 ```
+
+This incubator slice is a runnable protocol/provenance and server-profile
+validator. It does not yet expose ledger-backed `init`, `submit`, or `run`
+commands; those belong to the next source slice.
 
 ## Provenance example
 
@@ -120,7 +117,11 @@ python -m compileall -q research_lab examples tests
 python -m unittest discover -s tests -v
 ```
 
-v0.3.1 has 25 deterministic tests. They cover local and loopback-SSH execution, bounded concurrency, profile drift, safe staging, remote uncertainty, frozen provenance, unsafe reference rejection, strict-stage provenance requirements, and checkpoint initialization requirements. A real authorized SSH/GPU target is still required for infrastructure dogfood.
+This uploaded slice has 12 deterministic tests. They cover the local CLI,
+read-only server profile inspection, deterministic matrix expansion, frozen
+provenance, unsafe reference rejection, strict-stage provenance requirements,
+and checkpoint initialization requirements. A real authorized SSH/GPU target is
+still required for infrastructure dogfood.
 
 ## Repository strategy
 
@@ -129,10 +130,10 @@ agentops-mis-mvp
 └── incubator/research-lab/   # standalone package; no direct MIS database import
 ```
 
-- GitHub PR: `#21`
-- Target: `main`
-- Branch: `incubator/research-lab-ssh-v0-3`
-- Frozen v0.3.1 planning baseline: `34ee0301fa1e49c6f48c481727a197797744f122`
+- GitHub PR: `#32`
+- Target: `codex/osbi-v1-1-mainline`
+- Branch: `codex/research-lab-ssh-mainline`
+- Current source slice: runnable CLI smoke plus protocol/provenance contracts
 
 ## Next lanes
 

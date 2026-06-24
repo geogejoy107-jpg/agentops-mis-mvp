@@ -1,9 +1,9 @@
 # Research Lab v0.3.1 source completeness
 
 > Updated: 2026-06-24  
-> Branch: `incubator/research-lab-ssh-v0-3`  
-> PR: `#21`  
-> Canonical: false
+> Branch: `codex/research-lab-ssh-mainline`
+> PR: `#32`
+> Canonical for current CLI/protocol/provenance slice: true
 
 ## Uploaded and reviewable
 
@@ -17,6 +17,7 @@
 - non-secret SSH server profile registry;
 - deterministic allowlisted staging and safe extraction;
 - guarded SSH executor boundary;
+- CLI commands: `validate-spec`, `server-list`, `server-probe`, and `inventory`;
 - protocol deviation and Scientific Claim Gate logic;
 - protocol and provenance contract tests;
 - path-scoped GitHub Actions checks on Python 3.11, 3.12, and 3.13;
@@ -26,13 +27,14 @@
 
 - standalone SQLite ledger and migrations;
 - full orchestrator and retry/recovery persistence;
-- CLI commands;
 - report and read-only local website;
 - full local and loopback-SSH test suite;
 - the complete example training package;
 - durable detached SSH polling, cancellation, and reconciliation.
 
-The independently runnable local artifact remains the broader implementation evidence. GitHub PR #21 currently proves only the uploaded contract slice and its path-scoped checks. Do not treat local 25-test evidence as a remote PR CI result.
+GitHub PR #32 proves the uploaded runnable CLI/protocol/provenance slice and its
+path-scoped checks. Do not treat the older local 25-test planning baseline as a
+remote PR CI result for this branch.
 
 ## Real-infrastructure boundary
 
@@ -41,7 +43,8 @@ No authorized Linux/GPU server has been exercised from this environment. The def
 ## Next source slice
 
 1. Upload the SQLite ledger and compact orchestrator.
-2. Upload CLI and example training workload.
+2. Upload the example training workload and local end-to-end runner.
 3. Add local end-to-end tests and claim-gate negative tests.
 4. Expand CI from contract checks to the full standalone suite.
-5. Rebase or refresh the Draft PR against the latest `main` before review.
+5. Rebase or refresh the PR against the latest `codex/osbi-v1-1-mainline`
+   before review.

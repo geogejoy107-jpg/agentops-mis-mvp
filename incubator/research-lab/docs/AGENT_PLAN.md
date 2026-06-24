@@ -2,11 +2,11 @@
 
 ```text
 Repository: geogejoy107-jpg/agentops-mis-mvp
-Target branch: main
-Verified target commit: 34ee0301fa1e49c6f48c481727a197797744f122
-Working branch: incubator/research-lab-ssh-v0-3
+Target branch: codex/osbi-v1-1-mainline
+Verified target commit: 8f200c3200891bb1b747e18871ddc75cf8eccf5c
+Working branch: codex/research-lab-ssh-mainline
 Current milestone: v1.5 merged; keep P0 gates green while productization continues
-Current objective: upload the complete standalone module and absorb provenance patterns without authority transfer
+Current objective: upload the runnable CLI/protocol/provenance slice and absorb provenance patterns without authority transfer
 Relevant approved decisions: D-001 through D-006
 Open P0/P1 items: P0-11; P1-05; P1-06
 Risks / unknowns: real SSH/GPU evidence is pending; optional adapters are not yet integrated
@@ -14,7 +14,7 @@ Risks / unknowns: real SSH/GPU evidence is pending; optional adapters are not ye
 
 ```yaml
 task_understanding: >-
-  Complete the path-isolated Research Lab source slice and adapt selected MLflow,
+  Complete the path-isolated Research Lab CLI/protocol/provenance slice and adapt selected MLflow,
   DVC, Hydra, Slurm/Submitit, and Optuna concepts into first-party provenance and
   adapter boundaries without moving scientific governance into an external system.
 referenced_specs:
@@ -51,13 +51,13 @@ execution_steps:
   - bind code/data/model/environment/resolved-config references to the protocol hash
   - require provenance for strict scientific stages
   - propagate frozen hashes into local and SSH runtime actuals
-  - upload complete standalone source and tests
+  - upload runnable CLI, examples, source, and tests
   - add path-scoped CI
   - update GitHub PR and Notion evidence
 verification_plan:
   - compile package/examples/tests
   - run all deterministic tests
-  - execute one local confirmatory CLI workflow
+  - execute local and SSH-spec validation CLI workflows
   - verify strict provenance negative cases
   - verify PR diff stays under incubator plus dedicated workflow
 rollback_plan: >-
