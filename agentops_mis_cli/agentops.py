@@ -1556,9 +1556,12 @@ def cmd_operator_loop_supervision(args, client: AgentOpsClient) -> dict:
             "freshness_hours": args.freshness_hours,
             "include_codex": "true" if args.include_codex else "false",
             "research_profile": args.research_profile or None,
+            "work_packet": "true" if getattr(args, "work_packet", False) else None,
         },
     )
     if getattr(args, "work_packet", False):
+        if payload.get("operation") == "operator_loop_work_packet_bundle":
+            return payload
         return compact_loop_supervision_work_packets(payload)
     return payload
 
@@ -3716,6 +3719,54 @@ def select_command_center_advance_item(command_center: dict, source_filter: str)
     return {}
 
 
+def select_action_plan_advance_item(action_plan: dict, source_filter: str) -> dict:
+    source_filter = str(source_filter or "").strip()
+    if not source_filter:
+        return {}
+    for item in action_plan.get("actions") or []:
+        if not isinstance(item, dict):
+            continue
+        lane = str(item.get("lane") or "general")
+        source = f"operator_action_plan:{lane}"
+        if source_filter not in source and source_filter != lane:
+            continue
+        command = str(item.get("command") or "").strip()
+        if not command:
+            continue
+        policy = advance_loop_command_policy(command, phase="action")
+        if not policy.get("allowed"):
+            continue
+        evidence_payload = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        return {
+            "package_id": f"operator_action_plan:{source}",
+            "action_id": item.get("action_id"),
+            "action_signature": item.get("action_signature") or item.get("action_id"),
+            "gate_id": lane,
+            "gate_label": item.get("title") or source,
+            "gate_status": item.get("receipt_status") or item.get("severity") or "missing",
+            "source": "operator_action_plan",
+            "action_command": command,
+            "verify_command": item.get("verify_command") or "agentops operator action-plan --limit 12",
+            "receipt_verify_record_command": item.get("receipt_verify_record_command"),
+            "receipt_source": evidence_payload.get("receipt_source") or source,
+            "evidence": {
+                "command_center_source": source,
+                "title": item.get("title"),
+                "priority": item.get("priority"),
+                "receipt_status": item.get("receipt_status"),
+                "receipt_verified": item.get("receipt_verified"),
+                "control_readback_required": item.get("control_readback_required"),
+                "evidence": evidence_payload,
+                "operation": action_plan.get("operation"),
+                "status": action_plan.get("status"),
+                "token_omitted": True,
+            },
+            "advance_policy": policy,
+            "token_omitted": True,
+        }
+    return {}
+
+
 def compact_loop_control(payload: dict) -> dict:
     control = payload.get("control_summary") or {}
     step = control.get("recommended_step") or {}
@@ -3749,12 +3800,15 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
         command_center = client.get("/api/operator/command-center", query={"limit": args.limit})
         selected = select_command_center_advance_item(command_center, source_filter)
         if not selected:
+            action_plan = client.get("/api/operator/action-plan", query={"limit": args.limit})
+            selected = select_action_plan_advance_item(action_plan, source_filter)
+        if not selected:
             return {
                 "provider": "agentops-operator",
                 "operation": "operator_advance_loop",
                 "status": "empty",
                 "advanced": False,
-                "message": f"No allowlisted command-center action matched --source {source_filter!r}; explicit source filters do not fall back to unrelated gates.",
+                "message": f"No allowlisted command-center/action-plan action matched --source {source_filter!r}; explicit source filters do not fall back to unrelated gates.",
                 "source": source_filter,
                 "handoff_status": handoff.get("status"),
                 "control_readback": {
