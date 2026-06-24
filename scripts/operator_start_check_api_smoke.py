@@ -254,6 +254,14 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     require(service_managed_loop.get("control_readback_required") is True, f"{adapter} service-managed readback requirement missing: {admission_packet}", failures)
     require((service_managed_loop.get("safety") or {}).get("loads_service") is False, f"{adapter} service-managed load boundary missing: {admission_packet}", failures)
     require((service_managed_loop.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} service-managed server-shell proof missing: {admission_packet}", failures)
+    top_service_step = next((step for step in local_steps if isinstance(step, dict) and step.get("step_id") == "preview_worker_service_control"), {})
+    top_receipt_state = top_service_step.get("receipt_state") or {}
+    require(top_service_step.get("source") == f"local_readiness.service_control_preview.{adapter}", f"{adapter} top service-control source mismatch: {top_service_step}", failures)
+    require(f"--adapter {adapter}" in str(top_service_step.get("verify_command") or ""), f"{adapter} top service-control verify adapter mismatch: {top_service_step}", failures)
+    if service_managed_loop.get("receipt_id"):
+        require(top_receipt_state.get("receipt_id") == service_managed_loop.get("receipt_id"), f"{adapter} top service-control receipt mismatch: {top_service_step} vs {service_managed_loop}", failures)
+    if service_managed_loop.get("control_readback_id"):
+        require(top_receipt_state.get("control_readback_id") == service_managed_loop.get("control_readback_id"), f"{adapter} top service-control readback mismatch: {top_service_step} vs {service_managed_loop}", failures)
     require(managed_execution_path.get("operation") == "operator_service_managed_execution_path", f"{adapter} managed execution path missing: {admission_packet}", failures)
     require(managed_execution_path.get("service_managed_loop_ready") in {True, False}, f"{adapter} managed execution readiness missing: {managed_execution_path}", failures)
     require({"service_managed_loop_ready", "agent_plan_required", "knowledge_retrieval_required", "customer_worker_dispatch", "plan_evidence_required", "review_queue_required"}.issubset(managed_execution_gate_ids), f"{adapter} managed execution gates missing: {managed_execution_path}", failures)

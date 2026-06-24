@@ -562,6 +562,23 @@ def compact_start_check_local_run_path(local: dict[str, Any], *, adapter: str | 
                 step["source"] = f"local_readiness.service_control_preview.{requested_adapter}"
                 step["receipt_record_command"] = service_receipt_verified.replace(" --status verified", " --status recorded")
                 step["receipt_verify_record_command"] = service_receipt_verified
+                step["receipt_state"] = {
+                    "required": True,
+                    "status": "verified" if service_managed_loop.get("receipt_verified") else "missing",
+                    "match": "current" if service_managed_loop.get("receipt_verified") else "missing",
+                    "verified": bool(service_managed_loop.get("receipt_verified")),
+                    "receipt_id": service_managed_loop.get("receipt_id"),
+                    "receipt_hash": service_managed_loop.get("receipt_hash"),
+                    "action_signature": service_action_signature,
+                    "control_readback_required": True,
+                    "control_readback_attached": bool(service_managed_loop.get("control_readback_attached")),
+                    "control_readback_id": service_managed_loop.get("control_readback_id"),
+                    "control_readback_hash": service_managed_loop.get("control_readback_hash"),
+                    "readback_verification_status": service_managed_loop.get("readback_verification_status"),
+                    "service_check_ok": bool(service_managed_loop.get("service_check_ok")),
+                    "service_file_exists": bool(service_managed_loop.get("service_file_exists")),
+                    "token_omitted": True,
+                }
             elif step_id == "dispatch_customer_task":
                 step["adapter"] = requested_adapter
                 step["command"] = (
