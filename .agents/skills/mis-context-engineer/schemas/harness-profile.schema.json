@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentops-mis.local/schemas/harness-profile.v0.2.schema.json",
+  "title": "AgentOps MIS Harness Profile v0.2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name", "version", "authority", "scope", "retrieval", "cache", "tokens", "observability", "verification", "writeback"],
+  "properties": {
+    "schema_version": {"const": "0.2"},
+    "name": {"type": "string", "minLength": 1},
+    "version": {"type": "string", "minLength": 1},
+    "description": {"type": "string", "default": ""},
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_order", "candidate_memory_mode", "require_exact_git_for_code"],
+      "properties": {
+        "source_order": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/authorityClass"}},
+        "candidate_memory_mode": {"enum": ["exclude", "supporting_only"]},
+        "require_exact_git_for_code": {"type": "boolean"}
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspace_id", "project_id", "task_id", "access_tags", "enforce_before_ranking"],
+      "properties": {
+        "workspace_id": {"type": "string", "minLength": 1},
+        "project_id": {"type": ["string", "null"]},
+        "task_id": {"type": ["string", "null"]},
+        "access_tags": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "enforce_before_ranking": {"const": true}
+      }
+    },
+    "retrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mandatory_sources", "retrievers", "escalation_order", "lexical_first", "max_parallel_retrievers"],
+      "properties": {
+        "mandatory_sources": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "retrievers": {"type": "array", "uniqueItems": true, "items": {"enum": ["project_docs", "github", "mis_ledger", "approved_memory", "candidate_memory", "fts5", "repo_map", "semantic", "entity_graph", "external_research"]}},
+        "escalation_order": {"type": "array", "uniqueItems": true, "items": {"enum": ["mandatory", "lexical", "repo_map", "rerank", "semantic", "entity_graph"]}},
+        "lexical_first": {"const": true},
+        "max_parallel_retrievers": {"type": "integer", "minimum": 1, "maximum": 16}
+      }
+    },
+    "cache": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "stable_prefix", "content_addressed", "reuse_previous_manifest", "cache_namespace"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "stable_prefix": {"type": "boolean"},
+        "content_addressed": {"type": "boolean"},
+        "reuse_previous_manifest": {"type": "boolean"},
+        "cache_namespace": {"type": "string", "minLength": 1}
+      }
+    },
+    "tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_budget", "reserved_output", "tier_budgets", "min_item_tokens"],
+      "properties": {
+        "total_budget": {"type": "integer", "minimum": 256},
+        "reserved_output": {"type": "integer", "minimum": 0},
+        "min_item_tokens": {"type": "integer", "minimum": 1},
+        "tier_budgets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stable_prefix", "mandatory_authority", "task_and_acceptance", "implementation_evidence", "approved_memory", "optional_support"],
+          "properties": {
+            "stable_prefix": {"type": "integer", "minimum": 0},
+            "mandatory_authority": {"type": "integer", "minimum": 0},
+            "task_and_acceptance": {"type": "integer", "minimum": 0},
+            "implementation_evidence": {"type": "integer", "minimum": 0},
+            "approved_memory": {"type": "integer", "minimum": 0},
+            "optional_support": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_iteration_trace", "record_latency", "record_token_metrics", "record_cache_metrics"],
+      "properties": {
+        "record_iteration_trace": {"type": "boolean"},
+        "record_latency": {"type": "boolean"},
+        "record_token_metrics": {"type": "boolean"},
+        "record_cache_metrics": {"type": "boolean"}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["require_manifest_schema", "require_eval_summary", "deterministic_hash"],
+      "properties": {
+        "require_manifest_schema": {"const": true},
+        "require_eval_summary": {"const": true},
+        "deterministic_hash": {"const": true}
+      }
+    },
+    "writeback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "auto_promote", "require_human_review"],
+      "properties": {
+        "mode": {"enum": ["none", "candidate_only"]},
+        "auto_promote": {"const": false},
+        "require_human_review": {"const": true}
+      }
+    }
+  },
+  "$defs": {
+    "authorityClass": {"enum": ["git_fact", "mis_execution_fact", "approved_project_state", "approved_memory", "candidate_memory", "external_research", "chat_source"]}
+  }
+}
