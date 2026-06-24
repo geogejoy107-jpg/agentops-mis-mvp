@@ -4,7 +4,7 @@ import { NavLink, useLocation } from "react-router";
 import {
   Home, CheckSquare, Bot, ShieldCheck, Brain, BarChart2, Package,
   Activity, List, Wrench, Plug, Database, ClipboardList, Map,
-  ChevronDown, ChevronRight, Zap,
+  ChevronDown, ChevronRight, Zap, TerminalSquare, ClipboardCheck,
 } from "lucide-react";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 
@@ -25,8 +25,10 @@ const navGroups: NavGroup[] = [
     items: [
       { labelKey: "home",         path: "/workspace",              icon: <Home size={15} /> },
       { labelKey: "pixelOffice",  path: "/workspace/pixel-office", icon: <Map size={15} /> },
+      { labelKey: "dispatchDesk", path: "/workspace/dispatch",     icon: <ClipboardCheck size={15} /> },
       { labelKey: "myTasks",      path: "/workspace/tasks",        icon: <CheckSquare size={15} /> },
       { labelKey: "aiEmployees",  path: "/workspace/agents",       icon: <Bot size={15} /> },
+      { labelKey: "workerConsole",path: "/workspace/workers",      icon: <TerminalSquare size={15} /> },
       { labelKey: "approvals",    path: "/workspace/approvals",    icon: <ShieldCheck size={15} /> },
       { labelKey: "memory",       path: "/workspace/memory",       icon: <Brain size={15} /> },
       { labelKey: "reports",      path: "/workspace/reports",      icon: <BarChart2 size={15} /> },
@@ -58,8 +60,10 @@ export function Sidebar() {
       adminConsole: "Admin Console",
       home: "Home",
       pixelOffice: "Pixel Office",
+      dispatchDesk: "Dispatch Desk",
       myTasks: "My Tasks",
       aiEmployees: "AI Employees",
+      workerConsole: "Worker Console",
       approvals: "Approvals",
       memory: "Memory",
       reports: "Reports",
@@ -79,8 +83,10 @@ export function Sidebar() {
       adminConsole: "后台管理端",
       home: "首页",
       pixelOffice: "像素办公室",
+      dispatchDesk: "派活台",
       myTasks: "我的任务",
       aiEmployees: "AI 员工",
+      workerConsole: "Worker 控制台",
       approvals: "审批",
       memory: "记忆",
       reports: "报告",

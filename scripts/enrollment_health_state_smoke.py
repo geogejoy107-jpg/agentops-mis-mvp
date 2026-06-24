@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import re
 import sqlite3
 import sys
 import urllib.error
@@ -14,7 +17,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DB_PATH = ROOT / "agentops_mis.db"
+DB_PATH = Path(os.environ.get("AGENTOPS_DB_PATH") or (ROOT / "agentops_mis.db"))
 
 
 def http_json(
@@ -45,11 +48,19 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def safe_ref(prefix: str, raw: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9_]+", "_", raw or "").strip("_").lower()
+    if slug and len(slug) <= 64:
+        return f"{prefix}_{slug}"[-12:]
+    return f"{prefix}_{hashlib.sha256((raw or '').encode('utf-8')).hexdigest()[:16]}"[-12:]
+
+
 def find_enrollment(enrollments: list[dict], token_id: str) -> dict:
+    token_ref = safe_ref("token_ref", token_id)
     for item in enrollments:
-        if item.get("token_id") == token_id:
+        if item.get("token_ref") == token_ref:
             return item
-    raise AssertionError(f"token not found in enrollment list: {token_id}")
+    raise AssertionError(f"token ref not found in enrollment list: {token_ref}")
 
 
 def get_enrollment(base_url: str, token_id: str) -> dict:
@@ -86,6 +97,7 @@ def smoke(base_url: str, stamp: str) -> dict:
 
     never_seen = get_enrollment(base_url, token_id)
     require(never_seen.get("heartbeat_state") == "never_seen", f"expected never_seen, got {never_seen}")
+    require(never_seen.get("token_id_omitted") is True and not never_seen.get("token_id"), f"enrollment list leaked token id: {never_seen}")
 
     heartbeat_status, heartbeat = http_json("POST", base_url, "/api/agent-gateway/heartbeat", {
         "status": "idle",
@@ -110,7 +122,7 @@ def smoke(base_url: str, stamp: str) -> dict:
 
     return {
         "agent_id": agent_id,
-        "token_id": token_id,
+        "token_ref": safe_ref("token_ref", token_id),
         "states": ["never_seen", "fresh", "stale", "revoked"],
         "last_heartbeat_aged_at": aged_at,
         "token_omitted": True,

@@ -4,6 +4,8 @@ import { WorkspaceHome } from "./components/pages/WorkspaceHome";
 import { PixelOffice } from "./components/pages/PixelOffice";
 import { MyTasks } from "./components/pages/MyTasks";
 import { AIEmployees } from "./components/pages/AIEmployees";
+import { WorkerConsole } from "./components/pages/WorkerConsole";
+import { CustomerDispatchDesk } from "./components/pages/CustomerDispatchDesk";
 import { ApprovalsInbox } from "./components/pages/ApprovalsInbox";
 import { MemoryLibrary } from "./components/pages/MemoryLibrary";
 import { Reports } from "./components/pages/Reports";
@@ -32,6 +34,8 @@ export default function App() {
             <Route path="/workspace/pixel-office" element={<PixelOffice />} />
             <Route path="/workspace/tasks" element={<MyTasks />} />
             <Route path="/workspace/agents" element={<AIEmployees />} />
+            <Route path="/workspace/dispatch" element={<CustomerDispatchDesk />} />
+            <Route path="/workspace/workers" element={<WorkerConsole />} />
             <Route path="/workspace/approvals" element={<ApprovalsInbox />} />
             <Route path="/workspace/memory" element={<MemoryLibrary />} />
             <Route path="/workspace/reports" element={<Reports />} />

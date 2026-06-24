@@ -1,9 +1,10 @@
 # AgentOps MIS 当前项目记忆与事实基线
 
-> 状态日期：2026-06-21  
+> 状态日期：2026-06-24
 > 审计基准：`8d1827e00629bdca4779794121ca4a31dfa3f1e1`  
+> 当前交付 HEAD：`37f3eb1f5bbd2a8b9666e6ad84916cdbcb32de80`
 > 开发主线：`codex/agent-gateway-kb-demo`  
-> 相对 `main`：ahead 109 / behind 0  
+> 相对远端分支：ahead 0 / behind 0
 > 审计分支：`audit/v1-5-agent-gateway-hardening`
 
 ## 1. 基准更新
@@ -140,11 +141,11 @@ Machine Interface
 
 | P0 | 当前状态 | 结论 |
 |---|---|---|
-| Agent Method Block | v0 已实现 | 已有 spec/workflow/base/plan/verify，但尚未强制绑定 run/delivery，也没有不可变 plan hash |
-| Shared Knowledge Index | v0 已实现 | 已有 Markdown + SQLite FTS5，但仍缺 chunking、ACL、workspace 隔离、检索评测、Repo Map 和 hybrid retrieval |
-| Real Local Runtime | 大部分实现 | Mock/Hermes/OpenClaw、daemon、remote worker、retry、session、recovery 已有 |
-| Approval Wall | 部分实现 | 审批记录/UI/CLI/review queue 已有；prepared action/action hash/checkpoint/resume 尚未闭合 |
-| Local Coding Template | 未完成 | 尚缺 worktree、localization、patch/test artifact、独立 verifier 和 merge gate |
+| Agent Method Block | v1.5 硬门已落地 | Agent Plan hash、run-start binding、plan evidence manifest、launch packet、loop-control receipt 和 Method Block admission 已有 CI/本地 smoke；后续重点是继续扩大到更多高风险 runtime 内部动作。 |
+| Shared Knowledge Index | v1.5 本地闭环已落地 | Markdown + SQLite FTS5、workspace/scoped knowledge policy、retrieval quality、worker evidence packet、repo-map localization 已有；企业级 semantic/hybrid retrieval 和多租户 ACL 仍属后续商业化层。 |
+| Real Local Runtime | v1.5 产品级本地可用 | Mock/Hermes/OpenClaw worker、daemon、remote worker、retry、session、recovery、live readiness、current-code proof 均已有证据；Hermes/OpenClaw 真实执行仍需显式确认和本地 runtime 可用。 |
+| Approval Wall | 核心 prepared-action 闭环已落地 | 高风险 toolcall、external-write worker preflight、runtime fixed probe、Dify upload gate、customer delivery manifest gate 已有 exact hash/checkpoint/approval/resume 证据；不能宣称已逐条 introspect Hermes/OpenClaw 内部所有工具动作。 |
+| Local Coding Template | v1.5 Commander 本地开发闭环已落地 | Commander work package、repo-map localization、worktree workspace、patch/test/verifier artifact、integration inbox、merge-gate evidence 已有；商业化多人协作和 hosted branch policy 仍属后续。 |
 
 ## 7. 当前不能过度宣称的能力
 
@@ -192,18 +193,14 @@ loopback、本地自用、课程演示、受控 dogfood、单客户验证。
 
 ## 8. 当前最重要的风险
 
-1. Agent Plan 可创建但尚未成为真实执行硬门；
-2. Agent 可以提交 `approved` 状态的计划，审批角色尚未分离；
-3. Plan verify 只检查非空字段，不验证引用对象真实存在；
-4. generic approval 仍未恢复具体 prepared action；
-5. Runtime 内部工具行为未逐动作进入 MIS；
-6. Worker redaction 仍需统一和强化；
-7. 非 loopback/shared 部署仍可 fail-open；
-8. collaborator 权限仍使用 JSON 文本 `LIKE`；
-9. knowledge search 目前是全项目公共索引，没有 workspace/ACL filter；
-10. SQLite 尚未启用 WAL/busy timeout；
-11. HEAD 没有自动 CI status；
-12. 根目录许可证与第三方 provenance 尚未完成。
+1. 不要把本地 loopback v1.5 宣称成 hosted / multi-tenant SaaS；
+2. Runtime 内部工具行为尚未逐动作进入 MIS，只能宣称外部/高风险入口受 prepared-action gate 保护；
+3. Hermes/OpenClaw live evidence 是本地手动确认路径，不能放进 CI 或默认自动执行；
+4. 商业化 RBAC、billing、tenant provisioning、secret manager、backup/restore 仍不属于当前本地 MVP 完成范围；
+5. Dify/Notion live sync 当前被排除在 v1.5 active goal 之外，只保留安全边界；
+6. `artifacts/sample_export_memories.json` 和 `artifacts/sample_export_runs.json` 可能因本地 server reset/smoke 漂移，除非用户明确重分类，否则不要 stage/commit；
+7. 最终合并仍必须满足 exact-head green CI、clean worktree、release packet、freeze protocol 和 merge readiness strict gates；
+8. 真实产品可用性 claim 必须引用当前 HEAD 的 live Hermes/OpenClaw/remote worker 证据，而不是旧 run ID 或 mock-only CI。
 
 ### 2026-06-22 Reconciliation
 
@@ -302,7 +299,30 @@ liveApi.ts                        > 2.2k lines
 9. 不以状态改成 completed 代替真实执行证据；
 10. 不以文档中的历史通过记录代替当前 HEAD 的 CI。
 
-## 13. Loop Control 最新契约
+## 13. 异步并行执行硬约束
+
+Added: 2026-06-23
+
+用户已经多次纠正：AgentOps MIS 快速产品交付不能串行等待。后续 Codex、
+子代理和自动续跑必须把异步并行当成执行要求，而不是风格偏好。
+
+- MUST 把 CI、浏览器构建、live runtime、长命令和子代理工作拆成
+  asynchronous lanes；启动预计超过 60 秒的 lane 后，立刻推进另一条安全
+  可验证的实现、验证、文档或集成 lane。
+- MUST 在实质性产品交付期间维护 compact commander board，写清 running
+  lanes、merged results、blockers 和 next lane；任何有意等待前都要说明
+  为什么没有独立安全 lane 可推进。
+- MUST 不等齐所有子代理、不为了整洁批量关闭子代理、不把 CI/live runtime
+  等待当成主线停顿理由；慢 lane 结果回来后再合并。
+- MUST 把子代理容量限制看成调度约束，而不是阻塞；开不了子代理时继续主线
+  最高价值 slice，并记录稍后补跑的 lane。
+- MUST 在 context compaction、heartbeat resume 和跨天续跑后保留这套
+  lane board，不重新退回串行等待。
+
+工作区根规则已写入 `/Users/wuji/Documents/MIS/AGENTS.md`；当前仓库详细执行
+规则仍以 `AGENTS.md` 第 5 节为准。
+
+## 14. Loop Control 最新契约
 
 - `agentops operator advance-loop --confirm-advance` 的 `control_readback`
   仍是一次推进的前后读回执；确认路径必须请求

@@ -6,6 +6,7 @@ import {
   Bot,
   Brain,
   CheckCircle,
+  ClipboardCheck,
   ExternalLink,
   Map,
   Play,
@@ -115,12 +116,12 @@ export function WorkspaceHome() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Link
-            to="/workspace/pixel-office"
+            to="/workspace/dispatch"
             className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded"
             style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
           >
-            <Map size={13} />
-            Open Pixel Office
+            <ClipboardCheck size={13} />
+            Dispatch customer task
           </Link>
           <button
             onClick={refresh}
@@ -139,25 +140,25 @@ export function WorkspaceHome() {
       <section className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {[
           {
-            to: "/workspace/pixel-office",
-            icon: <Play size={15} />,
-            title: "Start a customer project",
-            body: "Choose a template, assign AI workers, and generate a ledger-backed delivery.",
+            to: "/workspace/dispatch",
+            icon: <ClipboardCheck size={15} />,
+            title: "Dispatch a customer task",
+            body: "Submit a real customer-style brief, choose AI workers, and generate ledger-backed delivery evidence.",
             color: "var(--mis-cyan)",
           },
           {
-            to: "/workspace/agents",
-            icon: <TerminalSquare size={15} />,
-            title: "Check worker readiness",
-            body: "See Hermes, OpenClaw, local daemon and remote agent enrollment state.",
-            color: "var(--mis-purple)",
+            to: "/workspace/pixel-office",
+            icon: <Map size={15} />,
+            title: "Open operating map",
+            body: "Use the Pixel Office map to navigate zones, agents, task hall, and formal MIS ledgers.",
+            color: "var(--mis-success)",
           },
           {
-            to: "/workspace/reports",
-            icon: <CheckCircle size={15} />,
-            title: "Open delivery reports",
-            body: "Return to customer project reports and confirm report artifact archive status.",
-            color: "var(--mis-success)",
+            to: "/workspace/workers",
+            icon: <TerminalSquare size={15} />,
+            title: "Check worker readiness",
+            body: "Operate mock, Hermes, and OpenClaw workers with live/dry-run and approval boundaries visible.",
+            color: "var(--mis-purple)",
           },
         ].map((item) => (
           <Link

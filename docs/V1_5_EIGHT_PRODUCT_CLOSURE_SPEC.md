@@ -51,6 +51,12 @@ product exposes:
 
 - Local readiness through `GET /api/local/readiness` and `agentops local
   readiness`.
+- Lightweight operator runtime doctor through `GET /api/operator/runtime-doctor`
+  and `agentops operator runtime-doctor`, so a human/Codex/Hermes/OpenClaw
+  operator can check MIS API reachability, adapter readiness, remote worker
+  fleet state, launch-packet availability, handoff evidence counts,
+  `--confirm-run`, prepared-action walls, redaction boundaries, and copyable
+  full-health/handoff commands before dispatching live work.
 - A commander project board through `GET /api/commander/project-board` with
   readiness, worker health, recent work packages, pending approvals, artifacts,
   memory candidates, workflow jobs, integration gates, and recommended next
@@ -83,6 +89,12 @@ product exposes:
   is indexed as `global/internal`, scoped Agent Gateway tokens can only retrieve
   `global` plus their own workspace documents, and redaction happens before FTS
   indexing or snippet return.
+- Local readiness now surfaces Knowledge Index evidence alongside memory
+  governance: `GET /api/local/readiness` and `agentops local readiness` expose
+  knowledge document/chunk/FTS counts, workspace-visible knowledge counts, and a
+  `knowledge_memory` next action that routes to `agentops knowledge search` when
+  indexed knowledge exists. Retrieval quality remains proven by the dedicated
+  smoke instead of inferred from counts alone.
 - CLI/API-first execution for agents, with browser pages reserved for command,
   supervision, approval, and review.
 - Real Hermes/OpenClaw dogfood evidence in the ledger, cited by run ID and
@@ -101,6 +113,17 @@ binding, approval role separation, prepared-action Approval Wall, redaction,
 workspace/knowledge visibility, SQLite reliability, CI, and public-claim
 limits. Treat that file as the release-candidate blocker list before adding
 more horizontal product features.
+
+## Product Validation Rule
+
+Product-readiness and dogfood claims must use real Hermes/OpenClaw execution
+when the local runtimes are available and explicitly authorized. Mock adapter
+evidence is allowed for deterministic CI, offline development, and safety
+fallbacks only; it must be labeled as mock/offline evidence and must not be
+presented as product-level completion. Real Hermes/OpenClaw validation still
+uses the MIS safety contract: explicit `confirm_run`, prepared-action approval
+where required, summary/hash ledger storage, and no raw prompt, raw response,
+credential, private-message, or full-transcript persistence.
 
 ## The Eight Product Closure Items
 
@@ -148,10 +171,23 @@ Acceptance evidence:
 
 Remaining product work:
 
-- OS service loading/restart automation. v1.5 now has safe template generation through `agentops-worker service-template`, dry-run-by-default file installation through `agentops-worker service-install`, and read-only diagnostics through `agentops-worker service-check`; it still does not load, restart, or mutate running OS service state automatically.
-- Full automatic relaunch after process death.
-- Production log rotation.
-- Fleet-level worker management.
+- OS-managed relaunch path is available but still explicit-operator controlled:
+  v1.5 has safe template generation through `agentops-worker service-template`
+  with launchd `KeepAlive=true` and systemd `Restart=always`, dry-run-by-default
+  file installation through `agentops-worker service-install`, read-only
+  machine-readable relaunch diagnostics through `agentops-worker service-check`,
+  and preview-first OS service load/unload/restart through
+  `agentops-worker service-control` / `agentops worker service-control`; real
+  launchd/systemd mutation requires `--confirm-control`.
+- Full hosted/production service orchestration after process death remains out
+  of v1.5; local/BYOC operators get safe service templates plus explicit load
+  controls.
+- Full production log management. v1.5 now rotates repo-local worker daemon logs on daemon start/restart using `AGENTOPS_WORKER_LOG_MAX_BYTES` and `AGENTOPS_WORKER_LOG_BACKUPS`; external launchd/systemd service logs still depend on the host log system.
+- Production fleet manager remains out of scope. v1.5 now has safe local/BYOC
+  fleet hygiene through API/CLI and `/workspace/workers`: operators can preview
+  stuck task release plus stale remote enrollment/session cleanup, then apply it
+  only after explicit cleanup confirmation. It never executes Hermes/OpenClaw
+  live work and keeps token/session ids omitted.
 
 ### 2. OpenClaw / Hermes Adapter Loop
 
@@ -226,6 +262,13 @@ Acceptance evidence:
   - Hermes completed `run_gw_f7fe3a78cadb` from task `tsk_worker_ui_hermes_20260621114203_9e6cc64a`.
   - The local ledger shows completed status plus tool/evaluation/audit/artifact evidence for both runs.
   - These are real live run IDs, not hard-coded fixtures; docs cite IDs and counts only, without raw prompts, raw responses, credentials, or private transcripts.
+- Latest normal customer-worker live acceptance on 2026-06-23:
+  - Current-code combined evidence command: `python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:<current-code-port> --db-path /tmp/<current-code-agentops>.db --confirm-live`; this covers knowledge indexing, Commander synthesis, real Hermes/OpenClaw customer-worker runs, live readiness readback, remote/scoped worker mock fallback, and final non-live local acceptance.
+  - `python3 scripts/customer_worker_real_runtime_acceptance.py --base-url http://127.0.0.1:8787 --confirm-live --adapter hermes --adapter openclaw --request-timeout 900 --hermes-timeout 480`
+  - `python3 scripts/v1_5_live_product_readiness_smoke.py --require-adapter hermes --require-adapter openclaw`
+  - Hermes completed `run_gw_ee70f20c021c` from task `tsk_worker_ui_hermes_20260623062626_2fc8c2b3`, with artifact `art_customer_worker_task_run_gw_ee70f20c021c`, approval `ap_customer_worker_delivery_run_gw_ee70f20c021c`, plan `plan_a1c439e073775da1`, and manifest `pem_daf7d404a2e9024b`.
+  - OpenClaw completed `run_gw_4a58476b7d09` from task `tsk_worker_ui_openclaw_20260623062652_7e64b47f`, with artifact `art_customer_worker_task_run_gw_4a58476b7d09`, approval `ap_customer_worker_delivery_run_gw_4a58476b7d09`, plan `plan_9dd24ddbffbd74a2`, and manifest `pem_1e63d0f6dcd96bf5`.
+  - Both runs wrote tool_calls 1, evaluations 1, runtime_events 14, audit_logs 7, artifacts 2, memories 2, approvals 1, and plan_evidence_manifests 1, and CLI readback showed `token_omitted:true`.
 - Generic customer worker governance closure on 2026-06-20:
   - Mock completed `run_gw_161d789c4469`.
   - Hermes completed `run_gw_5d998a53e469`.
@@ -237,6 +280,11 @@ Acceptance evidence:
   - OpenClaw customer worker live execution returned `runtime_connector_trust_blocked`
   - blocked task `tsk_customer_worker_trust_blocked_30651ba025db2763`
   - restored `rtc_openclaw_local` to `trusted`.
+- Runtime connector trust UI smoke:
+  - `python3 scripts/runtime_connector_trust_ui_smoke.py`
+  - `/admin/connectors` shows trusted/review/blocked operator impact,
+  - live worker gate readback includes connector id and trust status,
+  - connector-specific audit refs are visible next to the trust controls.
 - Runtime capability manifest smoke:
   - `python3 scripts/runtime_capability_manifest_smoke.py --base-url http://127.0.0.1:8787`
   - verifies Agent Gateway, OpenClaw, Hermes, Agnesfallback CLI and Agnesfallback API connector manifests through both API and CLI readback;
@@ -245,6 +293,16 @@ Acceptance evidence:
   - mock transient failure succeeded after two attempts in `run_gw_a572f60ec9f4`,
   - Hermes without `--confirm-run` stopped after one non-retryable `ConfirmRunRequired` attempt in `run_gw_9951c583b9a7`,
   - raw token output remained omitted.
+- `python3 scripts/worker_prompt_profile_smoke.py` verifies task-to-runtime
+  prompt profile v1:
+  - worker classifies coding, knowledge-base, review/quality-gate, and general
+    customer tasks into distinct profile ids;
+  - each profile has a stable `worker_prompt_profiles_v1` version and
+    `prompt_profile_hash`;
+  - tool calls, evaluation rubrics, audit metadata, external-write
+    prepared-action metadata, and worker JSON output carry
+    `prompt_profile_id`, `prompt_profile_version`, and `prompt_profile_hash`;
+  - raw prompt/raw response/token material remains omitted.
 - `python3 scripts/customer_worker_external_write_gate_smoke.py` verifies that
   a confirmed Hermes customer-worker task with `external_write_intent:true`
   returns `202`, writes task/run/tool/prepared-action/approval/runtime/audit
@@ -253,8 +311,9 @@ Acceptance evidence:
 
 Remaining product work:
 
-- Rich task-to-runtime prompt profiles.
-- Rich runtime trust policy beyond the current trusted/review/blocked MVP.
+- Rich runtime trust policy remains future work beyond the current trusted/review/blocked impact/readback controls.
+- Prompt profile v1 is ledger-visible; future work can add customer-editable
+  profile policies and per-template profile overrides.
 - Generalize the same prepared-action entry gate to every high-risk
   external connector/runtime side-effect path before shared/commercial
   deployment.
@@ -401,6 +460,11 @@ Current v1.5 implementation:
 - `/workspace/agents` now includes an operator readiness strip for self-dogfooding and customer operations. It explains local worker mode, confirmed Hermes/OpenClaw live dispatch, remote agent entry, and stuck-task recovery before the detailed gateway/worker/enrollment panels.
 - New/rotated enrollment responses include a safe `next_steps` launch packet for remote machines: package install, env setup, `agentops status`, `agentops-worker preflight`, heartbeat, one-shot `agentops-worker`, loop `agentops-worker`, launchd/systemd template/install/check commands, and repo-local fallback worker commands. Commands use an API-key placeholder rather than embedding the raw token.
 - Launch-packet worker commands now use `--use-session --session-ttl-sec 900`, so remote workers mint a short-lived session before processing tasks instead of holding the enrollment token in the worker loop.
+- `agentops worker readiness` and `GET /api/workers/adapter-readiness` now
+  expose `worker_connection_policy` (`agentops-worker-connection-policy-v1`):
+  short-lived session refresh defaults, idle/error backoff caps, adapter retry
+  semantics, daemon `continue_on_error` / `max_errors`, state/log fields, and
+  copyable verification commands.
 
 Acceptance evidence:
 
@@ -438,6 +502,10 @@ Acceptance evidence:
   - heartbeat, task pull, and audit writes are allowed,
   - claim, run start, tool call, and artifact writes are rejected with HTTP `403 forbidden`,
   - a worker token can claim and start the same task.
+- `python3 scripts/agent_gateway_scope_effects_ui_smoke.py` verifies `/workspace/agents` explains selected scope effects:
+  - read/heartbeat, execution, evidence-write, and governance scopes are grouped for operators,
+  - worker-loop viability is shown from the selected scopes before a token is issued,
+  - the UI explicitly names server-side Agent Gateway enforcement and HTTP `403` fail-closed behavior.
 - `python3 scripts/task_claim_conflict_smoke.py` verified multi-worker claim safety:
   - two agents initially saw the same public pool task,
   - the first claim won,
@@ -475,11 +543,14 @@ Acceptance evidence:
   - Local observer scopes are classified as `observer` and can use direct create.
   - Invalid scopes are blocked before token issue.
   - CLI output omits token/session/secret-like strings.
+- `python3 scripts/enrollment_hosted_policy_ui_smoke.py` verifies deployment-aware enrollment policy UI:
+  - local low-risk observer scopes can use direct token creation,
+  - hosted/shared mode forces approval request and admin-issued token flow,
+  - `/workspace/agents` shows the deployment gate and disables direct create when policy blocks it.
 
 Remaining product work:
 
-- Reconnection/backoff policy.
-- Hosted customer enrollment policy UI.
+- Full hosted enrollment administration remains future SaaS work: customer org enrollment pages, token issuance audit review by workspace owner, and production-grade RBAC administration.
 
 ### 5. MVP Security Boundary
 
@@ -536,6 +607,16 @@ Current v1.5 implementation:
 - `/workspace/agents` also surfaces local readiness, adapter route readiness,
   async workflow jobs, stuck workflow-job recovery, and the async integration
   inbox for commander review of work that returns at different speeds.
+- `/workspace/agents`, `GET /api/operator/execution-mode`, and
+  `agentops operator execution-mode` share a read-only execution-mode contract:
+  selected adapter path, dry-run/mock vs live-confirmed vs confirmation-missing
+  vs adapter-blocked state, confirm-run wall, prepared-action wall, pending
+  approval count, active async jobs, and copyable next commands.
+- `/workspace/workers` provides the dedicated Worker Control Console: it reads
+  real worker status, fleet health, adapter readiness, and operator
+  execution-mode state, then exposes focused one-shot dispatch, local daemon
+  start/restart/stop controls, ledger links, safety badges, and an explicit
+  live-confirm wall for Hermes/OpenClaw.
 - `/workspace/approvals` reads live approvals from the backend and can approve/reject through the real API.
 - `/admin/toolcalls` reads live tool-call evidence from the backend instead of mock data.
 - `/admin/tasks/:id` shows delivery artifacts and links related runs to their Run Detail pages.
@@ -562,12 +643,32 @@ Acceptance evidence:
 - `GET /api/tool-calls` returned 6928 live tool-call rows, including `artifact.delivery_summary`.
 - `GET /api/tasks/tsk_kb_bot_20260617185442_06` returned delivery artifact `art_kb_bot_delivery_20260617185442`.
 - `python3 scripts/approval_decision_side_effect_smoke.py` verified approve and reject status propagation.
+- `python3 scripts/operator_execution_mode_smoke.py` verifies the execution-mode
+  API and CLI are scoped, read-only, non-mutating, and redacted.
+- `python3 scripts/worker_console_ui_smoke.py` verifies `/workspace/workers`,
+  sidebar/home entry points, live Worker API wiring, dispatch/daemon controls,
+  fleet hygiene preview/apply controls, ledger links, and the live-confirm
+  safety wall.
+- `python3 scripts/customer_dispatch_desk_ui_smoke.py` verifies
+  `/workspace/dispatch`, sidebar/home entry points, live workflow API wiring,
+  template/worker dispatch controls, delivery board visibility, and the
+  live-confirm/prepared-action safety language.
+- `python3 scripts/task_detail_evidence_ui_smoke.py` verifies task detail
+  now exposes an execution-posture strip for runtime mode, approval wall, and
+  delivery gate. The strip distinguishes Hermes/OpenClaw live evidence from
+  mock/offline evidence, shows pending approval state, and keeps customers from
+  inferring delivery readiness only from raw run tables.
+- `python3 scripts/run_detail_evidence_ui_smoke.py` verifies run detail now
+  exposes a run evidence-chain strip across tool calls, evaluations, artifacts,
+  approvals, audit references, benchmark cases and live/mock runtime posture.
+  This gives operators a single readback for whether a run has enough evidence
+  to support delivery review.
 
 Remaining product work:
 
-- Dedicated worker control console.
-- Better customer-facing task submission flow.
-- Clearer live/dry-run/approval state indicators.
+- Further polish for live/dry-run/approval state indicators across secondary
+  customer-facing task flows beyond Dispatch Desk, Worker Console, Task Detail
+  and Run Detail.
 
 ### 7. Customer-Task Usefulness
 
@@ -617,6 +718,11 @@ Current v1.5 implementation:
 - Pixel Office can persist the generated customer project report back into the MIS ledger through the `Archive report to ledger` / `归档报告到账本` action.
 - The report link routes to `/workspace/customer-projects/:project_id/report`, a customer-facing page that renders report metrics, safety boundaries, ledger ids, and markdown content instead of raw JSON.
 - Reports can list recent customer projects through `GET /api/workflows/customer-projects`, so users can return to previous delivery reports and archive status.
+- `/workspace/dispatch` is the first-class customer task intake page: it loads
+  live agents through `loadDashboard()` + `loadAgents(metrics)`, reuses the
+  `CustomerDispatchPanel`, links back to Pixel Office and Worker Console, and
+  explains the CLI/API/MCP agent boundary plus Hermes/OpenClaw `confirm_run`
+  and prepared-action gates.
 - The same worker loop is now used for product dogfooding: Hermes/OpenClaw reviewed AgentOps MIS itself from a customer/one-person-company owner perspective and wrote run/tool/evaluation evidence.
 - Task creation now returns a clear `400 owner_agent_not_found` when an administrator assigns work to an unregistered agent, instead of surfacing a database foreign-key failure.
 
@@ -643,6 +749,12 @@ Acceptance evidence:
   - final run: `run_gw_cfde4c4822b1`
   - delivery artifact: `art_kb_bot_delivery_20260618154535`
   - pending external-upload approval: `ap_gw_956174266d1a`
+- Customer Dispatch Desk UI smoke:
+  `python3 scripts/customer_dispatch_desk_ui_smoke.py`
+  - route: `/workspace/dispatch`
+  - static-only safety proof: no live execution, no token material
+  - verifies live workflow API markers and explicit real-runtime confirmation
+    boundaries.
 - Customer template workflow CLI smoke:
   `python3 scripts/agentops_workflow_template_cli_smoke.py`
   - commands: `agentops workflow templates`, `agentops workflow run-template`
@@ -690,6 +802,16 @@ Acceptance evidence:
   - delivery artifact remains `art_kb_bot_delivery_20260618180442453801`
   - report artifact writes `runtime_events` and `audit_logs` with raw report omitted and content hash stored
   - concurrent report/report-artifact smokes passed after changing KB bot project IDs from second-level to microsecond-level timestamps
+- Delivery approval manifest gate smoke:
+  `python3 scripts/delivery_approval_manifest_gate_smoke.py`
+  - starts an isolated local MIS server and SQLite database;
+  - proves customer delivery approval returns
+    `verified_plan_evidence_manifest_required` before a verified manifest
+    exists;
+  - records tool/evaluation/artifact evidence, creates a verified
+    `plan_evidence_manifest`, then approves the delivery review;
+  - confirms the customer delivery board surfaces the verified manifest and
+    omits token-like material.
 - Pixel Office report-archive UI build: `cd ui/start-building-app && npm run build`
 - Customer report page UI build: `cd ui/start-building-app && npm run build`
 - Customer project index smoke: `python3 scripts/customer_project_index_smoke.py`
@@ -708,7 +830,8 @@ Acceptance evidence:
 
 Remaining product work:
 
-- Better task result page polish.
+- Better task result page polish beyond the first Run Detail evidence-chain
+  strip.
 
 ### 8. Productization Track
 
@@ -780,6 +903,7 @@ python3 scripts/task_claim_conflict_smoke.py
 python3 scripts/worker_stuck_recovery_smoke.py
 python3 scripts/worker_session_refresh_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py
+python3 scripts/worker_prompt_profile_smoke.py
 python3 scripts/customer_task_template_smoke.py
 python3 scripts/agentops_workflow_template_cli_smoke.py
 python3 scripts/agentops_workflow_async_job_smoke.py
@@ -790,7 +914,9 @@ python3 scripts/local_coding_project_template_smoke.py
 python3 scripts/commander_work_package_plan_smoke.py
 python3 scripts/commander_work_package_dispatch_smoke.py
 python3 scripts/operator_action_queue_ui_smoke.py
+python3 scripts/customer_dispatch_desk_ui_smoke.py
 python3 scripts/operator_advance_loop_smoke.py
+python3 scripts/operator_loop_control_smoke.py
 cd ui/start-building-app && npm run build
 # Optional live/local-runtime evidence, not part of default CI because it can take several minutes:
 python3 scripts/template_worker_live_dogfood.py --adapter openclaw
@@ -858,7 +984,7 @@ Implemented and verified:
 - Agent Gateway status surfaced in `/workspace/agents`.
 - Operator readiness strip surfaced in `/workspace/agents`.
 - Remote enrollment launch packet surfaced in `/workspace/agents` after token creation/rotation.
-- Remote enrollment launch packet worker path now uses the installable `agentops-worker` command, read-only adapter preflight, dry-run-by-default service file installation, read-only service diagnostics, and short-lived sessions before task processing; repo-local `scripts/agent_worker.py` is shown only as a fallback. Long-running worker setup can render, write, and check launchd/systemd templates, but service loading/restart remains manual.
+- Remote enrollment launch packet worker path now uses the installable `agentops-worker` command, read-only adapter preflight, dry-run-by-default service file installation, read-only service diagnostics, preview-first service control, and short-lived sessions before task processing; repo-local `scripts/agent_worker.py` is shown only as a fallback. Long-running worker setup can render, write, check, and preview load/unload/restart for launchd/systemd templates, while actual service mutation remains explicit operator-confirmed BYOC behavior through `--confirm-control`.
 - Loop-mode workers can refresh short-lived sessions before expiry while continuing to process tasks.
 - Remote enrollment UI.
 - Token revocation.
@@ -876,6 +1002,10 @@ Implemented and verified:
 - Customer-style knowledge-base bot project smoke with delivery artifact.
 - Customer task template API/UI path with KB bot template smoke.
 - Customer project report export from MIS ledger evidence.
+- Local readiness knowledge proof: `python3 scripts/local_readiness_smoke.py`
+  verifies knowledge document/chunk/FTS counters and the knowledge CLI next
+  action; `python3 scripts/knowledge_retrieval_quality_smoke.py` verifies the
+  heading-aware FTS5 retrieval baseline.
 
 Not yet product-complete:
 

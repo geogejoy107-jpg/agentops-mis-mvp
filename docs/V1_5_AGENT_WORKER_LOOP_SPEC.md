@@ -86,8 +86,8 @@ Task selection:
 Adapter execution:
 
 - `mock`: deterministic local summary, no external runtime.
-- `hermes`: calls `POST /api/integrations/hermes/run-task` with `confirm_run:true` only when worker gets `--confirm-run`.
-- `openclaw`: calls `POST /api/integrations/openclaw/probe` only when worker gets `--confirm-run`.
+- `hermes`: calls the configured local OpenAI-compatible Hermes gateway only when the worker gets `--confirm-run`.
+- `openclaw`: calls the configured local OpenClaw CLI only when the worker gets `--confirm-run`.
 - Retryable adapter failures can be retried with `--adapter-max-attempts` and `--adapter-retry-delay-sec`.
 - Safety gates such as missing `--confirm-run` return `ConfirmRunRequired` and are not retried.
 
@@ -240,8 +240,15 @@ Minimum acceptance for v1.5 worker loop:
 ## Known Limitations
 
 - No global package install.
-- Local daemon supervision is repo-local and process-based. Remote machines can render launchd/systemd templates with `agentops-worker service-template`, but v1.5 does not yet install/load those units automatically.
-- No process relaunch after daemon death.
+- Local daemon supervision is repo-local and process-based. Remote machines can
+  render launchd/systemd templates with `agentops-worker service-template`,
+  preview/write placeholder service files with dry-run-by-default
+  `agentops-worker service-install`, inspect them with read-only
+  `agentops-worker service-check`, and preview load/unload/restart commands
+  with `agentops-worker service-control`.
+- OS-managed process relaunch is explicit operator-controlled BYOC behavior:
+  service files use launchd `KeepAlive=true` or systemd `Restart=always`, but
+  loading/restarting them requires `--confirm-control` on the agent machine.
 - Scope enforcement and workspace isolation are still MVP-level, not full hosted RBAC.
 - UI controls are local self-use/recording controls, not a production fleet manager.
 - Hermes/OpenClaw execution is still fixed safe adapter execution, not arbitrary prompt automation.

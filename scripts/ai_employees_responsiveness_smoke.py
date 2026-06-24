@@ -25,6 +25,7 @@ CORE_ENDPOINTS = [
     ("/api/workers/status", "worker_status"),
     ("/api/workers/fleet", "worker_fleet"),
     ("/api/local/readiness", "local_readiness"),
+    ("/api/operator/loop-control?limit=8", "operator_loop_control"),
     ("/api/operator/command-center?limit=12", "operator_command_center"),
     ("/api/operator/action-plan?limit=12", "operator_action_plan"),
     ("/api/operator/evidence-report?limit=8", "operator_evidence_report"),
@@ -58,7 +59,7 @@ AGENT_ENDPOINTS = [
     ("/api/agents", "agents"),
 ]
 ALL_ENDPOINTS = CORE_ENDPOINTS + DEFERRED_ENDPOINTS + SCOPED_DEFERRED_ENDPOINTS + AGENT_ENDPOINTS
-CRITICAL_COMMAND_CENTER_LABELS = {"dashboard", "worker_status", "worker_fleet", "operator_command_center", "operator_health"}
+CRITICAL_COMMAND_CENTER_LABELS = {"dashboard", "worker_status", "worker_fleet", "operator_loop_control", "operator_command_center", "operator_health"}
 SECRET_PATTERNS = [
     re.compile(r"Authorization:", re.IGNORECASE),
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+"),
@@ -170,6 +171,14 @@ def static_contract() -> dict:
             "operatorCommandCenterActions",
             "isOperatorCommandCenterAction ? 119",
             'panelStatusBadge("operator_command_center")',
+        ]),
+        "has_operator_loop_control_core": all(marker in text for marker in [
+            "loadOperatorLoopControl",
+            'id: "operator_loop_control", load: async () => ({ operatorLoopControl: await loadOperatorLoopControl(8) })',
+            '"operator_loop_control"',
+            "operatorLoopControl",
+            "directLoopControlSummary",
+            'panelStatusBadge("operator_loop_control")',
         ]),
         "has_use_live_data_loader": "useLiveData(" in text,
         "has_monolithic_initial_loader": "const [metrics, demoReadiness, workerStatus" in text,
@@ -292,6 +301,8 @@ def main() -> int:
         failures.append(f"AI Employees panel diagnostics are not connected to Action Queue receipts: {contract}")
     if not contract["has_operator_command_center_core"]:
         failures.append(f"AI Employees does not expose operator command-center as a core queue source: {contract}")
+    if not contract["has_operator_loop_control_core"]:
+        failures.append(f"AI Employees does not expose direct operator loop-control as a core queue source: {contract}")
     if contract["has_use_live_data_loader"]:
         failures.append(f"AI Employees still uses one page-level useLiveData loader: {contract}")
     if contract["has_monolithic_initial_loader"] or contract["has_monolithic_scoped_loader"]:

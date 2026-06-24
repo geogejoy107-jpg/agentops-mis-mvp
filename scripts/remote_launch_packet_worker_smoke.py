@@ -73,6 +73,7 @@ def smoke(base_url: str, stamp: str) -> dict:
                 "tasks:read",
                 "tasks:claim",
                 "runs:write",
+                "runtime_events:write",
                 "toolcalls:write",
                 "artifacts:write",
                 "memories:propose",
@@ -88,15 +89,40 @@ def smoke(base_url: str, stamp: str) -> dict:
         steps = created.get("next_steps") or {}
         require(token and token_id, "create response missing one-time token")
         text = launch_text(steps)
+        command_text = launch_text({key: value for key, value in steps.items() if key != "notes"})
         require(token not in text, "raw token leaked into launch packet")
         require(steps.get("adapter") == "mock", f"launch packet adapter mismatch: {steps}")
         require("agentops status" in text and "agentops-worker" in text, f"launch packet missing product commands: {steps}")
+        require("agentops operator start-check" in text, f"launch packet missing remote start-check command: {steps}")
+        require("agentops operator loop-launch-packet --brief" in text, f"launch packet missing loop-launch brief command: {steps}")
+        method_contract = steps.get("method_gate_contract") or {}
+        require(method_contract.get("operation") == "remote_worker_method_gate_contract", f"launch packet missing method gate contract: {steps}")
+        require(method_contract.get("first_read") == steps.get("start_check"), f"method gate first_read mismatch: {method_contract}")
+        require((method_contract.get("safety") or {}).get("server_executes_shell") is False, f"method gate contract should be copy-only: {method_contract}")
+        require((method_contract.get("safety") or {}).get("token_omitted") is True, f"method gate contract token proof missing: {method_contract}")
+        require({"read_start_check", "plan_agent_plan", "retrieve_knowledge", "compare_base_reference", "preflight_adapter", "execute_bounded_worker", "verify_ledger", "record_memory_candidate"}.issubset(set(method_contract.get("required_gates") or [])), f"method gate list incomplete: {method_contract}")
+        require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set((method_contract.get("phase_commands") or {}))), f"method phase command map incomplete: {method_contract}")
         require("agentops-worker preflight" in text, f"launch packet missing adapter preflight command: {steps}")
         require("service-template --manager launchd" in text and "service-template --manager systemd" in text, f"launch packet missing service template commands: {steps}")
         require("service-install --manager launchd" in text and "service-install --manager systemd" in text, f"launch packet missing service install commands: {steps}")
         require("service-check --manager launchd" in text and "service-check --manager systemd" in text, f"launch packet missing service check commands: {steps}")
+        for manager in ("launchd", "systemd"):
+            for action in ("load", "unload", "restart"):
+                require(f"service-control --manager {manager} --action {action}" in text, f"launch packet missing {manager} service-control {action} preview command: {steps}")
+        require("--confirm-control" not in command_text, f"launch packet should not default to mutating service-control commands: {steps}")
         require("scripts/agent_worker.py" in text, f"launch packet missing repo fallback commands: {steps}")
         require("agentops session create" in text and "--use-session" in text, f"launch packet missing short-lived session path: {steps}")
+        for flag in (
+            "--session-refresh-margin-sec 60",
+            "--idle-backoff-max 30",
+            "--error-backoff-max 30",
+            "--backoff-factor 2",
+            "--adapter-max-attempts 1",
+            "--adapter-retry-delay-sec 1",
+            "--continue-on-error",
+            "--max-errors 5",
+        ):
+            require(flag in text, f"launch packet missing explicit remote loop policy flag {flag}: {steps}")
 
         status_status, status_payload = http_json("GET", base_url, "/api/agent-gateway/status", token=token)
         require(status_status == 200, f"token status failed: {status_status} {status_payload}")

@@ -110,6 +110,7 @@ It reports:
 - Agent Gateway status and token omission proof;
 - worker provider status, worker count, running workers, pending tasks, and stuck tasks;
 - setup hints for missing token, missing agent id, rejected token, or stuck worker recovery.
+- `local_demo_probe`, which checks the local demo default without switching targets, including current-code status, so a stale config can report whether `AGENTOPS_BASE_URL=... agentops status`, `agentops login --base-url ...`, or a process restart would repair the operator/agent CLI path.
 
 ```bash
 agentops doctor
@@ -137,6 +138,50 @@ evidence counts, local runbook/doc presence, UI routes, and recommended next
 actions. It is the preferred first check before a local demo or after changing
 worker/gateway code.
 
+Use `--require-current-code` before handing work to Hermes/OpenClaw/Codex. The
+CLI fails closed when the connected MIS process is older than backend source
+files or, with `--expect-head-sha`, when it reports a different git HEAD:
+
+```bash
+agentops status --require-current-code
+agentops local readiness --require-current-code --expect-head-sha "$(git rev-parse HEAD)"
+```
+
+### `agentops knowledge evidence-packet`
+
+Returns a read-only retrieval evidence packet for agents and operators. It uses
+the existing Markdown/SQLite FTS knowledge index and reports retrieval IDs,
+document/chunk IDs, headings, source hashes, visibility, and baseline
+Recall@5/MRR/p95 metrics without returning raw snippets, raw content, raw
+prompts, raw responses, or tokens.
+
+`agentops-worker` now consumes this packet before adapter execution. For normal
+MIS tasks it asks the server for a task-bound packet with `task_id`, so the
+authoritative task-aware query is built in one place. The worker falls back to a
+local redacted query only when no `task_id` is available. It folds only compact
+packet/query hashes, retrieval IDs, paths, source hashes, metrics, and minimal
+task-context omission proof into the Agent Plan, prompt hash input, tool-call
+args, evaluation rubric, and audit metadata, and keeps raw query/snippet/content/
+task text/prompt/response/token omitted. If the worker token lacks
+`knowledge:read`, the worker records an `unavailable` compact status instead of
+blocking unrelated task execution.
+
+```bash
+agentops knowledge evidence-packet "Agent Gateway CLI commands" --limit 5
+agentops knowledge evidence-packet --task-id <task_id> --adapter mock --limit 5
+curl -fsS "http://127.0.0.1:8787/api/knowledge/evidence-packet?q=Agent%20Gateway%20CLI&limit=5" | jq .
+```
+
+When `--task-id` is provided, MIS builds the same bounded task-aware retrieval
+query used by `agentops-worker` from the task title, description, acceptance
+criteria, risk and adapter hint, but the response still omits raw task text and
+returns only `task_context`, `query_hash`, retrieval IDs, paths, source hashes
+and metrics.
+
+The Agent Gateway route requires `knowledge:read`. Packet reads are non-mutating:
+they do not refresh the index, pull tasks, start runs, write tool calls, or call
+Hermes/OpenClaw.
+
 ### `agentops agent register`
 
 Registers or updates an AI digital employee identity.
@@ -161,7 +206,7 @@ agentops enrollment create \
   --agent-id agt_remote_builder \
   --name "Remote Builder" \
   --runtime openclaw \
-  --scopes agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write \
+  --scopes agents:write,agents:heartbeat,knowledge:read,knowledge:write,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write \
   --ttl-days 30
 ```
 
@@ -186,6 +231,7 @@ The create response also includes a `next_steps` launch packet for the remote ma
 - launchd/systemd service template generation through `agentops-worker service-template`
 - dry-run-by-default service file installation through `agentops-worker service-install`
 - read-only service diagnostics through `agentops-worker service-check`
+- preview-first launchd/systemd load, unload, and restart through `agentops-worker service-control`
 - repo-local fallback commands using `python3 scripts/agent_worker.py ...`
 
 This packet is safe to display in the UI because it omits the token value from command strings.
@@ -217,7 +263,8 @@ Maps to `agent_gateway_enrollment_requests`, `approvals`, `tasks`, `runs`, `audi
 
 ### `agentops enrollment list`
 
-Lists token metadata, status, scopes, expiry, and heartbeat freshness. It never prints token secrets.
+Lists token metadata, status, scopes, expiry, and heartbeat freshness. It never
+prints token secrets or raw enrollment token IDs.
 
 ```bash
 agentops enrollment list
@@ -230,6 +277,11 @@ Heartbeat freshness uses product-facing lifecycle states:
 - `stale`: token is active but the latest heartbeat is older than the timeout window.
 - `revoked`: token is no longer valid and should not be shown as live even if it has old heartbeat data.
 
+List/readback output uses `token_ref` plus `token_id_omitted:true`. The raw
+`token_id` is shown only in create/issue/rotate responses for explicit local
+management flows; operators can use `--agent-id` for bulk revoke or latest
+active-token rotation without retaining raw token IDs.
+
 ### `agentops enrollment revoke`
 
 Revokes one token or all active tokens for an agent.
@@ -238,6 +290,12 @@ Revokes one token or all active tokens for an agent.
 agentops enrollment revoke --token-id agtok_...
 agentops enrollment revoke --agent-id agt_remote_builder
 ```
+
+The revoke response reports counts plus `token_refs`/`session_refs`; it does not
+echo raw enrollment token IDs, raw session IDs, token hashes, or token values.
+`agentops status` follows the same readback rule: token/session auth status
+returns `token_ref`, `session_ref`, or `parent_token_ref` plus omission flags,
+not raw enrollment token IDs or raw session IDs.
 
 ### `agentops enrollment rotate`
 
@@ -360,6 +418,17 @@ The RECORD gate evidence also includes `receipt_failure_memory_*` counters from
 the action-plan learning lane, so repeated failed recovery receipts are visible
 as memory-review work instead of disappearing after the receipt evaluation
 fails.
+Operator handoff and launch packets also surface run-level memory review as
+first-class RECORD evidence: `required_ledgers` includes `memories` and
+`memory_review`, while the evidence-report gate exposes
+`memory_reviews`, `memory_review_ready`, `missing_memory_reviews`, and
+`pending_memory_reviews` for Hermes/OpenClaw/Codex before delivery closure.
+For worker-run observability, the same evidence report also exposes
+`worker_runtime_summary`, `worker_runtime_summary_ready`, and
+`worker_runtime_summary_missing`. These fields prove that the Agent Worker
+recorded a MIS ledger summary of adapter execution with event ids, hashes, and
+omission flags; they are not raw runtime traces and must not include full
+prompts, full responses, tokens, or private transcript content.
 It also includes an `action_package` section: each non-passing gate gets a
 copyable `action_command`, a scoped `verify_command`, a preview-only
 `receipt_record_command`, and a confirmed `receipt_verify_record_command`.
@@ -367,6 +436,37 @@ Hermes, OpenClaw, Codex, or a human operator can use this package as the
 repeatable loop work order after each audit pass.
 It recommends explicit next commands but does not create runs, approvals,
 memories, audit rows, or live adapter work.
+
+### `agentops operator loop-control`
+
+Reads the lightweight loop-control next step for real local ledgers:
+
+```bash
+agentops operator loop-control --limit 8
+agentops operator loop-control --loop-id loop_smoke_api_123 --limit 8
+agentops operator advance-loop --fast-control --limit 8
+```
+
+Maps to `GET /api/operator/loop-control`. This is the fast control-plane
+read model for Hermes, OpenClaw, Codex, and a human supervisor before they
+enter the heavier `handoff`/`loop-audit` diagnostics. It samples bounded ledger
+counts, recent Action Queue receipts, optional `loop://...` artifacts, loop
+memory-review state, and the shared bounded-runner policy. It does not call
+`operator handoff`, `operator action-plan`, or `operator evidence-report`, so it
+stays responsive on large local demo ledgers.
+
+When a loop id is provided, it chooses the next safe RECORD/VERIFY action for
+that loop: review existing pending memory/approvals, propose a `loop_record`
+memory candidate, or inspect blocked evidence. Without a loop id, it selects
+the lightweight `runtime-doctor` first check. `advance-loop --fast-control`
+uses this same read model, runs at most one allowlisted local command after
+`--confirm-advance`, then records the normal Action Queue receipt and
+control-readback evidence. Memory approval/rejection, live runtimes, workflow
+dispatch, worker lifecycle, and external writes remain denied by policy.
+Unscoped control is receipt-aware: a verified runtime-doctor receipt advances
+the next recommendation to `operator handoff`, then `operator action-plan`, then
+`review queue` when review pressure exists, rather than repeatedly selecting the
+same first diagnostic.
 
 ### `agentops operator handoff`
 
@@ -453,6 +553,134 @@ and self-check use. Like
 handoff, local no-token demo reads are allowed only when the server has no
 configured API key; supplied Agent Gateway tokens/sessions must be valid, carry
 `tasks:read`, and remain bound to their workspace.
+
+### `agentops operator runtime-doctor`
+
+Reads the local runtime launch and safety doctor for Hermes, OpenClaw, Codex,
+and remote Agents:
+
+```bash
+agentops operator runtime-doctor --limit 8
+agentops operator runtime-doctor --runtime-base-url http://127.0.0.1:8787 --limit 8
+```
+
+Maps to `GET /api/operator/runtime-doctor`. This is a lightweight read-only
+first-check, not the heavier full `operator health` aggregate. It samples
+adapter readiness, worker fleet state, and ledger evidence counts, then returns
+gates for local MIS API reachability, Hermes/OpenClaw availability,
+`--confirm-run`, prepared actions for external writes, remote worker freshness,
+launch-packet availability, handoff/evidence-chain status, Codex supervision,
+and token/raw-content redaction. The payload includes copyable commands for the
+full operator health and handoff checks, runtime preflight, launch packet, loop
+audit, evidence report, guarded Hermes/OpenClaw execution, and Action Queue
+receipt recording. It never starts runtimes, executes tasks, mutates ledgers or
+connector rows, or exposes tokens. Supplied Agent Gateway tokens/sessions must
+carry `tasks:read` and remain workspace-bound.
+
+### `agentops operator live-acceptance`
+
+Reads Hermes/OpenClaw live customer-worker acceptance freshness from ledger
+evidence:
+
+```bash
+agentops operator live-acceptance --limit 8
+agentops operator live-acceptance --freshness-hours 72 --limit 8
+```
+
+Maps to `GET /api/operator/live-acceptance`. The command anchors on recent
+`customer_worker_result` delivery artifacts for local Hermes/OpenClaw customer
+worker runs and also surfaces active `agt_customer_worker_*` worker attempts
+before their artifact exists. It checks the same run for matching adapter
+tool-call, evaluation, runtime-event, audit, memory, approval, and verified
+plan-evidence-manifest evidence. It returns adapter status as `fresh`, `stale`,
+`missing`, `latest_failed`, or `latest_incomplete`, plus `latest_attempt`,
+`latest_passing`, `active_attempt`, artifact ids, and manifest ids when
+present. Active attempts are visible for operators but never count as passing
+until the run is completed and the delivery artifact/evidence chain exists. It
+also returns the manual
+`customer_worker_real_runtime_acceptance.py --confirm-live ... --hermes-max-tokens 512`
+command for each adapter. It never calls Hermes/OpenClaw, creates tasks, starts
+workers, mutates ledgers, or exposes raw prompts, raw responses, credentials, or
+tokens.
+
+### `agentops operator live-product-readiness`
+
+Returns the operator-facing product-readiness proof from fresh Hermes/OpenClaw
+ledger evidence:
+
+```bash
+agentops operator live-product-readiness
+agentops operator live-product-readiness --require-adapter hermes --require-adapter openclaw
+```
+
+This command reads `/api/operator/live-acceptance` plus `/api/local/readiness`
+and collapses them into `product_readiness_proof`. It exits `0` only when every
+required live adapter has a fresh completed customer-worker run with matching
+tool-call, passing evaluation, runtime event, audit log, customer-worker
+artifact, memory candidate, delivery approval, and verified plan-evidence
+manifest. It exits non-zero with JSON next actions when proof is missing. It is
+read-only: no runtime calls, no task creation, no ledger mutation, no raw
+prompt/response, and no token output.
+
+### `agentops operator start-check`
+
+Reads the pre-task local loop start check for Hermes, OpenClaw, Codex, or a mock
+worker:
+
+```bash
+agentops operator start-check --adapter mock --limit 8
+agentops operator start-check --adapter hermes --limit 8
+agentops operator start-check --adapter openclaw --limit 8
+agentops operator start-check --adapter hermes --task-id tsk_123 --agent-id agt_worker
+```
+
+This is the recommended first command before an agent accepts or advances local
+work. The CLI maps to `GET /api/operator/start-check`, the canonical MIS read
+model that composes `/api/local/readiness`, `/api/workers/adapter-readiness`,
+`operator runtime-doctor`, live product-readiness evidence,
+`operator loop-launch-packet --brief`, and the bounded `operator loop-driver`
+entry.
+The result exposes gates for local MIS readiness, the worker connection policy,
+adapter preflight, runtime doctor, Agent Work Method launch brief, compact
+`loop_driver_entry`, `local_run_path`, service-control preview, Agent Plan
+boundary, and live ledger product proof. `loop_driver_entry` returns copyable
+preview, `--confirm-loop`, review queue, and verify commands plus a compact
+RECORD review snapshot with raw item summaries/content omitted. The same
+response now includes `agent_loop_packet`, a machine-readable
+READ/PLAN/RETRIEVE/COMPARE/PREFLIGHT/EXECUTE/VERIFY/RECORD command packet, so
+agents using the API can follow the same phased loop contract as the CLI
+`operator loop-driver` without scraping prose. The same response also includes
+`local_loop_admission_packet`, which binds those gates to the local worker-start
+command, service-control preview, customer-worker dispatch template, ledger
+verification, first safe commands, and confirm-required commands. It also
+returns copyable next commands for readiness, preflight, runtime doctor, launch
+brief, bounded loop-driver preview/confirmation, bounded advance, confirmed live
+dispatch, and task/run/evidence readback.
+
+`start-check` does not start Hermes/OpenClaw, execute shell from the server,
+create tasks, mutate ledgers, write connector rows, or print raw prompts,
+responses, snippets, API keys, worker tokens, or session tokens. Supplied Agent
+Gateway tokens/sessions require `tasks:read` and remain workspace-bound. For
+Hermes/OpenClaw it may report `status=attention` when adapter binaries,
+credentials, or fresh live product proof are missing; that is still useful loop
+input rather than a failed CLI call.
+
+### `agentops operator execution-mode`
+
+Reads the current dispatch mode before a human or agent starts a customer task:
+
+```bash
+agentops operator execution-mode --adapter mock
+agentops operator execution-mode --adapter hermes
+agentops operator execution-mode --adapter hermes --confirm-run
+```
+
+Maps to `GET /api/operator/execution-mode`. The command is read-only and
+returns the selected path, adapter readiness/trust state, confirm-run wall,
+prepared-action wall, pending approvals, active async jobs, and copyable next
+commands. It is the CLI/API counterpart to the `/workspace/agents` execution
+mode strip. It does not run Hermes/OpenClaw, create tasks, approve actions,
+start daemons, or mutate the ledger.
 
 ### `agentops approval prepared-action`
 
@@ -862,11 +1090,18 @@ Hermes/OpenClaw live execution still requires explicit confirmation:
 
 ```bash
 agentops workflow customer-worker-task \
-  --adapter openclaw \
+  --adapter hermes \
   --confirm-run \
+  --hermes-timeout 600 \
+  --hermes-max-tokens 512 \
   --title "Optimize AgentOps MIS customer workspace" \
-  --description "Use local OpenClaw to produce product recommendations."
+  --description "Use local Hermes to produce product recommendations."
 ```
+
+For Hermes, `--hermes-timeout` bounds the local gateway request and
+`--hermes-max-tokens` caps the OpenAI-compatible completion budget. The default
+max-token cap is `HERMES_MAX_TOKENS` or `512`, clamped between `64` and `4096`,
+which keeps acceptance runs from drifting into long unbounded summaries.
 
 Confirmed Hermes/OpenClaw tasks that intend to publish, upload, deploy, send,
 or otherwise write to an external target must declare the external-write
@@ -994,19 +1229,27 @@ Hermes/OpenClaw live execution still requires explicit confirmation:
 
 ```bash
 agentops workflow run-task \
-  --adapter openclaw \
+  --adapter hermes \
   --confirm-run \
-  --worker-agent-id agt_openclaw_builder \
+  --worker-agent-id agt_hermes_builder \
+  --hermes-timeout 600 \
+  --hermes-max-tokens 512 \
   --title "Optimize AgentOps MIS customer workspace" \
-  --description "Use local OpenClaw to produce product recommendations."
+  --description "Use local Hermes to produce product recommendations."
 ```
 
 The command returns JSON with `task_id`, `run_id`, `run_status`,
-`task_status`, `evidence`, `readback`, and `token_omitted:true`. Final task/run
-evidence is fetched through `GET /api/agent-gateway/tasks/:id` and
+`task_status`, `evidence`, `readback`, compact `agent_plan`, compact
+`plan_evidence`, and `token_omitted:true`. Final task/run evidence is fetched
+through `GET /api/agent-gateway/tasks/:id` and
 `GET /api/agent-gateway/runs/:id` with `tasks:read`, not through public demo
-detail endpoints. It must not print raw tokens, full prompts, full raw model
-responses, credentials, or private transcripts. Without `--confirm-run`,
+detail endpoints. The readback also verifies the worker-created Agent Plan and
+plan-evidence manifest, exposing `readback.agent_plan_verified`,
+`readback.plan_evidence_verified`, `agent_plan.failed_checks`, and
+`plan_evidence.evidence_counts`. This makes the one-command worker path prove
+READ/PLAN/RETRIEVE/COMPARE/EXECUTE/VERIFY/RECORD closure before another agent
+treats the run as done. It must not print raw tokens, full prompts, full raw
+model responses, credentials, or private transcripts. Without `--confirm-run`,
 Hermes/OpenClaw create a planned task but do not execute the live adapter.
 
 With `--confirm-run`, live Hermes/OpenClaw dispatch first checks the worker
@@ -1099,6 +1342,13 @@ The response includes:
 - per-adapter `capability_manifest`, `capability_policy_hash`,
   `observation_level`, `risk_floor`, and `commercial_readiness`
 - per-adapter `recommended_action`
+- per-adapter `remediation` with `primary_next_action`, missing local checks,
+  copy-only preflight/doctor/start/live-run-template/ledger-proof commands,
+  and safety proof
+- `worker_connection_policy`, a read-only
+  `agentops-worker-connection-policy-v1` block covering short-lived session
+  refresh, idle/error backoff, adapter retry, daemon error limits, state/log
+  fields, and copyable verification commands
 - `live_execution_performed:false`
 
 Capability manifests are deliberately conservative. `mock` is
@@ -1114,8 +1364,19 @@ prepared-action requirement in tool-call args, evaluation rubric, and audit
 metadata.
 
 Use `agentops worker readiness` when an operator or external agent needs to
-choose a route. Use `agentops worker preflight --adapter <name>` when debugging
-one specific adapter.
+choose a route or see what local setup is missing. Use the per-adapter
+`remediation.commands` in order: inspect/preflight/doctor commands are read-only;
+Hermes/OpenClaw worker starts and live task templates keep `--confirm-run`; the
+ledger proof command is `agentops operator live-product-readiness`. Use
+`agentops worker preflight --adapter <name>` when debugging one specific adapter.
+
+Remote workers should use the connection policy instead of hard-coding retry
+behavior from memory. The v1.5 defaults are `--use-session --session-ttl-sec
+900 --session-refresh-margin-sec 60`, `--poll-interval 5`,
+`--idle-backoff-max 30`, `--error-backoff-max 30`, `--backoff-factor 2`,
+`--continue-on-error`, and `--max-errors 5` for long-running loops. Retryable
+adapter failures may retry according to `adapter_retry`; non-retryable safety
+gates such as missing `--confirm-run` must not retry.
 
 ### `agentops worker preflight`
 
@@ -1207,6 +1468,9 @@ agentops session list
 ```
 
 Maps to `GET /api/agent-gateway/sessions`. The response omits `session_hash` and raw token values.
+It also omits raw session IDs and parent token IDs: operators get
+`session_ref`, `parent_token_ref`, `session_id_omitted:true`, and
+`parent_token_id_omitted:true` for readback correlation.
 
 ### `agentops session revoke`
 
@@ -1217,7 +1481,13 @@ agentops session revoke --session-id agtsess_...
 agentops session revoke --agent-id agt_remote_builder
 ```
 
+The raw `session_id` is only shown at session creation time for local
+management flows; list/readback outputs are refs-only. Operators can use
+`--agent-id` for bulk active-session revocation without retaining raw IDs.
+
 Maps to `POST /api/agent-gateway/session/revoke` and writes runtime/audit evidence.
+The public response reports safe `session_refs` only and includes
+`session_id_omitted:true`.
 
 ## API Endpoint Proposal
 
@@ -1280,7 +1550,15 @@ Never returns:
 
 - raw token value
 - token hash
+- raw enrollment token ID
+- raw short-lived session ID
+- raw parent token ID
 - full prompts or raw outputs
+
+When authenticated by a token or short-lived session, `auth` uses safe refs
+(`token_ref`, `session_ref`, `parent_token_ref`) and explicit omission flags
+(`token_id_omitted`, `session_id_omitted`, `parent_token_id_omitted`) so
+operators can correlate status without exposing raw credential identifiers.
 
 ### `POST /api/agent-gateway/register`
 
@@ -1687,14 +1965,66 @@ rows point to `agentops task pull --enforce-intake` so worker execution uses the
 same gate decision as the operator console.
 
 ```bash
+agentops operator start-check --adapter mock --limit 8
+agentops operator start-check --adapter hermes --limit 8
+agentops operator start-check --adapter openclaw --limit 8
+```
+
+This is the pre-task local loop start check for Codex, Hermes, OpenClaw, or a
+remote operator. It reads `GET /api/operator/start-check` and stays read-only:
+it aggregates `agentops local readiness`, `agentops worker readiness`,
+`operator runtime-doctor`, `operator loop-launch-packet --brief`, worker
+connection policy, local run path, service-control preview, and live
+product-readiness readback for the selected adapter. It does not start workers,
+call runtimes, execute shell commands, mutate ledgers, or expose tokens/raw
+prompts/raw responses. Use it immediately before handing a task to a local or
+remote agent so the agent sees the current copyable
+boot/readiness/preflight/launch/verify commands in one payload.
+
+The response includes two machine-facing gate packets:
+
+- `agent_loop_packet`: phase commands and Method Block gates for READ, PLAN,
+  RETRIEVE, COMPARE, PREFLIGHT, EXECUTE, VERIFY, and RECORD.
+- `local_loop_admission_packet`: a compact admission readback that binds those
+  gates to worker start, service-control preview, customer-worker dispatch, and
+  ledger verification commands while preserving `server_executes_shell:false`.
+
+Agent Gateway enrollment `next_steps` mirrors this for remote machines with
+`start_check`, `loop_launch_brief`, and `method_gate_contract`, so a newly
+enrolled worker can run start-check before preflight without relying on the
+browser UI.
+
+```bash
 agentops operator loop-launch-packet --task-id tsk_123 --agent-id agt_worker --limit 8
+agentops operator loop-launch-packet --task-id tsk_123 --agent-id agt_worker --brief --adapter hermes
+agentops operator loop-launch-packet --task-id tsk_123 --agent-id agt_worker --brief --adapter openclaw
+agentops operator loop-launch-packet --task-id tsk_123 --agent-id agt_worker --handoff-mode full
 ```
 
 Maps to `GET /api/operator/loop-launch-packet`. This is a read-only Agent Work
 Method launch packet for Hermes, OpenClaw, Codex, or a remote Agent. It combines
 the intake checklist, safe knowledge-search metadata, repo-map localization,
-operator handoff state, and a complete agent-plan draft into one machine-readable
+operator control state, and a complete agent-plan draft into one machine-readable
 `READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD` sequence.
+Default control uses lightweight `operator loop-control`; `--handoff-mode full`
+or `--full-handoff` switches the packet to deeper `operator handoff`
+diagnostics. The payload exposes `sources.operator_control` and a
+backward-compatible `sources.handoff` alias so older agents still find the
+control source while newer agents can branch on `summary.handoff_mode`.
+On large local ledgers, full handoff may be slow; prefer the default lightweight
+mode for normal loops, or pair full mode with a low `--limit` / higher
+`--request-timeout` for deliberate diagnostics.
+CLI `--brief` keeps the server/API contract unchanged but emits a compact
+copy-only `operator_loop_launch_brief` for live local agents. The brief includes
+the adapter preflight command, the current next/verify/receipt commands, compact
+execution-chain rows, confirmation/prepared-action guidance for Hermes/OpenClaw,
+an explicit `agentops workflow run-task --adapter ... --confirm-run` live command
+template, task/run/manifest readback commands, a compact `local_run_path` from
+`agentops local readiness` with the service-control preview step, and the same
+read-only/token-omission safety proof without printing the full launch packet.
+The local run path remains copy-only: it exposes boot/readiness/worker/service/
+dispatch/ledger/live-acceptance commands for the operator or agent shell, while
+`server_executes_shell=false` stays part of the safety proof.
 It emits commands for loop self-check, knowledge search, commander repo-map
 localization, plan creation/verification, intake comparison, enforced task
 pull, loop verification, plan-evidence binding, evidence reporting, Action
@@ -1720,12 +2050,19 @@ gates, create memories, or mutate ledgers.
 
 ```bash
 agentops operator advance-loop --loop-id loop_123 --limit 10
+agentops operator advance-loop --fast-control --limit 8
 agentops operator advance-loop --loop-id loop_123 --limit 10 --confirm-advance
 agentops operator advance-loop-policy
+agentops operator loop-control --limit 8
+agentops operator loop-driver --adapter hermes --max-steps 3
+agentops operator loop-driver --adapter openclaw --max-steps 3 --confirm-loop
 ```
 
 Reads `GET /api/operator/handoff` and selects the first non-passing loop action
 whose `agentops ...` command is allowed by the local bounded-runner policy.
+`--fast-control` reads `GET /api/operator/loop-control` instead of the full
+handoff packet, so local agents can advance one bounded read-only diagnostic or
+record step without waiting on the heavier aggregate read models.
 Without `--confirm-advance` it is preview-only. With confirmation it executes
 exactly one local allowlisted action, runs the paired verify command, and records
 an Action Queue receipt as `verified` or `failed`. Confirmed runs also return
@@ -1751,9 +2088,37 @@ and other commands that require an explicit human or dedicated confirmation path
 `advance-loop-policy` is read-only and returns the current policy id/version,
 allowlisted commands, denied namespaces/actions/flags, and sample decisions so
 operators and UI can show exactly why a command can or cannot be auto-advanced.
+`operator loop-control` is read-only and returns the lightweight copy-only
+selected item, preview command, confirm command, bounded evidence counts, and
+policy id for fast local loop steering.
 `operator handoff` exposes the same `work_order.advance_loop` preview/confirm
 commands, and `/workspace/agents` renders copy buttons for those local CLI
 commands without letting the browser or server execute shell.
+`operator loop-driver` is the local CLI loop wrapper for Hermes/OpenClaw/Codex:
+preview mode reads `operator start-check` into an `acceptance_gate`, then reads
+the compact launch brief and policy without writing ledgers. It also returns
+`agent_loop_packet`, a machine-readable READ/PLAN/RETRIEVE/COMPARE/PREFLIGHT/
+EXECUTE/VERIFY/RECORD command packet with acceptance, preflight, confirm-loop,
+verify, receipt, audit, and review commands for Hermes/OpenClaw/Codex;
+preview mode also reads `agentops worker readiness` into an
+`adapter_readiness` gate with the selected adapter's trust/readiness state,
+checks, `agentops worker preflight --adapter ...` command, and live-dispatch
+blockers. It also returns `record_review_snapshot`, a compact read-only RECORD
+view from the review queue with pending approval, memory candidate, returned
+item, and next review command counts; item summaries and raw content are
+omitted. Confirmed mode runs up to five
+`advance-loop --fast-control --confirm-advance` steps, re-reading the
+start-check acceptance gate, adapter readiness, and the launch brief before each
+step. If `can_confirm_bounded_loop` is false or `server_executes_shell` is not
+false, it stops before advance. Otherwise it relies on the existing allowlist,
+receipts, and control-readback path, then refreshes the same
+`record_review_snapshot` after each step. Confirmed output includes initial and
+final `agent_loop_packet` readbacks, so a caller can see which phase and
+readback command should run next without reconstructing state from prose. The
+readiness, packet, and review gates are read-only evidence, not authorization:
+they do not create a new server shell execution surface and still refuse
+live/workflow/approval/external-write commands through the bounded-runner
+policy.
 
 ```bash
 agentops operator remediate-evidence-gap --run-id run_123
@@ -2001,10 +2366,10 @@ Current implementation:
 - Session tokens inherit agent/workspace bindings and a subset of parent scopes.
 - Session tokens cannot mint replacement sessions.
 - Session-token auth rechecks the parent enrollment on every request. If the parent token is revoked, expired, missing, or no longer matches the session binding, the session fails closed.
-- `GET /api/agent-gateway/sessions` lists session metadata without `session_hash` or raw token values.
+- `GET /api/agent-gateway/sessions` lists session metadata with safe refs only; it omits `session_hash`, raw token values, raw session ids, and raw parent token ids.
 - `POST /api/agent-gateway/session/revoke` revokes one session or all active sessions for an agent.
 - Revoking an enrollment token also revokes active child sessions.
-- `GET /api/agent-gateway/enrollments` reports heartbeat freshness.
+- `GET /api/agent-gateway/enrollments` reports heartbeat freshness with safe `token_ref` values and omits raw token ids.
 - Revoked tokens report `heartbeat_state=revoked`, not `fresh` or `stale`.
 
 Current endpoint scope map:
@@ -2033,6 +2398,8 @@ Current endpoint scope map:
 | `GET /api/agent-gateway/artifacts` | `tasks:read` |
 | `POST /api/agent-gateway/artifacts` | `artifacts:write` |
 | `GET /api/agent-gateway/knowledge/search` | `knowledge:read` |
+| `GET /api/agent-gateway/knowledge/evidence-packet` | `knowledge:read` |
+| `GET /api/agent-gateway/knowledge/retrieval-evidence-packet` | `knowledge:read` |
 | `POST /api/agent-gateway/knowledge/index` | `knowledge:write` |
 | `GET /api/agent-gateway/agent-plans` | `agent_plans:read` |
 | `GET /api/agent-gateway/agent-plans/:plan_id` | `agent_plans:read` |
@@ -2203,6 +2570,8 @@ The stuck-recovery helper verifies a stale running worker task is listed, releas
 The worker package helper installs the Python source package into a temporary venv, verifies `agentops-worker --help`, then runs a one-shot no-task worker loop against a local stub Agent Gateway. It proves the installable worker can register, pull, heartbeat, write state outside the repo, and omit token values.
 It also verifies `agentops-worker service-template --manager launchd|systemd` renders restartable service files with only a token placeholder, not a raw token.
 It verifies `agentops-worker service-install --manager launchd|systemd` defaults to dry-run and only writes a placeholder service file when explicitly confirmed.
+It verifies `agentops-worker service-check --manager launchd|systemd` is read-only, omits raw service content, detects token-like values, and reports the expected relaunch policy (`KeepAlive=true` for launchd, `Restart=always` plus `RestartSec=5` for systemd).
+It verifies `agentops-worker service-control --manager launchd|systemd` previews load/unload/restart commands by default, requires explicit confirmation before OS mutation, and fails closed for token-like service files or live adapter templates missing `--confirm-run`.
 It verifies `agentops-worker preflight` can perform read-only Gateway/adapter readiness checks without executing tasks, writing ledger rows, or printing token values.
 The session-refresh helper verifies a loop worker using `--use-session` refreshes short-lived sessions before expiry and still completes multiple tasks with run/tool/evaluation evidence.
 The adapter-retry helper verifies retryable adapter failures can succeed after retry, while non-retryable safety gates such as missing `--confirm-run` stop after one attempt and still write failed run/tool/evaluation evidence.
@@ -2211,7 +2580,8 @@ Remaining future work:
 
 - Hosted customer enrollment policy UI.
 - Hosted multi-tenant isolation and full RBAC.
-- Reconnection backoff policy.
+- Reconnection/backoff policy is exposed through
+  `agentops worker readiness` -> `worker_connection_policy`.
 - mTLS or signed heartbeats for server-side agents.
 
 ## Non-Goals For v1.4

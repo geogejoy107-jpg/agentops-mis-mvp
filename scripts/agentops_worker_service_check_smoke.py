@@ -67,6 +67,9 @@ def main() -> int:
         require(direct_payload.get("ok") is True, f"service-check should be ok for generated template: {direct_payload}", failures)
         require(direct_payload.get("service_file", {}).get("raw_content_omitted") is True, f"raw content should be omitted: {direct_payload}", failures)
         require(direct_payload.get("service_file", {}).get("token_like_detected") is False, f"token-like value detected unexpectedly: {direct_payload}", failures)
+        require(direct_payload.get("service_file", {}).get("relaunch_policy_ok") is True, f"launchd relaunch policy flag missing: {direct_payload}", failures)
+        require(direct_payload.get("relaunch_policy", {}).get("enabled") is True, f"launchd relaunch policy not detected: {direct_payload}", failures)
+        require(direct_payload.get("relaunch_policy", {}).get("policy") == "KeepAlive=true", f"launchd policy not machine-readable: {direct_payload}", failures)
 
         cli = run([
             str(ROOT / "scripts" / "agentops"),
@@ -85,6 +88,62 @@ def main() -> int:
         require(cli.returncode == 0, f"agentops worker service-check failed: {cli_payload}", failures)
         require(cli_payload.get("command") == "agentops worker service-check", f"wrong wrapper command: {cli_payload}", failures)
         require(cli_payload.get("token_omitted") is True, f"token omitted flag missing: {cli_payload}", failures)
+
+        systemd_path = tmp_path / "agentops-worker-agt_service_check.service"
+        systemd_template = run([
+            sys.executable,
+            "-m",
+            "agentops_mis_cli.worker",
+            "service-template",
+            "--manager",
+            "systemd",
+            "--agent-id",
+            "agt_service_check",
+            "--adapter",
+            "mock",
+        ])
+        require(systemd_template.returncode == 0, f"systemd service-template failed: {systemd_template.stderr}", failures)
+        systemd_path.write_text(systemd_template.stdout, encoding="utf-8")
+        systemd = run([
+            sys.executable,
+            "-m",
+            "agentops_mis_cli.worker",
+            "service-check",
+            "--manager",
+            "systemd",
+            "--agent-id",
+            "agt_service_check",
+            "--adapter",
+            "mock",
+            "--service-path",
+            str(systemd_path),
+        ])
+        systemd_payload = parse_json(systemd)
+        require(systemd.returncode == 0, f"systemd service-check failed: {systemd_payload}", failures)
+        require(systemd_payload.get("relaunch_policy", {}).get("enabled") is True, f"systemd relaunch policy not detected: {systemd_payload}", failures)
+        require(systemd_payload.get("relaunch_policy", {}).get("policy") == "Restart=always", f"systemd policy not machine-readable: {systemd_payload}", failures)
+        require(systemd_payload.get("relaunch_policy", {}).get("restart_sec") == "5", f"systemd restart delay missing: {systemd_payload}", failures)
+
+        weak_systemd_path = tmp_path / "agentops-worker-agt_service_check_weak.service"
+        weak_systemd_path.write_text(systemd_template.stdout.replace("RestartSec=5\n", ""), encoding="utf-8")
+        weak_systemd = run([
+            sys.executable,
+            "-m",
+            "agentops_mis_cli.worker",
+            "service-check",
+            "--manager",
+            "systemd",
+            "--agent-id",
+            "agt_service_check",
+            "--adapter",
+            "mock",
+            "--service-path",
+            str(weak_systemd_path),
+        ])
+        weak_systemd_payload = parse_json(weak_systemd)
+        require(weak_systemd.returncode == 1, f"systemd service without RestartSec should fail: {weak_systemd_payload}", failures)
+        require(weak_systemd_payload.get("relaunch_policy", {}).get("enabled") is False, f"weak systemd relaunch policy accepted: {weak_systemd_payload}", failures)
+        require(any("relaunch policy" in item for item in weak_systemd_payload.get("setup_hints") or []), f"weak systemd relaunch hint missing: {weak_systemd_payload}", failures)
 
         unsafe_path = tmp_path / "unsafe.plist"
         unsafe_path.write_text(template.stdout + "\n<!-- agtok_fake_should_not_be_printed -->\n", encoding="utf-8")
@@ -106,7 +165,7 @@ def main() -> int:
         require(unsafe.returncode == 1, f"unsafe service-check should fail: {unsafe_payload}", failures)
         require(unsafe_payload.get("service_file", {}).get("token_like_detected") is True, f"unsafe token-like value was not detected: {unsafe_payload}", failures)
 
-        serialized = json.dumps({"direct": direct_payload, "cli": cli_payload, "unsafe": unsafe_payload}, ensure_ascii=False)
+        serialized = json.dumps({"direct": direct_payload, "cli": cli_payload, "systemd": systemd_payload, "weak_systemd": weak_systemd_payload, "unsafe": unsafe_payload}, ensure_ascii=False)
         require("agtok_fake_should_not_be_printed" not in serialized, "service-check leaked raw token-like content", failures)
         require("sk-" not in serialized and "ntn_" not in serialized, "service-check leaked secret-like content", failures)
 
@@ -114,6 +173,8 @@ def main() -> int:
         "ok": not failures,
         "direct_ok": not failures and direct_payload.get("ok"),
         "cli_ok": not failures and cli_payload.get("ok"),
+        "launchd_relaunch_policy": direct_payload.get("relaunch_policy", {}),
+        "systemd_relaunch_policy": systemd_payload.get("relaunch_policy", {}),
         "unsafe_detected": unsafe_payload.get("service_file", {}).get("token_like_detected"),
         "failures": failures,
     }, ensure_ascii=False, indent=2, sort_keys=True))

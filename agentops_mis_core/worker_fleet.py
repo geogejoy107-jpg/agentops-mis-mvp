@@ -173,6 +173,175 @@ def worker_fleet_health(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def public_worker_stale_enrollment(enrollment: dict[str, Any]) -> dict[str, Any]:
+    token_id = enrollment.get("token_id") or ""
+    public = dict(enrollment)
+    public.pop("token_id", None)
+    public["token_ref"] = stable_id("token_ref", token_id)[-12:] if token_id else ""
+    public["token_id_omitted"] = True
+    return public
+
+
+def build_worker_fleet_hygiene_plan(
+    *,
+    stuck_tasks: list[dict[str, Any]],
+    stale_enrollments: list[dict[str, Any]],
+    stale_heartbeat_enrollments: list[dict[str, Any]] | None = None,
+    threshold_sec: int,
+    enrollment_age_sec: int,
+    apply: bool = False,
+) -> dict[str, Any]:
+    stale_heartbeat_enrollments = stale_heartbeat_enrollments or []
+    actions_available = len(stuck_tasks) + len(stale_enrollments) + len(stale_heartbeat_enrollments)
+    return {
+        "provider": "agentops-worker",
+        "operation": "fleet_hygiene",
+        "status": "actionable" if actions_available else "ready",
+        "threshold_sec": threshold_sec,
+        "enrollment_age_sec": enrollment_age_sec,
+        "summary": {
+            "stuck_tasks": len(stuck_tasks),
+            "stale_never_seen_enrollments": len(stale_enrollments),
+            "stale_heartbeat_enrollments": len(stale_heartbeat_enrollments),
+            "actions_available": actions_available,
+        },
+        "stuck_tasks": stuck_tasks,
+        "stale_never_seen_enrollments": [public_worker_stale_enrollment(enrollment) for enrollment in stale_enrollments],
+        "stale_heartbeat_enrollments": [
+            public_worker_stale_enrollment(enrollment) for enrollment in stale_heartbeat_enrollments
+        ],
+        "recommended_actions": [
+            "agentops worker hygiene --apply --confirm-cleanup",
+        ] if actions_available else ["agentops worker status"],
+        "safety": {
+            "read_only": not apply,
+            "requires_confirm_cleanup": True,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
+def public_worker_revoked_enrollment(enrollment: dict[str, Any], sessions_revoked: int = 0) -> dict[str, Any]:
+    return {
+        "token_ref": stable_id("token_ref", enrollment.get("token_id") or "")[-12:],
+        "token_id_omitted": True,
+        "agent_id": enrollment.get("agent_id"),
+        "sessions_revoked": sessions_revoked,
+    }
+
+
+def public_worker_enrollment_error(enrollment: dict[str, Any], *, status: int, error: Any) -> dict[str, Any]:
+    return {
+        "kind": "enrollment_revoke",
+        "token_ref": stable_id("token_ref", enrollment.get("token_id") or "")[-12:],
+        "token_id_omitted": True,
+        "status": status,
+        "error": error,
+    }
+
+
+def public_remote_worker(
+    enrollment: dict[str, Any],
+    *,
+    agent: dict[str, Any] | None = None,
+    active_session_count: int = 0,
+) -> dict[str, Any]:
+    agent = agent or {}
+    return {
+        "token_ref": stable_id("token_ref", enrollment.get("token_id") or "")[-12:] if enrollment.get("token_id") else "",
+        "token_id_omitted": True,
+        "workspace_id": enrollment.get("workspace_id"),
+        "agent_id": enrollment.get("agent_id"),
+        "agent_name": agent.get("name") or enrollment.get("label") or enrollment.get("agent_id"),
+        "runtime_type": agent.get("runtime_type") or "external",
+        "agent_status": agent.get("status"),
+        "token_status": enrollment.get("status") or "unknown",
+        "heartbeat_state": enrollment.get("heartbeat_state") or "unknown",
+        "heartbeat_timeout_sec": enrollment.get("heartbeat_timeout_sec"),
+        "last_heartbeat_at": enrollment.get("last_heartbeat_at"),
+        "last_used_at": enrollment.get("last_used_at"),
+        "expires_at": enrollment.get("expires_at"),
+        "scope_count": len(enrollment.get("scopes") or []),
+        "active_session_count": active_session_count,
+    }
+
+
+def public_remote_session(session: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "session_ref": stable_id("session_ref", session.get("session_id") or "")[-12:] if session.get("session_id") else "",
+        "session_id_omitted": True,
+        "parent_token_ref": stable_id("token_ref", session.get("parent_token_id") or "")[-12:] if session.get("parent_token_id") else "",
+        "workspace_id": session.get("workspace_id"),
+        "agent_id": session.get("agent_id"),
+        "status": session.get("status"),
+        "session_state": session.get("session_state"),
+        "created_at": session.get("created_at"),
+        "expires_at": session.get("expires_at"),
+        "last_used_at": session.get("last_used_at"),
+        "scope_count": len(session.get("scopes") or []),
+    }
+
+
+def build_worker_remote_fleet_summary(
+    *,
+    enrollments: list[dict[str, Any]],
+    sessions: list[dict[str, Any]],
+    agents_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    active_sessions_by_agent: dict[str, int] = {}
+    session_state_counts: dict[str, int] = {}
+    for session in sessions:
+        state = session.get("session_state") or session.get("status") or "unknown"
+        session_state_counts[state] = session_state_counts.get(state, 0) + 1
+        if state == "active" and session.get("agent_id"):
+            active_sessions_by_agent[session["agent_id"]] = active_sessions_by_agent.get(session["agent_id"], 0) + 1
+
+    heartbeat_counts: dict[str, int] = {}
+    token_status_counts: dict[str, int] = {}
+    remote_workers = []
+    for enrollment in enrollments:
+        heartbeat_state = enrollment.get("heartbeat_state") or "unknown"
+        token_status = enrollment.get("status") or "unknown"
+        heartbeat_counts[heartbeat_state] = heartbeat_counts.get(heartbeat_state, 0) + 1
+        token_status_counts[token_status] = token_status_counts.get(token_status, 0) + 1
+        agent = agents_by_id.get(enrollment.get("agent_id") or "") or {}
+        remote_workers.append(public_remote_worker(
+            enrollment,
+            agent=agent,
+            active_session_count=active_sessions_by_agent.get(enrollment.get("agent_id"), 0),
+        ))
+
+    active_enrollments = [item for item in remote_workers if item.get("token_status") == "active"]
+    stale_enrollments = [item for item in remote_workers if item.get("heartbeat_state") == "stale"]
+    never_seen_enrollments = [item for item in remote_workers if item.get("heartbeat_state") == "never_seen"]
+    fresh_enrollments = [item for item in remote_workers if item.get("heartbeat_state") == "fresh"]
+    health_status = "attention" if stale_enrollments else "ready"
+    if active_enrollments and not fresh_enrollments and len(never_seen_enrollments) == len(active_enrollments):
+        health_status = "waiting_for_heartbeat"
+
+    return {
+        "status": health_status,
+        "remote_worker_count": len(active_enrollments),
+        "total_remote_enrollments": len(remote_workers),
+        "active_enrollments": len(active_enrollments),
+        "fresh_enrollments": len(fresh_enrollments),
+        "stale_enrollments": len(stale_enrollments),
+        "never_seen_enrollments": len(never_seen_enrollments),
+        "active_sessions": session_state_counts.get("active", 0),
+        "expired_sessions": session_state_counts.get("expired", 0),
+        "revoked_sessions": session_state_counts.get("revoked", 0),
+        "heartbeat_state_counts": heartbeat_counts,
+        "token_status_counts": token_status_counts,
+        "session_state_counts": session_state_counts,
+        "remote_workers": remote_workers[:50],
+        "recent_sessions": [public_remote_session(session) for session in sessions[:25]],
+        "token_omitted": True,
+    }
+
+
 def build_worker_status_payload(
     *,
     worker_agents: list[dict[str, Any]],

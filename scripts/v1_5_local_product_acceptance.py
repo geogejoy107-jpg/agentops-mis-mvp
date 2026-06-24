@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Non-live v1.5 product acceptance for the local AgentOps MIS loop.
+"""Non-live v1.5 local readiness acceptance for AgentOps MIS.
 
 This runner is intentionally read-only: it calls status/readiness endpoints and
 matching CLI readback commands only. It does not create tasks/runs, start
-workers, dispatch work, or invoke live Hermes/OpenClaw execution.
+workers, dispatch work, or invoke live Hermes/OpenClaw execution. It is not a
+product-readiness proof; use customer_worker_real_runtime_acceptance.py for
+manual live Hermes/OpenClaw dogfood evidence.
 """
 from __future__ import annotations
 
@@ -27,7 +29,7 @@ KNOWN_WORKER_STATUSES = {"ready", "running", "attention", "blocked", "degraded"}
 KNOWN_FLEET_STATUSES = {"ready", "attention", "blocked"}
 KNOWN_ADAPTER_STATUSES = {"ready", "degraded", "blocked"}
 KNOWN_ADAPTER_READINESS = {"ready", "review_required", "blocked", "unavailable"}
-KNOWN_GATE_STATUSES = {"pass", "warn", "fail", "info", "ready", "attention", "blocked", "degraded", "unknown", "needs_seed_or_run", "needs_demo_run", "missing_docs"}
+KNOWN_GATE_STATUSES = {"pass", "warn", "fail", "info", "ready", "current", "attention", "blocked", "degraded", "unknown", "needs_seed_or_run", "needs_demo_run", "missing_docs"}
 KNOWN_GATEWAY_STATUSES = {"ready", "attention", "blocked", "degraded"}
 KNOWN_ADAPTERS = {"mock", "hermes", "openclaw"}
 LEDGER_COUNT_KEYS = {
@@ -161,6 +163,9 @@ def validate_local_readiness(acc: Acceptance, label: str, payload: dict[str, Any
     acc.require(payload.get("status") in KNOWN_LOCAL_STATUSES, f"{label}: known status", payload.get("status"))
     validate_token_omission(acc, label, payload)
     validate_no_live_execution(acc, label, payload)
+    acc.require(isinstance(payload.get("local_demo_ready"), bool), f"{label}: local_demo_ready bool", payload.get("local_demo_ready"))
+    acc.require(isinstance(payload.get("local_security_boundary_ok"), bool), f"{label}: local security boundary bool", payload.get("local_security_boundary_ok"))
+    acc.require(isinstance(payload.get("production_ready"), bool), f"{label}: production_ready bool", payload.get("production_ready"))
 
     gates = payload.get("gates")
     acc.require(isinstance(gates, list) and bool(gates), f"{label}: gates present", len(gates or []))
@@ -179,6 +184,9 @@ def validate_local_readiness(acc: Acceptance, label: str, payload: dict[str, Any
     acc.require((payload.get("adapter_readiness") or {}).get("recommended_adapter") in KNOWN_ADAPTERS, f"{label}: recommended adapter known", payload.get("adapter_readiness"))
     security = payload.get("security_production_readiness") or {}
     acc.require(security.get("operation") == "production_readiness", f"{label}: security readiness operation", security)
+    security_gate = next((gate for gate in gates or [] if isinstance(gate, dict) and gate.get("id") == "production_security"), {})
+    acc.require(isinstance(security_gate.get("ok"), bool), f"{label}: production security gate ok bool", security_gate)
+    acc.require("production_ready=" in str(security_gate.get("detail") or ""), f"{label}: production security gate exposes production state", security_gate)
     validate_token_omission(acc, f"{label}: security readiness", security)
     validate_no_live_execution(acc, f"{label}: security readiness", security)
 
@@ -231,7 +239,7 @@ def ledger_counts(payload: dict[str, Any]) -> dict[str, int]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run v1.5 local product acceptance without live sync/execution.")
+    parser = argparse.ArgumentParser(description="Run v1.5 local readiness acceptance without live sync/execution.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8787")
     parser.add_argument("--verbose", action="store_true", help="Include every individual check in the JSON output.")
     args = parser.parse_args()
@@ -257,7 +265,9 @@ def main() -> int:
         summary = {
             "ok": False,
             "base_url": args.base_url,
-            "scope": "v1.5 local product acceptance, non-live",
+            "scope": "v1.5 local readiness acceptance, non-live",
+            "evidence_class": "read_only_non_live_readiness",
+            "product_readiness_proof": False,
             "limitation": limitation,
             "failure_count": len(acc.failures),
             "failures": acc.failures,
@@ -351,7 +361,9 @@ def main() -> int:
     summary = {
         "ok": acc.ok,
         "base_url": args.base_url,
-        "scope": "v1.5 local product acceptance, non-live",
+        "scope": "v1.5 local readiness acceptance, non-live",
+        "evidence_class": "read_only_non_live_readiness",
+        "product_readiness_proof": False,
         "live_execution_performed": False,
         "mutating_actions_performed": False,
         "checked_endpoints": sorted(path for path, payload in endpoints.items() if payload is not None),

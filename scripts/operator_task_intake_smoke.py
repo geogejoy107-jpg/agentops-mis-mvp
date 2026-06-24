@@ -3,13 +3,17 @@
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
 import os
 import re
+import socket
 import sqlite3
 import subprocess
+import sys
 import tempfile
+import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -106,12 +110,62 @@ def db_fingerprint(db_path: Path) -> dict | None:
         conn.close()
 
 
-def create_enrollment(base_url: str, workspace_id: str, agent_id: str) -> tuple[str, str]:
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def wait_for_server(base_url: str, timeout: float = 45.0) -> None:
+    deadline = time.time() + timeout
+    last_error = ""
+    while time.time() < deadline:
+        try:
+            with urlopen(base_url.rstrip("/") + "/api/dashboard/metrics", timeout=1.0) as resp:
+                if resp.status == 200:
+                    return
+        except Exception as exc:
+            last_error = str(exc)
+            time.sleep(0.25)
+    raise RuntimeError(f"server did not become ready: {last_error}")
+
+
+def start_isolated_server(db_path: Path, port: int, log_path: Path) -> subprocess.Popen:
+    env = os.environ.copy()
+    env["AGENTOPS_DB_PATH"] = str(db_path)
+    env["AGENTOPS_SKIP_SEED_EXPORTS"] = "1"
+    log_fh = log_path.open("w", encoding="utf-8")
+    proc = subprocess.Popen(
+        [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port), "--reset", "--serve"],
+        cwd=ROOT,
+        env=env,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    proc._agentops_log_fh = log_fh  # type: ignore[attr-defined]
+    return proc
+
+
+def stop_isolated_server(proc: subprocess.Popen) -> None:
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+    log_fh = getattr(proc, "_agentops_log_fh", None)
+    if log_fh:
+        log_fh.close()
+
+
+def create_enrollment(base_url: str, workspace_id: str, agent_id: str, runtime_type: str = "mock") -> tuple[str, str]:
     status, created, _raw = http_json(base_url, "POST", "/api/agent-gateway/enrollment/create", {
         "workspace_id": workspace_id,
         "agent_id": agent_id,
         "name": f"Task Intake {agent_id}",
-        "runtime_type": "mock",
+        "runtime_type": runtime_type,
         "scopes": ["agents:heartbeat", "tasks:read", "agent_plans:read", "agent_plans:write", "audit:write"],
         "ttl_days": 1,
         "heartbeat_timeout_sec": 60,
@@ -170,22 +224,26 @@ def find_item(payload: dict, task_id: str) -> dict:
     return next((item for item in payload.get("items") or [] if item.get("task_id") == task_id), {})
 
 
-def main() -> int:
-    base_url = os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787")
-    db_path = Path(os.environ.get("AGENTOPS_DB_PATH") or DEFAULT_DB)
+def run_checks(base_url: str, db_path: Path) -> int:
     stamp = now_stamp()
     workspace_id = "local-demo"
     agent_id = f"agt_task_intake_{stamp}"
+    hermes_agent_id = f"agt_task_intake_hermes_{stamp}"
     ready_task_id = f"tsk_task_intake_ready_{stamp}"
     blocked_task_id = f"tsk_task_intake_blocked_{stamp}"
-    token_id = None
+    hermes_task_id = f"tsk_task_intake_hermes_{stamp}"
+    token_ids: list[str] = []
     outputs: list[str] = []
     failures: list[str] = []
 
     try:
         token, token_id = create_enrollment(base_url, workspace_id, agent_id)
+        token_ids.append(token_id)
+        _hermes_token, hermes_token_id = create_enrollment(base_url, workspace_id, hermes_agent_id, runtime_type="hermes")
+        token_ids.append(hermes_token_id)
         create_task(base_url, workspace_id, ready_task_id, agent_id, "Task intake ready fixture")
         create_task(base_url, workspace_id, blocked_task_id, agent_id, "Task intake blocked fixture")
+        create_task(base_url, workspace_id, hermes_task_id, hermes_agent_id, "Hermes task intake Method Block fixture")
         plan_id = create_verified_plan(base_url, workspace_id, token, agent_id, ready_task_id, outputs)
 
         before = db_fingerprint(db_path)
@@ -196,10 +254,21 @@ def main() -> int:
         require((payload.get("safety") or {}).get("read_only") is True, f"intake should be read-only: {payload}", failures)
         ready_item = find_item(payload, ready_task_id)
         blocked_item = find_item(payload, blocked_task_id)
+        hermes_item = find_item(payload, hermes_task_id)
         require(ready_item.get("severity") == "ready", f"ready task not ready: {ready_item}", failures)
         require(ready_item.get("plan_id") == plan_id, f"ready task plan missing: {ready_item}", failures)
         require(blocked_item.get("severity") == "blocked", f"blocked task not blocked: {blocked_item}", failures)
         require("agent_plan" in set(blocked_item.get("failed_gate_ids") or []), f"blocked task did not fail agent_plan gate: {blocked_item}", failures)
+        require(hermes_item.get("severity") == "blocked", f"Hermes task without plan should be blocked: {hermes_item}", failures)
+        require(hermes_item.get("assigned_adapter") == "hermes", f"Hermes task adapter missing: {hermes_item}", failures)
+        hermes_admission = hermes_item.get("local_loop_admission_packet") or {}
+        hermes_dispatch = ((hermes_admission.get("local_deployment") or {}).get("customer_worker_dispatch") or {})
+        require("local_loop_admission_packet" not in set(hermes_item.get("failed_gate_ids") or []), f"Hermes Method Block gate should pass when packet is present: {hermes_item}", failures)
+        require(hermes_admission.get("operation") == "task_intake_local_loop_admission_packet", f"Hermes admission packet missing: {hermes_admission}", failures)
+        require(hermes_admission.get("ok") is True, f"Hermes admission packet not ok: {hermes_admission}", failures)
+        require("--confirm-run" in str(hermes_dispatch.get("command") or ""), f"Hermes dispatch missing confirm-run: {hermes_admission}", failures)
+        require((hermes_admission.get("safety") or {}).get("server_executes_shell") is False, f"Hermes admission server-shell proof missing: {hermes_admission}", failures)
+        require((payload.get("summary") or {}).get("missing_local_loop_admission") == 0, f"summary should show no missing Method Block admission: {payload.get('summary')}", failures)
 
         status, action_plan, raw = http_json(base_url, "GET", "/api/operator/action-plan", query={"limit": 30})
         outputs.append(raw)
@@ -217,6 +286,7 @@ def main() -> int:
             require(proc.returncode == 0, f"CLI intake failed: {proc.stderr or proc.stdout}", failures)
             require(find_item(cli_payload, ready_task_id).get("severity") == "ready", f"CLI ready task mismatch: {cli_payload}", failures)
             require(find_item(cli_payload, blocked_task_id).get("severity") == "blocked", f"CLI blocked task mismatch: {cli_payload}", failures)
+            require((find_item(cli_payload, hermes_task_id).get("local_loop_admission_packet") or {}).get("ok") is True, f"CLI Hermes admission missing: {cli_payload}", failures)
 
             status, start_gate, raw = http_json(base_url, "POST", "/api/workers/local/start", {
                 "adapter": "mock",
@@ -227,6 +297,8 @@ def main() -> int:
             outputs.append(raw)
             require(status == 409, f"worker daemon start should be intake-blocked: {status} {start_gate}", failures)
             require(start_gate.get("error") == "worker_intake_blocked", f"worker start did not report intake block: {start_gate}", failures)
+            require((start_gate.get("task_intake") or {}).get("local_loop_admission_summary"), f"worker start missing loop admission summary: {start_gate}", failures)
+            require((start_gate.get("task_intake") or {}).get("summary", {}).get("missing_local_loop_admission") == 0, f"worker start summary should prove no missing admission: {start_gate}", failures)
             require(
                 blocked_task_id in {item.get("task_id") for item in ((start_gate.get("task_intake") or {}).get("blocked_tasks") or [])},
                 f"worker start block missing blocked task evidence: {start_gate}",
@@ -242,6 +314,44 @@ def main() -> int:
             outputs.append(raw)
             require(status == 409, f"worker daemon restart should be intake-blocked: {status} {restart_gate}", failures)
             require(restart_gate.get("error") == "worker_intake_blocked", f"worker restart did not report intake block: {restart_gate}", failures)
+            require((restart_gate.get("task_intake") or {}).get("local_loop_admission_summary"), f"worker restart missing loop admission summary: {restart_gate}", failures)
+
+            status, hermes_start_gate, raw = http_json(base_url, "POST", "/api/workers/local/start", {
+                "adapter": "hermes",
+                "agent_id": hermes_agent_id,
+                "max_tasks": 1,
+                "confirm_run": True,
+                "enforce_intake": True,
+            })
+            outputs.append(raw)
+            hermes_start_summary = hermes_start_gate.get("local_loop_admission_summary") or {}
+            hermes_start_intake = hermes_start_gate.get("task_intake") or {}
+            hermes_start_blocked = next((item for item in (hermes_start_intake.get("blocked_tasks") or []) if item.get("task_id") == hermes_task_id), {})
+            hermes_worker_start = (((hermes_start_blocked.get("local_loop_admission_packet") or {}).get("local_deployment") or {}).get("worker_start") or {})
+            require(status == 409, f"Hermes worker daemon start should be intake-blocked before live execution: {status} {hermes_start_gate}", failures)
+            require(hermes_start_gate.get("error") == "worker_intake_blocked", f"Hermes worker start did not report intake block: {hermes_start_gate}", failures)
+            require(hermes_start_summary.get("operation") == "worker_loop_admission_summary", f"Hermes start missing admission summary: {hermes_start_gate}", failures)
+            require(hermes_start_summary.get("adapter") == "hermes", f"Hermes start summary adapter mismatch: {hermes_start_summary}", failures)
+            require(hermes_start_summary.get("passed_local_loop_admission") == 1, f"Hermes start summary should count passed admission: {hermes_start_summary}", failures)
+            require(hermes_start_summary.get("missing_local_loop_admission") == 0, f"Hermes start summary should not miss admission: {hermes_start_summary}", failures)
+            require((hermes_start_summary.get("safety") or {}).get("server_executes_shell") is False, f"Hermes start summary shell proof missing: {hermes_start_summary}", failures)
+            require((hermes_start_blocked.get("local_loop_admission_packet") or {}).get("ok") is True, f"Hermes worker start block missing admission packet: {hermes_start_gate}", failures)
+            require("--agent-id" in str(hermes_worker_start.get("command") or ""), f"Hermes worker start command should bind agent id: {hermes_start_gate}", failures)
+            require("--confirm-run" in str(hermes_worker_start.get("command") or ""), f"Hermes worker start command should require confirm-run: {hermes_start_gate}", failures)
+
+            status, hermes_restart_gate, raw = http_json(base_url, "POST", "/api/workers/local/restart", {
+                "adapter": "hermes",
+                "agent_id": hermes_agent_id,
+                "max_tasks": 1,
+                "confirm_run": True,
+                "enforce_intake": True,
+            })
+            outputs.append(raw)
+            hermes_restart_summary = hermes_restart_gate.get("local_loop_admission_summary") or {}
+            require(status == 409, f"Hermes worker daemon restart should be intake-blocked before live execution: {status} {hermes_restart_gate}", failures)
+            require(hermes_restart_gate.get("error") == "worker_intake_blocked", f"Hermes worker restart did not report intake block: {hermes_restart_gate}", failures)
+            require(hermes_restart_summary.get("operation") == "worker_loop_admission_summary", f"Hermes restart missing admission summary: {hermes_restart_gate}", failures)
+            require(hermes_restart_summary.get("passed_local_loop_admission") == 1, f"Hermes restart summary should count passed admission: {hermes_restart_summary}", failures)
 
             after_reads = db_fingerprint(db_path)
             if before is not None and after_reads is not None:
@@ -267,6 +377,16 @@ def main() -> int:
                 f"enforced pull did not return blocked task evidence: {blocked_pull}",
                 failures,
             )
+            proc = run_cli(base_url, ["task", "pull", "--agent-id", hermes_agent_id, "--task-id", hermes_task_id, "--status", "planned", "--limit", "5", "--enforce-intake"], env)
+            outputs.extend([proc.stdout, proc.stderr])
+            hermes_pull = load_json(proc)
+            hermes_pull_ids = {item.get("task_id") for item in hermes_pull.get("tasks") or []}
+            hermes_blocked = next((item for item in ((hermes_pull.get("intake") or {}).get("blocked_tasks") or []) if item.get("task_id") == hermes_task_id), {})
+            require(proc.returncode == 0, f"CLI Hermes pull failed: {proc.stderr or proc.stdout}", failures)
+            require(hermes_task_id not in hermes_pull_ids, f"Hermes task without plan leaked through enforced intake: {hermes_pull}", failures)
+            require((hermes_blocked.get("local_loop_admission_packet") or {}).get("ok") is True, f"Hermes blocked pull missing admission packet: {hermes_pull}", failures)
+            require("agent_plan" in set(hermes_blocked.get("failed_gate_ids") or []), f"Hermes blocked pull should still fail plan gate: {hermes_pull}", failures)
+            require("local_loop_admission_packet" not in set(hermes_blocked.get("failed_gate_ids") or []), f"Hermes Method Block admission should not be failed: {hermes_pull}", failures)
 
         after = db_fingerprint(db_path)
         if before is not None and after is not None:
@@ -278,8 +398,10 @@ def main() -> int:
             "ok": not failures,
             "workspace_id": workspace_id,
             "agent_id": agent_id,
+            "hermes_agent_id": hermes_agent_id,
             "ready_task_id": ready_task_id,
             "blocked_task_id": blocked_task_id,
+            "hermes_task_id": hermes_task_id,
             "plan_id": plan_id,
             "read_only": before == after_reads if before is not None and after_reads is not None else None,
             "pull_entity_stable": all(before.get(table) == after.get(table) for table in ("tasks", "agent_plans")) if before is not None and after is not None else None,
@@ -288,8 +410,29 @@ def main() -> int:
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if not failures else 1
     finally:
-        if token_id:
+        for token_id in token_ids:
             http_json(base_url, "POST", "/api/agent-gateway/enrollment/revoke", {"token_id": token_id})
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
+    parser.add_argument("--db-path", default=str(Path(os.environ.get("AGENTOPS_DB_PATH") or DEFAULT_DB)))
+    parser.add_argument("--isolated-fixture", action="store_true", help="Run against a temporary server and SQLite database.")
+    args = parser.parse_args()
+    if args.isolated_fixture:
+        with tempfile.TemporaryDirectory(prefix="agentops-task-intake-isolated-") as tmp:
+            tmp_path = Path(tmp)
+            db_path = tmp_path / "agentops_mis.db"
+            port = free_port()
+            base_url = f"http://127.0.0.1:{port}"
+            proc = start_isolated_server(db_path, port, tmp_path / "server.log")
+            try:
+                wait_for_server(base_url)
+                return run_checks(base_url, db_path)
+            finally:
+                stop_isolated_server(proc)
+    return run_checks(args.base_url, Path(args.db_path))
 
 
 if __name__ == "__main__":

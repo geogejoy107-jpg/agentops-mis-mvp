@@ -41,6 +41,7 @@ DEFAULT_WORKSPACE_ID = "local-demo"
 DEFAULT_AGENT_ID = "agt_worker_local"
 DEFAULT_HERMES_GATEWAY_URL = "http://127.0.0.1:8642"
 DEFAULT_HERMES_MODEL = "hermes-agent"
+DEFAULT_HERMES_MAX_TOKENS = int(os.environ.get("HERMES_MAX_TOKENS", "512"))
 DEFAULT_OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
 WORKER_SECRET_BOUNDARY_VERSION = "trusted_worker_client_v1"
 
@@ -286,6 +287,9 @@ class AdapterResult:
     ok: bool
     output_summary: str
     prompt_hash: str
+    prompt_profile_id: str = "general_customer_delivery_summary"
+    prompt_profile_version: str = "worker_prompt_profiles_v1"
+    prompt_profile_hash: str | None = None
     raw_payload_hash: str | None = None
     error_type: str | None = None
     error_message: str | None = None
@@ -298,20 +302,133 @@ class AdapterResult:
     retry_history: list[dict] | None = None
 
 
-def build_task_prompt(task: dict) -> str:
+PROMPT_PROFILE_VERSION = "worker_prompt_profiles_v1"
+
+
+def select_task_prompt_profile(task: dict, adapter: str | None = None) -> dict:
+    combined = " ".join([
+        str(task.get("title") or ""),
+        str(task.get("description") or ""),
+        str(task.get("acceptance_criteria") or ""),
+    ]).lower()
+    profile_id = "general_customer_delivery_summary"
+    if any(term in combined for term in [
+        "coding", "code", "repo", "repository", "worktree", "branch", "patch", "test", "tsx", "typescript",
+        "代码", "仓库", "分支", "补丁", "测试", "修复", "实现", "前端", "后端",
+    ]):
+        profile_id = "local_coding_project_summary"
+    elif any(term in combined for term in [
+        "knowledge", "file search", "qa bot", "q&a", "dataset", "retrieval",
+        "知识库", "问答", "资料", "检索", "引用",
+    ]):
+        profile_id = "knowledge_base_delivery_summary"
+    elif any(term in combined for term in [
+        "review", "audit", "evaluate", "qa", "quality", "acceptance", "验收", "审计", "审查", "评估", "质量",
+    ]):
+        profile_id = "review_quality_gate_summary"
+    profile_map = {
+        "general_customer_delivery_summary": {
+            "objective": "Turn a customer task into a concise delivery summary with risks, evidence, and next actions.",
+            "output_contract": ["delivery_summary", "risks_or_blockers", "recommended_next_actions"],
+        },
+        "local_coding_project_summary": {
+            "objective": "Analyze a coding task and return implementation guidance plus verification commands without editing files directly.",
+            "output_contract": ["implementation_plan", "affected_surfaces", "verification_commands", "risks_or_blockers"],
+        },
+        "knowledge_base_delivery_summary": {
+            "objective": "Analyze a knowledge-base or Q&A bot task and return ingestion, retrieval, evaluation, and delivery guidance.",
+            "output_contract": ["source_preparation", "retrieval_design", "evaluation_questions", "delivery_report"],
+        },
+        "review_quality_gate_summary": {
+            "objective": "Review task evidence against acceptance gates and return pass/fail risks plus remediation steps.",
+            "output_contract": ["gate_assessment", "missing_evidence", "remediation_steps"],
+        },
+    }
+    profile = dict(profile_map.get(profile_id) or profile_map["general_customer_delivery_summary"])
+    profile.update({
+        "profile_id": profile_id,
+        "version": PROMPT_PROFILE_VERSION,
+        "adapter": adapter or "worker",
+        "channel": "ledger_summary_only",
+        "prohibited_actions": [
+            "shell_execution",
+            "browser_operation",
+            "filesystem_write",
+            "mis_api_write",
+            "external_publish_upload_or_deploy",
+            "credential_request",
+        ],
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    })
+    profile["profile_hash"] = stable_hash({
+        "profile_id": profile["profile_id"],
+        "version": profile["version"],
+        "channel": profile["channel"],
+        "output_contract": profile["output_contract"],
+        "prohibited_actions": profile["prohibited_actions"],
+    })
+    return profile
+
+
+def build_task_prompt_bundle(task: dict, adapter: str | None = None) -> tuple[str, dict]:
+    profile = select_task_prompt_profile(task, adapter=adapter)
     title = redact_text(task.get("title"), 180)
     description = redact_text(task.get("description"), 900)
     acceptance = redact_text(task.get("acceptance_criteria"), 500)
     risk = redact_text(task.get("risk_level") or "medium", 40)
-    return (
+    knowledge = task.get("_knowledge_retrieval_evidence") or {}
+    knowledge_paths = [redact_text(path, 120) for path in (knowledge.get("paths") or [])[:5]]
+    knowledge_metrics = knowledge.get("metrics") or {}
+    knowledge_context = (
+        "项目知识检索证据："
+        f"status={redact_text(knowledge.get('packet_status') or knowledge.get('status') or 'unavailable', 60)}; "
+        f"packet_hash={redact_text(knowledge.get('packet_hash'), 80)}; "
+        f"query_hash={redact_text(knowledge.get('query_hash'), 80)}; "
+        f"recall_at_5={knowledge_metrics.get('recall_at_5')}; "
+        f"mrr={knowledge_metrics.get('mrr')}; "
+        f"paths={', '.join(knowledge_paths) if knowledge_paths else 'none'}; "
+        "raw_query/snippet/content/prompt/response/token omitted.\n"
+    )
+    profile_context = (
+        "执行画像："
+        f"profile_id={profile['profile_id']}; "
+        f"version={profile['version']}; "
+        f"profile_hash={profile['profile_hash'][:16]}; "
+        f"objective={profile['objective']}; "
+        f"output_contract={', '.join(profile['output_contract'])}; "
+        "raw profile prompt body omitted from MIS evidence.\n"
+    )
+    prompt = (
         "你是 AgentOps MIS 的本地 AI worker。请根据下面的任务摘要给出可交付结果。\n"
+        "执行边界：本次调用是 ledger_summary_only 摘要通道，不是工具执行通道。"
+        "不要调用终端、shell、浏览器、文件系统、MIS/API、外部工具或发布/上传/部署目标；"
+        "不要声称已经执行了这些动作。"
+        "如果任务需要这些动作，只能把它们列为下一步验证/执行建议，交给 MIS 账本流程处理。\n"
         "约束：不要请求外部凭证；不要输出隐藏推理；如果任务信息不足，给出可执行的下一步和缺口。"
         "请用中文，返回 3-6 条要点。\n\n"
         f"任务标题：{title}\n"
         f"任务风险：{risk}\n"
         f"任务描述：{description}\n"
         f"验收标准：{acceptance}\n"
+        f"{profile_context}"
+        f"{knowledge_context}"
     )
+    return prompt, profile
+
+
+def build_task_prompt(task: dict, adapter: str | None = None) -> str:
+    prompt, _profile = build_task_prompt_bundle(task, adapter=adapter)
+    return prompt
+
+
+def adapter_result_profile_fields(profile: dict) -> dict:
+    return {
+        "prompt_profile_id": profile.get("profile_id") or "general_customer_delivery_summary",
+        "prompt_profile_version": profile.get("version") or PROMPT_PROFILE_VERSION,
+        "prompt_profile_hash": profile.get("profile_hash"),
+    }
 
 
 def worker_secret_boundary_metadata() -> dict:
@@ -328,12 +445,13 @@ def worker_secret_boundary_metadata() -> dict:
 
 
 def execute_mock(task: dict, attempt: int = 1, fail_before_success: int = 0) -> AdapterResult:
-    prompt = build_task_prompt(task)
+    prompt, profile = build_task_prompt_bundle(task, adapter="mock")
     if fail_before_success and attempt <= fail_before_success:
         return AdapterResult(
             ok=False,
             output_summary=f"Mock worker simulated transient adapter failure on attempt {attempt}.",
             prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
             raw_payload_hash=stable_hash({"adapter": "mock", "task_id": task.get("task_id"), "attempt": attempt, "simulated": True}),
             error_type="MockTransientFailure",
             error_message=f"Simulated transient adapter failure before success, attempt {attempt}.",
@@ -345,18 +463,20 @@ def execute_mock(task: dict, attempt: int = 1, fail_before_success: int = 0) -> 
         ok=True,
         output_summary=summary,
         prompt_hash=stable_hash(prompt),
+        **adapter_result_profile_fields(profile),
         raw_payload_hash=stable_hash({"adapter": "mock", "task_id": task.get("task_id"), "summary": summary}),
         target_resource="local://agentops/mock-worker",
     )
 
 
-def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confirm_run: bool) -> AdapterResult:
-    prompt = build_task_prompt(task)
+def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confirm_run: bool, max_tokens: int) -> AdapterResult:
+    prompt, profile = build_task_prompt_bundle(task, adapter="hermes")
     if not confirm_run:
         return AdapterResult(
             ok=False,
             output_summary="Hermes adapter dry-run: pass --confirm-run to execute.",
             prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
             error_type="ConfirmRunRequired",
             error_message="Hermes live execution requires --confirm-run.",
             target_resource=gateway_url.rstrip() + "/v1/chat/completions",
@@ -366,6 +486,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
+        "max_tokens": min(max(int(max_tokens or DEFAULT_HERMES_MAX_TOKENS), 64), 4096),
     }
     started = time.time()
     try:
@@ -383,6 +504,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             ok=bool(visible),
             output_summary=redact_text(visible, 200) if visible else "Hermes returned an empty response.",
             prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
             raw_payload_hash=stable_hash(response),
             error_type=None if visible else "HermesEmptyResponse",
             error_message=None if visible else "Hermes returned no visible content.",
@@ -396,6 +518,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             ok=False,
             output_summary="Hermes adapter execution failed.",
             prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
             error_type="HermesExecutionFailed",
             error_message=redact_text(str(exc), 200),
             duration_ms=int((time.time() - started) * 1000),
@@ -405,12 +528,13 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
 
 
 def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int, confirm_run: bool) -> AdapterResult:
-    prompt = build_task_prompt(task)
+    prompt, profile = build_task_prompt_bundle(task, adapter="openclaw")
     if not confirm_run:
         return AdapterResult(
             ok=False,
             output_summary="OpenClaw adapter dry-run: pass --confirm-run to execute.",
             prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
             error_type="ConfirmRunRequired",
             error_message="OpenClaw live execution requires --confirm-run.",
             target_resource=f"local://openclaw/{agent_name}",
@@ -435,6 +559,7 @@ def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int
             ok=ok,
             output_summary=redact_text(visible, 200) if ok else "OpenClaw adapter execution failed.",
             prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
             raw_payload_hash=stable_hash(payload or {"stderr": proc.stderr, "returncode": proc.returncode}),
             error_type=None if ok else "OpenClawExecutionFailed",
             error_message=None if ok else redact_text(proc.stderr or visible or f"exit={proc.returncode}", 200),
@@ -447,6 +572,7 @@ def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int
             ok=False,
             output_summary="OpenClaw adapter execution failed.",
             prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
             error_type="OpenClawExecutionFailed",
             error_message=redact_text(str(exc), 200),
             duration_ms=int((time.time() - started) * 1000),
@@ -459,7 +585,7 @@ def execute_adapter_once(task: dict, args, attempt: int) -> AdapterResult:
     if args.adapter == "mock":
         return execute_mock(task, attempt=attempt, fail_before_success=args.mock_failures_before_success)
     if args.adapter == "hermes":
-        return execute_hermes(task, args.hermes_gateway_url, args.hermes_model, args.hermes_timeout, args.confirm_run)
+        return execute_hermes(task, args.hermes_gateway_url, args.hermes_model, args.hermes_timeout, args.confirm_run, args.hermes_max_tokens)
     if args.adapter == "openclaw":
         return execute_openclaw(task, args.openclaw_bin, args.openclaw_agent, args.openclaw_timeout, args.confirm_run)
     raise RuntimeError(f"unknown adapter: {args.adapter}")
@@ -582,9 +708,13 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
     action_type = f"agent_worker.{args.adapter}.external_write"
     target_resource = f"{args.adapter}://external-write/{task_id}"
     tool_risk = max_risk(task.get("risk_level"), "high", capability.get("risk_floor"))
+    prompt_profile = select_task_prompt_profile(task, adapter=args.adapter)
     normalized_args = {
         "task_id": task_id,
         "adapter": args.adapter,
+        "prompt_profile_id": prompt_profile.get("profile_id"),
+        "prompt_profile_version": prompt_profile.get("version"),
+        "prompt_profile_hash": prompt_profile.get("profile_hash"),
         "title": redact_text(task.get("title"), 140),
         "external_write_intent": True,
         "target_resource": target_resource,
@@ -639,6 +769,9 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
             "tool_call_id": tool_call.get("tool_call_id"),
             "approval_id": approval.get("approval_id"),
             "prepared_action_id": prepared_action.get("action_id"),
+            "prompt_profile_id": prompt_profile.get("profile_id"),
+            "prompt_profile_version": prompt_profile.get("version"),
+            "prompt_profile_hash": prompt_profile.get("profile_hash"),
             "live_execution_performed": False,
             **worker_secret_boundary_metadata(),
         },
@@ -656,6 +789,14 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
         "approval_id": approval.get("approval_id"),
         "prepared_action_id": prepared_action.get("action_id"),
         "prepared_action_hash": prepared_action.get("action_hash"),
+        "prompt_profile": {
+            "profile_id": prompt_profile.get("profile_id"),
+            "version": prompt_profile.get("version"),
+            "profile_hash": prompt_profile.get("profile_hash"),
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
         "next_action": tool_payload.get("next_action"),
         "output_summary": "Worker paused before live runtime execution because the task appears to request an external write.",
         "secret_boundary": worker_secret_boundary_metadata(),
@@ -706,8 +847,162 @@ def register_worker(client: AgentOpsClient, adapter: str):
     })
 
 
-def create_worker_agent_plan(client: AgentOpsClient, task: dict, args) -> dict:
+def unique_values(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        item = str(value or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def build_worker_knowledge_query(task: dict, adapter: str | None = None) -> str:
+    title = redact_text(task.get("title"), 90)
+    description = redact_text(task.get("description"), 220)
+    acceptance = redact_text(task.get("acceptance_criteria"), 160)
+    runtime = redact_text(adapter or task.get("runtime_type") or task.get("model_provider") or "worker", 40)
+    risk = redact_text(task.get("risk_level") or "medium", 32)
+    task_terms = " ".join(part for part in [title, description, acceptance] if part).strip()
+    query = (
+        f"Agent Gateway worker task evidence adapter {runtime} risk {risk}. "
+        f"{task_terms} "
+        "READ PLAN RETRIEVE COMPARE EXECUTE VERIFY RECORD method block "
+        "run ledger tool evaluation audit approval artifact worker adapter"
+    )
+    return redact_text(query, 240)
+
+
+def fetch_worker_knowledge_evidence(client: AgentOpsClient, task: dict, adapter: str | None = None) -> dict:
+    task_id = str(task.get("task_id") or "").strip()
+    query = build_worker_knowledge_query(task, adapter=adapter)
+    packet_query = {
+        "limit": 5,
+        "baseline_limit": 5,
+        "adapter": adapter,
+    }
+    if task_id:
+        packet_query["task_id"] = task_id
+    else:
+        packet_query["q"] = query
+    try:
+        packet = client.get("/api/agent-gateway/knowledge/evidence-packet", packet_query)
+        compact = compact_worker_knowledge_evidence(packet)
+        if compact.get("knowledge_retrieval_evidence_consumed"):
+            return compact
+        try:
+            indexed = client.post("/api/agent-gateway/knowledge/index", {"rebuild": False})
+            packet = client.get("/api/agent-gateway/knowledge/evidence-packet", packet_query)
+            compact = compact_worker_knowledge_evidence(packet)
+            compact["knowledge_index_attempted"] = True
+            compact["knowledge_index_status"] = indexed.get("status") or indexed.get("operation")
+            compact["knowledge_indexed_documents"] = indexed.get("indexed")
+            return compact
+        except Exception as index_exc:
+            compact["knowledge_index_attempted"] = True
+            compact["knowledge_index_status"] = "unavailable"
+            compact["knowledge_index_error"] = redact_text(str(index_exc), 220)
+            return compact
+    except Exception as exc:
+        return {
+            "operation": "worker_knowledge_retrieval_evidence",
+            "status": "unavailable",
+            "reason": redact_text(str(exc), 220),
+            "packet_hash": stable_hash({"status": "unavailable", "query_hash": stable_hash(query)}),
+            "query_hash": stable_hash(query),
+            "query_omitted": True,
+            "task_context": {
+                "task_id": task_id or None,
+                "task_found": False,
+                "query_source": "task_id" if task_id else "fallback_query",
+                "task_text_omitted": True,
+                "token_omitted": True,
+            },
+            "knowledge_retrieval_evidence_consumed": False,
+            "results": [],
+            "retrieval_ids": [],
+            "paths": [],
+            "source_hashes": [],
+            "metrics": {},
+            "raw_content_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        }
+
+
+def compact_worker_knowledge_evidence(packet: dict) -> dict:
+    primary = packet.get("primary_search") or {}
+    task_context = packet.get("task_context") if isinstance(packet.get("task_context"), dict) else {}
+    rows = []
+    for row in (primary.get("results") or [])[:5]:
+        rows.append({
+            "retrieval_id": row.get("retrieval_id"),
+            "doc_id": row.get("doc_id"),
+            "chunk_id": row.get("chunk_id"),
+            "path": row.get("path"),
+            "chunk_heading_path": row.get("chunk_heading_path"),
+            "source_hash": row.get("source_hash"),
+            "rank": row.get("rank"),
+            "snippet_omitted": True,
+            "content_summary_omitted": True,
+            "raw_content_omitted": True,
+            "raw_prompt_omitted": True,
+            "token_omitted": True,
+        })
+    core = {
+        "operation": "worker_knowledge_retrieval_evidence",
+        "packet_operation": packet.get("operation"),
+        "packet_status": packet.get("status"),
+        "task_context": {
+            "task_id": task_context.get("task_id"),
+            "task_found": bool(task_context.get("task_found")),
+            "query_source": task_context.get("query_source") or "explicit_query",
+            "source_fields": task_context.get("source_fields") if isinstance(task_context.get("source_fields"), list) else [],
+            "task_text_omitted": task_context.get("task_text_omitted") is not False,
+            "token_omitted": True,
+        },
+        "query_hash": packet.get("query_hash"),
+        "query_omitted": True,
+        "metrics": packet.get("metrics") or {},
+        "result_count": len(rows),
+        "retrieval_ids": [row.get("retrieval_id") for row in rows if row.get("retrieval_id")],
+        "paths": [row.get("path") for row in rows if row.get("path")],
+        "source_hashes": [row.get("source_hash") for row in rows if row.get("source_hash")],
+        "results": rows,
+        "raw_content_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+    core["packet_hash"] = stable_hash({
+        "packet_operation": core["packet_operation"],
+        "packet_status": core["packet_status"],
+        "task_context": core["task_context"],
+        "query_hash": core["query_hash"],
+        "metrics": core["metrics"],
+        "results": rows,
+    })
+    core["knowledge_retrieval_evidence_consumed"] = bool(rows)
+    return core
+
+
+def create_worker_agent_plan(client: AgentOpsClient, task: dict, args, knowledge_evidence: dict | None = None) -> dict:
     risk = task.get("risk_level") or "medium"
+    knowledge_evidence = knowledge_evidence or {}
+    retrieved_paths = [path for path in (knowledge_evidence.get("paths") or []) if isinstance(path, str)]
+    referenced_specs = unique_values([
+        "PROJECT_SPEC.md",
+        "AGENT_WORKFLOW.md",
+        "docs/AGENT_WORK_METHOD_BLOCK.md",
+        *[path for path in retrieved_paths if path.endswith(".md") and not path.startswith("knowledge/")],
+    ])[:8]
+    referenced_memories = unique_values([
+        "knowledge/shared/common_failures.md",
+        *retrieved_paths,
+    ])[:8]
     payload = {
         "workspace_id": client.workspace_id,
         "agent_id": client.agent_id,
@@ -716,14 +1011,17 @@ def create_worker_agent_plan(client: AgentOpsClient, task: dict, args) -> dict:
             f"Process task '{redact_text(task.get('title'), 120)}' through the {args.adapter} worker adapter, "
             "write run/tool/evaluation/artifact/audit evidence, then bind the result to this plan."
         ),
-        "referenced_specs": ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md", "docs/AGENT_WORK_METHOD_BLOCK.md"],
-        "referenced_memories": ["knowledge/shared/common_failures.md"],
+        "referenced_specs": referenced_specs,
+        "referenced_memories": referenced_memories,
         "referenced_bases": ["base_local_tasks", "base_local_memory"],
         "proposed_files_to_change": ["agentops-worker-runtime", f"adapter:{args.adapter}"],
         "risk_level": risk,
         "approval_required": risk in {"high", "critical"},
         "execution_steps": ["READ", "PLAN", "RETRIEVE", "COMPARE", "EXECUTE", "VERIFY", "RECORD"],
-        "verification_plan": "Agent worker must submit tool, evaluation, artifact, audit and plan_evidence_manifest evidence.",
+        "verification_plan": (
+            "Agent worker must consume knowledge retrieval evidence before execution and submit tool, "
+            "evaluation, artifact, audit and plan_evidence_manifest evidence."
+        ),
         "rollback_plan": "Mark the run failed/blocked and leave the manifest blocked if execution evidence is incomplete.",
         "status": "submitted",
     }
@@ -743,6 +1041,71 @@ def create_worker_plan_manifest(client: AgentOpsClient, plan_id: str, run_id: st
         "artifact_ids": [artifact_id] if artifact_id else [],
     }
     return client.post("/api/agent-gateway/plan-evidence-manifests", payload)
+
+
+def adapter_model_name(args) -> str:
+    if args.adapter == "hermes":
+        return args.hermes_model
+    if args.adapter == "openclaw":
+        return args.openclaw_agent
+    return "agentops-mock-worker"
+
+
+def record_worker_runtime_event(
+    client: AgentOpsClient,
+    args,
+    *,
+    run_id: str,
+    task_id: str,
+    result: AdapterResult,
+    capability: dict,
+) -> dict:
+    event_payload = {
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "run_id": run_id,
+        "adapter": args.adapter,
+        "event_type": "agent_worker.adapter_execution_summary",
+        "status": "completed" if result.ok else "failed",
+        "input_summary": (
+            f"Worker adapter={args.adapter} task={redact_text(task_id, 120)} "
+            f"observation={capability.get('observation_level')}"
+        ),
+        "output_summary": result.output_summary,
+        "error_message": result.error_message,
+        "latency_ms": result.duration_ms,
+        "model_name": adapter_model_name(args),
+        "prompt_hash": result.prompt_hash,
+        "raw_payload_hash": result.raw_payload_hash or stable_hash({
+            "adapter": args.adapter,
+            "run_id": run_id,
+            "task_id": task_id,
+            "ok": result.ok,
+            "error_type": result.error_type,
+            "attempt_count": result.attempt_count,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        }),
+        "metadata": {
+            "task_id": task_id,
+            "adapter": args.adapter,
+            "ok": result.ok,
+            "error_type": result.error_type,
+            "attempt_count": result.attempt_count,
+            "max_attempts": result.max_attempts,
+            "observation_level": capability.get("observation_level"),
+            "commercial_readiness": capability.get("commercial_readiness"),
+            "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
+            "runtime_internal_tools_remain_opaque": capability.get("observation_level") == "ledger_summary_only",
+            "event_is_worker_summary_not_raw_trace": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "source": "agentops-worker.adapter-execution-summary",
+    }
+    return client.post("/api/agent-gateway/runtime-events", event_payload)
 
 
 def process_one_task(client: AgentOpsClient, args) -> dict:
@@ -789,7 +1152,10 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "agent_id": client.agent_id,
         "runtime_type": args.adapter,
     })
-    plan_payload = create_worker_agent_plan(client, task, args)
+    knowledge_evidence = fetch_worker_knowledge_evidence(client, task, adapter=args.adapter)
+    task = dict(task)
+    task["_knowledge_retrieval_evidence"] = knowledge_evidence
+    plan_payload = create_worker_agent_plan(client, task, args, knowledge_evidence)
     plan_id = (plan_payload.get("agent_plan") or {}).get("plan_id")
     if not plan_id:
         raise RuntimeError("agent plan create did not return plan_id")
@@ -815,6 +1181,15 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
 
     result = execute_adapter_with_retries(task, args)
     tool_risk = max_risk(task.get("risk_level"), capability.get("risk_floor"))
+    runtime_event_payload = record_worker_runtime_event(
+        client,
+        args,
+        run_id=run_id,
+        task_id=task_id,
+        result=result,
+        capability=capability,
+    )
+    worker_runtime_event_id = ((runtime_event_payload.get("runtime_event") or {}).get("runtime_event_id"))
 
     tool_status = "completed" if result.ok else "failed"
     tool_payload = client.post("/api/agent-gateway/tool-calls", {
@@ -830,6 +1205,9 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "task_id": task_id,
             "adapter": args.adapter,
             "prompt_hash": result.prompt_hash,
+            "prompt_profile_id": result.prompt_profile_id,
+            "prompt_profile_version": result.prompt_profile_version,
+            "prompt_profile_hash": result.prompt_profile_hash,
             "attempt_count": result.attempt_count,
             "max_attempts": result.max_attempts,
             "retry_history": result.retry_history or [],
@@ -838,6 +1216,27 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "effective_risk_level": tool_risk,
             "commercial_readiness": capability.get("commercial_readiness"),
             "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
+            "worker_runtime_event_id": worker_runtime_event_id,
+            "worker_runtime_event_summary_recorded": bool(worker_runtime_event_id),
+            "runtime_internal_tools_remain_opaque": capability.get("observation_level") == "ledger_summary_only",
+            "hermes_max_tokens": args.hermes_max_tokens if args.adapter == "hermes" else None,
+            "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+            "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
+            "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
+            "knowledge_retrieval_status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+            "knowledge_retrieval_task_context": knowledge_evidence.get("task_context") or {},
+            "knowledge_retrieval_ids": knowledge_evidence.get("retrieval_ids") or [],
+            "knowledge_retrieval_paths": knowledge_evidence.get("paths") or [],
+            "knowledge_retrieval_source_hashes": knowledge_evidence.get("source_hashes") or [],
+            "knowledge_retrieval_metrics": knowledge_evidence.get("metrics") or {},
+            "knowledge_retrieval_omissions": {
+                "query_omitted": True,
+                "snippet_omitted": True,
+                "raw_content_omitted": True,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
             "raw_omitted": True,
             **secret_boundary,
         },
@@ -855,18 +1254,40 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "error_type": result.error_type,
         "error_message": result.error_message,
     })
+    knowledge_gate_pass = bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed"))
+    knowledge_gate_status = (
+        "pass"
+        if knowledge_gate_pass
+        else "unavailable"
+        if (knowledge_evidence.get("packet_status") or knowledge_evidence.get("status")) == "unavailable"
+        else "missing"
+    )
+    evaluation_pass = bool(result.ok and knowledge_gate_pass)
+    if evaluation_pass:
+        evaluation_notes = "Worker adapter loop completed with compact knowledge retrieval evidence."
+    elif result.ok:
+        evaluation_notes = "Worker adapter loop completed but failed quality gate: knowledge retrieval evidence was unavailable or missing."
+    else:
+        evaluation_notes = f"Worker adapter loop failed: {result.error_type}"
     eval_payload = client.post("/api/agent-gateway/evaluations/submit", {
         "workspace_id": client.workspace_id,
         "run_id": run_id,
         "task_id": task_id,
         "agent_id": client.agent_id,
         "evaluator_type": "rule",
-        "score": 1.0 if result.ok else 0.0,
-        "pass_fail": "pass" if result.ok else "fail",
+        "score": 1.0 if evaluation_pass else 0.0,
+        "pass_fail": "pass" if evaluation_pass else "fail",
         "rubric": {
             "gate": "worker_adapter_loop",
             "adapter": args.adapter,
             "requires_completed_run": True,
+            "requires_knowledge_retrieval_evidence": True,
+            "prompt_profile_id": result.prompt_profile_id,
+            "prompt_profile_version": result.prompt_profile_version,
+            "prompt_profile_hash": result.prompt_profile_hash,
+            "knowledge_retrieval_gate_pass": knowledge_gate_pass,
+            "knowledge_retrieval_gate_status": knowledge_gate_status,
+            "quality_gate_pass": evaluation_pass,
             "raw_prompt_response_omitted": True,
             "attempt_count": result.attempt_count,
             "max_attempts": result.max_attempts,
@@ -875,9 +1296,26 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "effective_risk_level": tool_risk,
             "commercial_readiness": capability.get("commercial_readiness"),
             "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
+            "worker_runtime_event_id": worker_runtime_event_id,
+            "worker_runtime_event_summary_recorded": bool(worker_runtime_event_id),
+            "runtime_internal_tools_remain_opaque": capability.get("observation_level") == "ledger_summary_only",
+            "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+            "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
+            "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
+            "knowledge_retrieval_status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+            "knowledge_retrieval_task_context": knowledge_evidence.get("task_context") or {},
+            "knowledge_retrieval_metrics": knowledge_evidence.get("metrics") or {},
+            "knowledge_retrieval_omissions": {
+                "query_omitted": True,
+                "snippet_omitted": True,
+                "raw_content_omitted": True,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
             **secret_boundary,
         },
-        "notes": "Worker adapter loop completed." if result.ok else f"Worker adapter loop failed: {result.error_type}",
+        "notes": evaluation_notes,
     })
     evaluation_id = (eval_payload.get("evaluation") or {}).get("evaluation_id")
     artifact_payload = client.post("/api/agent-gateway/artifacts", {
@@ -895,6 +1333,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "adapter": args.adapter,
             "summary": result.output_summary,
             "ok": result.ok,
+            "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
         }),
     })
     artifact_id = (artifact_payload.get("artifact") or {}).get("artifact_id")
@@ -923,6 +1362,9 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "adapter": args.adapter,
             "ok": result.ok,
             "prompt_hash": result.prompt_hash,
+            "prompt_profile_id": result.prompt_profile_id,
+            "prompt_profile_version": result.prompt_profile_version,
+            "prompt_profile_hash": result.prompt_profile_hash,
             "raw_payload_hash": result.raw_payload_hash,
             "attempt_count": result.attempt_count,
             "max_attempts": result.max_attempts,
@@ -932,6 +1374,25 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "effective_risk_level": tool_risk,
             "commercial_readiness": capability.get("commercial_readiness"),
             "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
+            "worker_runtime_event_id": worker_runtime_event_id,
+            "worker_runtime_event_summary_recorded": bool(worker_runtime_event_id),
+            "runtime_internal_tools_remain_opaque": capability.get("observation_level") == "ledger_summary_only",
+            "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+            "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
+            "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
+            "knowledge_retrieval_status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+            "knowledge_retrieval_task_context": knowledge_evidence.get("task_context") or {},
+            "knowledge_retrieval_ids": knowledge_evidence.get("retrieval_ids") or [],
+            "knowledge_retrieval_paths": knowledge_evidence.get("paths") or [],
+            "knowledge_retrieval_source_hashes": knowledge_evidence.get("source_hashes") or [],
+            "knowledge_retrieval_omissions": {
+                "query_omitted": True,
+                "snippet_omitted": True,
+                "raw_content_omitted": True,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
             **secret_boundary,
         },
     })
@@ -956,8 +1417,34 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "adapter": args.adapter,
         "ok": result.ok,
         "attempt_count": result.attempt_count,
+        "prompt_profile": {
+            "profile_id": result.prompt_profile_id,
+            "version": result.prompt_profile_version,
+            "profile_hash": result.prompt_profile_hash,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
         "output_summary": result.output_summary,
         "error_type": result.error_type,
+        "worker_runtime_event_id": worker_runtime_event_id,
+        "knowledge_retrieval_evidence": {
+            "consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+            "packet_hash": knowledge_evidence.get("packet_hash"),
+            "query_hash": knowledge_evidence.get("query_hash"),
+            "status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+            "task_context": knowledge_evidence.get("task_context") or {},
+            "result_count": knowledge_evidence.get("result_count") or 0,
+            "retrieval_ids": knowledge_evidence.get("retrieval_ids") or [],
+            "paths": knowledge_evidence.get("paths") or [],
+            "source_hashes": knowledge_evidence.get("source_hashes") or [],
+            "query_omitted": True,
+            "snippet_omitted": True,
+            "raw_content_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
         "secret_boundary": secret_boundary,
     }
 
@@ -990,6 +1477,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", DEFAULT_HERMES_GATEWAY_URL))
     parser.add_argument("--hermes-model", default=os.environ.get("HERMES_MODEL", DEFAULT_HERMES_MODEL))
     parser.add_argument("--hermes-timeout", type=int, default=int(os.environ.get("HERMES_TIMEOUT", "180")))
+    parser.add_argument("--hermes-max-tokens", type=int, default=DEFAULT_HERMES_MAX_TOKENS)
     parser.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", DEFAULT_OPENCLAW_BIN))
     parser.add_argument("--openclaw-agent", default=os.environ.get("OPENCLAW_AGENT", "main"))
     parser.add_argument("--openclaw-timeout", type=int, default=int(os.environ.get("OPENCLAW_TIMEOUT", "180")))
@@ -1156,6 +1644,25 @@ def service_load_commands(manager: str, path: Path, label: str) -> dict:
     }
 
 
+def service_control_sequence(manager: str, path: Path, label: str, action: str) -> list[list[str]]:
+    commands = service_load_commands(manager, path, label)
+    if manager == "launchd":
+        if action == "load":
+            return [commands["load"]]
+        if action == "unload":
+            return [commands["unload"]]
+        return [commands["unload"], commands["load"]]
+    if action == "load":
+        return [commands["daemon_reload"], commands["enable_now"]]
+    if action == "unload":
+        return [commands["disable_now"]]
+    return [commands["daemon_reload"], ["systemctl", "--user", "restart", path.name]]
+
+
+def shell_join(command: list[str]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in command)
+
+
 def read_service_file(path: Path) -> tuple[bool, str]:
     try:
         return True, path.read_text(encoding="utf-8", errors="replace")
@@ -1229,16 +1736,36 @@ def check_service_installation(args) -> dict:
     command_has_worker = "agentops-worker" in content
     adapter_present = args.adapter in content
     use_session_present = "--use-session" in content
+    if args.manager == "launchd":
+        launchd_keepalive = bool(re.search(r"<key>KeepAlive</key>\s*<true/>", content))
+        relaunch_policy = {
+            "manager": "launchd",
+            "enabled": launchd_keepalive,
+            "policy": "KeepAlive=true",
+            "raw_content_omitted": True,
+        }
+    else:
+        systemd_restart_always = bool(re.search(r"(?m)^Restart=always$", content))
+        systemd_restart_sec_ok = bool(re.search(r"(?m)^RestartSec=5$", content))
+        relaunch_policy = {
+            "manager": "systemd",
+            "enabled": bool(systemd_restart_always and systemd_restart_sec_ok),
+            "policy": "Restart=always",
+            "restart_sec": "5" if systemd_restart_sec_ok else None,
+            "raw_content_omitted": True,
+        }
     confirm_gate_ok = args.adapter == "mock" or "--confirm-run" in content
     if args.manager == "launchd":
         service_status = launchd_status(label, args.timeout)
     else:
         unit = service_path.name
         service_status = systemd_status(unit, args.timeout)
-    ok = bool(exists and command_has_worker and adapter_present and use_session_present and confirm_gate_ok and not token_like_detected)
+    ok = bool(exists and command_has_worker and adapter_present and use_session_present and confirm_gate_ok and relaunch_policy["enabled"] and not token_like_detected)
     hints = []
     if not exists:
         hints.append("Render a template with agentops-worker service-template and write it to service_path.")
+    if exists and not relaunch_policy["enabled"]:
+        hints.append("Service file does not expose the expected OS relaunch policy.")
     if token_like_detected:
         hints.append("Replace raw tokens with a local environment-only secret flow; do not commit service files with real tokens.")
     if args.adapter != "mock" and not confirm_gate_ok:
@@ -1260,11 +1787,13 @@ def check_service_installation(args) -> dict:
             "command_has_worker": command_has_worker,
             "adapter_present": adapter_present,
             "use_session_present": use_session_present,
+            "relaunch_policy_ok": relaunch_policy["enabled"],
             "confirm_gate_ok": confirm_gate_ok,
             "placeholder_present": placeholder_present,
             "token_like_detected": token_like_detected,
             "raw_content_omitted": True,
         },
+        "relaunch_policy": relaunch_policy,
         "service_status": service_status,
         "setup_hints": hints,
         "live_execution_performed": False,
@@ -1397,6 +1926,117 @@ def build_service_install_parser() -> argparse.ArgumentParser:
 def run_service_install(argv: list[str]) -> int:
     args = build_service_install_parser().parse_args(argv)
     payload = install_service_file(args)
+    print(json_dumps(payload))
+    return 0 if payload.get("ok") else 1
+
+
+def execute_service_command(command: list[str], timeout: int) -> dict:
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=max(1, min(timeout, 60)),
+            check=False,
+        )
+        return {
+            "command": shell_join(command),
+            "returncode": proc.returncode,
+            "ok": proc.returncode == 0,
+            "summary": redact_text(proc.stdout or proc.stderr or "", 700),
+        }
+    except Exception as exc:
+        return {"command": shell_join(command), "ok": False, **safe_error(exc)}
+
+
+def control_service(args) -> dict:
+    label = args.label or service_label(args.agent_id)
+    service_path = Path(args.service_path).expanduser() if args.service_path else default_service_path(args.manager, args.agent_id, label)
+    check_args = argparse.Namespace(
+        manager=args.manager,
+        workspace_id=args.workspace_id,
+        agent_id=args.agent_id,
+        adapter=args.adapter,
+        label=label,
+        service_path=str(service_path),
+        api_key_placeholder=args.api_key_placeholder,
+        timeout=args.timeout,
+    )
+    service_check = check_service_installation(check_args)
+    service_file = service_check.get("service_file") or {}
+    exists = bool(service_file.get("exists"))
+    token_like_detected = bool(service_file.get("token_like_detected"))
+    confirm_gate_ok = bool(service_file.get("confirm_gate_ok"))
+    command_has_worker = bool(service_file.get("command_has_worker"))
+    planned = service_control_sequence(args.manager, service_path, label, args.action)
+    failures = []
+    if not exists:
+        failures.append("service file is missing")
+    if not command_has_worker:
+        failures.append("service file does not appear to run agentops-worker")
+    if args.action in {"load", "restart"} and token_like_detected:
+        failures.append("refusing to load/restart a service file containing token-like values")
+    if args.action in {"load", "restart"} and not confirm_gate_ok:
+        failures.append("refusing to load/restart Hermes/OpenClaw service without --confirm-run in the service template")
+    dry_run = not bool(args.confirm_control)
+    command_results = []
+    if not dry_run and not failures:
+        for command in planned:
+            result = execute_service_command(command, args.timeout)
+            command_results.append(result)
+            if not result.get("ok") and not (args.action == "restart" and len(command_results) == 1):
+                failures.append(f"service control command failed: {result.get('command')}")
+                break
+    setup_hints = []
+    if dry_run:
+        setup_hints.append("Preview only. Re-run with --confirm-control on the agent machine to mutate launchd/systemd state.")
+    if token_like_detected:
+        setup_hints.append("Move secrets out of the service file before load/restart; raw token-like content is never printed.")
+    if args.adapter in {"hermes", "openclaw"} and not confirm_gate_ok:
+        setup_hints.append("Live adapter services must include --confirm-run in the rendered worker command.")
+    return {
+        "ok": not failures,
+        "provider": "agentops-worker",
+        "command": "agentops-worker service-control",
+        "manager": args.manager,
+        "action": args.action,
+        "dry_run": dry_run,
+        "confirmed_control": bool(args.confirm_control),
+        "service_mutated": bool(args.confirm_control and not failures),
+        "service_path": str(service_path),
+        "label": label,
+        "agent_id": args.agent_id,
+        "workspace_id": args.workspace_id,
+        "adapter": args.adapter,
+        "service_check": service_check,
+        "planned_commands": [shell_join(command) for command in planned],
+        "command_results": command_results,
+        "failures": failures,
+        "setup_hints": setup_hints,
+        "live_execution_performed": bool(args.confirm_control and args.action in {"load", "restart"} and args.adapter in {"hermes", "openclaw"} and not failures),
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def build_service_control_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Preview or explicitly run launchd/systemd control for an agentops-worker service.")
+    parser.add_argument("--manager", choices=["launchd", "systemd"], required=True)
+    parser.add_argument("--action", choices=["load", "unload", "restart"], required=True)
+    parser.add_argument("--workspace-id", default=os.environ.get("AGENTOPS_WORKSPACE_ID", DEFAULT_WORKSPACE_ID))
+    parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
+    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    parser.add_argument("--label", default="")
+    parser.add_argument("--service-path", default="")
+    parser.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    parser.add_argument("--timeout", type=int, default=10)
+    parser.add_argument("--confirm-control", action="store_true", help="Actually call launchctl/systemctl. Default is preview only.")
+    return parser
+
+
+def run_service_control(argv: list[str]) -> int:
+    args = build_service_control_parser().parse_args(argv)
+    payload = control_service(args)
     print(json_dumps(payload))
     return 0 if payload.get("ok") else 1
 
@@ -1536,6 +2176,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_service_install(argv[1:])
     if argv[:1] == ["service-check"]:
         return run_service_check(argv[1:])
+    if argv[:1] == ["service-control"]:
+        return run_service_control(argv[1:])
     if argv[:1] == ["preflight"]:
         return run_preflight(argv[1:])
     args = build_parser().parse_args(argv)

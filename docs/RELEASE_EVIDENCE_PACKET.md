@@ -34,6 +34,9 @@ python3 scripts/merge_readiness_status_smoke.py --require-ready-to-merge
   `GITHUB_REPOSITORY` and `GITHUB_RUN_ID`.
 - Outside CI, the packet may use `gh run list` to find a run for the current
   head SHA.
+- If the GitHub API is unavailable, the packet may use a public GitHub Actions
+  HTML fallback only when the run page contains the full current HEAD SHA and
+  an explicit success status. Short SHA matches are not sufficient.
 - If no current-head run is available, the packet must say so and keep the
   release in local MVP / NOT_READY posture.
 - READY evidence requires current-head CI with status `completed` and conclusion
@@ -72,10 +75,20 @@ The packet includes the canonical command manifest used for release review:
 - `python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py && git diff --check`
 - `python3 scripts/release_branch_control_smoke.py`
 - `python3 scripts/release_freeze_protocol_smoke.py`
+- `python3 scripts/github_ci_evidence_smoke.py`
 - `python3 scripts/clean_machine_rc_smoke.py`
 - `python3 scripts/release_evidence_packet_smoke.py`
 - `python3 scripts/merge_readiness_status_smoke.py`
 - `python3 scripts/v1_5_product_closure_evidence_smoke.py`
+- `python3 scripts/enrollment_hosted_policy_ui_smoke.py`
+- `python3 scripts/agent_gateway_scope_effects_ui_smoke.py`
+- Manual current-code product evidence gate, intentionally not CI-backed:
+  `python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:<current-code-port> --db-path /tmp/<current-code-agentops>.db --confirm-live`
+- Manual product-readiness gate, intentionally not CI-backed:
+  `python3 scripts/customer_worker_real_runtime_acceptance.py --confirm-live --adapter hermes --adapter openclaw`
+- `python3 scripts/customer_worker_hermes_retry_gateway_smoke.py`
+- `python3 scripts/redaction_policy_smoke.py`
+- `python3 scripts/sqlite_pragmas_smoke.py`
 - `python3 scripts/module_boundary_smoke.py`
 - `python3 scripts/read_model_cache_smoke.py`
 - `python3 scripts/open_source_adoption_boundary_smoke.py`
@@ -84,34 +97,127 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/secret_scan_smoke.py`
 - `python3 scripts/license_provenance_smoke.py`
 - `python3 scripts/public_claims_release_gate_smoke.py`
+- `python3 scripts/redaction_fuzz_smoke.py`
+- `python3 scripts/shared_mode_local_write_guard_smoke.py`
+- `python3 scripts/automatic_plan_evidence_workflow_smoke.py`
 - `python3 scripts/migration_rollback_smoke.py`
+- `python3 scripts/approval_semantics_boundary_smoke.py`
 - `python3 scripts/knowledge_retrieval_quality_smoke.py`
+- `python3 scripts/worker_knowledge_evidence_consumption_smoke.py`
+- `python3 scripts/worker_prompt_profile_smoke.py`
 - `python3 scripts/commander_repo_map_smoke.py`
 - `python3 scripts/commander_coding_project_template_smoke.py`
 - `python3 scripts/commander_coding_workspace_smoke.py`
 - `python3 scripts/operator_command_center_smoke.py`
 - `python3 scripts/commander_work_package_plan_smoke.py`
 - `python3 scripts/commander_work_package_dispatch_smoke.py`
+- `python3 scripts/commander_integration_inbox_smoke.py --base-url "$AGENTOPS_BASE_URL" --db-path "$AGENTOPS_DB_PATH"`
 - `python3 scripts/local_coding_project_template_smoke.py`
 - `python3 scripts/ai_employees_responsiveness_smoke.py`
 - `python3 scripts/operator_action_queue_ui_smoke.py`
+- `python3 scripts/worker_console_ui_smoke.py`
+- `python3 scripts/customer_dispatch_desk_ui_smoke.py`
+- `python3 scripts/commander_team_board_ui_smoke.py`
 - `python3 scripts/operator_advance_loop_smoke.py`
+- `python3 scripts/operator_loop_control_smoke.py`
+- `python3 scripts/operator_loop_driver_smoke.py`
+- `python3 scripts/operator_loop_launch_packet_smoke.py`
+- `python3 scripts/operator_evidence_report_smoke.py`
+- `python3 scripts/operator_live_product_readiness_smoke.py`
+- `python3 scripts/local_runtime_identity_smoke.py`
+- `python3 scripts/agentops_cli_connection_hint_smoke.py`
 - `python3 scripts/task_detail_evidence_ui_smoke.py`
+- `python3 scripts/run_detail_evidence_ui_smoke.py`
 - `python3 scripts/security_production_readiness_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/agentops_doctor_smoke.py`
+- `python3 scripts/agent_plan_integrity_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/run_start_plan_gate_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/operator_runtime_doctor_smoke.py`
+- `python3 scripts/operator_start_check_api_smoke.py`
+- `python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --adapter hermes --adapter openclaw`
+- `python3 scripts/operator_execution_mode_smoke.py`
 - `python3 scripts/runtime_capability_manifest_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/runtime_connector_trust_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/runtime_connector_trust_ui_smoke.py`
+- `python3 scripts/worker_fleet_hygiene_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/prepared_action_approval_wall_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/worker_external_write_preflight_gate_smoke.py`
+- `python3 scripts/runtime_probe_prepared_action_gate_smoke.py`
+- `python3 scripts/customer_worker_external_write_gate_smoke.py`
+- `python3 scripts/generic_external_side_effect_gate_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/agent_gateway_runtime_event_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/worker_adapter_retry_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/agent_gateway_knowledge_scope_smoke.py`
+- `python3 scripts/knowledge_scope_policy_smoke.py`
+- `python3 scripts/agent_gateway_reviewable_lists_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/safe_closure_evidence_packet_smoke.py`
+- `python3 scripts/delivery_approval_manifest_gate_smoke.py`
+- `python3 scripts/workspace_isolation_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/protected_live_runtime_ids_smoke.py`
 - `cd ui/start-building-app && npm ci && npm run build`
 
-The smoke verifies each command is backed by `.github/workflows/ci.yml` and that
-referenced script files exist.
+The smoke verifies each CI command is backed by `.github/workflows/ci.yml` and
+that referenced script files exist. `customer_worker_hermes_retry_gateway_smoke`
+uses a deterministic loopback OpenAI-compatible gateway to prove retry metadata
+is wired through the real customer-worker Hermes adapter path; it is still not
+live product-readiness proof. Manual-live commands are tracked in the packet but
+intentionally excluded from CI because they call real local Hermes/OpenClaw
+runtimes and require explicit operator confirmation.
+
+### Manual Live Product Evidence
+
+CI/offline smokes prove merge hygiene and regression coverage; they do not prove
+product readiness by themselves. Product-readiness, demo, dogfood, or
+customer-usefulness claims require current manual live evidence when local
+Hermes/OpenClaw are available and authorized:
+
+```bash
+python3 scripts/v1_5_current_code_product_evidence.py \
+  --base-url http://127.0.0.1:<current-code-port> \
+  --db-path /tmp/<current-code-agentops>.db \
+  --confirm-live
+
+python3 scripts/customer_worker_real_runtime_acceptance.py \
+  --confirm-live \
+  --adapter hermes \
+  --adapter openclaw
+
+python3 scripts/v1_5_live_product_readiness_smoke.py \
+  --require-adapter hermes \
+  --require-adapter openclaw
+```
+
+Canonical combined current-code proof command:
+`python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:<current-code-port> --db-path /tmp/<current-code-agentops>.db --confirm-live`.
+This command rebuilds knowledge evidence, runs Commander synthesis, executes
+confirmed Hermes/OpenClaw customer-worker acceptance, verifies live readback,
+exercises the remote/scoped worker mock fallback with short-lived session
+launch-packet evidence, and finishes with non-live local acceptance.
+
+Canonical read-only proof command:
+`python3 scripts/v1_5_live_product_readiness_smoke.py --require-adapter hermes --require-adapter openclaw`.
+
+The release note or handoff must cite the resulting Hermes/OpenClaw run IDs and
+artifact IDs. The read-only live product-readiness smoke must report
+`product_readiness_proof:true`; it only reads the MIS ledger and does not call
+Hermes/OpenClaw. Mock-only evidence must be described as CI/offline fallback,
+not as product-level completion.
+
+When the current-code server uses an isolated SQLite database, pass the matching
+`--db-path`; some server-backed smokes verify ledger rows directly and will read
+the default repo DB otherwise.
 
 Server-backed commands, including
-`python3 scripts/local_coding_project_template_smoke.py`, require a running
-AgentOps MIS server selected by `AGENTOPS_BASE_URL`. The GitHub Actions backend
-suite starts an isolated `127.0.0.1:8787` server with a temporary SQLite
-database and live Hermes/OpenClaw/Dify/Notion disabled before running them.
+`python3 scripts/local_coding_project_template_smoke.py`,
+`python3 scripts/enrollment_launch_steps_smoke.py --base-url "$AGENTOPS_BASE_URL"`,
+and `python3 scripts/remote_launch_packet_worker_smoke.py --base-url "$AGENTOPS_BASE_URL"`,
+require a running AgentOps MIS server selected by `AGENTOPS_BASE_URL`. The
+GitHub Actions backend suite starts an isolated `127.0.0.1:8787` server with a
+temporary SQLite database and live Hermes/OpenClaw/Dify/Notion disabled before
+running them. The enrollment/remote-worker smokes prove that launch packets
+contain preview-first service-control commands, omit raw tokens, mint
+short-lived sessions, and can write scoped worker evidence.
 
 ### Clean-Machine RC
 

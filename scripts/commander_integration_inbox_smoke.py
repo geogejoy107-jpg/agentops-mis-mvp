@@ -112,6 +112,16 @@ def validate_item(item: dict) -> None:
         require(key in item, f"item missing {key}: {item}")
     require(item.get("recommended_action"), f"item action empty: {item}")
     require(isinstance(item.get("evidence_counts"), dict), f"item evidence_counts missing: {item}")
+    decision = item.get("integration_decision")
+    require(isinstance(decision, dict), f"item integration_decision missing: {item}")
+    for key in ["decision", "status", "reason", "safe_to_auto_apply", "ledger_decision_required", "can_advance_without_waiting", "next_command"]:
+        require(key in decision, f"integration_decision missing {key}: {item}")
+    require(decision.get("safe_to_auto_apply") is False, f"inbox item must not auto-apply worker output: {item}")
+    require(decision.get("next_command") == item.get("recommended_action"), f"integration decision command mismatch: {item}")
+    if item.get("bucket") in {"ready_for_review", "blocked", "late_or_stale", "needs_memory_review"}:
+        require(decision.get("ledger_decision_required") is True, f"review bucket must require a ledger decision: {item}")
+    if item.get("bucket") == "still_running":
+        require(decision.get("decision") == "continue_running", f"running item should stay independent: {item}")
     require(any(item.get(key) for key in ["task_id", "run_id", "job_id", "artifact_id", "memory_id"]), f"item has no ledger id: {item}")
     age = item.get("age_sec")
     require(age is None or isinstance(age, int), f"item age_sec must be int/null: {item}")
@@ -181,6 +191,7 @@ def main() -> int:
             "bucket_counts": summary.get("buckets"),
             "items_returned": len(payload.get("inbox_items") or []),
             "filtered_items_returned": len(filtered_payload.get("inbox_items") or []),
+            "integration_decision_checked": True,
             "db_fingerprint_checked": before is not None and after is not None,
             "secret_leaked": False,
             "has_inbox_data": has_inbox_data,

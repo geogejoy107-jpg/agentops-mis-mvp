@@ -128,12 +128,15 @@ def require(condition: bool, message: str, failures: list[str]) -> None:
         failures.append(message)
 
 
-def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, failures: list[str]) -> None:
+def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, failures: list[str], *, expected_control_operation: str = "operator_loop_control", expected_handoff_mode: str = "lightweight") -> None:
     require(payload.get("operation") == "operator_loop_launch_packet", f"{label} operation mismatch: {payload}", failures)
     require(payload.get("method") == "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD", f"{label} method mismatch: {payload}", failures)
     require(payload.get("task_id") == task_id, f"{label} task mismatch: {payload.get('task_id')} != {task_id}", failures)
     require(payload.get("agent_id") == agent_id, f"{label} agent mismatch: {payload.get('agent_id')} != {agent_id}", failures)
     require(payload.get("token_omitted") is True, f"{label} token omission missing: {payload}", failures)
+    summary = payload.get("summary") or {}
+    require(summary.get("handoff_mode") == expected_handoff_mode, f"{label} handoff mode wrong: {summary}", failures)
+    require(summary.get("operator_control_status") in {"ready", "attention", "blocked", "unknown", None}, f"{label} operator control status unexpected: {summary}", failures)
     safety = payload.get("safety") or {}
     require(safety.get("read_only") is True, f"{label} read_only missing: {safety}", failures)
     require(safety.get("ledger_mutated") is False, f"{label} should not mutate ledger: {safety}", failures)
@@ -162,24 +165,31 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     require("agentops agent-plan verify" in joined, f"{label} missing plan verify command: {commands}", failures)
     require("agentops knowledge search" in joined, f"{label} missing knowledge search command: {commands}", failures)
     require("agentops commander repo-map" in joined, f"{label} missing commander repo-map command: {commands}", failures)
+    require("agentops operator loop-control" in joined, f"{label} missing lightweight loop-control command: {commands}", failures)
     require("agentops operator loop-self-check" in joined, f"{label} missing loop self-check command: {commands}", failures)
     require("agentops operator evidence-report" in joined, f"{label} missing evidence report command: {commands}", failures)
     require("agentops operator action-receipts" in joined, f"{label} missing action receipts command: {commands}", failures)
     require("agentops plan-evidence create" in joined, f"{label} missing plan evidence command: {commands}", failures)
+    require("agentops workflow stuck-jobs --threshold-sec 900 --limit 25" in joined, f"{label} missing workflow recovery inspect command: {commands}", failures)
     evaluation_contract = payload.get("evaluation_contract") or {}
     require(evaluation_contract.get("operation") == "loop_evaluation_contract", f"{label} evaluation contract missing: {evaluation_contract}", failures)
     require(evaluation_contract.get("status") in {"ready", "attention", "blocked", "unknown"}, f"{label} evaluation status wrong: {evaluation_contract}", failures)
     require(evaluation_contract.get("token_omitted") is True, f"{label} evaluation token omission missing: {evaluation_contract}", failures)
-    for ledger in ["agent_plans", "plan_evidence_manifests", "tool_calls", "evaluations", "artifacts", "audit_logs", "operator_action_receipts", "operator_action_evaluations"]:
+    for ledger in ["agent_plans", "plan_evidence_manifests", "tool_calls", "evaluations", "artifacts", "audit_logs", "memories", "memory_review", "operator_action_receipts", "operator_action_evaluations"]:
         require(ledger in (evaluation_contract.get("required_ledgers") or []), f"{label} evaluation required ledger missing {ledger}: {evaluation_contract}", failures)
     criteria = "\n".join(evaluation_contract.get("minimum_exit_criteria") or [])
     require("Agent Plan verifies" in criteria, f"{label} evaluation criteria missing plan verify: {criteria}", failures)
     require("plan_evidence_manifest" in criteria, f"{label} evaluation criteria missing manifest: {criteria}", failures)
+    require("memory candidates" in criteria, f"{label} evaluation criteria missing memory review gate: {criteria}", failures)
     audit_contract = payload.get("audit_contract") or {}
     require(audit_contract.get("operation") == "loop_audit_contract", f"{label} audit contract missing: {audit_contract}", failures)
     require(audit_contract.get("tamper_chain_required") is True, f"{label} tamper chain requirement missing: {audit_contract}", failures)
     require(audit_contract.get("record_required") is True, f"{label} record requirement missing: {audit_contract}", failures)
     require(audit_contract.get("token_omitted") is True, f"{label} audit token omission missing: {audit_contract}", failures)
+    audit_recovery = audit_contract.get("workflow_job_recovery") or {}
+    require(audit_recovery.get("operation") == "workflow_job_recovery_work_order", f"{label} audit workflow recovery missing: {audit_recovery}", failures)
+    require(audit_recovery.get("status") in {"ready", "attention", "blocked"}, f"{label} audit workflow recovery status wrong: {audit_recovery}", failures)
+    require(isinstance((audit_recovery.get("summary") or {}).get("items"), int), f"{label} audit workflow recovery summary missing: {audit_recovery}", failures)
     bounded_runner = audit_contract.get("bounded_runner") or {}
     require(bounded_runner.get("policy_id") == "advance_loop_local_bounded_v1", f"{label} bounded policy missing: {bounded_runner}", failures)
     require(bounded_runner.get("server_executes_shell") is False, f"{label} server shell boundary missing: {bounded_runner}", failures)
@@ -198,6 +208,8 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
         require((item.get("source_provenance") or {}).get("raw_content_returned") is False, f"{label} repo-map provenance leaked raw body: {item}", failures)
         require(item.get("snippets_omitted") is True and item.get("raw_content_omitted") is True, f"{label} repo-map file should omit snippets/raw body: {item}", failures)
     require((verify_phase.get("evaluation_contract") or {}).get("operation") == "loop_evaluation_contract", f"{label} verify phase lacks evaluation contract: {verify_phase}", failures)
+    verify_recovery = verify_phase.get("workflow_job_recovery") or {}
+    require(verify_recovery.get("status") in {"ready", "attention", "blocked"}, f"{label} verify phase lacks workflow recovery: {verify_phase}", failures)
     require((record_phase.get("audit_contract") or {}).get("operation") == "loop_audit_contract", f"{label} record phase lacks audit contract: {record_phase}", failures)
     execution_chain = payload.get("execution_chain") or []
     require(len(execution_chain) >= 7, f"{label} execution chain too short: {execution_chain}", failures)
@@ -244,7 +256,71 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     require((sources.get("intake") or {}).get("operation") == "task_intake_checklist", f"{label} missing intake source: {sources}", failures)
     require((sources.get("knowledge_search") or {}).get("operation") == "knowledge_search", f"{label} missing knowledge source: {sources}", failures)
     require((sources.get("repo_map") or {}).get("operation") == "repo_map", f"{label} missing repo-map source: {sources}", failures)
-    require((sources.get("handoff") or {}).get("operation") == "operator_handoff", f"{label} missing handoff source: {sources}", failures)
+    recovery_source = sources.get("workflow_job_recovery") or {}
+    require(recovery_source.get("operation") == "workflow_job_recovery_work_order", f"{label} missing workflow recovery source: {sources}", failures)
+    require(isinstance((recovery_source.get("summary") or {}).get("items"), int), f"{label} workflow recovery source summary missing: {recovery_source}", failures)
+    operator_control = sources.get("operator_control") or {}
+    handoff_source = sources.get("handoff") or {}
+    require(operator_control.get("operation") == expected_control_operation, f"{label} missing operator control source: {sources}", failures)
+    require(operator_control.get("mode") == expected_handoff_mode, f"{label} operator control mode mismatch: {operator_control}", failures)
+    require(handoff_source.get("operation") == expected_control_operation, f"{label} handoff compatibility source mismatch: {sources}", failures)
+    require(handoff_source.get("mode") == expected_handoff_mode, f"{label} handoff mode mismatch: {handoff_source}", failures)
+    require(operator_control.get("token_omitted") is True and handoff_source.get("token_omitted") is True, f"{label} control source token omission missing: {sources}", failures)
+
+
+def validate_brief(payload: dict, label: str, task_id: str, agent_id: str, adapter: str, failures: list[str]) -> None:
+    require(payload.get("operation") == "operator_loop_launch_brief", f"{label} brief operation mismatch: {payload}", failures)
+    require(payload.get("source_operation") == "operator_loop_launch_packet", f"{label} source operation mismatch: {payload}", failures)
+    require(payload.get("task_id") == task_id, f"{label} task mismatch: {payload.get('task_id')} != {task_id}", failures)
+    require(payload.get("agent_id") == agent_id, f"{label} agent mismatch: {payload.get('agent_id')} != {agent_id}", failures)
+    require(payload.get("adapter") == adapter, f"{label} adapter mismatch: {payload}", failures)
+    require(payload.get("token_omitted") is True, f"{label} token omission missing: {payload}", failures)
+    safety = payload.get("safety") or {}
+    require(safety.get("read_only") is True, f"{label} read_only missing: {safety}", failures)
+    require(safety.get("ledger_mutated") is False, f"{label} should not mutate ledger: {safety}", failures)
+    require(safety.get("live_execution_performed") is False, f"{label} should not execute live work: {safety}", failures)
+    policy = payload.get("policy") or {}
+    require(policy.get("server_executes_shell") is False, f"{label} server shell boundary missing: {policy}", failures)
+    require(policy.get("copy_only") is True, f"{label} copy-only boundary missing: {policy}", failures)
+    require(policy.get("live_execution_requires_confirm_run") is True, f"{label} live confirmation guidance missing: {policy}", failures)
+    require(policy.get("external_writes_require_prepared_action") is True, f"{label} prepared-action guidance missing: {policy}", failures)
+    require(payload.get("adapter_preflight_command") == f"agentops worker preflight --adapter {adapter}", f"{label} adapter preflight command missing: {payload}", failures)
+    require(f"agentops workflow run-task --adapter {adapter} --confirm-run" in str(payload.get("live_run_command") or ""), f"{label} live run command missing: {payload}", failures)
+    require("agentops run get --run-id <run_id>" in (payload.get("readback_commands") or []), f"{label} run readback command missing: {payload}", failures)
+    require("agentops operator loop-control --limit 8" in (payload.get("commands") or []), f"{label} loop-control command missing: {payload}", failures)
+    require("agentops operator advance-loop --fast-control --limit 8" in (payload.get("commands") or []), f"{label} fast advance command missing: {payload}", failures)
+    require(any("agentops local readiness" == str(command) for command in (payload.get("commands") or [])), f"{label} local readiness command missing: {payload}", failures)
+    require(any("--require-current-code" in str(command) for command in (payload.get("commands") or [])), f"{label} current-code command missing: {payload}", failures)
+    require(any("service-control" in str(command) for command in (payload.get("commands") or [])), f"{label} service-control preview command missing: {payload}", failures)
+    summary = payload.get("summary") or {}
+    require(summary.get("current_code_ok") is True, f"{label} current-code summary should be ready: {summary}", failures)
+    require(summary.get("current_code_status") == "current", f"{label} current-code status should be current: {summary}", failures)
+    local_run_path = payload.get("local_run_path") or {}
+    require(local_run_path.get("operation") == "local_run_path_compact", f"{label} local run path missing: {local_run_path}", failures)
+    require(len(local_run_path.get("steps") or []) >= 8, f"{label} local run path too short: {local_run_path}", failures)
+    current_code_gate = local_run_path.get("current_code_gate") or {}
+    require(current_code_gate.get("operation") == "local_current_code_gate", f"{label} current-code gate missing: {local_run_path}", failures)
+    require(current_code_gate.get("ok") is True and current_code_gate.get("current") is True, f"{label} current-code gate should pass: {current_code_gate}", failures)
+    require(current_code_gate.get("status") == "current", f"{label} current-code gate should report current: {current_code_gate}", failures)
+    require("--require-current-code" in str(current_code_gate.get("command") or ""), f"{label} current-code command missing: {current_code_gate}", failures)
+    require("--expect-head-sha" in str(current_code_gate.get("strict_command") or ""), f"{label} strict current-code command missing expected head: {current_code_gate}", failures)
+    require("repo_root" not in current_code_gate, f"{label} current-code gate should not expose repo root: {current_code_gate}", failures)
+    require((current_code_gate.get("safety") or {}).get("read_only") is True, f"{label} current-code gate read-only proof missing: {current_code_gate}", failures)
+    require((current_code_gate.get("safety") or {}).get("server_executes_shell") is False, f"{label} current-code gate server-shell boundary missing: {current_code_gate}", failures)
+    service_step = local_run_path.get("service_control_preview") or {}
+    require(service_step.get("step_id") == "preview_worker_service_control", f"{label} service-control local step missing: {local_run_path}", failures)
+    require("service-control" in str(service_step.get("command") or ""), f"{label} service-control command wrong: {service_step}", failures)
+    require(service_step.get("server_executes_shell") is False, f"{label} service-control step should not use server shell: {service_step}", failures)
+    require((local_run_path.get("safety") or {}).get("server_executes_shell") is False, f"{label} local run path server-shell boundary missing: {local_run_path}", failures)
+    require((local_run_path.get("safety") or {}).get("live_execution_performed") is False, f"{label} local run path should be read-only in brief: {local_run_path}", failures)
+    workflow_recovery = payload.get("workflow_job_recovery") or {}
+    require(workflow_recovery.get("operation") == "workflow_job_recovery_work_order", f"{label} workflow recovery brief missing: {workflow_recovery}", failures)
+    require(workflow_recovery.get("status") in {"ready", "attention", "blocked"}, f"{label} workflow recovery brief status wrong: {workflow_recovery}", failures)
+    require(isinstance((workflow_recovery.get("summary") or {}).get("items"), int), f"{label} workflow recovery brief summary missing: {workflow_recovery}", failures)
+    require(isinstance(workflow_recovery.get("commands") or [], list), f"{label} workflow recovery brief commands missing: {workflow_recovery}", failures)
+    chain = payload.get("execution_chain") or []
+    require(isinstance(chain, list) and bool(chain), f"{label} compact execution chain missing: {payload}", failures)
+    require(any(isinstance(item, dict) and item.get("next_safe_command") for item in chain), f"{label} compact chain lacks next_safe_command: {chain}", failures)
 
 
 def main() -> int:
@@ -316,6 +392,41 @@ def main() -> int:
             cli_payload = load_json(cli_proc.stdout)
             require(cli_proc.returncode == 0, f"CLI launch packet failed: {cli_proc.stderr or cli_proc.stdout}", failures)
             validate_packet(cli_payload, "cli", task_id, agent_id, failures)
+            brief_cli = run_cli(
+                base_url,
+                ["operator", "loop-launch-packet", "--task-id", task_id, "--agent-id", agent_id, "--limit", "8", "--query", "Agent Work Method Block", "--brief", "--adapter", "hermes"],
+                env,
+            )
+            outputs.extend([brief_cli.stdout, brief_cli.stderr])
+            brief_payload = load_json(brief_cli.stdout)
+            require(brief_cli.returncode == 0, f"Brief CLI launch packet failed: {brief_cli.stderr or brief_cli.stdout}", failures)
+            validate_brief(brief_payload, "cli_brief", task_id, agent_id, "hermes", failures)
+            openclaw_brief_cli = run_cli(
+                base_url,
+                ["operator", "loop-launch-packet", "--task-id", task_id, "--agent-id", agent_id, "--limit", "8", "--query", "Agent Work Method Block", "--brief", "--adapter", "openclaw"],
+                env,
+            )
+            outputs.extend([openclaw_brief_cli.stdout, openclaw_brief_cli.stderr])
+            openclaw_brief_payload = load_json(openclaw_brief_cli.stdout)
+            require(openclaw_brief_cli.returncode == 0, f"OpenClaw brief CLI launch packet failed: {openclaw_brief_cli.stderr or openclaw_brief_cli.stdout}", failures)
+            validate_brief(openclaw_brief_payload, "cli_openclaw_brief", task_id, agent_id, "openclaw", failures)
+            full_status, full_payload = http_json(
+                base_url,
+                "/api/operator/loop-launch-packet",
+                {"task_id": task_id, "agent_id": agent_id, "limit": 8, "q": "Agent Work Method Block", "full_handoff": "true"},
+            )
+            outputs.append(json.dumps(full_payload, ensure_ascii=False))
+            require(full_status == 200, f"Full handoff API status mismatch: {full_status} {full_payload}", failures)
+            validate_packet(full_payload, "api_full_handoff", task_id, agent_id, failures, expected_control_operation="operator_handoff", expected_handoff_mode="full")
+            full_cli = run_cli(
+                base_url,
+                ["operator", "loop-launch-packet", "--task-id", task_id, "--agent-id", agent_id, "--limit", "8", "--query", "Agent Work Method Block", "--full-handoff"],
+                env,
+            )
+            outputs.extend([full_cli.stdout, full_cli.stderr])
+            full_cli_payload = load_json(full_cli.stdout)
+            require(full_cli.returncode == 0, f"Full handoff CLI launch packet failed: {full_cli.stderr or full_cli.stdout}", failures)
+            validate_packet(full_cli_payload, "cli_full_handoff", task_id, agent_id, failures, expected_control_operation="operator_handoff", expected_handoff_mode="full")
             after = db_fingerprint(db_path)
             require(before == after, f"launch packet changed database fingerprint: {before} -> {after}", failures)
             require(not leaked("\n".join(outputs)), "loop launch packet leaked token-like material", failures)

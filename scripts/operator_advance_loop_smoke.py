@@ -165,6 +165,9 @@ def main() -> int:
             require(policy_payload.get("operation") == "operator_advance_loop_policy", f"advance policy operation mismatch: {policy_payload}", failures)
             require(policy_summary.get("policy_id") == "advance_loop_local_bounded_v1", f"advance policy id missing: {policy_payload}", failures)
             require((policy_payload.get("safety") or {}).get("read_only") is True, f"advance policy should be read-only: {policy_payload}", failures)
+            allowed_read_commands = set(policy_summary.get("allowed_read_commands") or [])
+            require("operator runtime-doctor" in allowed_read_commands, f"advance policy should allow runtime-doctor read: {policy_summary}", failures)
+            require("operator execution-mode" in allowed_read_commands, f"advance policy should allow execution-mode read: {policy_summary}", failures)
 
             global_preview = run_cli(["operator", "advance-loop", "--limit", "10"], base_url, outputs)
             global_preview_payload = load_json(global_preview.stdout)
@@ -330,6 +333,51 @@ def main() -> int:
             outputs.extend([evidence_policy.stdout, evidence_policy.stderr])
             evidence_policy_payload = load_json(evidence_policy.stdout)
             require(evidence_policy_payload.get("allowed") is True, f"evidence report should be allowlisted as read-only action: {evidence_policy_payload}", failures)
+            runtime_doctor_policy = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy; import json; print(json.dumps(advance_loop_command_policy('agentops operator runtime-doctor --limit 8', phase='action')))",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            outputs.extend([runtime_doctor_policy.stdout, runtime_doctor_policy.stderr])
+            runtime_doctor_policy_payload = load_json(runtime_doctor_policy.stdout)
+            require(runtime_doctor_policy_payload.get("allowed") is True, f"runtime-doctor should be allowlisted as read-only action: {runtime_doctor_policy_payload}", failures)
+            execution_mode_policy = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy; import json; print(json.dumps(advance_loop_command_policy('agentops operator execution-mode --adapter hermes', phase='action')))",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            outputs.extend([execution_mode_policy.stdout, execution_mode_policy.stderr])
+            execution_mode_policy_payload = load_json(execution_mode_policy.stdout)
+            require(execution_mode_policy_payload.get("allowed") is True, f"execution-mode should be allowlisted as read-only action: {execution_mode_policy_payload}", failures)
+            execution_mode_confirm_policy = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy; import json; print(json.dumps(advance_loop_command_policy('agentops operator execution-mode --adapter hermes --confirm-run', phase='action')))",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            outputs.extend([execution_mode_confirm_policy.stdout, execution_mode_confirm_policy.stderr])
+            execution_mode_confirm_policy_payload = load_json(execution_mode_confirm_policy.stdout)
+            require(execution_mode_confirm_policy_payload.get("allowed") is False, f"execution-mode --confirm-run should still be denied: {execution_mode_confirm_policy_payload}", failures)
             remediation_policy = subprocess.run(
                 [
                     sys.executable,

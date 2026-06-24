@@ -108,6 +108,134 @@ def commander_work_package_next_actions(packages: list[dict[str, Any]]) -> list[
     return next_actions[:8]
 
 
+def build_commander_team_board(
+    *,
+    packages: list[dict[str, Any]],
+    workspace_id: str,
+    project_id: str | None,
+    plan_id: str | None,
+) -> dict[str, Any]:
+    status_counts: dict[str, int] = {}
+    owner_counts: dict[str, int] = {}
+    dependency_edges: list[dict[str, str]] = []
+    lanes: list[dict[str, Any]] = []
+    ready_for_review: list[str] = []
+    blocked: list[str] = []
+    missing_coding_evidence: list[str] = []
+    workflow_job_counts: dict[str, int] = {}
+    active_workflow_jobs: list[str] = []
+    failed_workflow_jobs: list[str] = []
+
+    task_ids = {str(item.get("task_id") or "") for item in packages}
+    for item in packages:
+        task_id = str(item.get("task_id") or "")
+        package_status = str(item.get("package_status") or item.get("status") or "unknown")
+        owner_agent_id = str(item.get("owner_agent_id") or "unassigned")
+        status_counts[package_status] = status_counts.get(package_status, 0) + 1
+        owner_counts[owner_agent_id] = owner_counts.get(owner_agent_id, 0) + 1
+        dependencies = [str(dep) for dep in (item.get("dependencies") or []) if dep]
+        for dep in dependencies:
+            dependency_edges.append({
+                "from_task_id": dep,
+                "to_task_id": task_id,
+                "known_in_board": dep in task_ids,
+            })
+        if package_status == "ready_for_review":
+            ready_for_review.append(task_id)
+        if package_status == "blocked":
+            blocked.append(task_id)
+        if ((item.get("coding_evidence_gate") or {}).get("status") in {"missing", "partial"}):
+            missing_coding_evidence.append(task_id)
+        latest_run = item.get("latest_run") or {}
+        latest_workflow_job = item.get("latest_workflow_job") or {}
+        workflow_job_status = str(latest_workflow_job.get("status") or "")
+        if workflow_job_status:
+            workflow_job_counts[workflow_job_status] = workflow_job_counts.get(workflow_job_status, 0) + 1
+        if workflow_job_status in {"queued", "running"}:
+            active_workflow_jobs.append(task_id)
+        if workflow_job_status == "failed":
+            failed_workflow_jobs.append(task_id)
+        lanes.append({
+            "task_id": task_id,
+            "lane_id": item.get("lane_id"),
+            "title": item.get("title"),
+            "owner_agent_id": item.get("owner_agent_id"),
+            "collaborator_agent_ids": item.get("collaborator_agent_ids") or [],
+            "status": item.get("status"),
+            "package_status": package_status,
+            "priority": item.get("priority"),
+            "risk_level": item.get("risk_level"),
+            "dependencies": dependencies,
+            "dependency_count": len(dependencies),
+            "latest_run": {
+                "run_id": latest_run.get("run_id"),
+                "status": latest_run.get("status"),
+                "created_at": latest_run.get("created_at"),
+            } if latest_run else None,
+            "latest_workflow_job": {
+                "job_id": latest_workflow_job.get("job_id"),
+                "workflow_type": latest_workflow_job.get("workflow_type"),
+                "status": latest_workflow_job.get("status"),
+                "adapter": latest_workflow_job.get("adapter"),
+                "confirm_run": bool(latest_workflow_job.get("confirm_run")),
+                "result_run_id": latest_workflow_job.get("result_run_id"),
+                "result_artifact_id": latest_workflow_job.get("result_artifact_id"),
+                "created_at": latest_workflow_job.get("created_at"),
+                "started_at": latest_workflow_job.get("started_at"),
+                "completed_at": latest_workflow_job.get("completed_at"),
+                "updated_at": latest_workflow_job.get("updated_at"),
+            } if latest_workflow_job else None,
+            "evidence_counts": item.get("evidence_counts") or {},
+            "localization_gate": item.get("localization_gate") or {},
+            "coding_evidence_gate": item.get("coding_evidence_gate") or {},
+            "recommended_action": item.get("recommended_action"),
+        })
+
+    if blocked or failed_workflow_jobs:
+        board_status = "blocked"
+    elif ready_for_review or missing_coding_evidence or active_workflow_jobs or status_counts.get("still_running") or status_counts.get("planned"):
+        board_status = "attention"
+    else:
+        board_status = "ready" if lanes else "empty"
+
+    return {
+        "status": board_status,
+        "workspace_id": workspace_id,
+        "project_id": project_id or None,
+        "plan_id": plan_id or None,
+        "summary": {
+            "total_lanes": len(lanes),
+            "status_counts": status_counts,
+            "owner_counts": owner_counts,
+            "ready_for_review": len(ready_for_review),
+            "blocked": len(blocked),
+            "missing_coding_evidence": len(missing_coding_evidence),
+            "dependency_edges": len(dependency_edges),
+            "workflow_job_counts": workflow_job_counts,
+            "active_workflow_jobs": len(active_workflow_jobs),
+            "failed_workflow_jobs": len(failed_workflow_jobs),
+        },
+        "lanes": lanes,
+        "dependency_edges": dependency_edges,
+        "ready_for_review_task_ids": ready_for_review,
+        "blocked_task_ids": blocked,
+        "missing_coding_evidence_task_ids": missing_coding_evidence,
+        "active_workflow_job_task_ids": active_workflow_jobs,
+        "failed_workflow_job_task_ids": failed_workflow_jobs,
+        "next_actions": commander_work_package_next_actions(packages),
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_source_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def build_commander_work_packages_readback(
     *,
     packages: list[dict[str, Any]],
@@ -163,8 +291,21 @@ def build_commander_project_board_gates(
     synthesis_lifecycle: dict[str, Any],
     adapter_status: str,
     adapter_summary: dict[str, Any],
+    live_acceptance_status: str,
+    live_acceptance_summary: dict[str, Any],
 ) -> list[dict[str, Any]]:
     synthesis_summary = synthesis_lifecycle.get("summary") or {}
+    live_fresh = int(live_acceptance_summary.get("fresh") or 0)
+    live_failed = int(live_acceptance_summary.get("latest_failed") or 0)
+    live_incomplete = int(live_acceptance_summary.get("latest_incomplete") or 0)
+    live_missing = int(live_acceptance_summary.get("missing") or 0)
+    live_stale = int(live_acceptance_summary.get("stale") or 0)
+    if live_acceptance_status == "ready":
+        live_gate_status = "pass"
+    elif live_failed:
+        live_gate_status = "fail"
+    else:
+        live_gate_status = "warn"
     return [
         {
             "id": "evidence_chain",
@@ -210,6 +351,15 @@ def build_commander_project_board_gates(
             "status": "pass" if adapter_status == "ready" else "warn" if adapter_status == "degraded" else "fail",
             "summary": f"recommended_adapter={adapter_summary.get('recommended_adapter') or 'unknown'}; ready={','.join(adapter_summary.get('ready_adapters') or []) or 'none'}",
             "next_action": "agentops worker readiness",
+        },
+        {
+            "id": "live_acceptance_freshness",
+            "status": live_gate_status,
+            "summary": (
+                f"{live_fresh} fresh, {live_failed} latest failed, "
+                f"{live_incomplete} in flight/incomplete, {live_stale} stale, {live_missing} missing"
+            ),
+            "next_action": "agentops operator live-acceptance --limit 8",
         },
     ]
 

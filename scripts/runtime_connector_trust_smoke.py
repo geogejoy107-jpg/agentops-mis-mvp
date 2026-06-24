@@ -5,8 +5,19 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+
+SECRET_PATTERNS = [
+    re.compile(r"Authorization:", re.IGNORECASE),
+    re.compile(r"Bearer\s+(?!\[REDACTED\])[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
+    re.compile(r"agtok_[A-Za-z0-9_-]{16,}"),
+    re.compile(r"agtsess_[A-Za-z0-9_-]{16,}"),
+    re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"ntn_[A-Za-z0-9_-]{8,}"),
+]
 
 
 def http_json(method: str, base_url: str, path: str, payload: dict | None = None):
@@ -71,7 +82,7 @@ def main() -> int:
             failures.append(f"failed to restore trust: {restore_status} {restored}")
 
     serialized = json.dumps({"blocked_result": blocked_result}, ensure_ascii=False)
-    require("agtok_" not in serialized and "agtsess_" not in serialized and "sk-" not in serialized and "ntn_" not in serialized, "trust smoke output leaked token-like material", failures)
+    require(not any(pattern.search(serialized) for pattern in SECRET_PATTERNS), "trust smoke output leaked token-like material", failures)
 
     print(json.dumps({
         "ok": not failures,

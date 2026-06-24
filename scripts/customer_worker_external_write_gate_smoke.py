@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -20,8 +21,16 @@ def require(condition: bool, message: str) -> None:
 
 
 def leaked_secret(text: str) -> bool:
-    markers = ["AGENTOPS_API_KEY", "Authorization:", "Bearer ", "agtok_", "agtsess_", "sk-", "ntn_"]
-    return any(marker in text for marker in markers)
+    patterns = [
+        re.compile(r"Authorization:", re.IGNORECASE),
+        re.compile(r"Bearer\s+(?!\[REDACTED\])[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
+        re.compile(r"AGENTOPS_API_KEY\s*=\s*['\"]?(?!<paste|\\[REDACTED\\])[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
+        re.compile(r"agtok_[A-Za-z0-9_-]{16,}"),
+        re.compile(r"agtsess_[A-Za-z0-9_-]{16,}"),
+        re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
+        re.compile(r"ntn_[A-Za-z0-9_-]{8,}"),
+    ]
+    return any(pattern.search(text) for pattern in patterns)
 
 
 def main() -> int:

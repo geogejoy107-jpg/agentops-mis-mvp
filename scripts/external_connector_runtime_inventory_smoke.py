@@ -22,6 +22,7 @@ OBJECTIVE = ROOT / "docs" / "V1_5_AGENT_GATEWAY_HARDENING_OBJECTIVE.md"
 
 SOURCE_FILES = {
     "server.py": ROOT / "server.py",
+    "agentops_mis_core/approval_wall.py": ROOT / "agentops_mis_core" / "approval_wall.py",
     "agentops_mis_cli/worker.py": ROOT / "agentops_mis_cli" / "worker.py",
 }
 
@@ -45,6 +46,9 @@ INVENTORY: list[dict[str, Any]] = [
         "source_markers": {
             "server.py": [
                 "tool_call.prepared_action_required",
+                "build_high_risk_toolcall_prepared_action_required_response",
+            ],
+            "agentops_mis_core/approval_wall.py": [
                 "high_risk_prepared_action_required",
                 "openai.file_search.upload",
             ],
@@ -55,7 +59,7 @@ INVENTORY: list[dict[str, Any]] = [
         "description": "Generic external side-effect detection escalates risk and requires prepared actions.",
         "guard_script": "scripts/generic_external_side_effect_gate_smoke.py",
         "source_markers": {
-            "server.py": [
+            "agentops_mis_core/approval_wall.py": [
                 "tool_call_has_external_side_effect_intent",
                 "EXTERNAL_SIDE_EFFECT_KEYWORDS",
                 "EXTERNAL_SIDE_EFFECT_SCHEMES",

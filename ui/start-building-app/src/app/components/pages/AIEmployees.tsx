@@ -20,6 +20,7 @@ import {
   loadCustomerDeliveryBoard,
   loadDashboard,
   loadDemoReadiness,
+  loadCommanderProjectBoard,
   loadCommanderWorkPackages,
   loadHermesOpenClawLoopReadback,
   loadIntegrationInbox,
@@ -28,11 +29,15 @@ import {
   loadOperatorCommandCenter,
   loadOperatorActionPlan,
   loadOperatorEvidenceReport,
+  loadOperatorExecutionMode,
   loadOperatorHandoff,
   loadOperatorHealth,
+  loadOperatorLoopControl,
+  loadOperatorLoopDriverPackets,
   loadOperatorLoopLaunchPacket,
   loadOperatorLoopAudit,
   loadOperatorLoopSelfCheck,
+  loadOperatorRuntimeDoctor,
   loadReviewQueue,
   loadSecurityProductionReadiness,
   loadStuckWorkflowJobs,
@@ -48,6 +53,7 @@ import {
   promoteCommanderSynthesis,
   previewAgentGatewayEnrollmentPolicy,
   proposeReceiptFailureMemory,
+  recordOperatorActionControlReadback,
   recordOperatorActionReceipt,
   releaseWorkerTask,
   restartLocalWorkerDaemon,
@@ -64,6 +70,8 @@ import {
   type AgentGatewayEnrollmentCreateResult,
   type AgentGatewayEnrollmentPolicyPreview,
   type AgentGatewayEnrollmentRequestResult,
+  type CommanderProjectBoardPayload,
+  type CommanderWorkPackageDispatchBatchPayload,
   type CommanderWorkPackagePlanPayload,
   type CommanderSynthesisPromotionPayload,
   type CustomerDeliveryBoardPayload,
@@ -75,14 +83,19 @@ import {
   type OperatorActionReceiptsPayload,
   type OperatorCommandCenterPayload,
   type OperatorEvidenceReportPayload,
+  type OperatorExecutionModePayload,
   type OperatorHandoffPayload,
   type OperatorHealthPayload,
+  type OperatorLoopControlPayload,
+  type OperatorLoopDriverPacketsPayload,
   type OperatorLoopLaunchPacketPayload,
   type OperatorLoopAuditPayload,
   type OperatorLoopSelfCheckPayload,
+  type OperatorRuntimeDoctorPayload,
   type ReviewQueuePayload,
   type TaskIntakeChecklistItem,
   type WorkerAdapterName,
+  type WorkerDaemonResult,
   type WorkerDaemonLogPayload,
   type WorkerDispatchResult,
   type WorkerFleetHygienePayload,
@@ -103,14 +116,31 @@ const RUNTIME_COLOR: Record<string, string> = {
 
 const DEFAULT_GATEWAY_SCOPES = [
   "agents:heartbeat",
+  "agent_plans:read",
   "agent_plans:write",
+  "plan_evidence:read",
   "plan_evidence:write",
+  "knowledge:read",
+  "knowledge:write",
   "tasks:create",
   "tasks:read",
   "tasks:claim",
   "runs:write",
+  "runtime_events:write",
   "toolcalls:write",
   "artifacts:write",
+  "memories:propose",
+  "evaluations:submit",
+  "audit:write",
+];
+
+const WORKER_EXECUTION_REQUIRED_SCOPES = [
+  "agents:heartbeat",
+  "tasks:read",
+  "tasks:claim",
+  "runs:write",
+  "runtime_events:write",
+  "toolcalls:write",
   "evaluations:submit",
   "audit:write",
 ];
@@ -122,7 +152,7 @@ const GATEWAY_SCOPE_PRESETS = [
   },
   {
     id: "observer",
-    scopes: ["agents:heartbeat", "tasks:read", "audit:write"],
+    scopes: ["agents:heartbeat", "knowledge:read", "agent_plans:read", "plan_evidence:read", "tasks:read", "audit:write"],
   },
   {
     id: "approval",
@@ -130,7 +160,7 @@ const GATEWAY_SCOPE_PRESETS = [
   },
   {
     id: "full",
-    scopes: ["agents:write", "agents:heartbeat", "agent_plans:read", "agent_plans:write", "plan_evidence:read", "plan_evidence:write", "tasks:create", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "artifacts:write", "approvals:request", "memories:propose", "evaluations:submit", "audit:write"],
+    scopes: ["agents:write", "agents:heartbeat", "agent_plans:read", "agent_plans:write", "plan_evidence:read", "plan_evidence:write", "knowledge:read", "knowledge:write", "tasks:create", "tasks:read", "tasks:claim", "runs:write", "runtime_events:write", "toolcalls:write", "artifacts:write", "approvals:request", "memories:propose", "evaluations:submit", "audit:write"],
   },
 ];
 
@@ -148,7 +178,16 @@ type AIEmployeesPanelLoadState = {
 
 type AIEmployeesLiveData = {
   [key: string]: unknown;
+  commanderProjectBoard?: CommanderProjectBoardPayload;
   operatorCommandCenter?: OperatorCommandCenterPayload;
+  operatorExecutionMode?: OperatorExecutionModePayload;
+  operatorLoopControl?: OperatorLoopControlPayload;
+  operatorLoopDriverPackets?: OperatorLoopDriverPacketsPayload;
+  operatorRuntimeDoctor?: OperatorRuntimeDoctorPayload;
+  executionModeAdapter?: WorkerAdapterName;
+  executionModeConfirmRun?: boolean;
+  activeCommanderProjectId?: string;
+  activeCommanderPlanId?: string;
   panelLoadState?: Record<string, AIEmployeesPanelLoadState>;
 };
 
@@ -181,6 +220,10 @@ const AI_EMPLOYEES_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
   { id: "worker_hygiene", load: async () => ({ workerHygiene: await loadWorkerFleetHygiene({ limit: 5 }) }) },
   { id: "adapter_readiness", load: async () => ({ adapterReadiness: await loadWorkerAdapterReadiness() }) },
   { id: "local_readiness", load: async () => ({ localReadiness: await loadLocalReadiness() }) },
+  { id: "operator_runtime_doctor", load: async () => ({ operatorRuntimeDoctor: await loadOperatorRuntimeDoctor(8) }) },
+  { id: "operator_execution_mode", load: async (context) => ({ operatorExecutionMode: await loadOperatorExecutionMode(context.executionModeAdapter || "mock", Boolean(context.executionModeConfirmRun), 8) }) },
+  { id: "operator_loop_control", load: async () => ({ operatorLoopControl: await loadOperatorLoopControl(8) }) },
+  { id: "operator_loop_driver_packets", load: async () => ({ operatorLoopDriverPackets: await loadOperatorLoopDriverPackets(8) }) },
   { id: "operator_command_center", load: async () => ({ operatorCommandCenter: await loadOperatorCommandCenter(12) }) },
   { id: "operator_action_plan", load: async () => ({ operatorActionPlan: await loadOperatorActionPlan(12) }) },
   { id: "operator_action_receipts", load: async () => ({ operatorActionReceipts: await loadOperatorActionReceipts(8) }) },
@@ -189,6 +232,7 @@ const AI_EMPLOYEES_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
   { id: "security_readiness", load: async () => ({ securityReadiness: await loadSecurityProductionReadiness() }) },
   { id: "integration_inbox", load: async (context) => ({ integrationInbox: await loadIntegrationInbox({ bucket: String(context.integrationInboxBucket || "all"), limit: 20 }) }) },
   { id: "commander_work_packages", load: async () => ({ commanderWorkPackages: await loadCommanderWorkPackages({ limit: 8 }) }) },
+  { id: "commander_project_board", load: async (context) => ({ commanderProjectBoard: await loadCommanderProjectBoard({ project_id: String(context.activeCommanderProjectId || ""), plan_id: String(context.activeCommanderPlanId || ""), limit: 12 }) }) },
   { id: "review_queue", load: async () => ({ reviewQueue: await loadReviewQueue(12) }) },
   { id: "customer_delivery_board", load: async () => ({ customerDeliveryBoard: await loadCustomerDeliveryBoard(8) }) },
   { id: "loop_lane_readback", load: async () => ({ loopLaneReadback: await loadHermesOpenClawLoopReadback("", 6) }) },
@@ -205,6 +249,9 @@ const AI_EMPLOYEES_CORE_PANEL_IDS = new Set([
   "worker_status",
   "worker_fleet",
   "local_readiness",
+  "operator_runtime_doctor",
+  "operator_execution_mode",
+  "operator_loop_control",
   "operator_command_center",
   "operator_action_plan",
   "operator_evidence_report",
@@ -271,6 +318,7 @@ export function AIEmployees() {
   const [customerTaskResult, setCustomerTaskResult] = useState<CustomerTaskWorkflowResult | null>(null);
   const [customerTaskJob, setCustomerTaskJob] = useState<WorkflowJob | null>(null);
   const [lastWorkerDispatch, setLastWorkerDispatch] = useState<WorkerDispatchResult | null>(null);
+  const [lastDaemonControl, setLastDaemonControl] = useState<WorkerDaemonResult | null>(null);
   const [copiedIntakeCommand, setCopiedIntakeCommand] = useState<string | null>(null);
   const [loopLaneBusy, setLoopLaneBusy] = useState(false);
   const [loopLaneError, setLoopLaneError] = useState<string | null>(null);
@@ -290,6 +338,8 @@ export function AIEmployees() {
   const [commanderPlannerBusy, setCommanderPlannerBusy] = useState(false);
   const [commanderPlannerError, setCommanderPlannerError] = useState<string | null>(null);
   const [commanderPlannerResult, setCommanderPlannerResult] = useState<CommanderWorkPackagePlanPayload | null>(null);
+  const [activeCommanderProject, setActiveCommanderProject] = useState<{ projectId: string; planId: string } | null>(null);
+  const [lastCommanderBatch, setLastCommanderBatch] = useState<CommanderWorkPackageDispatchBatchPayload | null>(null);
   const [lastSynthesis, setLastSynthesis] = useState<{ artifactId: string; approvalId?: string | null } | null>(null);
   const [synthesisPromotion, setSynthesisPromotion] = useState<CommanderSynthesisPromotionPayload | null>(null);
   const [commanderPlannerForm, setCommanderPlannerForm] = useState({
@@ -349,18 +399,25 @@ export function AIEmployees() {
     setCreatedToken(null);
     setIssuedCredentialCopied(false);
   }, []);
-  const refresh = useCallback(async (options?: { preserveIssuedCredential?: boolean }) => {
+  const refresh = useCallback(async (options?: { preserveIssuedCredential?: boolean; commanderProject?: { projectId: string; planId: string } | null }) => {
     if (!options?.preserveIssuedCredential) {
       clearIssuedCredential();
     }
     setLoading(true);
     setError(null);
     setDeferredError(null);
+    const commanderProject = options?.commanderProject === undefined ? activeCommanderProject : options.commanderProject;
     try {
       const coreContext = await loadAIEmployeesPanelSet([
         ...AI_EMPLOYEES_CORE_PANEL_LOADERS,
         { id: "operator_health", load: async () => ({ operatorHealth: await loadOperatorHealth(12, "") }) },
-      ], { integrationInboxBucket });
+      ], {
+        integrationInboxBucket,
+        executionModeAdapter: customerTaskForm.adapter,
+        executionModeConfirmRun: liveRuntimeConfirmed,
+        activeCommanderProjectId: commanderProject?.projectId || "",
+        activeCommanderPlanId: commanderProject?.planId || "",
+      });
       setData((current) => ({
         ...(current || {}),
         ...coreContext,
@@ -375,6 +432,8 @@ export function AIEmployees() {
         const deferredContext = await loadAIEmployeesPanelSet(AI_EMPLOYEES_DEFERRED_PANEL_LOADERS, {
           ...coreContext,
           integrationInboxBucket,
+          activeCommanderProjectId: commanderProject?.projectId || "",
+          activeCommanderPlanId: commanderProject?.planId || "",
         });
         const scopedLoopId = latestLoopIdFromReadback(deferredContext.loopLaneReadback as HermesOpenClawLoopReadbackPayload | undefined);
         const scopedContext = await loadAIEmployeesPanelSet(AI_EMPLOYEES_SCOPED_PANEL_LOADERS, {
@@ -408,7 +467,7 @@ export function AIEmployees() {
       setLoading(false);
       setDeferredLoading(false);
     }
-  }, [clearIssuedCredential, integrationInboxBucket]);
+  }, [activeCommanderProject?.planId, activeCommanderProject?.projectId, clearIssuedCredential, customerTaskForm.adapter, integrationInboxBucket, liveRuntimeConfirmed]);
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -421,7 +480,15 @@ export function AIEmployees() {
         : [...AI_EMPLOYEES_PANEL_LOADERS, ...AI_EMPLOYEES_SCOPED_PANEL_LOADERS].find((item) => item.id === panelId);
     if (!loader) return;
     const scopedLoopId = latestLoopIdFromReadback(data?.loopLaneReadback as HermesOpenClawLoopReadbackPayload | undefined);
-    const context = { ...(data || {}), integrationInboxBucket, scopedLoopId };
+    const context = {
+      ...(data || {}),
+      integrationInboxBucket,
+      scopedLoopId,
+      executionModeAdapter: customerTaskForm.adapter,
+      executionModeConfirmRun: liveRuntimeConfirmed,
+      activeCommanderProjectId: activeCommanderProject?.projectId || "",
+      activeCommanderPlanId: activeCommanderProject?.planId || "",
+    };
     setLocalPanelRefreshing(panelId);
     setData((current) => ({
       ...(current || {}),
@@ -462,7 +529,7 @@ export function AIEmployees() {
     } finally {
       setLocalPanelRefreshing((current) => current === panelId ? null : current);
     }
-  }, [clearIssuedCredential, data, integrationInboxBucket]);
+  }, [activeCommanderProject?.planId, activeCommanderProject?.projectId, clearIssuedCredential, customerTaskForm.adapter, data, integrationInboxBucket, liveRuntimeConfirmed]);
   const loadSelectedDaemonLog = async (adapter = selectedLogAdapter) => {
     setDaemonLogsLoading(true);
     setDaemonLogsError(null);
@@ -492,9 +559,13 @@ export function AIEmployees() {
   const operatorActionReceipts = data?.operatorActionReceipts as OperatorActionReceiptsPayload | undefined;
   const operatorEvidenceReport = data?.operatorEvidenceReport as OperatorEvidenceReportPayload | undefined;
   const operatorLoopLaunchPacket = data?.operatorLoopLaunchPacket as OperatorLoopLaunchPacketPayload | undefined;
+  const operatorRuntimeDoctor = data?.operatorRuntimeDoctor as OperatorRuntimeDoctorPayload | undefined;
+  const operatorExecutionMode = data?.operatorExecutionMode as OperatorExecutionModePayload | undefined;
   const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
+  const operatorLoopDriverPackets = data?.operatorLoopDriverPackets as OperatorLoopDriverPacketsPayload | undefined;
   const operatorHandoff = data?.operatorHandoff as OperatorHandoffPayload | undefined;
   const operatorHealth = data?.operatorHealth as OperatorHealthPayload | undefined;
+  const operatorLoopControl = data?.operatorLoopControl as OperatorLoopControlPayload | undefined;
   const operatorLoopSelfCheck = data?.operatorLoopSelfCheck as OperatorLoopSelfCheckPayload | undefined;
   const operatorCommandCenterSummary = operatorCommandCenter?.summary;
   const operatorCommandCenterActions = operatorCommandCenter?.next_actions || [];
@@ -510,6 +581,16 @@ export function AIEmployees() {
   const operatorEvidenceSummary = operatorEvidenceReport?.summary;
   const operatorEvidenceRuns = operatorEvidenceReport?.runs || [];
   const operatorEvidenceCommands = operatorEvidenceReport?.recommended_commands || [];
+  const runtimeDoctorSummary = operatorRuntimeDoctor?.summary;
+  const runtimeDoctorBlockedGates = runtimeDoctorSummary?.blocked_gates || [];
+  const runtimeDoctorAttentionGates = runtimeDoctorSummary?.attention_gates || [];
+  const runtimeDoctorCommands = operatorRuntimeDoctor?.commands || {};
+  const runtimeDoctorPrimaryCommands = [
+    runtimeDoctorCommands.operator_runtime_doctor,
+    runtimeDoctorCommands.worker_readiness,
+    runtimeDoctorCommands.operator_health,
+  ].filter(Boolean).slice(0, 3);
+  const runtimeDoctorTopGates = operatorRuntimeDoctor?.gates.slice(0, 4) || [];
   const operatorEvidenceTopRuns = operatorEvidenceRuns
     .filter(item => item.status !== "ready")
     .concat(operatorEvidenceRuns.filter(item => item.status === "ready"))
@@ -558,9 +639,14 @@ export function AIEmployees() {
   const productionSecurityNeedsAttention = productionSecurityStatus !== "ready" || !securityReadiness?.production_ready || localWriteGuardGate?.status !== "pass";
   const integrationInbox = data?.integrationInbox;
   const commanderWorkPackages = data?.commanderWorkPackages;
+  const commanderProjectBoard = data?.commanderProjectBoard as CommanderProjectBoardPayload | undefined;
+  const commanderTeamBoard = commanderProjectBoard?.team_board || null;
+  const commanderTeamLanes = commanderTeamBoard?.lanes || [];
+  const commanderLastQueueBoard = lastCommanderBatch?.team_board_after_queue || null;
   const commanderPackageRows = commanderWorkPackages?.work_packages || [];
-  const commanderPlannedPackageCount = commanderPackageRows.filter(pkg => pkg.package_status === "planned" || pkg.status === "planned").length;
-  const commanderReadyPackageCount = commanderPackageRows.filter(pkg => pkg.package_status === "ready_for_review").length;
+  const commanderActionRows = commanderTeamLanes.length ? commanderTeamLanes : commanderPackageRows;
+  const commanderPlannedPackageCount = commanderActionRows.filter(pkg => pkg.package_status === "planned" || pkg.status === "planned").length;
+  const commanderReadyPackageCount = commanderActionRows.filter(pkg => pkg.package_status === "ready_for_review").length;
   const reviewQueue = data?.reviewQueue as ReviewQueuePayload | undefined;
   const reviewQueueSummary = reviewQueue?.summary;
   const reviewQueueItems = reviewQueue?.review_items || [];
@@ -572,6 +658,8 @@ export function AIEmployees() {
   const loopLaneReadback = data?.loopLaneReadback as HermesOpenClawLoopReadbackPayload | undefined;
   const localEvidence = localReadiness?.evidence;
   const localReadinessActions = localReadiness?.next_actions || [];
+  const localRunPath = localReadiness?.local_run_path || [];
+  const localServiceControlStep = localRunPath.find(step => step.service_control_preview || step.step_id === "preview_worker_service_control");
   const synthesisLifecycle = localReadiness?.commander_synthesis_lifecycle;
   const synthesisLifecycleActions = synthesisLifecycle?.next_actions || [];
   const localReadinessGates = localReadiness?.gates || [];
@@ -615,6 +703,13 @@ export function AIEmployees() {
   const staleEnrollments = enrollments.filter(item => item.heartbeat_state === "stale").length;
   const activeSessions = sessions.filter(item => item.session_state === "active").length;
   const runningDaemons = (workerStatus?.daemons || []).filter(daemon => daemon.running).length;
+  const lastDaemonAdmissionSummary = lastDaemonControl?.local_loop_admission_summary || lastDaemonControl?.task_intake?.local_loop_admission_summary;
+  const lastDaemonAdmissionSafety = lastDaemonAdmissionSummary?.safety || {};
+  const lastDaemonAdmissionCommands = lastDaemonAdmissionSummary?.next_safe_commands || [];
+  const lastDaemonAdmissionReadOnly = Boolean(lastDaemonAdmissionSafety.read_only);
+  const lastDaemonAdmissionLedgerMutated = Boolean(lastDaemonAdmissionSafety.ledger_mutated);
+  const lastDaemonAdmissionLiveExecuted = Boolean(lastDaemonAdmissionSafety.live_execution_performed);
+  const lastDaemonAdmissionServerShell = Boolean(lastDaemonAdmissionSafety.server_executes_shell);
   const stuckWorkerCount = Number(workerStatus?.stuck_worker_tasks || stuckTasks.length || 0);
   const stuckWorkflowJobCount = Number(workerStatus?.stuck_workflow_jobs || stuckWorkflowJobRefs.length || stuckWorkflowJobs.length || 0);
   const liveReadyAdapters = adapterReadiness?.summary.live_ready_adapters || workerStatus?.adapter_readiness?.live_ready_adapters || [];
@@ -623,6 +718,9 @@ export function AIEmployees() {
   const recommendedAdapter = adapterReadiness?.summary.recommended_adapter || workerStatus?.adapter_readiness?.recommended_adapter || "mock";
   const localRecommendedAdapter = localReadiness?.adapter_readiness?.recommended_adapter || recommendedAdapter;
   const selectedAdapterRoute = adapterReadiness?.adapters?.[customerTaskForm.adapter];
+  const selectedAdapterRemediation = selectedAdapterRoute?.remediation;
+  const selectedAdapterRemediationCommands = (selectedAdapterRemediation?.commands || []).filter(command => command.command).slice(0, 4);
+  const selectedAdapterMissingChecks = selectedAdapterRemediation?.missing || [];
   const selectedAdapterLiveBlocked = customerTaskForm.adapter !== "mock" && ["unavailable", "blocked"].includes(selectedAdapterRoute?.readiness || "");
   const selectedAdapterNeedsLiveConfirm = customerTaskForm.adapter !== "mock";
   const selectedAdapterLiveConfirmMissing = selectedAdapterNeedsLiveConfirm && !liveRuntimeConfirmed;
@@ -657,14 +755,32 @@ export function AIEmployees() {
       commandCenterProjects: "Projects",
       commandCenterCodingGaps: "Coding gaps",
       blockedRuns: "Blocked runs",
+      runtimeDoctorTitle: "Runtime doctor",
+      runtimeDoctorSummary: "Lightweight first-check for MIS reachability, adapter readiness, worker freshness, confirmation walls, prepared-action walls, and redaction boundaries.",
+      runtimeDoctorGates: "Doctor gates",
+      runtimeDoctorCommands: "Doctor commands",
       operatorHealthTitle: "Operator health",
       operatorHealthSummary: "Aggregate read-only health across loop handoff, local readiness, security, worker fleet, review queue, and action plan.",
       healthScore: "Health score",
       healthRisks: "Health risks",
       evidenceReportTitle: "Evidence report",
-      evidenceReportSummary: "Run-level delivery evidence matrix across Agent Plan, approval, plan_evidence_manifest, ledger counts, pending approvals, and action receipts.",
+      evidenceReportSummary: "Run-level delivery evidence matrix across Agent Plan, approval, plan_evidence_manifest, memory review, ledger counts, pending approvals, and action receipts.",
       evidenceReportReady: "Ready runs",
       evidenceReportBlocked: "Blocked runs",
+      workerKnowledge: "Worker knowledge",
+      workerKnowledgeReady: "Knowledge ready",
+      workerKnowledgeMissing: "Knowledge missing",
+      workerKnowledgeUnavailable: "Knowledge unavailable",
+      workerKnowledgePaths: "Knowledge paths",
+      workerKnowledgePacket: "Packet",
+      workerKnowledgeQuery: "Query",
+      workerRuntimeSummary: "Runtime summary",
+      workerRuntimeSummaryReady: "Runtime summaries ready",
+      workerRuntimeSummaryMissing: "Runtime summaries missing",
+      workerRuntimeSummaryEvents: "Summary events",
+      workerRuntimeSummaryLinked: "Linked",
+      workerRuntimeSummaryEvent: "Event",
+      runtimeRawTraceOmitted: "raw trace omitted",
       missingManifests: "Missing manifests",
       verifiedReceipts: "Verified receipts",
       demoReadinessTitle: "Demo readiness",
@@ -722,6 +838,24 @@ export function AIEmployees() {
       advanceLoopSummary: "Copy the local CLI runner that advances one allowlisted loop action, verifies it, and records a receipt.",
       previewAdvanceLoop: "Preview advance",
       confirmAdvanceLoop: "Confirm CLI",
+      loopDriverTitle: "Hermes/OpenClaw loop driver",
+      loopDriverSummary: "Copy the bounded local loop wrapper: preview is read-only; confirm advances allowlisted steps with receipts and control readback.",
+      loopDriverAgentPacket: "Agent loop packet",
+      loopDriverAgentPacketSummary: "Live start-check projection for each adapter: current phase, safety gates, and next copy command.",
+      methodGates: "Method gates",
+      localLoopAdmission: "Local loop admission",
+      daemonLoopAdmissionSummary: "Worker start/restart Method Block readback",
+      liveAdapterTasks: "Live adapter tasks",
+      passedAdmission: "Passed admission",
+      missingAdmission: "Missing admission",
+      firstSafeCommands: "First safe commands",
+      confirmCommands: "Confirm commands",
+      currentPhase: "Current phase",
+      readyToConfirmLoop: "Ready to confirm",
+      phase: "Phase",
+      command: "Command",
+      previewLoopDriver: "Preview loop",
+      confirmLoopDriver: "Confirm loop",
       advanceLoopPolicyLabel: "Policy",
       advanceLoopPolicy: "Local CLI only; no approvals, live runs, workflow dispatch, or server shell execution.",
       handoffSources: "Sources",
@@ -805,6 +939,12 @@ export function AIEmployees() {
       localReadinessTitle: "Local Readiness",
       localReadinessSummary: "Read-only proof that this local MIS workspace can be operated without leaking tokens or triggering live work.",
       localReadinessOverall: "Overall status",
+      localRunPathTitle: "Local run path",
+      localRunPathSummary: "Boot MIS, select Hermes/OpenClaw or mock, start a worker, preview service control, dispatch work, and verify ledger evidence.",
+      serviceControlPreviewTitle: "Service-control preview",
+      serviceControlPreviewSummary: "Preview launchd/systemd control from MIS, then verify with service-check before any confirmed OS mutation.",
+      serviceCheckCommand: "Service check",
+      servicePreviewCommand: "Preview control",
       evidenceChains: "Evidence chains",
       memoryApprovalCounts: "Memory / approvals",
       safetyProof: "Safety proof",
@@ -823,6 +963,24 @@ export function AIEmployees() {
       plannedPackages: "Planned packages",
       createdPackages: "Created tasks",
       plannerSafety: "Preview is safe",
+      activeTeamBoard: "Active team board",
+      activeTeamBoardSummary: "Project-scoped lanes, owners, dependencies and evidence gates for the current AI-team project.",
+      teamLanes: "Team lanes",
+      dependencyEdges: "Dependencies",
+      missingCodingEvidence: "Missing coding evidence",
+      teamReadyForReview: "Ready for review",
+      activeWorkflowJobs: "Active jobs",
+      failedWorkflowJobs: "Failed jobs",
+      completedWorkflowJobs: "Completed jobs",
+      latestWorkflowJob: "Latest job",
+      queueReadback: "Queue readback",
+      jobsCreated: "Jobs created",
+      afterQueueActive: "After queue active",
+      afterQueueFailed: "After queue failed",
+      afterQueueCompleted: "After queue completed",
+      retryWorkflowJob: "Retry job",
+      retryingWorkflowJob: "Retrying...",
+      markLaneJobFailed: "Mark job failed",
       persistedPackages: "Persisted packages",
       packageReadback: "Package readback",
       packageStatus: "Package status",
@@ -886,14 +1044,20 @@ export function AIEmployees() {
       itemAge: "Age",
       itemOwner: "Owner",
       itemBucket: "Bucket",
+      integrationDecision: "Decision",
+      integrationReason: "Reason",
+      integrationAutoApply: "Auto-apply",
+      integrationLedgerDecision: "Ledger decision",
+      canAdvanceWithoutWaiting: "Can advance without waiting",
       overallFleetHealth: "Fleet health",
       fleetHygieneTitle: "Fleet hygiene",
-      fleetHygieneSummary: "Plan or confirm cleanup for stale running worker tasks and never-seen remote enrollments. Cleanup writes audit/runtime evidence and never runs live adapters.",
+      fleetHygieneSummary: "Plan or confirm cleanup for stale running worker tasks, never-seen remote enrollments, and heartbeat-stale enrollments. Cleanup writes audit/runtime evidence and never runs live adapters.",
       hygienePlan: "Plan cleanup",
       hygieneApply: "Confirm cleanup",
       hygieneRunning: "Checking...",
       hygieneActions: "Actions",
       staleNeverSeen: "Never-seen enrollments",
+      staleHeartbeat: "Stale heartbeats",
       releasedTasks: "Released",
       revokedEnrollments: "Revoked",
       hygieneNoActions: "No cleanup needed.",
@@ -950,6 +1114,19 @@ export function AIEmployees() {
       confirmLiveTask: "Confirm live run",
       submitAsyncTask: "Submit async job",
       customerTaskRunning: "Running task...",
+      executionModeTitle: "Execution mode",
+      executionModeSummary: "One read-only strip for the current customer task path: dry-run, live confirmation, adapter readiness, approval wall, and async job state.",
+      selectedExecutionPath: "Selected path",
+      currentAdapter: "Current adapter",
+      dryRunMode: "dry-run / mock",
+      liveConfirmedMode: "live confirmed",
+      liveConfirmMissingMode: "live confirmation required",
+      adapterBlockedMode: "adapter route blocked",
+      approvalWaitingMode: "approval waiting",
+      asyncJobsMode: "async jobs",
+      confirmRunWall: "Confirm-run wall",
+      preparedActionWall: "Prepared-action wall",
+      selectedRoute: "Selected route",
       confirmLiveHint: "Hermes/OpenClaw require explicit confirmation before live execution. Mock is the safe default.",
       liveRuntimeConfirmLabel: "I understand this will run a real local Hermes/OpenClaw adapter and write ledger evidence.",
       liveRuntimeConfirmRequired: "Live adapter confirmation required",
@@ -1030,10 +1207,26 @@ export function AIEmployees() {
       enrollmentSummary: "Issue scoped tokens for agents running on another laptop or server. The token is shown once; MIS stores only a hash.",
       enrollmentPolicyTitle: "Scope policy preview",
       enrollmentPolicySummary: "Read-only preview before token issue: risk, approval path, privileged scopes, and worker viability.",
+      enrollmentDeploymentPolicy: "Deployment policy",
+      enrollmentDeploymentPolicySummary: "Hosted/shared mode routes remote credentials through approval and admin issue; local mode can direct-create only low-risk observer tokens.",
       riskLevel: "Risk",
       policyType: "Policy",
       approvalPath: "Approval path",
       directCreatePath: "Direct create",
+      directCreateAllowed: "Direct create allowed",
+      approvalRequestRequired: "Approval required",
+      adminKeyConfigured: "Admin key",
+      scopeEffectsTitle: "Selected scope effects",
+      scopeEffectsSummary: "Agent Gateway enforces these endpoint scopes server-side; missing permissions fail closed with HTTP 403.",
+      workerViability: "Worker viability",
+      workerViabilityReady: "Ready to run worker loop",
+      workerViabilityBlocked: "Missing worker-loop scopes",
+      requiredWorkerScopes: "Required worker scopes",
+      readScopes: "Read/heartbeat",
+      executionScopes: "Execution",
+      evidenceWriteScopes: "Evidence writes",
+      governanceScopes: "Governance",
+      scopeRbacProof: "RBAC proof",
       recommendedPath: "Recommended",
       invalidScopes: "Invalid scopes",
       privilegedScopes: "Privileged",
@@ -1076,6 +1269,9 @@ export function AIEmployees() {
       envSetup: "Environment",
       installCommand: "Install",
       verifyCommand: "Verify",
+      startCheckCommand: "Start check",
+      loopLaunchBriefCommand: "Launch brief",
+      methodGateContract: "Method gates",
       preflightCommand: "Preflight",
       sessionCommand: "Mint session",
       heartbeatCommand: "Heartbeat",
@@ -1108,6 +1304,9 @@ export function AIEmployees() {
       modeRecoveryBody: "Stale running worker tasks can be released back to planned; linked runs are blocked with audit evidence.",
       adapterRoutesTitle: "Adapter routes",
       adapterRoutesSummary: "Read-only route selection for agent workers before live dispatch.",
+      adapterRemediationTitle: "Setup commands",
+      adapterRemediationSummary: "Copy-only remediation path from worker readiness.",
+      missingChecks: "Missing checks",
       recommendedAdapter: "Recommended",
       trustStatus: "Trust",
       observationLevel: "Observation",
@@ -1151,14 +1350,32 @@ export function AIEmployees() {
       commandCenterProjects: "项目",
       commandCenterCodingGaps: "编码缺口",
       blockedRuns: "阻塞 Run",
+      runtimeDoctorTitle: "Runtime Doctor",
+      runtimeDoctorSummary: "轻量 first-check：检查 MIS 可达性、Adapter 就绪、远程 Worker 新鲜度、确认墙、Prepared Action 墙和脱敏边界。",
+      runtimeDoctorGates: "Doctor Gate",
+      runtimeDoctorCommands: "Doctor 命令",
       operatorHealthTitle: "Operator 健康",
       operatorHealthSummary: "聚合 Loop 交接、本地就绪、安全边界、Worker Fleet、评审队列和动作计划的只读健康快照。",
       healthScore: "健康分",
       healthRisks: "健康风险",
       evidenceReportTitle: "证据报告",
-      evidenceReportSummary: "按 run 聚合 Agent Plan、审批、plan_evidence_manifest、账本计数、待审批和动作收据的交付证据矩阵。",
+      evidenceReportSummary: "按 run 聚合 Agent Plan、审批、plan_evidence_manifest、记忆评审、账本计数、待审批和动作收据的交付证据矩阵。",
       evidenceReportReady: "就绪 Run",
       evidenceReportBlocked: "阻塞 Run",
+      workerKnowledge: "Worker 知识",
+      workerKnowledgeReady: "知识已就绪",
+      workerKnowledgeMissing: "知识缺失",
+      workerKnowledgeUnavailable: "知识不可用",
+      workerKnowledgePaths: "知识路径",
+      workerKnowledgePacket: "证据包",
+      workerKnowledgeQuery: "查询",
+      workerRuntimeSummary: "运行摘要",
+      workerRuntimeSummaryReady: "运行摘要已就绪",
+      workerRuntimeSummaryMissing: "运行摘要缺失",
+      workerRuntimeSummaryEvents: "摘要事件",
+      workerRuntimeSummaryLinked: "已关联",
+      workerRuntimeSummaryEvent: "事件",
+      runtimeRawTraceOmitted: "原始轨迹已省略",
       missingManifests: "缺失清单",
       verifiedReceipts: "已验收收据",
       demoReadinessTitle: "Demo 就绪",
@@ -1216,6 +1433,24 @@ export function AIEmployees() {
       advanceLoopSummary: "复制本地 CLI runner：只推进一个 allowlist loop 动作、验收并记录收据。",
       previewAdvanceLoop: "预览推进",
       confirmAdvanceLoop: "确认 CLI",
+      loopDriverTitle: "Hermes/OpenClaw Loop Driver",
+      loopDriverSummary: "复制受限本地 loop wrapper：预览只读；确认后只推进 allowlist 步骤，并写入收据和控制回读。",
+      loopDriverAgentPacket: "Agent Loop 机器包",
+      loopDriverAgentPacketSummary: "每个 adapter 的 start-check 实时投影：当前阶段、安全闸和下一条可复制命令。",
+      methodGates: "方法 Gate",
+      localLoopAdmission: "本地 Loop 准入包",
+      daemonLoopAdmissionSummary: "Worker 启停 Method Block 回读",
+      liveAdapterTasks: "Live adapter 任务",
+      passedAdmission: "已通过准入",
+      missingAdmission: "缺失准入",
+      firstSafeCommands: "先执行命令",
+      confirmCommands: "需确认命令",
+      currentPhase: "当前阶段",
+      readyToConfirmLoop: "可确认推进",
+      phase: "阶段",
+      command: "命令",
+      previewLoopDriver: "预览 Loop",
+      confirmLoopDriver: "确认 Loop",
       advanceLoopPolicyLabel: "策略",
       advanceLoopPolicy: "仅本地 CLI；不审批、不 live run、不调度 workflow、不让服务端执行 shell。",
       handoffSources: "来源",
@@ -1299,6 +1534,12 @@ export function AIEmployees() {
       localReadinessTitle: "本地就绪",
       localReadinessSummary: "只读证明：这个本地 MIS 工作区可运行，同时不泄露 token，也不会触发真实执行。",
       localReadinessOverall: "整体状态",
+      localRunPathTitle: "本地运行路径",
+      localRunPathSummary: "启动 MIS，选择 Hermes/OpenClaw 或 mock，启动 worker，预览服务控制，分派任务，并验收账本证据。",
+      serviceControlPreviewTitle: "服务控制预览",
+      serviceControlPreviewSummary: "先从 MIS 复制 launchd/systemd 控制预览，再用 service-check 验证，确认前不改变本机服务状态。",
+      serviceCheckCommand: "服务自检",
+      servicePreviewCommand: "预览控制",
       evidenceChains: "证据闭环",
       memoryApprovalCounts: "记忆 / 审批",
       safetyProof: "安全证明",
@@ -1317,6 +1558,24 @@ export function AIEmployees() {
       plannedPackages: "规划工作包",
       createdPackages: "已创建任务",
       plannerSafety: "预览安全",
+      activeTeamBoard: "当前团队项目板",
+      activeTeamBoardSummary: "按当前项目展示 lanes、负责人、依赖和证据 Gate，避免混进全局最近任务。",
+      teamLanes: "团队 lanes",
+      dependencyEdges: "依赖边",
+      missingCodingEvidence: "缺失编码证据",
+      teamReadyForReview: "待复核",
+      activeWorkflowJobs: "活跃 Job",
+      failedWorkflowJobs: "失败 Job",
+      completedWorkflowJobs: "完成 Job",
+      latestWorkflowJob: "最新 Job",
+      queueReadback: "排队读回",
+      jobsCreated: "已创建 Job",
+      afterQueueActive: "排队后活跃",
+      afterQueueFailed: "排队后失败",
+      afterQueueCompleted: "排队后完成",
+      retryWorkflowJob: "重试 Job",
+      retryingWorkflowJob: "正在重试...",
+      markLaneJobFailed: "标记 Job 失败",
       persistedPackages: "持久化工作包",
       packageReadback: "工作包读回",
       packageStatus: "工作包状态",
@@ -1380,14 +1639,20 @@ export function AIEmployees() {
       itemAge: "耗时",
       itemOwner: "负责人",
       itemBucket: "分组",
+      integrationDecision: "集成决策",
+      integrationReason: "原因",
+      integrationAutoApply: "自动应用",
+      integrationLedgerDecision: "账本决策",
+      canAdvanceWithoutWaiting: "可不等待推进",
       overallFleetHealth: "Fleet 健康",
       fleetHygieneTitle: "Fleet 清理",
-      fleetHygieneSummary: "为卡住的运行中任务和从未心跳的远程接入生成清理计划；确认清理会写入审计/runtime 证据，但不会触发真实 adapter 执行。",
+      fleetHygieneSummary: "为卡住的运行中任务、从未心跳的远程接入、心跳过期的远程接入生成清理计划；确认清理会写入审计/runtime 证据，但不会触发真实 adapter 执行。",
       hygienePlan: "只读计划",
       hygieneApply: "确认清理",
       hygieneRunning: "检查中...",
       hygieneActions: "可处理项",
       staleNeverSeen: "未连接接入",
+      staleHeartbeat: "心跳过期接入",
       releasedTasks: "已释放",
       revokedEnrollments: "已吊销",
       hygieneNoActions: "暂无需要清理的项目。",
@@ -1444,6 +1709,19 @@ export function AIEmployees() {
       confirmLiveTask: "确认真实运行",
       submitAsyncTask: "异步提交 Job",
       customerTaskRunning: "任务运行中...",
+      executionModeTitle: "执行模式",
+      executionModeSummary: "只读汇总当前客户任务路径：dry-run、真实运行确认、adapter 就绪、审批墙和异步 Job 状态。",
+      selectedExecutionPath: "当前路径",
+      currentAdapter: "当前 adapter",
+      dryRunMode: "dry-run / mock",
+      liveConfirmedMode: "已确认真实运行",
+      liveConfirmMissingMode: "需要真实运行确认",
+      adapterBlockedMode: "adapter 路由阻塞",
+      approvalWaitingMode: "等待审批",
+      asyncJobsMode: "异步 Job",
+      confirmRunWall: "Confirm-run 墙",
+      preparedActionWall: "Prepared-action 墙",
+      selectedRoute: "当前路由",
       confirmLiveHint: "Hermes/OpenClaw 真实执行前必须显式确认。mock 是安全默认。",
       liveRuntimeConfirmLabel: "我确认这会运行真实本地 Hermes/OpenClaw adapter，并写入账本证据。",
       liveRuntimeConfirmRequired: "需要确认真实 adapter",
@@ -1524,10 +1802,26 @@ export function AIEmployees() {
       enrollmentSummary: "给运行在另一台电脑或服务器上的 agent 发放带权限范围的 token。token 只显示一次，MIS 只保存 hash。",
       enrollmentPolicyTitle: "Scope 策略预览",
       enrollmentPolicySummary: "发 token 前的只读检查：风险、审批路径、高权限 scope 和 worker 可执行性。",
+      enrollmentDeploymentPolicy: "部署策略",
+      enrollmentDeploymentPolicySummary: "Hosted/共享模式下，远程凭证必须经过审批和管理员发放；本地模式只允许低风险 observer token 直接创建。",
       riskLevel: "风险",
       policyType: "策略",
       approvalPath: "走审批",
       directCreatePath: "直接创建",
+      directCreateAllowed: "可直接创建",
+      approvalRequestRequired: "需要审批",
+      adminKeyConfigured: "Admin key",
+      scopeEffectsTitle: "已选 scope 影响",
+      scopeEffectsSummary: "Agent Gateway 在服务端执行这些 endpoint scope；缺少权限会以 HTTP 403 失败关闭。",
+      workerViability: "Worker 可执行性",
+      workerViabilityReady: "可运行 worker loop",
+      workerViabilityBlocked: "缺少 worker-loop scope",
+      requiredWorkerScopes: "Worker 必需 scope",
+      readScopes: "读取 / 心跳",
+      executionScopes: "执行",
+      evidenceWriteScopes: "证据写入",
+      governanceScopes: "治理",
+      scopeRbacProof: "RBAC 证明",
       recommendedPath: "推荐路径",
       invalidScopes: "无效 scope",
       privilegedScopes: "高权限",
@@ -1570,6 +1864,9 @@ export function AIEmployees() {
       envSetup: "环境变量",
       installCommand: "安装",
       verifyCommand: "自检",
+      startCheckCommand: "启动检查",
+      loopLaunchBriefCommand: "启动简报",
+      methodGateContract: "方法 Gate",
       preflightCommand: "预检",
       sessionCommand: "换取短期 Session",
       heartbeatCommand: "心跳",
@@ -1602,6 +1899,9 @@ export function AIEmployees() {
       modeRecoveryBody: "卡住的运行中 worker 任务可以释放回 planned；关联 run 会标记 blocked 并留下审计证据。",
       adapterRoutesTitle: "Adapter 路由",
       adapterRoutesSummary: "agent worker 真跑前使用的只读选路状态。",
+      adapterRemediationTitle: "设置命令",
+      adapterRemediationSummary: "来自 worker readiness 的只复制修复路径。",
+      missingChecks: "缺失检查",
       recommendedAdapter: "推荐",
       trustStatus: "信任",
       observationLevel: "观测等级",
@@ -1741,6 +2041,77 @@ export function AIEmployees() {
       <Copy size={9} />
     </button>
   );
+  const executionModeSummary = operatorExecutionMode?.summary;
+  const executionModeRoute = operatorExecutionMode?.selected_route;
+  const executionModeGateById = Object.fromEntries((operatorExecutionMode?.gates || []).map((gate) => [gate.id, gate]));
+  const activeWorkflowJobCount = Number(executionModeSummary?.active_workflow_jobs ?? workflowJobs.filter((job) => ["queued", "running", "submitted", "planned"].includes(String(job.status || ""))).length);
+  const pendingApprovalCount = Number(executionModeSummary?.pending_approvals ?? reviewQueueSummary?.pending_approvals ?? operatorEvidenceSummary?.pending_approvals ?? customerDeliverySummary?.waiting_approval ?? 0);
+  const fallbackSelectedExecutionStatus = selectedAdapterLiveBlocked
+    ? "blocked"
+    : selectedAdapterLiveConfirmMissing
+      ? "attention"
+      : customerTaskForm.adapter === "mock"
+        ? "planned"
+        : "pass";
+  const selectedExecutionStatus = operatorExecutionMode?.status || fallbackSelectedExecutionStatus;
+  const fallbackSelectedExecutionLabel = selectedAdapterLiveBlocked
+    ? copy.adapterBlockedMode
+    : selectedAdapterLiveConfirmMissing
+      ? copy.liveConfirmMissingMode
+      : customerTaskForm.adapter === "mock"
+        ? copy.dryRunMode
+        : copy.liveConfirmedMode;
+  const selectedExecutionLabel = operatorExecutionMode?.mode
+    ? `${operatorExecutionMode.mode} · ${operatorExecutionMode.selected_path || executionModeSummary?.selected_path || fallbackSelectedExecutionLabel}`
+    : fallbackSelectedExecutionLabel;
+  const selectedRouteDetail = executionModeRoute
+    ? `${executionModeRoute.readiness || "unknown"} · ${executionModeRoute.trust_status || "trust:unknown"}`
+    : customerTaskForm.adapter === "mock"
+    ? copy.dryRunMode
+    : `${selectedAdapterRoute?.readiness || "unknown"} · ${selectedAdapterRoute?.trust_status || "trust:unknown"}`;
+  const executionModeCommand = operatorExecutionMode?.commands?.execution_mode
+    || executionModeRoute?.recommended_action
+    || selectedAdapterRoute?.recommended_action
+    || runtimeDoctorCommands.worker_readiness
+    || "agentops worker readiness";
+  const executionModeCards = [
+    {
+      id: "execution-mode-selected-path",
+      label: copy.selectedExecutionPath,
+      value: operatorExecutionMode?.selected_path || executionModeSummary?.selected_path || selectedExecutionLabel,
+      status: selectedExecutionStatus,
+    },
+    {
+      id: "execution-mode-current-adapter",
+      label: copy.currentAdapter,
+      value: `${operatorExecutionMode?.adapter || customerTaskForm.adapter} · ${selectedRouteDetail}`,
+      status: executionModeGateById.selected_adapter_route?.status || (selectedAdapterIsReady ? "pass" : "blocked"),
+    },
+    {
+      id: "execution-mode-confirm-run-wall",
+      label: copy.confirmRunWall,
+      value: executionModeSummary?.confirm_run_wall || (selectedAdapterNeedsLiveConfirm ? (liveRuntimeConfirmed ? copy.liveRuntimeConfirmed : copy.liveRuntimeConfirmRequired) : copy.dryRunMode),
+      status: executionModeGateById.confirm_run_wall?.status || (selectedAdapterNeedsLiveConfirm ? (liveRuntimeConfirmed ? "pass" : "attention") : "planned"),
+    },
+    {
+      id: "execution-mode-prepared-action-wall",
+      label: copy.preparedActionWall,
+      value: executionModeSummary?.prepared_action_wall || (runtimeDoctorSummary?.requires_prepared_action?.length ? runtimeDoctorSummary.requires_prepared_action.join(", ") : copy.statusClear),
+      status: executionModeGateById.prepared_action_wall?.status || (runtimeDoctorSummary?.requires_prepared_action?.length ? "pass" : "planned"),
+    },
+    {
+      id: "execution-mode-approval-waiting",
+      label: copy.approvalWaitingMode,
+      value: pendingApprovalCount,
+      status: executionModeGateById.approval_waiting?.status || (pendingApprovalCount > 0 ? "attention" : "pass"),
+    },
+    {
+      id: "execution-mode-async-jobs",
+      label: copy.asyncJobsMode,
+      value: activeWorkflowJobCount,
+      status: executionModeGateById.async_jobs?.status || (activeWorkflowJobCount > 0 ? "running" : "pass"),
+    },
+  ];
   const panelReceiptButton = (panelId: string) => {
     const busy = panelReceiptAction === panelId;
     return (
@@ -1815,12 +2186,15 @@ export function AIEmployees() {
     const liveReady = item.readiness === "ready" && adapter !== "mock";
     const attention = ["unavailable", "blocked"].includes(item.readiness);
     const checks = item.checks || {};
+    const remediation = item.remediation;
+    const remediationCommands = (remediation?.commands || []).filter(command => command.command).slice(0, 3);
+    const remediationMissing = remediation?.missing || [];
     const checkSummary = adapter === "hermes"
       ? `api=${String(checks.api_listening ?? "—")} · port=${String(checks.api_port ?? "—")}`
       : adapter === "openclaw"
         ? `bin=${String(checks.binary_exists ?? "—")} · agents=${String(checks.agents_count ?? "—")}`
         : "local mock worker";
-    return { item, liveReady, attention, checkSummary };
+    return { item, liveReady, attention, checkSummary, remediation, remediationCommands, remediationMissing };
   });
   const integrationInboxFilters = [
     { bucket: "all", label: copy.inboxAll, count: integrationInboxSummary?.total ?? 0 },
@@ -1921,6 +2295,27 @@ export function AIEmployees() {
   const advanceLoopPolicyRaw = typeof advanceLoopRaw.policy === "object" && advanceLoopRaw.policy !== null ? advanceLoopRaw.policy as Record<string, unknown> : {};
   const advanceLoopPreviewCommand = String(advanceLoopRaw.preview_command || "agentops operator advance-loop --limit 12");
   const advanceLoopConfirmCommand = String(advanceLoopRaw.confirm_command || `${advanceLoopPreviewCommand} --confirm-advance`);
+  const loopDriverPreviewCommands = [
+    "agentops operator loop-driver --adapter hermes --max-steps 3 --limit 8",
+    "agentops operator loop-driver --adapter openclaw --max-steps 3 --limit 8",
+  ];
+  const loopDriverConfirmCommands = loopDriverPreviewCommands.map(command => `${command} --confirm-loop`);
+  const loopDriverCommands = [
+    { label: `Hermes ${copy.previewLoopDriver}`, command: loopDriverPreviewCommands[0], color: "var(--mis-cyan)" },
+    { label: `OpenClaw ${copy.previewLoopDriver}`, command: loopDriverPreviewCommands[1], color: "var(--mis-cyan)" },
+    { label: `Hermes ${copy.confirmLoopDriver}`, command: loopDriverConfirmCommands[0], color: "var(--mis-warning)" },
+    { label: `OpenClaw ${copy.confirmLoopDriver}`, command: loopDriverConfirmCommands[1], color: "var(--mis-warning)" },
+  ];
+  const loopDriverPacketItems = operatorLoopDriverPackets?.packets || [];
+  const loopDriverPacketCommandItems = loopDriverPacketItems.flatMap((packet) => {
+    const adapterLabel = packet.adapter === "openclaw" ? "OpenClaw" : packet.adapter === "hermes" ? "Hermes" : packet.adapter;
+    return [
+      { label: `${adapterLabel} start-check`, command: packet.commands.start_check || "", color: "var(--mis-success)" },
+      { label: `${adapterLabel} ${copy.previewLoopDriver}`, command: packet.commands.preview_loop || "", color: "var(--mis-cyan)" },
+      { label: `${adapterLabel} ${copy.confirmLoopDriver}`, command: packet.commands.confirm_loop || "", color: "var(--mis-warning)" },
+    ].filter(item => item.command);
+  });
+  const loopDriverVisibleCommands = loopDriverPacketCommandItems.length ? loopDriverPacketCommandItems : loopDriverCommands;
   const advanceLoopSelectedGate = String(advanceLoopSummaryRaw.selected_gate || "—");
   const advanceLoopSelectedStatus = String(advanceLoopSummaryRaw.selected_status || advanceLoopRaw.status || "unknown");
   const advanceLoopServerShell = Boolean(advanceLoopPolicyRaw.server_executes_shell);
@@ -1931,8 +2326,44 @@ export function AIEmployees() {
   const handoffControlCommand = String(handoffControlSummary?.next_command || handoffControlStep.command || "");
   const handoffControlVerifyCommand = String(handoffControlSummary?.verify_command || handoffControlStep.verify_command || "");
   const handoffControlReceiptCommand = String(handoffControlSummary?.receipt_command || handoffControlStep.receipt_command || "");
-  const operatorHealthControlSummary = operatorHealth?.control_summary || handoffControlSummary;
+  const directLoopControlSummary = operatorLoopControl?.control_summary;
+  const operatorHealthControlSummary = directLoopControlSummary || operatorHealth?.control_summary || handoffControlSummary;
+  const directLoopControlStep = directLoopControlSummary?.recommended_step || {};
+  const directLoopControlNextCommand = String(directLoopControlSummary?.next_command || directLoopControlStep.command || operatorLoopControl?.next_actions?.[0] || operatorLoopControl?.work_order?.commands?.[0] || "");
+  const directLoopControlVerifyCommand = String(directLoopControlSummary?.verify_command || directLoopControlStep.verify_command || "");
+  const directLoopControlReceiptCommand = String(directLoopControlSummary?.receipt_command || directLoopControlStep.receipt_command || "");
+  const directLoopControlAdvance = (
+    operatorLoopControl?.work_order?.advance_loop &&
+    typeof operatorLoopControl.work_order.advance_loop === "object"
+      ? operatorLoopControl.work_order.advance_loop
+      : {}
+  ) as Record<string, unknown>;
+  const directLoopControlSelectedItem = (
+    directLoopControlAdvance.selected_item &&
+    typeof directLoopControlAdvance.selected_item === "object"
+      ? directLoopControlAdvance.selected_item
+      : {}
+  ) as Record<string, unknown>;
+  const directLoopControlPreviewCommand = String(directLoopControlAdvance.preview_command || directLoopControlNextCommand || "agentops operator loop-control --limit 8");
   const operatorHealthLoopControl = (
+    operatorLoopControl ? {
+      status: operatorLoopControl.status || directLoopControlSummary?.status || "unknown",
+      source: "operator_loop_control",
+      mode: directLoopControlSummary?.mode,
+      recommended_step: directLoopControlStep.label || directLoopControlStep.step_id,
+      recommended_step_status: directLoopControlStep.status || directLoopControlSelectedItem.gate_status,
+      selected_gate: directLoopControlSummary?.selected_gate || directLoopControlStep.selected_gate || directLoopControlSelectedItem.gate_id,
+      selected_status: directLoopControlSummary?.selected_status || directLoopControlSelectedItem.gate_status,
+      next_action: directLoopControlNextCommand,
+      verify_command: directLoopControlVerifyCommand,
+      receipt_command: directLoopControlReceiptCommand,
+      requires_human: directLoopControlSummary?.requires_human,
+      requires_receipt: directLoopControlSummary?.requires_receipt,
+      copy_only: directLoopControlSummary?.copy_only !== false,
+      server_executes_shell: Boolean(directLoopControlSummary?.server_executes_shell || operatorLoopControl.safety.server_executes_shell),
+      control_readback_source: "agentops operator advance-loop --fast-control --confirm-advance",
+      token_omitted: operatorLoopControl.token_omitted,
+    } :
     operatorHealth?.loop_control ||
     operatorHandoff?.loop_health?.gates?.loop_control ||
     operatorLoopSelfCheck?.gates?.loop_control ||
@@ -2030,8 +2461,15 @@ export function AIEmployees() {
       source: `${copy.operatorCommandCenterTitle} · ${item.source || "next_action"}`,
       status: operatorCommandCenter?.status || "attention",
       verifyAction: item.verify_command || "agentops operator command-center --limit 12",
-      actionSignature: item.action_id || null,
+      actionSignature: item.action_signature || item.action_id || null,
       receiptRequired: item.receipt_required !== false,
+      receiptStatus: item.receipt_status,
+      receiptVerified: item.receipt_verified,
+      receiptHash: item.receipt_hash,
+      receiptRecordCommand: item.receipt_record_command,
+      receiptVerifyRecordCommand: item.receipt_verify_record_command,
+      controlReadbackRequired: item.control_readback_required,
+      controlReadbackAttached: item.control_readback_attached,
       isOperatorCommandCenterAction: true,
     })),
     ...operatorPlanActions.map((item) => {
@@ -2305,6 +2743,95 @@ export function AIEmployees() {
     }
   };
 
+  const recordLocalRunPathReceipt = async (
+    step: LocalRunPathStep,
+    status: "recorded" | "verified",
+  ) => {
+    const actionKey = `local-run-path-receipt:${status}:${step.step_id}`;
+    setReceiptAction(actionKey);
+    setDispatchResult(null);
+    try {
+      const result = await recordOperatorActionReceipt({
+        action_command: step.command,
+        verify_command: step.verify_command || undefined,
+        action_id: step.step_id,
+        action_signature: step.action_signature || undefined,
+        source: step.source || "ui.local_run_path",
+        status,
+        result_summary: status === "verified"
+          ? `Operator verified local run-path step ${step.step_id}.`
+          : `Operator recorded local run-path step ${step.step_id}.`,
+      });
+      setDispatchResult(`${copy.actionReceipts}: ${result.status} · ${result.receipt?.receipt_id || ""}`);
+      await refresh();
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReceiptAction(null);
+    }
+  };
+
+  const recordLocalRunPathControlReadback = async (step: LocalRunPathStep) => {
+    const actionKey = `local-run-path-readback:${step.step_id}`;
+    setReceiptAction(actionKey);
+    setDispatchResult(null);
+    try {
+      const state = step.receipt_state || {};
+      let receiptId = String(state.receipt_id || "");
+      if (!receiptId || !state.verified) {
+        const receiptResult = await recordOperatorActionReceipt({
+          action_command: step.command,
+          verify_command: step.verify_command || undefined,
+          action_id: step.step_id,
+          action_signature: step.action_signature || undefined,
+          source: step.source || "ui.local_run_path.service_control_preview",
+          status: "verified",
+          result_summary: `Operator verified local run-path step ${step.step_id} before control readback.`,
+        });
+        receiptId = receiptResult.receipt?.receipt_id || receiptId;
+      }
+      if (!receiptId) throw new Error("receipt_id_required");
+      const readback = await recordOperatorActionControlReadback({
+        receipt_id: receiptId,
+        source: `${step.source || "ui.local_run_path.service_control_preview"}.control_readback`,
+        control_readback: {
+          before: {
+            step_id: step.step_id,
+            status: step.status,
+            adapter: step.adapter,
+            service_control_preview: Boolean(step.service_control_preview),
+          },
+          after: {
+            verify_command: step.verify_command || null,
+            service_check_expected: true,
+            confirmed_os_mutation: false,
+          },
+          self_check: {
+            copy_only: step.copy_only !== false,
+            server_executes_shell: false,
+            writes_ledger_for_service_control: false,
+            live_execution_performed: false,
+            token_omitted: true,
+          },
+          cache: {
+            refresh_cache_required_after_receipt: true,
+          },
+          token_omitted: true,
+        },
+      });
+      setDispatchResult(`${copy.controlReadback}: ${readback.status} · ${receiptId}`);
+      await Promise.allSettled([
+        refreshPanel("local_readiness"),
+        refreshPanel("operator_action_receipts"),
+        refreshPanel("operator_action_plan"),
+      ]);
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReceiptAction(null);
+    }
+  };
+
   const updateCustomerTaskText = (field: "title" | "description", value: string) => {
     setCustomerTaskForm(prev => ({ ...prev, [field]: value }));
   };
@@ -2335,9 +2862,24 @@ export function AIEmployees() {
         confirm_create: confirmCreate,
       });
       setCommanderPlannerResult(result);
+      const nextProject = result.project_id && result.plan_id ? { projectId: result.project_id, planId: result.plan_id } : null;
+      if (nextProject) {
+        setActiveCommanderProject(nextProject);
+      }
       setDispatchResult(`${result.status}: ${result.created_count || result.planned_count} · ${result.plan_id}`);
       if (confirmCreate) {
-        await refresh();
+        if (nextProject) {
+          const [projectBoard, scopedPackages] = await Promise.all([
+            loadCommanderProjectBoard({ project_id: nextProject.projectId, plan_id: nextProject.planId, limit: 12 }),
+            loadCommanderWorkPackages({ project_id: nextProject.projectId, plan_id: nextProject.planId, limit: 12 }),
+          ]);
+          setData((current) => ({
+            ...(current || {}),
+            commanderProjectBoard: projectBoard,
+            commanderWorkPackages: scopedPackages,
+          }));
+        }
+        await refresh({ commanderProject: nextProject });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2368,7 +2910,7 @@ export function AIEmployees() {
   };
 
   const dispatchCommanderPlannedBatch = async () => {
-    const plannedTaskIds = commanderPackageRows
+    const plannedTaskIds = commanderActionRows
       .filter(pkg => pkg.package_status === "planned" || pkg.status === "planned")
       .slice(0, 5)
       .map(pkg => pkg.task_id)
@@ -2381,12 +2923,24 @@ export function AIEmployees() {
     setDispatchResult(null);
     try {
       const result = await dispatchCommanderWorkPackageBatch({
+        project_id: commanderTeamBoard?.project_id || activeCommanderProject?.projectId || undefined,
+        plan_id: commanderTeamBoard?.plan_id || activeCommanderProject?.planId || undefined,
         task_ids: plannedTaskIds,
         adapter: "mock",
         status: "planned",
         limit: plannedTaskIds.length,
       });
+      setLastCommanderBatch(result);
       setDispatchResult(`${copy.dispatchBatchMock}: ${result.ok ? "queued" : result.reason || "failed"} · ${result.job_ids.length} jobs`);
+      if (result.team_board_after_queue) {
+        setData((current) => current ? {
+          ...current,
+          commanderProjectBoard: current.commanderProjectBoard ? {
+            ...(current.commanderProjectBoard as CommanderProjectBoardPayload),
+            team_board: result.team_board_after_queue,
+          } : current.commanderProjectBoard,
+        } : current);
+      }
       await refresh();
     } catch (err) {
       setDispatchResult(err instanceof Error ? err.message : String(err));
@@ -2396,7 +2950,7 @@ export function AIEmployees() {
   };
 
   const synthesizeCommanderReadyPackages = async () => {
-    const readyTaskIds = commanderPackageRows
+    const readyTaskIds = commanderActionRows
       .filter(pkg => pkg.package_status === "ready_for_review")
       .slice(0, 10)
       .map(pkg => pkg.task_id)
@@ -2549,15 +3103,104 @@ export function AIEmployees() {
     }
   };
 
+  const recordWorkflowJobRecoveryReceipt = async (input: {
+    actionCommand: string;
+    verifyCommand: string;
+    actionId: string;
+    actionSignature: string;
+    resultSummary: string;
+    status?: "recorded" | "verified" | "failed" | "skipped";
+  }) => {
+    const receipt = await recordOperatorActionReceipt({
+      action_command: input.actionCommand,
+      verify_command: input.verifyCommand,
+      action_id: input.actionId,
+      action_signature: input.actionSignature,
+      source: "ui.commander_team_board.workflow_job_recovery",
+      status: input.status || "verified",
+      result_summary: input.resultSummary,
+    });
+    await Promise.allSettled([
+      refreshPanel("operator_action_receipts"),
+      refreshPanel("operator_action_plan"),
+      refreshPanel("operator_loop_audit"),
+    ]);
+    return receipt;
+  };
+
   const markStuckWorkflowJobFailed = async (jobId: string) => {
     setWorkflowJobAction(jobId);
     setWorkflowJobResult(null);
+    const reason = locale === "zh" ? "操作台标记卡住 workflow job 为 failed" : "Operator marked stuck workflow job as failed";
     try {
       const result = await markWorkflowJobFailed(
         jobId,
-        locale === "zh" ? "操作台标记卡住 workflow job 为 failed" : "Operator marked stuck workflow job as failed",
+        reason,
       );
-      setWorkflowJobResult(`${jobId}: ${result.marked_failed ? "failed" : result.reason || "not changed"}`);
+      let receiptLabel = "";
+      try {
+        const receipt = await recordWorkflowJobRecoveryReceipt({
+          actionCommand: `agentops workflow job-mark-failed --job-id ${jobId} --reason "${reason}"`,
+          verifyCommand: `agentops workflow job-status --job-id ${jobId}`,
+          actionId: `commander_workflow_job_mark_failed:${jobId}`,
+          actionSignature: `workflow_job:${jobId}:mark_failed`,
+          status: result.marked_failed ? "verified" : "failed",
+          resultSummary: `${jobId} mark-failed recovery result: ${result.marked_failed ? "failed" : result.reason || "not changed"}.`,
+        });
+        receiptLabel = ` · receipt ${receipt.receipt?.receipt_id || receipt.status}`;
+      } catch (receiptErr) {
+        receiptLabel = ` · receipt ${receiptErr instanceof Error ? receiptErr.message : String(receiptErr)}`;
+      }
+      setWorkflowJobResult(`${jobId}: ${result.marked_failed ? "failed" : result.reason || "not changed"}${receiptLabel}`);
+      await refresh();
+    } catch (err) {
+      setWorkflowJobResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorkflowJobAction(null);
+    }
+  };
+
+  const retryCommanderWorkflowJob = async (taskId: string, jobId: string, adapter: WorkerAdapterName = "mock") => {
+    const safeAdapter = WORKER_ADAPTERS.includes(adapter as (typeof WORKER_ADAPTERS)[number]) ? adapter : "mock";
+    const actionId = `commander-retry-${jobId}`;
+    setWorkflowJobAction(actionId);
+    setWorkflowJobResult(null);
+    try {
+      const result = await dispatchCommanderWorkPackageBatch({
+        project_id: commanderTeamBoard?.project_id || activeCommanderProject?.projectId || undefined,
+        plan_id: commanderTeamBoard?.plan_id || activeCommanderProject?.planId || undefined,
+        task_ids: [taskId],
+        adapter: safeAdapter,
+        status: "all",
+        limit: 1,
+        confirm_run: safeAdapter !== "mock",
+      });
+      setLastCommanderBatch(result);
+      let receiptLabel = "";
+      try {
+        const newJobId = result.job_ids[0] || "<queued_job_id>";
+        const receipt = await recordWorkflowJobRecoveryReceipt({
+          actionCommand: `agentops commander dispatch-batch --task-id ${taskId} --status all --limit 1 --adapter ${safeAdapter}${safeAdapter !== "mock" ? " --confirm-run" : ""}`,
+          verifyCommand: newJobId === "<queued_job_id>" ? "agentops workflow jobs --limit 20" : `agentops workflow job-status --job-id ${newJobId} --wait`,
+          actionId: `commander_workflow_job_retry:${jobId}`,
+          actionSignature: `workflow_job:${jobId}:retry:${taskId}:${safeAdapter}`,
+          status: result.ok ? "verified" : "failed",
+          resultSummary: `${jobId} retry recovery queued ${result.job_ids.length} replacement job(s) for task ${taskId}.`,
+        });
+        receiptLabel = ` · receipt ${receipt.receipt?.receipt_id || receipt.status}`;
+      } catch (receiptErr) {
+        receiptLabel = ` · receipt ${receiptErr instanceof Error ? receiptErr.message : String(receiptErr)}`;
+      }
+      setWorkflowJobResult(`${jobId}: retry ${result.ok ? "queued" : result.reason || "failed"} · ${result.job_ids.length} jobs${receiptLabel}`);
+      if (result.team_board_after_queue) {
+        setData((current) => current ? {
+          ...current,
+          commanderProjectBoard: current.commanderProjectBoard ? {
+            ...(current.commanderProjectBoard as CommanderProjectBoardPayload),
+            team_board: result.team_board_after_queue,
+          } : current.commanderProjectBoard,
+        } : current);
+      }
       await refresh();
     } catch (err) {
       setWorkflowJobResult(err instanceof Error ? err.message : String(err));
@@ -2600,8 +3243,10 @@ export function AIEmployees() {
         poll_interval: 2,
         max_tasks: 0,
       });
+      setLastDaemonControl(result);
       if (!result.ok && result.task_intake) {
-        const action = result.recommended_action || result.task_intake.next_actions?.[0] || copy.activeIntakeGate;
+        const admissionAction = result.local_loop_admission_summary?.next_safe_commands?.[0] || result.task_intake.local_loop_admission_summary?.next_safe_commands?.[0];
+        const action = admissionAction || result.recommended_action || result.task_intake.next_actions?.[0] || copy.activeIntakeGate;
         setDispatchResult(`${adapter} daemon: blocked · ${action}`);
         return;
       }
@@ -2625,8 +3270,10 @@ export function AIEmployees() {
         poll_interval: 2,
         max_tasks: 0,
       });
+      setLastDaemonControl(result);
       if (!result.ok && result.task_intake) {
-        const action = result.recommended_action || result.task_intake.next_actions?.[0] || copy.activeIntakeGate;
+        const admissionAction = result.local_loop_admission_summary?.next_safe_commands?.[0] || result.task_intake.local_loop_admission_summary?.next_safe_commands?.[0];
+        const action = admissionAction || result.recommended_action || result.task_intake.next_actions?.[0] || copy.activeIntakeGate;
         setDispatchResult(`${adapter} restart: blocked · ${action}`);
         return;
       }
@@ -2778,6 +3425,31 @@ export function AIEmployees() {
     .split(",")
     .map(item => item.trim())
     .filter(Boolean);
+  const missingSelectedWorkerScopes = WORKER_EXECUTION_REQUIRED_SCOPES.filter(scope => !scopeList.includes(scope));
+  const selectedScopeWorkerViable = scopeList.length > 0 && missingSelectedWorkerScopes.length === 0;
+  const createEnrollmentBlockedByPolicy = Boolean(enrollmentPolicy && !enrollmentPolicy.direct_create_allowed);
+  const scopeEffectRows = [
+    {
+      label: copy.readScopes,
+      value: scopeList.filter(scope => scope === "agents:heartbeat" || scope.endsWith(":read")).length,
+      status: scopeList.some(scope => scope === "agents:heartbeat" || scope.endsWith(":read")) ? "pass" : "planned",
+    },
+    {
+      label: copy.executionScopes,
+      value: scopeList.filter(scope => ["tasks:claim", "runs:write"].includes(scope)).length,
+      status: scopeList.some(scope => ["tasks:claim", "runs:write"].includes(scope)) ? "attention" : "planned",
+    },
+    {
+      label: copy.evidenceWriteScopes,
+      value: scopeList.filter(scope => ["toolcalls:write", "runtime_events:write", "artifacts:write", "evaluations:submit", "audit:write"].includes(scope)).length,
+      status: scopeList.some(scope => ["toolcalls:write", "runtime_events:write", "artifacts:write", "evaluations:submit", "audit:write"].includes(scope)) ? "attention" : "planned",
+    },
+    {
+      label: copy.governanceScopes,
+      value: scopeList.filter(scope => scope.startsWith("agent_plans:") || scope.startsWith("plan_evidence:") || scope.startsWith("approvals:") || scope.startsWith("memories:")).length,
+      status: scopeList.some(scope => scope.startsWith("agent_plans:") || scope.startsWith("plan_evidence:") || scope.startsWith("approvals:") || scope.startsWith("memories:")) ? "attention" : "planned",
+    },
+  ];
 
   useEffect(() => {
     let cancelled = false;
@@ -2906,12 +3578,13 @@ export function AIEmployees() {
     }
   };
 
-  const revokeEnrollment = async (tokenId: string) => {
-    setEnrollmentAction(`revoke-${tokenId}`);
+  const revokeEnrollment = async (tokenId?: string, agentId?: string) => {
+    const actionRef = tokenId || agentId || "enrollment";
+    setEnrollmentAction(`revoke-${actionRef}`);
     setEnrollmentResult(null);
     clearIssuedCredential();
     try {
-      const result = await revokeAgentGatewayEnrollment({ token_id: tokenId });
+      const result = await revokeAgentGatewayEnrollment(tokenId ? { token_id: tokenId } : { agent_id: agentId });
       const sessionNote = result.sessions_revoked ? ` · sessions ${result.sessions_revoked}` : "";
       setEnrollmentResult(`revoked: ${result.tokens.join(", ") || result.revoked}${sessionNote}`);
       await refresh();
@@ -2922,12 +3595,13 @@ export function AIEmployees() {
     }
   };
 
-  const revokeSession = async (sessionId: string) => {
-    setEnrollmentAction(`revoke-session-${sessionId}`);
+  const revokeSession = async (sessionId?: string, agentId?: string) => {
+    const actionRef = sessionId || agentId || "session";
+    setEnrollmentAction(`revoke-session-${actionRef}`);
     setEnrollmentResult(null);
     clearIssuedCredential();
     try {
-      const result = await revokeAgentGatewaySession({ session_id: sessionId });
+      const result = await revokeAgentGatewaySession(sessionId ? { session_id: sessionId } : { agent_id: agentId });
       setEnrollmentResult(`session revoked: ${result.sessions.join(", ") || result.revoked}`);
       await refresh();
     } catch (err) {
@@ -2937,13 +3611,15 @@ export function AIEmployees() {
     }
   };
 
-  const rotateEnrollment = async (tokenId: string) => {
-    setEnrollmentAction(`rotate-${tokenId}`);
+  const rotateEnrollment = async (tokenId?: string, agentId?: string) => {
+    const actionRef = tokenId || agentId || "enrollment";
+    setEnrollmentAction(`rotate-${actionRef}`);
     setEnrollmentResult(null);
     clearIssuedCredential();
     try {
       const result = await rotateAgentGatewayEnrollment({
         token_id: tokenId,
+        agent_id: agentId,
         ttl_days: Number(enrollmentForm.ttl_days) || 30,
         heartbeat_timeout_sec: Number(enrollmentForm.heartbeat_timeout_sec) || 300,
       });
@@ -2989,6 +3665,61 @@ export function AIEmployees() {
         <button onClick={() => void refresh()} className="mt-3 text-[11px] px-3 py-1.5 rounded" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
           {copy.refresh}
         </button>
+      </div>
+
+      <div
+        data-testid="execution-mode-strip"
+        className="rounded-xl p-4"
+        style={{
+          background: selectedExecutionStatus === "blocked"
+            ? "rgba(248,113,113,0.08)"
+            : selectedExecutionStatus === "attention"
+              ? "rgba(251,191,36,0.08)"
+              : "var(--mis-surface)",
+          border: selectedExecutionStatus === "blocked"
+            ? "1px solid rgba(248,113,113,0.25)"
+            : selectedExecutionStatus === "attention"
+              ? "1px solid rgba(251,191,36,0.28)"
+              : "1px solid var(--mis-border)",
+        }}
+      >
+        <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <ShieldCheck size={15} style={{ color: selectedExecutionStatus === "blocked" ? "#F87171" : selectedExecutionStatus === "attention" ? "var(--mis-warning)" : "var(--mis-cyan)" }} />
+              <div className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.executionModeTitle}</div>
+              <StatusBadge status={selectedExecutionStatus} label={selectedExecutionLabel} />
+              <StatusBadge status={operatorExecutionMode?.safety?.read_only ? "pass" : "attention"} label={operatorExecutionMode?.safety?.read_only ? copy.readOnlyProof : copy.statusAttention} />
+              <StatusBadge status={operatorRuntimeDoctor?.status || "unknown"} label={`${copy.runtimeDoctorTitle}: ${operatorRuntimeDoctor?.status || "unknown"}`} />
+            </div>
+            <p className="text-[11px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>{copy.executionModeSummary}</p>
+            <p className="text-[10px] mt-1 max-w-4xl truncate" style={{ color: "var(--mis-muted)" }}>
+              {copy.selectedRoute}: {operatorExecutionMode?.adapter || customerTaskForm.adapter} · {selectedRouteDetail} · {copy.nextAction}: {executionModeCommand}
+            </p>
+            {operatorExecutionMode?.contract && (
+              <p className="text-[10px] mt-1 max-w-4xl truncate" style={{ color: "var(--mis-muted)" }}>{copy.contract}: {operatorExecutionMode.contract}</p>
+            )}
+          </div>
+          <button
+            onClick={() => void copyIntakeCommand(executionModeCommand)}
+            className="inline-flex items-center justify-center gap-1 text-[11px] px-2.5 py-1.5 rounded shrink-0"
+            style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
+          >
+            <Copy size={12} />
+            {copiedIntakeCommand === executionModeCommand ? copy.copiedCommand : copy.copyCommand}
+          </button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2 mt-3">
+          {executionModeCards.map((item) => (
+            <div key={item.id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+              <div className="flex items-center justify-between gap-2 mt-1">
+                <div className="text-[10px] font-semibold truncate" style={{ color: item.status === "blocked" ? "#F87171" : "var(--mis-text)" }}>{item.value}</div>
+                <StatusBadge status={item.status} />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div
@@ -3135,6 +3866,164 @@ export function AIEmployees() {
                     <Link to={`/admin/tasks/${pkg.task_id}`} className="inline-flex mt-2 text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>
                       {copy.openTask}
                     </Link>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {commanderTeamBoard && (
+          <div
+            data-testid="commander-team-board"
+            className="mt-4 rounded-lg p-3"
+            style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+          >
+            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <Activity size={13} style={{ color: "var(--mis-cyan)" }} />
+                  <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.activeTeamBoard}</div>
+                  <StatusBadge status={commanderTeamBoard.status} />
+                </div>
+                <p className="text-[10px] mt-1 max-w-2xl" style={{ color: "var(--mis-muted)" }}>{copy.activeTeamBoardSummary}</p>
+                <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-dim)" }}>
+                  {commanderTeamBoard.project_id || activeCommanderProject?.projectId || "project"} · {commanderTeamBoard.plan_id || activeCommanderProject?.planId || "plan"}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 min-w-[280px]">
+                {[
+                  { label: copy.teamLanes, value: commanderTeamBoard.summary.total_lanes, status: commanderTeamBoard.summary.total_lanes > 0 ? "pass" : "attention" },
+                  { label: copy.teamReadyForReview, value: commanderTeamBoard.summary.ready_for_review, status: commanderTeamBoard.summary.ready_for_review > 0 ? "attention" : "planned" },
+                  { label: copy.activeWorkflowJobs, value: commanderTeamBoard.summary.active_workflow_jobs, status: commanderTeamBoard.summary.active_workflow_jobs > 0 ? "running" : "pass" },
+                  { label: copy.failedWorkflowJobs, value: commanderTeamBoard.summary.failed_workflow_jobs, status: commanderTeamBoard.summary.failed_workflow_jobs > 0 ? "blocked" : "pass" },
+                  { label: copy.completedWorkflowJobs, value: commanderTeamBoard.summary.workflow_job_counts.completed || 0, status: (commanderTeamBoard.summary.workflow_job_counts.completed || 0) > 0 ? "completed" : "planned" },
+                  { label: copy.missingCodingEvidence, value: commanderTeamBoard.summary.missing_coding_evidence, status: commanderTeamBoard.summary.missing_coding_evidence > 0 ? "attention" : "pass" },
+                  { label: copy.dependencyEdges, value: commanderTeamBoard.summary.dependency_edges, status: commanderTeamBoard.summary.dependency_edges > 0 ? "planned" : "pass" },
+                  { label: copy.jobType, value: Object.values(commanderTeamBoard.summary.workflow_job_counts).reduce((total, value) => total + value, 0), status: Object.keys(commanderTeamBoard.summary.workflow_job_counts).length > 0 ? "pass" : "planned" },
+                ].map((item) => (
+                  <div key={item.label} className="rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[9px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                    <div className="flex items-center justify-between gap-2 mt-1">
+                      <span className="text-[13px] font-semibold" style={{ color: "var(--mis-text)" }}>{item.value}</span>
+                      <StatusBadge status={item.status} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2 mt-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="min-w-0">
+                <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.queueReadback}</div>
+                <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                  {lastCommanderBatch ? `${lastCommanderBatch.status || lastCommanderBatch.reason || "queued"} · ${lastCommanderBatch.job_ids.length} jobs · ${lastCommanderBatch.filter?.project_id || commanderTeamBoard.project_id || "project"}` : commanderTeamBoard.next_actions[0] || copy.dispatchBatchMock}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5 lg:justify-end">
+                {commanderLastQueueBoard && (
+                  <>
+                    <StatusBadge status={lastCommanderBatch?.safety.ledger_mutated ? "attention" : "pass"} label={`${copy.jobsCreated}: ${lastCommanderBatch?.safety.jobs_created ?? lastCommanderBatch?.job_ids.length ?? 0}`} />
+                    <StatusBadge status={commanderLastQueueBoard.summary.active_workflow_jobs > 0 ? "running" : "pass"} label={`${copy.afterQueueActive}: ${commanderLastQueueBoard.summary.active_workflow_jobs}`} />
+                    <StatusBadge status={commanderLastQueueBoard.summary.failed_workflow_jobs > 0 ? "blocked" : "pass"} label={`${copy.afterQueueFailed}: ${commanderLastQueueBoard.summary.failed_workflow_jobs}`} />
+                    <StatusBadge status={(commanderLastQueueBoard.summary.workflow_job_counts.completed || 0) > 0 ? "completed" : "planned"} label={`${copy.afterQueueCompleted}: ${commanderLastQueueBoard.summary.workflow_job_counts.completed || 0}`} />
+                  </>
+                )}
+                <button
+                  data-testid="commander-team-board-dispatch-batch"
+                  onClick={() => void dispatchCommanderPlannedBatch()}
+                  disabled={Boolean(dispatching) || commanderPlannedPackageCount === 0}
+                  className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                  style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}
+                >
+                  {dispatching === "commander-batch-mock" ? <RefreshCw size={10} /> : <Play size={10} />}
+                  {dispatching === "commander-batch-mock" ? copy.dispatching : `${copy.dispatchBatchMock} (${commanderPlannedPackageCount})`}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-2 mt-3">
+              {commanderTeamBoard.lanes.slice(0, 8).map((lane) => (
+                <div key={lane.task_id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{lane.title}</div>
+                      <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                        {lane.owner_agent_id || "agent"} · {lane.lane_id || "lane"} · deps {lane.dependency_count}
+                      </div>
+                    </div>
+                    <StatusBadge status={lane.package_status || lane.status} />
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5 mt-2">
+                    {[
+                      { label: "tool", value: lane.evidence_counts.tool_calls || 0 },
+                      { label: "eval", value: lane.evidence_counts.evaluations || 0 },
+                      { label: "artifact", value: lane.evidence_counts.artifacts || 0 },
+                    ].map((item) => (
+                      <div key={item.label} className="text-[9px] rounded px-2 py-1" style={{ color: "var(--mis-muted)", background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+                        {item.label}: <span style={{ color: "var(--mis-text)" }}>{item.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    {lane.latest_workflow_job && (
+                      <StatusBadge status={lane.latest_workflow_job.status || "unknown"} label={`${copy.latestWorkflowJob}: ${lane.latest_workflow_job.status || "unknown"}`} />
+                    )}
+                    {lane.latest_workflow_job?.adapter && (
+                      <StatusBadge status={lane.latest_workflow_job.confirm_run ? "attention" : "pass"} label={`${lane.latest_workflow_job.adapter} · ${lane.latest_workflow_job.confirm_run ? "live" : "safe"}`} />
+                    )}
+                    <StatusBadge status={String(lane.localization_gate.status || "unknown")} label={`repo ${String(lane.localization_gate.status || "unknown")}`} />
+                    <StatusBadge status={String(lane.coding_evidence_gate.status || "unknown")} label={`code ${String(lane.coding_evidence_gate.status || "unknown")}`} />
+                    {lane.latest_workflow_job?.job_id && (
+                      <span className="text-[10px] px-2 py-1 rounded font-mono" style={{ color: "var(--mis-muted)", background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+                        {lane.latest_workflow_job.job_id}
+                      </span>
+                    )}
+                    {lane.latest_workflow_job?.job_id && ["queued", "running"].includes(lane.latest_workflow_job.status || "") && (
+                      <button
+                        data-testid="commander-team-board-mark-job-failed"
+                        onClick={() => lane.latest_workflow_job?.job_id && void markStuckWorkflowJobFailed(lane.latest_workflow_job.job_id)}
+                        disabled={Boolean(workflowJobAction)}
+                        className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                        style={{ color: "#F87171", background: "rgba(248,113,113,0.10)", border: "1px solid rgba(248,113,113,0.22)" }}
+                      >
+                        {workflowJobAction === lane.latest_workflow_job.job_id ? <RefreshCw size={10} /> : <Square size={10} />}
+                        {workflowJobAction === lane.latest_workflow_job.job_id ? copy.markingJobFailed : copy.markLaneJobFailed}
+                      </button>
+                    )}
+                    {lane.latest_workflow_job?.job_id && lane.latest_workflow_job.status === "failed" && (
+                      <button
+                        data-testid="commander-team-board-retry-job"
+                        onClick={() => void retryCommanderWorkflowJob(lane.task_id, lane.latest_workflow_job?.job_id || lane.task_id, (lane.latest_workflow_job?.adapter || "mock") as WorkerAdapterName)}
+                        disabled={Boolean(workflowJobAction) || liveAdapterConfirmMissing((lane.latest_workflow_job?.adapter || "mock") as (typeof WORKER_ADAPTERS)[number])}
+                        className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                        style={{ color: "var(--mis-warning)", background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.20)" }}
+                      >
+                        {workflowJobAction === `commander-retry-${lane.latest_workflow_job.job_id}` ? <RefreshCw size={10} /> : <RotateCw size={10} />}
+                        {workflowJobAction === `commander-retry-${lane.latest_workflow_job.job_id}` ? copy.retryingWorkflowJob : copy.retryWorkflowJob}
+                      </button>
+                    )}
+                    {lane.latest_run?.run_id && (
+                      <Link to={`/admin/runs/${lane.latest_run.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ color: "var(--mis-cyan)", background: "rgba(34,211,238,0.10)", border: "1px solid rgba(34,211,238,0.18)" }}>
+                        {lane.latest_run.run_id}
+                      </Link>
+                    )}
+                    {lane.latest_workflow_job?.result_run_id && lane.latest_workflow_job.result_run_id !== lane.latest_run?.run_id && (
+                      <Link to={`/admin/runs/${lane.latest_workflow_job.result_run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.10)", border: "1px solid rgba(45,212,191,0.18)" }}>
+                        {copy.runId}
+                      </Link>
+                    )}
+                    {lane.latest_workflow_job?.result_artifact_id && (
+                      <span className="text-[10px] px-2 py-1 rounded font-mono" style={{ color: "var(--mis-warning)", background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.18)" }}>
+                        {copy.artifactId}: {lane.latest_workflow_job.result_artifact_id}
+                      </span>
+                    )}
+                    <Link to={`/admin/tasks/${lane.task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ color: "var(--mis-purple)", background: "rgba(129,140,248,0.10)", border: "1px solid rgba(129,140,248,0.18)" }}>
+                      {copy.openTask}
+                    </Link>
+                  </div>
+                  {lane.recommended_action && (
+                    <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-dim)" }}>{lane.recommended_action}</div>
                   )}
                 </div>
               ))}
@@ -3606,6 +4495,16 @@ export function AIEmployees() {
               <Activity size={14} style={{ color: "var(--mis-cyan)" }} />
               <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.commandCenterTitle}</h2>
               <StatusBadge status={operatorCommandCenter?.status || operatorHealth?.status || fleetHealth?.overall || workerStatus?.status || "unknown"} />
+              <StatusBadge status={operatorLoopControl?.status || "unknown"} label={`${copy.loopControlTitle}: ${operatorLoopControl?.status || "unknown"}`} />
+              <StatusBadge status={operatorRuntimeDoctor?.status || "unknown"} label={`${copy.runtimeDoctorTitle}: ${operatorRuntimeDoctor?.status || "unknown"}`} />
+              {panelStatusBadge("operator_loop_control")}
+              {panelRefreshButton("operator_loop_control")}
+              {panelDiagnosticsButton("operator_loop_control")}
+              {panelReceiptButton("operator_loop_control")}
+              {panelStatusBadge("operator_runtime_doctor")}
+              {panelRefreshButton("operator_runtime_doctor")}
+              {panelDiagnosticsButton("operator_runtime_doctor")}
+              {panelReceiptButton("operator_runtime_doctor")}
               {panelStatusBadge("operator_command_center")}
               {panelRefreshButton("operator_command_center")}
               {panelDiagnosticsButton("operator_command_center")}
@@ -3622,7 +4521,19 @@ export function AIEmployees() {
               </p>
             )}
             {panelEvidenceLine("operator_command_center")}
+            {panelEvidenceLine("operator_loop_control")}
+            {panelEvidenceLine("operator_runtime_doctor")}
             {panelEvidenceLine("worker_status")}
+            {operatorLoopControl && (
+              <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
+                {copy.loopControlSummary} · {copy.verifiedReceipts}: {Number(operatorLoopControl.summary.verified_receipts ?? 0)} · {copy.nextSafeCommand}: {directLoopControlNextCommand || directLoopControlPreviewCommand}
+              </p>
+            )}
+            {operatorRuntimeDoctor && (
+              <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
+                {copy.runtimeDoctorSummary} · {copy.recommendedAdapter}: {runtimeDoctorSummary?.recommended_adapter || "mock"} · {copy.runtimeDoctorGates}: {runtimeDoctorBlockedGates.length} blocked / {runtimeDoctorAttentionGates.length} attention
+              </p>
+            )}
             {operatorHealth && (
               <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
                 {copy.operatorHealthSummary} · {copy.healthScore}: {operatorHealth.score}/100 · {copy.healthRisks}: {operatorHealth.risks.length}
@@ -3654,9 +4565,10 @@ export function AIEmployees() {
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-9 gap-3 mt-4">
           {[
             { label: copy.operatorCommandCenterTitle, value: operatorCommandCenterSummary?.next_actions ?? operatorCommandCenterActions.length, status: operatorCommandCenter?.status || "unknown" },
+            { label: copy.loopControlTitle, value: loopControlSelectedGate, status: operatorLoopControl?.status || loopControlGateStatus },
+            { label: copy.runtimeDoctorTitle, value: runtimeDoctorSummary?.evidence_chain_status || operatorRuntimeDoctor?.status || "—", status: operatorRuntimeDoctor?.status || "unknown" },
             { label: copy.operatorHealthTitle, value: `${operatorHealth?.score ?? 0}/100`, status: operatorHealth?.status || "unknown" },
             { label: copy.commandCenterCodingGaps, value: operatorCommandCenterCodingGapCount, status: operatorCommandCenterCodingGapCount > 0 ? "attention" : "pass" },
-            { label: copy.loopControlTitle, value: loopControlSelectedGate, status: loopControlGateStatus },
             { label: copy.overallFleetHealth, value: fleetHealth?.overall || workerStatus?.status || "—", status: fleetHealth?.overall || workerStatus?.status || "unknown" },
             { label: copy.daemonStatus, value: `${runningDaemons}/${workerStatus?.daemons?.length ?? 0}`, status: runningDaemons > 0 ? "running" : "ready" },
             { label: copy.pendingTasks, value: workerStatus?.pending_worker_tasks ?? "—", status: (workerStatus?.pending_worker_tasks || 0) > 0 ? "planned" : "pass" },
@@ -3671,6 +4583,291 @@ export function AIEmployees() {
               </div>
             </div>
           ))}
+        </div>
+
+        {operatorLoopControl && (
+          <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Activity size={13} style={{ color: "var(--mis-cyan)" }} />
+                  <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopControlTitle}</div>
+                  <StatusBadge status={operatorLoopControl.status || "unknown"} />
+                  <StatusBadge status={operatorLoopControl.safety.read_only && !operatorLoopControl.safety.ledger_mutated ? "pass" : "attention"} label={operatorLoopControl.safety.read_only ? copy.readOnlyProof : copy.statusAttention} />
+                  <StatusBadge status={operatorLoopControl.safety.live_execution_performed ? "blocked" : "pass"} label={operatorLoopControl.safety.live_execution_performed ? "live executed" : copy.liveExecutionProof} />
+                  <StatusBadge status={loopControlServerShell ? "blocked" : "pass"} label={loopControlServerShell ? "server shell" : "copy-only"} />
+                  {panelStatusBadge("operator_loop_control")}
+                  {panelRefreshButton("operator_loop_control")}
+                  {panelDiagnosticsButton("operator_loop_control")}
+                  {panelReceiptButton("operator_loop_control")}
+                </div>
+                <p className="text-[10px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>{copy.loopControlSummary}</p>
+                {operatorLoopControl.contract && (
+                  <p className="text-[10px] mt-1 max-w-4xl truncate" style={{ color: "var(--mis-muted)" }}>{copy.contract}: {operatorLoopControl.contract}</p>
+                )}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+                  {[
+                    { label: copy.recommendedStep, value: String(directLoopControlStep.label || directLoopControlStep.step_id || loopControlSelectedGate || "—"), status: loopControlGateStatus },
+                    { label: copy.controlMode, value: loopControlGateMode, status: loopControlCopyOnly ? "pass" : "attention" },
+                    { label: copy.humanRequired, value: loopControlRequiresHuman ? copy.yes : copy.no, status: loopControlRequiresHuman ? "attention" : "pass" },
+                    { label: copy.receiptProof, value: loopControlRequiresReceipt ? copy.receiptNeeded : copy.verifiedReceipts, status: loopControlRequiresReceipt ? "attention" : "pass" },
+                  ].map((item) => (
+                    <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                      <div className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                      <div className="flex items-center justify-between gap-1 mt-0.5">
+                        <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                        <StatusBadge status={item.status} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-col gap-2 shrink-0 xl:max-w-[520px]">
+                <div className="flex flex-wrap xl:justify-end gap-1.5">
+                  {[
+                    { label: copy.nextSafeCommand, command: directLoopControlNextCommand || directLoopControlPreviewCommand, color: "var(--mis-cyan)" },
+                    { label: copy.verifyAfterAction, command: directLoopControlVerifyCommand, color: "var(--mis-success)" },
+                    { label: copy.copyReceiptCommand, command: directLoopControlReceiptCommand, color: "var(--mis-warning)" },
+                    { label: copy.previewAdvanceLoop, command: directLoopControlPreviewCommand, color: "var(--mis-cyan)" },
+                  ].filter(item => item.command).map((item) => (
+                    <button
+                      key={`${item.label}:${item.command}`}
+                      onClick={() => void copyIntakeCommand(item.command)}
+                      className="inline-flex items-center gap-1 text-[9px] px-2 py-1 rounded max-w-full"
+                      style={{ color: item.color, background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                      title={item.command}
+                    >
+                      <Copy size={10} />
+                      <span className="truncate max-w-[132px]">{copiedIntakeCommand === item.command ? copy.copiedCommand : item.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Terminal size={11} style={{ color: "var(--mis-cyan)" }} />
+                    <div className="text-[9px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopDriverTitle}</div>
+                    <StatusBadge status={operatorLoopDriverPackets?.status || "pass"} />
+                    <StatusBadge status="pass" label="local CLI" />
+                    <StatusBadge status={operatorLoopDriverPackets?.safety.server_executes_shell ? "blocked" : "pass"} label={operatorLoopDriverPackets?.safety.server_executes_shell ? "server shell" : "copy-only"} />
+                    {panelStatusBadge("operator_loop_driver_packets")}
+                    {panelRefreshButton("operator_loop_driver_packets")}
+                    {panelDiagnosticsButton("operator_loop_driver_packets")}
+                    {panelReceiptButton("operator_loop_driver_packets")}
+                  </div>
+                  <div className="text-[8px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>{copy.loopDriverSummary}</div>
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {loopDriverVisibleCommands.map((item) => (
+                      <button
+                        key={`${item.label}:${item.command}`}
+                        onClick={() => void copyIntakeCommand(item.command)}
+                        className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                        style={{ color: item.color, background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                        title={item.command}
+                      >
+                        <Copy size={8} />
+                        <span className="truncate max-w-[132px]">{copiedIntakeCommand === item.command ? copy.copiedCommand : item.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {loopDriverPacketItems.length > 0 && (
+                    <div className="mt-2 pt-2" style={{ borderTop: "1px solid var(--mis-border)" }}>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <div className="text-[8px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopDriverAgentPacket}</div>
+                        <span className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{copy.loopDriverAgentPacketSummary}</span>
+                      </div>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-1.5 mt-1.5">
+                        {loopDriverPacketItems.map((packet) => {
+                          const startCheck = operatorLoopDriverPackets?.start_checks?.[packet.adapter];
+                          const admissionPacket = (startCheck?.local_loop_admission_packet || {}) as Record<string, unknown>;
+                          const admission = (typeof admissionPacket.admission === "object" && admissionPacket.admission !== null ? admissionPacket.admission : {}) as Record<string, unknown>;
+                          const admissionSafety = (typeof admissionPacket.safety === "object" && admissionPacket.safety !== null ? admissionPacket.safety : {}) as Record<string, unknown>;
+                          const firstSafeCommands = Array.isArray(admissionPacket.first_safe_commands)
+                            ? admissionPacket.first_safe_commands.map(String).filter(Boolean).slice(0, 4)
+                            : [];
+                          const confirmRequiredCommands = Array.isArray(admissionPacket.confirm_required_commands)
+                            ? admissionPacket.confirm_required_commands.map(String).filter(Boolean).slice(0, 4)
+                            : [];
+                          return (
+                          <div key={`loop-driver-packet:${packet.adapter}`} className="rounded p-1.5 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                            <div className="flex flex-wrap items-center justify-between gap-1">
+                              <div className="text-[8px] font-semibold uppercase" style={{ color: "var(--mis-text)" }}>{packet.adapter}</div>
+                              <div className="flex flex-wrap gap-1">
+                                <StatusBadge status={packet.current_phase === "blocked" ? "blocked" : "pass"} label={`${copy.currentPhase}: ${packet.current_phase}`} />
+                                <StatusBadge status={packet.ready_to_confirm_loop ? "pass" : "attention"} label={`${copy.readyToConfirmLoop}: ${String(packet.ready_to_confirm_loop)}`} />
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-1 mt-1">
+                              {packet.phases.slice(0, 8).map((phase) => (
+                                <button
+                                  key={`${packet.adapter}:${phase.phase}`}
+                                  type="button"
+                                  disabled={!phase.command}
+                                  onClick={() => phase.command && void copyIntakeCommand(String(phase.command))}
+                                  className="flex items-center justify-between gap-1 rounded px-1.5 py-0.5 text-left disabled:opacity-60"
+                                  style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: "var(--mis-text)" }}
+                                  title={phase.command || `${copy.phase}: ${phase.phase}`}
+                                >
+                                  <span className="truncate text-[8px]">{phase.phase}</span>
+                                  <span className="inline-flex items-center gap-1 shrink-0 text-[8px]" style={{ color: phase.command ? "var(--mis-cyan)" : "var(--mis-muted)" }}>
+                                    {phase.command && <Copy size={8} />}
+                                    {phase.status}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                            {admissionPacket.operation === "operator_local_loop_admission_packet" && (
+                              <div className="mt-1.5 pt-1.5" style={{ borderTop: "1px solid var(--mis-border)" }}>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <div className="text-[8px] font-semibold" style={{ color: "var(--mis-muted)" }}>{copy.localLoopAdmission}</div>
+                                  <StatusBadge status={admission.can_confirm_bounded_loop ? "pass" : "attention"} label={`${copy.readyToConfirmLoop}: ${String(Boolean(admission.can_confirm_bounded_loop))}`} />
+                                  <StatusBadge status={admissionSafety.server_executes_shell ? "blocked" : "pass"} label={admissionSafety.server_executes_shell ? "server shell" : "copy-only"} />
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 mt-1">
+                                  <div className="min-w-0">
+                                    <div className="text-[8px] mb-0.5" style={{ color: "var(--mis-muted)" }}>{copy.firstSafeCommands}</div>
+                                    <div className="flex flex-col gap-1">
+                                      {firstSafeCommands.map((command, index) => (
+                                        <button
+                                          key={`${packet.adapter}:admission:first:${index}:${command}`}
+                                          type="button"
+                                          onClick={() => void copyIntakeCommand(command)}
+                                          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-left"
+                                          style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: "var(--mis-text)" }}
+                                          title={command}
+                                        >
+                                          <Copy size={8} />
+                                          <span className="truncate text-[8px]">{command}</span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="text-[8px] mb-0.5" style={{ color: "var(--mis-muted)" }}>{copy.confirmCommands}</div>
+                                    <div className="flex flex-col gap-1">
+                                      {confirmRequiredCommands.map((command, index) => (
+                                        <button
+                                          key={`${packet.adapter}:admission:confirm:${index}:${command}`}
+                                          type="button"
+                                          onClick={() => void copyIntakeCommand(command)}
+                                          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-left"
+                                          style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: "var(--mis-warning)" }}
+                                          title={command}
+                                        >
+                                          <Copy size={8} />
+                                          <span className="truncate text-[8px]">{command}</span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            {(packet.method_gates || []).length > 0 && (
+                              <div className="mt-1.5 pt-1.5" style={{ borderTop: "1px solid var(--mis-border)" }}>
+                                <div className="text-[8px] font-semibold mb-1" style={{ color: "var(--mis-muted)" }}>{copy.methodGates}</div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                                  {(packet.method_gates || []).slice(0, 8).map((gate) => {
+                                    const gateStatus = gate.status === "blocked" || gate.status === "fail"
+                                      ? "blocked"
+                                      : gate.status === "ready" || gate.status === "pass"
+                                        ? "pass"
+                                        : gate.required
+                                          ? "attention"
+                                          : "pass";
+                                    return (
+                                      <button
+                                        key={`${packet.adapter}:method-gate:${gate.id}`}
+                                        type="button"
+                                        disabled={!gate.command}
+                                        onClick={() => gate.command && void copyIntakeCommand(String(gate.command))}
+                                        className="flex items-center justify-between gap-1 rounded px-1.5 py-0.5 text-left disabled:opacity-60"
+                                        style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: "var(--mis-text)" }}
+                                        title={gate.proof || gate.command || gate.id}
+                                      >
+                                        <span className="truncate text-[8px]">{gate.id}</span>
+                                        <span className="inline-flex items-center gap-1 shrink-0 text-[8px]" style={{ color: gate.command ? "var(--mis-cyan)" : "var(--mis-muted)" }}>
+                                          {gate.command && <Copy size={8} />}
+                                          <StatusBadge status={gateStatus} label={gate.required ? "required" : "optional"} />
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <Terminal size={13} style={{ color: "var(--mis-cyan)" }} />
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.runtimeDoctorTitle}</div>
+                <StatusBadge status={operatorRuntimeDoctor?.status || "unknown"} />
+                <StatusBadge status={operatorRuntimeDoctor?.safety?.read_only && !operatorRuntimeDoctor?.safety?.ledger_mutated ? "pass" : "attention"} label={operatorRuntimeDoctor?.safety?.read_only ? copy.readOnlyProof : copy.statusAttention} />
+                <StatusBadge status={operatorRuntimeDoctor?.safety?.server_executes_shell ? "blocked" : "pass"} label={operatorRuntimeDoctor?.safety?.server_executes_shell ? "server shell" : "copy-only"} />
+                {panelStatusBadge("operator_runtime_doctor")}
+                {panelRefreshButton("operator_runtime_doctor")}
+                {panelDiagnosticsButton("operator_runtime_doctor")}
+                {panelReceiptButton("operator_runtime_doctor")}
+              </div>
+              <p className="text-[10px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>{copy.runtimeDoctorSummary}</p>
+              {operatorRuntimeDoctor?.contract && (
+                <p className="text-[10px] mt-1 max-w-4xl truncate" style={{ color: "var(--mis-muted)" }}>{copy.contract}: {operatorRuntimeDoctor.contract}</p>
+              )}
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {(runtimeDoctorSummary?.ready_adapters || []).map((adapter) => (
+                  <StatusBadge key={adapter} status="pass" label={`${adapter}: ${copy.liveReady}`} />
+                ))}
+                {(runtimeDoctorSummary?.requires_confirm_run || []).map((adapter) => (
+                  <StatusBadge key={`confirm-${adapter}`} status="attention" label={`${adapter}: ${copy.statusConfirm}`} />
+                ))}
+                {(runtimeDoctorSummary?.requires_prepared_action || []).map((adapter) => (
+                  <StatusBadge key={`prepared-${adapter}`} status="pass" label={`${adapter}: prepared action`} />
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-wrap xl:justify-end gap-1.5 shrink-0">
+              {(runtimeDoctorPrimaryCommands.length ? runtimeDoctorPrimaryCommands : ["agentops operator runtime-doctor --limit 8"]).map((command) => (
+                <button
+                  key={command}
+                  onClick={() => void copyIntakeCommand(command)}
+                  className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded"
+                  style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                  title={command}
+                >
+                  <Copy size={11} />
+                  {copiedIntakeCommand === command ? copy.copiedCommand : copy.copyCommand}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2 mt-3">
+            {runtimeDoctorTopGates.map((gate) => (
+              <div key={gate.id} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{gate.label}</div>
+                  <StatusBadge status={gate.status} />
+                </div>
+                <div className="text-[9px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>{gate.detail || gate.next_action || "—"}</div>
+              </div>
+            ))}
+            {runtimeDoctorTopGates.length === 0 && (
+              <div className="text-[10px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                {copy.backendUnavailable}: agentops operator runtime-doctor --limit 8
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
@@ -3714,7 +4911,12 @@ export function AIEmployees() {
               { label: copy.planEvidence, value: operatorEvidenceSummary?.verified_plan_evidence_manifests ?? 0, status: (operatorEvidenceSummary?.verified_plan_evidence_manifests || 0) > 0 ? "pass" : "attention" },
               { label: copy.missingManifests, value: operatorEvidenceSummary?.missing_plan_evidence_manifests ?? 0, status: (operatorEvidenceSummary?.missing_plan_evidence_manifests || 0) > 0 ? "blocked" : "pass" },
               { label: copy.pendingApprovals, value: operatorEvidenceSummary?.pending_approvals ?? 0, status: (operatorEvidenceSummary?.pending_approvals || 0) > 0 ? "attention" : "pass" },
+              { label: copy.memoryReview, value: `${operatorEvidenceSummary?.memory_review_ready ?? 0}/${operatorEvidenceSummary?.memory_reviews ?? 0}`, status: ((operatorEvidenceSummary?.missing_memory_reviews || 0) + (operatorEvidenceSummary?.pending_memory_reviews || 0)) > 0 ? "attention" : "pass" },
               { label: copy.verifiedReceipts, value: `${operatorEvidenceSummary?.verified_action_receipts ?? 0}/${operatorEvidenceSummary?.action_receipts ?? 0}`, status: (operatorEvidenceSummary?.verified_action_receipts || 0) > 0 ? "pass" : "planned" },
+              { label: copy.workerKnowledgeReady, value: `${operatorEvidenceSummary?.worker_knowledge_retrieval_ready ?? 0}/${operatorEvidenceSummary?.worker_runs ?? 0}`, status: (operatorEvidenceSummary?.worker_knowledge_retrieval_ready || 0) > 0 ? "pass" : (operatorEvidenceSummary?.worker_runs || 0) > 0 ? "attention" : "planned" },
+              { label: copy.workerKnowledgeMissing, value: (operatorEvidenceSummary?.worker_knowledge_retrieval_missing ?? 0) + (operatorEvidenceSummary?.worker_knowledge_retrieval_unavailable ?? 0), status: ((operatorEvidenceSummary?.worker_knowledge_retrieval_missing || 0) + (operatorEvidenceSummary?.worker_knowledge_retrieval_unavailable || 0)) > 0 ? "blocked" : "pass" },
+              { label: copy.workerRuntimeSummaryReady, value: `${operatorEvidenceSummary?.worker_runtime_summary_ready ?? 0}/${operatorEvidenceSummary?.worker_runs ?? 0}`, status: (operatorEvidenceSummary?.worker_runtime_summary_ready || 0) > 0 ? "pass" : (operatorEvidenceSummary?.worker_runs || 0) > 0 ? "attention" : "planned" },
+              { label: copy.workerRuntimeSummaryMissing, value: operatorEvidenceSummary?.worker_runtime_summary_missing ?? 0, status: (operatorEvidenceSummary?.worker_runtime_summary_missing || 0) > 0 ? "blocked" : "pass" },
             ].map((item) => (
               <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                 <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
@@ -3734,6 +4936,12 @@ export function AIEmployees() {
             {operatorEvidenceTopRuns.map((run) => {
               const counts = run.evidence_counts || {};
               const firstCommand = run.recommended_commands?.[0] || "";
+              const workerKnowledge = run.worker_knowledge_retrieval;
+              const workerKnowledgeStatus = workerKnowledge?.status || "not_applicable";
+              const workerKnowledgeBlocked = workerKnowledgeStatus === "missing" || workerKnowledgeStatus === "unavailable";
+              const workerRuntimeSummary = run.worker_runtime_summary;
+              const workerRuntimeSummaryStatus = workerRuntimeSummary?.status || "not_applicable";
+              const workerRuntimeSummaryBlocked = workerRuntimeSummaryStatus === "missing";
               return (
                 <div key={run.run_id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                   <div className="flex items-start justify-between gap-2">
@@ -3756,7 +4964,43 @@ export function AIEmployees() {
                         {copy.pendingApprovals}: {run.approvals?.pending}
                       </span>
                     )}
+                    {workerKnowledge?.applicable && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: workerKnowledgeBlocked ? "var(--mis-warning)" : "var(--mis-success)", background: workerKnowledgeBlocked ? "rgba(251,191,36,0.08)" : "rgba(45,212,191,0.08)", border: workerKnowledgeBlocked ? "1px solid rgba(251,191,36,0.22)" : "1px solid rgba(45,212,191,0.20)" }}>
+                        {copy.workerKnowledge}: {workerKnowledgeStatus}
+                      </span>
+                    )}
+                    {workerRuntimeSummary?.applicable && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: workerRuntimeSummaryBlocked ? "var(--mis-warning)" : "var(--mis-success)", background: workerRuntimeSummaryBlocked ? "rgba(251,191,36,0.08)" : "rgba(45,212,191,0.08)", border: workerRuntimeSummaryBlocked ? "1px solid rgba(251,191,36,0.22)" : "1px solid rgba(45,212,191,0.20)" }}>
+                        {copy.workerRuntimeSummary}: {workerRuntimeSummaryStatus}
+                      </span>
+                    )}
                   </div>
+                  {workerKnowledge?.applicable && (
+                    <div className="mt-2 rounded px-2 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>
+                          {copy.workerKnowledgePaths}: {(workerKnowledge.paths || []).length}
+                        </div>
+                        <StatusBadge status={workerKnowledgeBlocked ? "blocked" : workerKnowledgeStatus === "ready" ? "pass" : "attention"} />
+                      </div>
+                      <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
+                        {copy.workerKnowledgePacket}: {(workerKnowledge.packet_hashes?.[0] || "—").slice(0, 10)} · {copy.workerKnowledgeQuery}: {(workerKnowledge.query_hashes?.[0] || "—").slice(0, 10)}
+                      </div>
+                    </div>
+                  )}
+                  {workerRuntimeSummary?.applicable && (
+                    <div className="mt-2 rounded px-2 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>
+                          {copy.workerRuntimeSummaryEvents}: {workerRuntimeSummary.summary_events || 0} · {copy.workerRuntimeSummaryLinked}: {workerRuntimeSummary.linked_summary_events || 0}
+                        </div>
+                        <StatusBadge status={workerRuntimeSummaryBlocked ? "blocked" : workerRuntimeSummaryStatus === "ready" ? "pass" : "attention"} />
+                      </div>
+                      <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
+                        {copy.workerRuntimeSummaryEvent}: {(workerRuntimeSummary.event_ids?.[0] || "—").slice(0, 18)} · {copy.runtimeRawTraceOmitted}
+                      </div>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between gap-2 mt-2">
                     <div className="text-[9px] truncate" style={{ color: run.failed_check_ids.length ? "var(--mis-warning)" : "var(--mis-muted)" }}>
                       {run.failed_check_ids.length ? `${copy.gateEvidenceGaps}: ${run.failed_check_ids.join(", ")}` : copy.allGatesPassing}
@@ -3828,11 +5072,12 @@ export function AIEmployees() {
               </button>
             </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 2xl:grid-cols-6 gap-2 mt-3">
             {[
               { label: copy.hygieneActions, value: hygieneActionsAvailable, status: hygieneActionsAvailable > 0 ? "attention" : "pass" },
               { label: copy.stuckTasks, value: hygieneSummary?.stuck_tasks ?? 0, status: (hygieneSummary?.stuck_tasks || 0) > 0 ? "blocked" : "pass" },
               { label: copy.staleNeverSeen, value: hygieneSummary?.stale_never_seen_enrollments ?? 0, status: (hygieneSummary?.stale_never_seen_enrollments || 0) > 0 ? "attention" : "pass" },
+              { label: copy.staleHeartbeat, value: hygieneSummary?.stale_heartbeat_enrollments ?? 0, status: (hygieneSummary?.stale_heartbeat_enrollments || 0) > 0 ? "attention" : "pass" },
               { label: copy.releasedTasks, value: hygieneSummary?.released_tasks ?? activeHygiene?.released_tasks?.length ?? 0, status: (hygieneSummary?.released_tasks || 0) > 0 ? "completed" : "planned" },
               { label: copy.revokedEnrollments, value: hygieneSummary?.revoked_enrollments ?? activeHygiene?.revoked_enrollments?.length ?? 0, status: (hygieneSummary?.revoked_enrollments || 0) > 0 ? "completed" : "planned" },
             ].map((item) => (
@@ -5406,6 +6651,180 @@ export function AIEmployees() {
               ))}
             </div>
           </div>
+
+          {localServiceControlStep && (
+            <div className="rounded p-2 mt-3" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              {(() => {
+                const receiptState = localServiceControlStep.receipt_state || {};
+                const receiptStatus = String(receiptState.status || (localServiceControlStep.receipt_required ? "missing" : "not_required"));
+                const receiptHash = String(receiptState.receipt_hash || receiptState.action_hash || receiptState.receipt_id || "").slice(0, 10);
+                const serviceVerifyBusy = receiptAction === `local-run-path-receipt:verified:${localServiceControlStep.step_id}`;
+                const serviceReadbackBusy = receiptAction === `local-run-path-readback:${localServiceControlStep.step_id}`;
+                const serviceReceiptVerified = Boolean(receiptState.verified);
+                const serviceReadbackAttached = Boolean(receiptState.control_readback_attached || receiptState.control_readback_id);
+                return (
+                  <>
+              <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Power size={12} style={{ color: "var(--mis-cyan)" }} />
+                    <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.serviceControlPreviewTitle}</div>
+                    <StatusBadge status={localServiceControlStep.status || "preview"} />
+                    <StatusBadge status={localServiceControlStep.server_executes_shell === false ? "pass" : "blocked"} label={localServiceControlStep.server_executes_shell === false ? "no server shell" : "server shell"} />
+                    <StatusBadge status={localServiceControlStep.writes_ledger ? "blocked" : "pass"} label={localServiceControlStep.writes_ledger ? "ledger write" : "no ledger write"} />
+                    <StatusBadge status={serviceReceiptVerified ? "pass" : "attention"} label={`${copy.receiptProof}: ${receiptStatus}${receiptHash ? ` · ${receiptHash}` : ""}`} />
+                    <StatusBadge status={serviceReadbackAttached ? "pass" : "attention"} label={`${copy.controlReadback}: ${serviceReadbackAttached ? copy.yes : copy.no}`} />
+                  </div>
+                  <div className="text-[9px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>
+                    {localServiceControlStep.detail || copy.serviceControlPreviewSummary}
+                  </div>
+                </div>
+                <StatusBadge status={localServiceControlStep.confirm_required ? "attention" : "pass"} label={localServiceControlStep.confirm_required ? copy.confirmRequired : "preview-only"} />
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => void copyIntakeCommand(localServiceControlStep.command)}
+                  className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0"
+                  style={{ color: "var(--mis-text)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                  title={localServiceControlStep.command}
+                >
+                  <Copy size={9} />
+                  <span className="text-[9px] font-semibold shrink-0">{copy.servicePreviewCommand}</span>
+                  <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{copiedIntakeCommand === localServiceControlStep.command ? copy.copiedCommand : localServiceControlStep.command}</span>
+                </button>
+                {localServiceControlStep.verify_command && (
+                  <button
+                    type="button"
+                    onClick={() => void copyIntakeCommand(String(localServiceControlStep.verify_command))}
+                    className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0"
+                    style={{ color: "var(--mis-text)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                    title={String(localServiceControlStep.verify_command)}
+                  >
+                    <Copy size={9} />
+                    <span className="text-[9px] font-semibold shrink-0">{copy.serviceCheckCommand}</span>
+                    <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{copiedIntakeCommand === localServiceControlStep.verify_command ? copy.copiedCommand : localServiceControlStep.verify_command}</span>
+                  </button>
+                )}
+                {localServiceControlStep.receipt_required && (
+                  <>
+                    {localServiceControlStep.receipt_verify_record_command && (
+                      <button
+                        type="button"
+                        onClick={() => void copyIntakeCommand(String(localServiceControlStep.receipt_verify_record_command))}
+                        className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0"
+                        style={{ color: "var(--mis-warning)", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.18)" }}
+                        title={String(localServiceControlStep.receipt_verify_record_command)}
+                      >
+                        <Copy size={9} />
+                        <span className="text-[9px] font-semibold shrink-0">{copy.copyVerifyReceiptCommand}</span>
+                        <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{copiedIntakeCommand === localServiceControlStep.receipt_verify_record_command ? copy.copiedCommand : localServiceControlStep.receipt_verify_record_command}</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void recordLocalRunPathReceipt(localServiceControlStep, "verified")}
+                      disabled={Boolean(receiptAction)}
+                      className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0 disabled:opacity-50"
+                      style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.10)", border: "1px solid rgba(45,212,191,0.20)" }}
+                      title={copy.recordVerifyReceipt}
+                    >
+                      {serviceVerifyBusy ? <RefreshCw size={9} /> : <CheckCircle2 size={9} />}
+                      <span className="text-[9px] font-semibold shrink-0">{serviceVerifyBusy ? copy.recordingReceipt : copy.recordVerifyReceipt}</span>
+                      <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{localServiceControlStep.receipt_command || copy.actionReceipts}</span>
+                    </button>
+                    {localServiceControlStep.control_readback_required && (
+                      <button
+                        type="button"
+                        onClick={() => void recordLocalRunPathControlReadback(localServiceControlStep)}
+                        disabled={Boolean(receiptAction)}
+                        className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0 disabled:opacity-50"
+                        style={{ color: "var(--mis-cyan)", background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.20)" }}
+                        title={copy.controlReadback}
+                      >
+                        {serviceReadbackBusy ? <RefreshCw size={9} /> : <Activity size={9} />}
+                        <span className="text-[9px] font-semibold shrink-0">{serviceReadbackBusy ? copy.recordingReceipt : copy.controlReadback}</span>
+                        <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{localServiceControlStep.verify_command || copy.serviceCheckCommand}</span>
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+
+          {localRunPath.length > 0 && (
+            <div className="mt-3 rounded p-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Terminal size={12} style={{ color: "var(--mis-cyan)" }} />
+                    <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.localRunPathTitle}</div>
+                  </div>
+                  <p className="text-[9px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.localRunPathSummary}</p>
+                </div>
+                <StatusBadge status={localRunPath.some(step => step.status === "blocked" || step.status === "action_required") ? "attention" : "pass"} label={String(localRunPath.length)} />
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-2">
+                {localRunPath.slice(0, 8).map((step) => (
+                  <div key={step.step_id} className="rounded px-2 py-1.5 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{step.label}</div>
+                        <div className="text-[9px] truncate" style={{ color: "var(--mis-muted)" }}>{step.phase}{step.adapter ? ` · ${step.adapter}` : ""}</div>
+                      </div>
+                      <StatusBadge status={step.status} />
+                    </div>
+                    {step.detail && (
+                      <div className="text-[9px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>{step.detail}</div>
+                    )}
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      <StatusBadge status={step.copy_only ? "pass" : "attention"} label="copy-only" />
+                      <StatusBadge status={step.server_executes_shell === false ? "pass" : "blocked"} label="no server shell" />
+                      {step.receipt_required && (
+                        <StatusBadge
+                          status={Boolean(step.receipt_state?.verified) ? "pass" : "attention"}
+                          label={`${copy.receiptProof}: ${String(step.receipt_state?.status || "missing")}`}
+                        />
+                      )}
+                      {step.control_readback_required && (
+                        <StatusBadge
+                          status={step.receipt_state?.control_readback_attached ? "pass" : "attention"}
+                          label={`${copy.controlReadback}: ${step.receipt_state?.control_readback_attached ? copy.yes : copy.no}`}
+                        />
+                      )}
+                      {step.confirm_required && <StatusBadge status="attention" label={copy.confirmRequired} />}
+                      {step.live_execution && <StatusBadge status="attention" label="live" />}
+                      {step.writes_ledger && <StatusBadge status="ready" label="ledger" />}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => void copyIntakeCommand(step.command)}
+                        className="rounded px-2 py-1 text-[9px] font-semibold truncate max-w-full"
+                        style={{ color: "var(--mis-bg)", background: "var(--mis-cyan)", border: "1px solid var(--mis-cyan)" }}
+                      >
+                        {copy.copyActionCommand}
+                      </button>
+                      {step.verify_command && (
+                        <button
+                          type="button"
+                          onClick={() => void copyIntakeCommand(String(step.verify_command))}
+                          className="rounded px-2 py-1 text-[9px] font-semibold truncate max-w-full"
+                          style={{ color: "var(--mis-text)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                        >
+                          {copy.verifyAfterAction}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
@@ -5470,18 +6889,32 @@ export function AIEmployees() {
               )}
               {integrationInboxItems.slice(0, 5).map((item) => {
                 const primaryRef = item.task_id || item.run_id || item.job_id || item.artifact_id || item.item_id;
+                const integrationDecision = item.integration_decision;
                 return (
                   <div key={item.item_id || primaryRef} className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 min-w-0">
                         <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.title}</div>
                         <StatusBadge status={item.status} />
+                        {integrationDecision && <StatusBadge status={integrationDecision.status || "attention"} label={integrationDecision.decision} />}
                       </div>
                       <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-[10px]" style={{ color: "var(--mis-muted)" }}>
                         <span>{copy.itemBucket}: {item.bucket || "—"}</span>
                         <span>{copy.itemAge}: {formatAge(item.age_sec)}</span>
                         <span>{copy.itemOwner}: {item.owner_agent_id || item.agent_id || "—"}</span>
                       </div>
+                      {integrationDecision && (
+                        <div className="mt-1.5 rounded px-2 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                          <div className="flex flex-wrap gap-1.5">
+                            <StatusBadge status={integrationDecision.safe_to_auto_apply ? "fail" : "pass"} label={`${copy.integrationAutoApply}: ${integrationDecision.safe_to_auto_apply ? copy.yes : copy.no}`} />
+                            <StatusBadge status={integrationDecision.ledger_decision_required ? "attention" : "pass"} label={`${copy.integrationLedgerDecision}: ${integrationDecision.ledger_decision_required ? copy.yes : copy.no}`} />
+                            <StatusBadge status={integrationDecision.can_advance_without_waiting ? "pass" : "attention"} label={copy.canAdvanceWithoutWaiting} />
+                          </div>
+                          <div className="text-[10px] line-clamp-2 mt-1" style={{ color: "var(--mis-dim)" }}>
+                            {copy.integrationReason}: {integrationDecision.reason || "—"}
+                          </div>
+                        </div>
+                      )}
                       {item.recommended_action && (
                         <div className="text-[10px] truncate mt-1" style={{ color: "var(--mis-cyan)" }}>
                           {copy.nextAction}: {item.recommended_action}
@@ -5765,7 +7198,40 @@ export function AIEmployees() {
               <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-cyan)" }}>{selectedAdapterRoute?.commercial_readiness || "—"}</div>
             </div>
           </div>
-          <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-cyan)" }}>{copy.nextAction}: {selectedAdapterRoute?.recommended_action || "agentops worker readiness"}</div>
+          <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-cyan)" }}>{copy.nextAction}: {selectedAdapterRemediation?.primary_next_action || selectedAdapterRoute?.recommended_action || "agentops worker readiness"}</div>
+          {(selectedAdapterRemediationCommands.length > 0 || selectedAdapterMissingChecks.length > 0) && (
+            <div className="rounded px-2 py-1.5 mt-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-[9px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.adapterRemediationTitle}</div>
+                  <div className="text-[8px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>{copy.adapterRemediationSummary}</div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <StatusBadge status={selectedAdapterRemediation?.status || "unknown"} />
+                  <StatusBadge status={selectedAdapterRemediation?.safety?.server_executes_shell === false ? "pass" : "attention"} label={copy.readOnlyProof} />
+                </div>
+              </div>
+              {selectedAdapterMissingChecks.length > 0 && (
+                <div className="text-[8px] mt-1 truncate" style={{ color: "var(--mis-warning)" }}>
+                  {copy.missingChecks}: {selectedAdapterMissingChecks.slice(0, 4).join(", ")}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {selectedAdapterRemediationCommands.map((command) => (
+                  <button
+                    key={`${customerTaskForm.adapter}:${command.phase}:${command.command}`}
+                    onClick={() => void copyIntakeCommand(String(command.command || ""))}
+                    className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                    style={{ color: command.confirm_required ? "var(--mis-warning)" : "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                    title={String(command.command || "")}
+                  >
+                    <Copy size={8} />
+                    <span className="truncate max-w-[112px]">{copiedIntakeCommand === command.command ? copy.copiedCommand : command.phase || copy.copyCommand}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="text-[10px] mt-3" style={{ color: "var(--mis-muted)" }}>{copy.asyncTaskHint}</div>
@@ -6024,7 +7490,7 @@ export function AIEmployees() {
             <StatusBadge status={adapterReadiness?.status || "unknown"} label={`${copy.recommendedAdapter}: ${recommendedAdapter}`} />
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3">
-            {adapterRouteCards.map(({ item, liveReady, attention, checkSummary }) => (
+            {adapterRouteCards.map(({ item, liveReady, attention, checkSummary, remediation, remediationCommands, remediationMissing }) => (
               <div
                 key={item.adapter}
                 className="rounded px-3 py-2"
@@ -6070,8 +7536,38 @@ export function AIEmployees() {
                   {checkSummary}
                 </div>
                 <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-cyan)" }}>
-                  {copy.nextAction}: {item.recommended_action || "agentops worker readiness"}
+                  {copy.nextAction}: {remediation?.primary_next_action || item.recommended_action || "agentops worker readiness"}
                 </div>
+                {(remediationCommands.length > 0 || remediationMissing.length > 0) && (
+                  <div className="rounded px-2 py-1 mt-2" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{copy.adapterRemediationTitle}</div>
+                      <div className="flex items-center gap-1">
+                        <StatusBadge status={remediation?.status || "unknown"} />
+                        <StatusBadge status={remediation?.safety?.server_executes_shell === false ? "pass" : "attention"} label={copy.readOnlyProof} />
+                      </div>
+                    </div>
+                    {remediationMissing.length > 0 && (
+                      <div className="text-[8px] mt-1 truncate" style={{ color: "var(--mis-warning)" }}>
+                        {copy.missingChecks}: {remediationMissing.slice(0, 3).join(", ")}
+                      </div>
+                    )}
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {remediationCommands.map((command) => (
+                        <button
+                          key={`${item.adapter}:${command.phase}:${command.command}`}
+                          onClick={() => void copyIntakeCommand(String(command.command || ""))}
+                          className="inline-flex items-center gap-1 text-[8px] px-1 py-0.5 rounded max-w-full"
+                          style={{ color: command.confirm_required ? "var(--mis-warning)" : "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                          title={String(command.command || "")}
+                        >
+                          <Copy size={8} />
+                          <span className="truncate max-w-[82px]">{copiedIntakeCommand === command.command ? copy.copiedCommand : command.phase || copy.copyCommand}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {item.last_error && (
                   <div className="text-[10px] mt-1 truncate" style={{ color: "#F87171" }}>
                     {item.last_error}
@@ -6281,6 +7777,65 @@ export function AIEmployees() {
             {dispatching === "stop-daemons" ? copy.stopping : copy.stopDaemons}
           </button>
         </div>
+        {lastDaemonAdmissionSummary && (
+          <div className="rounded-lg p-3 mt-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <ShieldCheck size={13} style={{ color: "var(--mis-cyan)" }} />
+                  <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.daemonLoopAdmissionSummary}</div>
+                  <StatusBadge status={lastDaemonAdmissionSummary.local_loop_admission_ready ? "pass" : "blocked"} label={String(lastDaemonAdmissionSummary.adapter || "adapter")} />
+                  <StatusBadge status={lastDaemonAdmissionServerShell ? "blocked" : "pass"} label={lastDaemonAdmissionServerShell ? "server shell" : "copy-only"} />
+                  <StatusBadge status={lastDaemonAdmissionLiveExecuted ? "blocked" : "pass"} label={copy.liveExecutionProof} />
+                </div>
+                <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                  {copy.liveAdapterTasks}: {lastDaemonAdmissionSummary.live_adapter_tasks_checked}
+                  {" · "}
+                  {copy.passedAdmission}: {lastDaemonAdmissionSummary.passed_local_loop_admission}
+                  {" · "}
+                  {copy.missingAdmission}: {lastDaemonAdmissionSummary.missing_local_loop_admission}
+                  {" · "}
+                  {copy.methodGates}: {lastDaemonAdmissionSummary.required_method_gates.length}
+                </div>
+              </div>
+              <StatusBadge status={lastDaemonControl?.ok ? "ready" : "blocked"} label={lastDaemonControl?.error || (lastDaemonControl?.ok ? "ok" : "blocked")} />
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-3">
+              <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="text-[9px] font-semibold mb-1" style={{ color: "var(--mis-muted)" }}>{copy.firstSafeCommands}</div>
+                <div className="flex flex-col gap-1">
+                  {lastDaemonAdmissionCommands.slice(0, 4).map((command, index) => (
+                    <button
+                      key={`daemon-admission:${index}:${command}`}
+                      type="button"
+                      onClick={() => void copyIntakeCommand(command)}
+                      className="flex items-center gap-1 rounded px-1.5 py-0.5 text-left"
+                      style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)", color: "var(--mis-text)" }}
+                      title={command}
+                    >
+                      <Copy size={8} />
+                      <span className="truncate text-[8px]">{copiedIntakeCommand === command ? copy.copiedCommand : command}</span>
+                    </button>
+                  ))}
+                  {lastDaemonAdmissionCommands.length === 0 && (
+                    <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.noRecommendedActions}</div>
+                  )}
+                </div>
+              </div>
+              <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="text-[9px] font-semibold mb-1" style={{ color: "var(--mis-muted)" }}>{copy.activeIntakeGate}</div>
+                <div className="text-[10px] line-clamp-2" style={{ color: "var(--mis-dim)" }}>
+                  {lastDaemonControl?.recommended_action || lastDaemonControl?.task_intake?.next_actions?.[0] || copy.workerStartBlockedHint}
+                </div>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  <StatusBadge status={lastDaemonAdmissionReadOnly ? "pass" : "attention"} label={copy.readOnlyProof} />
+                  <StatusBadge status={lastDaemonAdmissionLedgerMutated ? "blocked" : "pass"} label={lastDaemonAdmissionLedgerMutated ? "ledger mutated" : "no ledger write"} />
+                  <StatusBadge status={lastDaemonAdmissionSummary.token_omitted ? "pass" : "attention"} label="token omitted" />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 mt-4">
           {[
             { label: copy.workers, value: workerStatus?.worker_count ?? "—" },
@@ -6691,6 +8246,76 @@ export function AIEmployees() {
                     </div>
                   ))}
                 </div>
+                <div
+                  data-testid="hosted-enrollment-policy-gate"
+                  className="rounded px-2 py-2 mt-3"
+                  style={{
+                    background: enrollmentPolicy.production_security_requested ? "rgba(251,191,36,0.08)" : "var(--mis-bg)",
+                    border: enrollmentPolicy.production_security_requested ? "1px solid rgba(251,191,36,0.18)" : "1px solid var(--mis-border)",
+                  }}
+                >
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <div className="text-[9px] uppercase tracking-wide mr-1" style={{ color: "var(--mis-muted)" }}>
+                      {copy.enrollmentDeploymentPolicy}
+                    </div>
+                    <StatusBadge status={enrollmentPolicy.production_security_requested ? "attention" : "pass"} label={`${copy.deploymentMode}: ${enrollmentPolicy.deployment_mode}`} />
+                    <StatusBadge status={enrollmentPolicy.direct_create_allowed ? "pass" : "attention"} label={`${copy.directCreateAllowed}: ${enrollmentPolicy.direct_create_allowed ? copy.yes : copy.no}`} />
+                    <StatusBadge status={enrollmentPolicy.approval_request_required ? "attention" : "pass"} label={`${copy.approvalRequestRequired}: ${enrollmentPolicy.approval_request_required ? copy.yes : copy.no}`} />
+                    <StatusBadge status={enrollmentPolicy.admin_key_configured ? "pass" : enrollmentPolicy.production_security_requested ? "fail" : "planned"} label={`${copy.adminKeyConfigured}: ${enrollmentPolicy.admin_key_configured ? copy.yes : copy.no}`} />
+                  </div>
+                  <div className="text-[10px] mt-2" style={{ color: "var(--mis-muted)" }}>
+                    {enrollmentPolicy.deployment_policy_summary || copy.enrollmentDeploymentPolicySummary}
+                  </div>
+                </div>
+                <div
+                  data-testid="agent-gateway-scope-effects"
+                  className="rounded px-2 py-2 mt-3"
+                  style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                >
+                  <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.scopeEffectsTitle}</div>
+                      <div className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>{copy.scopeEffectsSummary}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 lg:justify-end">
+                      <StatusBadge status={selectedScopeWorkerViable ? "pass" : "attention"} label={`${copy.workerViability}: ${selectedScopeWorkerViable ? copy.workerViabilityReady : copy.workerViabilityBlocked}`} />
+                      <StatusBadge status="pass" label={`${copy.scopeRbacProof}: 403`} />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+                    {scopeEffectRows.map(item => (
+                      <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                        <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                        <div className="flex items-center justify-between gap-2 mt-0.5">
+                          <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                          <StatusBadge status={item.status} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div
+                    data-testid="agent-gateway-worker-scope-readiness"
+                    className="rounded px-2 py-1.5 mt-3"
+                    style={{
+                      background: selectedScopeWorkerViable ? "rgba(42,157,143,0.08)" : "rgba(251,191,36,0.08)",
+                      border: selectedScopeWorkerViable ? "1px solid rgba(42,157,143,0.18)" : "1px solid rgba(251,191,36,0.18)",
+                    }}
+                  >
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[9px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>{copy.requiredWorkerScopes}</span>
+                      <StatusBadge status={selectedScopeWorkerViable ? "pass" : "attention"} label={selectedScopeWorkerViable ? copy.workerViabilityReady : `${copy.missingWorkerScopes}: ${missingSelectedWorkerScopes.length}`} />
+                    </div>
+                    {missingSelectedWorkerScopes.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {missingSelectedWorkerScopes.slice(0, 6).map(scope => (
+                          <span key={`selected-missing-${scope}`} className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "var(--mis-bg)", color: "var(--mis-muted)", border: "1px solid var(--mis-border)" }}>
+                            {scope}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <div className="flex flex-wrap gap-1.5 mt-3">
                   {enrollmentPolicy.invalid_scopes.slice(0, 4).map(scope => (
                     <span key={`invalid-${scope}`} className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "rgba(248,113,113,0.08)", color: "#F87171", border: "1px solid rgba(248,113,113,0.18)" }}>
@@ -6726,9 +8351,10 @@ export function AIEmployees() {
             </button>
             <button
               onClick={createEnrollment}
-              disabled={Boolean(enrollmentAction) || !enrollmentForm.agent_id.trim() || !enrollmentForm.name.trim() || scopeList.length === 0}
+              disabled={Boolean(enrollmentAction) || createEnrollmentBlockedByPolicy || !enrollmentForm.agent_id.trim() || !enrollmentForm.name.trim() || scopeList.length === 0}
               className="w-full flex items-center justify-center gap-1.5 text-[11px] px-3 py-2 rounded disabled:opacity-50"
               style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
+              title={createEnrollmentBlockedByPolicy ? copy.enrollmentDeploymentPolicySummary : undefined}
             >
               {enrollmentAction === "create" ? <RefreshCw size={12} /> : <ShieldCheck size={12} />}
               {enrollmentAction === "create" ? copy.creatingToken : copy.createToken}
@@ -6890,6 +8516,8 @@ export function AIEmployees() {
                     {[
                       { label: copy.installCommand, value: createdToken.next_steps.install || "" },
                       { label: copy.verifyCommand, value: createdToken.next_steps.verify },
+                      { label: copy.startCheckCommand, value: createdToken.next_steps.start_check || "" },
+                      { label: copy.loopLaunchBriefCommand, value: createdToken.next_steps.loop_launch_brief || "" },
                       { label: copy.preflightCommand, value: createdToken.next_steps.preflight || "" },
                       { label: copy.sessionCommand, value: createdToken.next_steps.session || "" },
                       { label: copy.heartbeatCommand, value: createdToken.next_steps.heartbeat },
@@ -6906,6 +8534,14 @@ export function AIEmployees() {
                         </code>
                       </div>
                     ))}
+                    {createdToken.next_steps.method_gate_contract && (
+                      <div>
+                        <div className="text-[10px] mb-1" style={{ color: "var(--mis-muted)" }}>{copy.methodGateContract}</div>
+                        <code className="block rounded px-2 py-1 text-[10px] break-all" style={{ background: "var(--mis-surface2)", color: "var(--mis-cyan)", border: "1px solid var(--mis-border)" }}>
+                          {(createdToken.next_steps.method_gate_contract.required_gates || []).join(" -> ")}
+                        </code>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -6921,11 +8557,14 @@ export function AIEmployees() {
                 {copy.noEnrollments}
               </div>
             )}
-            {enrollments.slice(0, 6).map((item) => (
-              <div key={item.token_id} className="grid grid-cols-1 xl:grid-cols-[1.2fr_1.1fr_0.9fr_1.3fr_auto] gap-3 items-start xl:items-center rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            {enrollments.slice(0, 6).map((item) => {
+              const tokenActionRef = item.token_id || item.agent_id;
+              const tokenDisplayRef = item.token_ref || item.token_id || "—";
+              return (
+              <div key={item.token_ref || item.token_id || `${item.agent_id}-${item.created_at}`} className="grid grid-cols-1 xl:grid-cols-[1.2fr_1.1fr_0.9fr_1.3fr_auto] gap-3 items-start xl:items-center rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                 <div className="min-w-0">
                   <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.agent_id}</div>
-                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.tokenId}: {item.token_id}</div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.tokenId}: {tokenDisplayRef}</div>
                 </div>
                 <div className="flex items-center gap-2 min-w-0">
                   <StatusBadge status={item.status} />
@@ -6948,26 +8587,27 @@ export function AIEmployees() {
                 </div>
                 <div className="flex flex-wrap gap-1.5 justify-start xl:justify-end">
                   <button
-                    onClick={() => rotateEnrollment(item.token_id)}
+                    onClick={() => rotateEnrollment(item.token_id, item.agent_id)}
                     disabled={item.status !== "active" || Boolean(enrollmentAction)}
                     className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
                     style={{ background: "rgba(34,211,238,0.1)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
                   >
-                    {enrollmentAction === `rotate-${item.token_id}` ? <RefreshCw size={12} /> : <RotateCw size={12} />}
-                    {enrollmentAction === `rotate-${item.token_id}` ? copy.rotatingToken : copy.rotateToken}
+                    {enrollmentAction === `rotate-${tokenActionRef}` ? <RefreshCw size={12} /> : <RotateCw size={12} />}
+                    {enrollmentAction === `rotate-${tokenActionRef}` ? copy.rotatingToken : copy.rotateToken}
                   </button>
                   <button
-                    onClick={() => revokeEnrollment(item.token_id)}
+                    onClick={() => revokeEnrollment(item.token_id, item.agent_id)}
                     disabled={item.status !== "active" || Boolean(enrollmentAction)}
                     className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
                     style={{ background: "rgba(248,113,113,0.1)", color: "#F87171", border: "1px solid rgba(248,113,113,0.22)" }}
                   >
-                    {enrollmentAction === `revoke-${item.token_id}` ? <RefreshCw size={12} /> : <Trash2 size={12} />}
-                    {enrollmentAction === `revoke-${item.token_id}` ? copy.revokingToken : copy.revokeToken}
+                    {enrollmentAction === `revoke-${tokenActionRef}` ? <RefreshCw size={12} /> : <Trash2 size={12} />}
+                    {enrollmentAction === `revoke-${tokenActionRef}` ? copy.revokingToken : copy.revokeToken}
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -6979,11 +8619,14 @@ export function AIEmployees() {
                 {copy.noSessions}
               </div>
             )}
-            {sessions.slice(0, 6).map((item) => (
-              <div key={item.session_id} className="grid grid-cols-1 xl:grid-cols-[1.1fr_1fr_1.1fr_1.3fr_auto] gap-3 items-start xl:items-center rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            {sessions.slice(0, 6).map((item) => {
+              const sessionActionRef = item.session_id || item.agent_id;
+              const sessionDisplayRef = item.session_ref || item.session_id || "—";
+              return (
+              <div key={item.session_ref || item.session_id || `${item.agent_id}-${item.created_at}`} className="grid grid-cols-1 xl:grid-cols-[1.1fr_1fr_1.1fr_1.3fr_auto] gap-3 items-start xl:items-center rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                 <div className="min-w-0">
                   <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.agent_id}</div>
-                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.sessionId}: {item.session_id}</div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.sessionId}: {sessionDisplayRef}</div>
                 </div>
                 <div className="flex items-center gap-2 min-w-0">
                   <StatusBadge status={item.session_state} />
@@ -6994,7 +8637,7 @@ export function AIEmployees() {
                 </div>
                 <div className="min-w-0">
                   <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>
-                    {copy.parentToken}: {item.parent_token_id || "—"}
+                    {copy.parentToken}: {item.parent_token_ref || item.parent_token_id || "—"}
                   </div>
                   <div className="flex flex-wrap gap-1 mt-1">
                     {item.scopes.slice(0, 3).map(scope => (
@@ -7011,17 +8654,18 @@ export function AIEmployees() {
                 </div>
                 <div className="flex justify-start xl:justify-end">
                   <button
-                    onClick={() => revokeSession(item.session_id)}
+                    onClick={() => revokeSession(item.session_id, item.agent_id)}
                     disabled={item.session_state !== "active" || Boolean(enrollmentAction)}
                     className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
                     style={{ background: "rgba(248,113,113,0.1)", color: "#F87171", border: "1px solid rgba(248,113,113,0.22)" }}
                   >
-                    {enrollmentAction === `revoke-session-${item.session_id}` ? <RefreshCw size={12} /> : <Trash2 size={12} />}
-                    {enrollmentAction === `revoke-session-${item.session_id}` ? copy.revokingSession : copy.revokeSession}
+                    {enrollmentAction === `revoke-session-${sessionActionRef}` ? <RefreshCw size={12} /> : <Trash2 size={12} />}
+                    {enrollmentAction === `revoke-session-${sessionActionRef}` ? copy.revokingSession : copy.revokeSession}
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

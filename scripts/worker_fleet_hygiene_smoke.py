@@ -6,8 +6,13 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
+import socket
 import sqlite3
+import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -52,12 +57,46 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-def make_stale(task_id: str, run_id: str, token_id: str) -> None:
+def token_like_leaked(payload: object) -> bool:
+    return bool(re.search(r"(Authorization:|Bearer |agtok_[A-Za-z0-9_-]{16,}|agtsess_[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9_-]{16,}|ntn_[A-Za-z0-9_-]{16,})", json.dumps(payload, ensure_ascii=False)))
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def wait_for_server(base_url: str, proc: subprocess.Popen[str], log_path: Path) -> None:
+    for _ in range(80):
+        if proc.poll() is not None:
+            raise RuntimeError(f"isolated server exited early; log={log_path.read_text(encoding='utf-8', errors='replace')[-4000:]}")
+        try:
+            status, _payload = http_json("GET", base_url, "/api/agent-gateway/status")
+            if status == 200:
+                return
+        except Exception:
+            pass
+        time.sleep(0.25)
+    raise RuntimeError(f"isolated server did not start; log={log_path.read_text(encoding='utf-8', errors='replace')[-4000:]}")
+
+
+def make_never_seen_stale(task_id: str, run_id: str, token_id: str) -> None:
     stale_at = old_iso()
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("UPDATE tasks SET updated_at=? WHERE task_id=?", (stale_at, task_id))
         conn.execute("UPDATE runs SET started_at=?, created_at=? WHERE run_id=?", (stale_at, stale_at, run_id))
         conn.execute("UPDATE agent_gateway_tokens SET created_at=?, last_used_at=NULL, last_heartbeat_at=NULL WHERE token_id=?", (stale_at, token_id))
+        conn.commit()
+
+
+def make_heartbeat_stale(token_id: str) -> None:
+    stale_at = old_iso()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE agent_gateway_tokens SET created_at=?, last_used_at=?, last_heartbeat_at=? WHERE token_id=?",
+            (stale_at, stale_at, stale_at, token_id),
+        )
         conn.commit()
 
 
@@ -89,6 +128,7 @@ def smoke(base_url: str, stamp: str) -> dict:
     agent_id = f"agt_worker_fleet_hygiene_{stamp}"
     task_id = f"tsk_fleet_hygiene_{stamp}"
     token_id = None
+    heartbeat_token_id = None
     try:
         status, created = http_json("POST", base_url, "/api/agent-gateway/enrollment/create", {
             "agent_id": agent_id,
@@ -102,6 +142,24 @@ def smoke(base_url: str, stamp: str) -> dict:
         require(status == 201, f"enrollment create failed: {status} {created}")
         token = created["token"]
         token_id = created["token_id"]
+        heartbeat_agent_id = f"{agent_id}_heartbeat"
+        status, heartbeat_created = http_json("POST", base_url, "/api/agent-gateway/enrollment/create", {
+            "agent_id": heartbeat_agent_id,
+            "name": "Fleet Hygiene Heartbeat Smoke",
+            "runtime_type": "mock",
+            "workspace_id": "local-demo",
+            "scopes": ["agents:heartbeat", "tasks:read", "audit:write"],
+            "ttl_days": 1,
+            "heartbeat_timeout_sec": 60,
+        })
+        require(status == 201, f"heartbeat enrollment create failed: {status} {heartbeat_created}")
+        heartbeat_token = heartbeat_created["token"]
+        heartbeat_token_id = heartbeat_created["token_id"]
+        status, heartbeat = http_json("POST", base_url, "/api/agent-gateway/heartbeat", {
+            "runtime_type": "mock",
+            "status": "idle",
+        }, token=heartbeat_token)
+        require(status == 200, f"heartbeat failed: {status} {heartbeat}")
 
         status, task = http_json("POST", base_url, "/api/tasks", {
             "task_id": task_id,
@@ -124,24 +182,40 @@ def smoke(base_url: str, stamp: str) -> dict:
         run_id = (start.get("run") or {}).get("run_id")
         require(run_id, f"missing run id: {start}")
 
-        make_stale(task_id, run_id, token_id)
+        make_never_seen_stale(task_id, run_id, token_id)
+        make_heartbeat_stale(heartbeat_token_id)
 
         query = {"threshold_sec": 30, "enrollment_age_sec": 0, "limit": 20}
         status, plan = http_json("GET", base_url, "/api/workers/fleet/hygiene", query=query)
         require(status == 200, f"hygiene plan failed: {status} {plan}")
         require(plan.get("safety", {}).get("read_only") is True, f"plan should be read-only: {plan}")
         require(task_id in {item.get("task_id") for item in plan.get("stuck_tasks", [])}, f"stuck task missing from hygiene plan: {plan}")
-        require(token_id in {item.get("token_id") for item in plan.get("stale_never_seen_enrollments", [])}, f"stale enrollment missing from hygiene plan: {plan}")
+        stale_public = plan.get("stale_never_seen_enrollments", [])
+        token_refs = {item.get("token_ref") for item in stale_public}
+        require(any(item.get("token_id_omitted") is True for item in stale_public), f"stale enrollment did not omit token id: {plan}")
+        require(not any(item.get("token_id") for item in stale_public), f"stale enrollment leaked token id: {plan}")
+        require(bool(token_refs), f"stale enrollment missing token refs: {plan}")
+        stale_heartbeat_public = plan.get("stale_heartbeat_enrollments", [])
+        heartbeat_token_refs = {item.get("token_ref") for item in stale_heartbeat_public}
+        require(any(item.get("token_id_omitted") is True for item in stale_heartbeat_public), f"heartbeat-stale enrollment did not omit token id: {plan}")
+        require(not any(item.get("token_id") for item in stale_heartbeat_public), f"heartbeat-stale enrollment leaked token id: {plan}")
+        require(bool(heartbeat_token_refs), f"heartbeat-stale enrollment missing token refs: {plan}")
+        require(plan.get("summary", {}).get("stale_heartbeat_enrollments", 0) >= 1, f"heartbeat-stale count missing: {plan}")
+        require(not token_like_leaked(plan), f"hygiene plan leaked token-like material: {plan}")
 
         status, rejected = http_json("POST", base_url, "/api/workers/fleet/hygiene", {**query, "apply": True})
         require(status == 409 and rejected.get("error") == "confirm_cleanup_required", f"cleanup should require confirmation: {status} {rejected}")
+        require(not token_like_leaked(rejected), f"rejected cleanup leaked token-like material: {rejected}")
 
         status, applied = http_json("POST", base_url, "/api/workers/fleet/hygiene", {**query, "apply": True, "confirm_cleanup": True})
         require(status in {200, 207}, f"hygiene apply failed: {status} {applied}")
         released_ids = {item.get("task_id") for item in applied.get("released_tasks", [])}
-        revoked_ids = {item.get("token_id") for item in applied.get("revoked_enrollments", [])}
+        revoked_refs = {item.get("token_ref") for item in applied.get("revoked_enrollments", [])}
         require(task_id in released_ids, f"task was not released by hygiene: {applied}")
-        require(token_id in revoked_ids, f"enrollment was not revoked by hygiene: {applied}")
+        require(token_refs & revoked_refs, f"enrollment was not revoked by hygiene: {applied}")
+        require(heartbeat_token_refs & revoked_refs, f"heartbeat-stale enrollment was not revoked by hygiene: {applied}")
+        require(not any(item.get("token_id") for item in applied.get("revoked_enrollments", [])), f"applied cleanup leaked token id: {applied}")
+        require(not token_like_leaked(applied), f"applied cleanup leaked token-like material: {applied}")
 
         status, detail = http_json("GET", base_url, f"/api/tasks/{task_id}")
         require(status == 200, f"task detail failed: {status} {detail}")
@@ -155,9 +229,12 @@ def smoke(base_url: str, stamp: str) -> dict:
             "agent_id": agent_id,
             "task_id": task_id,
             "run_id": run_id,
-            "token_id": token_id,
+            "token_ref": next(iter(token_refs)) if token_refs else "",
+            "heartbeat_token_ref": next(iter(heartbeat_token_refs)) if heartbeat_token_refs else "",
+            "token_id_omitted": True,
             "planned_stuck_tasks": plan.get("summary", {}).get("stuck_tasks"),
             "planned_stale_enrollments": plan.get("summary", {}).get("stale_never_seen_enrollments"),
+            "planned_stale_heartbeat_enrollments": plan.get("summary", {}).get("stale_heartbeat_enrollments"),
             "released_tasks": len(applied.get("released_tasks", [])),
             "revoked_enrollments": len(applied.get("revoked_enrollments", [])),
             "token_omitted": True,
@@ -165,15 +242,66 @@ def smoke(base_url: str, stamp: str) -> dict:
     finally:
         if token_id:
             http_json("POST", base_url, "/api/agent-gateway/enrollment/revoke", {"token_id": token_id})
+        if heartbeat_token_id:
+            http_json("POST", base_url, "/api/agent-gateway/enrollment/revoke", {"token_id": heartbeat_token_id})
 
 
 def main(argv: list[str] | None = None) -> int:
+    global DB_PATH
     parser = argparse.ArgumentParser(description="Verify worker fleet hygiene plan/apply.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8787")
+    parser.add_argument("--isolated-fixture", action="store_true", help="Start a temporary local server and SQLite DB so the smoke is not affected by demo ledger drift.")
     args = parser.parse_args(argv)
-    result = {"ok": True, "base_url": args.base_url, "smoke": smoke(args.base_url, now_stamp())}
-    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0
+    if not args.isolated_fixture:
+        result = {"ok": True, "base_url": args.base_url, "smoke": smoke(args.base_url, now_stamp())}
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+
+    with tempfile.TemporaryDirectory(prefix="agentops_fleet_hygiene_") as tmp:
+        tmp_path = Path(tmp)
+        DB_PATH = tmp_path / "agentops_mis.db"
+        port = free_port()
+        base_url = f"http://127.0.0.1:{port}"
+        log_path = tmp_path / "server.log"
+        env = {
+            **os.environ,
+            "AGENTOPS_DB_PATH": str(DB_PATH),
+            "AGENTOPS_HOST": "127.0.0.1",
+            "AGENTOPS_PORT": str(port),
+            "AGENTOPS_BASE_URL": base_url,
+            "AGENTOPS_SKIP_SEED_EXPORTS": "1",
+            "HERMES_ALLOW_REAL_RUN": "false",
+            "DIFY_ALLOW_REAL_UPLOAD": "false",
+            "NOTION_TOKEN": "",
+            "NOTION_PARENT_PAGE_ID": "",
+            "NOTION_DATABASE_ID": "",
+        }
+        with log_path.open("w", encoding="utf-8") as log:
+            proc = subprocess.Popen(
+                [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port)],
+                cwd=ROOT,
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+        try:
+            wait_for_server(base_url, proc, log_path)
+            result = {
+                "ok": True,
+                "base_url": base_url,
+                "isolated_fixture": True,
+                "db_path": str(DB_PATH),
+                "smoke": smoke(base_url, now_stamp()),
+            }
+            print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
 
 if __name__ == "__main__":

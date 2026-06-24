@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import subprocess
 import sys
 import urllib.error
@@ -36,6 +38,13 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def safe_ref(prefix: str, raw: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9_]+", "_", raw or "").strip("_").lower()
+    if slug and len(slug) <= 64:
+        return f"{prefix}_{slug}"[-12:]
+    return f"{prefix}_{hashlib.sha256((raw or '').encode('utf-8')).hexdigest()[:16]}"[-12:]
+
+
 def run_agentops(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["./scripts/agentops", *args], cwd=".", text=True, capture_output=True, check=False)
 
@@ -64,12 +73,16 @@ def smoke(base_url: str, stamp: str) -> dict:
     first = run_agentops(["status", "--base-url", base_url, "--api-key", token])
     require(token not in first.stdout, "status stdout leaked raw token")
     require(token not in first.stderr, "status stderr leaked raw token")
+    require(token_id not in first.stdout, "status stdout leaked raw token id")
+    require(token_id not in first.stderr, "status stderr leaked raw token id")
     first_payload = parse_stdout_json(first)
     auth = first_payload.get("auth", {})
     require(auth.get("mode") == "agent_token", f"expected agent_token mode: {first_payload}")
     require(auth.get("agent_id") == agent_id, f"wrong agent binding: {first_payload}")
     require(auth.get("workspace_id") == "local-demo", f"wrong workspace binding: {first_payload}")
-    require(auth.get("token_id") == token_id, f"wrong token id: {first_payload}")
+    require(auth.get("token_ref") == safe_ref("token_ref", token_id), f"wrong token ref: {first_payload}")
+    require(auth.get("token_id_omitted") is True, f"token id omission flag missing: {first_payload}")
+    require("token_id" not in auth, f"status auth leaked token_id field: {first_payload}")
     require(auth.get("heartbeat_state") == "never_seen", f"expected never_seen: {first_payload}")
     require("agents:heartbeat" in auth.get("scopes", []), f"missing scope in status: {first_payload}")
 
@@ -85,6 +98,7 @@ def smoke(base_url: str, stamp: str) -> dict:
     require(token not in heartbeat.stderr, "heartbeat stderr leaked raw token")
 
     second = run_agentops(["status", "--base-url", base_url, "--api-key", token])
+    require(token_id not in second.stdout, "post-heartbeat status stdout leaked raw token id")
     second_payload = parse_stdout_json(second)
     require(second_payload.get("auth", {}).get("heartbeat_state") == "fresh", f"expected fresh after heartbeat: {second_payload}")
 
@@ -98,7 +112,7 @@ def smoke(base_url: str, stamp: str) -> dict:
 
     return {
         "agent_id": agent_id,
-        "token_id": token_id,
+        "token_ref": safe_ref("token_ref", token_id),
         "initial_mode": auth.get("mode"),
         "initial_heartbeat_state": auth.get("heartbeat_state"),
         "prefix_global_args_supported": True,

@@ -87,6 +87,17 @@ def main() -> int:
     })
     for secret in [task_secret, env_secret, url_secret]:
         require(secret not in prompt, f"prompt leaked secret {secret}: {prompt}", failures)
+    for boundary_phrase in [
+        "ledger_summary_only",
+        "不要调用终端",
+        "shell",
+        "浏览器",
+        "文件系统",
+        "MIS/API",
+        "不要声称已经执行",
+        "交给 MIS 账本流程处理",
+    ]:
+        require(boundary_phrase in prompt, f"prompt missing execution-boundary phrase {boundary_phrase}: {prompt}", failures)
 
     token_id = None
     token = ""

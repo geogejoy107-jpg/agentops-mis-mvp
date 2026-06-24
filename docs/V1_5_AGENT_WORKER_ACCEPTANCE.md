@@ -19,6 +19,17 @@ Result: passed.
 - OpenClaw CLI: `/opt/homebrew/bin/openclaw`
 - Dify and Notion: not used in this acceptance pass.
 
+## Product Validation Rule
+
+Use real Hermes/OpenClaw runs for product-readiness, dogfood, demo, or customer
+usefulness claims whenever those runtimes are locally available and explicitly
+authorized. Mock adapter runs are deterministic CI/offline fallback evidence
+only; they can protect regressions, but they do not prove product-level
+completion by themselves. Live validation must still pass through explicit
+`confirm_run`, prepared-action approval when required, summary/hash-only ledger
+storage, and no raw prompt, raw response, credential, private-message, or
+full-transcript persistence.
+
 ## Commander-Style Async Management Model
 
 v1.5 is now documented as a local-first commander console, not just a worker
@@ -31,6 +42,14 @@ runner. The supported management primitives are:
   `agentops operator action-plan` merge review items, failed benchmark runs,
   customer delivery gates, worker fleet recovery, adapter readiness, and
   commander inbox state into a prioritized read-only next-action queue.
+- Operator runtime doctor: `GET /api/operator/runtime-doctor` and
+  `agentops operator runtime-doctor` provide a lightweight first-check of local
+  MIS API reachability, Hermes/OpenClaw adapter readiness, remote Agent fleet
+  state, launch packet availability, handoff/evidence counts, `--confirm-run`,
+  prepared-action walls and Codex supervision commands before live runtime
+  dispatch. It is read-only, copy-command only, returns deeper
+  `operator health` / `operator handoff` commands, and does not start runtimes
+  or mutate ledgers/connectors.
 - Failed benchmark run handling: `agentops eval review-case-run` can mark a
   failed `evaluation_case_runs` row as `investigating`, `acknowledged`,
   `waived`, or `open`; acknowledged/waived rows stay in the ledger but stop
@@ -55,9 +74,16 @@ runner. The supported management primitives are:
   `GET /api/workflows/jobs`, `GET /api/workflows/jobs/:job_id`,
   `GET /api/workflows/jobs/stuck`, and
   `POST /api/workflows/jobs/:job_id/mark-failed`.
+  The public list response projection lives in
+  `agentops_mis_core/workflow_jobs.py`; `server.py` owns query parsing,
+  SQLite reads/count producers, async execution, recovery writes and audit.
 - Async integration inbox: `GET /api/commander/integration-inbox` provides a
   read-only commander queue for returned worker results, running lanes, blocked
-  work, stale work and memory-review items.
+  work, stale work and memory-review items. Each item now includes an
+  `integration_decision` projection such as `merge_candidate`,
+  `continue_running`, `needs_recovery`, or `needs_memory_review`; the projection
+  proves worker output is never auto-applied and records whether a ledger
+  decision is required.
 - CLI/API-first agent execution: humans use browser pages for dispatch,
   supervision, approval, and review; agents execute through Agent Gateway
   CLI/API/MCP and write run/tool/evaluation/audit/artifact evidence.
@@ -1167,11 +1193,14 @@ Latest one-command workflow run-task smoke:
 ```text
 script: python3 scripts/agentops_workflow_run_task_smoke.py
 command: ./scripts/agentops workflow run-task
-mock task: tsk_6f3a92928acf
-mock run: run_gw_d640cf0bba6c
+mock task: tsk_7ff17228045a
+mock run: run_gw_518e62e77161
+agent_plan: plan_57220e046f04bf45 verified=true
+plan_evidence: pem_1907d07d2e43ee13 verified=true
 tool_calls: 1
 evaluations: 1
-Hermes without confirm_run: planned task tsk_983fbfb28103, confirm_run_required_for_live_adapter
+manifest evidence: tool_calls 1, evaluations 1, artifacts 1, audit_logs 11
+Hermes without confirm_run: planned task tsk_1ee9039cee39, confirm_run_required_for_live_adapter
 secret_leaked: false
 ```
 
@@ -1340,6 +1369,13 @@ failures: []
 read-only launchd/systemd diagnostics for agent machines. The check validates a
 generated worker service template, confirms raw service content is omitted, and
 fails closed when token-like values are present without printing those values.
+It also reports a machine-readable relaunch policy:
+
+```text
+launchd: KeepAlive=true
+systemd: Restart=always, RestartSec=5
+```
+
 It does not install, load, restart, or execute a service.
 
 Latest worker service install smoke:
@@ -1359,7 +1395,12 @@ a dry-run-by-default installation path for long-running agent machines. Without
 manual load commands. With `--confirm-install` it writes a placeholder-based
 service file with `0600` permissions, refuses to overwrite existing files unless
 `--overwrite` is present, and blocks token-like placeholders without leaking
-them. It still does not load launchd/systemd or execute the worker.
+them. `agentops-worker service-control` and `agentops worker service-control`
+now add preview-first launchd/systemd load, unload, and restart control. Without
+`--confirm-control` the command only returns planned OS commands and service
+check evidence. With `--confirm-control` it may mutate local OS service state on
+the agent machine, while still refusing load/restart for token-like service
+files or Hermes/OpenClaw templates missing `--confirm-run`.
 
 Latest remote worker fleet status smoke:
 
@@ -1377,6 +1418,12 @@ active remote worker count, total enrollment count, heartbeat state counts,
 active session count, and recent remote worker rows. Token and session IDs are
 represented only by short irreversible refs, so `agtok_` / `agtsess_` shaped
 values do not appear in the worker status output.
+
+The remote worker/session fleet summary public projections now live in
+`agentops_mis_core/worker_fleet.py`. `server.py` still owns scoped enrollment
+and session SQLite reads plus the agent-row lookup, but raw token ids, parent
+token ids and session ids are omitted before the data becomes a public worker
+status payload.
 
 The same status payload now includes a machine-facing `fleet_health` block for
 agent operators and automation:
@@ -1432,6 +1479,51 @@ Hermes live execution also exposed a fixed 180s HTTP timeout. The worker now
 supports `--hermes-timeout` / `HERMES_TIMEOUT`, and the customer worker workflow
 passes a 300s Hermes timeout for live dogfood runs.
 
+Hermes acceptance now also supports `--hermes-max-tokens` /
+`HERMES_MAX_TOKENS`. The worker sends this as the OpenAI-compatible
+`max_tokens` field, defaults to `512`, and clamps the value between `64` and
+`4096`. This lets live customer-worker acceptance stay bounded enough for loop
+supervision while still returning a usable Chinese delivery summary.
+
+Hermes/OpenClaw customer-worker prompts now explicitly declare the
+`ledger_summary_only` execution boundary. The model turn must not call
+terminal/shell, browser, filesystem, MIS/API, external tools, or
+publish/upload/deploy targets, and must not claim those actions were performed.
+When such actions are needed, the runtime should return them as next-step
+recommendations for the MIS Agent Gateway / approval / evidence path to execute
+and verify.
+
+Hermes transient disconnect handling is now covered at the customer-worker
+workflow boundary. The worker already had retry support; the customer-worker
+sync path now forwards `adapter_max_attempts` and `adapter_retry_delay_sec` to
+the repo-local worker process, and the CLI exposes the same knobs as
+`agentops workflow customer-worker-task --adapter-max-attempts ...`.
+The server-side subprocess timeout budget now scales with
+`adapter_max_attempts * hermes_timeout + retry_delay`, so a retry-capable Hermes
+worker is not killed after only the first long request window.
+
+Deterministic retry smoke:
+
+```text
+script: python3 scripts/customer_worker_hermes_retry_gateway_smoke.py
+evidence_class: deterministic_loopback_hermes_adapter_retry
+product_readiness_proof: false
+fake gateway behavior: first /v1/chat/completions disconnects, second succeeds
+observed request count: 2
+run: run_gw_3ba5637ddb55
+tool args: attempt_count=2, max_attempts=2, retry_history recorded
+```
+
+This is CI regression evidence for the real Hermes adapter path, not a
+replacement for `customer_worker_real_runtime_acceptance.py --confirm-live`
+against the local Hermes/OpenClaw runtimes.
+
+`agentops operator live-acceptance` is the read-only live proof gate. It now
+surfaces `active_attempt` for in-flight `agt_customer_worker_*` Hermes/OpenClaw
+runs before the customer delivery artifact exists, but only marks an adapter
+`fresh` after the run is completed and tool/evaluation/runtime/audit/artifact/
+memory/approval/plan-evidence evidence all line up.
+
 ## What This Proves
 
 The v1.5 worker loop can process normal MIS tasks, not just connector probes:
@@ -1457,14 +1549,28 @@ planned MIS task
 - Dify live sync, Notion live/bidirectional sync, hosted SaaS billing, and
   hosted multi-tenant operations remain excluded from this v1.5 acceptance.
 - The worker does not store full prompts or raw responses.
-- The worker is installable as a Python source package and can render/write/check launchd/systemd templates; it is not yet an npm package, signed binary, or automatic OS service loader/relauncher.
+- The worker is installable as a Python source package and can render/write/check launchd/systemd templates with OS-managed relaunch policy; it is not yet an npm package, signed binary, hosted fleet manager, or automatic OS service loader.
 - The UI/CLI worker status path now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, recent gateway events, remote enrollment/session health summaries, operator readiness cards, and stuck-task release controls; it is not a production fleet manager.
+- `/workspace/workers` now surfaces the same fleet hygiene path as the API/CLI:
+  it previews stuck worker task release plus never-seen / heartbeat-stale remote
+  enrollment cleanup, requires explicit cleanup confirmation before apply, and
+  displays token omission plus no-live-execution boundaries.
+  Local developer verification should prefer
+  `python3 scripts/worker_fleet_hygiene_smoke.py --isolated-fixture` so historic
+  demo enrollments cannot hide the fixture rows.
 - The worker status API/CLI now returns `fleet_health` gates and recommended
   CLI actions, so external agents and operator scripts can reason about whether
   the worker fleet is ready without scraping the browser UI.
 - The worker readiness API/CLI now returns adapter route readiness for
   mock/Hermes/OpenClaw without executing live work, so external agents can choose
   a viable route before starting a task.
+- The same readiness API/CLI now returns `worker_connection_policy` with schema
+  `agentops-worker-connection-policy-v1`, making remote worker session refresh
+  and reconnection/backoff policy machine-readable:
+  - session: `--use-session`, ttl 900s, refresh margin 60s, parent token in process memory only;
+  - loop: poll 5s, idle/error backoff max 30s, factor 2;
+  - adapter retry: retryable failures may retry, non-retryable safety gates do not;
+  - daemon: `--continue-on-error`, max errors 5, state/jsonl evidence.
 - The `/workspace/agents` UI now surfaces that route-readiness state for human
   operators without changing the machine-facing execution contract.
 - The same page surfaces selected-adapter readiness inside the customer dispatch
@@ -1475,7 +1581,7 @@ planned MIS task
 - Async customer-worker submit now fails early and records a failed workflow job
   instead of accepting a job that cannot run.
 - Async template worker submit now uses the same live-route gate.
-- Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls and worker-loop refresh, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, and hosted enrollment policy UI remain future work.
+- Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, deployment-aware hosted policy gate, endpoint-level scope enforcement, selected-scope worker-loop readiness, short-lived session tokens with list/revoke controls and worker-loop refresh, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, and production-grade hosted enrollment administration remain future work.
 
 ## 2026-06-22 Fleet Hygiene Recovery
 
@@ -1491,12 +1597,18 @@ The default path is read-only and reports:
 - running worker tasks that exceeded the stuck threshold;
 - active remote enrollments that have never heartbeated after the enrollment age
   threshold;
+- active remote enrollments whose last heartbeat is stale after the same
+  threshold;
 - safe recommended actions, with `token_omitted:true` and
   `live_execution_performed:false`.
+- stale enrollment rows expose only `token_ref` plus `token_id_omitted:true`;
+  raw `agtok_...` token ids must not appear in read-only or confirmed cleanup
+  responses.
 
 The confirmed apply path releases stale running tasks back to `planned`, blocks
-linked running runs, revokes never-seen enrollments, cascades child sessions, and
-writes runtime/audit evidence. It does not execute Hermes/OpenClaw live work.
+linked running runs, revokes never-seen and heartbeat-stale enrollments,
+cascades child sessions, and writes runtime/audit evidence. It does not execute
+Hermes/OpenClaw live work.
 
 Validated on the local demo server:
 
@@ -1511,6 +1623,128 @@ The hygiene run cleared historical stuck worker tasks and never-seen demo
 enrollments so `agentops worker status` reports `fleet_health.overall=ready`.
 `worker status` also redacts historical token/session-like ids in recent runtime
 events before returning them to CLI/UI clients.
+
+Follow-up hardening found that the read-only hygiene response could still expose
+raw enrollment `token_id` values. The public response now uses `token_ref` and
+`token_id_omitted:true` for plan, rejected-apply, and confirmed-apply payloads;
+`worker_fleet_hygiene_smoke.py` fails if `agtok_...` appears in any hygiene
+response.
+The public hygiene plan/revoke/error projections now live in
+`agentops_mis_core/worker_fleet.py`; `server.py` keeps only the SQLite reads,
+task release, enrollment revoke invocation, runtime events and audit writes.
+
+Latest isolated real OpenClaw customer-worker acceptance:
+
+```text
+script: python3 scripts/customer_worker_real_runtime_acceptance.py --base-url http://127.0.0.1:18891 --confirm-live --adapter openclaw
+OpenClaw run: run_gw_336f0c2e3244
+OpenClaw task: tsk_worker_ui_openclaw_20260622181338_cabe96c5
+OpenClaw artifact: art_customer_worker_task_run_gw_336f0c2e3244
+OpenClaw plan: plan_182f0e9028306fe0
+OpenClaw manifest: pem_35d37a327c3115e5
+OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 14, audit_logs 12, artifacts 2, memories 2, approvals 1
+```
+
+## 2026-06-23 Real Hermes/OpenClaw Product Acceptance
+
+Latest local live product-readiness run used the normal customer worker
+workflow against the running local MIS server. This was not a mock path and not
+a dry-run path.
+
+```text
+script: python3 scripts/customer_worker_real_runtime_acceptance.py --base-url http://127.0.0.1:8787 --confirm-live --adapter hermes --adapter openclaw --request-timeout 900 --hermes-timeout 480
+
+Hermes run: run_gw_ee70f20c021c
+Hermes task: tsk_worker_ui_hermes_20260623062626_2fc8c2b3
+Hermes artifact: art_customer_worker_task_run_gw_ee70f20c021c
+Hermes approval: ap_customer_worker_delivery_run_gw_ee70f20c021c
+Hermes plan: plan_a1c439e073775da1
+Hermes manifest: pem_daf7d404a2e9024b
+Hermes evidence: tool_calls 1, evaluations 1, runtime_events 14, audit_logs 7, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
+
+OpenClaw run: run_gw_4a58476b7d09
+OpenClaw task: tsk_worker_ui_openclaw_20260623062652_7e64b47f
+OpenClaw artifact: art_customer_worker_task_run_gw_4a58476b7d09
+OpenClaw approval: ap_customer_worker_delivery_run_gw_4a58476b7d09
+OpenClaw plan: plan_9dd24ddbffbd74a2
+OpenClaw manifest: pem_1e63d0f6dcd96bf5
+OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 14, audit_logs 7, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
+
+CLI readback:
+AGENTOPS_BASE_URL=http://127.0.0.1:8787 ./scripts/agentops run get --run-id run_gw_ee70f20c021c
+AGENTOPS_BASE_URL=http://127.0.0.1:8787 ./scripts/agentops artifact list --run-id run_gw_ee70f20c021c
+AGENTOPS_BASE_URL=http://127.0.0.1:8787 ./scripts/agentops run graph --run-id run_gw_ee70f20c021c
+AGENTOPS_BASE_URL=http://127.0.0.1:8787 ./scripts/agentops run get --run-id run_gw_4a58476b7d09
+AGENTOPS_BASE_URL=http://127.0.0.1:8787 ./scripts/agentops artifact list --run-id run_gw_4a58476b7d09
+AGENTOPS_BASE_URL=http://127.0.0.1:8787 ./scripts/agentops run graph --run-id run_gw_4a58476b7d09
+```
+
+Safety observations:
+
+- Both adapters returned `ok:true` from the live acceptance script.
+- Both runs are ledger `completed` runs with rule evaluations passing.
+- Both created customer delivery approvals before treating output as accepted
+  delivery.
+- CLI readback showed `token_omitted:true`.
+- Ledger rows store summaries and hashes/evidence; raw prompt, raw response,
+  credentials, private messages, and full transcripts are not documented here.
+- Hermes/OpenClaw remain `ledger_summary_only` and
+  `restricted_until_runtime_tool_events` for commercial claims until runtime
+  internal tool events are ingested or high-risk actions are routed through
+  prepared actions.
+
+## 2026-06-24 Current-Code Isolated Product Evidence
+
+Latest current-code evidence used an isolated `/tmp` SQLite database and a
+temporary local server, so the default repo database and tracked sample exports
+were not touched. The run rebuilt knowledge, created Commander synthesis
+evidence, executed real Hermes and OpenClaw customer-worker tasks, verified live
+readiness, exercised remote worker mock fallback, and finished with non-live
+local acceptance.
+
+```text
+head: af09ca85b4f91c0d5b97406cfb74e8f2712496d9
+server: http://127.0.0.1:57591
+db: /tmp/agentops_v15_current_exact_57591.db
+script: AGENTOPS_DB_PATH=/tmp/agentops_v15_current_exact_57591.db python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:57591 --db-path /tmp/agentops_v15_current_exact_57591.db --confirm-live --timeout 900 --hermes-timeout 600 --hermes-max-tokens 512
+
+before readiness: attention
+after readiness: ready
+product_readiness_proof: true
+knowledge documents/chunks: 95 / 1001
+commander synthesis artifacts: 1
+commander promoted deliveries: 1
+fresh live adapters: 2
+closed-loop runs after evidence: 16
+
+Hermes run: run_gw_37fbb0125371
+Hermes task: tsk_worker_ui_hermes_20260624004030_e4fc9c30
+Hermes artifact: art_customer_worker_task_run_gw_37fbb0125371
+Hermes approval: ap_customer_worker_delivery_run_gw_37fbb0125371
+Hermes manifest: pem_be3fbff0dfec04e1
+Hermes status: completed
+Hermes evidence: tool_calls 1, evaluations 1, runtime_events 15, audit_logs 12, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
+
+OpenClaw run: run_gw_ad5d349494b4
+OpenClaw task: tsk_worker_ui_openclaw_20260624004111_8fdac32b
+OpenClaw artifact: art_customer_worker_task_run_gw_ad5d349494b4
+OpenClaw approval: ap_customer_worker_delivery_run_gw_ad5d349494b4
+OpenClaw manifest: pem_649e9fec7abef9f5
+OpenClaw status: completed
+OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 15, audit_logs 12, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
+
+remote worker token fallback run: run_gw_e1bc3347526d
+remote launch/session fallback run: run_gw_f147132f9027
+non-live local acceptance: 169 checks, 0 failures
+safety: raw_prompt_omitted true, raw_response_omitted true, token_omitted true, repo_artifacts_written false, sample exports not committed
+```
+
+The same HEAD also fixed the remote worker token baseline so scoped worker tokens
+include `runtime_events:write`. Without that scope, a remote worker can
+pull/claim/start work but fails when writing runtime evidence. Guard evidence:
+`scripts/remote_agent_token_worker_smoke.py --adapter mock`,
+`scripts/remote_worker_product_acceptance.py`, and the current-code product
+evidence command above.
 
 ## 2026-06-22 Remote Worker Scope Baseline
 
@@ -1530,6 +1764,7 @@ tasks:create
 tasks:read
 tasks:claim
 runs:write
+runtime_events:write
 toolcalls:write
 artifacts:write
 memories:propose
@@ -1569,3 +1804,33 @@ still creates and verifies an Agent Plan before `run_start`, then writes a
 verified plan-evidence manifest after tool/evaluation/artifact evidence. The
 strict intake-enforced daemon path remains available for pre-planned operator
 queues.
+
+## 2026-06-24 Worker Runtime Event Summary Gate
+
+Agent workers now record an automatic `agent_worker.adapter_execution_summary`
+runtime event after adapter execution and before tool/evaluation/artifact
+writeback. The event stores only summaries, prompt/payload hashes, latency,
+status, adapter, model name, and omission proof. It does not store raw prompts,
+raw responses, credentials, private messages, or full transcripts.
+
+For Hermes and OpenClaw this is intentionally a worker-side execution summary,
+not a claim that runtime-internal tool calls are fully structured or observable.
+Those adapters still carry `observation_level=ledger_summary_only` and
+`commercial_readiness=restricted_until_runtime_tool_events` until structured
+per-action runtime events are available from the runtime itself.
+
+Validated against an isolated local server:
+
+```text
+python3 scripts/worker_adapter_retry_smoke.py --base-url http://127.0.0.1:61575
+```
+
+Observed evidence:
+
+- mock retry success wrote runtime event `rte_d94ec882ab26`;
+- Hermes confirm-run gate failure wrote runtime event `rte_ee7872afdb40`;
+- tool-call args include `worker_runtime_event_id`,
+  `worker_runtime_event_summary_recorded:true`, and, for Hermes,
+  `runtime_internal_tools_remain_opaque:true`.
+- `operator evidence-report` now exposes `worker_runtime_summary.status=ready`
+  and top-level `worker_runtime_summary_ready` counts for worker runs.

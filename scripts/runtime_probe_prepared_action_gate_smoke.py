@@ -114,12 +114,18 @@ def assert_gate_and_resume(base_url: str, path: str, body: dict, provider_calls:
     before_calls = provider_calls()
     status, prepared = http_json("POST", base_url, path, body)
     require(status == 201, f"prepare request failed for {path}: {status} {prepared}", failures)
+    require(prepared.get("status") == "waiting_approval", f"prepared response status wrong for {path}: {prepared}", failures)
     require(prepared.get("reason") == "runtime_probe_prepared_action_required", f"wrong prepared reason for {path}: {prepared}", failures)
     require(prepared.get("live_probe_performed") is False, f"live probe should not execute before approval for {path}: {prepared}", failures)
+    require(prepared.get("token_omitted") is True, f"prepared response missing token omission proof for {path}: {prepared}", failures)
+    require(bool(prepared.get("prompt_hash")), f"prepared response missing prompt_hash for {path}: {prepared}", failures)
+    require(bool(prepared.get("prepared_action_hash")), f"prepared response missing prepared_action_hash for {path}: {prepared}", failures)
     require(provider_calls() == before_calls, f"provider was called before approval for {path}", failures)
     approval_id = prepared.get("approval_id")
     action_id = prepared.get("prepared_action_id")
     require(bool(approval_id and action_id), f"approval/action missing for {path}: {prepared}", failures)
+    next_action = prepared.get("next_action") or ""
+    require(str(approval_id) in next_action and str(action_id) in next_action, f"prepared response next_action missing approval/action ids for {path}: {prepared}", failures)
     if not approval_id or not action_id:
         return
     approve(base_url, approval_id, failures)

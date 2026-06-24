@@ -27,6 +27,157 @@ The loop harness lets Codex ask Hermes and OpenClaw for alternating proposals, c
 
 ## Commands
 
+Quick loop-control brief for a live local adapter:
+
+```bash
+agentops operator start-check --adapter hermes --limit 8
+agentops worker preflight --adapter hermes
+agentops operator live-acceptance --limit 8
+agentops operator loop-launch-packet --brief --adapter hermes --limit 8
+
+agentops operator start-check --adapter openclaw --limit 8
+agentops worker preflight --adapter openclaw
+agentops operator live-acceptance --limit 8
+agentops operator loop-launch-packet --brief --adapter openclaw --limit 8
+```
+
+`start-check` is the preferred first read for a local loop. The CLI reads
+`GET /api/operator/start-check`, so Hermes/OpenClaw/Codex can use either the
+CLI or the local MIS HTTP API. It merges local readiness, worker readiness,
+runtime doctor, live product proof, compact launch brief, `local_run_path`, and
+service-control preview into one copy-only packet. Its `acceptance_packet`
+field is the machine-readable loop intake decision: `can_preview_loop`,
+`can_confirm_bounded_loop`, `live_dispatch_requires_confirm_run`, review
+pressure, required ledgers, receipt/readback requirements, and the exact
+copyable commands for start-check, runtime doctor, loop-driver preview/confirm,
+execution-mode confirmation, live-product readiness, and receipt readback. It
+may return `attention` while binaries, credentials, reviews, or live proof are
+missing, but it still gives the next safe command without running shell on the
+server or mutating ledgers.
+
+The brief is the preferred handoff payload when Codex wants Hermes or OpenClaw
+to continue a supervised loop without reading the full launch packet. It keeps
+only the adapter preflight command, current next/verify/receipt commands,
+compact execution-chain state, bounded-runner policy id, confirmation and
+prepared-action guidance, an explicit `agentops workflow run-task --adapter ...
+--confirm-run` live command template, readback commands for task/run/manifest
+evidence, a compact `local_run_path` with boot/readiness/worker/service-control
+preview/dispatch/ledger/live-acceptance commands, and read-only/token-omission
+proof. `workflow run-task` readback now
+also returns compact `agent_plan` and `plan_evidence` proof with verified flags
+and evidence counts, so the next agent can distinguish a closed loop lane from
+a model-only summary. The agent should copy commands locally; the server never
+executes shell from the brief.
+
+Before starting or advancing a local Hermes/OpenClaw lane, read the structured
+adapter setup guide:
+
+```bash
+agentops worker readiness
+```
+
+Each adapter row now includes `remediation.primary_next_action`, missing local
+checks, and ordered copy-only commands for inspect, preflight, runtime doctor,
+confirmed worker start, confirmed live task template, and final ledger proof via
+`agentops operator live-product-readiness`. The readiness endpoint does not run
+those commands; it only tells Hermes/OpenClaw/Codex exactly which command to
+copy next and which steps still require `--confirm-run`.
+
+For real customer-worker acceptance, prefer the read-only freshness gate before
+starting another live lane:
+
+```bash
+agentops operator live-acceptance --limit 8
+python3 scripts/customer_worker_real_runtime_acceptance.py \
+  --confirm-live \
+  --adapter hermes \
+  --request-timeout 720 \
+  --hermes-timeout 600 \
+  --hermes-max-tokens 512
+```
+
+`live-acceptance` exposes `active_attempt` for in-flight
+`agt_customer_worker_*` runs so Codex/OpenClaw/Hermes do not accidentally launch
+duplicate local work. Active attempts are scheduling evidence only; the adapter
+is not `fresh` until the run completes and the plan/tool/evaluation/runtime/
+audit/artifact/memory/approval evidence chain verifies.
+
+Bounded one-step advance:
+
+```bash
+agentops operator loop-control --limit 8
+agentops operator advance-loop --fast-control --limit 8
+agentops operator advance-loop --fast-control --limit 8 --confirm-advance
+agentops operator action-receipts --limit 20
+agentops operator loop-audit --limit 20
+```
+
+Bounded local loop-driver for Hermes/OpenClaw:
+
+```bash
+agentops operator loop-driver --adapter hermes --max-steps 3 --limit 8
+agentops operator loop-driver --adapter hermes --max-steps 3 --limit 8 --confirm-loop
+
+agentops operator loop-driver --adapter openclaw --max-steps 3 --limit 8
+agentops operator loop-driver --adapter openclaw --max-steps 3 --limit 8 --confirm-loop
+```
+
+`loop-driver` is the local copy-only wrapper for repeated loop progress. Without
+`--confirm-loop` it returns a compact `acceptance_gate` from
+`operator start-check`, an `agent_loop_packet` with the READ/PLAN/RETRIEVE/
+COMPARE/PREFLIGHT/EXECUTE/VERIFY/RECORD command sequence, the compact launch brief,
+proposed safe commands, a RECORD review snapshot, and an `adapter_readiness`
+gate derived from
+`agentops worker readiness`, including the exact `agentops worker preflight
+--adapter ...` command, adapter trust/readiness state, checks, and
+live-dispatch blockers. With `--confirm-loop`, it re-reads the start-check
+acceptance gate before execution and before each step, then only calls
+`advance-loop --fast-control --confirm-advance` when `can_confirm_bounded_loop`
+is true and `server_executes_shell` is false. It records the control readback
+and action receipt evidence, refreshes the review snapshot, returns initial and
+final `agent_loop_packet` readbacks, and stops at the bounded `--max-steps`
+cap. Acceptance/readiness/packet/review gates do not grant live runtime
+execution, workflow dispatch, approvals, or server shell execution; Hermes/
+OpenClaw still copy and run explicit local commands, and live worker dispatch
+still requires `--confirm-run` plus any prepared-action approval required by the
+task.
+
+For machine callers, read `agent_loop_packet.method_gates` before copying an
+execution command. The gates name the required Agent Work Method checkpoints:
+`plan_agent_plan`, `retrieve_knowledge`, `compare_base_reference`,
+`preflight_adapter`, `execute_bounded_loop`, `verify_loop`, and
+`record_memory_candidate`. `phase_commands` maps each phase to the exact local
+CLI command to copy.
+
+The local MIS UI mirrors this packet in `/workspace/agents`: the loop-driver
+panel reads Hermes and OpenClaw start-check packets, shows each adapter's
+current phase, `ready_to_confirm_loop` state, `server_executes_shell` proof, and
+copyable phase commands. Use that panel as the human supervision surface while
+Hermes/OpenClaw run the local CLI loop.
+
+Workflow-job recovery from the shared Action Queue:
+
+```bash
+agentops operator action-plan --limit 20
+agentops workflow stuck-jobs --threshold-sec 900 --limit 25
+agentops workflow recover-job --job-id <job_id> --mode mark-failed
+agentops workflow recover-job --job-id <job_id> --mode mark-failed \
+  --reason "<reason>" \
+  --confirm-recover \
+  --record-receipt
+agentops workflow job-status --job-id <job_id>
+```
+
+`operator action-plan` projects stuck or retryable workflow jobs into the
+`workflow_job_recovery` lane with `command`, `verify_command`,
+`receipt_record_command`, and `receipt_verify_record_command`. Hermes,
+OpenClaw, and Codex should copy those generated commands instead of inventing
+their own recovery syntax. The action-plan and stuck-job reads are read-only;
+`agentops workflow recover-job` is the safer wrapper for the explicit action:
+without `--confirm-recover` it previews the exact command, and with
+`--record-receipt` it records the RECORD step after a confirmed recovery.
+Live Hermes/OpenClaw retry commands still require explicit `--confirm-run`.
+
 Dry-run two rounds:
 
 ```bash

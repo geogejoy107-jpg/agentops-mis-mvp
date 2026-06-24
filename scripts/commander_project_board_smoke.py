@@ -62,7 +62,6 @@ def db_fingerprint(db_path: Path) -> dict | None:
             ("memories", "updated_at"),
             ("approvals", "decided_at"),
             ("audit_logs", "created_at"),
-            ("runtime_connectors", "updated_at"),
             ("agent_gateway_tokens", "last_used_at"),
             ("agent_gateway_sessions", "last_used_at"),
         ]
@@ -78,6 +77,10 @@ def db_fingerprint(db_path: Path) -> dict | None:
                 f"SELECT COUNT(*) AS count, COALESCE(MAX({timestamp_col}), '') AS max_ts FROM {table}"
             ).fetchone()
             result[table] = {"count": int(row["count"] or 0), "max_ts": row["max_ts"] or ""}
+        runtime_connectors = conn.execute(
+            "SELECT COUNT(*) AS count FROM runtime_connectors"
+        ).fetchone()
+        result["runtime_connectors"] = {"count": int(runtime_connectors["count"] or 0)}
         return result
     finally:
         conn.close()
@@ -97,16 +100,51 @@ def validate(payload: dict) -> None:
     counts = payload.get("counts") or {}
     require(isinstance(counts.get("tasks_by_status"), dict), "tasks_by_status missing")
     require(isinstance(counts.get("runs_by_status"), dict), "runs_by_status missing")
-    for key in ["pending_approvals", "active_workflow_jobs", "stuck_workflow_jobs", "recent_artifacts", "memory_candidates", "synthesis_artifacts", "synthesis_pending_reviews", "synthesis_promoted_deliveries"]:
+    for key in [
+        "pending_approvals",
+        "active_workflow_jobs",
+        "stuck_workflow_jobs",
+        "recent_artifacts",
+        "memory_candidates",
+        "synthesis_artifacts",
+        "synthesis_pending_reviews",
+        "synthesis_promoted_deliveries",
+        "live_acceptance_fresh",
+        "live_acceptance_latest_failed",
+        "live_acceptance_latest_incomplete",
+        "live_acceptance_missing",
+        "live_acceptance_stale",
+    ]:
         require(isinstance(counts.get(key), int), f"count {key} missing")
     gate_ids = {gate.get("id") for gate in payload.get("integration_gates") or []}
-    for gate_id in {"evidence_chain", "worker_fleet_health", "approvals_pending", "memory_review", "synthesis_lifecycle", "adapter_readiness"}:
+    for gate_id in {"evidence_chain", "worker_fleet_health", "approvals_pending", "memory_review", "synthesis_lifecycle", "adapter_readiness", "live_acceptance_freshness"}:
         require(gate_id in gate_ids, f"missing integration gate {gate_id}")
     lifecycle = payload.get("synthesis_lifecycle") or {}
     require(lifecycle.get("status") in {"empty", "created", "review_pending", "promotion_available", "promoted"}, f"bad synthesis lifecycle: {lifecycle}")
     require((lifecycle.get("safety") or {}).get("read_only") is True, f"synthesis lifecycle not read-only: {lifecycle}")
+    live_acceptance = payload.get("live_acceptance") or {}
+    require(live_acceptance.get("status") in {"ready", "attention"}, f"bad live acceptance status: {live_acceptance}")
+    require((live_acceptance.get("safety") or {}).get("read_only") is True, f"live acceptance not read-only: {live_acceptance}")
+    require(live_acceptance.get("live_execution_performed") is False, f"live acceptance should not execute runtime: {live_acceptance}")
+    require(isinstance(live_acceptance.get("adapters"), dict), f"live acceptance adapters missing: {live_acceptance}")
     require(payload.get("recommended_next_actions"), "recommended_next_actions must be nonempty")
     require(isinstance(payload.get("recent_work_packages"), list), "recent_work_packages must be a list")
+
+
+def validate_scoped_team_board(payload: dict) -> None:
+    validate(payload)
+    team_filter = payload.get("team_board_filter") or {}
+    require(team_filter.get("applied") is True, f"team_board_filter should be applied: {team_filter}")
+    require(team_filter.get("project_id") == "proj_mvp", f"team_board_filter project mismatch: {team_filter}")
+    team_board = payload.get("team_board") or {}
+    require(team_board.get("status") in {"empty", "ready", "attention", "blocked"}, f"bad team_board status: {team_board}")
+    require((team_board.get("safety") or {}).get("read_only") is True, f"team_board should be read-only: {team_board}")
+    require(team_board.get("live_execution_performed") is False, f"team_board should not execute runtime: {team_board}")
+    require(isinstance(team_board.get("lanes"), list), f"team_board lanes missing: {team_board}")
+    require(isinstance(team_board.get("dependency_edges"), list), f"team_board dependency edges missing: {team_board}")
+    require(isinstance((team_board.get("summary") or {}).get("status_counts"), dict), f"team_board summary missing: {team_board}")
+    require(isinstance((team_board.get("summary") or {}).get("owner_counts"), dict), f"team_board owners missing: {team_board}")
+    require(payload.get("team_work_packages_summary") is not None, f"team work package summary missing: {payload}")
 
 
 def main() -> int:
@@ -122,6 +160,11 @@ def main() -> int:
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         require(not token_like_leak(raw), "project board leaked token-like material")
         validate(payload)
+        scoped_status, scoped_payload = http_json(args.base_url, "/api/commander/project-board?project_id=proj_mvp&limit=5")
+        require(scoped_status == 200, f"scoped project board API failed: {scoped_status} {scoped_payload}")
+        scoped_raw = json.dumps(scoped_payload, ensure_ascii=False, sort_keys=True)
+        require(not token_like_leak(scoped_raw), "scoped project board leaked token-like material")
+        validate_scoped_team_board(scoped_payload)
         after = db_fingerprint(db_path)
         if before is not None and after is not None:
             require(before == after, f"database fingerprint changed: before={before} after={after}")
@@ -131,6 +174,7 @@ def main() -> int:
             "gate_count": len(payload.get("integration_gates") or []),
             "action_count": len(payload.get("recommended_next_actions") or []),
             "recent_work_packages": len(payload.get("recent_work_packages") or []),
+            "scoped_team_lanes": len((scoped_payload.get("team_board") or {}).get("lanes") or []),
             "db_fingerprint_checked": before is not None and after is not None,
             "secret_leaked": False,
         }

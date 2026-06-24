@@ -28,16 +28,49 @@ from urllib.request import Request, urlopen
 
 from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
 from agentops_mis_cli.redaction import redact_text
+from agentops_mis_core.operator_start_check import compact_start_check_local_run_path, operator_agent_loop_packet
 
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8787"
+LOCAL_DEMO_DEFAULT_URL = os.environ.get("AGENTOPS_LOCAL_DEMO_DEFAULT_URL", DEFAULT_BASE_URL).rstrip("/")
 DEFAULT_WORKSPACE_ID = "local-demo"
 DEFAULT_REQUEST_TIMEOUT = 30
 CONFIG_PATH = Path(os.environ.get("AGENTOPS_CONFIG", "~/.agentops/config.json")).expanduser()
+REORDERABLE_GLOBAL_OPTIONS = {
+    "--base-url": True,
+    "--api-key": True,
+}
 
 
 def eprint(*parts):
     print(*parts, file=sys.stderr)
+
+
+def normalize_reorderable_global_options(argv: list[str] | None) -> list[str] | None:
+    """Allow connection flags after subcommands without changing command semantics."""
+    if argv is None:
+        return None
+    global_items: list[str] = []
+    rest: list[str] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token in REORDERABLE_GLOBAL_OPTIONS:
+            if index + 1 >= len(argv):
+                rest.append(token)
+                index += 1
+                continue
+            global_items.extend([token, argv[index + 1]])
+            index += 2
+            continue
+        matched = next((name for name in REORDERABLE_GLOBAL_OPTIONS if token.startswith(name + "=")), None)
+        if matched:
+            global_items.append(token)
+            index += 1
+            continue
+        rest.append(token)
+        index += 1
+    return [*global_items, *rest]
 
 
 def load_config() -> dict:
@@ -67,13 +100,15 @@ def resolved_context(args) -> dict:
         request_timeout = max(1, int(request_timeout_raw))
     except (TypeError, ValueError):
         request_timeout = DEFAULT_REQUEST_TIMEOUT
-    return {
+    context = {
         "base_url": (getattr(args, "base_url", None) or os.environ.get("AGENTOPS_BASE_URL") or config.get("base_url") or DEFAULT_BASE_URL).rstrip("/"),
         "api_key": getattr(args, "api_key", None) if getattr(args, "api_key", None) is not None else os.environ.get("AGENTOPS_API_KEY", config.get("api_key", "")),
         "workspace_id": getattr(args, "workspace_id", None) or os.environ.get("AGENTOPS_WORKSPACE_ID") or config.get("workspace_id") or DEFAULT_WORKSPACE_ID,
         "agent_id": getattr(args, "agent_id", None) or os.environ.get("AGENTOPS_AGENT_ID") or config.get("agent_id") or "",
         "request_timeout": request_timeout,
     }
+    context["sources"] = context_sources(args, config)
+    return context
 
 
 def context_sources(args, config: dict) -> dict:
@@ -142,6 +177,117 @@ def cli_host_is_loopback(url: str) -> bool:
     return host.endswith(".localhost")
 
 
+def cli_git_head() -> str:
+    root = Path(__file__).resolve().parents[1]
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except Exception:
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def add_current_code_check(payload: dict, args) -> dict:
+    require_current = bool(getattr(args, "require_current_code", False))
+    expected_head = str(getattr(args, "expect_head_sha", "") or "").strip()
+    if require_current and not expected_head:
+        expected_head = cli_git_head()
+    if not require_current and not expected_head:
+        return payload
+    runtime = payload.get("running_instance")
+    if not isinstance(runtime, dict):
+        runtime = ((payload.get("gateway") or {}).get("running_instance") if isinstance(payload.get("gateway"), dict) else {}) or {}
+    server_head = str(runtime.get("git_head_sha") or "")
+    source_current = runtime.get("current") is True or runtime.get("status") == "current"
+    head_matches = bool(expected_head and server_head and server_head.startswith(expected_head)) if expected_head else True
+    ok = bool(runtime) and source_current and head_matches
+    payload["local_code_check"] = {
+        "operation": "local_code_check",
+        "ok": ok,
+        "status": "ready" if ok else "blocked",
+        "require_current_code": require_current,
+        "expected_head_sha": expected_head,
+        "server_head_sha": server_head,
+        "server_status": runtime.get("status") or "missing",
+        "server_started_after_source_mtime": runtime.get("server_started_after_source_mtime"),
+        "next_action": "restart the local MIS process from the current checkout, then rerun agentops local readiness --require-current-code",
+        "token_omitted": True,
+    }
+    if not ok:
+        payload["_exit_code"] = 2
+    return payload
+
+
+def local_demo_default_probe(target_base_url: str = "", timeout: float = 2.0) -> dict:
+    probe_url = LOCAL_DEMO_DEFAULT_URL.rstrip("/")
+    same_as_target = bool(target_base_url) and target_base_url.rstrip("/") == probe_url
+    result = {
+        "operation": "local_demo_default_probe",
+        "base_url": probe_url,
+        "same_as_target": same_as_target,
+        "reachable": False,
+        "ready": False,
+        "status": "unknown",
+        "status_code": None,
+        "current_code_ok": None,
+        "current_code_status": "unknown",
+        "running_instance_current": None,
+        "command": f"AGENTOPS_BASE_URL={probe_url} agentops status",
+        "current_code_command": f"AGENTOPS_BASE_URL={probe_url} agentops local readiness --require-current-code",
+        "repair_command": f"agentops login --base-url {probe_url}",
+        "token_omitted": True,
+    }
+    if same_as_target:
+        result["status"] = "target"
+        return result
+    try:
+        req = Request(probe_url + "/api/agent-gateway/status", headers={"Accept": "application/json"})
+        with urlopen(req, timeout=timeout) as res:
+            raw = res.read().decode("utf-8")
+            payload = json.loads(raw) if raw else {}
+            result.update({
+                "reachable": True,
+                "ready": payload.get("status") == "ready",
+                "status": payload.get("status") or "reachable",
+                "status_code": res.status,
+            })
+        try:
+            req = Request(probe_url + "/api/local/readiness", headers={"Accept": "application/json"})
+            with urlopen(req, timeout=timeout) as readiness_res:
+                raw = readiness_res.read().decode("utf-8")
+                readiness = json.loads(raw) if raw else {}
+                runtime = readiness.get("running_instance") if isinstance(readiness.get("running_instance"), dict) else {}
+                local_code = readiness.get("local_code_check") if isinstance(readiness.get("local_code_check"), dict) else {}
+                current_code_ok = (
+                    runtime.get("current") is True
+                    or runtime.get("status") == "current"
+                    or local_code.get("ok") is True
+                )
+                result.update({
+                    "current_code_ok": current_code_ok,
+                    "current_code_status": runtime.get("status") or local_code.get("status") or "unknown",
+                    "running_instance_current": runtime.get("current") if "current" in runtime else None,
+                })
+        except (HTTPError, URLError, OSError, TimeoutError, json.JSONDecodeError):
+            pass
+    except HTTPError as exc:
+        result.update({
+            "reachable": True,
+            "ready": False,
+            "status": "http_error",
+            "status_code": exc.code,
+        })
+    except (URLError, OSError, TimeoutError, json.JSONDecodeError):
+        result["status"] = "unreachable"
+    return result
+
+
 class AgentOpsClient:
     def __init__(self, context: dict):
         self.base_url = context["base_url"].rstrip("/")
@@ -149,6 +295,25 @@ class AgentOpsClient:
         self.workspace_id = context["workspace_id"]
         self.agent_id = context["agent_id"]
         self.request_timeout = int(context.get("request_timeout") or DEFAULT_REQUEST_TIMEOUT)
+        self.sources = context.get("sources") if isinstance(context.get("sources"), dict) else {}
+
+    def connection_hint(self) -> str:
+        source = self.sources.get("base_url") or "unknown"
+        default_probe = local_demo_default_probe(self.base_url)
+        probe_status = "ready" if default_probe.get("ready") else default_probe.get("status", "unknown")
+        current_code_status = default_probe.get("current_code_status") or "unknown"
+        hint = (
+            f"base_url_source={source}; config_path={CONFIG_PATH}; "
+            f"local_demo_default={LOCAL_DEMO_DEFAULT_URL}; "
+            f"local_demo_probe={probe_status}; "
+            f"local_demo_current_code={current_code_status}; "
+            f"try: AGENTOPS_BASE_URL={LOCAL_DEMO_DEFAULT_URL} agentops status"
+        )
+        if source == "config":
+            hint += f"; or update saved config: agentops login --base-url {LOCAL_DEMO_DEFAULT_URL}"
+        elif source == "env":
+            hint += "; or unset/adjust AGENTOPS_BASE_URL"
+        return hint
 
     def request(self, method: str, path: str, payload: dict | None = None, query: dict | None = None):
         url = self.base_url + path
@@ -173,7 +338,7 @@ class AgentOpsClient:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"{method} {path} failed: {exc.code} {redact_text(detail, 1200)}") from exc
         except URLError as exc:
-            raise RuntimeError(f"Cannot reach {redact_text(url, 500)}: {redact_text(str(exc.reason), 500)}") from exc
+            raise RuntimeError(f"Cannot reach {redact_text(url, 500)}: {redact_text(str(exc.reason), 500)}; {self.connection_hint()}") from exc
 
     def get(self, path: str, query: dict | None = None):
         return self.request("GET", path, query=query)
@@ -205,7 +370,7 @@ def cmd_login(args) -> dict:
 
 
 def cmd_status(args, client: AgentOpsClient) -> dict:
-    return client.get("/api/agent-gateway/status")
+    return add_current_code_check(client.get("/api/agent-gateway/status"), args)
 
 
 def cmd_doctor(args, client: AgentOpsClient) -> dict:
@@ -214,6 +379,7 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
     checks = []
     gateway = None
     workers = None
+    local_probe = local_demo_default_probe(client.base_url)
     mode = cli_deployment_mode()
     production_requested = mode in {"production", "prod", "shared", "hosted"} or cli_truthy_env("AGENTOPS_REQUIRE_PRODUCTION_SECURITY")
     non_loopback_target = not cli_host_is_loopback(client.base_url)
@@ -274,6 +440,12 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
         setup_hints.append("A token was provided but Agent Gateway did not authenticate it; rotate or re-enroll the agent.")
     if workers and workers.get("stuck_worker_tasks", 0):
         setup_hints.append("Stuck worker tasks detected. Run agentops worker stuck and agentops worker release after review.")
+    if not gateway and local_probe.get("ready"):
+        current_status = local_probe.get("current_code_status") or "unknown"
+        if local_probe.get("current_code_ok") is True:
+            setup_hints.append(f"Configured base URL is unreachable, but local demo default is ready and current-code status is {current_status}. Use AGENTOPS_BASE_URL={local_probe.get('base_url')} or run agentops login --base-url {local_probe.get('base_url')}.")
+        else:
+            setup_hints.append(f"Configured base URL is unreachable, and local demo default is reachable but current-code status is {current_status}. Run {local_probe.get('current_code_command')} before handing work to Hermes/OpenClaw/Codex.")
 
     deployment_safety = {
         "deployment_mode": mode,
@@ -302,6 +474,7 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
             "token_omitted": True,
         },
         "deployment_safety": deployment_safety,
+        "local_demo_probe": local_probe,
         "checks": checks,
         "gateway": gateway,
         "worker_summary": {
@@ -316,7 +489,7 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_local_readiness(args, client: AgentOpsClient) -> dict:
-    return client.get("/api/local/readiness")
+    return add_current_code_check(client.get("/api/local/readiness"), args)
 
 
 def cmd_demo_readiness(args, client: AgentOpsClient) -> dict:
@@ -450,6 +623,10 @@ def cmd_operator_loop_audit(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/loop-audit", query={"limit": args.limit, "loop_id": args.loop_id or None})
 
 
+def cmd_operator_loop_control(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/operator/loop-control", query={"limit": args.limit, "loop_id": args.loop_id or None})
+
+
 def cmd_operator_evidence_report(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/evidence-report", query={
         "limit": args.limit,
@@ -470,6 +647,173 @@ def cmd_operator_health(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/health", query={"limit": args.limit, "loop_id": args.loop_id or None})
 
 
+def cmd_operator_runtime_doctor(args, client: AgentOpsClient) -> dict:
+    return client.get(
+        "/api/operator/runtime-doctor",
+        query={
+            "limit": args.limit,
+            "loop_id": args.loop_id or None,
+            "base_url": args.runtime_base_url or None,
+        },
+    )
+
+
+def cmd_operator_live_acceptance(args, client: AgentOpsClient) -> dict:
+    return client.get(
+        "/api/operator/live-acceptance",
+        query={
+            "freshness_hours": args.freshness_hours,
+            "limit": args.limit,
+        },
+    )
+
+
+LIVE_PRODUCT_REQUIRED_EVIDENCE = [
+    "completed_adapter_tool_calls",
+    "passing_evaluations",
+    "runtime_events",
+    "audit_logs",
+    "customer_worker_artifacts",
+    "memories",
+    "approvals",
+    "verified_plan_evidence_manifests",
+]
+
+
+def summarize_live_product_adapter(adapter: str, item: dict, failures: list[str]) -> dict:
+    latest = item.get("latest_passing") if isinstance(item.get("latest_passing"), dict) else {}
+    if not latest:
+        latest = item.get("latest_attempt") if isinstance(item.get("latest_attempt"), dict) else {}
+    evidence = latest.get("evidence") if isinstance(latest.get("evidence"), dict) else {}
+    checks = latest.get("checks") if isinstance(latest.get("checks"), list) else []
+    if item.get("status") != "fresh":
+        failures.append(f"{adapter}: expected fresh status, got {item.get('status') or 'missing'}")
+    if item.get("ok") is not True:
+        failures.append(f"{adapter}: live acceptance ok flag is not true")
+    if latest.get("pass") is not True:
+        failures.append(f"{adapter}: latest passing acceptance evidence is missing")
+    if latest.get("run_status") != "completed":
+        failures.append(f"{adapter}: latest live acceptance run is not completed")
+    for key in LIVE_PRODUCT_REQUIRED_EVIDENCE:
+        if int(evidence.get(key) or 0) < 1:
+            failures.append(f"{adapter}: missing evidence {key}")
+    failed_checks = [str(check.get("id") or "unknown") for check in checks if isinstance(check, dict) and not check.get("ok")]
+    if failed_checks:
+        failures.append(f"{adapter}: failed acceptance checks {', '.join(failed_checks)}")
+    return {
+        "adapter": adapter,
+        "status": item.get("status"),
+        "run_id": latest.get("run_id"),
+        "task_id": latest.get("task_id"),
+        "artifact_id": latest.get("artifact_id"),
+        "plan_evidence_manifest_id": latest.get("plan_evidence_manifest_id"),
+        "age_hours": latest.get("age_hours"),
+        "evidence": {key: int(evidence.get(key) or 0) for key in LIVE_PRODUCT_REQUIRED_EVIDENCE},
+        "token_omitted": item.get("token_omitted") is True and latest.get("token_omitted") is True,
+    }
+
+
+def build_live_product_readiness_result(
+    *,
+    base_url: str,
+    workspace_id: str,
+    freshness_hours: int,
+    required_adapters: list[str],
+    live: dict,
+    local: dict,
+) -> dict:
+    failures: list[str] = []
+    if live.get("operation") != "live_acceptance_readiness":
+        failures.append("live acceptance read model is missing")
+    if live.get("live_execution_performed") is not False:
+        failures.append("live product-readiness must be read-only and must not execute runtimes")
+    if (live.get("safety") or {}).get("read_only") is not True:
+        failures.append("live acceptance safety read_only proof is missing")
+    if local.get("operation") != "local_readiness":
+        failures.append("local readiness read model is missing")
+    if local.get("live_execution_performed") is not False:
+        failures.append("local readiness must not execute live runtimes")
+    adapters = live.get("adapters") if isinstance(live.get("adapters"), dict) else {}
+    adapter_summaries = []
+    for adapter in required_adapters:
+        item = adapters.get(adapter)
+        if not isinstance(item, dict):
+            failures.append(f"{adapter}: missing live acceptance adapter row")
+            continue
+        adapter_summaries.append(summarize_live_product_adapter(adapter, item, failures))
+    live_summary = live.get("summary") if isinstance(live.get("summary"), dict) else {}
+    local_evidence = local.get("evidence") if isinstance(local.get("evidence"), dict) else {}
+    if int(live_summary.get("fresh") or 0) < len(required_adapters):
+        failures.append("live acceptance summary does not have enough fresh adapters")
+    if int(local_evidence.get("live_acceptance_fresh_adapters") or 0) < len(required_adapters):
+        failures.append("local readiness does not report enough fresh live adapters")
+    gates = {gate.get("id"): gate for gate in (local.get("gates") or []) if isinstance(gate, dict)}
+    live_gate = gates.get("live_acceptance_freshness") or {}
+    if live_gate.get("ok") is not True:
+        failures.append("local readiness live_acceptance_freshness gate is not passing")
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_live_product_readiness",
+        "ok": not failures,
+        "_exit_code": 0 if not failures else 1,
+        "product_readiness_proof": not failures,
+        "evidence_class": "manual_live_ledger_readback",
+        "base_url": base_url.rstrip("/"),
+        "workspace_id": workspace_id,
+        "freshness_hours": freshness_hours,
+        "required_adapters": required_adapters,
+        "adapters": adapter_summaries,
+        "live_acceptance_status": live.get("status"),
+        "local_readiness_status": local.get("status"),
+        "failures": failures,
+        "next_actions": [] if not failures else [
+            "python3 scripts/customer_worker_real_runtime_acceptance.py --confirm-live --adapter hermes --adapter openclaw --hermes-max-tokens 512",
+            "agentops operator live-acceptance --limit 8",
+        ],
+        "contract": "read-only product proof from fresh Hermes/OpenClaw customer-worker ledger evidence; does not call runtimes, mutate the ledger, or expose raw prompts/responses/tokens",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
+def cmd_operator_live_product_readiness(args, client: AgentOpsClient) -> dict:
+    required_adapters = args.require_adapter or ["hermes", "openclaw"]
+    live = client.get(
+        "/api/operator/live-acceptance",
+        query={
+            "freshness_hours": args.freshness_hours,
+            "limit": args.limit,
+        },
+    )
+    local = client.get("/api/local/readiness")
+    return build_live_product_readiness_result(
+        base_url=client.base_url,
+        workspace_id=client.workspace_id,
+        freshness_hours=args.freshness_hours,
+        required_adapters=required_adapters,
+        live=live,
+        local=local,
+    )
+
+
+def cmd_operator_execution_mode(args, client: AgentOpsClient) -> dict:
+    return client.get(
+        "/api/operator/execution-mode",
+        query={
+            "adapter": args.adapter,
+            "confirm_run": "true" if args.confirm_run else "false",
+            "limit": args.limit,
+        },
+    )
+
+
 def cmd_operator_command_center(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/command-center", query={"limit": args.limit, "project_id": args.project_id or None})
 
@@ -479,15 +823,727 @@ def cmd_operator_intake_checklist(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_operator_loop_launch_packet(args, client: AgentOpsClient) -> dict:
-    return client.get(
+    payload = client.get(
         "/api/operator/loop-launch-packet",
         query={
             "limit": args.limit,
             "task_id": args.task_id,
             "agent_id": args.agent_id,
             "q": args.query,
+            "handoff_mode": args.handoff_mode,
+            "full_handoff": "true" if args.full_handoff else None,
         },
     )
+    if args.brief:
+        local_readiness = client.get("/api/local/readiness")
+        return compact_loop_launch_packet(payload, adapter=args.adapter, local_readiness=local_readiness)
+    return payload
+
+
+def cmd_operator_start_check(args, client: AgentOpsClient) -> dict:
+    return client.get(
+        "/api/operator/start-check",
+        query={
+            "adapter": args.adapter,
+            "limit": args.limit,
+            "loop_id": args.loop_id,
+            "task_id": args.task_id,
+            "agent_id": args.agent_id,
+            "q": args.query,
+            "handoff_mode": args.handoff_mode,
+            "full_handoff": "true" if args.full_handoff else None,
+            "base_url": args.runtime_base_url or None,
+            "freshness_hours": args.freshness_hours,
+        },
+    )
+
+
+def compact_loop_launch_packet(payload: dict, *, adapter: str, local_readiness: dict | None = None) -> dict:
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    control = payload.get("control_summary") if isinstance(payload.get("control_summary"), dict) else {}
+    recommended = control.get("recommended_step") if isinstance(control.get("recommended_step"), dict) else {}
+    safety = payload.get("safety") if isinstance(payload.get("safety"), dict) else {}
+    evaluation = payload.get("evaluation_contract") if isinstance(payload.get("evaluation_contract"), dict) else {}
+    audit = payload.get("audit_contract") if isinstance(payload.get("audit_contract"), dict) else {}
+    agent_plan_draft = payload.get("agent_plan_draft") if isinstance(payload.get("agent_plan_draft"), dict) else {}
+    sources = payload.get("sources") if isinstance(payload.get("sources"), dict) else {}
+    workflow_recovery = payload.get("workflow_job_recovery") if isinstance(payload.get("workflow_job_recovery"), dict) else {}
+    if not workflow_recovery:
+        workflow_recovery = sources.get("workflow_job_recovery") if isinstance(sources.get("workflow_job_recovery"), dict) else {}
+    if not workflow_recovery:
+        handoff = sources.get("handoff") if isinstance(sources.get("handoff"), dict) else {}
+        handoff_work_order = handoff.get("work_order") if isinstance(handoff.get("work_order"), dict) else {}
+        workflow_recovery = handoff_work_order.get("workflow_job_recovery") if isinstance(handoff_work_order.get("workflow_job_recovery"), dict) else {}
+    workflow_recovery_summary = workflow_recovery.get("summary") if isinstance(workflow_recovery.get("summary"), dict) else {}
+    workflow_recovery_items = workflow_recovery.get("items") if isinstance(workflow_recovery.get("items"), list) else []
+    workflow_recovery_commands = []
+    for command in [
+        *(workflow_recovery.get("next_actions") if isinstance(workflow_recovery.get("next_actions"), list) else []),
+        *(workflow_recovery.get("commands") if isinstance(workflow_recovery.get("commands"), list) else []),
+    ]:
+        command = str(command or "").strip()
+        if command and command not in workflow_recovery_commands:
+            workflow_recovery_commands.append(command)
+    chain = payload.get("execution_chain") if isinstance(payload.get("execution_chain"), list) else []
+    compact_chain = []
+    for item in chain:
+        if not isinstance(item, dict):
+            continue
+        compact_chain.append({
+            "step_id": item.get("step_id"),
+            "phase": item.get("phase"),
+            "label": item.get("label"),
+            "status": item.get("step_status"),
+            "next_safe_command": item.get("next_safe_command") or item.get("command"),
+            "verify_command": item.get("verify_command"),
+            "receipt_command": item.get("receipt_command"),
+            "confirm_required": bool(item.get("confirm_required")),
+            "receipt_required": bool(item.get("receipt_required")),
+            "source": item.get("source"),
+            "token_omitted": item.get("token_omitted", True),
+        })
+    adapter_command = f"agentops worker preflight --adapter {adapter}"
+    live_run_command = (
+        "agentops workflow run-task "
+        f"--adapter {adapter} "
+        f"--confirm-run "
+        f"--worker-agent-id <{adapter}_agent_id> "
+        "--title '<task title>' "
+        "--description '<task description>'"
+    ) if adapter in {"hermes", "openclaw"} else (
+        "agentops workflow run-task "
+        "--adapter mock "
+        "--worker-agent-id <mock_agent_id> "
+        "--title '<task title>' "
+        "--description '<task description>'"
+    )
+    readback_commands = [
+        "agentops task get --task-id <task_id>",
+        "agentops run get --run-id <run_id>",
+        "agentops plan-evidence list --run-id <run_id>",
+        "agentops operator loop-audit --limit 20",
+        "agentops operator action-receipts --limit 20",
+    ]
+    local_readiness = local_readiness if isinstance(local_readiness, dict) else {}
+    local_run_path = compact_start_check_local_run_path(local_readiness)
+    compact_local_steps = local_run_path.get("steps") if isinstance(local_run_path.get("steps"), list) else []
+    service_step = local_run_path.get("service_control_preview") if isinstance(local_run_path.get("service_control_preview"), dict) else {}
+    current_code_gate = local_run_path.get("current_code_gate") if isinstance(local_run_path.get("current_code_gate"), dict) else {}
+    local_run_path_commands = local_run_path.get("commands") if isinstance(local_run_path.get("commands"), list) else []
+    return {
+        "provider": payload.get("provider", "agentops-operator"),
+        "operation": "operator_loop_launch_brief",
+        "source_operation": payload.get("operation", "operator_loop_launch_packet"),
+        "status": payload.get("status", "unknown"),
+        "workspace_id": payload.get("workspace_id"),
+        "task_id": payload.get("task_id"),
+        "agent_id": payload.get("agent_id"),
+        "adapter": adapter,
+        "method": payload.get("method"),
+        "summary": {
+            "handoff_mode": summary.get("handoff_mode"),
+            "control_status": control.get("status") or summary.get("control_status"),
+            "control_mode": control.get("mode") or summary.get("control_mode"),
+            "recommended_step": recommended.get("step_id") or summary.get("recommended_step"),
+            "recommended_label": recommended.get("label"),
+            "requires_human": bool(control.get("requires_human")),
+            "requires_receipt": bool(control.get("requires_receipt")),
+            "execution_chain_steps": len(compact_chain),
+            "blocking_steps": control.get("blocking_steps") or [],
+            "attention_steps": control.get("attention_steps") or [],
+            "required_ledgers": evaluation.get("required_ledgers") or [],
+            "agent_plan_risk": agent_plan_draft.get("risk_level"),
+            "agent_plan_approval_required": bool(agent_plan_draft.get("approval_required")),
+            "workflow_job_recovery_status": workflow_recovery.get("status"),
+            "workflow_job_recovery_items": workflow_recovery_summary.get("items"),
+            "workflow_job_recovery_stuck_jobs": workflow_recovery_summary.get("stuck_jobs"),
+            "workflow_job_recovery_retryable_failed_jobs": workflow_recovery_summary.get("retryable_failed_jobs"),
+            "workflow_job_recovery_receipt_missing": workflow_recovery_summary.get("receipt_missing"),
+            "local_readiness_status": local_readiness.get("status"),
+            "current_code_status": current_code_gate.get("status"),
+            "current_code_ok": current_code_gate.get("ok"),
+            "local_run_path_steps": len(compact_local_steps),
+            "local_run_path_recommended_adapter": (local_readiness.get("summary") or {}).get("recommended_adapter") if isinstance(local_readiness.get("summary"), dict) else None,
+            "service_control_preview": bool(service_step),
+        },
+        "next_command": control.get("next_command") or recommended.get("command"),
+        "verify_command": control.get("verify_command") or recommended.get("verify_command"),
+        "receipt_command": control.get("receipt_command") or recommended.get("receipt_command"),
+        "adapter_preflight_command": adapter_command,
+        "live_run_command": live_run_command,
+        "readback_commands": readback_commands,
+        "runtime_doctor_command": "agentops operator runtime-doctor --limit 8",
+        "local_run_path": local_run_path,
+        "workflow_job_recovery": {
+            "operation": workflow_recovery.get("operation"),
+            "status": workflow_recovery.get("status"),
+            "summary": workflow_recovery_summary,
+            "next_actions": workflow_recovery.get("next_actions") or [],
+            "commands": workflow_recovery_commands[:8],
+            "items": [
+                {
+                    "job_id": item.get("job_id"),
+                    "mode": item.get("mode"),
+                    "status": item.get("status"),
+                    "preview_command": item.get("preview_command"),
+                    "confirm_command": item.get("confirm_command"),
+                    "verify_command": item.get("verify_command"),
+                    "receipt_verify_record_command": item.get("receipt_verify_record_command"),
+                    "receipt_state": item.get("receipt_state") or {},
+                    "token_omitted": True,
+                }
+                for item in workflow_recovery_items[:3]
+                if isinstance(item, dict)
+            ],
+            "contract": "compact recover-job work order projection; preview first, confirm only with --confirm-recover, then record/verify receipt",
+            "token_omitted": True,
+        },
+        "execution_chain": compact_chain,
+        "policy": {
+            "policy_id": control.get("policy_id") or (audit.get("bounded_runner") or {}).get("policy_id"),
+            "server_executes_shell": bool(control.get("server_executes_shell") or (audit.get("bounded_runner") or {}).get("server_executes_shell")),
+            "live_execution_requires_confirm_run": adapter in {"hermes", "openclaw"},
+            "external_writes_require_prepared_action": adapter in {"hermes", "openclaw"},
+            "copy_only": control.get("copy_only", True) is not False,
+        },
+        "safety": {
+            "read_only": bool(safety.get("read_only", True)),
+            "ledger_mutated": bool(safety.get("ledger_mutated")),
+            "live_execution_performed": bool(safety.get("live_execution_performed")),
+            "raw_prompt_omitted": bool(safety.get("raw_prompt_omitted", True)),
+            "raw_response_omitted": bool(safety.get("raw_response_omitted", True)),
+            "token_omitted": bool(safety.get("token_omitted", True)),
+        },
+        "commands": [
+            adapter_command,
+            "agentops operator loop-control --limit 8",
+            "agentops operator advance-loop --fast-control --limit 8",
+            *local_run_path_commands[:8],
+            live_run_command,
+            *readback_commands,
+            *workflow_recovery_commands[:6],
+        ],
+        "contract": "compact copy-only launch brief for Hermes/OpenClaw/Codex; derived from loop-launch-packet without mutating ledgers, executing runtimes, or exposing raw prompts/responses/tokens",
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
+def compact_advance_loop_result(payload: dict) -> dict:
+    preview = payload.get("preview") if isinstance(payload.get("preview"), dict) else {}
+    receipt = payload.get("receipt") if isinstance(payload.get("receipt"), dict) else {}
+    receipt_row = receipt.get("receipt") if isinstance(receipt.get("receipt"), dict) else receipt
+    control = payload.get("control_readback") if isinstance(payload.get("control_readback"), dict) else {}
+    after = control.get("after") if isinstance(control.get("after"), dict) else {}
+    action_result = payload.get("action_result") if isinstance(payload.get("action_result"), dict) else {}
+    verify_result = payload.get("verify_result") if isinstance(payload.get("verify_result"), dict) else {}
+    return {
+        "operation": payload.get("operation"),
+        "status": payload.get("status"),
+        "advanced": bool(payload.get("advanced")),
+        "control_source": payload.get("control_source"),
+        "gate_id": preview.get("gate_id"),
+        "source": preview.get("source"),
+        "action_command": preview.get("action_command"),
+        "verify_command": preview.get("verify_command"),
+        "action_ok": action_result.get("ok"),
+        "verify_ok": verify_result.get("ok") if verify_result else None,
+        "receipt_id": receipt_row.get("receipt_id"),
+        "receipt_status": receipt_row.get("status"),
+        "control_after_status": after.get("status"),
+        "control_after_next_command": after.get("next_command"),
+        "raw_output_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def compact_loop_driver_adapter_readiness(payload: dict, *, adapter: str) -> dict:
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    adapters = payload.get("adapters") if isinstance(payload.get("adapters"), dict) else {}
+    item = adapters.get(adapter) if isinstance(adapters.get(adapter), dict) else {}
+    checks = item.get("checks") if isinstance(item.get("checks"), dict) else {}
+    remediation = item.get("remediation") if isinstance(item.get("remediation"), dict) else {}
+    readiness = str(item.get("readiness") or "unknown")
+    return {
+        "operation": "operator_loop_driver_adapter_readiness",
+        "source_operation": "worker_adapter_readiness",
+        "status": payload.get("status", "unknown"),
+        "adapter": adapter,
+        "ok": bool(item.get("ok")),
+        "readiness": readiness,
+        "connector_id": item.get("connector_id"),
+        "trust_status": item.get("trust_status"),
+        "requires_confirm_run": bool(item.get("requires_confirm_run")),
+        "recommended_action": item.get("recommended_action"),
+        "last_error": redact_text(item.get("last_error"), 240) if item.get("last_error") else None,
+        "target_resource": redact_text(item.get("target_resource"), 240) if item.get("target_resource") else None,
+        "checks": {
+            key: checks.get(key)
+            for key in [
+                "api_listening",
+                "api_port",
+                "config_exists",
+                "auth_exists",
+                "binary_exists",
+                "binary_executable",
+                "agents_count",
+                "cron_jobs_count",
+                "live_execution_performed",
+            ]
+            if key in checks
+        },
+        "summary": {
+            "ready_adapters": summary.get("ready_adapters") or [],
+            "live_ready_adapters": summary.get("live_ready_adapters") or [],
+            "recommended_adapter": summary.get("recommended_adapter"),
+            "blocked_adapters": summary.get("blocked_adapters") or [],
+            "unavailable_adapters": summary.get("unavailable_adapters") or [],
+        },
+        "commands": {
+            "worker_readiness": "agentops worker readiness",
+            "adapter_preflight": f"agentops worker preflight --adapter {adapter}",
+            "runtime_doctor": "agentops operator runtime-doctor --limit 8",
+        },
+        "remediation": {
+            "status": remediation.get("status"),
+            "primary_next_action": remediation.get("primary_next_action"),
+            "missing": remediation.get("missing") or [],
+            "commands": [
+                {
+                    "phase": command.get("phase"),
+                    "command": command.get("command"),
+                    "mutating": bool(command.get("mutating")),
+                    "confirm_required": bool(command.get("confirm_required")),
+                }
+                for command in (remediation.get("commands") if isinstance(remediation.get("commands"), list) else [])[:8]
+                if isinstance(command, dict)
+            ],
+            "safety": remediation.get("safety") if isinstance(remediation.get("safety"), dict) else {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        },
+        "gate": {
+            "live_dispatch_ready": readiness in {"ready", "review_required"},
+            "live_dispatch_requires_confirm_run": adapter in {"hermes", "openclaw"},
+            "loop_control_may_continue": True,
+            "blocks_live_dispatch": readiness in {"blocked", "unavailable", "unknown"},
+        },
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
+def fetch_loop_driver_adapter_readiness(args, client: AgentOpsClient) -> dict:
+    payload = client.get("/api/workers/adapter-readiness")
+    return compact_loop_driver_adapter_readiness(payload, adapter=args.adapter)
+
+
+def fetch_loop_launch_brief(args, client: AgentOpsClient) -> dict:
+    payload = client.get(
+        "/api/operator/loop-launch-packet",
+        query={
+            "limit": args.limit,
+            "task_id": args.task_id,
+            "agent_id": args.agent_id,
+            "q": args.query,
+            "handoff_mode": args.handoff_mode,
+            "full_handoff": "true" if getattr(args, "full_handoff", False) else None,
+        },
+    )
+    local_readiness = client.get("/api/local/readiness")
+    return compact_loop_launch_packet(payload, adapter=args.adapter, local_readiness=local_readiness)
+
+
+def compact_loop_driver_acceptance_gate(payload: dict, *, adapter: str) -> dict:
+    packet = payload.get("acceptance_packet") if isinstance(payload.get("acceptance_packet"), dict) else {}
+    decision = packet.get("decision") if isinstance(packet.get("decision"), dict) else {}
+    summary = packet.get("summary") if isinstance(packet.get("summary"), dict) else {}
+    commands = packet.get("commands") if isinstance(packet.get("commands"), dict) else {}
+    safety = packet.get("safety") if isinstance(packet.get("safety"), dict) else {}
+    bounded_allowed = bool(decision.get("can_confirm_bounded_loop"))
+    live_dispatch_allowed = bool(decision.get("live_dispatch_allowed"))
+    live_dispatch_waiting = adapter in {"hermes", "openclaw"} and not live_dispatch_allowed
+    server_executes_shell = bool(safety.get("server_executes_shell"))
+    stop_reasons = []
+    if not packet:
+        stop_reasons.append("acceptance_packet_missing")
+    if not bounded_allowed:
+        stop_reasons.append("bounded_loop_not_accepted")
+    if server_executes_shell:
+        stop_reasons.append("server_shell_safety_missing")
+    return {
+        "operation": "operator_loop_driver_acceptance_gate",
+        "source_operation": payload.get("operation"),
+        "status": "ready" if bounded_allowed and not server_executes_shell else "blocked",
+        "adapter": adapter,
+        "workspace_id": packet.get("workspace_id") or payload.get("workspace_id"),
+        "task_id": packet.get("task_id") or payload.get("task_id"),
+        "agent_id": packet.get("agent_id") or payload.get("agent_id"),
+        "decision": {
+            "can_preview_loop": bool(decision.get("can_preview_loop")),
+            "can_confirm_bounded_loop": bounded_allowed,
+            "live_dispatch_allowed": live_dispatch_allowed,
+            "live_dispatch_requires_confirm_run": bool(decision.get("live_dispatch_requires_confirm_run")),
+            "human_review_required": bool(decision.get("human_review_required")),
+            "memory_review_required": bool(decision.get("memory_review_required")),
+            "current_code_required": decision.get("current_code_required") is not False,
+            "current_code_ok": decision.get("current_code_ok") is not False,
+            "agent_plan_required": decision.get("agent_plan_required") is not False,
+            "knowledge_search_required": decision.get("knowledge_search_required") is not False,
+            "base_compare_required": decision.get("base_compare_required") is not False,
+            "receipt_required": decision.get("receipt_required") is not False,
+        },
+        "summary": {
+            "blocked_gates": summary.get("blocked_gates") or [],
+            "attention_gates": summary.get("attention_gates") or [],
+            "review_items_total": int(summary.get("review_items_total") or 0),
+            "pending_approvals": int(summary.get("pending_approvals") or 0),
+            "memory_candidates": int(summary.get("memory_candidates") or 0),
+            "required_ledgers": summary.get("required_ledgers") or [],
+            "current_code_status": summary.get("current_code_status"),
+            "current_code_ok": summary.get("current_code_ok"),
+            "runtime_doctor_status": summary.get("runtime_doctor_status"),
+            "adapter_readiness": summary.get("adapter_readiness"),
+            "live_product_readiness": summary.get("live_product_readiness"),
+        },
+        "commands": {
+            "start_check": commands.get("start_check") or f"agentops operator start-check --adapter {adapter} --limit 8",
+            "current_code_check": commands.get("current_code_check"),
+            "loop_driver_preview": commands.get("loop_driver_preview"),
+            "loop_driver_confirm": commands.get("loop_driver_confirm"),
+            "runtime_doctor": commands.get("runtime_doctor"),
+            "review_queue": commands.get("review_queue"),
+            "live_product_readiness": commands.get("live_product_readiness"),
+            "receipt_readback": commands.get("receipt_readback"),
+        },
+        "wait_gates": {
+            "human_review": bool(decision.get("human_review_required")),
+            "live_dispatch": live_dispatch_waiting,
+            "memory_review": bool(decision.get("memory_review_required")),
+        },
+        "stop_reasons": stop_reasons,
+        "contract": "loop-driver must read start-check acceptance_packet before preview and before each confirmed bounded advance; it may only continue bounded advance when can_confirm_bounded_loop is true and safety proves no server shell",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": server_executes_shell,
+            "raw_prompt_omitted": safety.get("raw_prompt_omitted", True) is not False,
+            "raw_response_omitted": safety.get("raw_response_omitted", True) is not False,
+            "raw_content_omitted": safety.get("raw_content_omitted", True) is not False,
+            "token_omitted": safety.get("token_omitted", True) is not False,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
+def fetch_loop_driver_acceptance_gate(args, client: AgentOpsClient) -> dict:
+    payload = client.get(
+        "/api/operator/start-check",
+        query={
+            "adapter": args.adapter,
+            "limit": args.limit,
+            "loop_id": args.loop_id,
+            "task_id": args.task_id,
+            "agent_id": args.agent_id,
+            "q": args.query,
+            "handoff_mode": args.handoff_mode,
+            "full_handoff": "true" if getattr(args, "full_handoff", False) else None,
+        },
+    )
+    return compact_loop_driver_acceptance_gate(payload, adapter=args.adapter)
+
+
+def fetch_loop_driver_review_snapshot(args, client: AgentOpsClient) -> dict:
+    limit = min(max(int(getattr(args, "limit", 8) or 8), 1), 20)
+    payload = client.get("/api/agent-gateway/review/queue", query={"limit": min(limit, 8)})
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    review_items = payload.get("review_items") if isinstance(payload.get("review_items"), list) else []
+    compact_items = []
+    for item in review_items[: min(limit, 5)]:
+        compact_items.append({
+            "item_id": item.get("item_id"),
+            "item_type": item.get("item_type"),
+            "kind": item.get("kind"),
+            "status": item.get("status"),
+            "priority": item.get("priority"),
+            "task_id": item.get("task_id"),
+            "run_id": item.get("run_id"),
+            "approval_id": item.get("approval_id"),
+            "memory_id": item.get("memory_id"),
+            "next_action": redact_text(item.get("next_action") or item.get("cli_action") or "", 500),
+            "summary_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        })
+    pending_approvals = int(summary.get("pending_approvals") or 0)
+    memory_candidates = int(summary.get("memory_candidates") or 0)
+    review_items_total = int(summary.get("review_items_total") or len(review_items))
+    next_actions = [
+        action
+        for action in (payload.get("next_actions") or [])
+        if isinstance(action, str) and action.strip()
+    ]
+    return {
+        "operation": "loop_driver_record_review_snapshot",
+        "status": "attention" if review_items_total or pending_approvals or memory_candidates else "ready",
+        "summary": {
+            "review_items_total": review_items_total,
+            "returned_items": int(summary.get("returned_items") or len(review_items)),
+            "pending_approvals": pending_approvals,
+            "memory_candidates": memory_candidates,
+            "retrieved_pending_approvals": int(summary.get("retrieved_pending_approvals") or 0),
+            "retrieved_memory_candidates": int(summary.get("retrieved_memory_candidates") or 0),
+        },
+        "items": compact_items,
+        "next_action": next_actions[0] if next_actions else "agentops review queue --limit 20",
+        "review_command": "agentops review queue --limit 20",
+        "contract": "read-only RECORD snapshot for loop-driver; exposes review pressure and memory candidates without approving, rejecting, promoting, or storing raw content",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
+def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
+    max_steps = min(max(int(args.max_steps or 1), 1), 5)
+    initial_acceptance_gate = fetch_loop_driver_acceptance_gate(args, client)
+    adapter_readiness = fetch_loop_driver_adapter_readiness(args, client)
+    initial_brief = fetch_loop_launch_brief(args, client)
+    initial_review_snapshot = fetch_loop_driver_review_snapshot(args, client)
+    initial_agent_loop_packet = operator_agent_loop_packet(
+        adapter=args.adapter,
+        max_steps=max_steps,
+        acceptance_gate=initial_acceptance_gate,
+        adapter_readiness=adapter_readiness,
+        launch_brief=initial_brief,
+        review_snapshot=initial_review_snapshot,
+        confirm_loop=bool(args.confirm_loop),
+    )
+    policy = advance_loop_policy_summary()
+    if not args.confirm_loop:
+        return {
+            "provider": "agentops-operator",
+            "operation": "operator_loop_driver",
+            "status": "preview",
+            "advanced": False,
+            "adapter": args.adapter,
+            "max_steps": max_steps,
+            "acceptance_gate": initial_acceptance_gate,
+            "agent_loop_packet": initial_agent_loop_packet,
+            "adapter_readiness": adapter_readiness,
+            "initial_brief": initial_brief,
+            "record_review_snapshot": initial_review_snapshot,
+            "next_actions": [
+                (initial_acceptance_gate.get("commands") or {}).get("start_check") or f"agentops operator start-check --adapter {args.adapter} --limit {args.limit}",
+                f"agentops worker preflight --adapter {args.adapter}",
+                initial_review_snapshot.get("review_command") or "agentops review queue --limit 20",
+                (initial_acceptance_gate.get("commands") or {}).get("loop_driver_confirm")
+                or "agentops operator loop-driver --confirm-loop --max-steps "
+                f"{max_steps} --adapter {args.adapter} --limit {args.limit}",
+            ],
+            "policy": {
+                **policy,
+                "driver_max_steps": 5,
+                "driver_uses": "operator start-check acceptance_packet plus operator loop-launch-packet --brief plus operator advance-loop --fast-control --confirm-advance",
+                "acceptance_packet_required_before_confirm_loop": True,
+                "adapter_preflight_required_before_live_run": args.adapter in {"hermes", "openclaw"},
+            },
+            "contract": "preview-only agent loop driver; reads start-check acceptance_packet, compact launch brief, adapter readiness, and review pressure without executing commands or mutating ledgers",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+            "live_execution_performed": False,
+        }
+
+    steps: list[dict] = []
+    stop_reason = "max_steps_reached"
+    if (initial_acceptance_gate.get("decision") or {}).get("can_confirm_bounded_loop") is not True or (initial_acceptance_gate.get("safety") or {}).get("server_executes_shell") is not False:
+        stop_reason = "acceptance_gate_blocked"
+        final_adapter_readiness = fetch_loop_driver_adapter_readiness(args, client)
+        final_brief = fetch_loop_launch_brief(args, client)
+        final_review_snapshot = fetch_loop_driver_review_snapshot(args, client)
+        final_agent_loop_packet = operator_agent_loop_packet(
+            adapter=args.adapter,
+            max_steps=max_steps,
+            acceptance_gate=initial_acceptance_gate,
+            adapter_readiness=final_adapter_readiness,
+            launch_brief=final_brief,
+            review_snapshot=final_review_snapshot,
+            confirm_loop=True,
+            stop_reason=stop_reason,
+        )
+        return {
+            "provider": "agentops-operator",
+            "operation": "operator_loop_driver",
+            "status": "blocked",
+            "adapter": args.adapter,
+            "max_steps": max_steps,
+            "steps_attempted": 0,
+            "steps_advanced": 0,
+            "stop_reason": stop_reason,
+            "acceptance_gate": initial_acceptance_gate,
+            "agent_loop_packet": final_agent_loop_packet,
+            "steps": [],
+            "adapter_readiness": final_adapter_readiness,
+            "final_brief": final_brief,
+            "initial_record_review_snapshot": initial_review_snapshot,
+            "record_review_snapshot": final_review_snapshot,
+            "policy": {
+                **policy,
+                "driver_max_steps": 5,
+                "server_executes_shell": False,
+                "acceptance_packet_required_before_confirm_loop": True,
+                "adapter_preflight_required_before_live_run": args.adapter in {"hermes", "openclaw"},
+            },
+            "contract": "bounded local agent loop driver stopped before advance because start-check acceptance_packet did not allow confirm-loop",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "raw_output_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+            "live_execution_performed": False,
+        }
+    for index in range(max_steps):
+        before_acceptance_gate = fetch_loop_driver_acceptance_gate(args, client)
+        if (before_acceptance_gate.get("decision") or {}).get("can_confirm_bounded_loop") is not True or (before_acceptance_gate.get("safety") or {}).get("server_executes_shell") is not False:
+            stop_reason = "acceptance_gate_blocked"
+            break
+        before_readiness = fetch_loop_driver_adapter_readiness(args, client)
+        before_brief = fetch_loop_launch_brief(args, client)
+        advance_args = argparse.Namespace(
+            loop_id=args.loop_id,
+            limit=args.limit,
+            timeout=args.timeout,
+            actor_id=args.actor_id,
+            fast_control=True,
+            confirm_advance=True,
+        )
+        advance_result = cmd_operator_advance_loop(advance_args, client)
+        after_acceptance_gate = fetch_loop_driver_acceptance_gate(args, client)
+        after_readiness = fetch_loop_driver_adapter_readiness(args, client)
+        after_brief = fetch_loop_launch_brief(args, client)
+        after_review_snapshot = fetch_loop_driver_review_snapshot(args, client)
+        compact_advance = compact_advance_loop_result(advance_result)
+        step = {
+            "step": index + 1,
+            "acceptance_gate_before": before_acceptance_gate,
+            "adapter_readiness_before": before_readiness,
+            "before": {
+                "status": before_brief.get("status"),
+                "next_command": before_brief.get("next_command"),
+                "control_status": (before_brief.get("summary") or {}).get("control_status"),
+                "control_mode": (before_brief.get("summary") or {}).get("control_mode"),
+                "workflow_job_recovery_status": (before_brief.get("summary") or {}).get("workflow_job_recovery_status"),
+                "token_omitted": True,
+            },
+            "advance": compact_advance,
+            "acceptance_gate_after": after_acceptance_gate,
+            "adapter_readiness_after": after_readiness,
+            "after": {
+                "status": after_brief.get("status"),
+                "next_command": after_brief.get("next_command"),
+                "control_status": (after_brief.get("summary") or {}).get("control_status"),
+                "control_mode": (after_brief.get("summary") or {}).get("control_mode"),
+                "workflow_job_recovery_status": (after_brief.get("summary") or {}).get("workflow_job_recovery_status"),
+                "token_omitted": True,
+            },
+            "record_review_snapshot": after_review_snapshot,
+            "token_omitted": True,
+        }
+        steps.append(step)
+        status = str(advance_result.get("status") or "")
+        if status in {"empty", "blocked", "failed"} or not advance_result.get("advanced"):
+            stop_reason = status or "not_advanced"
+            break
+        after_summary = after_brief.get("summary") or {}
+        if after_summary.get("control_status") == "ready" and not after_brief.get("next_command"):
+            stop_reason = "control_ready"
+            break
+
+    final_acceptance_gate = fetch_loop_driver_acceptance_gate(args, client)
+    final_adapter_readiness = fetch_loop_driver_adapter_readiness(args, client)
+    final_brief = fetch_loop_launch_brief(args, client)
+    final_review_snapshot = fetch_loop_driver_review_snapshot(args, client)
+    failed = [step for step in steps if (step.get("advance") or {}).get("status") in {"failed", "blocked"}]
+    advanced = [step for step in steps if (step.get("advance") or {}).get("advanced")]
+    final_agent_loop_packet = operator_agent_loop_packet(
+        adapter=args.adapter,
+        max_steps=max_steps,
+        acceptance_gate=final_acceptance_gate,
+        adapter_readiness=final_adapter_readiness,
+        launch_brief=final_brief,
+        review_snapshot=final_review_snapshot,
+        confirm_loop=True,
+        stop_reason=stop_reason,
+        steps_advanced=len(advanced),
+    )
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_loop_driver",
+        "status": "failed" if failed else "advanced" if advanced else "empty",
+        "adapter": args.adapter,
+        "max_steps": max_steps,
+        "steps_attempted": len(steps),
+        "steps_advanced": len(advanced),
+        "stop_reason": stop_reason,
+        "acceptance_gate": final_acceptance_gate,
+        "initial_acceptance_gate": initial_acceptance_gate,
+        "agent_loop_packet": final_agent_loop_packet,
+        "initial_agent_loop_packet": initial_agent_loop_packet,
+        "steps": steps,
+        "adapter_readiness": final_adapter_readiness,
+        "final_brief": final_brief,
+        "initial_record_review_snapshot": initial_review_snapshot,
+        "record_review_snapshot": final_review_snapshot,
+        "policy": {
+            **policy,
+            "driver_max_steps": 5,
+            "server_executes_shell": False,
+            "acceptance_packet_required_before_confirm_loop": True,
+            "adapter_preflight_required_before_live_run": args.adapter in {"hermes", "openclaw"},
+        },
+        "contract": "bounded local agent loop driver for Hermes/OpenClaw/Codex; each step re-reads start-check acceptance_packet and launch brief, delegates execution to advance-loop allowlist policy only when confirm-loop is accepted, records receipts/control-readback, surfaces a read-only RECORD review snapshot, and never runs live/workflow/approval commands",
+        "safety": {
+            "read_only": False,
+            "ledger_mutated": bool(advanced),
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_output_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
 
 
 def cmd_operator_advance_loop_policy(args, client: AgentOpsClient) -> dict:
@@ -565,6 +1621,13 @@ def run_bounded_agentops_command(command: str, client: AgentOpsClient, *, timeou
 
 def select_advance_loop_item(handoff: dict) -> dict:
     work_order = handoff.get("work_order") or {}
+    advance_loop = work_order.get("advance_loop") or {}
+    selected = advance_loop.get("selected_item") or {}
+    command = str(selected.get("action_command") or "").strip()
+    if command:
+        policy = advance_loop_command_policy(command, phase="action")
+        if policy.get("allowed"):
+            return {**selected, "advance_policy": policy}
     evidence_work_order = work_order.get("evidence_report") or {}
     evidence_status = str(evidence_work_order.get("status") or "").lower()
     evidence_receipt_state = evidence_work_order.get("receipt_state") or {}
@@ -669,7 +1732,8 @@ def compact_loop_control(payload: dict) -> dict:
 
 
 def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
-    handoff = client.get("/api/operator/handoff", query={"limit": args.limit, "loop_id": args.loop_id or None})
+    control_endpoint = "/api/operator/loop-control" if args.fast_control else "/api/operator/handoff"
+    handoff = client.get(control_endpoint, query={"limit": args.limit, "loop_id": args.loop_id or None})
     before_control = compact_loop_control(handoff)
     selected = select_advance_loop_item(handoff)
     policy_summary = advance_loop_policy_summary()
@@ -789,16 +1853,20 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
     }
     receipt = client.post("/api/operator/action-receipts", receipt_payload)
     refresh_query = {"limit": args.limit, "loop_id": args.loop_id or None, "refresh_cache": "true"}
-    after_handoff = client.get("/api/operator/handoff", query=refresh_query)
-    after_self_check = client.get("/api/operator/loop-self-check", query=refresh_query)
+    if args.fast_control:
+        after_handoff = client.get("/api/operator/loop-control", query=refresh_query)
+        after_self_check = after_handoff
+    else:
+        after_handoff = client.get("/api/operator/handoff", query=refresh_query)
+        after_self_check = client.get("/api/operator/loop-self-check", query=refresh_query)
     control_readback = {
         "before": before_control,
         "after": compact_loop_control(after_handoff),
         "after_self_check": compact_loop_control(after_self_check),
         "refresh_cache_requested": True,
         "cache_bypassed": (
-            ((after_handoff.get("read_model_cache") or {}).get("status") == "bypass")
-            and ((after_self_check.get("read_model_cache") or {}).get("status") == "bypass")
+            ((after_handoff.get("read_model_cache") or {}).get("status") in {"bypass", "not_cached"})
+            and ((after_self_check.get("read_model_cache") or {}).get("status") in {"bypass", "not_cached"})
         ),
         "token_omitted": True,
     }
@@ -816,6 +1884,7 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
         "provider": "agentops-operator",
         "operation": "operator_advance_loop",
         "status": "advanced" if succeeded else "failed",
+        "control_source": "loop_control" if args.fast_control else "handoff",
         "advanced": True,
         "confirm_advance": True,
         "preview": preview,
@@ -869,7 +1938,11 @@ def cmd_operator_close_evidence_gap(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_commander_board(args, client: AgentOpsClient) -> dict:
-    return client.get("/api/commander/project-board")
+    return client.get("/api/commander/project-board", query={
+        "project_id": getattr(args, "project_id", None),
+        "plan_id": getattr(args, "plan_id", None),
+        "limit": getattr(args, "limit", None),
+    })
 
 
 def cmd_commander_repo_map(args, client: AgentOpsClient) -> dict:
@@ -1306,6 +2379,16 @@ def cmd_knowledge_index(args, client: AgentOpsClient) -> dict:
     return client.post("/api/agent-gateway/knowledge/index", {"rebuild": bool(args.rebuild)})
 
 
+def cmd_knowledge_evidence_packet(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/agent-gateway/knowledge/evidence-packet", query={
+        "q": args.query,
+        "task_id": args.task_id,
+        "adapter": args.adapter,
+        "limit": args.limit,
+        "baseline_limit": args.baseline_limit,
+    })
+
+
 def cmd_agent_plan_create(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -1692,6 +2775,9 @@ def cmd_workflow_customer_worker_task(args, client: AgentOpsClient) -> dict:
         "selected_agent_ids": args.selected_agent_id or [],
         "worker_agent_id": args.worker_agent_id,
         "hermes_timeout": args.hermes_timeout,
+        "hermes_max_tokens": args.hermes_max_tokens,
+        "adapter_max_attempts": args.adapter_max_attempts,
+        "adapter_retry_delay_sec": args.adapter_retry_delay_sec,
         "external_write_intent": bool(args.external_write_intent),
         "target_resource": args.target_resource,
         "external_action_type": args.external_action_type,
@@ -1796,6 +2882,21 @@ def cmd_workflow_job_mark_failed(args, client: AgentOpsClient) -> dict:
     )
 
 
+def cmd_workflow_recover_job(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "mode": args.mode,
+        "reason": args.reason,
+        "task_id": args.task_id,
+        "adapter": args.adapter,
+        "actor_id": args.actor_id,
+        "confirm_recover": bool(args.confirm_recover),
+        "record_receipt": bool(args.record_receipt),
+        "confirm_run": bool(args.confirm_run),
+        "hermes_timeout": args.hermes_timeout,
+    }
+    return client.post(f"/api/workflows/jobs/{args.job_id}/recover", payload)
+
+
 def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
     from . import worker as worker_mod
 
@@ -1873,6 +2974,7 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
         "--adapter",
         args.adapter,
         "--once",
+        "--no-enforce-intake",
         "--status",
         "planned",
         "--adapter-max-attempts",
@@ -1888,6 +2990,8 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
         worker_argv.extend(["--hermes-gateway-url", args.hermes_gateway_url])
     if args.hermes_timeout is not None:
         worker_argv.extend(["--hermes-timeout", str(args.hermes_timeout)])
+    if args.hermes_max_tokens is not None:
+        worker_argv.extend(["--hermes-max-tokens", str(args.hermes_max_tokens)])
     if args.openclaw_bin:
         worker_argv.extend(["--openclaw-bin", args.openclaw_bin])
     if args.openclaw_timeout is not None:
@@ -1906,13 +3010,41 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
     run_id = first_result.get("run_id")
     run_detail = client.get(f"/api/agent-gateway/runs/{run_id}") if run_id else None
     task_detail = client.get(f"/api/agent-gateway/tasks/{task_id}") if task_id else None
+    run = (run_detail or {}).get("run") or {}
+    plan_id = first_result.get("plan_id") or run.get("agent_plan_id")
+    plan_verify = client.get(f"/api/agent-gateway/agent-plans/{plan_id}/verify") if plan_id else None
+    plan_verification = (plan_verify or {}).get("verification") or {}
+    agent_plan = (plan_verify or {}).get("agent_plan") or {}
+    manifest_id = first_result.get("plan_evidence_manifest_id")
+    if not manifest_id and run_id:
+        manifest_list = client.get("/api/agent-gateway/plan-evidence-manifests", query={"run_id": run_id, "limit": 1})
+        manifests = manifest_list.get("manifests") or []
+        manifest_id = (manifests[0] or {}).get("manifest_id") if manifests else None
+    manifest_verify = client.get(f"/api/agent-gateway/plan-evidence-manifests/{manifest_id}/verify") if manifest_id else None
+    manifest_verification = (manifest_verify or {}).get("verification") or {}
+    manifest = (manifest_verify or {}).get("manifest") or {}
+    agent_plan_readback = {
+        "plan_id": plan_id,
+        "status": agent_plan.get("status"),
+        "verified": bool(plan_verification.get("pass")),
+        "verification_status": plan_verification.get("status"),
+        "failed_checks": [item.get("id") for item in plan_verification.get("failed_checks") or []],
+        "token_omitted": True,
+    }
+    plan_evidence_readback = {
+        "manifest_id": manifest_id,
+        "status": manifest_verification.get("status") or manifest.get("status") or first_result.get("plan_evidence_status"),
+        "verified": bool(manifest_verification.get("pass")),
+        "evidence_counts": manifest_verification.get("evidence_counts") or {},
+        "failed_checks": [item.get("id") for item in manifest_verification.get("failed_checks") or []],
+        "token_omitted": True,
+    }
     evidence = {
         "tool_calls": len((run_detail or {}).get("tool_calls") or []),
         "evaluations": len((run_detail or {}).get("evaluations") or []),
         "approvals": len((run_detail or {}).get("approvals") or []),
         "artifacts": len((run_detail or {}).get("artifacts") or []),
     }
-    run = (run_detail or {}).get("run") or {}
     return {
         "ok": bool(exit_code == 0 and worker_result.get("ok") is True and run_id),
         "dry_run": False,
@@ -1930,7 +3062,13 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
             "run_provider": (run_detail or {}).get("provider"),
             "task_provider": (task_detail or {}).get("provider"),
             "required_scope": "tasks:read",
+            "agent_plan_id": plan_id,
+            "agent_plan_verified": agent_plan_readback["verified"],
+            "plan_evidence_manifest_id": manifest_id,
+            "plan_evidence_verified": plan_evidence_readback["verified"],
         },
+        "agent_plan": agent_plan_readback,
+        "plan_evidence": plan_evidence_readback,
         "evidence": evidence,
         "created_task": created,
         "agent_register": register_result,
@@ -2034,6 +3172,26 @@ def cmd_worker_service_install(args, client: AgentOpsClient) -> dict:
     )
     payload = worker_mod.install_service_file(install_args)
     payload["command"] = "agentops worker service-install"
+    return payload
+
+
+def cmd_worker_service_control(args, client: AgentOpsClient) -> dict:
+    from . import worker as worker_mod
+
+    control_args = argparse.Namespace(
+        manager=args.manager,
+        action=args.service_action,
+        workspace_id=client.workspace_id,
+        agent_id=args.agent_id or client.agent_id or worker_mod.DEFAULT_AGENT_ID,
+        adapter=args.adapter,
+        label=args.label or "",
+        service_path=args.service_path or "",
+        api_key_placeholder=args.api_key_placeholder,
+        timeout=args.timeout,
+        confirm_control=bool(args.confirm_control),
+    )
+    payload = worker_mod.control_service(control_args)
+    payload["command"] = "agentops worker service-control"
     return payload
 
 
@@ -2250,6 +3408,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = sub.add_parser("status", help="Check Agent Gateway connectivity and safe auth metadata.")
     add_global_args(status, suppress_defaults=True)
+    status.add_argument("--require-current-code", action="store_true", help="Fail if the connected MIS process is older than backend source files.")
+    status.add_argument("--expect-head-sha", default="", help="Fail if the connected MIS process reports a different git HEAD.")
     status.set_defaults(handler="status")
 
     doctor = sub.add_parser("doctor", help="Diagnose local/remote agent CLI setup without printing secrets.")
@@ -2259,6 +3419,8 @@ def build_parser() -> argparse.ArgumentParser:
     local = sub.add_parser("local", help="Single-workspace local readiness commands.")
     local_sub = local.add_subparsers(dest="action", required=True)
     local_readiness = local_sub.add_parser("readiness", help="Show end-to-end local MIS readiness and evidence closure.")
+    local_readiness.add_argument("--require-current-code", action="store_true", help="Fail if the connected MIS process is older than backend source files.")
+    local_readiness.add_argument("--expect-head-sha", default="", help="Fail if the connected MIS process reports a different git HEAD.")
     local_readiness.set_defaults(handler="local_readiness")
 
     demo = sub.add_parser("demo", help="Read-only demo and recording readiness commands.")
@@ -2311,6 +3473,10 @@ def build_parser() -> argparse.ArgumentParser:
     operator_loop.add_argument("--loop-id", default=None)
     operator_loop.add_argument("--limit", type=int, default=12)
     operator_loop.set_defaults(handler="operator_loop_audit")
+    operator_loop_control_parser = operator_sub.add_parser("loop-control", help="Read the lightweight loop-control next step for real local ledgers.")
+    operator_loop_control_parser.add_argument("--loop-id", default=None)
+    operator_loop_control_parser.add_argument("--limit", type=int, default=8)
+    operator_loop_control_parser.set_defaults(handler="operator_loop_control")
     operator_evidence = operator_sub.add_parser("evidence-report", help="Read a run-by-run evidence report across Agent Plans, approvals, manifests, and ledger rows.")
     operator_evidence.add_argument("--run-id", default=None)
     operator_evidence.add_argument("--task-id", default=None)
@@ -2329,6 +3495,7 @@ def build_parser() -> argparse.ArgumentParser:
     operator_advance.add_argument("--limit", type=int, default=12)
     operator_advance.add_argument("--timeout", type=int, default=90)
     operator_advance.add_argument("--actor-id", default="usr_founder")
+    operator_advance.add_argument("--fast-control", action="store_true", help="Use lightweight loop-control readback instead of full handoff.")
     operator_advance.add_argument("--confirm-advance", action="store_true", help="Execute exactly one allowlisted local agentops action and record its receipt.")
     operator_advance.set_defaults(handler="operator_advance_loop")
     operator_advance_policy = operator_sub.add_parser("advance-loop-policy", help="Read the bounded advance-loop policy.")
@@ -2337,6 +3504,25 @@ def build_parser() -> argparse.ArgumentParser:
     operator_health.add_argument("--loop-id", default=None)
     operator_health.add_argument("--limit", type=int, default=12)
     operator_health.set_defaults(handler="operator_health")
+    operator_runtime_doctor = operator_sub.add_parser("runtime-doctor", help="Read the local MIS/Hermes/OpenClaw/Codex runtime doctor with launch, safety, and evidence commands.")
+    operator_runtime_doctor.add_argument("--loop-id", default=None)
+    operator_runtime_doctor.add_argument("--limit", type=int, default=8)
+    operator_runtime_doctor.add_argument("--runtime-base-url", default=None, help="Base URL to embed in suggested runtime commands; defaults to the server host.")
+    operator_runtime_doctor.set_defaults(handler="operator_runtime_doctor")
+    operator_live_acceptance = operator_sub.add_parser("live-acceptance", help="Read Hermes/OpenClaw live customer-worker acceptance freshness without running adapters.")
+    operator_live_acceptance.add_argument("--freshness-hours", type=int, default=72)
+    operator_live_acceptance.add_argument("--limit", type=int, default=8)
+    operator_live_acceptance.set_defaults(handler="operator_live_acceptance")
+    operator_live_product = operator_sub.add_parser("live-product-readiness", help="Return product-readiness proof from fresh Hermes/OpenClaw live ledger evidence without running adapters.")
+    operator_live_product.add_argument("--freshness-hours", type=int, default=72)
+    operator_live_product.add_argument("--limit", type=int, default=8)
+    operator_live_product.add_argument("--require-adapter", action="append", choices=["hermes", "openclaw"], default=None)
+    operator_live_product.set_defaults(handler="operator_live_product_readiness")
+    operator_execution_mode = operator_sub.add_parser("execution-mode", help="Read the current dispatch execution mode for mock/Hermes/OpenClaw without running adapters.")
+    operator_execution_mode.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    operator_execution_mode.add_argument("--confirm-run", action="store_true", help="Preview the mode after explicit live confirmation; does not execute the adapter.")
+    operator_execution_mode.add_argument("--limit", type=int, default=8)
+    operator_execution_mode.set_defaults(handler="operator_execution_mode")
     operator_command_center = operator_sub.add_parser("command-center", help="Read the unified operator command-center BFF for projects, blockers, approvals, deliveries, stale workers, and next actions.")
     operator_command_center.add_argument("--project-id", default=None)
     operator_command_center.add_argument("--limit", type=int, default=12)
@@ -2349,7 +3535,37 @@ def build_parser() -> argparse.ArgumentParser:
     operator_launch.add_argument("--task-id", default=None)
     operator_launch.add_argument("--agent-id", default=None)
     operator_launch.add_argument("--query", default="READ PLAN RETRIEVE COMPARE VERIFY RECORD")
+    operator_launch.add_argument("--handoff-mode", choices=["lightweight", "full"], default="lightweight", help="Use lightweight loop-control by default; choose full for deeper operator handoff diagnostics.")
+    operator_launch.add_argument("--full-handoff", action="store_true", help="Shortcut for --handoff-mode full.")
+    operator_launch.add_argument("--brief", action="store_true", help="Return a compact copy-only launch brief for Hermes/OpenClaw/Codex instead of the full packet.")
+    operator_launch.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock", help="Adapter context to include in --brief preflight and live-confirmation guidance.")
     operator_launch.set_defaults(handler="operator_loop_launch_packet")
+    operator_start_check = operator_sub.add_parser("start-check", help="Read the pre-task local loop start check for Hermes/OpenClaw/Codex.")
+    operator_start_check.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    operator_start_check.add_argument("--limit", type=int, default=8)
+    operator_start_check.add_argument("--loop-id", default=None)
+    operator_start_check.add_argument("--task-id", default=None)
+    operator_start_check.add_argument("--agent-id", default=None)
+    operator_start_check.add_argument("--query", default="READ PLAN RETRIEVE COMPARE VERIFY RECORD")
+    operator_start_check.add_argument("--handoff-mode", choices=["lightweight", "full"], default="lightweight")
+    operator_start_check.add_argument("--full-handoff", action="store_true", help="Shortcut for --handoff-mode full when reading the launch brief.")
+    operator_start_check.add_argument("--runtime-base-url", default=None, help="Base URL to embed in suggested runtime-doctor commands.")
+    operator_start_check.add_argument("--freshness-hours", type=int, default=72)
+    operator_start_check.set_defaults(handler="operator_start_check")
+    operator_loop_driver = operator_sub.add_parser("loop-driver", help="Preview or run a bounded multi-step local loop for Hermes/OpenClaw/Codex.")
+    operator_loop_driver.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    operator_loop_driver.add_argument("--max-steps", type=int, default=3, help="Maximum bounded advance-loop steps to run; capped at 5.")
+    operator_loop_driver.add_argument("--limit", type=int, default=8)
+    operator_loop_driver.add_argument("--loop-id", default=None)
+    operator_loop_driver.add_argument("--task-id", default=None)
+    operator_loop_driver.add_argument("--agent-id", default=None)
+    operator_loop_driver.add_argument("--query", default="READ PLAN RETRIEVE COMPARE VERIFY RECORD")
+    operator_loop_driver.add_argument("--handoff-mode", choices=["lightweight", "full"], default="lightweight")
+    operator_loop_driver.add_argument("--full-handoff", action="store_true", help="Shortcut for --handoff-mode full when reading the launch brief.")
+    operator_loop_driver.add_argument("--timeout", type=int, default=90)
+    operator_loop_driver.add_argument("--actor-id", default="usr_founder")
+    operator_loop_driver.add_argument("--confirm-loop", action="store_true", help="Run bounded advance-loop steps and record receipts/control-readback.")
+    operator_loop_driver.set_defaults(handler="operator_loop_driver")
     evidence_gap = operator_sub.add_parser("remediate-evidence-gap", help="Preview or create a Commander package for a run execution-evidence gap.")
     evidence_gap.add_argument("--run-id", required=True)
     evidence_gap.add_argument("--task-id", default=None)
@@ -2378,6 +3594,9 @@ def build_parser() -> argparse.ArgumentParser:
     commander = sub.add_parser("commander", help="Commander planning, dispatch and readback commands.")
     commander_sub = commander.add_subparsers(dest="action", required=True)
     commander_board = commander_sub.add_parser("board", help="Read the Commander project board.")
+    commander_board.add_argument("--project-id", default=None, help="Optional Commander project id for a scoped team board.")
+    commander_board.add_argument("--plan-id", default=None, help="Optional Commander plan id for a scoped team board.")
+    commander_board.add_argument("--limit", type=int, default=25, help="Maximum scoped work packages to include in team_board.")
     commander_board.set_defaults(handler="commander_board")
     commander_repo_map = commander_sub.add_parser("repo-map", help="Localize relevant repo files for a coding work package.")
     commander_repo_map.add_argument("query", nargs="?", default="", help="Task or feature query to localize.")
@@ -2678,6 +3897,13 @@ def build_parser() -> argparse.ArgumentParser:
     knowledge_index = knowledge_sub.add_parser("index", help="Refresh the local Markdown knowledge FTS index.")
     knowledge_index.add_argument("--rebuild", action="store_true")
     knowledge_index.set_defaults(handler="knowledge_index")
+    knowledge_packet = knowledge_sub.add_parser("evidence-packet", help="Read retrieval quality and provenance proof without exposing raw content.")
+    knowledge_packet.add_argument("query", nargs="?", default="")
+    knowledge_packet.add_argument("--task-id", default=None, help="Build the retrieval packet from a MIS task without exposing raw task text.")
+    knowledge_packet.add_argument("--adapter", default=None, help="Optional runtime adapter hint used only for task-aware query hashing.")
+    knowledge_packet.add_argument("--limit", type=int, default=5)
+    knowledge_packet.add_argument("--baseline-limit", type=int, default=5)
+    knowledge_packet.set_defaults(handler="knowledge_evidence_packet")
 
     agent_plan = sub.add_parser("agent-plan", help="Agent work method plan commands.")
     agent_plan_sub = agent_plan.add_subparsers(dest="action", required=True)
@@ -2991,6 +4217,18 @@ def build_parser() -> argparse.ArgumentParser:
     job_mark_failed.add_argument("--reason", default="Operator marked stale workflow job as failed.")
     job_mark_failed.add_argument("--actor-id", default="usr_operator")
     job_mark_failed.set_defaults(handler="workflow_job_mark_failed")
+    recover_job = workflow_sub.add_parser("recover-job", help="Preview or execute receipt-backed workflow job recovery.")
+    recover_job.add_argument("--job-id", required=True)
+    recover_job.add_argument("--mode", choices=["mark-failed", "retry"], default="mark-failed")
+    recover_job.add_argument("--reason", default="workflow job recovery requested by operator.")
+    recover_job.add_argument("--task-id", default=None, help="Required for retry when the failed job has no result_task_id.")
+    recover_job.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default=None)
+    recover_job.add_argument("--actor-id", default="usr_operator")
+    recover_job.add_argument("--confirm-recover", action="store_true", help="Actually perform recovery. Omitted means preview only.")
+    recover_job.add_argument("--record-receipt", action="store_true", help="Record an operator action receipt after confirmed recovery.")
+    recover_job.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw retry dispatch.")
+    recover_job.add_argument("--hermes-timeout", type=int, default=300)
+    recover_job.set_defaults(handler="workflow_recover_job")
     customer_worker = workflow_sub.add_parser("customer-worker-task", help="Dispatch a customer task through the AgentOps worker loop.")
     customer_worker.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     customer_worker.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw live execution.")
@@ -3003,6 +4241,9 @@ def build_parser() -> argparse.ArgumentParser:
     customer_worker.add_argument("--selected-agent-id", action="append", default=None, help="Optional business agent id to record as selected context. Repeatable.")
     customer_worker.add_argument("--worker-agent-id", default=None, help="Optional exact worker agent id. Defaults to a unique id per dispatch.")
     customer_worker.add_argument("--hermes-timeout", type=int, default=300)
+    customer_worker.add_argument("--hermes-max-tokens", type=int, default=int(os.environ.get("HERMES_MAX_TOKENS", "512")))
+    customer_worker.add_argument("--adapter-max-attempts", type=int, default=None, help="Maximum live adapter attempts for retryable failures.")
+    customer_worker.add_argument("--adapter-retry-delay-sec", type=float, default=None, help="Delay between retryable live adapter attempts.")
     customer_worker.add_argument("--external-write-intent", action="store_true", help="Declare that the live runtime task intends to publish/upload/write to an external target; opaque runtimes will create a prepared action instead of running immediately.")
     customer_worker.add_argument("--target-resource", default=None, help="External write target resource used in the prepared action contract.")
     customer_worker.add_argument("--external-action-type", default=None, help="Prepared action type for external write governance.")
@@ -3029,6 +4270,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_task.add_argument("--adapter-retry-delay-sec", type=float, default=1.0)
     run_task.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642"))
     run_task.add_argument("--hermes-timeout", type=int, default=300)
+    run_task.add_argument("--hermes-max-tokens", type=int, default=int(os.environ.get("HERMES_MAX_TOKENS", "512")))
     run_task.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", "/opt/homebrew/bin/openclaw"))
     run_task.add_argument("--openclaw-timeout", type=int, default=180)
     run_task.set_defaults(handler="workflow_run_task")
@@ -3078,6 +4320,17 @@ def build_parser() -> argparse.ArgumentParser:
     worker_service_install.add_argument("--overwrite", action="store_true")
     worker_service_install.add_argument("--timeout", type=int, default=5)
     worker_service_install.set_defaults(handler="worker_service_install")
+    worker_service_control = worker_sub.add_parser("service-control", help="Preview or explicitly run launchd/systemd load, unload, or restart for a worker service.")
+    worker_service_control.add_argument("--manager", choices=["launchd", "systemd"], required=True)
+    worker_service_control.add_argument("--action", dest="service_action", choices=["load", "unload", "restart"], required=True)
+    worker_service_control.add_argument("--agent-id", default=None)
+    worker_service_control.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_service_control.add_argument("--label", default="")
+    worker_service_control.add_argument("--service-path", default="")
+    worker_service_control.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    worker_service_control.add_argument("--timeout", type=int, default=10)
+    worker_service_control.add_argument("--confirm-control", action="store_true", help="Actually call launchctl/systemctl. Default is preview only.")
+    worker_service_control.set_defaults(handler="worker_service_control")
     worker_start = worker_sub.add_parser("start", help="Start a local worker daemon through the MIS supervisor.")
     worker_start.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     worker_start.add_argument("--agent-id", default=None)
@@ -3132,7 +4385,7 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_create.add_argument("--name", default="Remote Agent")
     enroll_create.add_argument("--role", default="Remote AI Digital Employee")
     enroll_create.add_argument("--runtime", default="mock")
-    enroll_create.add_argument("--scopes", default="agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,approvals:request,memories:propose,evaluations:submit,audit:write")
+    enroll_create.add_argument("--scopes", default="agents:write,agents:heartbeat,knowledge:read,knowledge:write,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,approvals:request,memories:propose,evaluations:submit,audit:write")
     enroll_create.add_argument("--ttl-days", type=int, default=30)
     enroll_create.add_argument("--heartbeat-timeout-sec", type=int, default=300)
     enroll_create.add_argument("--label", default="")
@@ -3144,7 +4397,7 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_request.add_argument("--name", default="Remote Agent")
     enroll_request.add_argument("--role", default="Remote AI Digital Employee")
     enroll_request.add_argument("--runtime", default="mock")
-    enroll_request.add_argument("--scopes", default="agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write")
+    enroll_request.add_argument("--scopes", default="agents:heartbeat,knowledge:read,knowledge:write,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write")
     enroll_request.add_argument("--reason", default="Remote worker needs scoped access to process assigned MIS tasks.")
     enroll_request.set_defaults(handler="enrollment_request")
 
@@ -3205,15 +4458,22 @@ HANDLERS = {
     "operator_receipt_failure_memories": cmd_operator_receipt_failure_memories,
     "operator_propose_receipt_failure_memory": cmd_operator_propose_receipt_failure_memory,
     "operator_loop_audit": cmd_operator_loop_audit,
+    "operator_loop_control": cmd_operator_loop_control,
     "operator_evidence_report": cmd_operator_evidence_report,
     "operator_handoff": cmd_operator_handoff,
     "operator_loop_self_check": cmd_operator_loop_self_check,
     "operator_advance_loop": cmd_operator_advance_loop,
     "operator_advance_loop_policy": cmd_operator_advance_loop_policy,
     "operator_health": cmd_operator_health,
+    "operator_runtime_doctor": cmd_operator_runtime_doctor,
+    "operator_live_acceptance": cmd_operator_live_acceptance,
+    "operator_live_product_readiness": cmd_operator_live_product_readiness,
+    "operator_execution_mode": cmd_operator_execution_mode,
     "operator_command_center": cmd_operator_command_center,
     "operator_intake_checklist": cmd_operator_intake_checklist,
     "operator_loop_launch_packet": cmd_operator_loop_launch_packet,
+    "operator_start_check": cmd_operator_start_check,
+    "operator_loop_driver": cmd_operator_loop_driver,
     "operator_remediate_evidence_gap": cmd_operator_remediate_evidence_gap,
     "operator_close_evidence_gap": cmd_operator_close_evidence_gap,
     "commander_board": cmd_commander_board,
@@ -3250,6 +4510,7 @@ HANDLERS = {
     "artifact_record": cmd_artifact_record,
     "knowledge_search": cmd_knowledge_search,
     "knowledge_index": cmd_knowledge_index,
+    "knowledge_evidence_packet": cmd_knowledge_evidence_packet,
     "agent_plan_create": cmd_agent_plan_create,
     "agent_plan_list": cmd_agent_plan_list,
     "agent_plan_get": cmd_agent_plan_get,
@@ -3290,6 +4551,7 @@ HANDLERS = {
     "workflow_job_status": cmd_workflow_job_status,
     "workflow_stuck_jobs": cmd_workflow_stuck_jobs,
     "workflow_job_mark_failed": cmd_workflow_job_mark_failed,
+    "workflow_recover_job": cmd_workflow_recover_job,
     "workflow_customer_worker_task": cmd_workflow_customer_worker_task,
     "workflow_run_task": cmd_workflow_run_task,
     "worker_status": cmd_worker_status,
@@ -3299,6 +4561,7 @@ HANDLERS = {
     "worker_preflight": cmd_worker_preflight,
     "worker_service_check": cmd_worker_service_check,
     "worker_service_install": cmd_worker_service_install,
+    "worker_service_control": cmd_worker_service_control,
     "worker_start": cmd_worker_start,
     "worker_stop": cmd_worker_stop,
     "worker_restart": cmd_worker_restart,
@@ -3320,7 +4583,7 @@ HANDLERS = {
 
 def main(argv=None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(normalize_reorderable_global_options(argv if argv is not None else sys.argv[1:]))
     context = resolved_context(args)
     client = AgentOpsClient(context)
     try:

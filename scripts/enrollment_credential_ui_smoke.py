@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import socket
@@ -29,6 +30,13 @@ SECRET_PATTERNS = [
 def require(condition: bool, message: str, failures: list[str]) -> None:
     if not condition:
         failures.append(message)
+
+
+def safe_ref(prefix: str, raw: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9_]+", "_", raw or "").strip("_").lower()
+    if slug and len(slug) <= 64:
+        return f"{prefix}_{slug}"[-12:]
+    return f"{prefix}_{hashlib.sha256((raw or '').encode('utf-8')).hexdigest()[:16]}"[-12:]
 
 
 def extract_block(text: str, start_marker: str, end_marker: str) -> str:
@@ -126,17 +134,20 @@ def api_contract_smoke(failures: list[str]) -> dict:
             require(status == 200, f"enrollment list failed: {status} {listed}", failures)
             require(listed.get("token_omitted") is True, f"list token_omitted missing: {listed}", failures)
             enrollments = listed.get("enrollments") or []
-            listed_row = next((item for item in enrollments if item.get("token_id") == token_id), {})
-            require(bool(listed_row), f"created token id missing from list: {listed}", failures)
+            token_ref = safe_ref("token_ref", token_id)
+            listed_row = next((item for item in enrollments if item.get("token_ref") == token_ref), {})
+            require(bool(listed_row), f"created token ref missing from list: {listed}", failures)
             require("token" not in listed_row, f"list row exposed raw token field: {listed_row}", failures)
+            require("token_id" not in listed_row, f"list row exposed raw token id field: {listed_row}", failures)
             require("token_hash" not in listed_row, f"list row exposed token_hash field: {listed_row}", failures)
             require(not secret_leaked(list_raw, [raw_token]), "list response leaked a raw token-like value", failures)
+            require(token_id not in list_raw, "list response leaked raw token id", failures)
             redacted_create_raw = create_raw.replace(raw_token, "<redacted-token>") if raw_token else create_raw
             require(not secret_leaked(redacted_create_raw, []), "create response leaked unrelated token-like material", failures)
 
             return {
                 "base_url": base_url,
-                "token_id": token_id,
+                "token_ref": token_ref,
                 "list_token_omitted": listed.get("token_omitted") is True,
                 "raw_token_absent_from_list": not secret_leaked(list_raw, [raw_token]),
                 "temp_db": True,
@@ -183,6 +194,16 @@ def main() -> int:
         'data-testid="one-time-issued-credential"',
         '<div className="mt-4">',
     )
+    default_gateway_scopes = extract_block(
+        ai,
+        "const DEFAULT_GATEWAY_SCOPES = [",
+        "const GATEWAY_SCOPE_PRESETS = [",
+    )
+    gateway_scope_presets = extract_block(
+        ai,
+        "const GATEWAY_SCOPE_PRESETS = [",
+        "const WORKER_ADAPTERS",
+    )
     copy_helper = extract_block(
         ai,
         "const copyIssuedCredential = async () => {",
@@ -212,10 +233,24 @@ def main() -> int:
     require("credentialCannotBeReadAgain" in one_time_card, "one-time card should explain the no-reread contract", failures)
     require("createdToken.token" not in recent_enrollments, "recent enrollments list must not render raw token", failures)
     require("clearIssuedCredential();" in ai, "UI should have a clearIssuedCredential lifecycle call", failures)
-    require("refresh = useCallback(async (options?: { preserveIssuedCredential?: boolean })" in ai, "refresh should support narrow preservation after issuance", failures)
+    require("const refresh = useCallback(async (options?:" in ai and "preserveIssuedCredential?: boolean" in ai, "refresh should support narrow preservation after issuance", failures)
     require("if (!options?.preserveIssuedCredential)" in ai, "ordinary refresh should clear issued credential", failures)
     require("await refresh({ preserveIssuedCredential: true });" in ai, "create/issue/rotate should preserve only the fresh one-time card", failures)
     require("onClick={() => void refresh()}" in ai, "manual refresh buttons should call refresh without preserving secrets", failures)
+    for scope in [
+        "agent_plans:read",
+        "agent_plans:write",
+        "plan_evidence:read",
+        "plan_evidence:write",
+        "knowledge:read",
+        "knowledge:write",
+        "runtime_events:write",
+        "artifacts:write",
+        "memories:propose",
+    ]:
+        require(scope in default_gateway_scopes, f"worker default preset missing required worker scope {scope}", failures)
+        require(scope in gateway_scope_presets, f"scope preset matrix missing {scope}", failures)
+    require('"agents:heartbeat", "knowledge:read", "agent_plans:read", "plan_evidence:read", "tasks:read", "audit:write"' in gateway_scope_presets, "observer preset should match backend observer scopes", failures)
 
     forbidden_long_lived_reads = [
         match.group(0)

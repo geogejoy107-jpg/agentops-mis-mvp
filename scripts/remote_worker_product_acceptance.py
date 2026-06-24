@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Product acceptance wrapper for the remote-worker operator path.
+"""Remote-worker operator/install acceptance with mock CI fallback.
 
 The wrapper is intentionally non-live by default: it runs read-only operator
 checks plus mock-only remote worker smokes. It captures child output for
-validation, but only emits a compact redacted JSON summary.
+validation, but only emits a compact redacted JSON summary. It is not a
+product-readiness proof without a separate real Hermes/OpenClaw acceptance run.
 """
 from __future__ import annotations
 
@@ -38,7 +39,7 @@ AGENT_TOKEN_RE = re.compile(r"\b(?:agtok|agtsess)_[A-Za-z0-9_-]{24,}\b")
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run non-live/read-only and mock remote-worker product acceptance checks."
+        description="Run non-live/read-only remote-worker operator checks with mock CI fallback."
     )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument(
@@ -334,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
         "remote_worker_path": remote_worker_path,
         "token_leaked": leaked,
         "live_execution_performed": False,
+        "evidence_class": "remote_worker_operator_mock_fallback",
+        "product_readiness_proof": False,
     }
     if created_run_id:
         result["created_run_id"] = created_run_id

@@ -101,6 +101,8 @@ Moved out of `server.py`:
 - `/api/workers/status` payload shaping after server-owned row collection
 - `/api/workers/fleet` lane construction, counts, safety metadata and next-action hints
 - token/session omission proof for normalized local daemon, remote worker and registered worker lanes
+- worker fleet hygiene public plan/revoke/error projections with raw token-id omission
+- remote worker/session fleet summary public projections with raw token/session id omission
 
 Still owned by `server.py`:
 
@@ -109,7 +111,7 @@ Still owned by `server.py`:
 - local worker daemon process/status discovery
 - stuck task and workflow job lookup
 - runtime adapter readiness and Hermes/OpenClaw/OpenClaw-bin probing
-- fleet hygiene mutations, task release, enrollment revoke, runtime events and audit writes
+- fleet hygiene mutations, task release, enrollment revoke invocation, runtime events and audit writes
 
 ### Slice 5: Runtime Connector Refresh Projection
 
@@ -267,8 +269,1173 @@ python3 scripts/commander_work_package_dispatch_smoke.py
 python3 scripts/operator_command_center_smoke.py
 ```
 
+### Slice 11: Runtime Prepared-Action Response Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- shared waiting-approval response shaping for prepared actions
+- Approval Wall approval/action id extraction for response payloads
+- prepared-action hash exposure for waiting responses
+- next-action construction for inspect, approve and exact resume instructions
+- token-omission proof on prepared-action waiting responses
+- runtime probe, Dify upload, Notion export and customer-worker external-write
+  response assembly now reuse the shared helper
+
+Still owned by `server.py`:
+
+- HTTP routes
+- provider-specific prepared-action creation
+- SQLite task/run/tool-call writes
+- runtime events, audit logs and commits
+- Dify/Notion/runtime resume-gate reads
+- exact-once prepared-action resume writes and provider side-effect evidence
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/runtime_probe_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/dify_upload_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/notion_export_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/customer_worker_external_write_gate_smoke.py
+```
+
+### Slice 12: Prepared-Action Route and Blocked Response Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- shared prepared-action blocked/error response shaping
+- gate-error to `reason` projection for blocked responses
+- consistent `status=blocked` and `token_omitted` proof for blocked responses
+- route-level prepared-action resume not-found, approval-required, consumed and
+  hash-mismatch response shaping
+- route-level prepared-action resume success response shaping with
+  `execute_once` and hash-verification proof
+- runtime probe blocked payload now wraps the shared blocked-response helper
+- Dify upload and Notion export prepared-action blocked responses now reuse the
+  shared helper while keeping route-specific base fields
+
+Still owned by `server.py`:
+
+- HTTP routes
+- provider-specific dry-run plans and response base fields
+- runtime events, audit logs and commits for blocked routes
+- SQLite reads for prepared action and approval rows
+- exact-once prepared-action resume writes and provider side-effect evidence
+- hash-mismatch audit writes before returning route-level blocked responses
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/runtime_probe_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/dify_upload_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/notion_export_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 13: Prepared-Action Provider Result Reconciliation Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- shared provider-side prepared-action resume request shaping
+- shared provider result fields for `approval_id`, public prepared action,
+  resume status and token-omission proof
+- OpenClaw, Agnesfallback CLI/API, Hermes default run-task, Dify upload and
+  Notion export provider completion responses now use the shared helper
+
+Still owned by `server.py`:
+
+- provider execution and network/process calls
+- provider-specific side-effect id derivation
+- runtime events, audit logs, evaluations and commits
+- exact-once prepared-action resume invocation
+- provider-specific response base fields and delivery/sync evidence
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/runtime_probe_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/dify_upload_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/notion_export_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 14: Prepared-Action Route Access/Error Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- prepared-action get-route not-found response shaping
+- prepared-action bound-agent inspect-forbidden response shaping
+- prepared-action resume-forbidden response shaping
+- prepared-action route workspace-mismatch response shaping
+- unified prepared-action route access/error branch selection for inspect and
+  resume paths
+- route access/error response token-omission proof for these cases
+
+Still owned by `server.py`:
+
+- HTTP routes
+- Agent Gateway identity resolution
+- bound-token detection
+- workspace and agent identity inputs used by the route access helper
+- SQLite reads for prepared action and approval rows
+- exact-once prepared-action resume writes and provider side-effect evidence
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 15: Prepared-Action Prepare Response Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- tool-call `prepare_action=true` response `approval_wall` projection
+- prepared-action prepare `next_action` construction for inspect, approve and
+  exact resume
+- token-omission proof on the prepared-action prepare response fields
+
+Still owned by `server.py`:
+
+- HTTP routes
+- tool-call validation, risk classification and row writes
+- prepared-action creation orchestration
+- runtime events, audit logs and commits
+- exact-once prepared-action resume writes and provider side-effect evidence
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 16: Prepared-Action Decision Projection Helper
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- prepared-action decision response projection
+- `resume_required` decision flag for approved prepared actions
+- public prepared-action projection and token-omission proof on prepared-action
+  decision responses
+
+Still owned by `server.py`:
+
+- HTTP routes
+- approval decision state transitions
+- prepared-action status updates
+- linked tool/run/task state updates
+- runtime events, audit logs and commits
+- hash-mismatch audit writes before blocked approval responses
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/approval_decision_side_effect_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 17: High-Risk Tool-Call Required Response Helper
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- high-risk external side-effect tool-call 428 response projection
+- `prepare_action=true` remediation guidance
+- token-omission proof on the blocked response
+
+Still owned by `server.py`:
+
+- HTTP routes
+- run access checks
+- tool-call validation and risk classification
+- external side-effect intent detection
+- runtime events, audit logs and commits
+- prepared-action creation orchestration when `prepare_action=true`
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 18: Agent Plan Approval Decision Response Helper
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Agent Plan approval decision response projection
+- Agent Plan verification result hash exposure on approval responses
+- token-omission proof on Agent Plan approval decision responses
+
+Still owned by `server.py`:
+
+- HTTP routes
+- approval decision state transitions
+- Agent Plan verification and status transitions
+- approval audit writes and commits
+- task/run execution gates that consume Agent Plan approval state
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 19: Agent Plan Create And Role-Gate Response Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- approval-required Agent Plan missing-anchor response projection
+- agent-created invalid initial status response projection
+- bound Agent Gateway token/session approval-forbidden response projection
+- token-omission proof on Agent Plan role-gate responses
+
+Still owned by `server.py`:
+
+- HTTP routes
+- task/run anchor lookup
+- Agent Plan creation, verification and state transitions
+- scoped auth, bound-token detection and role resolution
+- approval rows, runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 20: Agent Plan Contract And Hash Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Agent Plan JSON-list row parsing helper
+- Agent Plan row-field fallback helper
+- immutable Agent Plan contract projection
+- Agent Plan contract hash
+- Agent Plan verification result hash
+
+Still owned by `server.py`:
+
+- HTTP routes
+- repository path/reference resolution
+- memory/base/spec authority checks
+- Agent Plan verification decisions and persistence
+- approval rows, runtime events, audit logs and commits
+- run-start task/agent/status execution gates
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 21: Agent Plan Path Scope Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Agent Plan safe relative path check
+- Agent Plan repository-contained path resolver
+- Agent Plan referenced-spec authority projection
+- Agent Plan proposed-file scope projection
+
+Still owned by `server.py`:
+
+- HTTP routes
+- root path selection for this deployment
+- database-backed memory authority checks
+- database-backed base authority checks
+- Agent Plan verification decisions and persistence
+- approval rows, runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 22: Agent Plan Verification Result Builder
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Agent Plan verification check list assembly
+- Agent Plan failed-check collection
+- Agent Plan verification summary projection
+- Agent Plan verification token-omission proof
+
+Still owned by `server.py`:
+
+- HTTP routes
+- root path selection for this deployment
+- database-backed memory authority checks
+- database-backed base authority checks
+- Agent Plan verification persistence
+- approval rows, runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 23: Agent Plan Pending Approval Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Agent Plan pending approval row projection
+- Approval reason text derived from plan id, risk and plan hash prefix
+- Pending decision defaults and timestamp field layout
+
+Still owned by `server.py`:
+
+- HTTP routes
+- stable approval id generation
+- created/expires timestamp generation
+- governance anchor run creation
+- approval row insertion
+- runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 24: Agent Plan Transition Error Projections
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Agent Plan not-transitionable response projection
+- Agent Plan not-approvable response projection
+- Agent Plan verification-failed response projection
+- Token-omission proof for those transition errors
+
+Still owned by `server.py`:
+
+- HTTP routes
+- transition actor resolution
+- workspace authorization
+- SQLite reads and writes
+- verification persistence
+- approval row updates
+- runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 25: Agent Plan Approval Run Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Agent Plan governance anchor run row projection
+- Approval-run ledger defaults for runtime/status/model/token/cost/error fields
+- Agent Plan, plan hash, trace and delegation linkage fields
+
+Still owned by `server.py`:
+
+- HTTP routes
+- stable run, trace and delegation id generation
+- created timestamp generation
+- existing-run lookup
+- `upsert_run` orchestration
+- approval row insertion
+- runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 26: Agent Plan Run-Start Gate Responses
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Agent Plan required response for run start
+- Agent Plan task/agent mismatch response projections
+- Agent Plan not-executable response projection
+- Agent Plan approval-required response projection
+- Agent Plan hash-mismatch response projection
+- Run-start verification-failed response now uses the shared Agent Plan
+  verification-failed helper
+
+Still owned by `server.py`:
+
+- HTTP routes
+- requested/default Agent Plan lookup
+- workspace authorization
+- task and agent matching checks
+- approval row lookup
+- hash recomputation and plan verification
+- verification persistence
+- run insertion, runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 27: Run-Start Rebind Response Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Run-start rebind-forbidden response projection
+- Existing/requested Agent Plan id and plan hash readback fields
+- Rebind mismatch list and token-omission proof
+
+Still owned by `server.py`:
+
+- HTTP routes
+- existing run lookup
+- expected/actual binding comparison
+- mismatch calculation
+- rebind-blocked audit writes
+- run insertion, runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 28: Run-Start Success Response Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Run-start success response projection
+- Run outcome readback field
+- Agent Plan id, plan hash, verification-result hash and verification-pass
+  readback fields
+
+Still owned by `server.py`:
+
+- HTTP routes
+- Agent Plan resolution and verification
+- run row construction and upsert
+- task/agent state updates
+- runtime events, audit logs and commits
+- response status-code selection
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 29: Run-Start Binding Comparison
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Run-start existing-run binding comparison
+- Expected workspace/task/agent/Agent Plan/hash projection
+- Actual existing-run binding projection
+- Rebind mismatch list and token-omission proof
+
+Still owned by `server.py`:
+
+- HTTP routes
+- existing run lookup
+- route-level rebind-blocked audit writes
+- run row construction and upsert
+- task/agent state updates
+- runtime events, audit logs and commits
+- response status-code selection
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 30: Run-Heartbeat Update Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/gateway_runs.py`
+
+Moved out of `server.py`:
+
+- Run heartbeat update row projection
+- Run heartbeat terminal run-status to task-status mapping
+- Token-omission proof for the heartbeat update projection
+
+Still owned by `server.py`:
+
+- HTTP routes
+- Agent Gateway identity and run access checks
+- redaction, parsing and default selection
+- SQLite run/task/agent updates
+- runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_gateway_scoped_read_smoke.py
+python3 scripts/workspace_isolation_smoke.py
+```
+
+### Slice 31: External Side-Effect Intent Detection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- risky tool registry for high-risk Agent Gateway tool calls
+- external side-effect URL/scheme and keyword detection
+- generic tool-call external side-effect intent detection
+- metadata-only false-positive guard for runtime capability reports
+
+Still owned by `server.py`:
+
+- HTTP routes
+- Agent Gateway identity and run access checks
+- tool-call row construction and SQLite upsert orchestration
+- risk default application from the Approval Wall registry
+- runtime events, audit logs and commits
+- prepared-action creation orchestration when `prepare_action=true`
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/generic_external_side_effect_gate_smoke.py
+python3 scripts/external_connector_runtime_inventory_smoke.py
+```
+
+### Slice 32: Workflow Job Public Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/workflow_jobs.py`
+
+Moved out of `server.py`:
+
+- async workflow-job public response projection
+- `result_json` safe parse/fallback behavior
+- raw-request and token omission proof for workflow-job readback
+- workflow-job list response projection for read-only async queue summaries
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite workflow-job reads and writes
+- async job submission and status transitions
+- stuck-job age calculation and recovery routing
+- runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/workflow_jobs_list_poll_smoke.py
+python3 scripts/workflow_job_stuck_recovery_smoke.py
+```
+
+### Slice 33: Workflow Job Stuck Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/workflow_jobs.py`
+
+Moved out of `server.py`:
+
+- workflow-job ISO timestamp parsing
+- stuck-job age calculation from public job fields
+- threshold comparison and stuck-reason projection
+- omission proof preservation on stuck-job readback
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite workflow-job reads and writes
+- workflow-job threshold and limit normalization
+- async job submission and status transitions
+- stuck-job recovery mutations
+- runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/workflow_job_stuck_recovery_smoke.py
+python3 scripts/workflow_jobs_list_poll_smoke.py
+```
+
+### Slice 34: Workflow Job Recovery Responses
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/workflow_jobs.py`
+
+Moved out of `server.py`:
+
+- non-active workflow-job recovery response projection
+- successful mark-failed recovery response projection
+- provider/marked-failed/token-omission proof for recovery responses
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite workflow-job reads and writes
+- workflow-job status validation
+- mark-failed mutation
+- runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/workflow_job_stuck_recovery_smoke.py
+python3 scripts/workflow_jobs_list_poll_smoke.py
+```
+
+### Slice 35: Worker Fleet Hygiene Public Projections
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/worker_fleet.py`
+
+Moved out of `server.py`:
+
+- stale never-seen enrollment public projection
+- worker fleet hygiene read-only plan shape
+- stale enrollment revoke success/error public projection
+- raw `token_id` omission proof for plan, rejected cleanup and confirmed cleanup payloads
+
+Still owned by `server.py`:
+
+- stuck task and stale enrollment SQLite reads
+- task release mutation
+- Agent Gateway enrollment revoke invocation
+- runtime event and audit writes
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/worker_fleet_hygiene_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/secret_scan_smoke.py
+```
+
+### Slice 36: Remote Worker Fleet Summary Projections
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/worker_fleet.py`
+
+Moved out of `server.py`:
+
+- remote worker public projection from enrollment plus optional agent row
+- remote session public projection from short-lived session rows
+- active-session, heartbeat-state and token-status aggregation
+- status selection for ready, attention and waiting-for-heartbeat states
+- raw token id, parent token id and session id omission proof for worker status
+
+Still owned by `server.py`:
+
+- HTTP routes
+- scoped enrollment and session SQLite reads
+- agent row lookup for remote enrollment agent ids
+- final worker status payload assembly with local daemon/status producers
+- enrollment/session mutations, heartbeat/session lifecycle, runtime events and audit writes
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/worker_remote_fleet_status_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/agentops_worker_fleet_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/secret_scan_smoke.py
+```
+
+### Slice 37: Workflow Job List Response Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/workflow_jobs.py`
+
+Moved out of `server.py`:
+
+- `/api/workflows/jobs` public response shape after server-owned row collection
+- status and workflow-type filter readback projection
+- by-status/by-workflow-type summary map shaping
+- read-only safety metadata and recovery next-action hints
+- token/raw-request omission proof for workflow-job list readback
+
+Still owned by `server.py`:
+
+- HTTP routes
+- query-parameter parsing and filter validation
+- SQLite workflow-job reads and count queries
+- active/stuck workflow-job count producers
+- workflow-job writes, async execution, status transitions, runtime events and audit writes
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/workflow_jobs_list_poll_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/workflow_job_stuck_recovery_smoke.py --base-url "$AGENTOPS_BASE_URL"
+```
+
+### Slice 38: Workflow Job Recovery Work-Order Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/workflow_jobs.py`
+
+Moved out of `server.py`:
+
+- workflow-job recovery work-order response shape
+- recover-job preview/confirm/verify command projection
+- receipt state matching for recovery actions
+- receipt record/verify command projection
+- recovery summary and read-only safety metadata
+
+Still owned by `server.py`:
+
+- SQLite workflow-job reads and status filters
+- stuck-job threshold calculation inputs
+- operator action receipt row lookup
+- `recover-job` mutation route orchestration
+- runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/workflow_job_stuck_recovery_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/operator_action_plan_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/operator_handoff_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/operator_loop_launch_packet_smoke.py --base-url "$AGENTOPS_BASE_URL"
+```
+
+### Slice 39: Operator Evidence Report Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/operator_evidence.py`
+
+Moved out of `server.py`:
+
+- run/task memory-review public projection after server-owned memory row reads
+- run evidence ready/attention/blocked status classification
+- evidence-report summary aggregation across plan manifests, approvals, memory
+  review, and action receipts
+- evidence-report ready/attention/blocked status selection
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite run/task/memory/approval/manifest reads
+- Agent Plan and plan-evidence verification calls
+- recommended command construction
+- final response assembly and safety contract fields
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/operator_evidence_report_smoke.py
+python3 scripts/operator_handoff_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --adapter hermes --adapter openclaw
+```
+
+### Slice 40: Operator Start-Check Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/operator_start_check.py`
+
+Moved out of `server.py`:
+
+- start-check gate row projection
+- compact local run path projection
+- compact Agent Work Method launch brief projection for start-check responses
+- compact loop-driver entry and RECORD review snapshot projection
+
+Still owned by `server.py`:
+
+- HTTP routes
+- query/header/auth normalization
+- local readiness, worker readiness, runtime doctor, launch packet, and live
+  acceptance read orchestration
+- adapter readiness and worker policy inputs
+- final start-check response assembly and safety contract fields
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/operator_start_check_api_smoke.py
+python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --adapter hermes --adapter openclaw
+python3 scripts/operator_runtime_doctor_smoke.py --base-url "$AGENTOPS_BASE_URL"
+```
+
+### Slice 41: Operator Loop-Control Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/operator_loop_control.py`
+
+Moved out of `server.py`:
+
+- operator loop-control summary projection from handoff state
+- operator loop-control gate projection for loop health/readiness surfaces
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite counts, receipt rows, and operator loop artifact/run/task/memory/
+  approval reads
+- selected action ladder construction
+- bounded-runner policy, loop health, and safety inputs
+- final loop-control, handoff, and self-check response assembly
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/operator_loop_control_smoke.py
+python3 scripts/operator_handoff_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/operator_loop_launch_packet_smoke.py --base-url "$AGENTOPS_BASE_URL"
+```
+
+### Slice 42: Operator Receipt Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/operator_receipts.py`
+
+Moved out of `server.py`:
+
+- operator action receipt public projection
+- operator action evaluation public projection
+- operator control-readback public projection
+- receipt source classification for required control readback
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite receipt/evaluation/readback row reads and writes
+- runtime event and audit insertion
+- receipt status validation and stable hash/id construction
+- control-readback sanitization
+- final receipt list/record/readback response assembly
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/operator_action_receipt_smoke.py
+python3 scripts/operator_action_receipts_cli_smoke.py
+python3 scripts/operator_action_plan_smoke.py --base-url "$AGENTOPS_BASE_URL"
+```
+
+### Slice 43: Operator Start-Check Acceptance Packet Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/operator_start_check.py`
+
+Moved out of `server.py`:
+
+- local loop acceptance-packet projection
+- start-check gate readback compaction
+- copy-only command map for Hermes/OpenClaw/Codex intake
+- loop preview/confirm/live-dispatch decision summary
+
+Still owned by `server.py`:
+
+- HTTP route
+- SQLite/local-readiness/runtime-doctor/live-product/readback producers
+- adapter readiness and human-review queue reads
+- final start-check response assembly
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/operator_start_check_api_smoke.py
+python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --adapter hermes --adapter openclaw
+```
+
+### Slice 44: Evaluation Case Public Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/evaluation_cases.py`
+
+Moved out of `server.py`:
+
+- evaluation case candidate public projection
+- evaluation case run public projection
+- invalid JSON fallback for rubric/checks public fields
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite candidate/run row reads and writes
+- review status transitions, remediation-task creation, runtime/audit writes
+- evaluation-case execution and final route response assembly
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/evaluation_case_candidate_smoke.py
+```
+
+### Slice 45: Operator Agent Loop Packet Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/operator_start_check.py`
+
+Moved out of CLI/server-only paths:
+
+- machine-readable READ/PLAN/RETRIEVE/COMPARE/PREFLIGHT/EXECUTE/VERIFY/RECORD agent loop packet projection
+- confirm-loop readiness and current phase selection
+- copy-only start-check, preflight, verify, receipt, audit, and review command map
+- token/raw-content/live-execution/server-shell omission proof
+
+Still owned by `server.py`:
+
+- HTTP route
+- SQLite/local-readiness/runtime-doctor/live-product/readback producers
+- adapter readiness and human-review queue reads
+- final start-check response assembly
+
+Still owned by `agentops_mis_cli/agentops.py`:
+
+- CLI argument parsing and HTTP calls
+- bounded loop-driver orchestration
+- advance-loop invocation and final CLI response assembly
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/operator_start_check_api_smoke.py
+python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --adapter hermes --adapter openclaw
+python3 scripts/operator_loop_driver_smoke.py
+```
+
+### Slice 46: Operator Local Loop Admission Packet Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/operator_start_check.py`
+
+Moved out of server-only start-check assembly:
+
+- local loop admission projection for agent callers
+- Method Block gate ids and phase command compaction
+- worker-start, service-control preview, customer-worker dispatch, and ledger-verify command grouping
+- first-safe-command and confirm-required-command projection
+- copy-only/read-only/no-server-shell/token-omission proof
+
+Still owned by `server.py`:
+
+- HTTP route
+- SQLite/local-readiness/runtime-doctor/live-product/readback producers
+- remote enrollment token creation and launch-step assembly
+- final start-check response assembly
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/operator_start_check_api_smoke.py
+python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --adapter hermes --adapter openclaw
+python3 scripts/enrollment_launch_steps_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/remote_launch_packet_worker_smoke.py --base-url "$AGENTOPS_BASE_URL"
+```
+
 ## Next Candidate Slices
 
-- Runtime prepared-action response helpers.
+- Continue P1-05 with small smoke-backed strangler slices only; prefer pure
+  helper extraction before moving stateful route orchestration.
 
 Each candidate must be extracted in a separate, smoke-backed slice.

@@ -35,17 +35,70 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 from agentops_mis_core.approval_wall import (
+    RISKY_TOOLS,
     approval_wall_recommended_actions,
+    build_high_risk_toolcall_prepared_action_required_response,
+    build_prepared_action_approval_decision_response,
+    build_prepared_action_blocked_response,
     build_prepared_action_get_response,
+    build_prepared_action_hash_mismatch_response,
+    build_prepared_action_prepare_response_fields,
+    build_prepared_action_provider_result_fields,
+    build_prepared_action_provider_resume_request,
+    build_prepared_action_resume_blocked_response,
+    build_prepared_action_resume_success_response,
+    build_prepared_action_waiting_response,
     prepared_action_checkpoint,
     prepared_action_gate,
     prepared_action_hash,
     prepared_action_id_from_request,
     prepared_action_public,
     prepared_action_resume_gate_error,
+    prepared_action_route_access_error,
     prepared_action_stored_args,
+    runtime_probe_blocked_payload,
+    runtime_probe_prepared_action_required_payload,
+    tool_call_has_external_side_effect_intent,
+)
+from agentops_mis_core.agent_plans import (
+    agent_plan_contract,
+    agent_plan_verification_hash,
+    build_agent_plan_approval_anchor_required_response,
+    build_agent_plan_approval_decision_response,
+    build_agent_plan_approval_run,
+    build_agent_plan_bound_approval_forbidden_response,
+    build_agent_plan_not_approvable_response,
+    build_agent_plan_not_transitionable_response,
+    build_agent_plan_pending_approval,
+    build_agent_plan_run_agent_mismatch_response,
+    build_agent_plan_run_approval_required_response,
+    build_agent_plan_run_hash_mismatch_response,
+    build_agent_plan_run_not_executable_response,
+    build_agent_plan_run_required_response,
+    build_agent_plan_run_task_mismatch_response,
+    build_agent_plan_status_transition_required_response,
+    build_agent_plan_verification,
+    build_agent_plan_verification_failed_response,
+    build_run_start_rebind_forbidden_response,
+    build_run_start_success_response,
+    compare_run_start_binding,
+    compute_agent_plan_hash,
+    load_json_list_field,
+    plan_ref_path,
+    row_field,
+    resolve_agent_plan_file_scope,
+    resolve_agent_plan_spec_authority,
+)
+from agentops_mis_core.gateway_runs import (
+    build_run_heartbeat_update,
+    run_heartbeat_terminal_task_status,
+)
+from agentops_mis_core.evaluation_cases import (
+    evaluation_case_candidate_public,
+    evaluation_case_run_public,
 )
 from agentops_mis_core.commander_work_packages import (
+    build_commander_team_board,
     build_commander_work_packages_readback,
     build_commander_project_board_gates,
     commander_project_board_next_actions,
@@ -59,10 +112,48 @@ from agentops_mis_core.operator_command_center import (
     build_command_center_stale_worker_refs,
     command_center_status,
 )
+from agentops_mis_core.operator_evidence import (
+    build_operator_run_memory_review,
+    operator_evidence_report_status,
+    operator_evidence_report_summary,
+    operator_run_evidence_status,
+)
+from agentops_mis_core.operator_loop_control import (
+    operator_loop_control_gate,
+    operator_loop_control_summary_from_handoff,
+)
+from agentops_mis_core.operator_receipts import (
+    operator_action_evaluation_public,
+    operator_action_receipt_public,
+    operator_control_readback_public,
+    operator_receipt_requires_control_readback,
+)
+from agentops_mis_core.operator_start_check import (
+    compact_start_check_loop_driver_entry,
+    compact_start_check_launch_brief,
+    compact_start_check_local_run_path,
+    operator_agent_loop_packet,
+    operator_local_loop_admission_packet,
+    operator_start_check_acceptance_packet,
+    operator_start_check_gate,
+)
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.worker_fleet import (
+    build_worker_remote_fleet_summary,
+    build_worker_fleet_hygiene_plan,
     build_worker_fleet_view,
     build_worker_status_payload,
+    public_remote_session,
+    public_worker_enrollment_error,
+    public_worker_revoked_enrollment,
+)
+from agentops_mis_core.workflow_jobs import (
+    build_workflow_job_recovery_work_order,
+    workflow_jobs_list_response,
+    workflow_job_mark_failed_response,
+    workflow_job_not_active_response,
+    workflow_job_public,
+    workflow_job_stuck_projection,
 )
 from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
 from agentops_mis_cli.redaction import redact_full_text as shared_redact_full_text
@@ -86,6 +177,8 @@ from agentops_mis_runtime.trust import (
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("AGENTOPS_DB_PATH") or (ROOT / "agentops_mis.db"))
+SERVER_STARTED_AT = dt.datetime.now(dt.timezone.utc)
+SERVER_STARTED_AT_EPOCH = time.time()
 SQLITE_SCHEMA_BASELINE_ID = "2026-06-22-v1.5-sqlite-reliability"
 STATIC_DIR = ROOT / "static"
 ARTIFACTS_DIR = ROOT / "artifacts"
@@ -99,39 +192,6 @@ READ_MODEL_CACHE_TTL_SEC = float(os.environ.get("AGENTOPS_READ_MODEL_CACHE_TTL_S
 READ_MODEL_CACHE_MAX_ITEMS = int(os.environ.get("AGENTOPS_READ_MODEL_CACHE_MAX_ITEMS", "96"))
 READ_MODEL_CACHE = ReadModelCache(ttl_sec=READ_MODEL_CACHE_TTL_SEC, max_items=READ_MODEL_CACHE_MAX_ITEMS)
 
-RISKY_TOOLS = {
-    "shell.exec",
-    "github.push",
-    "email.send",
-    "file.delete",
-    "database.write",
-    "dify.knowledge.upload",
-    "openai.file_search.upload",
-}
-EXTERNAL_SIDE_EFFECT_KEYWORDS = {
-    "external",
-    "publish",
-    "upload",
-    "write",
-    "send",
-    "post",
-    "push",
-    "export",
-    "deliver",
-    "file_search",
-    "knowledge",
-}
-EXTERNAL_SIDE_EFFECT_SCHEMES = (
-    "http://",
-    "https://",
-    "openai://",
-    "dify://",
-    "notion://",
-    "github://",
-    "slack://",
-    "discord://",
-    "email://",
-)
 HIGH_RISK_CATEGORIES = {"shell", "email", "database"}
 VALID_TASK_STATUSES = {"backlog", "planned", "running", "waiting_approval", "blocked", "completed", "failed", "canceled"}
 VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
@@ -165,6 +225,76 @@ def new_id(prefix: str) -> str:
 def stable_hash(value) -> str:
     raw = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def local_git_value(args: list[str], timeout: int = 3) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except Exception:
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def runtime_source_paths() -> list[Path]:
+    paths = [ROOT / "server.py"]
+    for folder in [ROOT / "agentops_mis_core", ROOT / "agentops_mis_runtime"]:
+        if folder.exists():
+            paths.extend(sorted(folder.glob("*.py")))
+    return [path for path in paths if path.exists()]
+
+
+def running_instance_identity() -> dict:
+    source_paths = runtime_source_paths()
+    latest_mtime = 0.0
+    latest_source = ""
+    for path in source_paths:
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if mtime >= latest_mtime:
+            latest_mtime = mtime
+            latest_source = str(path.relative_to(ROOT))
+    git_head = local_git_value(["rev-parse", "HEAD"])
+    git_branch = local_git_value(["rev-parse", "--abbrev-ref", "HEAD"])
+    git_status = local_git_value(["status", "--porcelain"])
+    source_fresh = SERVER_STARTED_AT_EPOCH + 1.0 >= latest_mtime if latest_mtime else True
+    status = "current" if source_fresh else "stale_process"
+    return {
+        "operation": "running_instance_identity",
+        "status": status,
+        "current": status == "current",
+        "server_pid": os.getpid(),
+        "server_started_at": SERVER_STARTED_AT.isoformat(),
+        "server_started_epoch": round(SERVER_STARTED_AT_EPOCH, 3),
+        "latest_source_path": latest_source,
+        "latest_source_mtime": dt.datetime.fromtimestamp(latest_mtime, dt.timezone.utc).isoformat() if latest_mtime else None,
+        "latest_source_mtime_epoch": round(latest_mtime, 3) if latest_mtime else None,
+        "server_started_after_source_mtime": source_fresh,
+        "git_head_sha": git_head,
+        "git_head_short": git_head[:12] if git_head else "",
+        "git_branch": git_branch,
+        "git_dirty_entries": len([line for line in git_status.splitlines() if line.strip()]),
+        "repo_root": str(ROOT),
+        "contract": "read-only local runtime identity for agents/operators; verifies the running server process is newer than backend source files and reports git metadata without secrets",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "external_network": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
 
 
 def stable_id(prefix: str, *parts) -> str:
@@ -2426,6 +2556,8 @@ AGENT_GATEWAY_OBSERVER_SCOPES = {
 AGENT_GATEWAY_WORKER_WRITE_SCOPES = {
     "agent_plans:write",
     "plan_evidence:write",
+    "knowledge:read",
+    "knowledge:write",
     "tasks:create",
     "tasks:claim",
     "runs:write",
@@ -2435,6 +2567,8 @@ AGENT_GATEWAY_WORKER_WRITE_SCOPES = {
     "memories:propose",
     "evaluations:submit",
 }
+
+AGENT_GATEWAY_WORKER_ACTION_SCOPES = AGENT_GATEWAY_WORKER_WRITE_SCOPES - AGENT_GATEWAY_OBSERVER_SCOPES
 
 AGENT_GATEWAY_PRIVILEGED_SCOPES = {
     "agents:write",
@@ -2478,16 +2612,28 @@ def agent_gateway_enrollment_policy_preview(body) -> tuple[dict, int]:
             invalid_scopes.append(scope)
     runtime_type = coerce_choice(body.get("runtime_type") or body.get("runtime"), VALID_RUNTIME_TYPES, "mock")
     workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    mode = deployment_mode()
+    production_requested = production_security_requested()
+    admin_key_configured = bool(os.environ.get("AGENTOPS_ADMIN_KEY", "").strip())
     privileged = [scope for scope in scopes if scope in AGENT_GATEWAY_PRIVILEGED_SCOPES]
-    worker_writes = [scope for scope in scopes if scope in AGENT_GATEWAY_WORKER_WRITE_SCOPES]
     observer_only = bool(scopes) and set(scopes).issubset(AGENT_GATEWAY_OBSERVER_SCOPES)
+    worker_writes = [] if observer_only else [scope for scope in scopes if scope in AGENT_GATEWAY_WORKER_ACTION_SCOPES]
     missing_worker_scopes = [
         scope for scope in [
             "agents:heartbeat",
+            "agent_plans:read",
+            "agent_plans:write",
+            "plan_evidence:read",
+            "plan_evidence:write",
+            "knowledge:read",
+            "knowledge:write",
             "tasks:read",
             "tasks:claim",
             "runs:write",
+            "runtime_events:write",
             "toolcalls:write",
+            "artifacts:write",
+            "memories:propose",
             "evaluations:submit",
             "audit:write",
         ] if scope not in scopes
@@ -2522,6 +2668,19 @@ def agent_gateway_enrollment_policy_preview(body) -> tuple[dict, int]:
         policy = "custom"
         approval_recommended = True
         recommended_path = "request_approval"
+    if production_requested and risk_level != "blocked":
+        approval_recommended = True
+        if recommended_path == "create_token":
+            recommended_path = "request_approval"
+    direct_create_allowed = risk_level != "blocked" and recommended_path == "create_token" and not production_requested
+    approval_request_required = risk_level != "blocked" and recommended_path == "request_approval"
+    deployment_policy_summary = (
+        "Shared/hosted/production enrollment must use approval request and admin-issued tokens."
+        if production_requested and admin_key_configured
+        else "Shared/hosted/production enrollment is not ready to issue tokens until AGENTOPS_ADMIN_KEY is configured."
+        if production_requested
+        else "Local/demo enrollment can directly create low-risk tokens; privileged or non-local worker scopes still use approval."
+    )
     gates = [
         {
             "id": "valid_scopes",
@@ -2547,6 +2706,12 @@ def agent_gateway_enrollment_policy_preview(body) -> tuple[dict, int]:
             "status": "warn" if approval_recommended else "pass",
             "summary": "Use approval-gated request before issuing this token." if approval_recommended else "Direct token creation is acceptable for this local/low-risk scope set.",
         },
+        {
+            "id": "deployment_policy",
+            "ok": (not production_requested) or admin_key_configured,
+            "status": "warn" if production_requested and admin_key_configured else "fail" if production_requested else "pass",
+            "summary": deployment_policy_summary,
+        },
     ]
     return {
         "provider": "agent_gateway",
@@ -2554,10 +2719,16 @@ def agent_gateway_enrollment_policy_preview(body) -> tuple[dict, int]:
         "status": "blocked" if risk_level == "blocked" else "attention" if approval_recommended or privileged else "ready",
         "workspace_id": workspace_id,
         "runtime_type": runtime_type,
+        "deployment_mode": mode,
+        "production_security_requested": production_requested,
+        "admin_key_configured": admin_key_configured,
         "policy": policy,
         "risk_level": risk_level,
         "approval_recommended": approval_recommended,
         "recommended_path": recommended_path,
+        "direct_create_allowed": direct_create_allowed,
+        "approval_request_required": approval_request_required,
+        "deployment_policy_summary": deployment_policy_summary,
         "scope_count": len(scopes),
         "scopes": scopes,
         "invalid_scopes": invalid_scopes,
@@ -2568,6 +2739,7 @@ def agent_gateway_enrollment_policy_preview(body) -> tuple[dict, int]:
         "next_actions": [action for action in [
             "Fix invalid scopes before creating a token." if invalid_scopes else "",
             "Use agentops enrollment request before issuing this token." if approval_recommended else "Use agentops enrollment create for this low-risk/local scope set.",
+            "Configure AGENTOPS_ADMIN_KEY before issuing hosted/shared tokens." if production_requested and not admin_key_configured else "",
             "Use short-lived sessions for worker loops after enrollment.",
         ] if action],
         "safety": {
@@ -2913,7 +3085,44 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
     ]
     confirm_flag = " --confirm-run" if adapter in {"hermes", "openclaw"} else ""
     run_once = f"agentops-worker --once --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900"
-    run_loop = f"agentops-worker --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900 --poll-interval 5 --max-tasks 0 --continue-on-error --write-state --jsonl-log"
+    worker_loop_flags = "--use-session --session-ttl-sec 900 --session-refresh-margin-sec 60 --poll-interval 5 --idle-backoff-max 30 --error-backoff-max 30 --backoff-factor 2 --adapter-max-attempts 1 --adapter-retry-delay-sec 1 --max-tasks 0 --continue-on-error --max-errors 5 --write-state --jsonl-log"
+    run_loop = f"agentops-worker --adapter {adapter}{confirm_flag} {worker_loop_flags}"
+    start_check = f"agentops operator start-check --adapter {adapter} --limit 8 --agent-id {shlex.quote(safe_agent_id)}"
+    loop_launch_brief = f"agentops operator loop-launch-packet --brief --adapter {adapter} --limit 8 --agent-id {shlex.quote(safe_agent_id)}"
+    method_gate_contract = {
+        "operation": "remote_worker_method_gate_contract",
+        "source": "agent_gateway_enrollment_launch_steps",
+        "adapter": adapter,
+        "method": "READ -> PLAN -> RETRIEVE -> COMPARE -> PREFLIGHT -> EXECUTE -> VERIFY -> RECORD",
+        "first_read": start_check,
+        "phase_commands": {
+            "read": start_check,
+            "plan": "agentops agent-plan create --help",
+            "retrieve": "agentops knowledge search --query '<task terms>'",
+            "compare": "agentops commander repo-map --query '<task terms>'",
+            "preflight": f"agentops-worker preflight --adapter {adapter} --base-url {shlex.quote(base_url)} --workspace-id {shlex.quote(safe_workspace_id)} --agent-id {shlex.quote(safe_agent_id)}",
+            "execute": run_once,
+            "verify": "agentops operator live-product-readiness --require-adapter hermes --require-adapter openclaw" if adapter in {"hermes", "openclaw"} else "agentops run list --limit 5",
+            "record": "agentops review queue --limit 20",
+        },
+        "required_gates": [
+            "read_start_check",
+            "plan_agent_plan",
+            "retrieve_knowledge",
+            "compare_base_reference",
+            "preflight_adapter",
+            "execute_bounded_worker",
+            "verify_ledger",
+            "record_memory_candidate",
+        ],
+        "safety": {
+            "copy_only": True,
+            "server_executes_shell": False,
+            "live_execution_requires_confirm_run": adapter in {"hermes", "openclaw"},
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
     template_args = (
         f"--adapter {adapter}{confirm_flag} "
         f"--base-url {shlex.quote(base_url)} "
@@ -2929,6 +3138,9 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
         "install": "python3 -m pip install .",
         "env": env,
         "verify": "agentops status",
+        "start_check": start_check,
+        "loop_launch_brief": loop_launch_brief,
+        "method_gate_contract": method_gate_contract,
         "preflight": f"agentops-worker preflight --adapter {adapter} --base-url {shlex.quote(base_url)} --workspace-id {shlex.quote(safe_workspace_id)} --agent-id {shlex.quote(safe_agent_id)}",
         "heartbeat": "agentops agent heartbeat --status idle --summary 'remote worker connected'",
         "session": "agentops session create --ttl-sec 900 --save-session",
@@ -2942,17 +3154,25 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
         "systemd_service_install_confirm": f"agentops-worker service-install --manager systemd {template_args} --confirm-install",
         "service_check_launchd": f"agentops-worker service-check --manager launchd --adapter {adapter} --agent-id {shlex.quote(safe_agent_id)}",
         "service_check_systemd": f"agentops-worker service-check --manager systemd --adapter {adapter} --agent-id {shlex.quote(safe_agent_id)}",
+        "launchd_service_control_load_preview": f"agentops-worker service-control --manager launchd --action load --adapter {adapter} --agent-id {shlex.quote(safe_agent_id)}",
+        "launchd_service_control_unload_preview": f"agentops-worker service-control --manager launchd --action unload --adapter {adapter} --agent-id {shlex.quote(safe_agent_id)}",
+        "launchd_service_control_restart_preview": f"agentops-worker service-control --manager launchd --action restart --adapter {adapter} --agent-id {shlex.quote(safe_agent_id)}",
+        "systemd_service_control_load_preview": f"agentops-worker service-control --manager systemd --action load --adapter {adapter} --agent-id {shlex.quote(safe_agent_id)}",
+        "systemd_service_control_unload_preview": f"agentops-worker service-control --manager systemd --action unload --adapter {adapter} --agent-id {shlex.quote(safe_agent_id)}",
+        "systemd_service_control_restart_preview": f"agentops-worker service-control --manager systemd --action restart --adapter {adapter} --agent-id {shlex.quote(safe_agent_id)}",
         "repo_fallback_run_once": f"python3 scripts/agent_worker.py --once --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900",
-        "repo_fallback_run_loop": f"python3 scripts/agent_worker.py --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900 --poll-interval 5 --max-tasks 0 --continue-on-error --write-state --jsonl-log",
+        "repo_fallback_run_loop": f"python3 scripts/agent_worker.py --adapter {adapter}{confirm_flag} {worker_loop_flags}",
         "notes": [
             "Do not commit AGENTOPS_API_KEY or paste it into issue trackers.",
             "Install the source package on the agent machine first; the product command is agentops-worker.",
             "Use agentops status before pulling tasks.",
+            "Use agentops operator start-check before worker preflight so remote agents see the same Method Block gates as the local operator console.",
             "Use agentops-worker preflight before a live worker loop; it checks adapter readiness without executing a task.",
             "Worker launch commands mint a short-lived session before processing tasks; the enrollment token should remain local and revocable.",
             "Service template commands render launchd/systemd files with a token placeholder; replace it only on the agent machine.",
             "Service install commands are dry-run by default; --confirm-install writes a placeholder service file but does not load or execute it.",
             "Run service-check after writing a service file and before manually loading launchd/systemd.",
+            "Service-control commands are preview-only by default; add --confirm-control only on the agent machine after local review.",
             "Repo-local scripts/agent_worker.py commands are included only as development fallbacks.",
             "Hermes/OpenClaw launch commands include --confirm-run because the selected runtime is intended to execute.",
         ],
@@ -2967,10 +3187,11 @@ def agent_gateway_create_enrollment(conn, body) -> tuple[dict, int]:
     scopes = parse_scope_list(body.get("scopes") or body.get("allowed_scopes") or [
         "agents:write",
         "agents:heartbeat",
-        "knowledge:read",
-        "agent_plans:read",
-        "agent_plans:write",
-        "plan_evidence:read",
+            "knowledge:read",
+            "knowledge:write",
+            "agent_plans:read",
+            "agent_plans:write",
+            "plan_evidence:read",
         "plan_evidence:write",
         "tasks:create",
         "tasks:read",
@@ -3039,10 +3260,11 @@ def agent_gateway_request_enrollment(conn, body) -> tuple[dict, int]:
     runtime_type = coerce_choice(body.get("runtime_type") or body.get("runtime"), VALID_RUNTIME_TYPES, "mock")
     scopes = parse_scope_list(body.get("scopes") or body.get("allowed_scopes") or [
         "agents:heartbeat",
-        "knowledge:read",
-        "agent_plans:read",
-        "agent_plans:write",
-        "plan_evidence:read",
+            "knowledge:read",
+            "knowledge:write",
+            "agent_plans:read",
+            "agent_plans:write",
+            "plan_evidence:read",
         "plan_evidence:write",
         "tasks:create",
         "tasks:read",
@@ -3301,6 +3523,17 @@ def agent_gateway_enrollment_rows(conn) -> list[dict]:
     return rows
 
 
+def agent_gateway_public_enrollment_rows(conn) -> list[dict]:
+    public_rows = []
+    for row in agent_gateway_enrollment_rows(conn):
+        public = dict(row)
+        token_id = public.pop("token_id", None)
+        public["token_ref"] = stable_id("token_ref", token_id)[-12:] if token_id else ""
+        public["token_id_omitted"] = True
+        public_rows.append(public)
+    return public_rows
+
+
 def agent_gateway_session_state(row, now_dt: dt.datetime | None = None) -> str:
     now_dt = now_dt or dt.datetime.now(dt.timezone.utc)
     status = row.get("status") if hasattr(row, "get") else row["status"]
@@ -3328,90 +3561,29 @@ def agent_gateway_session_rows(conn) -> list[dict]:
     return rows
 
 
+def agent_gateway_public_session_rows(conn) -> list[dict]:
+    return [public_remote_session(row) for row in agent_gateway_session_rows(conn)]
+
+
 def worker_remote_fleet_summary(conn) -> dict:
     enrollments = agent_gateway_enrollment_rows(conn)
     sessions = agent_gateway_session_rows(conn)
     remote_agent_ids = sorted({row.get("agent_id") for row in enrollments if row.get("agent_id")})
-    agents = {}
+    agents_by_id = {}
     if remote_agent_ids:
         placeholders = ",".join("?" for _ in remote_agent_ids)
-        agents = {
+        agents_by_id = {
             row["agent_id"]: row
             for row in rows_to_dicts(conn.execute(
                 f"SELECT agent_id,name,role,runtime_type,status,updated_at FROM agents WHERE agent_id IN ({placeholders})",
                 tuple(remote_agent_ids),
             ).fetchall())
         }
-    active_sessions_by_agent: dict[str, int] = {}
-    session_state_counts: dict[str, int] = {}
-    for session in sessions:
-        state = session.get("session_state") or session.get("status") or "unknown"
-        session_state_counts[state] = session_state_counts.get(state, 0) + 1
-        if state == "active" and session.get("agent_id"):
-            active_sessions_by_agent[session["agent_id"]] = active_sessions_by_agent.get(session["agent_id"], 0) + 1
-    heartbeat_counts: dict[str, int] = {}
-    token_status_counts: dict[str, int] = {}
-    remote_workers = []
-    for enrollment in enrollments:
-        heartbeat_state = enrollment.get("heartbeat_state") or "unknown"
-        token_status = enrollment.get("status") or "unknown"
-        heartbeat_counts[heartbeat_state] = heartbeat_counts.get(heartbeat_state, 0) + 1
-        token_status_counts[token_status] = token_status_counts.get(token_status, 0) + 1
-        agent = agents.get(enrollment.get("agent_id")) or {}
-        remote_workers.append({
-            "token_ref": stable_id("token_ref", enrollment.get("token_id") or "")[-12:] if enrollment.get("token_id") else "",
-            "token_id_omitted": True,
-            "workspace_id": enrollment.get("workspace_id"),
-            "agent_id": enrollment.get("agent_id"),
-            "agent_name": agent.get("name") or enrollment.get("label") or enrollment.get("agent_id"),
-            "runtime_type": agent.get("runtime_type") or "external",
-            "agent_status": agent.get("status"),
-            "token_status": token_status,
-            "heartbeat_state": heartbeat_state,
-            "heartbeat_timeout_sec": enrollment.get("heartbeat_timeout_sec"),
-            "last_heartbeat_at": enrollment.get("last_heartbeat_at"),
-            "last_used_at": enrollment.get("last_used_at"),
-            "expires_at": enrollment.get("expires_at"),
-            "scope_count": len(enrollment.get("scopes") or []),
-            "active_session_count": active_sessions_by_agent.get(enrollment.get("agent_id"), 0),
-        })
-    active_enrollments = [item for item in remote_workers if item.get("token_status") == "active"]
-    stale_enrollments = [item for item in remote_workers if item.get("heartbeat_state") == "stale"]
-    never_seen_enrollments = [item for item in remote_workers if item.get("heartbeat_state") == "never_seen"]
-    fresh_enrollments = [item for item in remote_workers if item.get("heartbeat_state") == "fresh"]
-    health_status = "attention" if stale_enrollments else "ready"
-    if active_enrollments and not fresh_enrollments and len(never_seen_enrollments) == len(active_enrollments):
-        health_status = "waiting_for_heartbeat"
-    return {
-        "status": health_status,
-        "remote_worker_count": len(active_enrollments),
-        "total_remote_enrollments": len(remote_workers),
-        "active_enrollments": len(active_enrollments),
-        "fresh_enrollments": len(fresh_enrollments),
-        "stale_enrollments": len(stale_enrollments),
-        "never_seen_enrollments": len(never_seen_enrollments),
-        "active_sessions": session_state_counts.get("active", 0),
-        "expired_sessions": session_state_counts.get("expired", 0),
-        "revoked_sessions": session_state_counts.get("revoked", 0),
-        "heartbeat_state_counts": heartbeat_counts,
-        "token_status_counts": token_status_counts,
-        "session_state_counts": session_state_counts,
-        "remote_workers": remote_workers[:50],
-        "recent_sessions": [{
-            "session_ref": stable_id("session_ref", session.get("session_id") or "")[-12:] if session.get("session_id") else "",
-            "session_id_omitted": True,
-            "parent_token_ref": stable_id("token_ref", session.get("parent_token_id") or "")[-12:] if session.get("parent_token_id") else "",
-            "workspace_id": session.get("workspace_id"),
-            "agent_id": session.get("agent_id"),
-            "status": session.get("status"),
-            "session_state": session.get("session_state"),
-            "created_at": session.get("created_at"),
-            "expires_at": session.get("expires_at"),
-            "last_used_at": session.get("last_used_at"),
-            "scope_count": len(session.get("scopes") or []),
-        } for session in sessions[:25]],
-        "token_omitted": True,
-    }
+    return build_worker_remote_fleet_summary(
+        enrollments=enrollments,
+        sessions=sessions,
+        agents_by_id=agents_by_id,
+    )
 
 
 def agent_gateway_status(conn, headers) -> tuple[dict, int]:
@@ -3429,6 +3601,7 @@ def agent_gateway_status(conn, headers) -> tuple[dict, int]:
             "workspace_id": normalize_workspace_id(auth_ctx.get("workspace_id") or "local-demo"),
             "scopes": auth_ctx.get("scopes") or [],
         },
+        "running_instance": running_instance_identity(),
         "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES),
         "token_omitted": True,
     }
@@ -3438,7 +3611,8 @@ def agent_gateway_status(conn, headers) -> tuple[dict, int]:
         if row:
             safe_row = dict(row)
             payload["auth"].update({
-                "token_id": safe_row.get("token_id"),
+                "token_ref": stable_id("token_ref", safe_row.get("token_id"))[-12:],
+                "token_id_omitted": True,
                 "token_status": safe_row.get("status"),
                 "heartbeat_state": agent_gateway_token_heartbeat_state(safe_row),
                 "heartbeat_timeout_sec": safe_row.get("heartbeat_timeout_sec"),
@@ -3448,8 +3622,10 @@ def agent_gateway_status(conn, headers) -> tuple[dict, int]:
             })
     if auth_ctx.get("mode") == "agent_session":
         payload["auth"].update({
-            "session_id": auth_ctx.get("session_id"),
-            "parent_token_id": auth_ctx.get("token_id"),
+            "session_ref": stable_id("session_ref", auth_ctx.get("session_id"))[-12:],
+            "parent_token_ref": stable_id("token_ref", auth_ctx.get("token_id"))[-12:],
+            "session_id_omitted": True,
+            "parent_token_id_omitted": True,
             "session_expires_at": auth_ctx.get("expires_at"),
         })
     return payload, 200
@@ -3644,7 +3820,20 @@ def agent_gateway_revoke_enrollment(conn, body) -> tuple[dict, int]:
                 audit(conn, "user", "usr_founder", "agent_gateway.session_revoke_cascade", "agent_gateway_sessions", session["session_id"], session, {"status": "revoked", "revoked_at": now}, {"parent_token_id": row["token_id"], "token_omitted": True})
         runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.revoke", "completed", agent_id=row["agent_id"], output_summary=f"Revoked token ref {stable_id('token_ref', row['token_id'])[-12:]}.")
         audit(conn, "user", "usr_founder", "agent_gateway.enrollment_revoke", "agent_gateway_tokens", row["token_id"], row, {"status": "revoked", "revoked_at": now}, {"token_omitted": True})
-    return {"revoked": len(before), "changed": len(before) + len(revoked_session_ids), "tokens": [row["token_id"] for row in before], "sessions_revoked": len(revoked_session_ids), "sessions": revoked_session_ids}, 200
+    token_refs = [stable_id("token_ref", row["token_id"])[-12:] for row in before]
+    session_refs = [stable_id("session_ref", session_id)[-12:] for session_id in revoked_session_ids]
+    return {
+        "revoked": len(before),
+        "changed": len(before) + len(revoked_session_ids),
+        "token_refs": token_refs,
+        "tokens": token_refs,
+        "token_id_omitted": True,
+        "sessions_revoked": len(revoked_session_ids),
+        "session_refs": session_refs,
+        "sessions": session_refs,
+        "session_id_omitted": True,
+        "token_omitted": True,
+    }, 200
 
 
 def agent_gateway_revoke_session(conn, body) -> tuple[dict, int]:
@@ -3664,7 +3853,14 @@ def agent_gateway_revoke_session(conn, body) -> tuple[dict, int]:
     for row in before:
         runtime_event(conn, "rtc_agent_gateway_local", "agent.session.revoke", "completed", agent_id=row["agent_id"], output_summary=f"Revoked short-lived session ref {stable_id('session_ref', row['session_id'])[-12:]}.")
         audit(conn, "user", "usr_founder", "agent_gateway.session_revoke", "agent_gateway_sessions", row["session_id"], row, {"status": "revoked", "revoked_at": now}, {"token_omitted": True})
-    return {"revoked": len(before), "sessions": [row["session_id"] for row in before], "token_omitted": True}, 200
+    session_refs = [stable_id("session_ref", row["session_id"])[-12:] for row in before]
+    return {
+        "revoked": len(before),
+        "session_refs": session_refs,
+        "sessions": session_refs,
+        "session_id_omitted": True,
+        "token_omitted": True,
+    }, 200
 
 
 def agent_gateway_rotate_enrollment(conn, body) -> tuple[dict, int]:
@@ -3777,6 +3973,8 @@ def agent_gateway_pull_tasks(conn, qs, headers, auth_ctx=None) -> tuple[dict, in
                 "command": item["command"],
                 "plan_id": item["plan_id"],
                 "plan_verified": item["plan_verified"],
+                "assigned_adapter": item.get("assigned_adapter"),
+                "local_loop_admission_packet": item.get("local_loop_admission_packet"),
                 "token_omitted": True,
             }
             if item["severity"] == "blocked":
@@ -4484,12 +4682,12 @@ def sync_knowledge_index(conn: sqlite3.Connection, rebuild: bool = False) -> dic
     ensure_knowledge_chunks_table(conn)
     chunk_fts_available = ensure_knowledge_chunk_fts(conn)
     if rebuild:
-        conn.execute("DELETE FROM knowledge_documents")
+        if chunk_fts_available:
+            conn.execute("DELETE FROM knowledge_chunk_fts")
         conn.execute("DELETE FROM knowledge_chunks")
         if fts_available:
             conn.execute("DELETE FROM knowledge_fts")
-        if chunk_fts_available:
-            conn.execute("DELETE FROM knowledge_chunk_fts")
+        conn.execute("DELETE FROM knowledge_documents")
     indexed = 0
     changed = 0
     chunks_indexed = 0
@@ -4584,18 +4782,18 @@ def sync_knowledge_index(conn: sqlite3.Connection, rebuild: bool = False) -> dic
         changed += 1
     existing_ids = {row["doc_id"] for row in conn.execute("SELECT doc_id FROM knowledge_documents").fetchall()}
     for stale_id in sorted(existing_ids - seen_doc_ids):
-        conn.execute("DELETE FROM knowledge_documents WHERE doc_id=?", (stale_id,))
+        if chunk_fts_available:
+            conn.execute("DELETE FROM knowledge_chunk_fts WHERE doc_id=?", (stale_id,))
         conn.execute("DELETE FROM knowledge_chunks WHERE doc_id=?", (stale_id,))
         if fts_available:
             conn.execute("DELETE FROM knowledge_fts WHERE doc_id=?", (stale_id,))
-        if chunk_fts_available:
-            conn.execute("DELETE FROM knowledge_chunk_fts WHERE doc_id=?", (stale_id,))
+        conn.execute("DELETE FROM knowledge_documents WHERE doc_id=?", (stale_id,))
         deleted += 1
     existing_chunk_ids = {row["chunk_id"] for row in conn.execute("SELECT chunk_id FROM knowledge_chunks").fetchall()}
     for stale_chunk_id in sorted(existing_chunk_ids - seen_chunk_ids):
-        conn.execute("DELETE FROM knowledge_chunks WHERE chunk_id=?", (stale_chunk_id,))
         if chunk_fts_available:
             conn.execute("DELETE FROM knowledge_chunk_fts WHERE chunk_id=?", (stale_chunk_id,))
+        conn.execute("DELETE FROM knowledge_chunks WHERE chunk_id=?", (stale_chunk_id,))
     return {
         "indexed": indexed,
         "changed": changed,
@@ -4834,6 +5032,306 @@ def knowledge_search(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=
     }, 200
 
 
+KNOWLEDGE_RETRIEVAL_EVIDENCE_CASES = [
+    {
+        "id": "en_gateway_cli",
+        "language": "en",
+        "query": "Agent Gateway CLI commands task pull run heartbeat approval memory eval audit",
+        "expected_paths": {"docs/AGENT_GATEWAY_CLI_SPEC.md"},
+    },
+    {
+        "id": "en_actor_model",
+        "language": "en",
+        "query": "Solo owner team member human approver AI digital employee external runtime surface model template model",
+        "expected_paths": {"docs/PRODUCT_USAGE_AND_ACTOR_MODEL.md"},
+    },
+    {
+        "id": "en_method_block",
+        "language": "en",
+        "query": "READ PLAN RETRIEVE COMPARE EXECUTE VERIFY RECORD method block",
+        "expected_paths": {"AGENT_WORKFLOW.md", "docs/AGENT_WORK_METHOD_BLOCK.md", "knowledge/runbooks/agent_work_method_runbook.md"},
+    },
+    {
+        "id": "zh_hermes_openclaw",
+        "language": "zh",
+        "query": "Hermes OpenClaw Loop Runbook mis-ledger plan_evidence_manifest 回写 证据",
+        "expected_paths": {"docs/HERMES_OPENCLAW_LOOP_RUNBOOK.md", "docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md"},
+    },
+    {
+        "id": "en_pixel_office",
+        "language": "en",
+        "query": "Pixel Office operating map zones route formal MIS pages task hall inspector operations bar",
+        "expected_paths": {"docs/PIXEL_OPERATING_MAP_SPEC.md", "docs/PIXEL_OPERATING_MAP_ACCEPTANCE.md"},
+    },
+]
+
+
+def percentile(values: list[float], percent: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(float(value) for value in values)
+    index = min(len(ordered) - 1, max(0, int(round((percent / 100.0) * (len(ordered) - 1)))))
+    return ordered[index]
+
+
+def reciprocal_rank(paths: list[str], expected_paths: set[str]) -> float:
+    for index, path in enumerate(paths, start=1):
+        if path in expected_paths:
+            return 1.0 / index
+    return 0.0
+
+
+def safe_knowledge_evidence_result(row: dict) -> dict:
+    return {
+        "doc_id": row.get("doc_id"),
+        "chunk_id": row.get("chunk_id"),
+        "path": row.get("path"),
+        "title": row.get("title"),
+        "category": row.get("category"),
+        "scope": row.get("scope"),
+        "workspace_id": row.get("workspace_id"),
+        "access_level": row.get("access_level"),
+        "retrieval_id": row.get("retrieval_id"),
+        "retrieval_granularity": row.get("retrieval_granularity"),
+        "chunk_heading": row.get("chunk_heading") or row.get("heading"),
+        "chunk_heading_path": row.get("chunk_heading_path") or row.get("heading_path"),
+        "source_hash": row.get("source_hash"),
+        "rank": row.get("rank"),
+        "snippet_omitted": True,
+        "content_summary_omitted": True,
+        "raw_content_omitted": True,
+        "raw_prompt_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def knowledge_retrieval_query_value(qs: dict, *keys: str, default: str = "") -> str:
+    for key in keys:
+        value = qs.get(key)
+        if isinstance(value, list):
+            value = value[0] if value else ""
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return default
+
+
+def knowledge_task_query(task: dict, adapter: str | None = None) -> str:
+    title = redact_text(task.get("title"), 90)
+    description = redact_text(task.get("description"), 220)
+    acceptance = redact_text(task.get("acceptance_criteria"), 160)
+    runtime = redact_text(adapter or task.get("runtime_type") or task.get("model_provider") or "worker", 40)
+    risk = redact_text(task.get("risk_level") or "medium", 32)
+    task_terms = " ".join(part for part in [title, description, acceptance] if part).strip()
+    query = (
+        f"Agent Gateway worker task evidence adapter {runtime} risk {risk}. "
+        f"{task_terms} "
+        "READ PLAN RETRIEVE COMPARE EXECUTE VERIFY RECORD method block "
+        "run ledger tool evaluation audit approval artifact worker adapter"
+    )
+    return redact_text(query, 240)
+
+
+def knowledge_retrieval_evidence_packet(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=None) -> tuple[dict, int]:
+    headers = headers or {}
+    qs = qs or {}
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or headers.get("X-AgentOps-Workspace-Id")
+        or (qs.get("workspace_id") or ["local-demo"])[0]
+    )
+    task_id = knowledge_retrieval_query_value(qs, "task_id")
+    adapter = knowledge_retrieval_query_value(qs, "adapter", "runtime_type")
+    task_context = {
+        "task_id": task_id or None,
+        "task_found": False,
+        "query_source": "explicit_query",
+        "source_fields": [],
+        "task_text_omitted": True,
+        "token_omitted": True,
+    }
+    query = redact_text(knowledge_retrieval_query_value(qs, "q", "query", default="READ PLAN RETRIEVE COMPARE VERIFY RECORD"), 240)
+    if task_id:
+        task_row = conn.execute(
+            """SELECT task_id, workspace_id, title, description, acceptance_criteria,
+                risk_level, owner_agent_id
+            FROM tasks WHERE task_id=? AND workspace_id=?""",
+            (task_id, workspace_id),
+        ).fetchone()
+        if not task_row:
+            return {
+                "provider": "agentops-knowledge",
+                "operation": "knowledge_retrieval_evidence_packet",
+                "status": "not_found",
+                "error": "task_not_found",
+                "workspace_id": workspace_id,
+                "task_context": {
+                    **task_context,
+                    "query_source": "task_id",
+                    "task_id": task_id,
+                },
+                "query_omitted": True,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "raw_content_omitted": True,
+                "token_omitted": True,
+            }, 404
+        task = dict(task_row)
+        query = knowledge_task_query(task, adapter=adapter)
+        task_context = {
+            **task_context,
+            "task_id": task_id,
+            "task_found": True,
+            "query_source": "task_id",
+            "workspace_id": workspace_id,
+            "agent_id": task.get("owner_agent_id"),
+            "source_fields": ["title", "description", "acceptance_criteria", "risk_level"],
+            "task_text_omitted": True,
+        }
+    limit = bounded_int((qs.get("limit") or ["5"])[0], 5, 1, 10)
+    baseline_limit = bounded_int((qs.get("baseline_limit") or ["5"])[0], 5, 1, 10)
+    search_auth_ctx = auth_ctx if auth_ctx is not None else {}
+    counts = {
+        "knowledge_documents": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_documents"),
+        "knowledge_chunks": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_chunks"),
+        "knowledge_chunk_fts_rows": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_chunk_fts"),
+        "workspace_documents": scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM knowledge_documents WHERE workspace_id IN ('global', ?)",
+            (workspace_id,),
+        ),
+        "workspace_chunks": scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM knowledge_chunks WHERE workspace_id IN ('global', ?)",
+            (workspace_id,),
+        ),
+    }
+    primary_payload, _primary_status = knowledge_search(
+        conn,
+        {"q": [query], "limit": [str(limit)]},
+        headers,
+        auth_ctx=search_auth_ctx,
+    )
+    primary_results = [safe_knowledge_evidence_result(row) for row in (primary_payload.get("results") or [])]
+    per_query: list[dict] = []
+    reciprocal_ranks: list[float] = []
+    latencies_ms: list[float] = []
+    hits = 0
+    fallback_queries = 0
+    heading_chunk_queries = 0
+    for case in KNOWLEDGE_RETRIEVAL_EVIDENCE_CASES:
+        started = time.perf_counter()
+        payload, _status = knowledge_search(
+            conn,
+            {"q": [case["query"]], "limit": [str(baseline_limit)]},
+            headers,
+            auth_ctx=search_auth_ctx,
+        )
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        rows = payload.get("results") or []
+        paths = [str(row.get("path") or "") for row in rows]
+        rr = reciprocal_rank(paths, set(case["expected_paths"]))
+        hit = rr > 0
+        hits += 1 if hit else 0
+        reciprocal_ranks.append(rr)
+        latencies_ms.append(elapsed_ms)
+        quality = payload.get("search_quality") or {}
+        if quality.get("fallback_used"):
+            fallback_queries += 1
+        if quality.get("heading_aware_chunks"):
+            heading_chunk_queries += 1
+        per_query.append({
+            "id": case["id"],
+            "language": case["language"],
+            "query_hash": stable_hash(case["query"]),
+            "expected_paths": sorted(case["expected_paths"]),
+            "hit_at_5": hit,
+            "rank": int(1 / rr) if rr else None,
+            "latency_ms": round(elapsed_ms, 2),
+            "search_mode": payload.get("search_mode"),
+            "result_quality": quality.get("result_quality"),
+            "fallback_used": bool(quality.get("fallback_used")),
+            "heading_aware_chunks": bool(quality.get("heading_aware_chunks")),
+            "content_body_searched": bool(quality.get("content_body_searched")),
+            "top_results": [safe_knowledge_evidence_result(row) for row in rows[:baseline_limit]],
+            "token_omitted": True,
+        })
+    total = len(KNOWLEDGE_RETRIEVAL_EVIDENCE_CASES)
+    recall_at_5 = hits / total if total else 0.0
+    mrr = sum(reciprocal_ranks) / total if total else 0.0
+    p95_ms = percentile(latencies_ms, 95)
+    status = (
+        "ready"
+        if counts["knowledge_documents"] > 0
+        and counts["knowledge_chunks"] > 0
+        and counts["knowledge_chunk_fts_rows"] > 0
+        and recall_at_5 >= 0.8
+        and mrr >= 0.5
+        and fallback_queries == 0
+        else "attention"
+    )
+    metrics = {
+        "queries": total,
+        "hits_at_5": hits,
+        "recall_at_5": round(recall_at_5, 4),
+        "mrr": round(mrr, 4),
+        "p95_ms": round(p95_ms, 2),
+        "fallback_queries": fallback_queries,
+        "heading_chunk_queries": heading_chunk_queries,
+        "baseline_limit": baseline_limit,
+        "thresholds": {
+            "recall_at_5": 0.8,
+            "mrr": 0.5,
+            "fallback_queries": 0,
+        },
+        "token_omitted": True,
+    }
+    return {
+        "provider": "agentops-knowledge",
+        "operation": "knowledge_retrieval_evidence_packet",
+        "version": "v0",
+        "status": status,
+        "workspace_id": workspace_id,
+        "task_context": task_context,
+        "query_hash": stable_hash(query or "recent"),
+        "query_omitted": True,
+        "counts": counts,
+        "metrics": metrics,
+        "primary_search": {
+            "operation": primary_payload.get("operation"),
+            "query_hash": stable_hash(primary_payload.get("query") or query or "recent"),
+            "query_omitted": True,
+            "count": primary_payload.get("count"),
+            "search_quality": primary_payload.get("search_quality") or {},
+            "visibility": primary_payload.get("visibility") or {},
+            "index": primary_payload.get("index") or {},
+            "results": primary_results,
+            "snippet_omitted": True,
+            "content_summary_omitted": True,
+            "raw_content_omitted": True,
+            "raw_prompt_omitted": True,
+            "token_omitted": True,
+        },
+        "baseline": per_query,
+        "contract": "read-only retrieval evidence packet for agents/operators; uses existing Markdown/SQLite FTS index and returns IDs, hashes, headings and metrics without raw snippets, raw prompts, raw responses or credentials",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "task_mutated": False,
+            "run_mutated": False,
+            "tool_mutated": False,
+            "live_execution_performed": False,
+            "external_network": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "snippet_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }, 200
+
+
 def list_agent_plans(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers or {}, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 100)
@@ -4885,76 +5383,6 @@ def get_agent_plan(conn: sqlite3.Connection, plan_id: str, headers=None, auth_ct
     return {"provider": "agentops-agent-plan", "operation": "agent_plan_get", "agent_plan": dict(row), "token_omitted": True}, 200
 
 
-def load_json_list_field(row: sqlite3.Row | dict, field: str) -> list:
-    try:
-        value = row[field]
-    except Exception:
-        value = "[]"
-    try:
-        parsed = json.loads(value or "[]")
-    except Exception:
-        parsed = []
-    return parsed if isinstance(parsed, list) else []
-
-
-def row_field(row: sqlite3.Row | dict | None, field: str, default=None):
-    if row is None:
-        return default
-    try:
-        return row[field]
-    except Exception:
-        return row.get(field, default) if hasattr(row, "get") else default
-
-
-def plan_ref_is_safe_relative_path(ref: str) -> bool:
-    value = str(ref or "").strip()
-    if not value or value.startswith(("http://", "https://", "file://", "~")):
-        return False
-    path = Path(value)
-    return not path.is_absolute() and ".." not in path.parts
-
-
-def plan_ref_path(ref: str) -> Path | None:
-    if not plan_ref_is_safe_relative_path(ref):
-        return None
-    try:
-        resolved = (ROOT / ref).resolve(strict=False)
-        root_resolved = ROOT.resolve(strict=True)
-    except Exception:
-        return None
-    try:
-        resolved.relative_to(root_resolved)
-    except ValueError:
-        return None
-    return resolved
-
-
-def resolve_agent_plan_spec_authority(refs: list) -> dict:
-    readable: list[dict] = []
-    missing: list[str] = []
-    unsafe: list[str] = []
-    for item in refs:
-        ref = str(item or "").strip()
-        if not ref:
-            continue
-        path = plan_ref_path(ref)
-        if not path:
-            unsafe.append(ref)
-            continue
-        if path.exists() and path.is_file():
-            readable.append({"ref": ref, "path": str(path.relative_to(ROOT.resolve(strict=True))), "bytes": path.stat().st_size})
-        else:
-            missing.append(ref)
-    return {
-        "ok": bool(readable) and not missing and not unsafe,
-        "readable": readable,
-        "missing": missing,
-        "unsafe": unsafe,
-        "message": "Referenced specs must be readable files inside the repository.",
-        "token_omitted": True,
-    }
-
-
 def resolve_agent_plan_base_authority(conn: sqlite3.Connection | None, refs: list) -> dict:
     table_bases: list[dict] = []
     file_bases: list[dict] = []
@@ -4973,7 +5401,7 @@ def resolve_agent_plan_base_authority(conn: sqlite3.Connection | None, refs: lis
         if base:
             table_bases.append(dict(base))
             continue
-        path = plan_ref_path(ref)
+        path = plan_ref_path(ref, repo_root=ROOT)
         if not path:
             unsafe.append(ref)
             continue
@@ -4991,51 +5419,6 @@ def resolve_agent_plan_base_authority(conn: sqlite3.Connection | None, refs: lis
         "message": "Referenced bases must exist in the bases table, as readable repository base specs, or as explicit internal ledger bases.",
         "token_omitted": True,
     }
-
-
-def resolve_agent_plan_file_scope(refs: list) -> dict:
-    scoped: list[dict] = []
-    unsafe: list[str] = []
-    for item in refs:
-        ref = str(item or "").strip()
-        if not ref:
-            continue
-        path = plan_ref_path(ref)
-        if not path:
-            unsafe.append(ref)
-            continue
-        scoped.append({"ref": ref, "path": str(path.relative_to(ROOT.resolve(strict=True))), "exists": path.exists()})
-    return {
-        "ok": not unsafe,
-        "scoped": scoped,
-        "unsafe": unsafe,
-        "message": "Proposed file changes must stay inside the repository and use relative paths.",
-        "token_omitted": True,
-    }
-
-
-def agent_plan_contract(row: sqlite3.Row | dict) -> dict:
-    return {
-        "workspace_id": row_field(row, "workspace_id"),
-        "task_id": row_field(row, "task_id"),
-        "run_id": row_field(row, "run_id"),
-        "agent_id": row_field(row, "agent_id"),
-        "task_understanding": row_field(row, "task_understanding") or "",
-        "referenced_specs": load_json_list_field(row, "referenced_specs_json"),
-        "referenced_memories": load_json_list_field(row, "referenced_memories_json"),
-        "referenced_bases": load_json_list_field(row, "referenced_bases_json"),
-        "proposed_files_to_change": load_json_list_field(row, "proposed_files_to_change_json"),
-        "risk_level": row_field(row, "risk_level"),
-        "approval_required": bool(row_field(row, "approval_required")),
-        "execution_steps": load_json_list_field(row, "execution_steps_json"),
-        "verification_plan": row_field(row, "verification_plan") or "",
-        "rollback_plan": row_field(row, "rollback_plan") or "",
-        "plan_version": int(row_field(row, "plan_version", 1) or 1),
-    }
-
-
-def compute_agent_plan_hash(row: sqlite3.Row | dict) -> str:
-    return stable_hash(agent_plan_contract(row))
 
 
 def resolve_agent_plan_memory_authority(conn: sqlite3.Connection | None, row: sqlite3.Row | dict, refs: list) -> dict:
@@ -5098,69 +5481,17 @@ def verify_agent_plan_row(row: sqlite3.Row | dict, conn: sqlite3.Connection | No
     memories = load_json_list_field(row, "referenced_memories_json")
     bases = load_json_list_field(row, "referenced_bases_json")
     files = load_json_list_field(row, "proposed_files_to_change_json")
-    steps = load_json_list_field(row, "execution_steps_json")
-    risk = row["risk_level"]
-    approval_required = bool(row["approval_required"])
-    spec_authority = resolve_agent_plan_spec_authority(specs)
+    spec_authority = resolve_agent_plan_spec_authority(specs, repo_root=ROOT)
     memory_authority = resolve_agent_plan_memory_authority(conn, row, memories)
     base_authority = resolve_agent_plan_base_authority(conn, bases)
-    file_scope = resolve_agent_plan_file_scope(files)
-    checks = [
-        {"id": "read_specs", "ok": bool(specs) and bool(spec_authority.get("ok")), "message": "Plan references readable specs or workflow docs.", "details": spec_authority},
-        {"id": "retrieve_memory", "ok": bool(memories), "message": "Plan references memory, knowledge, or failure-case context."},
-        {"id": "memory_authority", "ok": bool(memory_authority.get("ok")), "message": "Referenced memory ids exist and are approved before acting as authority.", "details": memory_authority},
-        {"id": "compare_bases", "ok": bool(bases) and bool(base_authority.get("ok")), "message": "Plan references existing base constraints or reusable foundations.", "details": base_authority},
-        {"id": "execution_steps", "ok": len(steps) >= 3, "message": "Plan includes concrete execution steps."},
-        {"id": "verification_plan", "ok": bool(str(row["verification_plan"] or "").strip()), "message": "Plan includes verification path."},
-        {"id": "rollback_plan", "ok": bool(str(row["rollback_plan"] or "").strip()), "message": "Plan includes rollback path."},
-        {"id": "risk_gate", "ok": risk not in {"high", "critical"} or approval_required, "message": "High/critical risk requires approval."},
-        {"id": "file_scope", "ok": (bool(files) or risk == "low") and bool(file_scope.get("ok")), "message": "Non-low work names proposed files or surfaces inside the repository.", "details": file_scope},
-    ]
-    failed = [check for check in checks if not check["ok"]]
-    plan_hash = row_field(row, "plan_hash") or compute_agent_plan_hash(row)
-    return {
-        "pass": not failed,
-        "plan_hash": plan_hash,
-        "checks": checks,
-        "failed_checks": failed,
-        "summary": {
-            "referenced_specs": len(specs),
-            "readable_spec_refs": len(spec_authority.get("readable") or []),
-            "referenced_memories": len(memories),
-            "approved_memory_refs": len(memory_authority.get("approved") or []),
-            "non_authoritative_memory_refs": len(memory_authority.get("non_authoritative") or []),
-            "missing_memory_refs": len(memory_authority.get("missing") or []),
-            "knowledge_context_refs": len(memory_authority.get("knowledge_context") or []),
-            "referenced_bases": len(bases),
-            "resolved_base_refs": len((base_authority.get("table_bases") or []) + (base_authority.get("file_bases") or []) + (base_authority.get("virtual_bases") or [])),
-            "proposed_files_to_change": len(files),
-            "scoped_file_refs": len(file_scope.get("scoped") or []),
-            "execution_steps": len(steps),
-            "risk_level": risk,
-            "approval_required": approval_required,
-        },
-        "token_omitted": True,
-    }
-
-
-def build_agent_plan_pending_approval(row: sqlite3.Row | dict) -> dict:
-    plan_id = row_field(row, "plan_id")
-    return {
-        "approval_id": row_field(row, "approval_id") or stable_id("ap_plan", plan_id),
-        "task_id": row_field(row, "task_id"),
-        "run_id": row_field(row, "run_id"),
-        "tool_call_id": None,
-        "requested_by_agent_id": row_field(row, "agent_id"),
-        "approver_user_id": "usr_founder",
-        "decision": "pending",
-        "reason": redact_text(
-            f"Agent Plan approval required before execution: {plan_id} risk={row_field(row, 'risk_level')} hash={(row_field(row, 'plan_hash') or '')[:12]}",
-            500,
-        ),
-        "expires_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7)).isoformat(),
-        "created_at": now_iso(),
-        "decided_at": None,
-    }
+    file_scope = resolve_agent_plan_file_scope(files, repo_root=ROOT)
+    return build_agent_plan_verification(
+        row,
+        spec_authority=spec_authority,
+        memory_authority=memory_authority,
+        base_authority=base_authority,
+        file_scope=file_scope,
+    )
 
 
 def insert_or_keep_agent_plan_approval(conn: sqlite3.Connection, approval_row: dict) -> dict:
@@ -5188,45 +5519,15 @@ def ensure_agent_plan_approval_run(conn: sqlite3.Connection, row: sqlite3.Row | 
     if existing:
         return run_id
     now = now_iso()
-    upsert_run(conn, {
-        "run_id": run_id,
-        "workspace_id": row_field(row, "workspace_id") or "local-demo",
-        "task_id": task_id,
-        "agent_id": agent_id,
-        "runtime_type": "governance",
-        "status": "waiting_approval",
-        "started_at": now,
-        "ended_at": None,
-        "duration_ms": None,
-        "input_summary": f"Governance anchor for Agent Plan approval {plan_id}.",
-        "output_summary": None,
-        "model_provider": "agentops",
-        "model_name": "agent-plan-approval-gate",
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "reasoning_tokens": 0,
-        "cost_usd": 0.0,
-        "error_type": None,
-        "error_message": None,
-        "trace_id": stable_id("trace_plan_approval", plan_id),
-        "parent_run_id": None,
-        "delegation_id": stable_id("del_plan_approval", plan_id),
-        "approval_required": 1,
-        "agent_plan_id": plan_id,
-        "plan_hash": row_field(row, "plan_hash"),
-        "created_at": now,
-    }, actor_id="agent-plan-approval-gate", audit_metadata={"plan_id": plan_id, "token_omitted": True})
+    approval_run = build_agent_plan_approval_run(
+        row,
+        run_id=run_id,
+        trace_id=stable_id("trace_plan_approval", plan_id),
+        delegation_id=stable_id("del_plan_approval", plan_id),
+        created_at=now,
+    )
+    upsert_run(conn, approval_run, actor_id="agent-plan-approval-gate", audit_metadata={"plan_id": plan_id, "token_omitted": True})
     return run_id
-
-
-def agent_plan_verification_hash(plan_id: str, verification: dict) -> str:
-    return stable_hash({
-        "plan_id": plan_id,
-        "plan_hash": verification.get("plan_hash"),
-        "pass": verification.get("pass"),
-        "failed_checks": [check.get("id") for check in verification.get("failed_checks") or []],
-        "summary": verification.get("summary") or {},
-    })
 
 
 def persist_agent_plan_verification(conn: sqlite3.Connection, plan_id: str, verification: dict) -> tuple[dict, str]:
@@ -5287,19 +5588,11 @@ def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dic
     risk = coerce_choice(body.get("risk_level"), VALID_RISK_LEVELS, "medium")
     requested_status = body.get("status") or "submitted"
     if (body.get("approval_required") or risk in {"high", "critical"}) and requested_status == "submitted" and not task_id and not run_id:
-        return {
-            "error": "agent_plan_approval_anchor_required",
-            "message": "Approval-required Agent Plans must be attached to a task or run so the approval ledger has task/run anchors.",
-            "token_omitted": True,
-        }, 400
+        return build_agent_plan_approval_anchor_required_response(), 400
     if requested_status not in {"draft", "submitted"}:
-        return {
-            "error": "plan_status_transition_required",
-            "message": "Agent-created plans may only start as draft or submitted. Human/admin approval must be a separate transition.",
-            "requested_status": redact_text(requested_status, 80),
-            "allowed_create_statuses": ["draft", "submitted"],
-            "token_omitted": True,
-        }, 400
+        return build_agent_plan_status_transition_required_response(
+            requested_status=redact_text(requested_status, 80),
+        ), 400
     row = {
         "plan_id": body.get("plan_id") or stable_id("plan", agent_id, task_id or run_id or stable_hash(understanding)[:12], now_iso()),
         "workspace_id": ident["workspace_id"],
@@ -5330,7 +5623,12 @@ def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dic
     row["plan_hash"] = compute_agent_plan_hash(row)
     approval_row = None
     if row["approval_required"] and row["status"] == "submitted":
-        approval_row = build_agent_plan_pending_approval(row)
+        approval_row = build_agent_plan_pending_approval(
+            row,
+            approval_id=row_field(row, "approval_id") or stable_id("ap_plan", row["plan_id"]),
+            created_at=now_iso(),
+            expires_at=(dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7)).isoformat(),
+        )
         row["approval_id"] = approval_row["approval_id"]
     conn.execute(
         """INSERT INTO agent_plans(plan_id,workspace_id,task_id,run_id,agent_id,task_understanding,referenced_specs_json,
@@ -5346,7 +5644,7 @@ def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dic
     if approval_row:
         approval_row["run_id"] = ensure_agent_plan_approval_run(conn, row)
         if not approval_row.get("task_id") or not approval_row.get("run_id"):
-            return {"error": "agent_plan_approval_anchor_required", "message": "Approval-required Agent Plans must be attached to a task or run so the approval ledger has task/run anchors.", "plan_id": row["plan_id"], "token_omitted": True}, 400
+            return build_agent_plan_approval_anchor_required_response(plan_id=row["plan_id"]), 400
         approval_row = insert_or_keep_agent_plan_approval(conn, approval_row)
         audit(conn, "agent", agent_id, "agent_gateway.agent_plan_approval_request", "approvals", approval_row["approval_id"], None, approval_row, {"plan_id": row["plan_id"], "plan_hash": row["plan_hash"], "token_omitted": True})
     audit(conn, "agent", agent_id, "agent_gateway.agent_plan_create", "agent_plans", row["plan_id"], None, row, {"raw_omitted": True, "plan_hash": row["plan_hash"]})
@@ -5367,13 +5665,7 @@ def agent_plan_transition_actor(conn: sqlite3.Connection, headers, body) -> tupl
     if auth_error:
         return None, (auth_error, agent_gateway_error_status(auth_error))
     if agent_gateway_is_bound_auth(auth_ctx):
-        return None, ({
-            "error": "agent_plan_human_approval_required",
-            "message": "Bound Agent Gateway tokens and sessions cannot approve or reject Agent Plans.",
-            "auth_mode": auth_ctx.get("mode"),
-            "agent_id": auth_ctx.get("agent_id"),
-            "token_omitted": True,
-        }, 403)
+        return None, (build_agent_plan_bound_approval_forbidden_response(auth_ctx=auth_ctx), 403)
     requested_actor_type = str(body.get("actor_type") or "user").strip().lower()
     actor_type = requested_actor_type if requested_actor_type in {"user", "admin", "policy"} else "user"
     actor_id = (
@@ -5402,13 +5694,25 @@ def transition_agent_plan(conn: sqlite3.Connection, plan_id: str, decision: str,
         return workspace_forbidden("agent_plan", plan_id, actor["workspace_id"], plan["workspace_id"])
     before = dict(plan)
     if before["status"] in {"superseded"}:
-        return {"error": "agent_plan_not_transitionable", "message": "Superseded plans cannot be approved or rejected.", "plan_id": plan_id, "status": before["status"], "token_omitted": True}, 409
+        return build_agent_plan_not_transitionable_response(
+            plan_id=plan_id,
+            status=before["status"],
+            message="Superseded plans cannot be approved or rejected.",
+        ), 409
     if decision == "approved":
         if before["status"] != "submitted":
-            return {"error": "agent_plan_not_approvable", "message": "Only submitted plans can be approved.", "plan_id": plan_id, "status": before["status"], "token_omitted": True}, 409
+            return build_agent_plan_not_approvable_response(
+                plan_id=plan_id,
+                status=before["status"],
+                message="Only submitted plans can be approved.",
+            ), 409
         verification = verify_agent_plan_row(plan, conn)
         if not verification.get("pass"):
-            return {"error": "agent_plan_verification_failed", "message": "Agent Plan must pass verification before approval.", "plan_id": plan_id, "failed_checks": verification.get("failed_checks") or [], "token_omitted": True}, 428
+            return build_agent_plan_verification_failed_response(
+                plan_id=plan_id,
+                failed_checks=verification.get("failed_checks") or [],
+                message="Agent Plan must pass verification before approval.",
+            ), 428
         plan, verification_hash = persist_agent_plan_verification(conn, plan_id, verification)
     else:
         verification = verify_agent_plan_row(plan, conn)
@@ -5503,32 +5807,26 @@ def apply_agent_plan_approval_decision(conn: sqlite3.Connection, approval: sqlit
         return None, None
     before = dict(plan)
     if before["status"] == "superseded":
-        return None, ({
-            "error": "agent_plan_not_transitionable",
-            "message": "Superseded plans cannot be approved or rejected.",
-            "plan_id": before["plan_id"],
-            "status": before["status"],
-            "token_omitted": True,
-        }, 409)
+        return None, (build_agent_plan_not_transitionable_response(
+            plan_id=before["plan_id"],
+            status=before["status"],
+            message="Superseded plans cannot be approved or rejected.",
+        ), 409)
     verification = verify_agent_plan_row(plan, conn)
     verification_hash = agent_plan_verification_hash(before["plan_id"], verification)
     if decision == "approved":
         if before["status"] not in {"submitted", "approved"}:
-            return None, ({
-                "error": "agent_plan_not_approvable",
-                "message": "Only submitted Agent Plans can be approved.",
-                "plan_id": before["plan_id"],
-                "status": before["status"],
-                "token_omitted": True,
-            }, 409)
+            return None, (build_agent_plan_not_approvable_response(
+                plan_id=before["plan_id"],
+                status=before["status"],
+                message="Only submitted Agent Plans can be approved.",
+            ), 409)
         if not verification.get("pass"):
-            return None, ({
-                "error": "agent_plan_verification_failed",
-                "message": "Agent Plan must pass method-block verification before approval.",
-                "plan_id": before["plan_id"],
-                "failed_checks": verification.get("failed_checks") or [],
-                "token_omitted": True,
-            }, 428)
+            return None, (build_agent_plan_verification_failed_response(
+                plan_id=before["plan_id"],
+                failed_checks=verification.get("failed_checks") or [],
+                message="Agent Plan must pass method-block verification before approval.",
+            ), 428)
         _persisted, verification_hash = persist_agent_plan_verification(conn, before["plan_id"], verification)
         conn.execute(
             """UPDATE agent_plans
@@ -6559,87 +6857,6 @@ def operator_close_execution_evidence_gap(conn: sqlite3.Connection, body: dict, 
 VALID_OPERATOR_ACTION_RECEIPT_STATUSES = {"recorded", "verified", "failed", "skipped"}
 
 
-def operator_control_readback_public(row: sqlite3.Row | dict | None) -> dict | None:
-    if not row:
-        return None
-    row_dict = dict(row)
-    try:
-        metadata = json.loads(row_dict.get("metadata_json") or "{}")
-    except Exception:
-        metadata = {}
-    control_readback = metadata.get("control_readback") if isinstance(metadata.get("control_readback"), dict) else {}
-    return {
-        "readback_id": metadata.get("readback_id"),
-        "receipt_id": metadata.get("receipt_id") or row_dict.get("entity_id"),
-        "workspace_id": metadata.get("workspace_id") or "local-demo",
-        "action_id": metadata.get("action_id"),
-        "action_signature": metadata.get("action_signature"),
-        "source": metadata.get("source") or "operator.action_queue_control_readback",
-        "control_readback": control_readback,
-        "created_at": row_dict.get("created_at"),
-        "tamper_chain_hash": row_dict.get("tamper_chain_hash"),
-        "token_omitted": True,
-    }
-
-
-def operator_action_evaluation_public(row: sqlite3.Row | dict | None) -> dict | None:
-    if not row:
-        return None
-    row_dict = dict(row)
-    try:
-        rubric = json.loads(row_dict.get("rubric_json") or "{}")
-    except Exception:
-        rubric = {}
-    return {
-        "evaluation_id": row_dict.get("evaluation_id"),
-        "receipt_id": row_dict.get("receipt_id"),
-        "workspace_id": row_dict.get("workspace_id") or "local-demo",
-        "action_id": row_dict.get("action_id"),
-        "action_signature": row_dict.get("action_signature"),
-        "action_hash": row_dict.get("action_hash"),
-        "verify_hash": row_dict.get("verify_hash"),
-        "source": row_dict.get("source") or "operator_action_queue",
-        "evaluator_type": row_dict.get("evaluator_type") or "rule",
-        "score": float(row_dict.get("score") or 0),
-        "pass_fail": row_dict.get("pass_fail"),
-        "rubric": rubric,
-        "notes": row_dict.get("notes"),
-        "created_at": row_dict.get("created_at"),
-        "token_omitted": True,
-    }
-
-
-def operator_action_receipt_public(row: sqlite3.Row) -> dict:
-    try:
-        metadata = json.loads(row["metadata_json"] or "{}")
-    except Exception:
-        metadata = {}
-    return {
-        "receipt_id": row["entity_id"],
-        "audit_id": row["audit_id"],
-        "actor_id": row["actor_id"],
-        "workspace_id": metadata.get("workspace_id") or "local-demo",
-        "status": metadata.get("status") or "recorded",
-        "source": metadata.get("source") or "operator_action_queue",
-        "action_id": metadata.get("action_id"),
-        "action_signature": metadata.get("action_signature"),
-        "action_command": metadata.get("action_command"),
-        "action_hash": metadata.get("action_hash"),
-        "verify_command": metadata.get("verify_command"),
-        "verify_hash": metadata.get("verify_hash"),
-        "result_summary": metadata.get("result_summary"),
-        "control_readback": metadata.get("control_readback") if isinstance(metadata.get("control_readback"), dict) else None,
-        "created_at": row["created_at"],
-        "tamper_chain_hash": row["tamper_chain_hash"],
-        "token_omitted": True,
-    }
-
-
-def operator_receipt_requires_control_readback(receipt: dict) -> bool:
-    source = str(receipt.get("source") or "")
-    return source.startswith("advance_loop:") or source == "handoff.evidence_remediation"
-
-
 def operator_action_receipt_rows(conn: sqlite3.Connection, workspace_id: str, limit: int) -> list[dict]:
     limit = min(max(int(limit), 1), 1000)
     rows = conn.execute(
@@ -7373,54 +7590,30 @@ def resolve_agent_plan_for_run(conn: sqlite3.Connection, body: dict, task: sqlit
             (ident["workspace_id"], task["task_id"], agent_id),
         ).fetchone()
     if not plan:
-        return None, ({
-            "error": "agent_plan_required",
-            "message": "Agent Gateway run_start requires a submitted, verified Agent Plan for this task and agent.",
-            "task_id": task["task_id"],
-            "agent_id": agent_id,
-            "hint": "Create and verify a plan first: agentops agent-plan create ... && agentops agent-plan verify --plan-id <plan_id>",
-            "token_omitted": True,
-        }, 428)
+        return None, (build_agent_plan_run_required_response(task_id=task["task_id"], agent_id=agent_id), 428)
     if plan["workspace_id"] != ident["workspace_id"]:
         return None, workspace_forbidden("agent_plan", plan["plan_id"], ident["workspace_id"], plan["workspace_id"])
     if plan["task_id"] != task["task_id"]:
-        return None, ({"error": "agent_plan_task_mismatch", "message": "Agent Plan task_id must match run_start task_id.", "plan_id": plan["plan_id"], "token_omitted": True}, 409)
+        return None, (build_agent_plan_run_task_mismatch_response(plan_id=plan["plan_id"]), 409)
     if plan["agent_id"] != agent_id:
-        return None, ({"error": "agent_plan_agent_mismatch", "message": "Agent Plan agent_id must match run_start agent_id.", "plan_id": plan["plan_id"], "token_omitted": True}, 409)
+        return None, (build_agent_plan_run_agent_mismatch_response(plan_id=plan["plan_id"]), 409)
     if plan["status"] not in {"submitted", "approved"}:
-        return None, ({"error": "agent_plan_not_executable", "message": "Agent Plan must be submitted or approved before run_start.", "plan_id": plan["plan_id"], "status": plan["status"], "token_omitted": True}, 409)
+        return None, (build_agent_plan_run_not_executable_response(plan_id=plan["plan_id"], status=plan["status"]), 409)
     if bool(plan["approval_required"]):
         approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (plan["approval_id"] or "",)).fetchone()
         if plan["status"] != "approved" or not approval or approval["decision"] != "approved":
-            return None, ({
-                "error": "agent_plan_approval_required",
-                "message": "This Agent Plan requires human/admin/policy approval before run_start.",
-                "plan_id": plan["plan_id"],
-                "status": plan["status"],
-                "approval_id": plan["approval_id"],
-                "approval_decision": approval["decision"] if approval else None,
-                "token_omitted": True,
-            }, 428)
+            return None, (build_agent_plan_run_approval_required_response(plan=plan, approval=approval), 428)
     stored_hash = plan["plan_hash"]
     current_hash = compute_agent_plan_hash(plan)
     if stored_hash and stored_hash != current_hash:
-        return None, ({
-            "error": "agent_plan_hash_mismatch",
-            "message": "Agent Plan content no longer matches its stored plan_hash.",
-            "plan_id": plan["plan_id"],
-            "stored_plan_hash": stored_hash,
-            "current_plan_hash": current_hash,
-            "token_omitted": True,
-        }, 409)
+        return None, (build_agent_plan_run_hash_mismatch_response(plan_id=plan["plan_id"], stored_plan_hash=stored_hash, current_plan_hash=current_hash), 409)
     verification = verify_agent_plan_row(plan, conn)
     if not verification.get("pass"):
-        return None, ({
-            "error": "agent_plan_verification_failed",
-            "message": "Agent Plan failed method-block verification and cannot authorize run_start.",
-            "plan_id": plan["plan_id"],
-            "failed_checks": verification.get("failed_checks") or [],
-            "token_omitted": True,
-        }, 428)
+        return None, (build_agent_plan_verification_failed_response(
+            plan_id=plan["plan_id"],
+            failed_checks=verification.get("failed_checks") or [],
+            message="Agent Plan failed method-block verification and cannot authorize run_start.",
+        ), 428)
     plan, verification_hash = persist_agent_plan_verification(conn, plan["plan_id"], verification)
     return {
         "plan": plan,
@@ -7579,33 +7772,30 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
     run_id = body.get("run_id") or new_id("run_gw")
     existing_run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
     if existing_run:
-        expected = {
-            "workspace_id": ident["workspace_id"],
-            "task_id": task_id,
-            "agent_id": agent_id,
-            "agent_plan_id": plan_binding["plan_id"],
-            "plan_hash": plan_binding["plan_hash"],
-        }
-        actual = {key: existing_run[key] for key in expected}
-        mismatches = [key for key, value in expected.items() if actual.get(key) != value]
+        binding_comparison = compare_run_start_binding(
+            existing_run,
+            workspace_id=ident["workspace_id"],
+            task_id=task_id,
+            agent_id=agent_id,
+            plan_binding=plan_binding,
+        )
+        mismatches = binding_comparison["mismatches"]
         if mismatches:
             audit(conn, "agent", agent_id, "agent_gateway.run_start_rebind_blocked", "runs", run_id, dict(existing_run), dict(existing_run), {
                 "requested_agent_plan_id": plan_binding["plan_id"],
                 "requested_plan_hash": plan_binding["plan_hash"],
                 "mismatches": mismatches,
+                "binding_expected": binding_comparison["expected"],
+                "binding_actual": binding_comparison["actual"],
                 "token_omitted": True,
             })
-            return {
-                "error": "run_start_rebind_forbidden",
-                "message": "Existing runs cannot be rebound to a different workspace, task, agent, agent_plan_id, or plan_hash.",
-                "run_id": run_id,
-                "existing_agent_plan_id": existing_run["agent_plan_id"],
-                "existing_plan_hash": existing_run["plan_hash"],
-                "requested_agent_plan_id": plan_binding["plan_id"],
-                "requested_plan_hash": plan_binding["plan_hash"],
-                "mismatches": mismatches,
-                "token_omitted": True,
-            }, 409
+            return build_run_start_rebind_forbidden_response(
+                existing_run,
+                run_id=run_id,
+                requested_agent_plan_id=plan_binding["plan_id"],
+                requested_plan_hash=plan_binding["plan_hash"],
+                mismatches=mismatches,
+            ), 409
     row = {
         "run_id": run_id,
         "workspace_id": ident["workspace_id"],
@@ -7644,16 +7834,7 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
     conn.execute("UPDATE tasks SET status='running', owner_agent_id=COALESCE(NULLIF(owner_agent_id,''), ?), updated_at=? WHERE task_id=?", (agent_id, now_iso(), task_id))
     conn.execute("UPDATE agents SET status='running', updated_at=? WHERE agent_id=?", (now_iso(), agent_id))
     runtime_event(conn, "rtc_agent_gateway_local", "run.start", "running", task_id=task_id, run_id=run_id, agent_id=agent_id, input_summary=row["input_summary"], output_summary=f"Run bound to agent_plan {plan_binding['plan_id']}.")
-    return {
-        "run": row,
-        "outcome": outcome,
-        "agent_plan": {
-            "plan_id": plan_binding["plan_id"],
-            "plan_hash": plan_binding["plan_hash"],
-            "verification_result_hash": plan_binding.get("verification_result_hash"),
-            "verification_pass": bool((plan_binding.get("verification") or {}).get("pass")),
-        },
-    }, 201 if outcome == "created" else 200
+    return build_run_start_success_response(run=row, outcome=outcome, plan_binding=plan_binding), 201 if outcome == "created" else 200
 
 
 def agent_gateway_run_heartbeat(conn, run_id: str, body) -> tuple[dict, int]:
@@ -7669,71 +7850,31 @@ def agent_gateway_run_heartbeat(conn, run_id: str, body) -> tuple[dict, int]:
     duration_ms = parse_ms(body.get("duration_ms"))
     if duration_ms is None:
         duration_ms = before["duration_ms"]
-    conn.execute(
-        """UPDATE runs SET status=?, ended_at=?, duration_ms=?, output_summary=?, error_type=?, error_message=?, output_tokens=?, cost_usd=?
-        WHERE run_id=?""",
-        (
-            status,
-            ended_at,
-            duration_ms,
-            output_summary,
-            redact_text(body.get("error_type"), 80) if body.get("error_type") else before["error_type"],
-            redact_text(body.get("error_message"), 200) if body.get("error_message") else before["error_message"],
-            int(body.get("output_tokens") or before["output_tokens"] or 0),
-            float(body.get("cost_usd") if body.get("cost_usd") is not None else before["cost_usd"] or 0),
-            run_id,
-        ),
+    heartbeat_update = build_run_heartbeat_update(
+        before,
+        status=status,
+        ended_at=ended_at,
+        duration_ms=duration_ms,
+        output_summary=output_summary,
+        error_type=redact_text(body.get("error_type"), 80) if body.get("error_type") else before["error_type"],
+        error_message=redact_text(body.get("error_message"), 200) if body.get("error_message") else before["error_message"],
+        output_tokens=int(body.get("output_tokens") or before["output_tokens"] or 0),
+        cost_usd=float(body.get("cost_usd") if body.get("cost_usd") is not None else before["cost_usd"] or 0),
     )
-    if status in {"completed", "failed", "blocked"}:
-        task_status = "completed" if status == "completed" else "blocked" if status == "blocked" else "failed"
+    conn.execute(
+        """UPDATE runs SET status=:status, ended_at=:ended_at, duration_ms=:duration_ms, output_summary=:output_summary,
+        error_type=:error_type, error_message=:error_message, output_tokens=:output_tokens, cost_usd=:cost_usd
+        WHERE run_id=:run_id""",
+        heartbeat_update,
+    )
+    task_status = run_heartbeat_terminal_task_status(status)
+    if task_status:
         conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", (task_status, now_iso(), before["task_id"]))
         conn.execute("UPDATE agents SET status='idle', updated_at=? WHERE agent_id=?", (now_iso(), before["agent_id"]))
     after = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
     runtime_event(conn, "rtc_agent_gateway_local", "run.heartbeat", status, run_id=run_id, task_id=before["task_id"], agent_id=before["agent_id"], output_summary=output_summary, error_message=body.get("error_message"))
     audit(conn, "agent", before["agent_id"], "agent_gateway.run_heartbeat", "runs", run_id, dict(before), dict(after), {"status": status})
     return {"run": dict(after)}, 200
-
-
-def tool_call_has_external_side_effect_intent(tool_name: str, category: str, target_resource: str | None, args: dict) -> bool:
-    scanned_args = dict(args or {})
-    # Capability metadata says whether a runtime would need a prepared action for
-    # external writes; it is not itself an external write intent.
-    safe_metadata_keys = {
-        "requires_prepared_action_for_external_write",
-        "credential_storage",
-        "credential_storage_policy",
-        "credentials_stored",
-        "raw_document_storage",
-        "raw_documents_stored",
-        "raw_payload_stored",
-        "raw_text_omitted",
-        "summary_only",
-    }
-    for key in list(scanned_args):
-        if key in safe_metadata_keys or str(key).endswith("_storage"):
-            scanned_args.pop(key, None)
-    explicit_target = str(
-        scanned_args.get("target")
-        or scanned_args.get("url")
-        or scanned_args.get("endpoint")
-        or scanned_args.get("resource")
-        or scanned_args.get("destination")
-        or ""
-    ).strip().lower()
-    haystack = " ".join([
-        tool_name or "",
-        category or "",
-        target_resource or "",
-        json.dumps(scanned_args, ensure_ascii=False, sort_keys=True),
-    ]).lower()
-    target = (target_resource or "").strip().lower()
-    if target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES) or explicit_target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES):
-        return True
-    if tool_name in RISKY_TOOLS:
-        return True
-    if category in {"email", "notion", "github", "discord", "mcp", "database"} and any(keyword in haystack for keyword in EXTERNAL_SIDE_EFFECT_KEYWORDS):
-        return True
-    return any(keyword in haystack for keyword in EXTERNAL_SIDE_EFFECT_KEYWORDS)
 
 
 def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
@@ -7754,7 +7895,12 @@ def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
     if external_side_effect_intent and risk in {"low", "medium"}:
         risk = "high"
     status = coerce_choice(body.get("status"), {"planned", "running", "completed", "failed", "blocked", "waiting_approval"}, "completed" if risk in {"low", "medium"} else "waiting_approval")
-    high_risk_side_effect = risk in {"high", "critical"} and (
+    side_effect_like_tool = (
+        tool_name in RISKY_TOOLS
+        or bool(body.get("side_effect_id"))
+        or external_side_effect_intent
+    )
+    high_risk_side_effect = risk in {"high", "critical"} and side_effect_like_tool and (
         status == "completed"
         or bool(body.get("side_effect_id"))
         or external_side_effect_intent
@@ -7781,18 +7927,14 @@ def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
             "raw_omitted": True,
             "token_omitted": True,
         })
-        return {
-            "error": "high_risk_prepared_action_required",
-            "message": "High-risk or critical external side-effect tool calls must use prepare_action=true and resume the prepared action after approval.",
-            "tool_name": tool_name,
-            "risk_level": risk,
-            "requested_status": status,
-            "external_side_effect_intent": external_side_effect_intent,
-            "run_id": run_id,
-            "task_id": run["task_id"],
-            "next_action": "Record again with prepare_action=true, inspect/approve the generated approval, then resume the prepared action exactly once with provider_side_effect_id.",
-            "token_omitted": True,
-        }, 428
+        return build_high_risk_toolcall_prepared_action_required_response(
+            tool_name=tool_name,
+            risk_level=risk,
+            requested_status=status,
+            external_side_effect_intent=external_side_effect_intent,
+            run_id=run_id,
+            task_id=run["task_id"],
+        ), 428
     row = {
         "tool_call_id": body.get("tool_call_id") or new_id("tc_gw"),
         "run_id": run_id,
@@ -7846,19 +7988,7 @@ def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
         prepared_action_payload, _prepared_status = agent_gateway_prepare_action(conn, prepare_body)
     response = {"tool_call": row, "outcome": outcome}
     if prepared_action_payload:
-        response["approval_wall"] = {
-            "prepared_action": prepared_action_payload.get("prepared_action"),
-            "approval": prepared_action_payload.get("approval"),
-            "resume_contract": prepared_action_payload.get("resume_contract"),
-            "operation": prepared_action_payload.get("operation"),
-            "outcome": prepared_action_payload.get("outcome"),
-            "token_omitted": True,
-        }
-        response["next_action"] = (
-            f"agentops approval inspect --approval-id {prepared_action_payload.get('approval', {}).get('approval_id')} && "
-            f"agentops approval approve --approval-id {prepared_action_payload.get('approval', {}).get('approval_id')} && "
-            f"agentops approval prepared-action resume --action-id {prepared_action_payload.get('prepared_action', {}).get('action_id')} --provider-side-effect-id <id>"
-        )
+        response.update(build_prepared_action_prepare_response_fields(prepared_action_payload))
     return response, 201 if outcome == "created" else 200
 
 
@@ -7869,12 +7999,15 @@ def get_prepared_action_for_approval(conn: sqlite3.Connection, approval_id: str)
 def agent_gateway_get_prepared_action(conn: sqlite3.Connection, action_id: str, headers, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers, auth_ctx=auth_ctx)
     row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
-    if not row:
-        return {"error": "not_found", "message": f"prepared action {action_id} not found", "token_omitted": True}, 404
-    if row_workspace(row) != ident["workspace_id"]:
-        return workspace_forbidden("prepared_action", action_id, ident["workspace_id"], row_workspace(row))
-    if agent_gateway_is_bound_auth(auth_ctx) and row["requested_by_agent_id"] != ident["agent_id"]:
-        return {"error": "forbidden", "message": "Agent token cannot inspect another agent's prepared action.", "token_omitted": True}, 403
+    access_error = prepared_action_route_access_error(
+        action_id=action_id,
+        row=row,
+        identity=ident,
+        operation="inspect",
+        enforce_agent_match=agent_gateway_is_bound_auth(auth_ctx),
+    )
+    if access_error:
+        return access_error
     approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
     return build_prepared_action_get_response(row, approval), 200
 
@@ -7999,38 +8132,24 @@ def agent_gateway_prepare_action(conn, body) -> tuple[dict, int]:
 
 def agent_gateway_resume_prepared_action(conn, action_id: str, body) -> tuple[dict, int]:
     row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
-    if not row:
-        return {"error": "prepared_action_not_found", "token_omitted": True}, 404
     ident = agent_gateway_identity({}, body)
-    if row_workspace(row) != ident["workspace_id"]:
-        return workspace_forbidden("prepared_action", action_id, ident["workspace_id"], row_workspace(row))
-    if ident.get("agent_id") and row["requested_by_agent_id"] != ident["agent_id"]:
-        return {"error": "forbidden", "message": "Agent token cannot resume another agent's prepared action.", "token_omitted": True}, 403
+    access_error = prepared_action_route_access_error(
+        action_id=action_id,
+        row=row,
+        identity=ident,
+        operation="resume",
+        enforce_agent_match=bool(ident.get("agent_id")),
+    )
+    if access_error:
+        return access_error
     approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
-    if not approval or approval["decision"] != "approved":
-        return {
-            "error": "approval_required",
-            "message": "Prepared action can resume only after its approval is approved.",
-            "approval_id": row["approval_id"],
-            "decision": approval["decision"] if approval else None,
-            "token_omitted": True,
-        }, 409
-    if row["consumed_at"] or row["status"] == "consumed":
-        return {
-            "error": "prepared_action_already_consumed",
-            "prepared_action": prepared_action_public(row),
-            "token_omitted": True,
-        }, 409
+    blocked_response = build_prepared_action_resume_blocked_response(action_id=action_id, row=row, approval=approval)
+    if blocked_response:
+        payload, status = blocked_response
+        if payload.get("error") == "action_hash_mismatch":
+            audit(conn, "agent", row["requested_by_agent_id"], "approval_wall.prepared_action_hash_mismatch", "prepared_actions", action_id, dict(row), dict(row), {"stored_action_hash": row["action_hash"], "current_action_hash": payload.get("current_action_hash"), "token_omitted": True})
+        return payload, status
     current_hash = prepared_action_hash(dict(row))
-    if current_hash != row["action_hash"]:
-        audit(conn, "agent", row["requested_by_agent_id"], "approval_wall.prepared_action_hash_mismatch", "prepared_actions", action_id, dict(row), dict(row), {"stored_action_hash": row["action_hash"], "current_action_hash": current_hash, "token_omitted": True})
-        return {
-            "error": "action_hash_mismatch",
-            "message": "Prepared action changed after approval; request a new approval.",
-            "stored_action_hash": row["action_hash"],
-            "current_action_hash": current_hash,
-            "token_omitted": True,
-        }, 409
     now = now_iso()
     provider_side_effect_id = redact_text(body.get("provider_side_effect_id") or f"side_effect_{action_id}_{row['action_hash'][:12]}", 180)
     result_summary = redact_text(body.get("result_summary") or f"Prepared action {action_id} resumed exactly once after approval.", 260)
@@ -8041,11 +8160,7 @@ def agent_gateway_resume_prepared_action(conn, action_id: str, body) -> tuple[di
     )
     if cursor.rowcount != 1:
         refreshed = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
-        return {
-            "error": "prepared_action_already_consumed",
-            "prepared_action": prepared_action_public(refreshed or row),
-            "token_omitted": True,
-        }, 409
+        return build_prepared_action_resume_blocked_response(action_id=action_id, row=refreshed or row, approval=approval) or ({"error": "prepared_action_already_consumed", "token_omitted": True}, 409)
     after = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
     if row["tool_call_id"]:
         tool_before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (row["tool_call_id"],)).fetchone()
@@ -8059,21 +8174,16 @@ def agent_gateway_resume_prepared_action(conn, action_id: str, body) -> tuple[di
     conn.execute("UPDATE tasks SET status=CASE WHEN status='waiting_approval' THEN 'running' ELSE status END, updated_at=? WHERE task_id=?", (now, row["task_id"]))
     runtime_event(conn, "rtc_agent_gateway_local", "prepared_action.resume", "completed", run_id=row["run_id"], task_id=row["task_id"], agent_id=row["requested_by_agent_id"], input_summary=row["action_type"], output_summary=result_summary, raw_payload_hash=row["action_hash"])
     audit(conn, "agent", row["requested_by_agent_id"], "approval_wall.prepared_action_resumed", "prepared_actions", action_id, before, dict(after), {"approval_id": row["approval_id"], "action_hash": row["action_hash"], "provider_side_effect_id": provider_side_effect_id, "execute_once": True, "token_omitted": True})
-    return {
-        "provider": "agentops-approval-wall",
-        "operation": "prepared_action_resume",
-        "status": "completed",
-        "prepared_action": prepared_action_public(after),
-        "approval": dict(approval),
-        "provider_side_effect_id": provider_side_effect_id,
-        "execute_once": True,
-        "hash_verification": {
+    return build_prepared_action_resume_success_response(
+        prepared_action=after,
+        approval=approval,
+        provider_side_effect_id=provider_side_effect_id,
+        hash_verification={
             "stored_action_hash": row["action_hash"],
             "current_action_hash": current_hash,
             "match": True,
         },
-        "token_omitted": True,
-    }, 200
+    ), 200
 
 
 def agent_gateway_request_approval(conn, body) -> tuple[dict, int]:
@@ -8186,26 +8296,6 @@ def agent_gateway_eval_submit(conn, body) -> tuple[dict, int]:
     outcome = upsert_evaluation(conn, row, "agent-gateway")
     runtime_event(conn, "rtc_agent_gateway_local", "evaluation.submit", pass_fail, run_id=run_id, task_id=row["task_id"], agent_id=row["agent_id"], output_summary=row["notes"])
     return {"evaluation": row, "outcome": outcome}, 201 if outcome == "created" else 200
-
-
-def evaluation_case_candidate_public(row) -> dict:
-    data = dict(row)
-    try:
-        data["rubric"] = json.loads(data.get("rubric_json") or "{}")
-    except Exception:
-        data["rubric"] = {}
-    data["token_omitted"] = True
-    return data
-
-
-def evaluation_case_run_public(row) -> dict:
-    data = dict(row)
-    try:
-        data["checks"] = json.loads(data.get("checks_json") or "{}")
-    except Exception:
-        data["checks"] = {}
-    data["token_omitted"] = True
-    return data
 
 
 def list_evaluation_case_candidates(conn: sqlite3.Connection, qs: dict | None = None, headers=None) -> tuple[dict, int]:
@@ -9335,32 +9425,8 @@ def runtime_probe_prepared_action_resume_gate(conn, body: dict, expected_args: d
 
 def runtime_probe_prepared_action_required_response(conn, body: dict, *, provider: str, mode: str, connector_id: str, agent_id: str, task_id: str, runtime_type: str, prompt_hash: str, target_resource: str, risk_level: str = "medium") -> dict:
     prepared = create_runtime_probe_prepared_action(conn, body, provider=provider, mode=mode, connector_id=connector_id, agent_id=agent_id, task_id=task_id, runtime_type=runtime_type, prompt_hash=prompt_hash, target_resource=target_resource, risk_level=risk_level)
-    wall = prepared["approval_wall"]
-    approval = wall.get("approval") or {}
-    prepared_action = wall.get("prepared_action") or {}
     conn.commit()
-    return {
-        "provider": provider,
-        "mode": mode,
-        "dry_run": True,
-        "live_probe_performed": False,
-        "status": "waiting_approval",
-        "reason": "runtime_probe_prepared_action_required",
-        "run_id": prepared["run_id"],
-        "task_id": task_id,
-        "tool_call_id": prepared["tool_call_id"],
-        "approval_wall": wall,
-        "approval_id": approval.get("approval_id"),
-        "prepared_action_id": prepared_action.get("action_id"),
-        "prepared_action_hash": prepared_action.get("action_hash"),
-        "prompt_hash": prompt_hash,
-        "next_action": (
-            f"agentops approval inspect --approval-id {approval.get('approval_id')} && "
-            f"agentops approval approve --approval-id {approval.get('approval_id')} && "
-            f"repeat the probe request with confirm_run:true and prepared_action_id={prepared_action.get('action_id')}"
-        ),
-        "token_omitted": True,
-    }
+    return runtime_probe_prepared_action_required_payload(prepared=prepared, provider=provider, mode=mode, task_id=task_id, prompt_hash=prompt_hash)
 
 
 def run_openclaw_probe(conn, body: dict | None = None) -> dict:
@@ -9435,7 +9501,7 @@ def run_openclaw_probe(conn, body: dict | None = None) -> dict:
         runtime_event(conn, "rtc_openclaw_local", "agent_probe_prepared_action_blocked", "blocked", task_id=task_id, agent_id=agent_id, prompt_hash=prompt_hash, output_summary=gate_error.get("error"), raw_payload_hash=prompt_hash)
         audit(conn, "system", "openclaw-probe", "runtime.openclaw_probe.prepared_action_blocked", "runtime_connectors", "rtc_openclaw_local", None, gate_error, {"prompt_hash": prompt_hash, "token_omitted": True})
         conn.commit()
-        return {"provider": "openclaw", "mode": "main_agent_cli", "dry_run": True, "live_probe_performed": False, **gate_error, "reason": gate_error.get("error")}
+        return runtime_probe_blocked_payload(provider="openclaw", mode="main_agent_cli", gate_error=gate_error)
     started = now_iso()
     probe = {"ok": False, "error": None}
     if not OPENCLAW_BIN.exists():
@@ -9493,13 +9559,13 @@ def run_openclaw_probe(conn, body: dict | None = None) -> dict:
     upsert_run(conn, row, "openclaw-probe", {"manual_probe": True})
     upsert_evaluation(conn, quality_gate_for_run(row), "openclaw-probe")
     runtime_event(conn, "rtc_openclaw_local", "agent_probe", "completed" if probe["ok"] else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name=row["model_name"], latency_ms=row["duration_ms"], output_summary=probe.get("visible"), error_message=probe.get("error"), raw_payload_hash=stable_hash({"trace_id": probe.get("run_id"), "visible": probe.get("visible"), "error": probe.get("error")}))
-    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
-        "workspace_id": prepared_row["workspace_id"],
-        "provider_side_effect_id": probe.get("run_id") or stable_id("openclaw_probe", run_id),
-        "result_summary": row["output_summary"],
-    })
+    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], build_prepared_action_provider_resume_request(
+        prepared_row,
+        provider_side_effect_id=probe.get("run_id") or stable_id("openclaw_probe", run_id),
+        result_summary=row["output_summary"],
+    ))
     audit(conn, "system", "openclaw-probe", "runtime.openclaw_probe", "runs", run_id, None, {"status": row["status"]}, {"manual_probe": True, "trace_id": probe.get("run_id"), "prepared_action_id": prepared_row["action_id"], "approval_id": prepared_row["approval_id"], "token_omitted": True})
-    return {"provider": "openclaw", "probe": probe, "run_id": run_id, "dry_run": False, "live_probe_performed": True, "approval_id": prepared_row["approval_id"], "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row), "prepared_action_resume_status": resume_status, "token_omitted": True}
+    return {"provider": "openclaw", "probe": probe, "run_id": run_id, "dry_run": False, "live_probe_performed": True, **build_prepared_action_provider_result_fields(prepared_row, resume_payload, resume_status)}
 
 
 def hermes_status() -> dict:
@@ -9932,25 +9998,21 @@ def dify_create_document_by_text(conn, body: dict) -> dict:
     if gate_error:
         if gate_error.get("error") == "dify_prepared_action_required":
             prepared = dify_prepared_action_payload(conn, body, cfg, agent_id, task_id, dataset_id, document_name, text_hash)
-            wall = prepared["approval_wall"]
-            plan.update({
-                "reason": "dify_external_write_prepared_action_required",
-                "status": "waiting_approval",
-                "run_id": prepared["run_id"],
-                "tool_call_id": prepared["tool_call_id"],
-                "approval_wall": wall,
-                "approval_id": (wall.get("approval") or {}).get("approval_id"),
-                "prepared_action_id": (wall.get("prepared_action") or {}).get("action_id"),
-                "prepared_action_hash": (wall.get("prepared_action") or {}).get("action_hash"),
-                "next_action": f"agentops approval inspect --approval-id {(wall.get('approval') or {}).get('approval_id')} && agentops approval approve --approval-id {(wall.get('approval') or {}).get('approval_id')} && POST /api/integrations/dify/upload-text with prepared_action_id={(wall.get('prepared_action') or {}).get('action_id')}",
-                "token_omitted": True,
-            })
             conn.commit()
-            return plan
+            return build_prepared_action_waiting_response(
+                base={
+                    **plan,
+                    "run_id": prepared["run_id"],
+                    "tool_call_id": prepared["tool_call_id"],
+                },
+                approval_wall=prepared["approval_wall"],
+                reason="dify_external_write_prepared_action_required",
+                resume_instruction="POST /api/integrations/dify/upload-text with prepared_action_id={prepared_action_id}",
+            )
         runtime_event(conn, "rtc_agent_gateway_local", "dify.upload_text.prepared_action_blocked", "blocked", task_id=task_id, agent_id=agent_id, input_summary=f"Dify upload blocked text_hash={text_hash[:16]}", output_summary=gate_error.get("error"), raw_payload_hash=text_hash)
         audit(conn, "agent", agent_id, "dify.upload_text.prepared_action_blocked", "connectors", "conn_dify_knowledge", None, gate_error, {"text_hash": text_hash, "raw_text_omitted": True, "token_omitted": True})
         conn.commit()
-        return {**plan, **gate_error, "reason": gate_error.get("error"), "status": "blocked"}
+        return build_prepared_action_blocked_response(base=plan, gate_error=gate_error)
 
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
@@ -10029,11 +10091,11 @@ def dify_create_document_by_text(conn, body: dict) -> dict:
     upsert_evaluation(conn, quality_gate_for_run(row), "dify-connector")
     runtime_event(conn, "rtc_agent_gateway_local", "dify.upload_text", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, latency_ms=duration, input_summary=f"Dify text upload text_hash={text_hash[:16]}", output_summary=row["output_summary"], error_message=error, raw_payload_hash=response_hash or text_hash)
     if ok and prepared_row:
-        resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
-            "workspace_id": prepared_row["workspace_id"],
-            "provider_side_effect_id": document_id or stable_id("dify_document", run_id, text_hash),
-            "result_summary": row["output_summary"],
-        })
+        resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], build_prepared_action_provider_resume_request(
+            prepared_row,
+            provider_side_effect_id=document_id or stable_id("dify_document", run_id, text_hash),
+            result_summary=row["output_summary"],
+        ))
     else:
         resume_payload, resume_status = None, None
     audit(conn, "agent", agent_id, "dify.upload_text", "runs", run_id, None, {"status": row["status"], "document_id": document_id}, {"text_hash": text_hash, "dataset_id": redact_text(dataset_id, 80), "approval_id": prepared_row["approval_id"] if prepared_row else body.get("approval_id"), "prepared_action_id": prepared_row["action_id"] if prepared_row else body.get("prepared_action_id"), "trust_mode": cfg["trust_mode"], "token_omitted": True})
@@ -10053,10 +10115,7 @@ def dify_create_document_by_text(conn, body: dict) -> dict:
         "text_hash": text_hash,
         "output_summary": row["output_summary"],
         "error": error,
-        "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row),
-        "approval_id": prepared_row["approval_id"] if prepared_row else body.get("approval_id"),
-        "prepared_action_resume_status": resume_status,
-        "token_omitted": True,
+        **build_prepared_action_provider_result_fields(prepared_row, resume_payload, resume_status),
     }
 
 
@@ -10128,7 +10187,7 @@ def agnesfallback_cli_probe(conn, body: dict) -> dict:
         runtime_event(conn, connector_id, "cli_probe_prepared_action_blocked", "blocked", task_id=task_id, agent_id=agent_id, prompt_hash=stable_hash(prompt), output_summary=gate_error.get("error"), raw_payload_hash=stable_hash(prompt))
         audit(conn, "system", "agnesfallback-cli", "runtime.cli_probe.prepared_action_blocked", "runtime_connectors", connector_id, None, gate_error, {"prompt_hash": stable_hash(prompt), "token_omitted": True})
         conn.commit()
-        return {"provider": "agnesfallback", "mode": "cli_probe", "dry_run": True, "live_probe_performed": False, **gate_error, "reason": gate_error.get("error")}
+        return runtime_probe_blocked_payload(provider="agnesfallback", mode="cli_probe", gate_error=gate_error)
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
     ok = False
@@ -10172,14 +10231,14 @@ def agnesfallback_cli_probe(conn, body: dict) -> dict:
     upsert_run(conn, row, "agnesfallback-cli", {"prompt_hash": stable_hash(prompt)})
     upsert_evaluation(conn, quality_gate_for_run(row), "agnesfallback-cli")
     runtime_event(conn, connector_id, "cli_probe", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="agnesfallback", latency_ms=duration, prompt_hash=stable_hash(prompt), output_summary=visible, error_message=error, raw_payload_hash=stable_hash({"visible": visible, "error": error}))
-    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
-        "workspace_id": prepared_row["workspace_id"],
-        "provider_side_effect_id": stable_id("agnesfallback_cli_probe", run_id, stable_hash(visible or error or "")),
-        "result_summary": row["output_summary"],
-    })
+    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], build_prepared_action_provider_resume_request(
+        prepared_row,
+        provider_side_effect_id=stable_id("agnesfallback_cli_probe", run_id, stable_hash(visible or error or "")),
+        result_summary=row["output_summary"],
+    ))
     audit(conn, "system", "agnesfallback-cli", "runtime.cli_probe", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": stable_hash(prompt), "confirmed": True, "prepared_action_id": prepared_row["action_id"], "approval_id": prepared_row["approval_id"], "token_omitted": True})
     conn.commit()
-    return {"provider": "agnesfallback", "mode": "cli_probe", "dry_run": False, "live_probe_performed": True, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error, "approval_id": prepared_row["approval_id"], "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row), "prepared_action_resume_status": resume_status, "token_omitted": True}
+    return {"provider": "agnesfallback", "mode": "cli_probe", "dry_run": False, "live_probe_performed": True, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error, **build_prepared_action_provider_result_fields(prepared_row, resume_payload, resume_status)}
 
 
 def agnesfallback_chat_completion_probe(conn, body: dict) -> dict:
@@ -10212,7 +10271,7 @@ def agnesfallback_chat_completion_probe(conn, body: dict) -> dict:
         runtime_event(conn, connector_id, "chat_completion_probe_prepared_action_blocked", "blocked", task_id=task_id, agent_id=agent_id, prompt_hash=stable_hash(prompt), output_summary=gate_error.get("error"), raw_payload_hash=stable_hash(prompt))
         audit(conn, "system", "agnesfallback-api", "runtime.chat_completion_probe.prepared_action_blocked", "runtime_connectors", connector_id, None, gate_error, {"prompt_hash": stable_hash(prompt), "token_omitted": True})
         conn.commit()
-        return {"provider": "agnesfallback", "mode": "openai_compatible", "dry_run": True, "live_probe_performed": False, **gate_error, "reason": gate_error.get("error")}
+        return runtime_probe_blocked_payload(provider="agnesfallback", mode="openai_compatible", gate_error=gate_error)
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
     payload = {"model": "agnesfallback", "messages": [{"role": "user", "content": prompt}], "temperature": 0}
@@ -10267,14 +10326,14 @@ def agnesfallback_chat_completion_probe(conn, body: dict) -> dict:
     upsert_run(conn, row, "agnesfallback-api", {"prompt_hash": stable_hash(prompt), "raw_payload_hash": response_hash})
     upsert_evaluation(conn, quality_gate_for_run(row), "agnesfallback-api")
     runtime_event(conn, connector_id, "chat_completion_probe", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="agnesfallback", latency_ms=duration, prompt_hash=stable_hash(prompt), output_summary=visible, error_message=error, raw_payload_hash=response_hash)
-    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
-        "workspace_id": prepared_row["workspace_id"],
-        "provider_side_effect_id": stable_id("agnesfallback_api_probe", run_id, response_hash or stable_hash(visible or error or "")),
-        "result_summary": row["output_summary"],
-    })
+    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], build_prepared_action_provider_resume_request(
+        prepared_row,
+        provider_side_effect_id=stable_id("agnesfallback_api_probe", run_id, response_hash or stable_hash(visible or error or "")),
+        result_summary=row["output_summary"],
+    ))
     audit(conn, "system", "agnesfallback-api", "runtime.chat_completion_probe", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": stable_hash(prompt), "confirmed": True, "prepared_action_id": prepared_row["action_id"], "approval_id": prepared_row["approval_id"], "token_omitted": True})
     conn.commit()
-    return {"provider": "agnesfallback", "mode": "openai_compatible", "dry_run": False, "live_probe_performed": True, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error, "approval_id": prepared_row["approval_id"], "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row), "prepared_action_resume_status": resume_status, "token_omitted": True}
+    return {"provider": "agnesfallback", "mode": "openai_compatible", "dry_run": False, "live_probe_performed": True, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error, **build_prepared_action_provider_result_fields(prepared_row, resume_payload, resume_status)}
 
 
 def ensure_local_ai_brief_agent_task(conn):
@@ -10980,52 +11039,6 @@ def run_customer_task_template_workflow(conn, body: dict) -> tuple[dict, int]:
     return result, 201
 
 
-def workflow_job_public(row: sqlite3.Row | dict | None) -> dict | None:
-    if not row:
-        return None
-    data = dict(row)
-    result = {}
-    try:
-        result = json.loads(data.get("result_json") or "{}")
-    except Exception:
-        result = {}
-    return {
-        "job_id": data.get("job_id"),
-        "workspace_id": data.get("workspace_id"),
-        "workflow_type": data.get("workflow_type"),
-        "status": data.get("status"),
-        "template_id": data.get("template_id"),
-        "adapter": data.get("adapter"),
-        "confirm_run": bool(data.get("confirm_run")),
-        "title": data.get("title"),
-        "input_summary": data.get("input_summary"),
-        "request_hash": data.get("request_hash"),
-        "result_task_id": data.get("result_task_id"),
-        "result_run_id": data.get("result_run_id"),
-        "result_artifact_id": data.get("result_artifact_id"),
-        "error_message": data.get("error_message"),
-        "created_at": data.get("created_at"),
-        "started_at": data.get("started_at"),
-        "completed_at": data.get("completed_at"),
-        "updated_at": data.get("updated_at"),
-        "result": result,
-        "raw_request_omitted": True,
-        "token_omitted": True,
-    }
-
-
-def _parse_iso_datetime(value: str | None) -> dt.datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = dt.datetime.fromisoformat(value)
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=dt.timezone.utc)
-        return parsed
-    except Exception:
-        return None
-
-
 def workflow_stuck_jobs(conn, threshold_sec: int = 900, limit: int = 25) -> list[dict]:
     threshold_sec = max(int(threshold_sec or 900), 30)
     limit = min(max(int(limit or 25), 1), 200)
@@ -11035,18 +11048,8 @@ def workflow_stuck_jobs(conn, threshold_sec: int = 900, limit: int = 25) -> list
     ).fetchall()
     stuck: list[dict] = []
     for row in rows:
-        data = workflow_job_public(row) or {}
-        anchor = (
-            _parse_iso_datetime(data.get("updated_at"))
-            or _parse_iso_datetime(data.get("started_at"))
-            or _parse_iso_datetime(data.get("created_at"))
-            or now_dt
-        )
-        age_sec = max(int((now_dt - anchor).total_seconds()), 0)
-        if age_sec >= threshold_sec:
-            data["age_sec"] = age_sec
-            data["threshold_sec"] = threshold_sec
-            data["stuck_reason"] = "workflow_job_exceeded_threshold"
+        data = workflow_job_stuck_projection(row, now_dt=now_dt, threshold_sec=threshold_sec)
+        if data:
             stuck.append(data)
         if len(stuck) >= limit:
             break
@@ -11059,12 +11062,7 @@ def mark_workflow_job_failed(conn, job_id: str, body: dict) -> tuple[dict, int]:
     if not before:
         return {"error": "not found", "job_id": job_id}, 404
     if before["status"] not in {"queued", "running"}:
-        return {
-            "ok": False,
-            "reason": "workflow_job_not_active",
-            "job": workflow_job_public(before),
-            "token_omitted": True,
-        }, 409
+        return workflow_job_not_active_response(before), 409
     reason = redact_text(body.get("reason") or "Operator marked stale workflow job as failed.", 300)
     now = now_iso()
     conn.execute(
@@ -11077,14 +11075,183 @@ def mark_workflow_job_failed(conn, job_id: str, body: dict) -> tuple[dict, int]:
     after = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
     audit(conn, "user", body.get("actor_id") or "usr_operator", "workflow.job.mark_failed", "workflow_jobs", job_id, dict(before), dict(after) if after else {"status": "failed"}, {"raw_request_omitted": True, "reason": reason})
     conn.commit()
-    return {
-        "ok": True,
+    return workflow_job_mark_failed_response(after, job_id), 200
+
+
+def recover_workflow_job(conn, job_id: str, body: dict, headers=None) -> tuple[dict, int]:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    job_id = redact_text(job_id, 120)
+    row = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+    if not row:
+        return {"error": "not found", "job_id": job_id, "token_omitted": True}, 404
+    job = workflow_job_public(row) or {}
+    mode = coerce_choice(body.get("mode"), {"mark-failed", "retry"}, "mark-failed")
+    actor_id = redact_text(body.get("actor_id") or "usr_operator", 120)
+    confirm_recover = bool(body.get("confirm_recover") or body.get("confirm"))
+    record_receipt = bool(body.get("record_receipt"))
+    action_id = f"workflow_job_recovery:{job_id}:{'mark_failed' if mode == 'mark-failed' else 'retry'}"
+    receipt_source = "operator.workflow_job_recovery"
+    receipt_result_summary = f"Workflow job {job_id} recovery {mode} completed."
+    recovery_payload: dict = {}
+    recovery_status = 200
+    new_job_id = None
+
+    if mode == "mark-failed":
+        reason = redact_text(body.get("reason") or "workflow job exceeded async threshold; operator recovery from recover-job", 300)
+        action_command = (
+            "agentops workflow job-mark-failed "
+            f"--job-id {shlex.quote(job_id)} "
+            f"--reason {shlex.quote(reason)}"
+        )
+        verify_command = f"agentops workflow job-status --job-id {shlex.quote(job_id)}"
+        action_signature = stable_id("op_action_sig", "workflow_job_recovery", workspace_id, job_id, "mark_failed")[-18:]
+        recovery_request = {"reason": reason, "actor_id": actor_id, "workspace_id": workspace_id}
+        receipt_result_summary = f"Workflow job {job_id} marked failed after recover-job review."
+        if confirm_recover:
+            recovery_payload, recovery_status = mark_workflow_job_failed(conn, job_id, recovery_request)
+    else:
+        task_id = redact_text(body.get("task_id") or job.get("result_task_id") or "", 120)
+        if not task_id:
+            return {
+                "provider": "agentops-workflow-job",
+                "operation": "workflow_job_recover",
+                "ok": False,
+                "mode": mode,
+                "job_id": job_id,
+                "reason": "task_id_required_for_retry",
+                "job": job,
+                "token_omitted": True,
+            }, 400
+        adapter = coerce_choice(body.get("adapter") or job.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
+        confirm_run = bool(body.get("confirm_run"))
+        command_parts = [
+            "agentops", "commander", "dispatch-batch",
+            "--task-id", task_id,
+            "--status", "all",
+            "--limit", "1",
+            "--adapter", adapter,
+        ]
+        if adapter in {"hermes", "openclaw"} and confirm_run:
+            command_parts.append("--confirm-run")
+        action_command = " ".join(shlex.quote(part) for part in command_parts)
+        verify_command = "agentops workflow jobs --status queued,running,completed,failed --limit 20"
+        action_signature = stable_id("op_action_sig", "workflow_job_recovery", workspace_id, job_id, "retry", task_id, adapter)[-18:]
+        dispatch_body = {
+            "workspace_id": workspace_id,
+            "task_ids": [task_id],
+            "status": "all",
+            "limit": 1,
+            "adapter": adapter,
+            "confirm_run": confirm_run,
+            "hermes_timeout": body.get("hermes_timeout") or 300,
+            "base_url": body.get("base_url") or body.get("_base_url") or request_base_url(headers),
+        }
+        receipt_result_summary = f"Workflow job {job_id} retry was queued or safely rejected with evidence."
+        if confirm_recover:
+            recovery_payload, recovery_status = submit_commander_work_package_dispatch_jobs(conn, dispatch_body, headers)
+            new_job_id = next((item for item in (recovery_payload.get("job_ids") or []) if item), None) if isinstance(recovery_payload, dict) else None
+            if new_job_id:
+                verify_command = f"agentops workflow job-status --job-id {shlex.quote(str(new_job_id))} --wait"
+
+    preview = {
         "provider": "agentops-workflow-job",
-        "job": workflow_job_public(after),
+        "operation": "workflow_job_recover",
+        "ok": bool((not confirm_recover) or 200 <= int(recovery_status) < 300),
+        "dry_run": not confirm_recover,
+        "mode": mode,
         "job_id": job_id,
-        "marked_failed": True,
+        "new_job_id": new_job_id,
+        "job": job,
+        "action_id": action_id,
+        "action_signature": action_signature,
+        "action_command": action_command,
+        "verify_command": verify_command,
+        "receipt_source": receipt_source,
+        "receipt_result_summary": receipt_result_summary,
+        "record_receipt_requested": record_receipt,
+        "receipt": None,
+        "recovery": recovery_payload if confirm_recover else None,
+        "next_actions": [action_command] if not confirm_recover else [verify_command, "agentops operator action-plan --limit 20"],
+        "safety": {
+            "read_only": not confirm_recover,
+            "ledger_mutated": bool(confirm_recover and 200 <= int(recovery_status) < 300),
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
         "token_omitted": True,
-    }, 200
+        "live_execution_performed": False,
+    }
+    if not confirm_recover:
+        preview["requires"] = {"confirm_recover": True}
+        return preview, 200
+
+    if record_receipt:
+        receipt_status = "verified" if 200 <= int(recovery_status) < 300 else "failed"
+        receipt_payload, receipt_http_status = record_operator_action_receipt(conn, {
+            "workspace_id": workspace_id,
+            "actor_id": actor_id,
+            "action_command": action_command,
+            "verify_command": verify_command,
+            "action_id": action_id,
+            "action_signature": action_signature,
+            "status": receipt_status,
+            "source": receipt_source,
+            "result_summary": receipt_result_summary,
+        }, headers)
+        preview["receipt"] = receipt_payload.get("receipt") if isinstance(receipt_payload, dict) else None
+        preview["receipt_status"] = receipt_status
+        preview["receipt_http_status"] = receipt_http_status
+        preview["safety"]["ledger_mutated"] = True
+    if not (200 <= int(recovery_status) < 300):
+        preview["ok"] = False
+        return preview, recovery_status
+    return preview, 200
+
+
+def workflow_job_recovery_work_order(conn: sqlite3.Connection, workspace_id: str, limit: int = 8) -> dict:
+    workspace_id = normalize_workspace_id(workspace_id)
+    limit = min(max(int(limit or 8), 1), 25)
+    now_dt = dt.datetime.now(dt.timezone.utc)
+    active_rows = conn.execute(
+        """SELECT *
+        FROM workflow_jobs
+        WHERE COALESCE(workspace_id,'local-demo')=?
+          AND status IN ('queued','running')
+        ORDER BY updated_at ASC
+        LIMIT 500""",
+        (workspace_id,),
+    ).fetchall()
+    stuck_jobs: list[dict] = []
+    for row in active_rows:
+        projected = workflow_job_stuck_projection(row, now_dt=now_dt, threshold_sec=900)
+        if projected:
+            stuck_jobs.append(projected)
+        if len(stuck_jobs) >= limit:
+            break
+    retryable_failed_jobs = [
+        workflow_job_public(row) or {}
+        for row in conn.execute(
+            """SELECT *
+            FROM workflow_jobs
+            WHERE COALESCE(workspace_id,'local-demo')=?
+              AND status='failed'
+              AND result_task_id IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT ?""",
+            (workspace_id, limit),
+        ).fetchall()
+    ]
+    receipt_rows = operator_action_receipt_rows(conn, workspace_id, min(max(limit * 40, 200), 1000))
+    return build_workflow_job_recovery_work_order(
+        workspace_id=workspace_id,
+        stuck_jobs=stuck_jobs,
+        retryable_failed_jobs=retryable_failed_jobs,
+        receipt_rows=receipt_rows,
+        limit=limit,
+    )
 
 
 def run_workflow_job_background(job_id: str, body: dict) -> None:
@@ -12772,7 +12939,7 @@ def hermes_run_task(conn, body: dict) -> dict:
         runtime_event(conn, "rtc_hermes_default_gateway", "run_task_prepared_action_blocked", "blocked", task_id=task_id, agent_id=agent_id, prompt_hash=prompt_hash, output_summary=gate_error.get("error"), raw_payload_hash=prompt_hash)
         audit(conn, "system", "hermes-run-task", "runtime.run_task.prepared_action_blocked", "runtime_connectors", "rtc_hermes_default_gateway", None, gate_error, {"prompt_hash": prompt_hash, "token_omitted": True})
         conn.commit()
-        return {"created": False, "dry_run": True, "live_probe_performed": False, "provider": "hermes", "mode": "default_gateway_fixed_probe", **gate_error, "reason": gate_error.get("error")}
+        return runtime_probe_blocked_payload(provider="hermes", mode="default_gateway_fixed_probe", gate_error=gate_error, created=False)
 
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
@@ -12829,19 +12996,84 @@ def hermes_run_task(conn, body: dict) -> dict:
     upsert_run(conn, row, "hermes-run-task", {"prompt_hash": prompt_hash, "raw_payload_hash": response_hash})
     upsert_evaluation(conn, quality_gate_for_run(row), "hermes-run-task")
     runtime_event(conn, "rtc_hermes_default_gateway", "run_task", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="hermes-agent", latency_ms=duration, prompt_hash=prompt_hash, output_summary=visible, error_message=error, raw_payload_hash=response_hash)
-    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
-        "workspace_id": prepared_row["workspace_id"],
-        "provider_side_effect_id": stable_id("hermes_default_probe", run_id, response_hash or stable_hash(visible or error or "")),
-        "result_summary": row["output_summary"],
-    })
+    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], build_prepared_action_provider_resume_request(
+        prepared_row,
+        provider_side_effect_id=stable_id("hermes_default_probe", run_id, response_hash or stable_hash(visible or error or "")),
+        result_summary=row["output_summary"],
+    ))
     audit(conn, "system", "hermes-run-task", "runtime.run_task", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": prompt_hash, "confirmed": True, "prepared_action_id": prepared_row["action_id"], "approval_id": prepared_row["approval_id"], "token_omitted": True})
     conn.commit()
-    return {"created": True, "dry_run": False, "live_probe_performed": True, "provider": "hermes", "mode": "default_gateway_fixed_probe", "ok": ok, "run_id": run_id, "task_id": task_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error, "approval_id": prepared_row["approval_id"], "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row), "prepared_action_resume_status": resume_status, "token_omitted": True}
+    return {"created": True, "dry_run": False, "live_probe_performed": True, "provider": "hermes", "mode": "default_gateway_fixed_probe", "ok": ok, "run_id": run_id, "task_id": task_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error, **build_prepared_action_provider_result_fields(prepared_row, resume_payload, resume_status)}
 
 
 def worker_runtime_path(adapter: str, suffix: str) -> Path:
     safe = coerce_choice(adapter, {"mock", "hermes", "openclaw"}, "mock")
     return WORKER_RUNTIME_DIR / f"{safe}.{suffix}"
+
+
+def worker_log_rotation_config() -> dict:
+    try:
+        max_bytes = int(os.environ.get("AGENTOPS_WORKER_LOG_MAX_BYTES", str(2 * 1024 * 1024)))
+    except Exception:
+        max_bytes = 2 * 1024 * 1024
+    try:
+        backups = int(os.environ.get("AGENTOPS_WORKER_LOG_BACKUPS", "5"))
+    except Exception:
+        backups = 5
+    max_bytes = max(0, min(max_bytes, 100 * 1024 * 1024))
+    backups = max(0, min(backups, 20))
+    return {
+        "max_bytes": max_bytes,
+        "backups": backups,
+        "enabled": bool(max_bytes > 0 and backups > 0),
+        "trigger": "daemon_start",
+    }
+
+
+def rotate_worker_log_if_needed(adapter: str) -> dict:
+    config = worker_log_rotation_config()
+    log_path = worker_runtime_path(adapter, "log")
+    result = {
+        **config,
+        "rotated": False,
+        "log_path": str(log_path),
+        "active_log_only": True,
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    }
+    if not config["enabled"]:
+        result["reason"] = "disabled"
+        return result
+    if not log_path.exists():
+        result["reason"] = "missing"
+        return result
+    try:
+        current_size = log_path.stat().st_size
+        result["current_bytes"] = current_size
+        if current_size <= config["max_bytes"]:
+            result["reason"] = "below_threshold"
+            return result
+        oldest = Path(f"{log_path}.{config['backups']}")
+        if oldest.exists():
+            oldest.unlink()
+        for index in range(config["backups"] - 1, 0, -1):
+            src = Path(f"{log_path}.{index}")
+            dst = Path(f"{log_path}.{index + 1}")
+            if src.exists():
+                src.replace(dst)
+        log_path.replace(Path(f"{log_path}.1"))
+        result.update({
+            "rotated": True,
+            "reason": "size_threshold",
+            "rotated_to": f"{log_path}.1",
+        })
+        return result
+    except Exception as exc:
+        result.update({
+            "reason": "rotation_failed",
+            "error": redact_text(str(exc), 220),
+        })
+        return result
 
 
 def pid_is_alive(pid) -> bool:
@@ -12910,6 +13142,7 @@ def read_worker_daemon(adapter: str, include_log: bool = False) -> dict:
         "max_tasks": meta.get("max_tasks"),
         "confirm_run": bool(meta.get("confirm_run")),
         "log_path": str(log_path),
+        "log_retention": worker_log_rotation_config(),
         "state_path": str(state_path),
         "worker_status": worker_status,
         "state_updated_at": state.get("updated_at"),
@@ -12932,7 +13165,63 @@ def worker_daemon_status(include_log: bool = False) -> list[dict]:
     return [read_worker_daemon(adapter, include_log=include_log) for adapter in ("mock", "hermes", "openclaw")]
 
 
-def worker_intake_start_gate(conn, agent_id: str, workspace_id: str = "local-demo", status_filters: list[str] | None = None, limit: int = 25) -> dict:
+def worker_loop_admission_summary(items: list[dict], adapter: str | None = None, agent_id: str | None = None) -> dict:
+    live_items = [item for item in items if item.get("assigned_adapter") in {"hermes", "openclaw"}]
+    packets = [
+        item.get("local_loop_admission_packet")
+        for item in live_items
+        if isinstance(item.get("local_loop_admission_packet"), dict)
+    ]
+    passed_packets = [packet for packet in packets if packet.get("ok") is True]
+    missing_items = [
+        item
+        for item in live_items
+        if "local_loop_admission_packet" in set(item.get("failed_gate_ids") or [])
+    ]
+    live_adapters = sorted({str(item.get("assigned_adapter")) for item in live_items if item.get("assigned_adapter")})
+    requested_adapter = coerce_choice(adapter, {"mock", "hermes", "openclaw"}, "mock") if adapter else None
+    next_safe_commands: list[str] = []
+    if requested_adapter in {"hermes", "openclaw"}:
+        quoted_agent = shlex.quote(agent_id or f"agt_worker_daemon_{requested_adapter}")
+        next_safe_commands.append(
+            f"agentops operator start-check --adapter {requested_adapter} --agent-id {quoted_agent}"
+        )
+        next_safe_commands.append(
+            f"agentops worker preflight --adapter {requested_adapter}"
+        )
+    for packet in packets[:3]:
+        deployment = packet.get("local_deployment") or {}
+        worker_start = (deployment.get("worker_start") or {}).get("command")
+        if worker_start:
+            next_safe_commands.append(worker_start)
+        phase_commands = packet.get("phase_commands") or {}
+        read_command = phase_commands.get("read")
+        if read_command:
+            next_safe_commands.append(read_command)
+    deduped_commands = list(dict.fromkeys(next_safe_commands))
+    return {
+        "operation": "worker_loop_admission_summary",
+        "adapter": requested_adapter,
+        "agent_id": agent_id,
+        "live_adapter_tasks_checked": len(live_items),
+        "live_adapters": live_adapters,
+        "passed_local_loop_admission": len(passed_packets),
+        "missing_local_loop_admission": len(missing_items),
+        "local_loop_admission_ready": len(missing_items) == 0,
+        "required_method_gates": TASK_INTAKE_METHOD_GATE_IDS,
+        "next_safe_commands": deduped_commands[:6] or ["agentops operator intake-checklist --limit 20"],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
+def worker_intake_start_gate(conn, agent_id: str, workspace_id: str = "local-demo", status_filters: list[str] | None = None, limit: int = 25, adapter: str | None = None) -> dict:
     statuses = status_filters or ["planned"]
     statuses = [coerce_choice(str(status), VALID_TASK_STATUSES, "planned") for status in statuses if status]
     if not statuses:
@@ -12955,6 +13244,7 @@ def worker_intake_start_gate(conn, agent_id: str, workspace_id: str = "local-dem
     blocked = [item for item in items if item["severity"] == "blocked"]
     attention = [item for item in items if item["severity"] == "attention"]
     ready = [item for item in items if item["severity"] == "ready"]
+    loop_admission = worker_loop_admission_summary(items, adapter=adapter, agent_id=agent_id)
     return {
         "provider": "agentops-worker",
         "operation": "worker_intake_start_gate",
@@ -12966,7 +13256,11 @@ def worker_intake_start_gate(conn, agent_id: str, workspace_id: str = "local-dem
             "blocked_for_intake": len(blocked),
             "attention_for_intake": len(attention),
             "ready_for_intake": len(ready),
+            "live_adapter_tasks_checked": loop_admission["live_adapter_tasks_checked"],
+            "passed_local_loop_admission": loop_admission["passed_local_loop_admission"],
+            "missing_local_loop_admission": loop_admission["missing_local_loop_admission"],
         },
+        "local_loop_admission_summary": loop_admission,
         "items": items,
         "blocked_tasks": blocked[:5],
         "next_actions": [item["command"] for item in blocked[:5] if item.get("command")],
@@ -13010,7 +13304,7 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
     if existing["running"]:
         return {"provider": "agentops-worker", "ok": True, "already_running": True, "daemon": existing}, 200
     enforce_intake = body_bool(body.get("enforce_intake"), True)
-    intake_gate = worker_intake_start_gate(conn, agent_id, body.get("workspace_id") or "local-demo", status_filters=status_filters)
+    intake_gate = worker_intake_start_gate(conn, agent_id, body.get("workspace_id") or "local-demo", status_filters=status_filters, adapter=adapter)
     if enforce_intake and intake_gate["summary"]["blocked_for_intake"] > 0 and not body_bool(body.get("confirm_intake_override")):
         return {
             "provider": "agentops-worker",
@@ -13019,6 +13313,7 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
             "error": "worker_intake_blocked",
             "message": "Resolve blocked Agent Plan / knowledge intake gates before starting a worker daemon.",
             "task_intake": intake_gate,
+            "local_loop_admission_summary": intake_gate.get("local_loop_admission_summary"),
             "recommended_action": (intake_gate.get("next_actions") or ["agentops operator intake-checklist --limit 20"])[0],
             "token_omitted": True,
         }, 409
@@ -13068,8 +13363,11 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
     if adapter == "openclaw":
         cmd.extend(["--openclaw-bin", str(OPENCLAW_BIN), "--openclaw-timeout", str(int(body.get("openclaw_timeout") or 180))])
 
+    log_rotation = rotate_worker_log_if_needed(adapter)
     log_path = worker_runtime_path(adapter, "log")
     with log_path.open("a", encoding="utf-8") as log:
+        if log_rotation.get("rotated"):
+            log.write(f"[{now_iso()}] previous worker log rotated to {log_rotation.get('rotated_to')} ({log_rotation.get('current_bytes')} bytes)\n")
         log.write(f"\n[{now_iso()}] starting {' '.join(shlex.quote(part) for part in cmd)}\n")
         log.flush()
         proc = subprocess.Popen(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
@@ -13089,6 +13387,7 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
         "max_errors": max(int(body.get("max_errors") or 5), 1),
         "state_path": str(worker_runtime_path(adapter, "state.json")),
         "enforce_intake": enforce_intake,
+        "log_rotation": log_rotation,
     }
     worker_runtime_path(adapter, "json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     runtime_event(conn, "rtc_agent_gateway_local", "worker.daemon.start", "running", agent_id=agent_id, output_summary=f"Started {adapter} local worker daemon pid={proc.pid}.")
@@ -13169,7 +13468,7 @@ def restart_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
     if not status_filters:
         status_filters = ["planned"]
     enforce_intake = body_bool(body.get("enforce_intake"), True)
-    intake_gate = worker_intake_start_gate(conn, agent_id, body.get("workspace_id") or "local-demo", status_filters=status_filters)
+    intake_gate = worker_intake_start_gate(conn, agent_id, body.get("workspace_id") or "local-demo", status_filters=status_filters, adapter=adapter)
     if enforce_intake and intake_gate["summary"]["blocked_for_intake"] > 0 and not body_bool(body.get("confirm_intake_override")):
         return {
             "provider": "agentops-worker",
@@ -13179,6 +13478,7 @@ def restart_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
             "message": "Resolve blocked Agent Plan / knowledge intake gates before restarting a worker daemon.",
             "previous": previous,
             "task_intake": intake_gate,
+            "local_loop_admission_summary": intake_gate.get("local_loop_admission_summary"),
             "recommended_action": (intake_gate.get("next_actions") or ["agentops operator intake-checklist --limit 20"])[0],
             "token_omitted": True,
         }, 409
@@ -13234,7 +13534,12 @@ def worker_stuck_tasks(conn, threshold_sec: int = 900, limit: int = 25) -> list[
     cutoff = now_dt - dt.timedelta(seconds=threshold_sec)
     tasks = rows_to_dicts(conn.execute(
         """SELECT * FROM tasks
-        WHERE status='running' AND (owner_agent_id LIKE 'agt_worker_%' OR owner_agent_id LIKE 'agt_remote_%' OR owner_agent_id LIKE 'agt_launch_%')
+        WHERE status='running' AND (
+            owner_agent_id LIKE 'agt_worker_%'
+            OR owner_agent_id LIKE 'agt_remote_%'
+            OR owner_agent_id LIKE 'agt_launch_%'
+            OR owner_agent_id LIKE 'agt_customer_worker_%'
+        )
         ORDER BY updated_at ASC LIMIT ?""",
         (limit,),
     ).fetchall())
@@ -13311,6 +13616,29 @@ def worker_stale_never_seen_enrollments(conn, enrollment_age_sec: int = 900, lim
     return stale
 
 
+def worker_stale_heartbeat_enrollments(conn, heartbeat_age_sec: int = 900, limit: int = 25) -> list[dict]:
+    heartbeat_age_sec = max(int(heartbeat_age_sec or 900), 0)
+    limit = min(max(int(limit or 25), 1), 100)
+    now_dt = dt.datetime.now(dt.timezone.utc)
+    cutoff = now_dt - dt.timedelta(seconds=heartbeat_age_sec)
+    rows = agent_gateway_enrollment_rows(conn)
+    stale: list[dict] = []
+    for row in rows:
+        if row.get("status") != "active" or row.get("heartbeat_state") != "stale":
+            continue
+        heartbeat_at = parse_iso_datetime(row.get("last_heartbeat_at"))
+        age_sec = int((now_dt - heartbeat_at).total_seconds()) if heartbeat_at else 0
+        if heartbeat_at and heartbeat_at <= cutoff:
+            item = dict(row)
+            item["age_sec"] = age_sec
+            item["threshold_sec"] = heartbeat_age_sec
+            item["stale_reason"] = "active_enrollment_heartbeat_stale"
+            stale.append(item)
+        if len(stale) >= limit:
+            break
+    return stale
+
+
 def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False) -> tuple[dict, int]:
     body = body or {}
     threshold_raw = body.get("threshold_sec")
@@ -13321,31 +13649,15 @@ def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False)
     limit = min(max(int(limit_raw if limit_raw is not None else 25), 1), 100)
     stuck_tasks = worker_stuck_tasks(conn, threshold_sec, limit)
     stale_enrollments = worker_stale_never_seen_enrollments(conn, enrollment_age_sec, limit)
-    plan = {
-        "provider": "agentops-worker",
-        "operation": "fleet_hygiene",
-        "status": "actionable" if stuck_tasks or stale_enrollments else "ready",
-        "threshold_sec": threshold_sec,
-        "enrollment_age_sec": enrollment_age_sec,
-        "summary": {
-            "stuck_tasks": len(stuck_tasks),
-            "stale_never_seen_enrollments": len(stale_enrollments),
-            "actions_available": len(stuck_tasks) + len(stale_enrollments),
-        },
-        "stuck_tasks": stuck_tasks,
-        "stale_never_seen_enrollments": stale_enrollments,
-        "recommended_actions": [
-            "agentops worker hygiene --apply --confirm-cleanup",
-        ] if stuck_tasks or stale_enrollments else ["agentops worker status"],
-        "safety": {
-            "read_only": not apply,
-            "requires_confirm_cleanup": True,
-            "live_execution_performed": False,
-            "token_omitted": True,
-        },
-        "token_omitted": True,
-        "live_execution_performed": False,
-    }
+    stale_heartbeat_enrollments = worker_stale_heartbeat_enrollments(conn, enrollment_age_sec, limit)
+    plan = build_worker_fleet_hygiene_plan(
+        stuck_tasks=stuck_tasks,
+        stale_enrollments=stale_enrollments,
+        stale_heartbeat_enrollments=stale_heartbeat_enrollments,
+        threshold_sec=threshold_sec,
+        enrollment_age_sec=enrollment_age_sec,
+        apply=apply,
+    )
     if not apply:
         return plan, 200
     if body.get("confirm_cleanup") is not True:
@@ -13365,16 +13677,20 @@ def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False)
             released.append({"task_id": task["task_id"], "released_runs": payload.get("released_runs", [])})
         else:
             errors.append({"kind": "task_release", "task_id": task.get("task_id"), "status": status, "error": payload})
-    for enrollment in stale_enrollments:
+    enrollments_to_revoke: list[dict] = []
+    seen_token_ids: set[str] = set()
+    for enrollment in [*stale_enrollments, *stale_heartbeat_enrollments]:
+        token_id = enrollment.get("token_id")
+        if not token_id or token_id in seen_token_ids:
+            continue
+        seen_token_ids.add(token_id)
+        enrollments_to_revoke.append(enrollment)
+    for enrollment in enrollments_to_revoke:
         payload, status = agent_gateway_revoke_enrollment(conn, {"token_id": enrollment["token_id"]})
         if status == 200:
-            revoked.append({
-                "token_id": enrollment["token_id"],
-                "agent_id": enrollment.get("agent_id"),
-                "sessions_revoked": payload.get("sessions_revoked", 0),
-            })
+            revoked.append(public_worker_revoked_enrollment(enrollment, sessions_revoked=payload.get("sessions_revoked", 0)))
         else:
-            errors.append({"kind": "enrollment_revoke", "token_id": enrollment.get("token_id"), "status": status, "error": payload})
+            errors.append(public_worker_enrollment_error(enrollment, status=status, error=payload))
 
     applied = {
         **plan,
@@ -13401,6 +13717,143 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
         refresh_runtime_connectors(conn)
     hermes = hermes_status()
     openclaw = openclaw_status()
+
+    def worker_connection_policy() -> dict:
+        adapter_max_attempts = max(int(os.environ.get("AGENTOPS_ADAPTER_MAX_ATTEMPTS", "1") or 1), 1)
+        try:
+            adapter_retry_delay = max(float(os.environ.get("AGENTOPS_ADAPTER_RETRY_DELAY_SEC", "1") or 0), 0.0)
+        except Exception:
+            adapter_retry_delay = 1.0
+        recommended_remote_loop = (
+            "agentops-worker --adapter mock --use-session --session-ttl-sec 900 "
+            "--session-refresh-margin-sec 60 --poll-interval 5 "
+            "--idle-backoff-max 30 --error-backoff-max 30 --backoff-factor 2 "
+            f"--adapter-max-attempts {adapter_max_attempts} --adapter-retry-delay-sec {adapter_retry_delay:g} "
+            "--max-tasks 0 --continue-on-error --max-errors 5 --write-state --jsonl-log"
+        )
+        return {
+            "schema": "agentops-worker-connection-policy-v1",
+            "recommended_remote_loop": recommended_remote_loop,
+            "session": {
+                "use_session_recommended": True,
+                "ttl_sec": 900,
+                "refresh_margin_sec": 60,
+                "parent_enrollment_token_storage": "process_memory_only",
+                "session_token_storage": "process_memory_only",
+                "state_fields": ["session_id", "session_expires_at", "session_refresh_count"],
+                "token_omitted": True,
+            },
+            "loop_backoff": {
+                "poll_interval_sec": 5,
+                "idle_backoff_max_sec": 30,
+                "error_backoff_max_sec": 30,
+                "backoff_factor": 2,
+                "idle_reason": "idle_backoff",
+                "error_reason": "error_backoff",
+                "state_fields": ["consecutive_idle", "consecutive_errors", "last_sleep_sec", "next_sleep_sec", "last_sleep_reason"],
+            },
+            "adapter_retry": {
+                "default_max_attempts": adapter_max_attempts,
+                "default_retry_delay_sec": adapter_retry_delay,
+                "retryable_failures_can_retry": True,
+                "non_retryable_safety_gates_retry": False,
+                "evidence_fields": ["attempt_count", "max_attempts", "retry_history"],
+            },
+            "daemon_resilience": {
+                "continue_on_error": True,
+                "max_errors": 5,
+                "state_written": True,
+                "jsonl_log": True,
+                "os_service_relaunch": "launchd KeepAlive=true or systemd Restart=always when operator installs/loads the generated service template",
+            },
+            "operator_checks": {
+                "readiness": "agentops worker readiness",
+                "status": "agentops worker status",
+                "preflight": "agentops worker preflight --adapter <mock|hermes|openclaw>",
+                "session_refresh_smoke": "python3 scripts/worker_session_refresh_smoke.py --base-url http://127.0.0.1:8787",
+                "adapter_retry_smoke": "python3 scripts/worker_adapter_retry_smoke.py --base-url http://127.0.0.1:8787",
+            },
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+        }
+
+    def adapter_remediation(adapter: str, readiness: str, checks: dict, recommended_action: str, target_resource: str | None, last_error: str | None = None) -> dict:
+        preflight = f"agentops worker preflight --adapter {adapter}"
+        runtime_doctor = "agentops operator runtime-doctor --limit 8"
+        live_product_readiness = "agentops operator live-product-readiness --require-adapter hermes --require-adapter openclaw"
+        if adapter == "mock":
+            commands = [
+                {"phase": "preflight", "command": preflight, "mutating": False, "confirm_required": False},
+                {"phase": "start", "command": "agentops worker start --adapter mock --poll-interval 5 --max-tasks 0", "mutating": True, "confirm_required": False},
+                {"phase": "verify", "command": "agentops worker status", "mutating": False, "confirm_required": False},
+            ]
+            missing = []
+        elif adapter == "hermes":
+            commands = [
+                {"phase": "inspect", "command": "agentops worker readiness", "mutating": False, "confirm_required": False},
+                {"phase": "preflight", "command": preflight, "mutating": False, "confirm_required": False},
+                {"phase": "doctor", "command": runtime_doctor, "mutating": False, "confirm_required": False},
+                {"phase": "start_worker", "command": "agentops worker start --adapter hermes --confirm-run --poll-interval 5 --max-tasks 0", "mutating": True, "confirm_required": True},
+                {"phase": "live_run_template", "command": "agentops workflow run-task --adapter hermes --confirm-run --worker-agent-id <hermes_agent_id> --title '<task title>' --description '<task description>'", "mutating": True, "confirm_required": True},
+                {"phase": "verify_ledger", "command": live_product_readiness, "mutating": False, "confirm_required": False},
+            ]
+            missing = [
+                label for label, ok in [
+                    ("hermes_gateway_listening", checks.get("api_listening")),
+                    ("hermes_config_yaml", checks.get("config_exists")),
+                    ("hermes_auth_json", checks.get("auth_exists")),
+                ]
+                if ok is False
+            ]
+        elif adapter == "openclaw":
+            commands = [
+                {"phase": "inspect", "command": "agentops worker readiness", "mutating": False, "confirm_required": False},
+                {"phase": "preflight", "command": preflight, "mutating": False, "confirm_required": False},
+                {"phase": "doctor", "command": runtime_doctor, "mutating": False, "confirm_required": False},
+                {"phase": "binary_check", "command": "command -v openclaw || test -x /opt/homebrew/bin/openclaw", "mutating": False, "confirm_required": False},
+                {"phase": "start_worker", "command": "agentops worker start --adapter openclaw --confirm-run --poll-interval 5 --max-tasks 0", "mutating": True, "confirm_required": True},
+                {"phase": "live_run_template", "command": "agentops workflow run-task --adapter openclaw --confirm-run --worker-agent-id <openclaw_agent_id> --title '<task title>' --description '<task description>'", "mutating": True, "confirm_required": True},
+                {"phase": "verify_ledger", "command": live_product_readiness, "mutating": False, "confirm_required": False},
+            ]
+            missing = [
+                label for label, ok in [
+                    ("openclaw_binary_exists", checks.get("binary_exists")),
+                    ("openclaw_binary_executable", checks.get("binary_executable")),
+                    ("openclaw_config", checks.get("config_exists")),
+                ]
+                if ok is False
+            ]
+        else:
+            commands = [{"phase": "inspect", "command": "agentops worker readiness", "mutating": False, "confirm_required": False}]
+            missing = []
+        if readiness in {"ready", "review_required"}:
+            primary = recommended_action
+        elif missing:
+            primary = preflight
+        else:
+            primary = recommended_action or preflight
+        return {
+            "status": "ready" if readiness in {"ready", "review_required"} else "action_required",
+            "primary_next_action": primary,
+            "missing": missing,
+            "last_error": redact_text(last_error, 240) if last_error else None,
+            "target_resource": redact_text(target_resource, 240) if target_resource else None,
+            "commands": commands,
+            "contract": "copy-only local remediation guidance; commands are not executed by readiness and live Hermes/OpenClaw paths still require --confirm-run and prepared-action gates",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }
 
     def trust_for(adapter: str) -> dict:
         connector_id = runtime_connector_for_adapter(adapter)
@@ -13434,6 +13887,8 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
 
     mock_trust = trust_for("mock")
     mock_readiness, mock_ok = readiness_from_checks(True, mock_trust)
+    mock_checks = {"available": True, "live_execution_performed": False}
+    mock_recommended_action = "agentops workflow run-task --adapter mock"
     adapters["mock"] = {
         "adapter": "mock",
         "ok": mock_ok,
@@ -13447,14 +13902,24 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
         "commercial_readiness": (mock_trust.get("capability_manifest") or {}).get("commercial_readiness"),
         "requires_confirm_run": False,
         "target_resource": "local://agentops/mock-worker",
-        "checks": {"available": True, "live_execution_performed": False},
-        "recommended_action": "agentops workflow run-task --adapter mock",
+        "checks": mock_checks,
+        "recommended_action": mock_recommended_action,
+        "remediation": adapter_remediation("mock", mock_readiness, mock_checks, mock_recommended_action, "local://agentops/mock-worker"),
         "token_omitted": True,
     }
 
     hermes_trust = trust_for("hermes")
     hermes_available = bool(hermes.get("api_listening"))
     hermes_readiness, hermes_ok = readiness_from_checks(hermes_available, hermes_trust)
+    hermes_checks = {
+        "api_listening": hermes_available,
+        "api_port": hermes.get("api_port"),
+        "config_exists": bool(hermes.get("config_exists")),
+        "auth_exists": bool(hermes.get("auth_exists")),
+        "live_execution_performed": False,
+    }
+    hermes_recommended_action = "agentops worker preflight --adapter hermes" if not hermes_available else "agentops workflow run-task --adapter hermes --confirm-run"
+    hermes_last_error = None if hermes_available else "Hermes API gateway is not listening."
     adapters["hermes"] = {
         "adapter": "hermes",
         "ok": hermes_ok,
@@ -13468,21 +13933,26 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
         "commercial_readiness": (hermes_trust.get("capability_manifest") or {}).get("commercial_readiness"),
         "requires_confirm_run": True,
         "target_resource": hermes.get("gateway_url"),
-        "checks": {
-            "api_listening": hermes_available,
-            "api_port": hermes.get("api_port"),
-            "config_exists": bool(hermes.get("config_exists")),
-            "auth_exists": bool(hermes.get("auth_exists")),
-            "live_execution_performed": False,
-        },
-        "recommended_action": "agentops worker preflight --adapter hermes" if not hermes_available else "agentops workflow run-task --adapter hermes --confirm-run",
-        "last_error": None if hermes_available else "Hermes API gateway is not listening.",
+        "checks": hermes_checks,
+        "recommended_action": hermes_recommended_action,
+        "last_error": hermes_last_error,
+        "remediation": adapter_remediation("hermes", hermes_readiness, hermes_checks, hermes_recommended_action, hermes.get("gateway_url"), hermes_last_error),
         "token_omitted": True,
     }
 
     openclaw_trust = trust_for("openclaw")
     openclaw_available = bool(openclaw.get("cli_exists")) and os.access(OPENCLAW_BIN, os.X_OK)
     openclaw_readiness, openclaw_ok = readiness_from_checks(openclaw_available, openclaw_trust)
+    openclaw_checks = {
+        "binary_exists": bool(openclaw.get("cli_exists")),
+        "binary_executable": os.access(OPENCLAW_BIN, os.X_OK) if OPENCLAW_BIN.exists() else False,
+        "config_exists": bool(openclaw.get("config_exists")),
+        "agents_count": int(openclaw.get("agents_count") or 0),
+        "cron_jobs_count": int(openclaw.get("cron_jobs_count") or 0),
+        "live_execution_performed": False,
+    }
+    openclaw_recommended_action = "agentops worker preflight --adapter openclaw" if not openclaw_available else "agentops workflow run-task --adapter openclaw --confirm-run"
+    openclaw_last_error = None if openclaw_available else f"OpenClaw binary unavailable at {OPENCLAW_BIN}."
     adapters["openclaw"] = {
         "adapter": "openclaw",
         "ok": openclaw_ok,
@@ -13496,16 +13966,10 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
         "commercial_readiness": (openclaw_trust.get("capability_manifest") or {}).get("commercial_readiness"),
         "requires_confirm_run": True,
         "target_resource": str(OPENCLAW_BIN),
-        "checks": {
-            "binary_exists": bool(openclaw.get("cli_exists")),
-            "binary_executable": os.access(OPENCLAW_BIN, os.X_OK) if OPENCLAW_BIN.exists() else False,
-            "config_exists": bool(openclaw.get("config_exists")),
-            "agents_count": int(openclaw.get("agents_count") or 0),
-            "cron_jobs_count": int(openclaw.get("cron_jobs_count") or 0),
-            "live_execution_performed": False,
-        },
-        "recommended_action": "agentops worker preflight --adapter openclaw" if not openclaw_available else "agentops workflow run-task --adapter openclaw --confirm-run",
-        "last_error": None if openclaw_available else f"OpenClaw binary unavailable at {OPENCLAW_BIN}.",
+        "checks": openclaw_checks,
+        "recommended_action": openclaw_recommended_action,
+        "last_error": openclaw_last_error,
+        "remediation": adapter_remediation("openclaw", openclaw_readiness, openclaw_checks, openclaw_recommended_action, str(OPENCLAW_BIN), openclaw_last_error),
         "token_omitted": True,
     }
 
@@ -13521,6 +13985,7 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
     return {
         "provider": "agentops-worker",
         "status": summary_status,
+        "worker_connection_policy": worker_connection_policy(),
         "summary": {
             "ready_adapters": ready,
             "live_ready_adapters": live_ready,
@@ -13620,6 +14085,8 @@ def demo_readiness(conn: sqlite3.Connection, headers) -> dict:
     board = commander_project_board(conn, headers)
     conn.rollback()
     evidence = local.get("evidence") or {}
+    live_acceptance = local.get("live_acceptance_readiness") or {}
+    live_acceptance_summary = live_acceptance.get("summary") or {}
     inbox_summary = inbox.get("summary") or {}
     fleet_summary = fleet.get("summary") or {}
 
@@ -13675,6 +14142,20 @@ def demo_readiness(conn: sqlite3.Connection, headers) -> dict:
             "next_action": "Run mock for safe recording, then explain confirmed Hermes/OpenClaw mode.",
         },
         {
+            "id": "live_acceptance_freshness",
+            "label": "Hermes/OpenClaw live acceptance freshness",
+            "route": "/workspace/agents",
+            "command": "python3 scripts/customer_worker_real_runtime_acceptance.py --base-url http://127.0.0.1:8787 --confirm-live --adapter hermes --adapter openclaw --hermes-max-tokens 512",
+            "status": live_acceptance.get("status") or "unknown",
+            "ok": live_acceptance.get("status") == "ready",
+            "detail": (
+                f"{live_acceptance_summary.get('fresh', 0)} fresh adapter(s); "
+                f"{live_acceptance_summary.get('latest_failed', 0)} latest failed; "
+                f"{live_acceptance_summary.get('missing', 0)} missing"
+            ),
+            "next_action": "Run the manual live acceptance command only after explicitly confirming local Hermes/OpenClaw runtime use.",
+        },
+        {
             "id": "run_ledger_evidence",
             "label": "Run ledger evidence",
             "route": "/admin/runs",
@@ -13701,6 +14182,8 @@ def demo_readiness(conn: sqlite3.Connection, headers) -> dict:
             "warning_count": warning_count,
             "closed_loop_runs": evidence.get("closed_loop_runs", 0),
             "customer_worker_artifacts": evidence.get("customer_worker_artifacts", 0),
+            "live_acceptance_fresh_adapters": live_acceptance_summary.get("fresh", 0),
+            "live_acceptance_latest_failed_adapters": live_acceptance_summary.get("latest_failed", 0),
             "fleet_lanes": fleet_summary.get("lane_count", 0),
             "ready_inbox_items": inbox_summary.get("items_returned", 0),
         },
@@ -13714,6 +14197,7 @@ def demo_readiness(conn: sqlite3.Connection, headers) -> dict:
             "runbook": "docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md",
             "acceptance": "python3 scripts/v1_5_local_product_acceptance.py --base-url http://127.0.0.1:8787",
         },
+        "live_acceptance_readiness": live_acceptance,
         "contract": "read-only canonical v1.5 demo readiness; does not start workers, call live runtimes, create tasks, or store prompts/tokens",
         "safety": {
             "read_only": True,
@@ -13812,6 +14296,13 @@ REPO_MAP_INCLUDED_SUFFIXES = {
     ".sh",
 }
 
+REPO_MAP_DEFAULT_MAX_FILE_BYTES = 240_000
+REPO_MAP_CORE_MAX_FILE_BYTES = 2_000_000
+REPO_MAP_LARGE_CORE_FILES = {
+    "server.py",
+    "agentops_mis_cli/agentops.py",
+}
+
 
 def commander_safe_text(value, limit=180) -> str:
     redacted = redact_text(value, limit)
@@ -13846,8 +14337,9 @@ def repo_map_file_allowed(path: Path) -> bool:
         return False
     if path.suffix.lower() not in REPO_MAP_INCLUDED_SUFFIXES:
         return False
+    max_bytes = REPO_MAP_CORE_MAX_FILE_BYTES if rel.as_posix() in REPO_MAP_LARGE_CORE_FILES else REPO_MAP_DEFAULT_MAX_FILE_BYTES
     try:
-        if path.stat().st_size > 240_000:
+        if path.stat().st_size > max_bytes:
             return False
     except OSError:
         return False
@@ -14008,7 +14500,7 @@ def commander_repo_map(qs=None, headers=None) -> dict:
         "ranking": {
             "deterministic": True,
             "sort": "score desc, path asc",
-            "score_version": "repo-map-localizer-v1",
+            "score_version": "repo-map-localizer-v2",
             "token_omitted": True,
         },
         "contract": "read-only repo localization for coding work packages; scans tracked-style repo text paths, returns redacted snippets plus hashes, and does not mutate ledger or execute commands",
@@ -14023,10 +14515,37 @@ def commander_repo_map(qs=None, headers=None) -> dict:
     }
 
 
-def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
+def commander_project_board(conn: sqlite3.Connection, headers, qs=None) -> dict:
+    qs = qs or {}
     readiness, worker = safe_commander_readiness_snapshot(conn, headers)
     adapter_payload = worker_adapter_readiness(conn, refresh=False)
     conn.rollback()
+    workspace_id = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    live_acceptance = live_acceptance_readiness(conn, workspace_id)
+    live_acceptance_summary = live_acceptance.get("summary") or {}
+    project_id = commander_safe_text((qs.get("project_id") or [""])[0], 120)
+    plan_id = commander_safe_text((qs.get("plan_id") or [""])[0], 120)
+    try:
+        team_limit_raw = int((qs.get("limit") or ["25"])[0])
+    except Exception:
+        team_limit_raw = 25
+    team_limit = min(max(team_limit_raw, 1), 100)
+    team_readback = None
+    team_board = None
+    if project_id or plan_id:
+        team_readback = commander_work_packages_readback(conn, {
+            "workspace_id": [workspace_id],
+            "project_id": [project_id],
+            "plan_id": [plan_id],
+            "status": ["all"],
+            "limit": [str(team_limit)],
+        }, headers)
+        team_board = build_commander_team_board(
+            packages=team_readback.get("work_packages") or [],
+            workspace_id=workspace_id,
+            project_id=project_id or None,
+            plan_id=plan_id or None,
+        )
 
     task_counts = status_counts(conn, "tasks", VALID_TASK_STATUSES)
     run_counts = status_counts(conn, "runs")
@@ -14097,6 +14616,8 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
         synthesis_lifecycle=synthesis_lifecycle,
         adapter_status=adapter_payload.get("status") or "unknown",
         adapter_summary=adapter_summary,
+        live_acceptance_status=live_acceptance.get("status") or "unknown",
+        live_acceptance_summary=live_acceptance_summary,
     )
     recommended_next_actions = commander_project_board_next_actions(integration_gates, readiness.get("next_actions") or [])
     board_status = commander_project_board_status(integration_gates)
@@ -14106,7 +14627,7 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
         "status": board_status,
         "token_omitted": True,
         "live_execution_performed": False,
-        "workspace_id": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+        "workspace_id": workspace_id,
         "local_readiness": {
             "status": readiness.get("status") or "unknown",
             "ok": bool(readiness.get("ok")) if "ok" in readiness else None,
@@ -14133,8 +14654,32 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
             "synthesis_artifacts": synthesis_summary.get("synthesis_artifacts", 0),
             "synthesis_pending_reviews": synthesis_summary.get("pending_reviews", 0),
             "synthesis_promoted_deliveries": synthesis_summary.get("promoted_delivery_artifacts", 0),
+            "live_acceptance_fresh": live_acceptance_summary.get("fresh", 0),
+            "live_acceptance_latest_failed": live_acceptance_summary.get("latest_failed", 0),
+            "live_acceptance_latest_incomplete": live_acceptance_summary.get("latest_incomplete", 0),
+            "live_acceptance_missing": live_acceptance_summary.get("missing", 0),
+            "live_acceptance_stale": live_acceptance_summary.get("stale", 0),
         },
         "synthesis_lifecycle": synthesis_lifecycle,
+        "live_acceptance": {
+            "status": live_acceptance.get("status") or "unknown",
+            "summary": live_acceptance_summary,
+            "adapters": {
+                adapter: {
+                    "status": item.get("status"),
+                    "ok": item.get("ok"),
+                    "latest_attempt": item.get("latest_attempt"),
+                    "latest_passing": item.get("latest_passing"),
+                    "active_attempt": item.get("active_attempt"),
+                    "next_action": item.get("next_action"),
+                    "token_omitted": True,
+                }
+                for adapter, item in (live_acceptance.get("adapters") or {}).items()
+            },
+            "safety": live_acceptance.get("safety") or {},
+            "token_omitted": True,
+            "live_execution_performed": False,
+        },
         "recent_artifacts": recent_artifact_rows,
         "stuck_workflow_jobs": [{
             "job_id": job.get("job_id"),
@@ -14145,6 +14690,14 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
             "result_run_id": job.get("result_run_id"),
         } for job in stuck_jobs],
         "recent_work_packages": recent_work_packages,
+        "team_board": team_board,
+        "team_board_filter": {
+            "project_id": project_id or None,
+            "plan_id": plan_id or None,
+            "limit": team_limit,
+            "applied": bool(project_id or plan_id),
+        },
+        "team_work_packages_summary": (team_readback or {}).get("summary"),
         "integration_gates": integration_gates,
         "recommended_next_actions": recommended_next_actions[:8],
         "safety": {
@@ -14865,6 +15418,16 @@ def commander_work_package_from_task(conn: sqlite3.Connection, row: sqlite3.Row)
         (task["task_id"],),
     ).fetchone()
     latest_run = dict(latest_run_row) if latest_run_row else None
+    latest_workflow_job_row = conn.execute(
+        """SELECT job_id, workflow_type, status, adapter, confirm_run, result_task_id, result_run_id,
+                  result_artifact_id, error_message, created_at, started_at, completed_at, updated_at
+        FROM workflow_jobs
+        WHERE result_task_id=? AND workflow_type='commander_work_package_dispatch'
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT 1""",
+        (task["task_id"],),
+    ).fetchone()
+    latest_workflow_job = dict(latest_workflow_job_row) if latest_workflow_job_row else None
     evidence = commander_evidence_counts(conn, task_id=task["task_id"], run_id=(latest_run or {}).get("run_id"))
     localization_row = conn.execute(
         """SELECT artifact_id, task_id, run_id, artifact_type, title, uri, summary, created_at
@@ -14905,6 +15468,7 @@ def commander_work_package_from_task(conn: sqlite3.Connection, row: sqlite3.Row)
         "verification_commands": commander_extract_verification(description),
         "acceptance_criteria": commander_safe_text(task.get("acceptance_criteria"), 360),
         "latest_run": latest_run,
+        "latest_workflow_job": latest_workflow_job,
         "localization_artifact": localization_artifact,
         "localization_gate": {
             "status": "recorded" if localization_artifact else "missing",
@@ -15801,6 +16365,13 @@ def submit_commander_work_package_dispatch_jobs(conn: sqlite3.Connection, body: 
             "raw_request_omitted": True,
         })
         jobs.append(workflow_job_public(job_row))
+    queued_packages = [commander_work_package_from_task(conn, row) for row in rows]
+    team_board_after_queue = build_commander_team_board(
+        packages=queued_packages,
+        workspace_id=workspace_id,
+        project_id=project_id or None,
+        plan_id=plan_id or None,
+    )
     conn.commit()
 
     for job in jobs:
@@ -15831,6 +16402,7 @@ def submit_commander_work_package_dispatch_jobs(conn: sqlite3.Connection, body: 
         "task_ids": [job.get("result_task_id") for job in jobs],
         "status_urls": [f"/api/workflows/jobs/{job.get('job_id')}" for job in jobs],
         "filter": {"project_id": project_id or None, "plan_id": plan_id or None, "status": status_filter, "limit": limit},
+        "team_board_after_queue": team_board_after_queue,
         "safety": {
             "ledger_mutated": True,
             "jobs_created": len(jobs),
@@ -16646,12 +17218,73 @@ def commander_evidence_counts(conn: sqlite3.Connection, task_id=None, run_id=Non
     return counts
 
 
+def commander_integration_decision(bucket: str, evidence_counts: dict, recommended_action: str) -> dict:
+    evidence_complete = all(
+        int(evidence_counts.get(key) or 0) > 0
+        for key in ("artifacts", "evaluations", "audit_logs")
+    )
+    pending_approval = int(evidence_counts.get("pending_approvals") or 0) > 0
+    if bucket == "ready_for_review":
+        decision = "merge_candidate" if evidence_complete else "needs_evidence_review"
+        status = "attention"
+        reason = (
+            "Worker output has artifact, evaluation and audit evidence; a human commander must review approval state before delivery."
+            if evidence_complete
+            else "Worker output is ready-looking but missing one or more artifact/evaluation/audit evidence rows."
+        )
+        required_review = True
+        can_advance_without_waiting = True
+    elif bucket == "still_running":
+        decision = "continue_running"
+        status = "running"
+        reason = "This lane is still active; review other completed lanes without blocking on it."
+        required_review = False
+        can_advance_without_waiting = True
+    elif bucket == "late_or_stale":
+        decision = "needs_recovery"
+        status = "blocked"
+        reason = "This lane exceeded the async freshness threshold and needs stuck-job or worker recovery before integration."
+        required_review = True
+        can_advance_without_waiting = True
+    elif bucket == "blocked":
+        decision = "needs_recovery"
+        status = "blocked"
+        reason = "This lane has failed or blocked ledger state and needs retry, rejection, reassignment, or a recovery package."
+        required_review = True
+        can_advance_without_waiting = True
+    elif bucket == "needs_memory_review":
+        decision = "needs_memory_review"
+        status = "attention"
+        reason = "A memory candidate must be approved, rejected, superseded, or left out before it becomes durable team context."
+        required_review = True
+        can_advance_without_waiting = True
+    else:
+        decision = "review_required"
+        status = "attention"
+        reason = "Commander review is required before this inbox item affects delivery or project memory."
+        required_review = True
+        can_advance_without_waiting = False
+    return {
+        "decision": decision,
+        "status": status,
+        "reason": reason,
+        "required_review": required_review,
+        "can_advance_without_waiting": can_advance_without_waiting,
+        "evidence_complete": evidence_complete,
+        "pending_approval": pending_approval,
+        "safe_to_auto_apply": False,
+        "ledger_decision_required": required_review,
+        "next_command": recommended_action,
+    }
+
+
 def commander_inbox_item(bucket: str, row: dict, title: str, recommended_action: str, conn: sqlite3.Connection, artifact_id=None) -> dict:
     task_id = row.get("task_id") or row.get("result_task_id")
     run_id = row.get("run_id") or row.get("result_run_id")
     job_id = row.get("job_id")
     artifact_id = artifact_id or row.get("artifact_id") or row.get("result_artifact_id")
     item_id = f"{bucket}:{job_id or run_id or task_id or artifact_id or row.get('memory_id')}"
+    evidence_counts = commander_evidence_counts(conn, task_id=task_id, run_id=run_id, artifact_id=artifact_id)
     return {
         "item_id": item_id,
         "bucket": bucket,
@@ -16664,7 +17297,8 @@ def commander_inbox_item(bucket: str, row: dict, title: str, recommended_action:
         "agent_id": row.get("agent_id"),
         "owner_agent_id": row.get("owner_agent_id") or row.get("agent_id"),
         "age_sec": commander_age_sec(row.get("updated_at"), row.get("started_at"), row.get("created_at")),
-        "evidence_counts": commander_evidence_counts(conn, task_id=task_id, run_id=run_id, artifact_id=artifact_id),
+        "evidence_counts": evidence_counts,
+        "integration_decision": commander_integration_decision(bucket, evidence_counts, recommended_action),
         "recommended_action": recommended_action,
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at") or row.get("completed_at") or row.get("ended_at") or row.get("created_at"),
@@ -17067,14 +17701,248 @@ def recent_closed_loop_run_count(conn: sqlite3.Connection, limit: int = 250) -> 
     return count
 
 
+def live_acceptance_readiness(conn: sqlite3.Connection, workspace_id: str = "local-demo", freshness_hours: int = 72, limit: int = 8) -> dict:
+    workspace_id = normalize_workspace_id(workspace_id)
+    freshness_hours = min(max(int(freshness_hours or 72), 1), 24 * 30)
+    limit = min(max(int(limit or 8), 1), 25)
+    now_dt = dt.datetime.now(dt.timezone.utc)
+
+    def row_time(row: dict) -> dt.datetime | None:
+        return parse_iso_datetime(row.get("checked_at") or row.get("ended_at") or row.get("started_at") or row.get("created_at"))
+
+    def evidence_for_run(run_id: str, task_id: str | None, adapter: str) -> dict:
+        task_id = task_id or ""
+        return {
+            "tool_calls": scalar_count(conn, "SELECT COUNT(*) FROM tool_calls WHERE run_id=?", (run_id,)),
+            "completed_tool_calls": scalar_count(conn, "SELECT COUNT(*) FROM tool_calls WHERE run_id=? AND status='completed'", (run_id,)),
+            "completed_adapter_tool_calls": scalar_count(
+                conn,
+                "SELECT COUNT(*) FROM tool_calls WHERE run_id=? AND status='completed' AND tool_name=?",
+                (run_id, f"agent_worker.{adapter}"),
+            ),
+            "evaluations": scalar_count(conn, "SELECT COUNT(*) FROM evaluations WHERE run_id=?", (run_id,)),
+            "passing_evaluations": scalar_count(conn, "SELECT COUNT(*) FROM evaluations WHERE run_id=? AND pass_fail='pass'", (run_id,)),
+            "runtime_events": scalar_count(conn, "SELECT COUNT(*) FROM runtime_events WHERE run_id=? OR task_id=?", (run_id, task_id)),
+            "audit_logs": scalar_count(conn, "SELECT COUNT(*) FROM audit_logs WHERE entity_id IN (?,?) OR metadata_json LIKE ?", (run_id, task_id, f"%{run_id}%")),
+            "artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts WHERE run_id=?", (run_id,)),
+            "customer_worker_artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts WHERE run_id=? AND artifact_type='customer_worker_result'", (run_id,)),
+            "memories": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE source_ref=? OR task_id=?", (run_id, task_id)),
+            "approvals": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE run_id=? OR task_id=?", (run_id, task_id)),
+            "plan_evidence_manifests": scalar_count(conn, "SELECT COUNT(*) FROM plan_evidence_manifests WHERE run_id=?", (run_id,)),
+            "verified_plan_evidence_manifests": scalar_count(conn, "SELECT COUNT(*) FROM plan_evidence_manifests WHERE run_id=? AND status='verified'", (run_id,)),
+        }
+
+    def acceptance_checks(run: dict, evidence: dict) -> list[dict]:
+        return [
+            {"id": "run_completed", "ok": run.get("status") == "completed", "message": "Run completed before being counted as live acceptance."},
+            {"id": "adapter_tool_evidence", "ok": evidence["completed_adapter_tool_calls"] >= 1, "message": "The matching worker adapter tool-call completed."},
+            {"id": "evaluation_pass", "ok": evidence["passing_evaluations"] >= 1, "message": "At least one evaluation passed."},
+            {"id": "runtime_event", "ok": evidence["runtime_events"] >= 1, "message": "Runtime events were recorded."},
+            {"id": "audit_log", "ok": evidence["audit_logs"] >= 1, "message": "Audit evidence was recorded."},
+            {"id": "customer_worker_artifact", "ok": evidence["customer_worker_artifacts"] >= 1, "message": "A customer-worker delivery artifact exists."},
+            {"id": "memory_candidate", "ok": evidence["memories"] >= 1, "message": "A memory candidate or artifact summary exists."},
+            {"id": "delivery_approval", "ok": evidence["approvals"] >= 1, "message": "Customer delivery approval evidence exists."},
+            {"id": "plan_evidence", "ok": evidence["verified_plan_evidence_manifests"] >= 1, "message": "A verified plan-evidence manifest exists."},
+        ]
+
+    adapters: dict[str, dict] = {}
+    for adapter in ["hermes", "openclaw"]:
+        rows = rows_to_dicts(conn.execute(
+            """SELECT r.run_id,r.task_id,r.agent_id,r.runtime_type,r.status,r.started_at,r.ended_at,r.created_at,
+                      r.error_type,r.error_message,t.title AS task_title,t.status AS task_status,
+                      (SELECT a.artifact_id
+                         FROM artifacts a
+                        WHERE a.run_id=r.run_id AND a.artifact_type='customer_worker_result'
+                        ORDER BY a.created_at DESC
+                        LIMIT 1) AS artifact_id,
+                      (SELECT a.created_at
+                         FROM artifacts a
+                        WHERE a.run_id=r.run_id AND a.artifact_type='customer_worker_result'
+                        ORDER BY a.created_at DESC
+                        LIMIT 1) AS artifact_created_at,
+                      (SELECT pem.manifest_id
+                         FROM plan_evidence_manifests pem
+                        WHERE pem.run_id=r.run_id AND pem.status='verified'
+                        ORDER BY pem.created_at DESC
+                        LIMIT 1) AS plan_evidence_manifest_id,
+                      COALESCE(
+                        (SELECT a.created_at
+                           FROM artifacts a
+                          WHERE a.run_id=r.run_id AND a.artifact_type='customer_worker_result'
+                          ORDER BY a.created_at DESC
+                          LIMIT 1),
+                        r.started_at,
+                        r.ended_at,
+                        r.created_at
+                      ) AS checked_at,
+                      COALESCE(r.started_at, r.created_at) AS attempt_at
+               FROM runs r
+               LEFT JOIN tasks t ON t.task_id=r.task_id
+               WHERE COALESCE(r.workspace_id,t.workspace_id,'local-demo')=?
+                 AND r.runtime_type=?
+                 AND (
+                    EXISTS (
+                        SELECT 1
+                          FROM artifacts a
+                         WHERE a.run_id=r.run_id
+                           AND a.artifact_type='customer_worker_result'
+                    )
+                    OR (
+                        r.agent_id LIKE 'agt_customer_worker_%'
+                        AND r.delegation_id LIKE ?
+                        AND r.status IN ('running','waiting_approval','failed','blocked')
+                    )
+                 )
+               ORDER BY attempt_at DESC
+               LIMIT ?""",
+            (workspace_id, adapter, f"worker:{adapter}:%", limit),
+        ).fetchall())
+        attempts = []
+        passing = None
+        for row in rows:
+            evidence = evidence_for_run(row["run_id"], row.get("task_id"), adapter)
+            checks = acceptance_checks(row, evidence)
+            checked_at = row_time(row)
+            age_hours = round((now_dt - checked_at).total_seconds() / 3600, 2) if checked_at else None
+            item = {
+                "run_id": row.get("run_id"),
+                "task_id": row.get("task_id"),
+                "artifact_id": row.get("artifact_id"),
+                "plan_evidence_manifest_id": row.get("plan_evidence_manifest_id"),
+                "agent_id": row.get("agent_id"),
+                "runtime_type": row.get("runtime_type"),
+                "run_status": row.get("status"),
+                "task_status": row.get("task_status"),
+                "task_title": redact_text(row.get("task_title"), 180),
+                "started_at": row.get("started_at"),
+                "ended_at": row.get("ended_at"),
+                "checked_at": row.get("checked_at"),
+                "attempt_at": row.get("attempt_at"),
+                "age_hours": age_hours,
+                "active": row.get("status") == "running",
+                "error_type": row.get("error_type"),
+                "error_summary": redact_text(row.get("error_message"), 220) if row.get("error_message") else None,
+                "evidence": evidence,
+                "checks": checks,
+                "pass": all(check["ok"] for check in checks),
+                "token_omitted": True,
+            }
+            attempts.append(item)
+            if passing is None and item["pass"]:
+                passing = item
+        latest = attempts[0] if attempts else None
+        if not passing:
+            status = "missing"
+        elif passing.get("age_hours") is not None and passing["age_hours"] <= freshness_hours:
+            status = "fresh"
+        else:
+            status = "stale"
+        if latest and not latest.get("pass") and latest.get("run_status") in {"failed", "blocked"}:
+            status = "latest_failed"
+        elif latest and not latest.get("pass") and latest.get("run_status") in {"running", "waiting_approval"} and not passing:
+            status = "latest_incomplete"
+        adapters[adapter] = {
+            "adapter": adapter,
+            "status": status,
+            "ok": status == "fresh",
+            "freshness_hours": freshness_hours,
+            "latest_attempt": latest,
+            "latest_passing": passing,
+            "active_attempt": next((item for item in attempts if item.get("active")), None),
+            "recent_attempts": attempts[:3],
+            "next_action": (
+                f"python3 scripts/customer_worker_real_runtime_acceptance.py --confirm-live --adapter {adapter} --request-timeout 720 --hermes-timeout 600 --hermes-max-tokens 512"
+            ),
+            "token_omitted": True,
+        }
+    workflow_recovery = workflow_job_recovery_work_order(conn, workspace_id, limit=min(limit, 8))
+    workflow_recovery_summary = workflow_recovery.get("summary") or {}
+    workflow_recovery_hint = {
+        "operation": "workflow_job_recovery_hint",
+        "status": workflow_recovery.get("status"),
+        "summary": {
+            "items": int(workflow_recovery_summary.get("items") or 0),
+            "stuck_jobs": int(workflow_recovery_summary.get("stuck_jobs") or 0),
+            "retryable_failed_jobs": int(workflow_recovery_summary.get("retryable_failed_jobs") or 0),
+            "receipt_missing": int(workflow_recovery_summary.get("receipt_missing") or 0),
+        },
+        "inspect_command": "agentops workflow stuck-jobs --threshold-sec 900 --limit 25",
+        "handoff_command": f"agentops operator handoff --limit {min(limit, 8)}",
+        "contract": "read-only live-acceptance hint only; full recover-job preview/confirm contract is exposed through operator handoff and loop-launch packet",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+    overall = "ready" if all(item["ok"] for item in adapters.values()) else "attention"
+    return {
+        "provider": "agentops-operator",
+        "operation": "live_acceptance_readiness",
+        "status": overall,
+        "ok": overall == "ready",
+        "workspace_id": workspace_id,
+        "freshness_hours": freshness_hours,
+        "adapters": adapters,
+        "summary": {
+            "fresh": sum(1 for item in adapters.values() if item["status"] == "fresh"),
+            "stale": sum(1 for item in adapters.values() if item["status"] == "stale"),
+            "missing": sum(1 for item in adapters.values() if item["status"] == "missing"),
+            "latest_failed": sum(1 for item in adapters.values() if item["status"] == "latest_failed"),
+            "latest_incomplete": sum(1 for item in adapters.values() if item["status"] == "latest_incomplete"),
+            "workflow_job_recovery_items": int(workflow_recovery_summary.get("items") or 0),
+            "workflow_job_recovery_stuck_jobs": int(workflow_recovery_summary.get("stuck_jobs") or 0),
+            "workflow_job_recovery_retryable_failed_jobs": int(workflow_recovery_summary.get("retryable_failed_jobs") or 0),
+            "workflow_job_recovery_receipt_missing": int(workflow_recovery_summary.get("receipt_missing") or 0),
+        },
+        "commands": {
+            **{adapter: adapters[adapter]["next_action"] for adapter in adapters},
+            "workflow_jobs": workflow_recovery_hint["inspect_command"],
+        },
+        "workflow_job_recovery_hint": workflow_recovery_hint,
+        "contract": "read-only live Hermes/OpenClaw customer-worker acceptance freshness; derives from ledger evidence only and does not call runtimes",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = True) -> dict:
     gateway, gateway_status_code = agent_gateway_status(conn, headers)
+    running_instance = running_instance_identity()
     security = security_production_readiness(conn, headers)
+    security_startup = security.get("startup_security") or {}
+    production_requested = bool(security.get("production_requested"))
+    production_ready = bool(security.get("production_ready"))
+    local_security_boundary_ok = (
+        security.get("status") in {"ready", "attention"}
+        and not bool(security_startup.get("failures"))
+        and not (production_requested and not production_ready)
+    )
     worker = worker_status(conn, refresh_runtime=refresh_runtime)
     adapter_summary = worker.get("adapter_readiness") or {}
     adapter_payload = worker_adapter_readiness(conn, refresh=refresh_runtime)
     synthesis_lifecycle = commander_synthesis_lifecycle(conn, limit=3)
     synthesis_summary = synthesis_lifecycle.get("summary") or {}
+    workspace_id = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    live_acceptance = live_acceptance_readiness(conn, workspace_id)
+    live_summary = live_acceptance.get("summary") or {}
+    knowledge_evidence, _knowledge_evidence_status = knowledge_retrieval_evidence_packet(
+        conn,
+        {"q": ["AgentOps MIS local worker knowledge retrieval evidence"], "limit": ["5"], "baseline_limit": ["5"]},
+        headers,
+        auth_ctx={},
+    )
+    knowledge_evidence_metrics = knowledge_evidence.get("metrics") or {}
     docs = [
         ("README", ROOT / "README.md"),
         ("remote_worker_runbook", ROOT / "docs" / "REMOTE_WORKER_OPERATIONS_RUNBOOK.md"),
@@ -17096,6 +17964,19 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "memories": scalar_count(conn, "SELECT COUNT(*) FROM memories"),
         "memory_candidates": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='candidate'"),
         "approved_memories": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='approved'"),
+        "knowledge_documents": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_documents"),
+        "knowledge_chunks": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_chunks"),
+        "knowledge_chunk_fts_rows": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_chunk_fts"),
+        "knowledge_workspace_documents": scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM knowledge_documents WHERE workspace_id IN ('global', ?)",
+            (workspace_id,),
+        ),
+        "knowledge_workspace_chunks": scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM knowledge_chunks WHERE workspace_id IN ('global', ?)",
+            (workspace_id,),
+        ),
         "pending_approvals": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='pending'"),
         "approvals": scalar_count(conn, "SELECT COUNT(*) FROM approvals"),
         "workflow_jobs": scalar_count(conn, "SELECT COUNT(*) FROM workflow_jobs"),
@@ -17106,9 +17987,24 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "commander_synthesis_approved_reviews": int(synthesis_summary.get("approved_reviews") or 0),
         "commander_synthesis_promoted_memories": int(synthesis_summary.get("promoted_memory_candidates") or 0),
         "commander_synthesis_promoted_deliveries": int(synthesis_summary.get("promoted_delivery_artifacts") or 0),
+        "live_acceptance_fresh_adapters": int(live_summary.get("fresh") or 0),
+        "live_acceptance_latest_failed_adapters": int(live_summary.get("latest_failed") or 0),
+        "live_acceptance_missing_adapters": int(live_summary.get("missing") or 0),
+        "knowledge_retrieval_recall_at_5": knowledge_evidence_metrics.get("recall_at_5"),
+        "knowledge_retrieval_mrr": knowledge_evidence_metrics.get("mrr"),
+        "knowledge_retrieval_p95_ms": knowledge_evidence_metrics.get("p95_ms"),
+        "knowledge_retrieval_fallback_queries": knowledge_evidence_metrics.get("fallback_queries"),
+        "local_security_boundary_ok": local_security_boundary_ok,
+        "production_ready": production_ready,
+        "production_security_requested": production_requested,
+        "running_instance_current": bool(running_instance.get("current")),
+        "running_instance_git_head": running_instance.get("git_head_sha"),
+        "running_instance_git_dirty_entries": int(running_instance.get("git_dirty_entries") or 0),
     }
     evidence["has_task_run_tool_eval_audit_artifact_chain"] = evidence["closed_loop_runs"] > 0
-    evidence["has_memory_or_knowledge"] = evidence["memories"] > 0
+    evidence["has_indexed_knowledge"] = evidence["knowledge_documents"] > 0 or evidence["knowledge_chunks"] > 0
+    evidence["has_workspace_knowledge"] = evidence["knowledge_workspace_documents"] > 0 or evidence["knowledge_workspace_chunks"] > 0
+    evidence["has_memory_or_knowledge"] = evidence["memories"] > 0 or evidence["has_indexed_knowledge"]
     evidence["has_approval_flow"] = evidence["approvals"] > 0
     gates = [
         {
@@ -17118,6 +18014,18 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
             "status": gateway.get("status") or gateway.get("error") or "unknown",
             "detail": gateway.get("message") or (gateway.get("auth") or {}).get("mode") or "ready",
             "next_action": "agentops status",
+        },
+        {
+            "id": "running_instance_freshness",
+            "label": "Running MIS process matches current backend source",
+            "ok": running_instance.get("current") is True,
+            "status": running_instance.get("status") or "unknown",
+            "detail": (
+                f"pid={running_instance.get('server_pid')}; "
+                f"head={running_instance.get('git_head_short') or 'unknown'}; "
+                f"latest_source={running_instance.get('latest_source_path') or 'unknown'}"
+            ),
+            "next_action": "agentops local readiness --require-current-code",
         },
         {
             "id": "worker_fleet",
@@ -17130,10 +18038,18 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         {
             "id": "production_security",
             "label": "Production security boundary",
-            "ok": security.get("production_ready") is True,
+            "ok": local_security_boundary_ok,
             "status": security.get("status") or "unknown",
-            "detail": security.get("contract") or f"auth_mode={security.get('auth_mode')}",
-            "next_action": "agentops security production-readiness",
+            "detail": (
+                f"local_boundary_ok={local_security_boundary_ok}; "
+                f"production_ready={production_ready}; "
+                f"auth_mode={security.get('auth_mode') or 'unknown'}"
+            ),
+            "next_action": (
+                "agentops security production-readiness"
+                if not local_security_boundary_ok
+                else "For shared/production deployment, configure Gateway and admin credentials before exposing beyond loopback."
+            ),
         },
         {
             "id": "adapter_route",
@@ -17146,10 +18062,18 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         {
             "id": "knowledge_memory",
             "label": "Memory/knowledge sedimentation",
-            "ok": evidence["has_memory_or_knowledge"],
-            "status": "ready" if evidence["has_memory_or_knowledge"] else "needs_seed_or_run",
-            "detail": f"{evidence['memories']} memories, {evidence['memory_candidates']} candidates",
-            "next_action": "agentops memory propose --text '...' --type artifact_summary",
+            "ok": evidence["has_memory_or_knowledge"] and knowledge_evidence.get("status") == "ready",
+            "status": knowledge_evidence.get("status") if evidence["has_memory_or_knowledge"] else "needs_seed_or_run",
+            "detail": (
+                f"{evidence['memories']} memories, {evidence['memory_candidates']} candidates, "
+                f"{evidence['knowledge_documents']} knowledge docs, {evidence['knowledge_chunks']} chunks, "
+                f"Recall@5={knowledge_evidence_metrics.get('recall_at_5')}, MRR={knowledge_evidence_metrics.get('mrr')}"
+            ),
+            "next_action": (
+                "agentops knowledge evidence-packet \"project spec\" --limit 5"
+                if evidence["has_indexed_knowledge"]
+                else "agentops knowledge index --rebuild"
+            ),
         },
         {
             "id": "evidence_chain",
@@ -17172,6 +18096,18 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
             "next_action": (synthesis_lifecycle.get("next_actions") or ["agentops commander synthesize --status ready_for_review --confirm-create"])[0],
         },
         {
+            "id": "live_acceptance_freshness",
+            "label": "Hermes/OpenClaw live acceptance freshness",
+            "ok": live_acceptance.get("status") == "ready",
+            "status": live_acceptance.get("status") or "unknown",
+            "detail": (
+                f"{live_summary.get('fresh', 0)} fresh, "
+                f"{live_summary.get('latest_failed', 0)} latest failed, "
+                f"{live_summary.get('missing', 0)} missing"
+            ),
+            "next_action": "python3 scripts/customer_worker_real_runtime_acceptance.py --base-url http://127.0.0.1:8787 --confirm-live --adapter hermes --adapter openclaw --hermes-max-tokens 512",
+        },
+        {
             "id": "runbook",
             "label": "Local demo/runbook",
             "ok": all(item["exists"] for item in doc_status),
@@ -17180,23 +18116,286 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
             "next_action": "open docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md",
         },
     ]
-    blockers = [gate for gate in gates if not gate["ok"] and gate["id"] in {"agent_gateway", "worker_fleet", "adapter_route", "runbook"}]
+    blockers = [gate for gate in gates if not gate["ok"] and gate["id"] in {"agent_gateway", "running_instance_freshness", "worker_fleet", "adapter_route", "runbook"}]
     warnings = [gate for gate in gates if not gate["ok"] and gate not in blockers]
     overall = "blocked" if blockers else "attention" if warnings else "ready"
+    gate_by_id = {gate["id"]: gate for gate in gates}
+    adapter_routes = adapter_payload.get("adapters") or {}
+    adapter_summary_full = adapter_payload.get("summary") or {}
+    recommended_adapter = adapter_summary_full.get("recommended_adapter") or adapter_summary.get("recommended_adapter") or "mock"
+    if recommended_adapter not in {"mock", "hermes", "openclaw"}:
+        recommended_adapter = "mock"
+    recommended_route = adapter_routes.get(recommended_adapter) or {}
+    recommended_remediation = recommended_route.get("remediation") or {}
+    recommended_commands = recommended_remediation.get("commands") or []
+    candidate_start_worker_command = next(
+        (
+            item.get("command")
+            for item in recommended_commands
+            if item.get("phase") in {"start", "start_worker"} and item.get("command")
+        ),
+        "",
+    )
+    fallback_start_worker_command = (
+        f"agentops worker start --adapter {recommended_adapter} --poll-interval 5 --max-tasks 0"
+        if recommended_adapter == "mock"
+        else f"agentops worker start --adapter {recommended_adapter} --confirm-run --poll-interval 5 --max-tasks 0"
+    )
+    start_worker_command = (
+        candidate_start_worker_command
+        if recommended_adapter == "mock" or "--confirm-run" in str(candidate_start_worker_command)
+        else fallback_start_worker_command
+    )
+    service_control_command = f"agentops worker service-control --manager launchd --action restart --adapter {recommended_adapter} --agent-id agt_worker_daemon_{recommended_adapter}"
+    service_control_verify_command = f"agentops worker service-check --manager launchd --adapter {recommended_adapter} --agent-id agt_worker_daemon_{recommended_adapter}"
+    service_control_action_signature = stable_hash(
+        "local_readiness.service_control_preview:"
+        f"{recommended_adapter}:{service_control_command}:{service_control_verify_command}"
+    )
+    service_control_receipt_base = [
+        "agentops", "operator", "record-action-receipt",
+        "--action-command", service_control_command,
+        "--verify-command", service_control_verify_command,
+        "--action-id", "local_readiness.service_control_preview",
+        "--action-signature", service_control_action_signature,
+        "--source", "local_readiness.service_control_preview",
+    ]
+    service_control_receipt_record_command = " ".join(
+        shlex.quote(str(part))
+        for part in [*service_control_receipt_base, "--status", "recorded"]
+    )
+    service_control_receipt_verify_command = " ".join(
+        shlex.quote(str(part))
+        for part in [
+            *service_control_receipt_base,
+            "--status", "verified",
+            "--result-summary", "Worker service-control preview inspected and service-check reviewed.",
+            "--confirm-record",
+        ]
+    )
+    live_dispatch_command = (
+        "agentops workflow customer-worker-task --adapter mock --title 'Local readiness demo' --description 'Verify full MIS evidence.'"
+        if recommended_adapter == "mock"
+        else f"agentops workflow customer-worker-task --adapter {recommended_adapter} --confirm-run --title '<customer task>' --description '<safe task brief>'"
+    )
+    live_acceptance_command = gate_by_id.get("live_acceptance_freshness", {}).get("next_action") or "agentops operator live-product-readiness --require-adapter hermes --require-adapter openclaw"
+    local_run_path = [
+        {
+            "step_id": "start_local_stack",
+            "label": "Start local MIS stack",
+            "phase": "boot",
+            "status": "ready" if gate_by_id.get("agent_gateway", {}).get("ok") else "action_required",
+            "command": "python3 scripts/run_local_stack.py --install-ui",
+            "verify_command": "agentops local readiness",
+            "route": "/workspace/agents",
+            "detail": "Starts the local backend and Vite UI when they are not already listening.",
+            "mutating": True,
+            "confirm_required": False,
+            "writes_ledger": False,
+            "live_execution": False,
+        },
+        {
+            "step_id": "inspect_local_readiness",
+            "label": "Inspect local readiness",
+            "phase": "read",
+            "status": overall,
+            "command": "agentops local readiness",
+            "verify_command": "agentops local readiness",
+            "route": "/workspace/agents",
+            "detail": "Reads Agent Gateway, security, worker, adapter, memory, approval, and evidence-chain gates.",
+            "mutating": False,
+            "confirm_required": False,
+            "writes_ledger": False,
+            "live_execution": False,
+        },
+        {
+            "step_id": "select_worker_adapter",
+            "label": f"Select {recommended_adapter} adapter route",
+            "phase": "route",
+            "status": recommended_route.get("readiness") or adapter_payload.get("status") or "unknown",
+            "adapter": recommended_adapter,
+            "command": "agentops worker readiness",
+            "verify_command": f"agentops worker preflight --adapter {recommended_adapter}",
+            "route": "/workspace/agents",
+            "detail": f"Recommended route is {recommended_adapter}; live adapters keep confirm-run and prepared-action walls.",
+            "mutating": False,
+            "confirm_required": False,
+            "writes_ledger": False,
+            "live_execution": False,
+        },
+        {
+            "step_id": "start_selected_worker",
+            "label": f"Start {recommended_adapter} worker loop",
+            "phase": "worker",
+            "status": recommended_route.get("readiness") if recommended_route.get("readiness") in {"ready", "review_required"} else "action_required",
+            "adapter": recommended_adapter,
+            "command": start_worker_command,
+            "verify_command": "agentops worker status",
+            "route": "/workspace/agents",
+            "detail": "Starts a repo-local supervised worker daemon; Hermes/OpenClaw require explicit --confirm-run.",
+            "mutating": True,
+            "confirm_required": recommended_adapter in {"hermes", "openclaw"},
+            "writes_ledger": False,
+            "live_execution": recommended_adapter in {"hermes", "openclaw"},
+        },
+        {
+            "step_id": "preview_worker_service_control",
+            "label": f"Preview {recommended_adapter} service control",
+            "phase": "service",
+            "status": "preview",
+            "adapter": recommended_adapter,
+            "command": service_control_command,
+            "verify_command": service_control_verify_command,
+            "route": "/workspace/agents",
+            "detail": "Previews launchd/systemd load/unload/restart for installed workers; add --confirm-control only after local review.",
+            "mutating": False,
+            "confirm_required": True,
+            "writes_ledger": False,
+            "live_execution": False,
+            "service_control_preview": True,
+            "copy_only": True,
+            "server_executes_shell": False,
+            "receipt_required": True,
+            "control_readback_required": True,
+            "receipt_command": "agentops operator action-receipts --limit 20",
+            "receipt_record_command": service_control_receipt_record_command,
+            "receipt_verify_record_command": service_control_receipt_verify_command,
+            "action_signature": service_control_action_signature,
+            "source": "local_readiness.service_control_preview",
+            "token_omitted": True,
+        },
+        {
+            "step_id": "dispatch_customer_task",
+            "label": "Dispatch a customer task",
+            "phase": "execute",
+            "status": "ready" if gate_by_id.get("evidence_chain", {}).get("ok") else "attention",
+            "adapter": recommended_adapter,
+            "command": live_dispatch_command,
+            "verify_command": "agentops operator live-product-readiness --require-adapter hermes --require-adapter openclaw" if recommended_adapter in {"hermes", "openclaw"} else "agentops local readiness",
+            "route": "/workspace/agents",
+            "detail": "Creates normal MIS task/run/tool/eval/audit/artifact evidence through the selected worker path.",
+            "mutating": True,
+            "confirm_required": recommended_adapter in {"hermes", "openclaw"},
+            "writes_ledger": True,
+            "live_execution": recommended_adapter in {"hermes", "openclaw"},
+        },
+        {
+            "step_id": "verify_ledger_evidence",
+            "label": "Verify ledger evidence",
+            "phase": "verify",
+            "status": "ready" if evidence["has_task_run_tool_eval_audit_artifact_chain"] else "attention",
+            "command": "agentops local readiness",
+            "verify_command": "agentops run list --limit 5",
+            "route": "/admin/runs",
+            "detail": "Checks task/run/tool/evaluation/audit/artifact counts and recent closed-loop evidence.",
+            "mutating": False,
+            "confirm_required": False,
+            "writes_ledger": False,
+            "live_execution": False,
+        },
+        {
+            "step_id": "prove_live_product_readiness",
+            "label": "Prove Hermes/OpenClaw freshness",
+            "phase": "acceptance",
+            "status": live_acceptance.get("status") or "unknown",
+            "command": live_acceptance_command,
+            "verify_command": "agentops operator live-product-readiness --require-adapter hermes --require-adapter openclaw",
+            "route": "/workspace/agents",
+            "detail": "Manual live acceptance remains explicit and read back from ledger evidence.",
+            "mutating": True,
+            "confirm_required": True,
+            "writes_ledger": True,
+            "live_execution": True,
+        },
+    ]
+    for step in local_run_path:
+        step["copy_only"] = True
+        step["server_executes_shell"] = False
+        step["token_omitted"] = True
+    receipt_lookup_rows = operator_action_receipt_rows(conn, workspace_id, 200)
+
+    def local_run_path_receipt_state(step: dict) -> dict:
+        command = str(step.get("command") or "").strip()
+        action_signature = str(step.get("action_signature") or "").strip()
+        receipt_required = bool(step.get("receipt_required"))
+        if not receipt_required:
+            return {
+                "required": False,
+                "status": "not_required",
+                "match": "not_required",
+                "verified": True,
+                "token_omitted": True,
+            }
+        command_hash = stable_hash(command) if command else ""
+        stale_candidate: dict | None = None
+        matched: dict | None = None
+        match = "missing"
+        for receipt in receipt_lookup_rows:
+            receipt_command = str(receipt.get("action_command") or "").strip()
+            receipt_action_hash = str(receipt.get("action_hash") or "").strip()
+            if command and (receipt_command == command or receipt_action_hash == command_hash):
+                matched = receipt
+                match = "current"
+                break
+            receipt_signature = str(receipt.get("action_signature") or "").strip()
+            if action_signature and receipt_signature == action_signature:
+                stale_candidate = stale_candidate or receipt
+        if matched is None and stale_candidate:
+            matched = stale_candidate
+            match = "stale"
+        underlying_status = str((matched or {}).get("status") or "missing")
+        evaluation = (matched or {}).get("evaluation") or {}
+        receipt_hash = (
+            (matched or {}).get("tamper_chain_hash")
+            or (matched or {}).get("verify_hash")
+            or (matched or {}).get("action_hash")
+            or (matched or {}).get("audit_id")
+        )
+        return {
+            "required": True,
+            "status": "stale" if match == "stale" else underlying_status,
+            "underlying_status": underlying_status,
+            "match": match,
+            "current": match == "current",
+            "verified": match == "current" and underlying_status == "verified",
+            "receipt_id": (matched or {}).get("receipt_id"),
+            "receipt_hash": receipt_hash,
+            "control_readback_attached": bool((matched or {}).get("control_readback")),
+            "control_readback_id": (matched or {}).get("control_readback_id"),
+            "control_readback_hash": (matched or {}).get("control_readback_hash"),
+            "evaluation_id": (matched or {}).get("evaluation_id") or evaluation.get("evaluation_id"),
+            "evaluation_pass_fail": (matched or {}).get("evaluation_pass_fail") or evaluation.get("pass_fail"),
+            "action_signature": action_signature or (matched or {}).get("action_signature"),
+            "action_hash": (matched or {}).get("action_hash") or (command_hash if command else None),
+            "verify_hash": (matched or {}).get("verify_hash"),
+            "token_omitted": True,
+        }
+
+    for step in local_run_path:
+        if step.get("receipt_required"):
+            step["receipt_state"] = local_run_path_receipt_state(step)
     return {
         "provider": "agentops-local",
         "operation": "local_readiness",
         "status": overall,
         "ok": overall != "blocked",
-        "workspace_id": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+        "local_demo_ready": overall == "ready",
+        "local_security_boundary_ok": local_security_boundary_ok,
+        "production_ready": production_ready,
+        "production_security_requested": production_requested,
+        "workspace_id": workspace_id,
         "gates": gates,
         "evidence": evidence,
         "adapter_readiness": adapter_payload.get("summary"),
         "worker_fleet_health": worker.get("fleet_health"),
         "security_production_readiness": security,
         "commander_synthesis_lifecycle": synthesis_lifecycle,
+        "live_acceptance_readiness": live_acceptance,
+        "knowledge_retrieval_evidence": knowledge_evidence,
+        "running_instance": running_instance,
         "gateway": gateway,
         "docs": doc_status,
+        "local_run_path": local_run_path,
         "ui_routes": {
             "worker_console": "/workspace/agents",
             "memory": "/workspace/memory",
@@ -17246,8 +18445,136 @@ def latest_task_agent_plan(conn: sqlite3.Connection, task_id: str, agent_ids: li
     ).fetchone()
 
 
+TASK_INTAKE_METHOD_GATE_IDS = [
+    "read_start_check",
+    "plan_agent_plan",
+    "retrieve_knowledge",
+    "compare_base_reference",
+    "preflight_adapter",
+    "execute_bounded_loop",
+    "verify_loop",
+    "record_memory_candidate",
+]
+
+
+def task_assigned_runtime_adapter(conn: sqlite3.Connection, row: sqlite3.Row | dict, assigned_agent_ids: list[str]) -> str | None:
+    for agent_id in assigned_agent_ids:
+        if not agent_id:
+            continue
+        agent = conn.execute("SELECT runtime_type, model_provider FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
+        if agent:
+            runtime_type = coerce_choice(agent["runtime_type"], {"mock", "hermes", "openclaw"}, "mock")
+            model_provider = coerce_choice(agent["model_provider"], {"mock", "hermes", "openclaw"}, "mock")
+            if runtime_type in {"hermes", "openclaw"}:
+                return runtime_type
+            if model_provider in {"hermes", "openclaw"}:
+                return model_provider
+        lowered = str(agent_id or "").lower()
+        if "openclaw" in lowered:
+            return "openclaw"
+        if "hermes" in lowered:
+            return "hermes"
+    return None
+
+
+def task_intake_local_loop_admission_packet(adapter: str | None, task_id: str, agent_id: str | None) -> dict | None:
+    if adapter not in {"hermes", "openclaw"}:
+        return None
+    quoted_agent = shlex.quote(agent_id or f"agt_worker_daemon_{adapter}")
+    worker_start = f"agentops worker start --adapter {adapter} --agent-id {quoted_agent} --confirm-run --poll-interval 5 --max-tasks 0"
+    customer_dispatch = (
+        "agentops workflow customer-worker-task "
+        f"--adapter {adapter} "
+        "--confirm-run "
+        f"--worker-agent-id {shlex.quote(agent_id or '<agent_id>')} "
+        "--title '<task title>' "
+        "--description '<task description>'"
+    )
+    phase_commands = {
+        "read": f"agentops operator start-check --adapter {adapter} --task-id {shlex.quote(task_id)}",
+        "plan": f"agentops agent-plan create --task-id {shlex.quote(task_id)}",
+        "retrieve": "agentops knowledge search --query '<task terms>'",
+        "compare": "agentops commander repo-map --query '<task terms>'",
+        "preflight": f"agentops worker preflight --adapter {adapter}",
+        "execute": customer_dispatch,
+        "verify": f"agentops operator live-product-readiness --require-adapter {adapter}",
+        "record": "agentops review queue --limit 20",
+    }
+    checks = [
+        {
+            "id": "method_gate_ids",
+            "ok": len(TASK_INTAKE_METHOD_GATE_IDS) >= 8,
+            "message": "Method Block gate ids are present.",
+        },
+        {
+            "id": "phase_commands",
+            "ok": {"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(phase_commands)),
+            "message": "READ/PLAN/RETRIEVE/COMPARE/PREFLIGHT/EXECUTE/VERIFY/RECORD commands are present.",
+        },
+        {
+            "id": "worker_start_confirm_run",
+            "ok": "--confirm-run" in worker_start,
+            "message": "Live worker start requires --confirm-run.",
+        },
+        {
+            "id": "customer_dispatch_confirm_run",
+            "ok": "--confirm-run" in customer_dispatch,
+            "message": "Live customer-worker dispatch requires --confirm-run.",
+        },
+        {
+            "id": "server_shell_boundary",
+            "ok": True,
+            "message": "Task intake returns copy-only commands and does not execute shell.",
+        },
+    ]
+    ok = all(item["ok"] for item in checks)
+    return {
+        "operation": "task_intake_local_loop_admission_packet",
+        "adapter": adapter,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "ok": ok,
+        "required_method_gates": TASK_INTAKE_METHOD_GATE_IDS,
+        "phase_commands": phase_commands,
+        "local_deployment": {
+            "worker_start": {
+                "command": worker_start,
+                "confirm_required": True,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "customer_worker_dispatch": {
+                "command": customer_dispatch,
+                "requires_confirm_run_flag": True,
+                "writes_ledger": True,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+        },
+        "checks": checks,
+        "contract": "task-pull intake gate for live Hermes/OpenClaw workers; blocks pull if Method Block admission commands or safety proofs are missing",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
 def task_intake_item_for_row(conn: sqlite3.Connection, row: sqlite3.Row | dict) -> dict:
     assigned_agent_ids = task_assigned_agent_ids(row)
+    assigned_adapter = task_assigned_runtime_adapter(conn, row, assigned_agent_ids)
+    task_id = row_field(row, "task_id")
+    local_loop_admission_packet = task_intake_local_loop_admission_packet(
+        assigned_adapter,
+        str(task_id or ""),
+        assigned_agent_ids[0] if assigned_agent_ids else None,
+    )
     plan = latest_task_agent_plan(conn, row_field(row, "task_id"), assigned_agent_ids)
     verification = verify_agent_plan_row(plan, conn) if plan else None
     plan_verified = bool(plan and row_field(plan, "verified_at") and (verification or {}).get("pass"))
@@ -17294,6 +18621,14 @@ def task_intake_item_for_row(conn: sqlite3.Connection, row: sqlite3.Row | dict) 
             "message": "High/critical intake requires approval_required in the plan.",
         },
     ]
+    if assigned_adapter in {"hermes", "openclaw"}:
+        local_loop_ok = bool(local_loop_admission_packet and local_loop_admission_packet.get("ok") is True)
+        gates.append({
+            "id": "local_loop_admission_packet",
+            "ok": local_loop_ok,
+            "status": "pass" if local_loop_ok else "blocked",
+            "message": "Live Hermes/OpenClaw intake has a Method Block local loop admission packet with confirm-run and no-server-shell proofs.",
+        })
     failed_blockers = [gate for gate in gates if not gate["ok"] and gate["status"] == "blocked"]
     attention_gates = [gate for gate in gates if not gate["ok"] and gate["status"] == "attention"]
     if failed_blockers:
@@ -17305,7 +18640,6 @@ def task_intake_item_for_row(conn: sqlite3.Connection, row: sqlite3.Row | dict) 
     else:
         severity = "ready"
         priority = 58
-    task_id = row_field(row, "task_id")
     title = redact_text(row_field(row, "title") or task_id, 180)
     failed_gate_ids = [gate["id"] for gate in gates if not gate["ok"]]
     if "assigned_agent" in set(failed_gate_ids):
@@ -17330,6 +18664,7 @@ def task_intake_item_for_row(conn: sqlite3.Connection, row: sqlite3.Row | dict) 
         "status": row_field(row, "status"),
         "priority": row_field(row, "priority"),
         "risk_level": risk_level,
+        "assigned_adapter": assigned_adapter,
         "assigned_agent_ids": assigned_agent_ids,
         "plan_id": plan["plan_id"] if plan else None,
         "plan_status": plan["status"] if plan else None,
@@ -17339,6 +18674,7 @@ def task_intake_item_for_row(conn: sqlite3.Connection, row: sqlite3.Row | dict) 
         "referenced_memories": len(referenced_memories),
         "referenced_bases": len(referenced_bases),
         "gates": gates,
+        "local_loop_admission_packet": local_loop_admission_packet,
         "failed_gate_ids": failed_gate_ids,
         "severity": severity,
         "priority_score": priority,
@@ -17373,6 +18709,7 @@ def operator_task_intake_checklist(conn: sqlite3.Connection, workspace_id: str, 
         "missing_knowledge_retrieval": 0,
         "missing_base_reference": 0,
         "risk_gate_blocked": 0,
+        "missing_local_loop_admission": 0,
     }
     for row in rows:
         item = task_intake_item_for_row(conn, row)
@@ -17388,6 +18725,8 @@ def operator_task_intake_checklist(conn: sqlite3.Connection, workspace_id: str, 
             summary["missing_base_reference"] += 1
         if "risk_boundary" in set(item["failed_gate_ids"]):
             summary["risk_gate_blocked"] += 1
+        if "local_loop_admission_packet" in set(item["failed_gate_ids"]):
+            summary["missing_local_loop_admission"] += 1
         if item["severity"] == "blocked":
             summary["blocked_for_intake"] += 1
         elif item["severity"] == "attention":
@@ -17435,6 +18774,10 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         120,
     )
     query = redact_text((qs.get("q") or qs.get("query") or ["READ PLAN RETRIEVE COMPARE VERIFY RECORD"])[0], 240)
+    requested_handoff_mode = str((qs.get("handoff_mode") or qs.get("mode") or ["lightweight"])[0] or "lightweight").strip().lower()
+    if str((qs.get("full_handoff") or [""])[0]).strip().lower() in {"1", "true", "yes", "on"}:
+        requested_handoff_mode = "full"
+    handoff_mode = "full" if requested_handoff_mode == "full" else "lightweight"
     intake = operator_task_intake_checklist(conn, workspace_id, limit=limit)
     selected_task = None
     if task_id:
@@ -17454,6 +18797,12 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         headers,
         auth_ctx={} if auth_ctx is None else auth_ctx,
     )
+    knowledge_evidence, _knowledge_evidence_status = knowledge_retrieval_evidence_packet(
+        conn,
+        {"q": [query], "limit": [str(min(limit, 10))], "baseline_limit": ["5"]},
+        headers,
+        auth_ctx={} if auth_ctx is None else auth_ctx,
+    )
     safe_knowledge_results = [
         {
             "doc_id": row.get("doc_id"),
@@ -17468,7 +18817,12 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         }
         for row in (knowledge_payload.get("results") or [])
     ]
-    handoff = operator_handoff(conn, headers, {"limit": [str(limit)]}, auth_ctx=auth_ctx)
+    if handoff_mode == "full":
+        operator_control = operator_handoff(conn, headers, {"limit": [str(limit)]}, auth_ctx=auth_ctx)
+    else:
+        operator_control = operator_loop_control(conn, headers, {"limit": [str(limit)]}, auth_ctx=auth_ctx)
+    workflow_recovery_work_order = workflow_job_recovery_work_order(conn, workspace_id, limit=min(limit, 8))
+    workflow_recovery_summary = workflow_recovery_work_order.get("summary") or {}
     selected_task_id = (selected_task or {}).get("task_id") or task_id or "<task_id>"
     selected_title = (selected_task or {}).get("title") or selected_task_id
     assigned_agent_ids = (selected_task or {}).get("assigned_agent_ids") or []
@@ -17551,32 +18905,38 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
     retrieve_command = f"agentops knowledge search {shlex.quote(query)} --limit {min(limit, 10)}"
     compare_command = "agentops operator intake-checklist --limit 20"
     execute_command = f"agentops task pull --agent-id {shlex.quote(agent_id)} --status planned --limit 5 --enforce-intake"
-    self_check_command = "agentops operator loop-self-check --limit 12"
+    loop_control_command = f"agentops operator loop-control --limit {limit}"
+    deep_self_check_command = "agentops operator loop-self-check --limit 12"
+    self_check_command = deep_self_check_command if handoff_mode == "full" else loop_control_command
     verify_command = "agentops operator loop-audit --limit 20"
     evidence_report_command = "agentops operator evidence-report --limit 12"
-    handoff_command = "agentops operator handoff --limit 12"
+    deep_handoff_command = "agentops operator handoff --limit 12"
+    handoff_command = deep_handoff_command if handoff_mode == "full" else loop_control_command
     action_receipts_command = "agentops operator action-receipts --limit 20"
     record_command = "agentops review queue --limit 20"
-    loop_health = handoff.get("loop_health") or {}
+    loop_health = operator_control.get("loop_health") or {}
+    operator_control_summary = operator_control.get("control_summary") or {}
+    operator_control_operation = operator_control.get("operation") or ("operator_handoff" if handoff_mode == "full" else "operator_loop_control")
     health_gates = loop_health.get("gates") or {}
     receipt_eval_gate = health_gates.get("receipt_evaluations") or {}
-    evidence_work_order = ((handoff.get("work_order") or {}).get("evidence_report") or {})
+    evidence_work_order = ((operator_control.get("work_order") or {}).get("evidence_report") or {})
     advance_policy = advance_loop_policy_summary()
     evaluation_contract = {
         "operation": "loop_evaluation_contract",
-        "status": loop_health.get("status") or handoff.get("status") or "unknown",
+        "status": loop_health.get("status") or operator_control_summary.get("status") or operator_control.get("status") or "unknown",
         "score": loop_health.get("score"),
-        "score_source": "operator_handoff.loop_health",
+        "score_source": "operator_handoff.loop_health" if handoff_mode == "full" else "operator_loop_control.control_summary",
         "minimum_exit_criteria": [
             "Agent Plan verifies before execution",
             "intake gates are not blocked for the selected task",
             "targeted task checks pass and failed evidence remains visible",
             "plan_evidence_manifest verifies against tool/evaluation/artifact/audit rows",
+            "run/task memory candidates are recorded and reviewed before delivery closure",
             "operator loop-audit reports no loop-local blocked gates",
             "Action Queue receipt is recorded and evaluated when a bounded advance action is used",
             "no raw prompt, raw response, customer body, token, or credential is exposed",
         ],
-        "required_commands": [self_check_command, verify_command, evidence_report_command, action_receipts_command],
+        "required_commands": list(dict.fromkeys([self_check_command, deep_self_check_command, verify_command, evidence_report_command, action_receipts_command])),
         "required_ledgers": [
             "agent_plans",
             "plan_evidence_manifests",
@@ -17584,6 +18944,8 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "evaluations",
             "artifacts",
             "audit_logs",
+            "memories",
+            "memory_review",
             "operator_action_receipts",
             "operator_action_evaluations",
         ],
@@ -17612,6 +18974,14 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "summary": evidence_work_order.get("summary") or {},
             "token_omitted": True,
         },
+        "workflow_job_recovery": {
+            "operation": workflow_recovery_work_order.get("operation"),
+            "status": workflow_recovery_work_order.get("status"),
+            "summary": workflow_recovery_summary,
+            "next_actions": workflow_recovery_work_order.get("next_actions") or [],
+            "safety": workflow_recovery_work_order.get("safety") or {},
+            "token_omitted": True,
+        },
         "bounded_runner": {
             "policy_id": advance_policy.get("policy_id"),
             "policy_version": advance_policy.get("policy_version"),
@@ -17627,7 +18997,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         },
         "token_omitted": True,
     }
-    advance_loop = ((handoff.get("work_order") or {}).get("advance_loop") or {})
+    advance_loop = ((operator_control.get("work_order") or {}).get("advance_loop") or {})
     advance_summary = advance_loop.get("summary") or {}
     advance_selected = advance_loop.get("selected_item") or {}
     advance_preview_command = advance_loop.get("preview_command") or "agentops operator advance-loop --limit 12"
@@ -17710,8 +19080,8 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         reason = "copy and run this read-only command, then verify the next gate"
         blocked_reason = None
         if step_id == "pre_advance_self_check":
-            status = normalize_chain_status(loop_health.get("status") or handoff.get("status"), "ready")
-            reason = "handoff loop health feeds the self-check gate"
+            status = normalize_chain_status(loop_health.get("status") or operator_control_summary.get("status") or operator_control.get("status"), "ready")
+            reason = "operator control readback feeds the self-check gate"
         elif step_id == "bounded_advance_preview":
             status = normalize_chain_status(advance_summary.get("selected_status") or advance_loop.get("status"), "attention")
             reason = "preview is read-only and selects at most one allowlisted next action"
@@ -17739,7 +19109,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             status = normalize_chain_status(receipt_eval_gate.get("status") or loop_health.get("status"), "ready")
             reason = "review queue and action receipt evaluation coverage feed RECORD readiness"
         elif step_id == "loop_audit_final":
-            status = normalize_chain_status(loop_health.get("status") or handoff.get("status"), "ready")
+            status = normalize_chain_status(loop_health.get("status") or operator_control_summary.get("status") or operator_control.get("status"), "ready")
             reason = "final loop-audit must read back no loop-local blocked gates"
         if receipt_state.get("required") and receipt_state.get("verified"):
             status = "verified"
@@ -17766,7 +19136,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "mutating": False,
             "confirm_required": False,
             "receipt_required": False,
-            "source": "operator_loop_self_check",
+            "source": "operator_loop_self_check" if handoff_mode == "full" else "operator_loop_control",
             "next_on_pass": "bounded_advance_preview",
             "token_omitted": True,
         },
@@ -17780,7 +19150,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "mutating": False,
             "confirm_required": False,
             "receipt_required": False,
-            "source": "operator_handoff.advance_loop",
+            "source": f"{operator_control_operation}.advance_loop",
             "selected_gate": advance_summary.get("selected_gate"),
             "selected_status": advance_summary.get("selected_status") or advance_loop.get("status"),
             "policy_id": advance_policy.get("policy_id"),
@@ -17940,7 +19310,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
     launch_sequence = [
         {
             "phase": "READ",
-            "commands": ["git status --short --branch", "git rev-parse --short HEAD", handoff_command, self_check_command],
+            "commands": list(dict.fromkeys(["git status --short --branch", "git rev-parse --short HEAD", loop_control_command, handoff_command, self_check_command, deep_self_check_command])),
             "evidence": referenced_specs,
         },
         {
@@ -17990,9 +19360,15 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         },
         {
             "phase": "VERIFY",
-            "commands": [verify_command, evidence_report_command],
+            "commands": [verify_command, evidence_report_command, "agentops workflow stuck-jobs --threshold-sec 900 --limit 25"],
             "contract": "run targeted checks and keep failed evidence visible",
             "evaluation_contract": evaluation_contract,
+            "workflow_job_recovery": {
+                "status": workflow_recovery_work_order.get("status"),
+                "summary": workflow_recovery_summary,
+                "next_actions": workflow_recovery_work_order.get("next_actions") or [],
+                "token_omitted": True,
+            },
         },
         {
             "phase": "RECORD",
@@ -18001,9 +19377,17 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "audit_contract": audit_contract,
         },
     ]
-    handoff_commands = ((handoff.get("work_order") or {}).get("commands") or [])[:8]
+    handoff_commands = ((operator_control.get("work_order") or {}).get("commands") or [])[:8]
     commands = []
-    for item in [self_check_command, retrieve_command, repo_map_command, plan_create_command, plan_verify_command, compare_command, execute_command, verify_command, evidence_report_command, plan_evidence_command, record_command, action_receipts_command, *handoff_commands]:
+    workflow_recovery_commands = [
+        str(command or "").strip()
+        for command in [
+            *(workflow_recovery_work_order.get("next_actions") or []),
+            *(workflow_recovery_work_order.get("commands") or []),
+        ]
+        if str(command or "").strip()
+    ]
+    for item in [loop_control_command, self_check_command, deep_self_check_command, retrieve_command, repo_map_command, plan_create_command, plan_verify_command, compare_command, execute_command, verify_command, evidence_report_command, "agentops workflow stuck-jobs --threshold-sec 900 --limit 25", plan_evidence_command, record_command, action_receipts_command, deep_handoff_command, *workflow_recovery_commands[:6], *handoff_commands]:
         if item and item not in commands:
             commands.append(item)
     return {
@@ -18019,8 +19403,13 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "intake_status": intake.get("status"),
             "selected_task_severity": (selected_task or {}).get("severity"),
             "knowledge_results": knowledge_payload.get("count", 0),
+            "knowledge_retrieval_status": knowledge_evidence.get("status"),
+            "knowledge_recall_at_5": (knowledge_evidence.get("metrics") or {}).get("recall_at_5"),
+            "knowledge_mrr": (knowledge_evidence.get("metrics") or {}).get("mrr"),
             "repo_map_files": repo_map_payload.get("selected_count", 0),
-            "handoff_status": handoff.get("status"),
+            "handoff_mode": handoff_mode,
+            "operator_control_status": operator_control.get("status"),
+            "handoff_status": operator_control.get("status"),
             "commands": len(commands),
             "approval_required": approval_required,
             "evaluation_status": evaluation_contract.get("status"),
@@ -18030,6 +19419,11 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "control_status": control_summary.get("status"),
             "control_mode": control_summary.get("mode"),
             "recommended_step": (control_summary.get("recommended_step") or {}).get("step_id"),
+            "workflow_job_recovery_status": workflow_recovery_work_order.get("status"),
+            "workflow_job_recovery_items": int(workflow_recovery_summary.get("items") or 0),
+            "workflow_job_recovery_stuck_jobs": int(workflow_recovery_summary.get("stuck_jobs") or 0),
+            "workflow_job_recovery_retryable_failed_jobs": int(workflow_recovery_summary.get("retryable_failed_jobs") or 0),
+            "workflow_job_recovery_receipt_missing": int(workflow_recovery_summary.get("receipt_missing") or 0),
         },
         "launch_sequence": launch_sequence,
         "execution_chain": execution_chain,
@@ -18037,6 +19431,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         "agent_plan_draft": launch_sequence[1]["draft"],
         "evaluation_contract": evaluation_contract,
         "audit_contract": audit_contract,
+        "workflow_job_recovery": workflow_recovery_work_order,
         "commands": commands[:24],
         "sources": {
             "intake": intake,
@@ -18046,6 +19441,22 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
                 "count": knowledge_payload.get("count"),
                 "results": safe_knowledge_results,
                 "index": knowledge_payload.get("index") or {},
+                "token_omitted": True,
+            },
+            "knowledge_retrieval_evidence": {
+                "operation": knowledge_evidence.get("operation"),
+                "status": knowledge_evidence.get("status"),
+                "counts": knowledge_evidence.get("counts") or {},
+                "metrics": knowledge_evidence.get("metrics") or {},
+                "primary_search": {
+                    "count": ((knowledge_evidence.get("primary_search") or {}).get("count")),
+                    "search_quality": ((knowledge_evidence.get("primary_search") or {}).get("search_quality") or {}),
+                    "results": ((knowledge_evidence.get("primary_search") or {}).get("results") or []),
+                    "snippet_omitted": True,
+                    "raw_content_omitted": True,
+                    "token_omitted": True,
+                },
+                "safety": knowledge_evidence.get("safety") or {},
                 "token_omitted": True,
             },
             "repo_map": {
@@ -18062,16 +19473,29 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
                 "raw_content_omitted": True,
                 "token_omitted": True,
             },
+            "operator_control": {
+                "operation": operator_control_operation,
+                "mode": handoff_mode,
+                "status": operator_control.get("status"),
+                "summary": operator_control.get("summary") or {},
+                "control_summary": operator_control.get("control_summary") or {},
+                "loop_health": operator_control.get("loop_health") or {},
+                "work_order": operator_control.get("work_order") or {},
+                "token_omitted": True,
+            },
+            "workflow_job_recovery": workflow_recovery_work_order,
             "handoff": {
-                "operation": handoff.get("operation"),
-                "status": handoff.get("status"),
-                "summary": handoff.get("summary") or {},
-                "loop_health": handoff.get("loop_health") or {},
-                "work_order": handoff.get("work_order") or {},
+                "operation": operator_control_operation,
+                "mode": handoff_mode,
+                "status": operator_control.get("status"),
+                "summary": operator_control.get("summary") or {},
+                "control_summary": operator_control.get("control_summary") or {},
+                "loop_health": operator_control.get("loop_health") or {},
+                "work_order": operator_control.get("work_order") or {},
                 "token_omitted": True,
             },
         },
-        "contract": "read-only loop launch packet for agents; it drafts commands and evidence requirements but does not create plans, run workers, approve gates, create memories, or mutate ledgers",
+        "contract": "read-only loop launch packet for agents; default control uses lightweight loop-control and --full-handoff is reserved for deeper diagnostics; it drafts commands and evidence requirements but does not create plans, run workers, approve gates, create memories, or mutate ledgers",
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
@@ -18198,6 +19622,220 @@ def operator_dispatch_evidence_lane(conn: sqlite3.Connection, workspace_id: str,
     }
 
 
+def operator_run_memory_review(conn: sqlite3.Connection, run_id: str | None, task_id: str | None, limit: int = 8) -> dict:
+    where: list[str] = []
+    params: list[str] = []
+    if run_id:
+        where.append("source_ref=?")
+        params.append(run_id)
+    if task_id:
+        where.append("task_id=?")
+        params.append(task_id)
+    rows: list[dict] = []
+    if where:
+        rows = rows_to_dicts(conn.execute(
+            """SELECT memory_id, scope, memory_type, source_type, source_ref, task_id, agent_id,
+                      confidence, review_status, ttl_review_due_at, created_at, updated_at
+               FROM memories
+               WHERE """ + " OR ".join(where) + """
+               ORDER BY updated_at DESC
+               LIMIT ?""",
+            [*params, max(1, min(int(limit or 8), 25))],
+        ).fetchall())
+    return build_operator_run_memory_review(rows)
+
+
+def operator_run_worker_knowledge_retrieval(conn: sqlite3.Connection, run_id: str | None) -> dict:
+    if not run_id:
+        return {
+            "applicable": False,
+            "status": "not_applicable",
+            "worker_tool_calls": 0,
+            "consumed_tool_calls": 0,
+            "token_omitted": True,
+        }
+    rows = conn.execute(
+        """SELECT tool_call_id, tool_name, status, normalized_args_json
+        FROM tool_calls
+        WHERE run_id=? AND tool_name LIKE 'agent_worker.%'
+        ORDER BY created_at DESC""",
+        (run_id,),
+    ).fetchall()
+    items = []
+    for row in rows:
+        try:
+            args = json.loads(row["normalized_args_json"] or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        omissions = args.get("knowledge_retrieval_omissions") if isinstance(args.get("knowledge_retrieval_omissions"), dict) else {}
+        metrics = args.get("knowledge_retrieval_metrics") if isinstance(args.get("knowledge_retrieval_metrics"), dict) else {}
+        item = {
+            "tool_call_id": row["tool_call_id"],
+            "tool_name": row["tool_name"],
+            "tool_status": row["status"],
+            "consumed": bool(args.get("knowledge_retrieval_evidence_consumed")),
+            "packet_hash": args.get("knowledge_retrieval_packet_hash"),
+            "query_hash": args.get("knowledge_retrieval_query_hash"),
+            "retrieval_status": args.get("knowledge_retrieval_status"),
+            "retrieval_ids": args.get("knowledge_retrieval_ids") if isinstance(args.get("knowledge_retrieval_ids"), list) else [],
+            "source_hashes": args.get("knowledge_retrieval_source_hashes") if isinstance(args.get("knowledge_retrieval_source_hashes"), list) else [],
+            "paths": args.get("knowledge_retrieval_paths") if isinstance(args.get("knowledge_retrieval_paths"), list) else [],
+            "metrics": {
+                "recall_at_5": metrics.get("recall_at_5"),
+                "mrr": metrics.get("mrr"),
+                "p95_ms": metrics.get("p95_ms"),
+                "fallback_queries": metrics.get("fallback_queries"),
+            },
+            "omissions": {
+                "query_omitted": omissions.get("query_omitted") is True,
+                "snippet_omitted": omissions.get("snippet_omitted") is True,
+                "raw_content_omitted": omissions.get("raw_content_omitted") is True,
+                "raw_prompt_omitted": omissions.get("raw_prompt_omitted") is True,
+                "raw_response_omitted": omissions.get("raw_response_omitted") is True,
+                "token_omitted": omissions.get("token_omitted") is True,
+            },
+            "token_omitted": True,
+        }
+        items.append(item)
+    applicable = bool(items)
+    ready_items = [
+        item for item in items
+        if item.get("consumed")
+        and item.get("packet_hash")
+        and item.get("query_hash")
+        and all((item.get("omissions") or {}).values())
+    ]
+    unavailable_items = [item for item in items if item.get("retrieval_status") == "unavailable"]
+    status = (
+        "not_applicable"
+        if not applicable
+        else "ready"
+        if ready_items
+        else "unavailable"
+        if unavailable_items
+        else "missing"
+    )
+    return {
+        "applicable": applicable,
+        "status": status,
+        "worker_tool_calls": len(items),
+        "consumed_tool_calls": len(ready_items),
+        "missing_tool_calls": max(len(items) - len(ready_items), 0),
+        "packet_hashes": [item.get("packet_hash") for item in ready_items if item.get("packet_hash")],
+        "query_hashes": [item.get("query_hash") for item in ready_items if item.get("query_hash")],
+        "retrieval_ids": [rid for item in ready_items for rid in (item.get("retrieval_ids") or [])],
+        "source_hashes": [source_hash for item in ready_items for source_hash in (item.get("source_hashes") or [])],
+        "paths": [path for item in ready_items for path in (item.get("paths") or [])],
+        "items": items[:5],
+        "raw_query_omitted": True,
+        "snippet_omitted": True,
+        "raw_content_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def operator_run_worker_runtime_summary(conn: sqlite3.Connection, run_id: str | None) -> dict:
+    if not run_id:
+        return {
+            "applicable": False,
+            "status": "not_applicable",
+            "worker_tool_calls": 0,
+            "summary_events": 0,
+            "token_omitted": True,
+        }
+    tool_rows = conn.execute(
+        """SELECT tool_call_id, tool_name, status, normalized_args_json
+        FROM tool_calls
+        WHERE run_id=? AND tool_name LIKE 'agent_worker.%'
+        ORDER BY created_at DESC""",
+        (run_id,),
+    ).fetchall()
+    event_rows = conn.execute(
+        """SELECT runtime_event_id,event_type,status,model_name,latency_ms,prompt_hash,raw_payload_hash,
+                  input_summary,output_summary,error_message,created_at
+        FROM runtime_events
+        WHERE run_id=? AND event_type='agent_worker.adapter_execution_summary'
+        ORDER BY created_at DESC""",
+        (run_id,),
+    ).fetchall()
+    tool_event_ids: set[str] = set()
+    tool_items = []
+    for row in tool_rows:
+        try:
+            args = json.loads(row["normalized_args_json"] or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        event_id = args.get("worker_runtime_event_id")
+        if event_id:
+            tool_event_ids.add(str(event_id))
+        tool_items.append({
+            "tool_call_id": row["tool_call_id"],
+            "tool_name": row["tool_name"],
+            "tool_status": row["status"],
+            "worker_runtime_event_id": event_id,
+            "summary_recorded": bool(args.get("worker_runtime_event_summary_recorded")),
+            "runtime_internal_tools_remain_opaque": args.get("runtime_internal_tools_remain_opaque") is True,
+            "observation_level": args.get("observation_level"),
+            "commercial_readiness": args.get("commercial_readiness"),
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        })
+    event_items = []
+    for row in event_rows:
+        event_items.append({
+            "runtime_event_id": row["runtime_event_id"],
+            "event_type": row["event_type"],
+            "status": row["status"],
+            "model_name": redact_text(row["model_name"], 120) if row["model_name"] else None,
+            "latency_ms": row["latency_ms"],
+            "prompt_hash_present": bool(row["prompt_hash"]),
+            "payload_hash_present": bool(row["raw_payload_hash"]),
+            "input_summary": redact_text(row["input_summary"], 200) if row["input_summary"] else None,
+            "output_summary": redact_text(row["output_summary"], 200) if row["output_summary"] else None,
+            "error_message": redact_text(row["error_message"], 200) if row["error_message"] else None,
+            "created_at": row["created_at"],
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        })
+    applicable = bool(tool_rows)
+    ready_events = [
+        item for item in event_items
+        if item.get("runtime_event_id")
+        and item.get("prompt_hash_present")
+        and item.get("payload_hash_present")
+    ]
+    linked_event_ids = {
+        str(item.get("runtime_event_id"))
+        for item in ready_events
+        if item.get("runtime_event_id") in tool_event_ids
+    }
+    status = (
+        "not_applicable"
+        if not applicable
+        else "ready"
+        if ready_events and (not tool_event_ids or linked_event_ids)
+        else "missing"
+    )
+    return {
+        "applicable": applicable,
+        "status": status,
+        "worker_tool_calls": len(tool_rows),
+        "summary_events": len(event_items),
+        "linked_summary_events": len(linked_event_ids),
+        "event_ids": [item.get("runtime_event_id") for item in ready_events if item.get("runtime_event_id")],
+        "tool_items": tool_items[:5],
+        "events": event_items[:5],
+        "event_is_worker_summary_not_raw_trace": bool(ready_events),
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+
+
 def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> dict:
     run_id = run["run_id"]
     task_id = run["task_id"]
@@ -18214,6 +19852,9 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
         "SELECT approval_id,decision,tool_call_id,reason,created_at,decided_at FROM approvals WHERE run_id=? ORDER BY created_at DESC",
         (run_id,),
     ).fetchall())
+    memory_review = operator_run_memory_review(conn, run_id, task_id)
+    worker_knowledge_retrieval = operator_run_worker_knowledge_retrieval(conn, run_id)
+    worker_runtime_summary = operator_run_worker_runtime_summary(conn, run_id)
     gap_decision = latest_execution_evidence_gap_decision(conn, run_id)
     checks = [
         {"id": "agent_plan_bound", "ok": bool(run["agent_plan_id"] and run["plan_hash"]), "message": "Run is bound to an Agent Plan and plan_hash."},
@@ -18228,11 +19869,22 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
         {"id": "evaluation_evidence", "ok": int(counts.get("evaluations") or 0) > 0, "message": "Run has evaluation evidence."},
         {"id": "artifact_evidence", "ok": int(counts.get("artifacts") or 0) > 0, "message": "Run or task has artifact evidence."},
         {"id": "audit_evidence", "ok": int(counts.get("audit_logs") or 0) > 0, "message": "Run/task chain has audit evidence."},
+        {
+            "id": "worker_knowledge_retrieval",
+            "ok": not worker_knowledge_retrieval.get("applicable") or worker_knowledge_retrieval.get("status") == "ready",
+            "message": "Agent worker runs consume compact knowledge retrieval evidence before adapter execution.",
+        },
+        {
+            "id": "worker_runtime_summary",
+            "ok": not worker_runtime_summary.get("applicable") or worker_runtime_summary.get("status") == "ready",
+            "message": "Agent worker runs record adapter execution summaries in runtime_events.",
+        },
+        {"id": "memory_review_recorded", "ok": int(memory_review.get("total") or 0) > 0, "message": "Run/task has a memory candidate or reviewed memory row."},
+        {"id": "memory_review_resolved", "ok": int(memory_review.get("pending_review") or 0) == 0, "message": "Run/task memory rows are approved/rejected/superseded rather than pending candidate/stale review."},
         {"id": "approval_queue_clear", "ok": not any(item.get("decision") == "pending" for item in approvals), "message": "Run has no pending approval rows."},
     ]
-    failed = [check for check in checks if not check["ok"]]
-    blocking_ids = {"agent_plan_bound", "agent_plan_verifies", "plan_approval_resolved", "plan_evidence_manifest_verified"}
-    status = "blocked" if any(check["id"] in blocking_ids for check in failed) else "attention" if failed else "ready"
+    evidence_status = operator_run_evidence_status(checks)
+    status = evidence_status["status"]
     commands = [
         f"agentops run get --run-id {run_id}",
     ]
@@ -18246,6 +19898,10 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
         pending_id = next((item.get("approval_id") for item in approvals if item.get("decision") == "pending"), None)
         if pending_id:
             commands.append(f"agentops approval inspect --approval-id {pending_id}")
+    if int(memory_review.get("total") or 0) == 0:
+        commands.append(f"agentops memory propose --agent-id {shlex.quote(run['agent_id'])} --task-id {shlex.quote(task_id or '')} --run-id {shlex.quote(run_id)} --scope task --type artifact_summary --text \"Summarize approved run outcome for review\"")
+    elif int(memory_review.get("pending_review") or 0) > 0:
+        commands.append(f"agentops memory list --task-id {shlex.quote(task_id or '')} --status candidate --limit 10")
     if status != "ready" and not gap_decision:
         commands.append(f"agentops operator remediate-evidence-gap --run-id {run_id} --confirm-create")
     return {
@@ -18255,7 +19911,7 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
         "run_status": run["status"],
         "status": status,
         "checks": checks,
-        "failed_check_ids": [check["id"] for check in failed],
+        "failed_check_ids": evidence_status["failed_check_ids"],
         "evidence_counts": counts,
         "agent_plan": {
             "plan_id": plan["plan_id"] if plan else None,
@@ -18273,6 +19929,9 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
             "verification_pass": bool(manifest_verification and manifest_verification.get("pass")),
             "failed_check_ids": [check.get("id") for check in (manifest_verification or {}).get("failed_checks") or []],
         },
+        "worker_knowledge_retrieval": worker_knowledge_retrieval,
+        "worker_runtime_summary": worker_runtime_summary,
+        "memory_review": memory_review,
         "approvals": {
             "count": len(approvals),
             "pending": sum(1 for item in approvals if item.get("decision") == "pending"),
@@ -18307,21 +19966,8 @@ def operator_evidence_report(conn: sqlite3.Connection, headers, qs=None) -> dict
     ).fetchall()
     items = [operator_run_evidence_item(conn, row) for row in rows]
     receipt_summary = (list_operator_action_receipts(conn, {"workspace_id": [workspace_id], "limit": [str(min(max(limit, 8), 25))]}, headers).get("summary") or {})
-    summary = {
-        "runs": len(items),
-        "ready": sum(1 for item in items if item.get("status") == "ready"),
-        "attention": sum(1 for item in items if item.get("status") == "attention"),
-        "blocked": sum(1 for item in items if item.get("status") == "blocked"),
-        "verified_plan_evidence_manifests": sum(1 for item in items if (item.get("plan_evidence_manifest") or {}).get("verification_pass")),
-        "missing_plan_evidence_manifests": sum(1 for item in items if not (item.get("plan_evidence_manifest") or {}).get("manifest_id")),
-        "pending_approvals": sum(int((item.get("approvals") or {}).get("pending") or 0) for item in items),
-        "approval_required_plans": sum(1 for item in items if (item.get("agent_plan") or {}).get("approval_required")),
-        "approved_required_plans": sum(1 for item in items if (item.get("agent_plan") or {}).get("approval_required") and (item.get("agent_plan") or {}).get("approval_decision") == "approved"),
-        "action_receipts": int(receipt_summary.get("receipts") or 0),
-        "verified_action_receipts": int(receipt_summary.get("verified") or 0),
-        "evaluated_action_receipts": int(receipt_summary.get("evaluated") or 0),
-    }
-    status = "blocked" if summary["blocked"] else "attention" if summary["attention"] or summary["pending_approvals"] else "ready"
+    summary = operator_evidence_report_summary(items, receipt_summary)
+    status = operator_evidence_report_status(summary)
     return {
         "provider": "agentops-operator",
         "operation": "operator_evidence_report",
@@ -18330,7 +19976,7 @@ def operator_evidence_report(conn: sqlite3.Connection, headers, qs=None) -> dict
         "summary": summary,
         "runs": items,
         "recommended_commands": [command for item in items[:5] for command in (item.get("recommended_commands") or [])[:2]][:8],
-        "contract": "read-only execution evidence report; does not create plans, manifests, approvals, receipts, or memories",
+        "contract": "read-only execution evidence report; does not create plans, manifests, approvals, receipts, or memories; memory rows are summarized by id/status only and raw memory text is omitted",
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
@@ -18770,6 +20416,47 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             },
         )
 
+    workflow_recovery_work_order = workflow_job_recovery_work_order(conn, workspace_id, limit=max(limit, 8))
+    workflow_recovery_summary = workflow_recovery_work_order.get("summary") or {}
+    for job in (workflow_recovery_work_order.get("items") or [])[:limit]:
+        job_id = str(job.get("job_id") or "").strip()
+        command = str(job.get("confirm_command") or "").strip()
+        verify_command = str(job.get("verify_command") or "").strip()
+        if not job_id or not command:
+            continue
+        add_action(
+            "workflow_job_recovery",
+            job.get("title") or f"Mark stuck workflow job failed: {job_id}",
+            command,
+            priority=112 if job.get("mode") == "mark-failed" else 101,
+            severity=str(job.get("severity") or "attention"),
+            source=f"workflow_job_recovery:{job.get('mode') or 'recover'}",
+            summary=job.get("summary") or "",
+            ui_route="/workspace/agents" if job.get("mode") == "mark-failed" else f"/admin/tasks/{job.get('task_id')}",
+            evidence={
+                "job_id": job_id,
+                "workflow_type": job.get("workflow_type"),
+                "adapter": job.get("adapter"),
+                "mode": job.get("mode"),
+                "confirm_required": job.get("confirm_required"),
+                "live_confirm_required": job.get("live_confirm_required"),
+                "age_sec": job.get("age_sec"),
+                "threshold_sec": job.get("threshold_sec"),
+                "stuck_reason": job.get("stuck_reason"),
+                "task_id": job.get("task_id"),
+                "run_id": job.get("run_id"),
+                "artifact_id": job.get("artifact_id"),
+                "preview_command": job.get("preview_command"),
+                "receipt_next_command": job.get("receipt_next_command"),
+                "raw_request_omitted": True,
+            },
+            verify_command_override=verify_command or None,
+            action_signature_override=str(job.get("action_signature") or ""),
+            action_id_override=str(job.get("action_id") or ""),
+            receipt_source="operator.workflow_job_recovery",
+            receipt_result_summary=f"Workflow job {job_id} recovery action completed through recover-job.",
+        )
+
     adapter_summary = adapter_readiness.get("summary") or {}
     recommended_adapter = adapter_summary.get("recommended_adapter") or "mock"
     if adapter_readiness.get("status") != "ready" or recommended_adapter == "mock":
@@ -18783,6 +20470,66 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             summary=f"recommended_adapter={recommended_adapter}; live routes require explicit confirmation.",
             ui_route="/workspace/agents",
             evidence=adapter_summary,
+        )
+
+    service_control_step = next(
+        (
+            step for step in (local_readiness_snapshot.get("local_run_path") or [])
+            if isinstance(step, dict)
+            and (step.get("service_control_preview") is True or step.get("step_id") == "preview_worker_service_control")
+        ),
+        {},
+    )
+    service_receipt_state = service_control_step.get("receipt_state") if isinstance(service_control_step.get("receipt_state"), dict) else {}
+    service_receipt_verified = bool(service_receipt_state.get("verified"))
+    service_control_readback_missing = bool(
+        service_control_step.get("control_readback_required")
+        and not service_receipt_state.get("control_readback_attached")
+    )
+    if service_control_step and (not service_receipt_verified or service_control_readback_missing):
+        service_action_signature = str(service_control_step.get("action_signature") or "")
+        service_action_id = str(service_control_step.get("step_id") or "preview_worker_service_control")
+        add_action(
+            "local_service_control",
+            (
+                "Record service-control readback"
+                if service_receipt_verified and service_control_readback_missing
+                else "Record service-control preview receipt"
+            ),
+            str(service_control_step.get("command") or ""),
+            priority=121 if service_control_readback_missing else 119,
+            severity="attention",
+            source=str(service_control_step.get("source") or "local_readiness.service_control_preview"),
+            summary=(
+                "Local worker service-control preview must have a verified Action Receipt and control readback "
+                "before Hermes/OpenClaw loop operators treat service supervision as closed."
+            ),
+            ui_route="/workspace/agents",
+            evidence={
+                "step_id": service_action_id,
+                "adapter": service_control_step.get("adapter"),
+                "status": service_control_step.get("status"),
+                "phase": service_control_step.get("phase"),
+                "service_control_preview": True,
+                "receipt_verified": service_receipt_verified,
+                "receipt_status": service_receipt_state.get("status"),
+                "receipt_id": service_receipt_state.get("receipt_id"),
+                "control_readback_required": bool(service_control_step.get("control_readback_required")),
+                "control_readback_attached": bool(service_receipt_state.get("control_readback_attached")),
+                "control_readback_missing": service_control_readback_missing,
+                "control_readback_hash": service_receipt_state.get("control_readback_hash"),
+                "verify_command": service_control_step.get("verify_command"),
+                "receipt_verify_record_command": service_control_step.get("receipt_verify_record_command"),
+                "copy_only": service_control_step.get("copy_only") is not False,
+                "server_executes_shell": False,
+                "live_execution_performed": False,
+                "token_omitted": True,
+            },
+            verify_command_override=str(service_control_step.get("verify_command") or "agentops local readiness"),
+            action_signature_override=service_action_signature,
+            action_id_override=service_action_id,
+            receipt_source=str(service_control_step.get("source") or "local_readiness.service_control_preview"),
+            receipt_result_summary="Worker service-control preview inspected and service-check reviewed.",
         )
 
     review_summary = review.get("summary") or {}
@@ -19238,6 +20985,38 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         item for item in deduped
         if str(item.get("source") or "").startswith("evidence_remediation_workflow:")
     ]
+    workflow_recovery_actions = [
+        item for item in deduped
+        if item.get("lane") == "workflow_job_recovery"
+    ]
+    local_service_control_actions = [
+        item for item in deduped
+        if item.get("lane") == "local_service_control"
+    ]
+    workflow_recovery_blocked = len([item for item in workflow_recovery_actions if item.get("severity") == "blocked"])
+    workflow_recovery_source = {
+        "operation": "workflow_job_recovery",
+        "status": "blocked" if workflow_recovery_blocked else "attention" if workflow_recovery_actions else "ready",
+        "summary": {
+            "actions": len(workflow_recovery_actions),
+            "stuck_jobs": workflow_recovery_summary.get("stuck_jobs", 0),
+            "retryable_failed_jobs": workflow_recovery_summary.get("retryable_failed_jobs", 0),
+            "blocked": workflow_recovery_blocked,
+            "attention": len([item for item in workflow_recovery_actions if item.get("severity") == "attention"]),
+            "receipt_missing": len([item for item in workflow_recovery_actions if not item.get("receipt_verified")]),
+            "receipt_verified": len([item for item in workflow_recovery_actions if item.get("receipt_verified")]),
+        },
+        "items": workflow_recovery_actions[:limit],
+        "work_order": workflow_recovery_work_order,
+        "contract": "projects workflow-job stuck/failed recovery into recover-job Action Queue commands for Codex/Hermes/OpenClaw; commands are explicit CLI actions, confirmed recovery requires --confirm-recover, and receipts govern RECORD",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
     remediation_workflow_source = {
         "status": "attention" if remediation_workflow_actions else "ready",
         "summary": {
@@ -19303,6 +21082,17 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "operator_health_risks": (operator_health_source.get("summary") or {}).get("risks", 0),
             "operator_health_blocked": (operator_health_source.get("summary") or {}).get("blocked", 0),
             "operator_health_attention": (operator_health_source.get("summary") or {}).get("attention", 0),
+            "workflow_job_recovery_actions": (workflow_recovery_source.get("summary") or {}).get("actions", 0),
+            "workflow_job_recovery_stuck_jobs": (workflow_recovery_source.get("summary") or {}).get("stuck_jobs", 0),
+            "workflow_job_recovery_retryable_failed_jobs": (workflow_recovery_source.get("summary") or {}).get("retryable_failed_jobs", 0),
+            "workflow_job_recovery_receipt_missing": (workflow_recovery_source.get("summary") or {}).get("receipt_missing", 0),
+            "workflow_job_recovery_receipt_verified": (workflow_recovery_source.get("summary") or {}).get("receipt_verified", 0),
+            "local_service_control_actions": len(local_service_control_actions),
+            "local_service_control_receipt_missing": len([item for item in local_service_control_actions if not item.get("receipt_verified")]),
+            "local_service_control_readback_missing": len([
+                item for item in local_service_control_actions
+                if (item.get("evidence") or {}).get("control_readback_missing")
+            ]),
             "evidence_remediation_workflow_actions": (remediation_workflow_source.get("summary") or {}).get("actions", 0),
             "evidence_remediation_workflow_mutating": (remediation_workflow_source.get("summary") or {}).get("mutating", 0),
             "evidence_remediation_workflow_confirm_required": (remediation_workflow_source.get("summary") or {}).get("confirm_required", 0),
@@ -19350,6 +21140,8 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "task_intake": task_intake.get("status"),
             "dispatch_evidence": dispatch_evidence.get("status"),
             "operator_health": operator_health_source.get("status"),
+            "local_service_control": "attention" if local_service_control_actions else "ready",
+            "workflow_job_recovery": workflow_recovery_source.get("status"),
             "evidence_remediation_workflow": remediation_workflow_source.get("status"),
             "action_receipts": action_receipts.get("status"),
             "receipt_evaluation": receipt_evaluation_status,
@@ -19360,6 +21152,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         "task_intake": task_intake,
         "dispatch_evidence": dispatch_evidence,
         "operator_health": operator_health_source,
+        "workflow_job_recovery": workflow_recovery_source,
         "evidence_remediation_workflow": remediation_workflow_source,
         "action_receipts": action_receipts,
         "receipt_failure_memory": receipt_failure_memory,
@@ -19908,100 +21701,275 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     }
 
 
-def operator_loop_control_summary_from_handoff(advance_loop: dict, loop_health: dict | None = None, *, loop_id: str | None = None) -> dict:
-    loop_health = loop_health or {}
-    selected = advance_loop.get("selected_item") or {}
-    summary = advance_loop.get("summary") or {}
-    policy = advance_loop.get("policy") or {}
-    safety = advance_loop.get("safety") or {}
-    selected_status = str(selected.get("gate_status") or summary.get("selected_status") or advance_loop.get("status") or "unknown")
-    has_selected = bool(selected)
-    if has_selected:
-        control_mode = "human_confirm_required"
-        next_command = advance_loop.get("confirm_command") or advance_loop.get("preview_command")
-        verify_command = selected.get("verify_command")
-        receipt_command = selected.get("receipt_verify_record_command")
-        step_status = "blocked" if selected_status in {"blocked", "failed", "fail", "error"} else "attention"
-        reason = "selected handoff action requires local CLI confirmation, verification, and receipt recording"
+def operator_loop_control(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
+    loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or headers.get("X-AgentOps-Workspace-Id")
+        or (qs.get("workspace_id") or ["local-demo"])[0]
+    )
+    loop_arg = f" --loop-id {shlex.quote(loop_id)}" if loop_id else ""
+    base_preview_args = ["agentops", "operator", "advance-loop", "--fast-control", "--limit", str(limit)]
+    if loop_id:
+        base_preview_args.extend(["--loop-id", loop_id])
+    preview_command = " ".join(shlex.quote(str(part)) for part in base_preview_args)
+    confirm_command = " ".join(shlex.quote(str(part)) for part in [*base_preview_args, "--confirm-advance"])
+    policy = advance_loop_policy_summary()
+
+    counts = {
+        "knowledge_documents": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_documents"),
+        "verified_agent_plans": scalar_count(conn, "SELECT COUNT(*) FROM agent_plans WHERE COALESCE(workspace_id,'local-demo')=? AND verified_at IS NOT NULL", (workspace_id,)),
+        "plan_bound_runs": scalar_count(conn, "SELECT COUNT(*) FROM runs WHERE COALESCE(workspace_id,'local-demo')=? AND agent_plan_id IS NOT NULL AND plan_hash IS NOT NULL", (workspace_id,)),
+        "verified_plan_evidence_manifests": scalar_count(conn, "SELECT COUNT(*) FROM plan_evidence_manifests WHERE COALESCE(workspace_id,'local-demo')=? AND status='verified'", (workspace_id,)),
+        "pending_approvals": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE COALESCE(decision,'pending')='pending'"),
+        "memory_candidates": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE COALESCE(review_status,'candidate')='candidate'"),
+        "approved_memories": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='approved'"),
+        "audit_logs": scalar_count(conn, "SELECT COUNT(*) FROM audit_logs"),
+    }
+    receipt_rows = operator_action_receipt_rows(conn, workspace_id, min(max(limit * 6, 24), 120))
+    receipt_verified = len([row for row in receipt_rows if row.get("status") == "verified"])
+    receipt_failed = len([row for row in receipt_rows if row.get("status") == "failed"])
+
+    def has_verified_control_receipt(action_command: str, source: str) -> bool:
+        action_command = action_command.strip()
+        source = source.strip()
+        for receipt in receipt_rows:
+            if receipt.get("status") != "verified":
+                continue
+            if str(receipt.get("action_command") or "").strip() != action_command:
+                continue
+            if source and str(receipt.get("source") or "").strip() != source:
+                continue
+            pass_fail = str(receipt.get("evaluation_pass_fail") or "").strip().lower()
+            if pass_fail and pass_fail != "pass":
+                continue
+            return True
+        return False
+
+    selected_item: dict | None = None
+    receipt_source: str | None = None
+    loop_counts = {
+        "loop_runs": 0,
+        "loop_tasks": 0,
+        "loop_artifacts": 0,
+        "loop_verified_agent_plans": 0,
+        "loop_verified_plan_evidence_manifests": 0,
+        "loop_blocked_plan_evidence_manifests": 0,
+        "loop_memory_candidates": 0,
+        "loop_approved_memories": 0,
+        "loop_pending_approvals": 0,
+    }
+
+    if loop_id:
+        artifacts = rows_to_dicts(conn.execute(
+            """SELECT artifact_id, task_id, run_id, artifact_type, title, uri, created_at
+               FROM artifacts
+               WHERE uri=? OR uri LIKE ?
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (f"loop://{loop_id}", f"loop://{loop_id}/%", limit),
+        ).fetchall())
+        run_ids = sorted({str(row.get("run_id")) for row in artifacts if row.get("run_id")})
+        task_ids = sorted({str(row.get("task_id")) for row in artifacts if row.get("task_id")})
+        loop_counts["loop_artifacts"] = len(artifacts)
+        if run_ids:
+            placeholders = ",".join("?" for _ in run_ids)
+            loop_counts["loop_runs"] = scalar_count(conn, f"SELECT COUNT(*) FROM runs WHERE run_id IN ({placeholders})", run_ids)
+            loop_counts["loop_verified_plan_evidence_manifests"] = scalar_count(conn, f"SELECT COUNT(*) FROM plan_evidence_manifests WHERE run_id IN ({placeholders}) AND status='verified'", run_ids)
+            loop_counts["loop_blocked_plan_evidence_manifests"] = scalar_count(conn, f"SELECT COUNT(*) FROM plan_evidence_manifests WHERE run_id IN ({placeholders}) AND status='blocked'", run_ids)
+            loop_counts["loop_pending_approvals"] = scalar_count(conn, f"SELECT COUNT(*) FROM approvals WHERE COALESCE(decision,'pending')='pending' AND run_id IN ({placeholders})", run_ids)
+            loop_counts["loop_verified_agent_plans"] = scalar_count(conn, f"SELECT COUNT(*) FROM agent_plans WHERE run_id IN ({placeholders}) AND verified_at IS NOT NULL", run_ids)
+        if task_ids:
+            placeholders = ",".join("?" for _ in task_ids)
+            loop_counts["loop_tasks"] = scalar_count(conn, f"SELECT COUNT(*) FROM tasks WHERE task_id IN ({placeholders})", task_ids)
+            loop_counts["loop_memory_candidates"] = scalar_count(conn, f"SELECT COUNT(*) FROM memories WHERE review_status='candidate' AND (source_ref=? OR task_id IN ({placeholders}))", [f"loop://{loop_id}", *task_ids])
+            loop_counts["loop_approved_memories"] = scalar_count(conn, f"SELECT COUNT(*) FROM memories WHERE review_status='approved' AND (source_ref=? OR task_id IN ({placeholders}))", [f"loop://{loop_id}", *task_ids])
+        else:
+            loop_counts["loop_memory_candidates"] = scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='candidate' AND source_ref=?", (f"loop://{loop_id}",))
+            loop_counts["loop_approved_memories"] = scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='approved' AND source_ref=?", (f"loop://{loop_id}",))
+        if loop_counts["loop_runs"] == 0:
+            action_command = f"agentops operator runtime-doctor --loop-id {shlex.quote(loop_id)} --limit {limit}"
+            gate_id = "loop_readback"
+            gate_label = "Loop readback missing"
+            gate_status = "attention"
+            source = "operator_loop_control.loop_readback"
+            verify_command = f"agentops operator loop-control{loop_arg} --limit {limit}"
+        elif loop_counts["loop_blocked_plan_evidence_manifests"] > 0:
+            action_command = f"agentops operator loop-audit{loop_arg} --limit {limit}"
+            gate_id = "verify"
+            gate_label = "Blocked loop evidence"
+            gate_status = "blocked"
+            source = "operator_loop_control.verify"
+            verify_command = f"agentops operator loop-control{loop_arg} --limit {limit}"
+        elif loop_counts["loop_pending_approvals"] or loop_counts["loop_memory_candidates"]:
+            action_command = "agentops review queue --limit 20"
+            gate_id = "record_review"
+            gate_label = "Loop review queue"
+            gate_status = "attention"
+            source = "operator_loop_control.record"
+            verify_command = f"agentops operator loop-control{loop_arg} --limit {limit}"
+        elif loop_counts["loop_approved_memories"] == 0:
+            text = f"Loop {loop_id} completed with plan/evidence/audit readback; review this loop_record before treating it as durable memory."
+            action_command = (
+                "agentops memory propose "
+                "--agent-id agt_operator "
+                f"--source-ref {shlex.quote('loop://' + loop_id)} "
+                "--scope project "
+                "--type loop_record "
+                f"--text {shlex.quote(text)}"
+            )
+            gate_id = "record"
+            gate_label = "Propose loop record memory"
+            gate_status = "attention"
+            source = "operator_loop_control.record"
+            verify_command = f"agentops operator loop-control{loop_arg} --limit {limit}"
+        else:
+            action_command = ""
+            gate_id = None
+            gate_label = None
+            gate_status = None
+            source = "operator_loop_control.ready"
+            verify_command = None
     else:
-        control_mode = "read_only_copy"
-        next_command = advance_loop.get("preview_command") or "agentops operator advance-loop --limit 12"
-        verify_command = "agentops operator handoff --limit 12"
-        receipt_command = None
-        step_status = "ready" if (loop_health.get("status") or advance_loop.get("status")) in {"ready", "pass"} else "attention"
-        reason = "no selected bounded action; preview the handoff queue before advancing"
-    recommended = {
-        "step_id": "handoff_advance_loop",
-        "label": selected.get("gate_label") or "Bounded handoff advance",
-        "phase": "EXECUTE" if has_selected else "READ",
-        "status": step_status,
-        "control_mode": control_mode,
-        "command": next_command,
-        "verify_command": verify_command,
-        "receipt_command": receipt_command,
-        "reason": reason,
-        "mutating": has_selected,
-        "confirm_required": has_selected,
-        "receipt_required": has_selected,
-        "receipt_verified": False,
-        "receipt_status": "missing" if has_selected else "not_required",
-        "action_signature": selected.get("action_signature"),
-        "policy_id": policy.get("policy_id") or summary.get("policy_id"),
-        "selected_gate": selected.get("gate_id") or summary.get("selected_gate"),
-        "source": selected.get("source") or "operator_handoff.advance_loop",
-        "run_id": selected.get("run_id"),
-        "token_omitted": True,
-    }
-    status = "blocked" if step_status == "blocked" else "attention" if has_selected or loop_health.get("status") == "attention" else "ready"
-    return {
-        "operation": "operator_loop_control_summary",
-        "status": status,
-        "mode": control_mode,
-        "loop_id": loop_id or None,
-        "recommended_step": recommended,
-        "next_command": next_command,
-        "verify_command": verify_command,
-        "receipt_command": receipt_command,
-        "requires_human": has_selected,
-        "requires_receipt": has_selected,
-        "server_executes_shell": False,
-        "copy_only": True,
-        "step_counts": {
-            "selected": 1 if has_selected else 0,
-            "ready": 0 if has_selected else 1,
-            "attention": 1 if has_selected else 0,
-            "blocked": 1 if step_status == "blocked" else 0,
+        control_ladder = [
+            {
+                "gate_id": "runtime_doctor",
+                "gate_label": "Local runtime first check",
+                "gate_status": "attention" if counts["pending_approvals"] or counts["memory_candidates"] else "ready",
+                "source": "operator_loop_control.runtime_doctor",
+                "receipt_source": "loop_control:runtime_doctor",
+                "action_command": f"agentops operator runtime-doctor --limit {limit}",
+            },
+            {
+                "gate_id": "handoff",
+                "gate_label": "Read operator handoff",
+                "gate_status": "attention",
+                "source": "operator_loop_control.handoff",
+                "receipt_source": "loop_control:handoff",
+                "action_command": f"agentops operator handoff --limit {limit}",
+            },
+            {
+                "gate_id": "action_plan",
+                "gate_label": "Read operator action plan",
+                "gate_status": "attention",
+                "source": "operator_loop_control.action_plan",
+                "receipt_source": "loop_control:action_plan",
+                "action_command": f"agentops operator action-plan --limit {limit}",
+            },
+        ]
+        if counts["pending_approvals"] or counts["memory_candidates"]:
+            control_ladder.append({
+                "gate_id": "review_queue",
+                "gate_label": "Inspect review queue",
+                "gate_status": "attention",
+                "source": "operator_loop_control.review_queue",
+                "receipt_source": "loop_control:review_queue",
+                "action_command": "agentops review queue --limit 20",
+            })
+        selected_control = next(
+            (
+                item for item in control_ladder
+                if not has_verified_control_receipt(str(item["action_command"]), str(item["receipt_source"]))
+            ),
+            None,
+        )
+        if selected_control:
+            action_command = str(selected_control["action_command"])
+            gate_id = str(selected_control["gate_id"])
+            gate_label = str(selected_control["gate_label"])
+            gate_status = str(selected_control["gate_status"])
+            source = str(selected_control["source"])
+            receipt_source = str(selected_control["receipt_source"])
+            verify_command = f"agentops operator loop-control --limit {limit}"
+        else:
+            action_command = ""
+            gate_id = None
+            gate_label = None
+            gate_status = None
+            source = "operator_loop_control.ready"
+            receipt_source = None
+            verify_command = None
+
+    if action_command:
+        action_signature = stable_id("loop_control_action_sig", workspace_id, loop_id or "global", gate_id, action_command)[-18:]
+        selected_item = {
+            "package_id": stable_id("loop_control_package", workspace_id, loop_id or "global", gate_id, action_command)[-18:],
+            "action_id": stable_id("loop_control_action", workspace_id, loop_id or "global", gate_id, action_command)[-18:],
+            "action_signature": action_signature,
+            "gate_id": gate_id,
+            "gate_label": gate_label,
+            "gate_status": gate_status,
+            "source": source,
+            "action_command": action_command,
+            "verify_command": verify_command,
+            "receipt_source": receipt_source or f"loop_control:{gate_id}",
+            "evidence": {**counts, **loop_counts, "recent_receipts": len(receipt_rows), "verified_receipts": receipt_verified, "failed_receipts": receipt_failed},
+            "token_omitted": True,
+        }
+
+    advance_loop = {
+        "operation": "advance_loop_work_order",
+        "status": "attention" if selected_item else "empty",
+        "summary": {
+            "items": 1 if selected_item else 0,
+            "selected_gate": (selected_item or {}).get("gate_id"),
+            "selected_status": (selected_item or {}).get("gate_status"),
+            "loop_scoped": bool(loop_id),
+            "policy_id": policy.get("policy_id"),
+            "policy_version": policy.get("policy_version"),
+            "source": "lightweight_loop_control",
         },
-        "selected_gate": selected.get("gate_id") or summary.get("selected_gate"),
-        "selected_status": selected_status,
-        "policy_id": policy.get("policy_id") or summary.get("policy_id"),
-        "server_shell_execution": bool(safety.get("server_shell_execution")),
+        "selected_item": selected_item,
+        "preview_command": preview_command,
+        "confirm_command": confirm_command,
+        "next_actions": [preview_command, confirm_command] if selected_item else [preview_command],
+        "policy": policy,
+        "contract": "lightweight copy-only control work order; it uses bounded counts and never calls handoff/action-plan/evidence-report",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_shell_execution": False,
+            "confirm_required": bool(selected_item),
+            "token_omitted": True,
+        },
         "token_omitted": True,
     }
-
-
-def operator_loop_control_gate(control_summary: dict, *, source: str = "operator_handoff.control_summary") -> dict:
-    recommended_step = control_summary.get("recommended_step") or {}
-    status = str(control_summary.get("status") or "unknown")
+    control_summary = operator_loop_control_summary_from_handoff(advance_loop, {"status": "attention" if selected_item else "ready"}, loop_id=loop_id or None)
+    status = "attention" if selected_item else "ready"
     return {
-        "status": "pass" if status == "ready" else status,
-        "source": source,
-        "mode": control_summary.get("mode"),
-        "recommended_step": recommended_step.get("step_id"),
-        "recommended_step_status": recommended_step.get("status"),
-        "selected_gate": control_summary.get("selected_gate"),
-        "selected_status": control_summary.get("selected_status"),
-        "next_action": control_summary.get("next_command"),
-        "verify_command": control_summary.get("verify_command"),
-        "receipt_command": control_summary.get("receipt_command"),
-        "requires_human": control_summary.get("requires_human") is True,
-        "requires_receipt": control_summary.get("requires_receipt") is True,
-        "copy_only": control_summary.get("copy_only") is True,
-        "server_executes_shell": control_summary.get("server_executes_shell") is True,
-        "server_shell_execution": control_summary.get("server_shell_execution") is True,
-        "refresh_cache_required_after_receipt": control_summary.get("requires_receipt") is True,
-        "control_readback_source": "agentops operator advance-loop --confirm-advance",
+        "provider": "agentops-operator",
+        "operation": "operator_loop_control",
+        "status": status,
+        "workspace_id": workspace_id,
+        "loop_id": loop_id or None,
+        "summary": {
+            **counts,
+            **loop_counts,
+            "recent_receipts": len(receipt_rows),
+            "verified_receipts": receipt_verified,
+            "failed_receipts": receipt_failed,
+            "control_status": control_summary.get("status"),
+            "control_mode": control_summary.get("mode"),
+            "control_selected_gate": control_summary.get("selected_gate"),
+        },
+        "work_order": {"advance_loop": advance_loop, "token_omitted": True},
+        "control_summary": control_summary,
+        "next_actions": advance_loop["next_actions"],
+        "contract": "lightweight read-only loop control for real local ledgers; use operator handoff/loop-audit for deep diagnostics after the first check",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "read_model_cache": {"status": "not_cached", "reason": "lightweight direct control read"},
         "token_omitted": True,
+        "live_execution_performed": False,
     }
 
 
@@ -20024,6 +21992,16 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     evidence_report_summary = evidence_report.get("summary") or {}
     evidence_report_runs = evidence_report.get("runs") or []
     evidence_report_commands = evidence_report.get("recommended_commands") or []
+    workflow_recovery_work_order = workflow_job_recovery_work_order(conn, workspace_id, limit=min(limit, 8))
+    workflow_recovery_summary = workflow_recovery_work_order.get("summary") or {}
+    workflow_recovery_status = str(workflow_recovery_work_order.get("status") or "ready")
+    workflow_recovery_items = int(workflow_recovery_summary.get("items") or 0)
+    workflow_recovery_stuck_jobs = int(workflow_recovery_summary.get("stuck_jobs") or 0)
+    workflow_recovery_retryable_failed_jobs = int(workflow_recovery_summary.get("retryable_failed_jobs") or 0)
+    workflow_recovery_blocked = int(workflow_recovery_summary.get("blocked") or 0)
+    workflow_recovery_attention = int(workflow_recovery_summary.get("attention") or 0)
+    workflow_recovery_receipt_missing = int(workflow_recovery_summary.get("receipt_missing") or 0)
+    workflow_recovery_receipt_verified = int(workflow_recovery_summary.get("receipt_verified") or 0)
     receipt_coverage = action_plan.get("receipt_coverage") or {}
     loop_record = loop_audit.get("loop_record") or {}
     action_receipts = action_plan.get("action_receipts") or {}
@@ -20052,6 +22030,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     evidence_report_attention = int(evidence_report_summary.get("attention") or 0)
     evidence_report_missing_manifests = int(evidence_report_summary.get("missing_plan_evidence_manifests") or 0)
     evidence_report_pending_approvals = int(evidence_report_summary.get("pending_approvals") or 0)
+    evidence_report_memory_reviews = int(evidence_report_summary.get("memory_reviews") or 0)
+    evidence_report_memory_review_ready = int(evidence_report_summary.get("memory_review_ready") or 0)
+    evidence_report_missing_memory_reviews = int(evidence_report_summary.get("missing_memory_reviews") or 0)
+    evidence_report_pending_memory_reviews = int(evidence_report_summary.get("pending_memory_reviews") or 0)
     receipt_rows = operator_action_receipt_rows(conn, workspace_id, 200)
     execution_evidence_gaps = ((action_plan.get("execution_evidence") or {}).get("gaps") or [])
     execution_gap_by_run = {str(item.get("run_id")): item for item in execution_evidence_gaps if item.get("run_id")}
@@ -20689,10 +22671,16 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         loop_health_risks.append({"id": "run_evidence_blocked", "severity": "blocked", "count": evidence_report_blocked, "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0]})
     elif evidence_report_attention or evidence_report_missing_manifests or evidence_report_pending_approvals:
         loop_health_risks.append({"id": "run_evidence_attention", "severity": "attention", "count": evidence_report_attention + evidence_report_missing_manifests + evidence_report_pending_approvals, "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0]})
+    if evidence_report_missing_memory_reviews or evidence_report_pending_memory_reviews:
+        loop_health_risks.append({"id": "run_memory_review_attention", "severity": "attention", "count": evidence_report_missing_memory_reviews + evidence_report_pending_memory_reviews, "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0]})
     if remediation_workflow_blocked:
         loop_health_risks.append({"id": "evidence_remediation_workflow_blocked", "severity": "blocked", "count": remediation_workflow_blocked, "next_action": (remediation_chain.get("next_actions") or ["agentops operator handoff --limit 12"])[0]})
     elif remediation_workflow_ready or remediation_workflow_receipt_missing:
         loop_health_risks.append({"id": "evidence_remediation_workflow_attention", "severity": "attention", "count": remediation_workflow_ready + remediation_workflow_receipt_missing, "next_action": (remediation_chain.get("next_actions") or ["agentops operator handoff --limit 12"])[0]})
+    if workflow_recovery_blocked:
+        loop_health_risks.append({"id": "workflow_job_recovery_blocked", "severity": "blocked", "count": workflow_recovery_blocked, "next_action": (workflow_recovery_work_order.get("next_actions") or ["agentops workflow stuck-jobs --threshold-sec 900 --limit 25"])[0]})
+    elif workflow_recovery_attention or workflow_recovery_receipt_missing:
+        loop_health_risks.append({"id": "workflow_job_recovery_attention", "severity": "attention", "count": workflow_recovery_attention + workflow_recovery_receipt_missing, "next_action": (workflow_recovery_work_order.get("next_actions") or ["agentops workflow stuck-jobs --threshold-sec 900 --limit 25"])[0]})
     if loop_record_status not in {"ready", "pass", "closed"}:
         loop_health_risks.append({"id": "loop_record_not_closed", "severity": "attention", "count": int(loop_record.get("candidate_count") or 0) + int(loop_record.get("pending_approval_count") or 0), "next_action": loop_record.get("next_action") or "agentops review queue --limit 20"})
     auth_mode = (auth_ctx or {}).get("mode") or "unknown"
@@ -20701,6 +22689,16 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         loop_health_risks.append({"id": "auth_boundary_unknown", "severity": "blocked", "count": 1, "next_action": "agentops status"})
     safety_ready = True
     handoff_commands: list[str] = []
+    for command in workflow_recovery_work_order.get("next_actions") or []:
+        command = str(command or "").strip()
+        if command and command not in handoff_commands:
+            handoff_commands.append(command)
+    for command in workflow_recovery_work_order.get("commands") or []:
+        command = str(command or "").strip()
+        if command and command not in handoff_commands:
+            handoff_commands.append(command)
+        if len(handoff_commands) >= 20:
+            break
     for command in evidence_report_work_order.get("next_actions") or []:
         command = str(command or "").strip()
         if command and command not in handoff_commands:
@@ -20773,7 +22771,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "next_action": (receipt_failure_work_order.get("next_actions") or receipt_failure_memory.get("next_actions") or ["agentops operator receipt-failure-memories --min-failures 2 --limit 8"])[0],
         },
         "evidence_report": {
-            "status": "blocked" if evidence_report_blocked else "attention" if evidence_report_attention or evidence_report_missing_manifests or evidence_report_pending_approvals else "pass",
+            "status": "blocked" if evidence_report_blocked else "attention" if evidence_report_attention or evidence_report_missing_manifests or evidence_report_pending_approvals or evidence_report_missing_memory_reviews or evidence_report_pending_memory_reviews else "pass",
             "runs": int(evidence_report_summary.get("runs") or 0),
             "ready": int(evidence_report_summary.get("ready") or 0),
             "attention": evidence_report_attention,
@@ -20781,7 +22779,22 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "verified_plan_evidence_manifests": int(evidence_report_summary.get("verified_plan_evidence_manifests") or 0),
             "missing_plan_evidence_manifests": evidence_report_missing_manifests,
             "pending_approvals": evidence_report_pending_approvals,
+            "memory_reviews": evidence_report_memory_reviews,
+            "memory_review_ready": evidence_report_memory_review_ready,
+            "missing_memory_reviews": evidence_report_missing_memory_reviews,
+            "pending_memory_reviews": evidence_report_pending_memory_reviews,
             "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0],
+        },
+        "workflow_job_recovery": {
+            "status": "blocked" if workflow_recovery_status == "blocked" else "attention" if workflow_recovery_status == "attention" else "pass",
+            "items": workflow_recovery_items,
+            "stuck_jobs": workflow_recovery_stuck_jobs,
+            "retryable_failed_jobs": workflow_recovery_retryable_failed_jobs,
+            "blocked": workflow_recovery_blocked,
+            "attention": workflow_recovery_attention,
+            "receipt_missing": workflow_recovery_receipt_missing,
+            "receipt_verified": workflow_recovery_receipt_verified,
+            "next_action": (workflow_recovery_work_order.get("next_actions") or ["agentops workflow stuck-jobs --threshold-sec 900 --limit 25"])[0],
         },
         "evidence_remediation_workflow": {
             "status": "blocked" if remediation_workflow_blocked else "attention" if remediation_workflow_ready or remediation_workflow_receipt_missing else "pass",
@@ -20824,7 +22837,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         10 if safety_ready else 0,
     ]
     loop_health_score = min(max(sum(score_parts), 0), 100)
-    loop_health_status = "blocked" if loop_blocked or receipt_evaluation_fail or evidence_report_blocked or remediation_workflow_blocked or not auth_ready or not safety_ready else "attention" if loop_health_risks or loop_health_score < 90 else "ready"
+    loop_health_status = "blocked" if loop_blocked or receipt_evaluation_fail or evidence_report_blocked or remediation_workflow_blocked or workflow_recovery_blocked or not auth_ready or not safety_ready else "attention" if loop_health_risks or loop_health_score < 90 else "ready"
     loop_health_payload = {
         "operation": "operator_loop_health",
         "status": loop_health_status,
@@ -20881,6 +22894,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "evidence_report_blocked": evidence_report_blocked,
             "evidence_report_missing_plan_evidence_manifests": evidence_report_missing_manifests,
             "evidence_report_pending_approvals": evidence_report_pending_approvals,
+            "evidence_report_memory_reviews": evidence_report_memory_reviews,
+            "evidence_report_memory_review_ready": evidence_report_memory_review_ready,
+            "evidence_report_missing_memory_reviews": evidence_report_missing_memory_reviews,
+            "evidence_report_pending_memory_reviews": evidence_report_pending_memory_reviews,
             "loop_package_items": len(action_package_items),
             "operator_actions": len(action_plan_actions),
             "receipt_required": receipt_coverage.get("required", 0),
@@ -20895,6 +22912,11 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "receipt_failure_memory_failed_receipts": receipt_failure_memory_failed_receipts,
             "receipt_failure_memory_existing_candidates": receipt_failure_memory_existing_candidates,
             "receipt_failure_memory_work_items": len(receipt_failure_work_order_items),
+            "workflow_job_recovery_items": workflow_recovery_items,
+            "workflow_job_recovery_stuck_jobs": workflow_recovery_stuck_jobs,
+            "workflow_job_recovery_retryable_failed_jobs": workflow_recovery_retryable_failed_jobs,
+            "workflow_job_recovery_receipt_missing": workflow_recovery_receipt_missing,
+            "workflow_job_recovery_receipt_verified": workflow_recovery_receipt_verified,
             "advance_loop_work_items": 1 if advance_loop_selected_item else 0,
             "control_status": control_summary.get("status"),
             "control_mode": control_summary.get("mode"),
@@ -20911,6 +22933,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "next_actions": loop_audit.get("next_actions") or [],
             "top_operator_actions": action_plan_actions[: min(limit, 8)],
             "receipt_failure_memory": receipt_failure_work_order,
+            "workflow_job_recovery": workflow_recovery_work_order,
             "advance_loop": advance_loop_work_order,
             "commands": handoff_commands[:20],
             "token_omitted": True,
@@ -20950,6 +22973,13 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
                 "summary": evidence_report_summary,
                 "safety": evidence_report.get("safety") or {},
                 "contract": evidence_report.get("contract"),
+            },
+            "workflow_job_recovery": {
+                "status": workflow_recovery_work_order.get("status"),
+                "summary": workflow_recovery_summary,
+                "safety": workflow_recovery_work_order.get("safety") or {},
+                "contract": workflow_recovery_work_order.get("contract"),
+                "token_omitted": True,
             },
         },
         "loop_health": loop_health_payload,
@@ -21486,6 +23516,838 @@ def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -
     }
 
 
+def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
+    loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
+    scheme = str(headers.get("X-Forwarded-Proto") or "http").split(",", 1)[0].strip() or "http"
+    host = str(headers.get("Host") or "127.0.0.1:8787").strip() or "127.0.0.1:8787"
+    base_url = redact_text((qs.get("base_url") or [f"{scheme}://{host}"])[0], 240)
+    effective_headers = headers
+    if agent_gateway_is_bound_auth(auth_ctx):
+        effective_headers = dict(headers)
+        effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
+        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or effective_headers.get("X-AgentOps-Workspace-Id")
+        or "local-demo"
+    )
+    readiness = worker_adapter_readiness(conn, refresh=False)
+    fleet = worker_fleet_view(conn)
+    readiness_summary = readiness.get("summary") or {}
+    adapters = readiness.get("adapters") or {}
+    fleet_summary = fleet.get("summary") or {}
+
+    def table_count(table: str, where: str = "", params=()) -> int:
+        exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+        if not exists:
+            return 0
+        sql = f"SELECT COUNT(*) FROM {table}"
+        if where:
+            sql += f" WHERE {where}"
+        return scalar_count(conn, sql, params)
+
+    evidence_counts = {
+        "agent_plans": table_count("agent_plans"),
+        "plan_evidence_manifests": table_count("plan_evidence_manifests"),
+        "audit_logs": table_count("audit_logs"),
+        "operator_action_receipts": table_count("operator_action_receipts"),
+        "operator_action_evaluations": table_count("operator_action_evaluations"),
+        "pending_approvals": table_count("approvals", "decision='pending'"),
+        "memory_candidates": table_count("memories", "review_status='candidate'"),
+    }
+    evidence_chain_status = (
+        "pass"
+        if evidence_counts["audit_logs"] > 0
+        else "attention"
+        if evidence_counts["agent_plans"] or evidence_counts["plan_evidence_manifests"]
+        else "blocked"
+    )
+
+    def component_status(value: str | None) -> str:
+        value = str(value or "unknown")
+        if value in {"ready", "pass", "running", "ok"}:
+            return "pass"
+        if value in {"blocked", "fail", "failed", "error"}:
+            return "blocked"
+        return "attention"
+
+    commands = {
+        "operator_runtime_doctor": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops operator runtime-doctor --limit {limit}",
+        "operator_health": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops operator health --limit 20",
+        "loop_launch_packet": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops operator loop-launch-packet --limit {limit}",
+        "handoff": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops operator handoff --limit {limit}",
+        "loop_self_check": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops operator loop-self-check --limit 12",
+        "loop_audit": "agentops operator loop-audit --limit 20",
+        "evidence_report": "agentops operator evidence-report --limit 12",
+        "worker_readiness": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops worker readiness",
+        "worker_fleet": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops worker fleet",
+        "hermes_preflight": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops worker preflight --adapter hermes",
+        "openclaw_preflight": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops worker preflight --adapter openclaw",
+        "run_hermes_guarded": "agentops workflow run-task --adapter hermes --confirm-run",
+        "run_openclaw_guarded": "agentops workflow run-task --adapter openclaw --confirm-run",
+        "prepared_action_review": "agentops approval list --decision pending --limit 20",
+        "record_action_receipt": "agentops operator record-action-receipt --action-command '<command>' --verify-command 'agentops operator runtime-doctor --limit 8' --confirm-record",
+        "codex_supervisor": "codex resume this workspace, read AGENTS.md, then run agentops operator runtime-doctor --limit 8 before dispatching work",
+    }
+
+    gates: list[dict] = []
+
+    def add_gate(gate_id: str, label: str, status: str, detail: str, command: str | None = None, **extra) -> None:
+        gates.append({
+            "id": gate_id,
+            "label": label,
+            "status": status,
+            "ok": status == "pass",
+            "detail": redact_text(detail, 360),
+            "next_action": command,
+            **extra,
+            "token_omitted": True,
+        })
+
+    add_gate(
+        "mis_api",
+        "Local MIS API",
+        "pass",
+        "runtime-doctor endpoint is responding from the local MIS API",
+        commands["operator_health"],
+    )
+    add_gate(
+        "adapter_readiness",
+        "Hermes/OpenClaw adapter readiness",
+        "pass" if readiness.get("status") == "ready" else component_status(readiness.get("status")),
+        f"ready={','.join(readiness_summary.get('ready_adapters') or [])}; live_ready={','.join(readiness_summary.get('live_ready_adapters') or [])}",
+        commands["worker_readiness"],
+    )
+    for adapter in ("hermes", "openclaw"):
+        item = adapters.get(adapter) or {}
+        add_gate(
+            f"{adapter}_runtime",
+            f"{adapter} local runtime",
+            "pass" if item.get("readiness") == "ready" else component_status(item.get("readiness")),
+            f"readiness={item.get('readiness') or 'unknown'} target={item.get('target_resource') or 'unknown'} observation={item.get('observation_level') or 'unknown'}",
+            commands[f"{adapter}_preflight"],
+            adapter=adapter,
+            target_resource=item.get("target_resource"),
+            observation_level=item.get("observation_level"),
+            capability_policy_hash=item.get("capability_policy_hash"),
+        )
+    live_adapters = [name for name in ("hermes", "openclaw") if name in (readiness_summary.get("ready_adapters") or [])]
+    confirm_ready = all((adapters.get(name) or {}).get("requires_confirm_run") is True for name in live_adapters)
+    add_gate(
+        "confirm_run_wall",
+        "Live execution confirmation wall",
+        "pass" if confirm_ready else "blocked",
+        f"live_adapters={','.join(live_adapters) or 'none'} require --confirm-run before Hermes/OpenClaw execution",
+        commands["worker_readiness"],
+        live_adapters=live_adapters,
+    )
+    prepared_ready = True
+    restricted = []
+    for adapter in ("hermes", "openclaw"):
+        manifest = (adapters.get(adapter) or {}).get("capability_manifest") or {}
+        governance = manifest.get("governance") or {}
+        if governance.get("requires_prepared_action_for_external_write") is not True:
+            prepared_ready = False
+        if (adapters.get(adapter) or {}).get("commercial_readiness") == "restricted_until_runtime_tool_events":
+            restricted.append(adapter)
+    add_gate(
+        "prepared_action_wall",
+        "External-write prepared action wall",
+        "pass" if prepared_ready else "blocked",
+        f"opaque_external_writes_route_to_prepared_actions; restricted_until_runtime_tool_events={','.join(restricted) or 'none'}",
+        commands["prepared_action_review"],
+        restricted_adapters=restricted,
+    )
+    remote_attention = int(fleet_summary.get("stale_remote_enrollments") or 0) + int(fleet_summary.get("never_seen_remote_enrollments") or 0)
+    add_gate(
+        "remote_worker_fleet",
+        "Remote Agent fleet",
+        "attention" if remote_attention else component_status(fleet.get("status")),
+        f"remote={fleet_summary.get('remote_worker_count', 0)} fresh={fleet_summary.get('fresh_remote_enrollments', 0)} stale={fleet_summary.get('stale_remote_enrollments', 0)} never_seen={fleet_summary.get('never_seen_remote_enrollments', 0)} active_sessions={fleet_summary.get('active_remote_sessions', 0)}",
+        commands["worker_fleet"],
+        remote_worker_count=fleet_summary.get("remote_worker_count", 0),
+        stale_remote_enrollments=fleet_summary.get("stale_remote_enrollments", 0),
+        never_seen_remote_enrollments=fleet_summary.get("never_seen_remote_enrollments", 0),
+    )
+    add_gate(
+        "loop_launch_packet",
+        "Agent Work Method launch packet",
+        "pass",
+        "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD packet is available before dispatch",
+        commands["loop_launch_packet"],
+    )
+    add_gate(
+        "handoff_evidence_chain",
+        "Handoff and evidence chain",
+        evidence_chain_status,
+        f"agent_plans={evidence_counts['agent_plans']} manifests={evidence_counts['plan_evidence_manifests']} audit_logs={evidence_counts['audit_logs']} receipts={evidence_counts['operator_action_receipts']}",
+        commands["handoff"],
+        evidence_counts=evidence_counts,
+    )
+    add_gate(
+        "codex_supervisor",
+        "Codex supervisor lane",
+        "pass",
+        "Codex coordinates local loop work through repo state, AGENTS.md, runtime doctor, and receipt-backed commands",
+        commands["codex_supervisor"],
+    )
+    add_gate(
+        "redaction_boundary",
+        "Token and raw-content redaction",
+        "pass",
+        "Doctor output exposes refs, hashes, summaries, and commands only; tokens, sessions, raw prompts, and raw responses remain omitted",
+        "agentops worker readiness && agentops operator runtime-doctor --limit 8",
+    )
+
+    blocked = [gate for gate in gates if gate.get("status") == "blocked"]
+    attention = [gate for gate in gates if gate.get("status") == "attention"]
+    status = "blocked" if blocked else "attention" if attention else "ready"
+    recommended_adapter = readiness_summary.get("recommended_adapter") or "mock"
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_runtime_doctor",
+        "status": status,
+        "workspace_id": workspace_id,
+        "base_url": base_url,
+        "summary": {
+            "mis_status": "ready",
+            "operator_health_score": None,
+            "recommended_adapter": recommended_adapter,
+            "ready_adapters": readiness_summary.get("ready_adapters") or [],
+            "live_ready_adapters": readiness_summary.get("live_ready_adapters") or [],
+            "requires_confirm_run": [name for name in ("hermes", "openclaw") if (adapters.get(name) or {}).get("requires_confirm_run") is True],
+            "requires_prepared_action": [name for name in ("hermes", "openclaw") if (((adapters.get(name) or {}).get("capability_manifest") or {}).get("governance") or {}).get("requires_prepared_action_for_external_write") is True],
+            "remote_worker_count": fleet_summary.get("remote_worker_count", 0),
+            "stale_remote_enrollments": fleet_summary.get("stale_remote_enrollments", 0),
+            "never_seen_remote_enrollments": fleet_summary.get("never_seen_remote_enrollments", 0),
+            "control_status": "inspect_handoff",
+            "control_mode": "copy_only",
+            "evidence_chain_status": evidence_chain_status,
+            "blocked_gates": [gate["id"] for gate in blocked],
+            "attention_gates": [gate["id"] for gate in attention],
+        },
+        "gates": gates,
+        "commands": commands,
+        "sources": {
+            "operator_health": {
+                "status": "not_sampled",
+                "score": None,
+                "summary": {
+                    "reason": "runtime_doctor_is_lightweight_first_check; run agentops operator health for the full aggregate health model",
+                    "command": commands["operator_health"],
+                },
+                "token_omitted": True,
+            },
+            "adapter_readiness": {
+                "status": readiness.get("status"),
+                "summary": readiness_summary,
+                "token_omitted": True,
+            },
+            "worker_fleet": {
+                "status": fleet.get("status"),
+                "summary": fleet_summary,
+                "token_omitted": True,
+            },
+            "handoff": {
+                "status": evidence_chain_status,
+                "summary": {
+                    "evidence_counts": evidence_counts,
+                    "command": commands["handoff"],
+                },
+                "loop_health": {
+                    "status": evidence_chain_status,
+                    "score": None,
+                    "next_action": commands["handoff"],
+                    "token_omitted": True,
+                },
+                "token_omitted": True,
+            },
+        },
+        "contract": "read-only runtime doctor for local MIS, Hermes, OpenClaw, Codex supervision, remote Agent fleet, launch packet, handoff, confirm-run walls, prepared-action walls, and evidence commands; it never starts runtimes, executes tasks, or mutates ledgers",
+        "auth": {
+            "mode": (auth_ctx or {}).get("mode") or "unknown",
+            "required_scope": "tasks:read",
+            "workspace_id": workspace_id,
+            "agent_id": (auth_ctx or {}).get("agent_id") or effective_headers.get("X-AgentOps-Agent-Id") or None,
+            "token_omitted": True,
+        },
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
+def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    adapter = coerce_choice((qs.get("adapter") or ["mock"])[0], {"mock", "hermes", "openclaw"}, "mock")
+    limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
+    freshness_hours = bounded_int((qs.get("freshness_hours") or ["72"])[0], 72, 1, 720)
+    loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
+    task_id = redact_text((qs.get("task_id") or [""])[0], 160)
+    requested_agent_id = redact_text((qs.get("agent_id") or [""])[0], 120)
+    query = redact_text((qs.get("q") or qs.get("query") or ["READ PLAN RETRIEVE COMPARE VERIFY RECORD"])[0], 240)
+    handoff_mode = str((qs.get("handoff_mode") or ["lightweight"])[0] or "lightweight").strip().lower()
+    if str((qs.get("full_handoff") or [""])[0]).strip().lower() in {"1", "true", "yes", "on"}:
+        handoff_mode = "full"
+    handoff_mode = "full" if handoff_mode == "full" else "lightweight"
+
+    effective_headers = headers
+    if agent_gateway_is_bound_auth(auth_ctx):
+        effective_headers = dict(headers)
+        effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
+        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or effective_headers.get("X-AgentOps-Workspace-Id")
+        or "local-demo"
+    )
+    if not requested_agent_id:
+        requested_agent_id = redact_text((auth_ctx or {}).get("agent_id") or effective_headers.get("X-AgentOps-Agent-Id") or "", 120)
+
+    local = local_readiness(conn, effective_headers, refresh_runtime=False)
+    worker_readiness = worker_adapter_readiness(conn, refresh=False)
+    runtime_doctor_qs = {"limit": [str(limit)], "loop_id": [loop_id] if loop_id else []}
+    if qs.get("base_url"):
+        runtime_doctor_qs["base_url"] = qs.get("base_url")
+    runtime_doctor = operator_runtime_doctor(
+        conn,
+        effective_headers,
+        runtime_doctor_qs,
+        auth_ctx,
+    )
+    launch_packet = operator_loop_launch_packet(
+        conn,
+        effective_headers,
+        {
+            "limit": [str(limit)],
+            "task_id": [task_id] if task_id else [],
+            "agent_id": [requested_agent_id] if requested_agent_id else [],
+            "q": [query],
+            "handoff_mode": [handoff_mode],
+            "full_handoff": ["true"] if handoff_mode == "full" else [],
+        },
+        auth_ctx,
+    )
+    local_run_path = compact_start_check_local_run_path(local)
+    launch_brief = compact_start_check_launch_brief(launch_packet, adapter=adapter, local_run_path=local_run_path)
+    loop_driver_review = human_review_queue(
+        conn,
+        limit=min(max(int(limit or 8), 1), 8),
+        ident={"workspace_id": workspace_id or "local-demo", "agent_id": requested_agent_id or ""},
+        auth_ctx=auth_ctx,
+    )
+    loop_driver_entry = compact_start_check_loop_driver_entry(
+        loop_driver_review,
+        adapter=adapter,
+        limit=limit,
+        loop_id=loop_id or None,
+        task_id=task_id or None,
+        agent_id=requested_agent_id or None,
+    )
+    live_acceptance = live_acceptance_readiness(conn, workspace_id, freshness_hours=freshness_hours, limit=limit)
+    live_item = (live_acceptance.get("adapters") or {}).get(adapter) if adapter in {"hermes", "openclaw"} else None
+    live_product = None
+    if adapter in {"hermes", "openclaw"}:
+        live_product_ok = isinstance(live_item, dict) and live_item.get("status") == "fresh" and live_item.get("ok") is True
+        live_product = {
+            "provider": "agentops-operator",
+            "operation": "operator_live_product_readiness",
+            "ok": live_product_ok,
+            "product_readiness_proof": live_product_ok,
+            "evidence_class": "manual_live_ledger_readback",
+            "workspace_id": workspace_id,
+            "freshness_hours": freshness_hours,
+            "required_adapters": [adapter],
+            "live_acceptance_status": live_acceptance.get("status"),
+            "adapters": [{
+                "adapter": adapter,
+                "status": (live_item or {}).get("status") if isinstance(live_item, dict) else "missing",
+                "run_id": ((live_item or {}).get("latest_passing") or {}).get("run_id") if isinstance(live_item, dict) else None,
+                "task_id": ((live_item or {}).get("latest_passing") or {}).get("task_id") if isinstance(live_item, dict) else None,
+                "artifact_id": ((live_item or {}).get("latest_passing") or {}).get("artifact_id") if isinstance(live_item, dict) else None,
+                "token_omitted": True,
+            }],
+            "failures": [] if live_product_ok else [f"{adapter}: fresh live product evidence missing"],
+            "next_actions": [] if live_product_ok else [
+                f"agentops operator live-product-readiness --require-adapter {adapter}",
+                f"python3 scripts/customer_worker_real_runtime_acceptance.py --confirm-live --adapter {adapter} --hermes-max-tokens 512",
+            ],
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }
+
+    adapters = worker_readiness.get("adapters") if isinstance(worker_readiness.get("adapters"), dict) else {}
+    adapter_item = adapters.get(adapter) if isinstance(adapters.get(adapter), dict) else {}
+    adapter_readiness = str(adapter_item.get("readiness") or ("ready" if adapter == "mock" else "unknown"))
+    worker_policy = worker_readiness.get("worker_connection_policy") if isinstance(worker_readiness.get("worker_connection_policy"), dict) else {}
+    if not worker_policy:
+        worker_policy = {
+            "source": "adapter_readiness",
+            "status": "not_reported",
+            "copy_only": True,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        }
+    else:
+        worker_policy = dict(worker_policy)
+        worker_policy_safety = worker_policy.get("safety") if isinstance(worker_policy.get("safety"), dict) else {}
+        worker_policy.setdefault("server_executes_shell", worker_policy_safety.get("server_executes_shell", False))
+        worker_policy.setdefault("token_omitted", bool(
+            worker_policy_safety.get("token_omitted") is True
+            or (worker_policy.get("session") or {}).get("token_omitted") is True
+        ))
+    worker_policy_safety = worker_policy.get("safety") if isinstance(worker_policy.get("safety"), dict) else {}
+    worker_policy_server_shell = worker_policy.get("server_executes_shell") if "server_executes_shell" in worker_policy else worker_policy_safety.get("server_executes_shell")
+    worker_policy_token_omitted = worker_policy.get("token_omitted") if "token_omitted" in worker_policy else worker_policy_safety.get("token_omitted", True)
+    local_summary = local.get("summary") if isinstance(local.get("summary"), dict) else {}
+    local_steps = local_run_path.get("steps") if isinstance(local_run_path.get("steps"), list) else []
+    service_step = local_run_path.get("service_control_preview") if isinstance(local_run_path.get("service_control_preview"), dict) else None
+    current_code_gate = local_run_path.get("current_code_gate") if isinstance(local_run_path.get("current_code_gate"), dict) else {}
+    launch_summary = launch_brief.get("summary") if isinstance(launch_brief.get("summary"), dict) else {}
+    live_ok = True if adapter == "mock" else bool(live_product and live_product.get("product_readiness_proof") is True)
+
+    gates = [
+        operator_start_check_gate(
+            "local_readiness",
+            label="Local MIS readiness",
+            ok=local.get("operation") == "local_readiness" and local.get("live_execution_performed") is False,
+            status="pass" if local.get("status") in {"ready", "attention"} else "blocked",
+            detail=f"local status={local.get('status')}; recommended_adapter={local_summary.get('recommended_adapter')}",
+            command="agentops local readiness",
+        ),
+        operator_start_check_gate(
+            "worker_connection_policy",
+            label="Worker connection policy",
+            ok=worker_policy_server_shell is False and worker_policy_token_omitted is not False,
+            detail=f"status={worker_policy.get('status') or worker_policy.get('mode') or worker_policy.get('schema') or 'reported'}; server_executes_shell={worker_policy_server_shell}",
+            command="agentops worker readiness",
+        ),
+        operator_start_check_gate(
+            "current_code_gate",
+            label="Current-code runtime gate",
+            ok=current_code_gate.get("ok") is True,
+            status="pass" if current_code_gate.get("ok") is True else "blocked",
+            detail=(
+                f"server_status={current_code_gate.get('status')}; "
+                f"head={current_code_gate.get('git_head_short') or 'unknown'}; "
+                f"latest_source={current_code_gate.get('latest_source_path') or 'unknown'}"
+            ),
+            command=current_code_gate.get("strict_command") or current_code_gate.get("command") or "agentops local readiness --require-current-code",
+        ),
+        operator_start_check_gate(
+            "adapter_preflight",
+            label=f"{adapter} adapter preflight",
+            ok=adapter == "mock" or adapter_readiness in {"ready", "review_required"},
+            status="pass" if adapter == "mock" or adapter_readiness in {"ready", "review_required"} else "attention",
+            detail=f"readiness={adapter_readiness}; connector_id={adapter_item.get('connector_id')}",
+            command=f"agentops worker preflight --adapter {adapter}",
+        ),
+        operator_start_check_gate(
+            "runtime_doctor",
+            label="Runtime doctor",
+            ok=runtime_doctor.get("operation") == "operator_runtime_doctor" and runtime_doctor.get("live_execution_performed") is False,
+            status="pass" if runtime_doctor.get("status") in {"ready", "attention"} else "blocked",
+            detail=f"doctor status={runtime_doctor.get('status')}",
+            command="agentops operator runtime-doctor --limit 8",
+        ),
+        operator_start_check_gate(
+            "loop_launch_brief",
+            label="Agent Work Method launch brief",
+            ok=launch_brief.get("operation") == "operator_loop_launch_brief" and launch_brief.get("live_execution_performed") is False,
+            detail=f"control={launch_brief.get('status')}; local_steps={len(local_steps)}",
+            command=f"agentops operator loop-launch-packet --brief --adapter {adapter} --limit {limit}",
+        ),
+        operator_start_check_gate(
+            "loop_driver_entry",
+            label="Bounded loop driver entry",
+            ok=loop_driver_entry.get("operation") == "operator_start_check_loop_driver_entry" and (loop_driver_entry.get("safety") or {}).get("server_executes_shell") is False,
+            status=loop_driver_entry.get("status") if loop_driver_entry.get("status") in {"ready", "attention"} else "blocked",
+            detail=(
+                f"review_items={((loop_driver_entry.get('review_snapshot') or {}).get('summary') or {}).get('review_items_total', 0)}; "
+                f"pending_approvals={((loop_driver_entry.get('review_snapshot') or {}).get('summary') or {}).get('pending_approvals', 0)}"
+            ),
+            command=(loop_driver_entry.get("commands") or {}).get("preview"),
+        ),
+        operator_start_check_gate(
+            "local_run_path",
+            label="Local run path",
+            ok=bool(local_steps) and (local_run_path.get("safety") or {}).get("server_executes_shell") is False,
+            detail=f"steps={len(local_steps)}; service_control_preview={bool(service_step)}",
+            command="agentops local readiness",
+        ),
+        operator_start_check_gate(
+            "agent_plan_boundary",
+            label="Agent Plan boundary",
+            ok=bool(launch_summary.get("agent_plan_risk")) and (launch_brief.get("safety") or {}).get("token_omitted") is True,
+            detail=f"risk={launch_summary.get('agent_plan_risk')}; approval_required={launch_summary.get('agent_plan_approval_required')}",
+            command="agentops agent-plan create --task-id <task_id> ... && agentops agent-plan verify --plan-id <plan_id>",
+        ),
+        operator_start_check_gate(
+            "live_product_readiness",
+            label="Live product readiness",
+            ok=live_ok,
+            status="pass" if live_ok else "attention",
+            detail="not required for mock" if adapter == "mock" else f"product_readiness_proof={bool(live_product and live_product.get('product_readiness_proof'))}",
+            command="agentops local readiness" if adapter == "mock" else f"agentops operator live-product-readiness --require-adapter {adapter}",
+        ),
+    ]
+    if any(gate.get("status") == "blocked" for gate in gates):
+        status = "blocked"
+    elif any(gate.get("status") == "attention" or not gate.get("ok") for gate in gates):
+        status = "attention"
+    else:
+        status = "ready"
+
+    next_commands = [
+        "agentops local readiness",
+        current_code_gate.get("strict_command") or current_code_gate.get("command") or "agentops local readiness --require-current-code",
+        "agentops worker readiness",
+        f"agentops worker preflight --adapter {adapter}",
+        "agentops operator runtime-doctor --limit 8",
+        f"agentops operator loop-launch-packet --brief --adapter {adapter} --limit {limit}",
+        (loop_driver_entry.get("commands") or {}).get("preview"),
+        (loop_driver_entry.get("commands") or {}).get("review_queue"),
+        "agentops operator advance-loop --fast-control --limit 8",
+    ]
+    if adapter in {"hermes", "openclaw"}:
+        next_commands.extend([
+            (loop_driver_entry.get("commands") or {}).get("confirm_loop"),
+            f"agentops operator live-product-readiness --require-adapter {adapter}",
+            launch_brief.get("live_run_command"),
+        ])
+    next_commands.extend(launch_brief.get("readback_commands") or [])
+    deduped_commands = []
+    for command in next_commands:
+        command = str(command or "").strip()
+        if command and command not in deduped_commands:
+            deduped_commands.append(command)
+    start_check_commands = deduped_commands[:16]
+    start_check_adapter_readiness = {
+        "adapter": adapter,
+        "readiness": adapter_readiness,
+        "ok": bool(adapter_item.get("ok")) if adapter != "mock" else True,
+        "requires_confirm_run": bool(adapter_item.get("requires_confirm_run")) or adapter in {"hermes", "openclaw"},
+        "recommended_action": adapter_item.get("recommended_action"),
+        "remediation": adapter_item.get("remediation"),
+        "token_omitted": True,
+    }
+    acceptance_packet = operator_start_check_acceptance_packet(
+        status=status,
+        adapter=adapter,
+        workspace_id=workspace_id,
+        task_id=task_id or None,
+        agent_id=requested_agent_id or None,
+        gates=gates,
+        worker_connection_policy=worker_policy,
+        adapter_readiness=start_check_adapter_readiness,
+        runtime_doctor=runtime_doctor,
+        launch_brief=launch_brief,
+        loop_driver_entry=loop_driver_entry,
+        local_run_path=local_run_path,
+        live_product_readiness=live_product,
+        next_commands=start_check_commands,
+    )
+    agent_loop_packet = operator_agent_loop_packet(
+        adapter=adapter,
+        max_steps=3,
+        acceptance_gate=acceptance_packet,
+        adapter_readiness=start_check_adapter_readiness,
+        launch_brief=launch_brief,
+        review_snapshot=(loop_driver_entry.get("review_snapshot") or {}),
+        confirm_loop=False,
+    )
+    local_loop_admission_packet = operator_local_loop_admission_packet(
+        status=status,
+        adapter=adapter,
+        workspace_id=workspace_id,
+        task_id=task_id or None,
+        agent_id=requested_agent_id or None,
+        acceptance_packet=acceptance_packet,
+        agent_loop_packet=agent_loop_packet,
+        local_run_path=local_run_path,
+        adapter_readiness=start_check_adapter_readiness,
+        loop_driver_entry=loop_driver_entry,
+    )
+
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_start_check",
+        "status": status,
+        "adapter": adapter,
+        "workspace_id": workspace_id,
+        "task_id": task_id or None,
+        "agent_id": requested_agent_id or None,
+        "summary": {
+            "local_readiness_status": local.get("status"),
+            "runtime_doctor_status": runtime_doctor.get("status"),
+            "adapter_readiness": adapter_readiness,
+            "launch_brief_status": launch_brief.get("status"),
+            "control_status": launch_summary.get("control_status"),
+            "recommended_step": launch_summary.get("recommended_step"),
+            "loop_driver_status": loop_driver_entry.get("status"),
+            "loop_driver_review_items_total": ((loop_driver_entry.get("review_snapshot") or {}).get("summary") or {}).get("review_items_total", 0),
+            "loop_driver_pending_approvals": ((loop_driver_entry.get("review_snapshot") or {}).get("summary") or {}).get("pending_approvals", 0),
+            "loop_driver_memory_candidates": ((loop_driver_entry.get("review_snapshot") or {}).get("summary") or {}).get("memory_candidates", 0),
+            "local_run_path_steps": len(local_steps),
+            "current_code_status": current_code_gate.get("status"),
+            "current_code_ok": current_code_gate.get("ok"),
+            "service_control_preview": bool(service_step),
+            "live_product_readiness": None if live_product is None else bool(live_product.get("product_readiness_proof")),
+            "requires_confirm_run": adapter in {"hermes", "openclaw"},
+            "acceptance_packet_status": acceptance_packet.get("status"),
+            "can_confirm_bounded_loop": (acceptance_packet.get("decision") or {}).get("can_confirm_bounded_loop"),
+        },
+        "gates": gates,
+        "worker_connection_policy": worker_policy,
+        "adapter_readiness": start_check_adapter_readiness,
+        "runtime_doctor": {
+            "status": runtime_doctor.get("status"),
+            "summary": runtime_doctor.get("summary") if isinstance(runtime_doctor.get("summary"), dict) else {},
+            "commands": runtime_doctor.get("commands") if isinstance(runtime_doctor.get("commands"), dict) else {},
+            "token_omitted": True,
+        },
+        "launch_brief": launch_brief,
+        "loop_driver_entry": loop_driver_entry,
+        "local_run_path": local_run_path,
+        "live_product_readiness": live_product,
+        "acceptance_packet": acceptance_packet,
+        "agent_loop_packet": agent_loop_packet,
+        "local_loop_admission_packet": local_loop_admission_packet,
+        "next_commands": start_check_commands,
+        "auth": {
+            "mode": (auth_ctx or {}).get("mode") or "unknown",
+            "required_scope": "tasks:read",
+            "workspace_id": workspace_id,
+            "agent_id": (auth_ctx or {}).get("agent_id") or requested_agent_id or None,
+            "token_omitted": True,
+        },
+        "contract": "read-only pre-task start check for Hermes/OpenClaw/Codex; aggregates local readiness, adapter readiness, runtime doctor, live ledger proof, launch brief, bounded loop-driver entry, local run path, service-control preview, and evidence boundaries without starting runtimes, executing shell, mutating ledgers, or exposing raw prompts/responses/tokens",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
+def operator_execution_mode(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    adapter = coerce_choice((qs.get("adapter") or ["mock"])[0], {"mock", "hermes", "openclaw"}, "mock")
+    confirm_run = str((qs.get("confirm_run") or ["false"])[0]).lower() in {"1", "true", "yes", "y"}
+    limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
+    effective_headers = headers
+    if agent_gateway_is_bound_auth(auth_ctx):
+        effective_headers = dict(headers)
+        effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
+        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or effective_headers.get("X-AgentOps-Workspace-Id")
+        or "local-demo"
+    )
+    live_acceptance = live_acceptance_readiness(conn, workspace_id)
+    selected_live_acceptance = (live_acceptance.get("adapters") or {}).get(adapter) or {}
+    doctor = operator_runtime_doctor(conn, headers, {"limit": [str(limit)]}, auth_ctx)
+    readiness = worker_adapter_readiness(conn, refresh=False)
+    adapters = readiness.get("adapters") or {}
+    selected = adapters.get(adapter) or {}
+    doctor_summary = doctor.get("summary") or {}
+
+    def table_count(table: str, where: str = "", params=()) -> int:
+        exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+        if not exists:
+            return 0
+        sql = f"SELECT COUNT(*) FROM {table}"
+        if where:
+            sql += f" WHERE {where}"
+        return scalar_count(conn, sql, params)
+
+    def table_has_column(table: str, column: str) -> bool:
+        exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+        if not exists:
+            return False
+        return any(str(row[1]) == column for row in conn.execute(f"PRAGMA table_info({table})").fetchall())
+
+    workflow_job_status_filter = "status IN ('queued','running','submitted','planned')"
+    if table_has_column("workflow_jobs", "workspace_id"):
+        active_jobs = table_count("workflow_jobs", f"{workflow_job_status_filter} AND workspace_id=?", (workspace_id,))
+    else:
+        active_jobs = table_count("workflow_jobs", workflow_job_status_filter)
+    if table_has_column("approvals", "workspace_id"):
+        pending_approvals = table_count("approvals", "decision='pending' AND COALESCE(workspace_id,'local-demo')=?", (workspace_id,))
+    else:
+        pending_approvals = table_count("approvals", "decision='pending'")
+    readiness_value = str(selected.get("readiness") or ("ready" if adapter == "mock" else "unknown"))
+    selected_blocked = adapter != "mock" and readiness_value in {"unavailable", "blocked"}
+    live_confirm_required = adapter in {"hermes", "openclaw"}
+    live_confirm_missing = live_confirm_required and not confirm_run
+    if selected_blocked:
+        status = "blocked"
+        mode = "adapter_route_blocked"
+        selected_path = "blocked_before_dispatch"
+    elif live_confirm_missing:
+        status = "attention"
+        mode = "live_confirmation_required"
+        selected_path = "waiting_for_confirm_run"
+    elif adapter == "mock":
+        status = "planned"
+        mode = "dry_run_or_mock"
+        selected_path = "safe_mock_worker"
+    else:
+        status = "ready"
+        mode = "live_confirmed"
+        selected_path = "live_worker_dispatch_allowed"
+
+    commands = {
+        "execution_mode": f"agentops operator execution-mode --adapter {adapter}{' --confirm-run' if confirm_run else ''}",
+        "worker_readiness": "agentops worker readiness",
+        "runtime_doctor": "agentops operator runtime-doctor --limit 8",
+        "review_queue": "agentops review queue --limit 20",
+    }
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_execution_mode",
+        "status": status,
+        "workspace_id": workspace_id,
+        "adapter": adapter,
+        "mode": mode,
+        "selected_path": selected_path,
+        "summary": {
+            "adapter": adapter,
+            "adapter_readiness": readiness_value,
+            "trust_status": selected.get("trust_status") or "unknown",
+            "selected_path": selected_path,
+            "live_confirm_required": live_confirm_required,
+            "confirm_run": confirm_run,
+            "confirm_run_wall": "pass" if not live_confirm_missing else "attention",
+            "prepared_action_wall": "pass" if adapter in (doctor_summary.get("requires_prepared_action") or []) else "planned",
+            "pending_approvals": pending_approvals,
+            "active_workflow_jobs": active_jobs,
+            "runtime_doctor_status": doctor.get("status"),
+            "live_acceptance_status": selected_live_acceptance.get("status") if adapter in {"hermes", "openclaw"} else "not_required_for_mock",
+            "blocked_gates": doctor_summary.get("blocked_gates") or [],
+            "attention_gates": doctor_summary.get("attention_gates") or [],
+            "recommended_adapter": doctor_summary.get("recommended_adapter") or "mock",
+        },
+        "selected_route": {
+            "adapter": adapter,
+            "readiness": readiness_value,
+            "trust_status": selected.get("trust_status") or "unknown",
+            "target_resource": selected.get("target_resource"),
+            "recommended_action": selected.get("recommended_action") or commands["worker_readiness"],
+            "requires_confirm_run": bool(selected.get("requires_confirm_run")) if adapter != "mock" else False,
+            "requires_prepared_action": adapter in (doctor_summary.get("requires_prepared_action") or []),
+            "token_omitted": True,
+        },
+        "gates": [
+            {
+                "id": "selected_adapter_route",
+                "label": "Selected adapter route",
+                "status": "blocked" if selected_blocked else "pass" if readiness_value in {"ready", "review_required"} or adapter == "mock" else "attention",
+                "detail": f"{adapter} readiness={readiness_value} trust={selected.get('trust_status') or 'unknown'}",
+                "next_action": selected.get("recommended_action") or commands["worker_readiness"],
+                "token_omitted": True,
+            },
+            {
+                "id": "confirm_run_wall",
+                "label": "Confirm-run wall",
+                "status": "attention" if live_confirm_missing else "pass",
+                "detail": "Hermes/OpenClaw live dispatch requires explicit confirm_run." if live_confirm_required else "Mock path does not require live confirmation.",
+                "next_action": commands["execution_mode"] if live_confirm_missing else commands["worker_readiness"],
+                "token_omitted": True,
+            },
+            {
+                "id": "prepared_action_wall",
+                "label": "Prepared-action wall",
+                "status": "pass" if adapter in (doctor_summary.get("requires_prepared_action") or []) else "planned",
+                "detail": "Opaque external writes route through prepared actions before provider calls." if adapter != "mock" else "Mock path has no external side effect.",
+                "next_action": "agentops approval list --decision pending --limit 20",
+                "token_omitted": True,
+            },
+            {
+                "id": "approval_waiting",
+                "label": "Pending approvals",
+                "status": "attention" if pending_approvals else "pass",
+                "detail": f"{pending_approvals} pending approval(s) in workspace {workspace_id}.",
+                "next_action": commands["review_queue"],
+                "token_omitted": True,
+            },
+            {
+                "id": "async_jobs",
+                "label": "Active workflow jobs",
+                "status": "running" if active_jobs else "pass",
+                "detail": f"{active_jobs} active workflow job(s).",
+                "next_action": "agentops workflow jobs --limit 20",
+                "token_omitted": True,
+            },
+            {
+                "id": "live_acceptance_freshness",
+                "label": "Live acceptance freshness",
+                "status": selected_live_acceptance.get("status") if adapter in {"hermes", "openclaw"} else "not_required",
+                "detail": (
+                    f"{adapter} latest live acceptance status={selected_live_acceptance.get('status') or 'not_required'}"
+                    if adapter in {"hermes", "openclaw"}
+                    else "Mock dispatch does not require live runtime acceptance."
+                ),
+                "next_action": selected_live_acceptance.get("next_action") or "agentops operator execution-mode --adapter hermes",
+                "token_omitted": True,
+            },
+        ],
+        "commands": commands,
+        "sources": {
+            "runtime_doctor": {
+                "status": doctor.get("status"),
+                "operation": doctor.get("operation"),
+                "summary": doctor_summary,
+                "token_omitted": True,
+            },
+            "adapter_readiness": {
+                "status": readiness.get("status"),
+                "summary": readiness.get("summary") or {},
+                "token_omitted": True,
+            },
+            "live_acceptance_readiness": live_acceptance,
+        },
+        "contract": "read-only execution-mode read model for UI, CLI, and agents; it does not run adapters, start daemons, create tasks, write approvals, or mutate ledgers",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     limit = bounded_int((qs.get("limit") or ["12"])[0], 12, 1, 30)
@@ -21590,21 +24452,48 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
 
     next_actions: list[dict] = []
 
-    def add_next_action(source: str, command: str | None, *, title: str = "", priority: int = 100, verify_command: str | None = None, evidence: dict | None = None) -> None:
+    def add_next_action(
+        source: str,
+        command: str | None,
+        *,
+        title: str = "",
+        priority: int = 100,
+        verify_command: str | None = None,
+        evidence: dict | None = None,
+        action_signature: str | None = None,
+        receipt_required: bool = True,
+        receipt_status: str | None = None,
+        receipt_verified: bool | None = None,
+        receipt_hash: str | None = None,
+        receipt_record_command: str | None = None,
+        receipt_verify_record_command: str | None = None,
+        control_readback_required: bool | None = None,
+        control_readback_attached: bool | None = None,
+    ) -> None:
         command = str(command or "").strip()
         if not command:
             return
         if any(item.get("command") == command for item in next_actions):
             return
+        evidence_payload = evidence or {}
+        action_id = stable_id("cmd_center_action", workspace_id, source, command)[-18:]
         next_actions.append({
-            "action_id": stable_id("cmd_center_action", workspace_id, source, command)[-18:],
+            "action_id": action_id,
+            "action_signature": action_signature or action_id,
             "source": source,
             "title": redact_text(title or source, 160),
             "priority": int(priority),
             "command": redact_text(command, 500),
             "verify_command": redact_text(verify_command or "agentops operator command-center --limit 12", 500),
-            "evidence": evidence or {},
-            "receipt_required": True,
+            "evidence": evidence_payload,
+            "receipt_required": receipt_required,
+            "receipt_status": receipt_status or "missing",
+            "receipt_verified": bool(receipt_verified),
+            "receipt_hash": receipt_hash,
+            "receipt_record_command": redact_text(receipt_record_command, 900) if receipt_record_command else None,
+            "receipt_verify_record_command": redact_text(receipt_verify_record_command, 900) if receipt_verify_record_command else None,
+            "control_readback_required": bool(control_readback_required) if control_readback_required is not None else bool(evidence_payload.get("control_readback_required")),
+            "control_readback_attached": bool(control_readback_attached) if control_readback_attached is not None else bool(evidence_payload.get("control_readback_attached")),
             "token_omitted": True,
         })
 
@@ -21615,7 +24504,22 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             title=item.get("title") or "Operator action",
             priority=int(item.get("priority") or 100),
             verify_command=item.get("verify_command"),
-            evidence={"source_action_id": item.get("action_id"), "receipt_status": item.get("receipt_status")},
+            evidence={
+                **(item.get("evidence") if isinstance(item.get("evidence"), dict) else {}),
+                "source_action_id": item.get("action_id"),
+                "receipt_status": item.get("receipt_status"),
+                "receipt_verified": bool(item.get("receipt_verified")),
+                "receipt_hash": item.get("receipt_hash"),
+            },
+            action_signature=item.get("action_signature"),
+            receipt_required=item.get("receipt_required") is not False,
+            receipt_status=item.get("receipt_status"),
+            receipt_verified=bool(item.get("receipt_verified")),
+            receipt_hash=item.get("receipt_hash"),
+            receipt_record_command=item.get("receipt_record_command"),
+            receipt_verify_record_command=item.get("receipt_verify_record_command"),
+            control_readback_required=bool((item.get("evidence") or {}).get("control_readback_required")) if isinstance(item.get("evidence"), dict) else None,
+            control_readback_attached=bool((item.get("evidence") or {}).get("control_readback_attached")) if isinstance(item.get("evidence"), dict) else None,
         )
     for gap in commander_gaps[:limit]:
         add_next_action(
@@ -21870,15 +24774,33 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
     if confirm_run:
         cmd.append("--confirm-run")
     worker_timeout = 260
+    adapter_max_attempts = body.get("adapter_max_attempts") or os.environ.get("AGENTOPS_ADAPTER_MAX_ATTEMPTS")
+    try:
+        adapter_max_attempts_int = min(max(int(adapter_max_attempts or 1), 1), 5)
+    except Exception:
+        adapter_max_attempts_int = 1
+    adapter_retry_delay = body.get("adapter_retry_delay_sec") or os.environ.get("AGENTOPS_ADAPTER_RETRY_DELAY_SEC")
+    try:
+        adapter_retry_delay_float = max(float(adapter_retry_delay or 0), 0.0)
+    except Exception:
+        adapter_retry_delay_float = 0.0
     if adapter == "hermes":
         hermes_timeout = int(body.get("hermes_timeout") or os.environ.get("HERMES_TIMEOUT", "300"))
-        worker_timeout = max(hermes_timeout + 80, worker_timeout)
+        hermes_max_tokens = int(body.get("hermes_max_tokens") or os.environ.get("HERMES_MAX_TOKENS", "512"))
+        retry_budget = int((adapter_max_attempts_int * hermes_timeout) + (max(adapter_max_attempts_int - 1, 0) * adapter_retry_delay_float) + 80)
+        worker_timeout = max(retry_budget, worker_timeout)
         cmd.extend([
             "--hermes-gateway-url",
             os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642"),
             "--hermes-timeout",
             str(hermes_timeout),
+            "--hermes-max-tokens",
+            str(hermes_max_tokens),
         ])
+    if adapter_max_attempts is not None:
+        cmd.extend(["--adapter-max-attempts", str(adapter_max_attempts)])
+    if adapter_retry_delay is not None:
+        cmd.extend(["--adapter-retry-delay-sec", str(adapter_retry_delay)])
     if adapter == "openclaw":
         cmd.extend(["--openclaw-bin", str(OPENCLAW_BIN), "--openclaw-timeout", "180"])
 
@@ -21896,6 +24818,40 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
     duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
     result_item = ((parsed.get("results") or [{}])[0] or {}) if isinstance(parsed, dict) else {}
     run_id = result_item.get("run_id")
+    if not run_id:
+        recovered = conn.execute(
+            """SELECT run_id FROM runs
+            WHERE task_id=? AND agent_id=?
+            ORDER BY COALESCE(started_at, created_at) DESC
+            LIMIT 1""",
+            (task_id, agent_id),
+        ).fetchone()
+        if recovered:
+            run_id = recovered["run_id"]
+            if not ok:
+                failure_summary = redact_text(error or "Worker process exited without a structured result.", 260)
+                ended_at = now_iso()
+                conn.execute(
+                    """UPDATE runs
+                    SET status='failed', ended_at=?, error_type=?, error_message=?, output_summary=?
+                    WHERE run_id=? AND status IN ('planned','running')""",
+                    (ended_at, "WorkerProcessFailed", failure_summary, failure_summary, run_id),
+                )
+                conn.execute(
+                    "UPDATE tasks SET status='failed', updated_at=? WHERE task_id=? AND status IN ('planned','running')",
+                    (ended_at, task_id),
+                )
+                runtime_event(
+                    conn,
+                    "rtc_agent_gateway_local",
+                    "worker.dispatch_process_failed",
+                    "failed",
+                    run_id=run_id,
+                    task_id=task_id,
+                    agent_id=agent_id,
+                    output_summary=failure_summary,
+                    raw_payload_hash=stable_hash({"task_id": task_id, "run_id": run_id, "adapter": adapter, "error": failure_summary}),
+                )
     plan_id = result_item.get("plan_id") or result_item.get("agent_plan_id")
     manifest_id = result_item.get("plan_evidence_manifest_id")
     evidence = worker_dispatch_evidence_summary(conn, task_id, run_id, plan_id, manifest_id)
@@ -21956,6 +24912,54 @@ def customer_worker_external_write_intent(body: dict, title: str, description: s
         str(body.get("external_action_type") or ""),
     ]).lower()
     return any(keyword.lower() in combined for keyword in EXTERNAL_WRITE_INTENT_KEYWORDS)
+
+
+def customer_worker_loop_admission_readback(
+    conn: sqlite3.Connection,
+    *,
+    adapter: str,
+    task_id: str | None = None,
+    agent_id: str | None = None,
+) -> dict | None:
+    """Return the copy-only Method Block admission packet for customer-worker intake."""
+    if adapter not in {"hermes", "openclaw"}:
+        return None
+    qs: dict[str, list[str]] = {
+        "adapter": [adapter],
+        "limit": ["8"],
+    }
+    if task_id:
+        qs["task_id"] = [str(task_id)]
+    if agent_id:
+        qs["agent_id"] = [str(agent_id)]
+    try:
+        start_check = operator_start_check(
+            conn,
+            {},
+            qs,
+            {"workspace_id": "local-demo", "agent_id": agent_id or ""},
+        )
+    except Exception as exc:
+        return {
+            "operation": "operator_local_loop_admission_packet",
+            "adapter": adapter,
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "status": "unavailable",
+            "reason": "start_check_unavailable",
+            "error": redact_text(str(exc), 220),
+            "contract": "customer-worker intake could not read the Method Block admission packet; live execution remains guarded by confirm-run/prepared-action gates",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }
+    packet = start_check.get("local_loop_admission_packet") if isinstance(start_check, dict) else None
+    return packet if isinstance(packet, dict) else None
 
 
 def create_customer_worker_external_write_gate(conn, body: dict, adapter: str, connector_id: str | None, adapter_readiness: dict, title: str, description: str, acceptance: str, worker_agent_id: str) -> tuple[dict, int]:
@@ -22068,34 +25072,31 @@ def create_customer_worker_external_write_gate(conn, body: dict, adapter: str, c
         "reason": body.get("approval_reason") or f"{adapter} is an opaque live runtime and this customer task requests external write/publish/upload. Approve exact prepared action before execution resumes.",
         "approver_user_id": body.get("approver_user_id") or "usr_founder",
     })
+    loop_admission_packet = customer_worker_loop_admission_readback(conn, adapter=adapter, task_id=task_id, agent_id=agent_id)
     runtime_event(conn, connector_id or "rtc_agent_gateway_local", "customer_worker_task.external_write_prepared_action_required", "waiting_approval", run_id=run_id, task_id=task_id, agent_id=agent_id, input_summary=f"{adapter} external write intent requires prepared action.", output_summary="Live execution paused before runtime invocation.", raw_payload_hash=stable_hash(normalized_args))
-    audit(conn, "system", "runtime-capability-policy", "workflow.customer_worker_task.external_write_prepared_action_required", "runs", run_id, None, {"status": "waiting_approval"}, {"adapter": adapter, "connector_id": connector_id, "approval_status": approval_status, "raw_output_omitted": True, "token_omitted": True})
+    audit(conn, "system", "runtime-capability-policy", "workflow.customer_worker_task.external_write_prepared_action_required", "runs", run_id, None, {"status": "waiting_approval"}, {"adapter": adapter, "connector_id": connector_id, "approval_status": approval_status, "local_loop_admission": (loop_admission_packet or {}).get("operation"), "raw_output_omitted": True, "token_omitted": True})
     conn.commit()
-    approval = approval_wall.get("approval") or {}
-    prepared_action = approval_wall.get("prepared_action") or {}
-    return {
-        "provider": "agentops-worker",
-        "workflow": "customer_worker_task",
-        "dry_run": True,
-        "ok": False,
-        "adapter": adapter,
-        "task_id": task_id,
-        "run_id": run_id,
-        "tool_call_id": tool_call_id,
-        "connector_id": connector_id,
-        "reason": "external_write_prepared_action_required",
-        "note": "Live runtime execution was not started. Approve and resume the exact prepared action before external write execution.",
-        "approval_wall": approval_wall,
-        "approval_id": approval.get("approval_id"),
-        "prepared_action_id": prepared_action.get("action_id"),
-        "next_action": (
-            f"agentops approval inspect --approval-id {approval.get('approval_id')} && "
-            f"agentops approval approve --approval-id {approval.get('approval_id')} && "
-            f"agentops approval prepared-action resume --action-id {prepared_action.get('action_id')} --provider-side-effect-id <id>"
-        ),
-        "live_execution_performed": False,
-        "token_omitted": True,
-    }, 202
+    return build_prepared_action_waiting_response(
+        base={
+            "provider": "agentops-worker",
+            "workflow": "customer_worker_task",
+            "dry_run": True,
+            "ok": False,
+            "adapter": adapter,
+            "task_id": task_id,
+            "run_id": run_id,
+            "tool_call_id": tool_call_id,
+            "connector_id": connector_id,
+            "note": "Live runtime execution was not started. Approve and resume the exact prepared action before external write execution.",
+            "live_execution_performed": False,
+            "local_loop_admission_packet": loop_admission_packet,
+            "token_omitted": True,
+        },
+        approval_wall=approval_wall,
+        reason="external_write_prepared_action_required",
+        resume_instruction="agentops approval prepared-action resume --action-id {prepared_action_id} --provider-side-effect-id <id>",
+        include_prepared_action_hash=False,
+    ), 202
 
 
 def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
@@ -22137,13 +25138,14 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "updated_at": now,
         }
         upsert_task(conn, row, "customer-worker-task")
+        loop_admission_packet = customer_worker_loop_admission_readback(conn, adapter=adapter, task_id=task_id, agent_id=agent_id)
         reason = redact_text(
             connector_trust.get("trust_note")
             or f"{adapter} live execution is blocked by runtime connector trust policy.",
             260,
         )
         runtime_event(conn, connector_id, "customer_worker_task.trust_blocked", "blocked", task_id=task_id, agent_id=agent_id, input_summary=f"{adapter} worker live execution blocked by trust registry.", output_summary=reason)
-        audit(conn, "system", "runtime-trust-registry", "workflow.customer_worker_task.trust_blocked", "tasks", task_id, None, row, {"adapter": adapter, "connector_id": connector_id, "trust_status": "blocked", "raw_output_omitted": True})
+        audit(conn, "system", "runtime-trust-registry", "workflow.customer_worker_task.trust_blocked", "tasks", task_id, None, row, {"adapter": adapter, "connector_id": connector_id, "trust_status": "blocked", "local_loop_admission": (loop_admission_packet or {}).get("operation"), "raw_output_omitted": True, "token_omitted": True})
         conn.commit()
         return {
             "provider": "agentops-worker",
@@ -22157,6 +25159,8 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "trust_status": "blocked",
             "reason": "runtime_connector_trust_blocked",
             "note": reason,
+            "local_loop_admission_packet": loop_admission_packet,
+            "token_omitted": True,
         }, 409
     if (
         adapter in {"hermes", "openclaw"}
@@ -22187,6 +25191,7 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "updated_at": now,
         }
         upsert_task(conn, row, "customer-worker-task")
+        loop_admission_packet = customer_worker_loop_admission_readback(conn, adapter=adapter, task_id=task_id, agent_id=agent_id)
         reason = redact_text(
             adapter_readiness.get("last_error")
             or f"{adapter} adapter is not ready for confirmed live execution.",
@@ -22198,7 +25203,9 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "connector_id": connector_id,
             "readiness": adapter_readiness.get("readiness"),
             "recommended_action": adapter_readiness.get("recommended_action"),
+            "local_loop_admission": (loop_admission_packet or {}).get("operation"),
             "raw_output_omitted": True,
+            "token_omitted": True,
         })
         conn.commit()
         return {
@@ -22214,6 +25221,7 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "readiness": adapter_readiness.get("readiness"),
             "recommended_action": adapter_readiness.get("recommended_action"),
             "note": reason,
+            "local_loop_admission_packet": loop_admission_packet,
             "token_omitted": True,
         }, 409
     if adapter in {"hermes", "openclaw"} and not confirm_run:
@@ -22238,8 +25246,9 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "updated_at": now,
         }
         upsert_task(conn, row, "customer-worker-task")
+        loop_admission_packet = customer_worker_loop_admission_readback(conn, adapter=adapter, task_id=task_id, agent_id=agent_id)
         runtime_event(conn, "rtc_agent_gateway_local", "customer_worker_task.confirm_required", "planned", task_id=task_id, agent_id=agent_id, input_summary=f"{adapter} worker requires confirm_run before live execution.")
-        audit(conn, "user", "usr_customer_demo", "workflow.customer_worker_task.confirm_required", "tasks", task_id, None, row, {"adapter": adapter, "confirm_run": False})
+        audit(conn, "user", "usr_customer_demo", "workflow.customer_worker_task.confirm_required", "tasks", task_id, None, row, {"adapter": adapter, "confirm_run": False, "local_loop_admission": (loop_admission_packet or {}).get("operation"), "token_omitted": True})
         conn.commit()
         return {
             "provider": "agentops-worker",
@@ -22252,6 +25261,8 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "requires": {"confirm_run": True},
             "reason": "confirm_run_required_for_live_adapter",
             "note": "Task was planned but live Hermes/OpenClaw worker execution requires explicit confirmation.",
+            "local_loop_admission_packet": loop_admission_packet,
+            "token_omitted": True,
         }, 201
 
     dispatch = dispatch_local_worker_once(conn, {
@@ -22267,6 +25278,8 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
         "requester_id": body.get("requester_id", "usr_customer_demo"),
         "agent_id": worker_agent_id,
         "hermes_timeout": body.get("hermes_timeout") or 300,
+        "adapter_max_attempts": body.get("adapter_max_attempts"),
+        "adapter_retry_delay_sec": body.get("adapter_retry_delay_sec"),
         "base_url": body.get("base_url") or body.get("_base_url"),
         "_base_url": body.get("_base_url"),
     })
@@ -22274,6 +25287,7 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
     processed = next((item for item in worker_results if item.get("processed")), worker_results[0] if worker_results else {})
     run_id = processed.get("run_id")
     task_id = dispatch.get("task_id") or processed.get("task_id")
+    loop_admission_packet = customer_worker_loop_admission_readback(conn, adapter=adapter, task_id=task_id, agent_id=dispatch.get("agent_id") or worker_agent_id)
     output_summary = redact_text(processed.get("output_summary") or dispatch.get("error") or "Worker task dispatched.", 1000)
     artifact_id = None
     evidence = {
@@ -22413,6 +25427,7 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
                 "evaluation_case_result": evaluation_case_result,
                 "worker_result": dispatch.get("worker_result"),
                 "error": dispatch.get("error") or "Customer delivery approval blocked by plan evidence manifest gate.",
+                "local_loop_admission_packet": loop_admission_packet,
                 "token_omitted": True,
             }, 409
         delivery_approval_id = stable_id("ap_customer_worker_delivery", run_id)
@@ -22479,6 +25494,8 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
         "evidence": evidence,
         "worker_result": dispatch.get("worker_result"),
         "error": dispatch.get("error"),
+        "local_loop_admission_packet": loop_admission_packet,
+        "token_omitted": True,
     }, 201
 
 
@@ -22783,39 +25800,39 @@ def notion_export_live_or_gate(conn, body: dict, markdown: str, title: str, acto
     if gate_error:
         if gate_error.get("error") == "notion_prepared_action_required":
             prepared = create_notion_export_prepared_action(conn, body, markdown, title, cfg, actor)
-            wall = prepared["approval_wall"]
-            approval = wall.get("approval") or {}
-            prepared_action = wall.get("prepared_action") or {}
             conn.commit()
-            return {
+            return build_prepared_action_waiting_response(
+                base={
+                    "provider": "notion",
+                    "dry_run": True,
+                    "created": False,
+                    "live_export_performed": False,
+                    "configured": cfg["configured"],
+                    "export_mode": cfg["export_mode"],
+                    "run_id": prepared["run_id"],
+                    "task_id": prepared["task_id"],
+                    "tool_call_id": prepared["tool_call_id"],
+                    "markdown_hash": action_args["markdown_hash"],
+                    "block_count": action_args["block_count"],
+                },
+                approval_wall=prepared["approval_wall"],
+                reason="notion_external_write_prepared_action_required",
+                resume_instruction="POST /api/integrations/notion/export-report with prepared_action_id={prepared_action_id}",
+            )
+        runtime_event(conn, "rtc_agent_gateway_local", "notion.export.prepared_action_blocked", "blocked", input_summary=f"Notion export blocked markdown_hash={action_args['markdown_hash'][:16]}", output_summary=gate_error.get("error"), raw_payload_hash=action_args["markdown_hash"])
+        audit(conn, "system", actor, "notion.export.prepared_action_blocked", "integrations", "notion", None, gate_error, {"markdown_hash": action_args["markdown_hash"], "token_omitted": True})
+        conn.commit()
+        return build_prepared_action_blocked_response(
+            base={
                 "provider": "notion",
                 "dry_run": True,
                 "created": False,
                 "live_export_performed": False,
-                "status": "waiting_approval",
-                "reason": "notion_external_write_prepared_action_required",
                 "configured": cfg["configured"],
                 "export_mode": cfg["export_mode"],
-                "run_id": prepared["run_id"],
-                "task_id": prepared["task_id"],
-                "tool_call_id": prepared["tool_call_id"],
-                "approval_wall": wall,
-                "approval_id": approval.get("approval_id"),
-                "prepared_action_id": prepared_action.get("action_id"),
-                "prepared_action_hash": prepared_action.get("action_hash"),
-                "markdown_hash": action_args["markdown_hash"],
-                "block_count": action_args["block_count"],
-                "next_action": (
-                    f"agentops approval inspect --approval-id {approval.get('approval_id')} && "
-                    f"agentops approval approve --approval-id {approval.get('approval_id')} && "
-                    f"POST /api/integrations/notion/export-report with prepared_action_id={prepared_action.get('action_id')}"
-                ),
-                "token_omitted": True,
-            }
-        runtime_event(conn, "rtc_agent_gateway_local", "notion.export.prepared_action_blocked", "blocked", input_summary=f"Notion export blocked markdown_hash={action_args['markdown_hash'][:16]}", output_summary=gate_error.get("error"), raw_payload_hash=action_args["markdown_hash"])
-        audit(conn, "system", actor, "notion.export.prepared_action_blocked", "integrations", "notion", None, gate_error, {"markdown_hash": action_args["markdown_hash"], "token_omitted": True})
-        conn.commit()
-        return {"provider": "notion", "dry_run": True, "created": False, "live_export_performed": False, "configured": cfg["configured"], "export_mode": cfg["export_mode"], **gate_error, "reason": gate_error.get("error")}
+            },
+            gate_error=gate_error,
+        )
 
     try:
         try:
@@ -22837,14 +25854,14 @@ def notion_export_live_or_gate(conn, body: dict, markdown: str, title: str, acto
                 "INSERT INTO external_object_links(link_id,internal_object_type,internal_object_id,external_provider,external_object_type,external_object_id,external_url,sync_direction,sync_status,last_synced_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (stable_id("lnk", "report", event["sync_event_id"]), "report", "agentops_mis_project_report", "notion", "page", result.get("notion_page_id"), result.get("url"), "outbound", "created", now_iso(), now_iso()),
             )
-        resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
-            "workspace_id": prepared_row["workspace_id"],
-            "provider_side_effect_id": result.get("notion_page_id") or stable_id("notion_page", event["sync_event_id"]),
-            "result_summary": f"Notion page created: {result.get('notion_page_id') or 'unknown'}",
-        })
+        resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], build_prepared_action_provider_resume_request(
+            prepared_row,
+            provider_side_effect_id=result.get("notion_page_id") or stable_id("notion_page", event["sync_event_id"]),
+            result_summary=f"Notion page created: {result.get('notion_page_id') or 'unknown'}",
+        ))
         audit(conn, "user", "usr_founder", "notion.export_confirmed", "integrations", "notion", None, result, {"sync_event_id": event["sync_event_id"], "prepared_action_id": prepared_row["action_id"], "approval_id": prepared_row["approval_id"], "token_omitted": True})
         conn.commit()
-        return {**result, "dry_run": False, "live_export_performed": True, "sync_event_id": event["sync_event_id"], "approval_id": prepared_row["approval_id"], "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row), "prepared_action_resume_status": resume_status, "token_omitted": True}
+        return {**result, "dry_run": False, "live_export_performed": True, "sync_event_id": event["sync_event_id"], **build_prepared_action_provider_result_fields(prepared_row, resume_payload, resume_status)}
     except Exception as exc:
         err = redact_text(str(exc), 300)
         event = create_sync_event(conn, "conn_notion_templates", "outbound", "report", "failed", {"export_mode": cfg["export_mode"]}, error_message=err)
@@ -23056,6 +26073,19 @@ class Handler(BaseHTTPRequestHandler):
                 payload = operator_loop_audit(conn, self.headers, qs)
                 conn.rollback()
                 return self.send_json(payload)
+            if path == "/api/operator/loop-control":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = operator_loop_control(conn, self.headers, qs, auth_ctx)
+                conn.rollback()
+                return self.send_json(payload)
             if path == "/api/operator/evidence-report":
                 payload = cached_read_model(
                     "operator_evidence_report",
@@ -23080,6 +26110,85 @@ class Handler(BaseHTTPRequestHandler):
                     qs,
                     self.headers,
                     lambda: operator_health(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
+                )
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/runtime-doctor":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = cached_read_model(
+                    "operator_runtime_doctor",
+                    qs,
+                    self.headers,
+                    lambda: operator_runtime_doctor(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
+                )
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/start-check":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = cached_read_model(
+                    "operator_start_check",
+                    qs,
+                    self.headers,
+                    lambda: operator_start_check(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
+                )
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/live-acceptance":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                workspace_id = normalize_workspace_id((auth_ctx or {}).get("workspace_id") or self.headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+                freshness_hours = bounded_int((qs.get("freshness_hours") or ["72"])[0], 72, 1, 720)
+                limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 25)
+                payload = cached_read_model(
+                    "operator_live_acceptance",
+                    qs,
+                    self.headers,
+                    lambda: live_acceptance_readiness(conn, workspace_id, freshness_hours=freshness_hours, limit=limit),
+                    auth_ctx,
+                )
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/execution-mode":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = cached_read_model(
+                    "operator_execution_mode",
+                    qs,
+                    self.headers,
+                    lambda: operator_execution_mode(conn, self.headers, qs, auth_ctx),
                     auth_ctx,
                 )
                 conn.rollback()
@@ -23178,7 +26287,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/commander/project-board":
-                payload = commander_project_board(conn, self.headers)
+                payload = commander_project_board(conn, self.headers, qs)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/commander/repo-map":
@@ -23201,12 +26310,23 @@ class Handler(BaseHTTPRequestHandler):
                 auth_error = agent_gateway_admin_auth_error(self.headers)
                 if auth_error:
                     return self.send_json(auth_error, 401)
-                return self.send_json({"enrollments": agent_gateway_enrollment_rows(conn), "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES), "token_omitted": True})
+                return self.send_json({
+                    "enrollments": agent_gateway_public_enrollment_rows(conn),
+                    "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES),
+                    "token_omitted": True,
+                    "token_id_omitted": True,
+                })
             if path == "/api/agent-gateway/sessions":
                 auth_error = agent_gateway_admin_auth_error(self.headers)
                 if auth_error:
                     return self.send_json(auth_error, 401)
-                return self.send_json({"sessions": agent_gateway_session_rows(conn), "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES), "token_omitted": True})
+                return self.send_json({
+                    "sessions": agent_gateway_public_session_rows(conn),
+                    "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES),
+                    "token_omitted": True,
+                    "session_id_omitted": True,
+                    "parent_token_id_omitted": True,
+                })
             if path == "/api/agent-gateway/tasks/pull":
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
                 if auth_error:
@@ -23331,6 +26451,22 @@ class Handler(BaseHTTPRequestHandler):
                     query["workspace_id"] = [auth_ctx["workspace_id"]]
                 payload, status = knowledge_search(conn, query, self.headers, auth_ctx)
                 conn.commit()
+                return self.send_json(payload, status)
+            if path in {"/api/agent-gateway/knowledge/evidence-packet", "/api/agent-gateway/knowledge/retrieval-evidence-packet"}:
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "knowledge:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                query = dict(qs)
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                    requested_workspace = requested_workspace_from_qs(query, auth_ctx["workspace_id"])
+                    if requested_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot read knowledge evidence from another workspace."}, 403)
+                    query["workspace_id"] = [auth_ctx["workspace_id"]]
+                payload, status = knowledge_retrieval_evidence_packet(conn, query, self.headers, auth_ctx)
+                conn.rollback()
                 return self.send_json(payload, status)
             if path == "/api/agent-gateway/agent-plans":
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "agent_plans:read")
@@ -23540,6 +26676,10 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status = knowledge_search(conn, dict(qs), self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
+            if path in {"/api/knowledge/evidence-packet", "/api/knowledge/retrieval-evidence-packet"}:
+                payload, status = knowledge_retrieval_evidence_packet(conn, dict(qs), self.headers, auth_ctx={})
+                conn.rollback()
+                return self.send_json(payload, status)
             if path == "/api/agent-plans":
                 payload, status = list_agent_plans(conn, dict(qs), self.headers)
                 conn.commit()
@@ -23638,35 +26778,16 @@ class Handler(BaseHTTPRequestHandler):
                 workflow_type_rows = conn.execute("SELECT workflow_type, COUNT(*) c FROM workflow_jobs GROUP BY workflow_type").fetchall()
                 active_count = scalar_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE status IN ('queued','running')")
                 stuck_count = len(workflow_stuck_jobs(conn, threshold_sec=900, limit=200))
-                return self.send_json({
-                    "provider": "agentops-workflow-job",
-                    "operation": "workflow_jobs_list",
-                    "jobs": [workflow_job_public(row) for row in rows],
-                    "count": len(rows),
-                    "limit": limit,
-                    "filters": {
-                        "status": sorted(statuses),
-                        "workflow_type": sorted(workflow_types),
-                    },
-                    "summary": {
-                        "by_status": {row["status"]: row["c"] for row in summary_rows},
-                        "by_workflow_type": {row["workflow_type"]: row["c"] for row in workflow_type_rows},
-                        "active_jobs": active_count,
-                        "stuck_jobs": stuck_count,
-                    },
-                    "next_actions": [
-                        "agentops workflow job-status --job-id <job_id> --wait",
-                        "agentops workflow stuck-jobs --threshold-sec 900 --limit 25",
-                        "agentops workflow job-mark-failed --job-id <job_id> --reason '<reason>'",
-                    ],
-                    "safety": {
-                        "read_only": True,
-                        "ledger_mutated": False,
-                        "live_execution_performed": False,
-                        "token_omitted": True,
-                    },
-                    "token_omitted": True,
-                })
+                return self.send_json(workflow_jobs_list_response(
+                    rows=rows,
+                    limit=limit,
+                    statuses=statuses,
+                    workflow_types=workflow_types,
+                    summary_rows=summary_rows,
+                    workflow_type_rows=workflow_type_rows,
+                    active_count=active_count,
+                    stuck_count=stuck_count,
+                ))
             if path == "/api/workflows/jobs/stuck":
                 threshold = int((qs.get("threshold_sec") or ["900"])[0])
                 limit = int((qs.get("limit") or ["25"])[0])
@@ -23879,6 +27000,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     return self.send_json({"error": "unknown agent gateway endpoint"}, 404)
                 conn.commit()
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             local_write_auth_error = local_ui_write_auth_error(self.headers)
             if local_write_auth_error:
@@ -24074,9 +27196,11 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/workflows/customer-task":
                 return self.send_json(run_customer_task_workflow(conn, body), 201)
             if path == "/api/workflows/customer-worker-task":
+                body.setdefault("base_url", request_base_url(self.headers) or "http://127.0.0.1:8787")
                 payload, status = run_customer_worker_task_workflow(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workflows/customer-worker-task/submit":
+                body.setdefault("base_url", request_base_url(self.headers) or "http://127.0.0.1:8787")
                 payload, status = submit_customer_worker_task_job(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workflows/hermes-openclaw-loop":
@@ -24097,6 +27221,13 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/workflows/jobs/") and path.endswith("/mark-failed"):
                 job_id = path.split("/")[-2]
                 payload, status = mark_workflow_job_failed(conn, job_id, body)
+                return self.send_json(payload, status)
+            if path.startswith("/api/workflows/jobs/") and path.endswith("/recover"):
+                job_id = path.split("/")[-2]
+                body.setdefault("_base_url", request_base_url(self.headers) or "http://127.0.0.1:8787")
+                payload, status = recover_workflow_job(conn, job_id, body, self.headers)
+                conn.commit()
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             if path.startswith("/api/workflows/customer-projects/") and path.endswith("/report-artifact"):
                 project_id = path.split("/")[-2]
@@ -24266,15 +27397,13 @@ class Handler(BaseHTTPRequestHandler):
                     {"approval_id": approval_id, "stored_action_hash": prepared_action["action_hash"], "current_action_hash": current_hash, "token_omitted": True},
                 )
                 conn.commit()
-                return self.send_json({
-                    "error": "action_hash_mismatch",
-                    "message": "Prepared action changed after approval request; create a new prepared action.",
-                    "approval": dict(before),
-                    "prepared_action": prepared_action_public(prepared_action),
-                    "stored_action_hash": prepared_action["action_hash"],
-                    "current_action_hash": current_hash,
-                    "token_omitted": True,
-                }, 409)
+                return self.send_json(build_prepared_action_hash_mismatch_response(
+                    prepared_action,
+                    current_hash,
+                    message="Prepared action changed after approval request; create a new prepared action.",
+                    approval=before,
+                    include_prepared_action=True,
+                ), 409)
             conn.execute("UPDATE approvals SET decision=?, decided_at=? WHERE approval_id=?", (decision, now_iso(), approval_id))
             prepared_status = "approved" if decision == "approved" else "rejected"
             conn.execute(
@@ -24308,7 +27437,11 @@ class Handler(BaseHTTPRequestHandler):
             audit(conn, "user", "usr_founder", f"approval_wall.prepared_action_{decision}", "prepared_actions", prepared_action["action_id"], dict(prepared_action), dict(action_after), {"approval_id": approval_id, "action_hash": prepared_action["action_hash"], "resume_required": decision == "approved", "token_omitted": True})
             audit(conn, "user", "usr_founder", f"approval.{decision}", "approvals", approval_id, dict(before), dict(after), {"prepared_action_id": prepared_action["action_id"], "action_hash": prepared_action["action_hash"], "run_task_status_unchanged": decision == "approved", "token_omitted": True})
             conn.commit()
-            return self.send_json({"approval": dict(after), "prepared_action": prepared_action_public(action_after), "resume_required": decision == "approved", "token_omitted": True})
+            return self.send_json(build_prepared_action_approval_decision_response(
+                approval=after,
+                prepared_action=action_after,
+                decision=decision,
+            ))
         agent_plan_decision, agent_plan_error = apply_agent_plan_approval_decision(conn, before, decision)
         if agent_plan_error:
             payload, status = agent_plan_error
@@ -24320,13 +27453,10 @@ class Handler(BaseHTTPRequestHandler):
             after = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
             audit(conn, "user", "usr_founder", f"approval.{decision}", "approvals", approval_id, dict(before), dict(after), {"agent_plan_id": agent_plan_decision["agent_plan"]["plan_id"], "token_omitted": True})
             conn.commit()
-            return self.send_json({
-                "approval": dict(after),
-                "agent_plan": agent_plan_decision["agent_plan"],
-                "verification": agent_plan_decision["verification"],
-                "verification_result_hash": agent_plan_decision["verification_result_hash"],
-                "token_omitted": True,
-            })
+            return self.send_json(build_agent_plan_approval_decision_response(
+                approval=after,
+                agent_plan_decision=agent_plan_decision,
+            ))
         conn.execute("UPDATE approvals SET decision=?, decided_at=? WHERE approval_id=?", (decision, now_iso(), approval_id))
         if before["tool_call_id"]:
             tool_before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (before["tool_call_id"],)).fetchone()
@@ -24362,6 +27492,7 @@ class Handler(BaseHTTPRequestHandler):
         after = conn.execute("SELECT * FROM memories WHERE memory_id=?", (memory_id,)).fetchone()
         audit(conn, "user", "usr_founder", f"memory.{status}", "memories", memory_id, dict(before), dict(after), {})
         conn.commit()
+        clear_read_model_cache()
         return self.send_json(dict(after))
 
     def review_evaluation_case(self, conn, case_id, status):

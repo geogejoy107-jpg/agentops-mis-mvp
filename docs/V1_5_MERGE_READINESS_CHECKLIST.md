@@ -41,7 +41,7 @@ python3 scripts/release_freeze_protocol_smoke.py
 - [x] Real run links an `agent_plan_id`.
 - [x] Run Agent/task/workspace match the plan.
 - [x] Superseded, changed, or alternate plans cannot authorize/rebind execution.
-- [x] Delivery gate compares execution evidence with the declared plan: `operator evidence-report` checks run `agent_plan_id`/`plan_hash`, plan verification, plan approval, verified `plan_evidence_manifest`, tool/evaluation/artifact/audit evidence, pending approvals, and read-only DB fingerprint stability.
+- [x] Delivery gate compares execution evidence with the declared plan: `operator evidence-report` checks run `agent_plan_id`/`plan_hash`, plan verification, plan approval, verified `plan_evidence_manifest`, tool/evaluation/artifact/audit evidence, memory review status, pending approvals, raw memory text omission, and read-only DB fingerprint stability.
 
 Required checks:
 
@@ -252,17 +252,36 @@ coverage for every external side-effect path.
   runtime connector trust state helpers now live in
   `agentops_mis_runtime/trust.py`; read-model cache behavior now lives in
   `agentops_mis_core/read_model_cache.py`; Approval Wall prepared-action
-  hash, public projection, gate, readback and resume-gate mismatch helpers now live in
-  `agentops_mis_core/approval_wall.py`; worker status/fleet lane/health
-  aggregation now lives in `agentops_mis_core/worker_fleet.py`; Commander
+  hash, public projection, gate, readback, resume-gate mismatch, waiting-response,
+  route blocked/error, route access/error, prepare-response, prepared-action decision projection, high-risk tool-call required response, risky tool registry, external side-effect intent detection, metadata-only false-positive guard, resume-success, provider-result reconciliation and
+  next-action helpers now live in
+  `agentops_mis_core/approval_wall.py`; Agent Plan approval-decision,
+  create-status, bound-approval-forbidden, transition-error, run-start gate,
+  run-start rebind/success, run-start binding comparison, contract, hash,
+  path-scope, verification-result, pending-approval and approval-run helpers now live in
+  `agentops_mis_core/agent_plans.py`; Agent Gateway run heartbeat update and
+  terminal task-status projection now live in
+  `agentops_mis_core/gateway_runs.py`; worker status/fleet lane/health,
+  remote worker/session public readback, and hygiene token-omitting
+  projections now live in `agentops_mis_core/worker_fleet.py`; workflow-job
+  public/list/stuck/recovery response projections now live in `agentops_mis_core/workflow_jobs.py`; Commander
   work-package status/action/readback summary and project-board gate aggregation
   now live in `agentops_mis_core/commander_work_packages.py`; Operator
   command-center gap/project/stale-ref/status aggregation now lives in
   `agentops_mis_core/operator_command_center.py`; `server.py`
   keeps HTTP routes, health probing, refresh orchestration, trust-route runtime
   events, audit writes, endpoint auth checks, read-model producers,
-  repo-local daemon/process reads, Approval Wall exact-once resume writes and
-  Commander write workflows.
+  Agent Gateway enrollment/session and remote-agent metadata reads,
+  repo-local daemon/process reads, workflow-job reads/writes/list filters/count
+  producers/status transitions/threshold-limit normalization/status validation/stuck-job recovery routing, tool-call row construction/upsert,
+  risk default application, provider calls and side-effect id construction,
+  Approval Wall exact-once resume invocation/writes,
+  route-level hash-mismatch audit writes, Agent Plan DB-backed memory/base
+  checks, run-start plan lookup/matching/approval/hash checks,
+  rebind-blocked audit writes, run-start row upserts/status-code selection, stable
+  approval run ids/timestamps, verification persistence/status transitions,
+  heartbeat redaction/parsing/default selection, run/task/agent heartbeat writes,
+  fleet hygiene mutations, and Commander write workflows.
   Guarded by
   `scripts/module_boundary_smoke.py`, `docs/MODULE_BOUNDARY_PLAN.md`, and the
   existing runtime capability/readiness/trust plus read-model cache and worker
@@ -385,7 +404,7 @@ python3 scripts/sqlite_long_transaction_audit_smoke.py
 - [x] Measure time to first useful panel: `scripts/ai_employees_responsiveness_smoke.py` measures core command-center readiness as the first useful panel against a <1.5s budget, critical command-center endpoint latency against a <1s budget, and background panel completion against a <2s budget on an isolated local DB; recent runs stayed below budget, with no ledger mutation and no token leakage.
 - [x] Do not fetch daemon logs before the panel is opened: AI Employees removes the initial `loadWorkerDaemonLogs` fan-out, loads only the selected adapter after the log panel is opened, and UI smoke forbids the old prefetch marker.
 - [x] Make panels independently loadable: AI Employees now uses `AI_EMPLOYEES_CORE_PANEL_LOADERS`, `AI_EMPLOYEES_DEFERRED_PANEL_LOADERS`, and `AI_EMPLOYEES_SCOPED_PANEL_LOADERS` with `Promise.allSettled` plus `panelLoadState`; core command-center panels render first, deferred governance/scoped panels merge later, and one panel endpoint can become unavailable without failing the whole `/workspace/agents` page loader. Key panel headers render ready/unavailable/loading badges, local refresh controls, retry/error evidence (`attempts`, `updated_at`, `last_error`), copyable redacted panel diagnostics, and `ui.panel_diagnostics` Action Queue receipt recording so panel failures enter loop-audit/handoff evidence; repeated failed panel diagnostic receipts feed the same receipt-failure memory candidate/work-order lane as other failed recovery receipts. `scripts/ai_employees_responsiveness_smoke.py` forbids the old page-level `useLiveData` and monolithic destructured loaders, and `scripts/operator_panel_diagnostics_receipt_smoke.py` verifies the receipt plus repeated-failure memory path end to end.
-- [x] Add a lightweight command-center read model or equivalent aggregation: `/workspace/agents` now loads `operator command-center` as a core panel and Action Queue source, while `operator evidence-report` aggregates Agent Plan, approval, plan_evidence_manifest and ledger evidence by run.
+- [x] Add a lightweight command-center read model or equivalent aggregation: `/workspace/agents` now loads `operator command-center` as a core panel and Action Queue source, while `operator evidence-report` aggregates Agent Plan, approval, plan_evidence_manifest, memory review status and ledger evidence by run.
 - [x] Add run-level evidence to operator handoff: `operator handoff` now includes an `evidence_report` source and read-only work order so Hermes/OpenClaw/Codex can inherit delivery evidence gaps and commands.
 - [x] Bounded advance consumes handoff evidence work: unscoped `agentops operator advance-loop` prioritizes the read-only `evidence_report` work order for blocked/attention run evidence, verifies through handoff, records action receipt/evaluation proof, feeds that receipt back into handoff/UI, skips the same evidence work order after it is verified, and then continues into the first read-only `evidence_remediation` preview while preserving the `handoff.evidence_remediation` receipt source; scoped `--loop-id` still advances that loop's gate.
 - [x] Evidence remediation chain is explicit in handoff: each non-ready evidence-report run has preview, create, plan-evidence, close-gap, verify, and receipt commands; preview can be consumed by bounded advance, while create/close/confirm mutating steps remain explicit operator actions and are never auto-run by handoff/advance-loop.

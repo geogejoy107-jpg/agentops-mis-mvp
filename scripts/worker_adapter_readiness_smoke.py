@@ -58,6 +58,26 @@ def validate_readiness(payload: dict) -> None:
     require(payload.get("status") in {"ready", "degraded", "blocked"}, f"bad readiness status: {payload}")
     require(payload.get("live_execution_performed") is False, "readiness must not execute live work")
     require(payload.get("token_omitted") is True, "token omission proof missing")
+    connection_policy = payload.get("worker_connection_policy") or {}
+    require(connection_policy.get("schema") == "agentops-worker-connection-policy-v1", f"connection policy missing: {payload}")
+    require((connection_policy.get("safety") or {}).get("read_only") is True, f"connection policy must be read-only: {connection_policy}")
+    require((connection_policy.get("safety") or {}).get("live_execution_performed") is False, f"connection policy executed live work: {connection_policy}")
+    require((connection_policy.get("safety") or {}).get("token_omitted") is True, f"connection policy token proof missing: {connection_policy}")
+    session = connection_policy.get("session") or {}
+    require(session.get("use_session_recommended") is True, f"session policy should recommend short-lived sessions: {connection_policy}")
+    require(session.get("ttl_sec") == 900 and session.get("refresh_margin_sec") == 60, f"session defaults missing: {connection_policy}")
+    require(session.get("parent_enrollment_token_storage") == "process_memory_only", f"parent token storage boundary missing: {connection_policy}")
+    recommended_loop = str(connection_policy.get("recommended_remote_loop") or "")
+    for flag in ("--session-refresh-margin-sec 60", "--idle-backoff-max 30", "--error-backoff-max 30", "--backoff-factor 2", "--adapter-max-attempts 1", "--adapter-retry-delay-sec 1", "--max-errors 5"):
+        require(flag in recommended_loop, f"recommended remote loop missing {flag}: {connection_policy}")
+    loop_backoff = connection_policy.get("loop_backoff") or {}
+    require(loop_backoff.get("idle_reason") == "idle_backoff" and loop_backoff.get("error_reason") == "error_backoff", f"backoff reasons missing: {connection_policy}")
+    require(loop_backoff.get("idle_backoff_max_sec") == 30 and loop_backoff.get("error_backoff_max_sec") == 30, f"backoff caps missing: {connection_policy}")
+    adapter_retry = connection_policy.get("adapter_retry") or {}
+    require(adapter_retry.get("retryable_failures_can_retry") is True, f"retryable failure policy missing: {connection_policy}")
+    require(adapter_retry.get("non_retryable_safety_gates_retry") is False, f"safety gates should not retry: {connection_policy}")
+    daemon_resilience = connection_policy.get("daemon_resilience") or {}
+    require(daemon_resilience.get("continue_on_error") is True and daemon_resilience.get("max_errors") == 5, f"daemon resilience policy missing: {connection_policy}")
     adapters = payload.get("adapters") or {}
     for adapter in ("mock", "hermes", "openclaw"):
         item = adapters.get(adapter) or {}
@@ -71,12 +91,23 @@ def validate_readiness(payload: dict) -> None:
         require(item.get("observation_level") in {"structured_ledger", "ledger_summary_only"}, f"{adapter} observation level missing: {item}")
         require(item.get("risk_floor") in {"low", "medium"}, f"{adapter} risk floor missing: {item}")
         require(manifest.get("token_omitted") is True, f"{adapter} manifest token omission proof missing: {manifest}")
+        remediation = item.get("remediation") or {}
+        require(remediation.get("status") in {"ready", "action_required"}, f"{adapter} remediation status missing: {item}")
+        require(bool(remediation.get("primary_next_action")), f"{adapter} remediation primary action missing: {item}")
+        require((remediation.get("safety") or {}).get("read_only") is True, f"{adapter} remediation must be read-only: {item}")
+        require((remediation.get("safety") or {}).get("live_execution_performed") is False, f"{adapter} remediation executed live work: {item}")
+        commands = remediation.get("commands") or []
+        require(any(command.get("phase") == "preflight" for command in commands), f"{adapter} remediation preflight missing: {item}")
+        require(all(command.get("command") for command in commands), f"{adapter} remediation command missing: {item}")
     for adapter in ("hermes", "openclaw"):
         item = adapters.get(adapter) or {}
         require(item.get("observation_level") == "ledger_summary_only", f"{adapter} must disclose summary-only observation: {item}")
         require(item.get("commercial_readiness") == "restricted_until_runtime_tool_events", f"{adapter} commercial restriction missing: {item}")
         governance = ((item.get("capability_manifest") or {}).get("governance") or {})
         require(governance.get("requires_prepared_action_for_external_write") is True, f"{adapter} external write governance missing: {item}")
+        remediation_commands = (item.get("remediation") or {}).get("commands") or []
+        require(any(command.get("confirm_required") is True for command in remediation_commands), f"{adapter} live remediation commands should require confirmation: {item}")
+        require(any("live-product-readiness" in str(command.get("command") or "") for command in remediation_commands), f"{adapter} live proof command missing: {item}")
     summary = payload.get("summary") or {}
     require(summary.get("recommended_adapter") in {"mock", "hermes", "openclaw"}, f"missing recommended adapter: {summary}")
     require("opaque_runtime_adapters" in summary, f"opaque adapter list missing: {summary}")
@@ -107,6 +138,7 @@ def main() -> int:
         result = {
             "ok": True,
             "api_status": api_payload.get("status"),
+            "connection_policy_schema": (api_payload.get("worker_connection_policy") or {}).get("schema"),
             "recommended_adapter": (api_payload.get("summary") or {}).get("recommended_adapter"),
             "ready_adapters": (api_payload.get("summary") or {}).get("ready_adapters"),
             "live_execution_performed": False,

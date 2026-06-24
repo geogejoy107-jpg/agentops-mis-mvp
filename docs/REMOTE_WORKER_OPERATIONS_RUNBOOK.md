@@ -82,6 +82,16 @@ Preview scope risk before issuing any token:
 For Hermes/OpenClaw or worker write scopes, prefer the approval-gated request
 path when the preview returns `approval_recommended=true`.
 
+The browser `/workspace/agents` Worker preset and the backend default worker
+enrollment scopes include `agent_plans:read/write`, `plan_evidence:read/write`,
+`knowledge:read/write`, `runtime_events:write`, `artifacts:write`, and
+`memories:propose` because the installable worker must retrieve task-aware
+knowledge evidence, write runtime events, record artifacts, propose memory, and
+verify the plan-evidence manifest. `knowledge:write` is intentionally treated as
+privileged because it lets an authorized worker refresh the local knowledge
+index; remote Hermes/OpenClaw workers should use the approval-gated enrollment
+path before receiving that scope set.
+
 ```bash
 ./scripts/agentops enrollment create \
   --agent-id agt_remote_builder \
@@ -120,10 +130,19 @@ export AGENTOPS_API_KEY="<paste one-time token here>"
 
 agentops doctor
 agentops status
+agentops operator start-check --adapter mock --limit 8
 agentops agent heartbeat --status idle --summary "remote worker ready"
 agentops worker preflight --adapter mock
 agentops-worker --once --adapter mock --use-session --session-ttl-sec 900
 ```
+
+Enrollment responses include this command as `next_steps.start_check` plus
+`next_steps.method_gate_contract`. Run it before worker preflight so the remote
+worker sees the same Method Block gates as the local operator console:
+`read_start_check`, `plan_agent_plan`, `retrieve_knowledge`,
+`compare_base_reference`, `preflight_adapter`, `execute_bounded_worker`,
+`verify_ledger`, and `record_memory_candidate`. The packet is copy-only and
+omits the raw enrollment token.
 
 For a long-running remote loop:
 
@@ -212,7 +231,35 @@ agentops worker service-check \
 The check inspects the service file and OS service status only. It does not
 install, load, unload, restart, or execute the worker. It omits raw service file
 content and fails closed if token-like values such as enrollment/session/API
-tokens are detected in a generated file.
+tokens are detected in a generated file. It also reports whether the installed
+template exposes the expected OS relaunch policy: launchd `KeepAlive=true` or
+systemd `Restart=always` with `RestartSec=5`.
+
+Preview OS service control before mutating launchd/systemd:
+
+```bash
+agentops-worker service-control \
+  --manager launchd \
+  --action load \
+  --adapter mock \
+  --agent-id agt_remote_builder
+```
+
+```bash
+agentops worker service-control \
+  --manager systemd \
+  --action restart \
+  --adapter mock \
+  --agent-id agt_remote_builder \
+  --service-path ~/.config/systemd/user/agentops-worker-agt_remote_builder.service
+```
+
+`service-control` is preview-only by default. It returns the exact
+`launchctl`/`systemctl` commands and service-check evidence without executing
+them. To mutate OS service state on the agent machine, re-run with
+`--confirm-control`. Load/restart fails closed if the service file contains
+token-like values or if a Hermes/OpenClaw service template lacks
+`--confirm-run`.
 
 ## Operations Loop
 
@@ -230,7 +277,7 @@ agentops worker release --task-id <task_id> --reason "reviewed stale worker"
 
 For routine demo/customer cleanup, use fleet hygiene first. It is read-only by
 default and requires an explicit confirmation before it releases stale tasks or
-revokes never-seen enrollments:
+revokes never-seen or heartbeat-stale enrollments:
 
 ```bash
 agentops worker hygiene
@@ -398,6 +445,17 @@ agentops worker status
 `agentops worker readiness` is the route-selection check. It returns the safe
 readiness for `mock`, `hermes`, and `openclaw`, including runtime connector
 trust status and a recommended adapter. It never executes live runtime work.
+Each adapter also includes a `remediation` block with copy-only operator
+commands for preflight, runtime doctor, worker start, live task template, and
+ledger verification where relevant. MIS does not execute those commands from
+the server; live Hermes/OpenClaw steps still require `--confirm-run` and any
+prepared-action approval required by the task.
+
+The same response includes `worker_connection_policy` for remote worker loops:
+short-lived session defaults, refresh margin, idle/error backoff caps, adapter
+retry semantics, daemon `continue_on_error` / `max_errors`, state/log fields,
+and copyable verification commands. Remote agents should read this block before
+starting a long-running loop rather than relying on stale local notes.
 Confirmed customer-worker dispatch uses the same readiness signal: when a live
 Hermes/OpenClaw adapter is unavailable or blocked, MIS returns
 `reason: adapter_not_ready` for adapter availability failures or
@@ -425,12 +483,13 @@ gate for agent operators and scripts:
   `agentops worker stuck`, `agentops workflow stuck-jobs`,
   `agentops worker preflight --adapter mock`, or `agentops enrollment list`
 
-`agentops worker hygiene` wraps the two most common fleet recovery actions in a
-safe operator flow. The `GET`/default CLI path only reports stuck worker tasks
-and active enrollments that never heartbeated after the age threshold. The
-confirmed apply path releases those tasks back to `planned`, blocks any linked
-running runs, revokes stale enrollment tokens, cascades active child sessions,
-and writes runtime/audit evidence. It never executes live Hermes/OpenClaw work.
+`agentops worker hygiene` wraps the most common fleet recovery actions in a safe
+operator flow. The `GET`/default CLI path only reports stuck worker tasks,
+active enrollments that never heartbeated after the age threshold, and active
+enrollments whose last heartbeat is older than the same threshold. The confirmed
+apply path releases those tasks back to `planned`, blocks any linked running
+runs, revokes stale enrollment tokens, cascades active child sessions, and writes
+runtime/audit evidence. It never executes live Hermes/OpenClaw work.
 
 Use this before asking a remote OpenClaw/Hermes/Dify-style worker to execute
 work. The browser UI should confirm what happened; the worker should still pull,
@@ -470,6 +529,23 @@ agentops enrollment rotate --agent-id agt_remote_builder
 ```
 
 Revoking an enrollment also invalidates active child sessions.
+Public revoke output returns counts plus safe token/session refs only; raw
+enrollment token ids, session ids, token hashes, and token values stay out of
+CLI/API output.
+Gateway status readback uses the same boundary: token/session-authenticated
+`agentops status` and `GET /api/agent-gateway/status` return safe
+`token_ref`, `session_ref`, and `parent_token_ref` values plus omission flags,
+never raw enrollment token ids or raw short-lived session ids.
+Session inventory follows that readback boundary too: `agentops session list`
+and `GET /api/agent-gateway/sessions` expose safe `session_ref` and
+`parent_token_ref` values only. Keep the one-time creation `session_id` locally
+if a specific-session revoke is required, or use `agentops session revoke
+--agent-id <agent_id>` for bulk active-session cleanup.
+Enrollment inventory follows the same pattern: `agentops enrollment list` and
+`GET /api/agent-gateway/enrollments` expose safe `token_ref` values only. Keep
+one-time creation/rotation token IDs locally if exact-token rotation is needed,
+or use `agentops enrollment rotate --agent-id <agent_id>` and
+`agentops enrollment revoke --agent-id <agent_id>` for managed cleanup.
 
 For a local supervised worker daemon, restart is a first-class operator action:
 
@@ -501,6 +577,7 @@ python3 scripts/agent_gateway_task_create_scope_smoke.py
 python3 scripts/agentops_workflow_run_task_smoke.py
 python3 scripts/worker_remote_fleet_status_smoke.py
 python3 scripts/worker_fleet_hygiene_smoke.py
+python3 scripts/agentops_worker_service_control_smoke.py
 python3 scripts/enrollment_policy_preview_smoke.py
 python3 scripts/agentops_worker_restart_smoke.py
 python3 scripts/agentops_local_backup_smoke.py
@@ -512,7 +589,7 @@ The expected proof is:
 
 - `agentops worker preflight` returns JSON and `live_execution_performed=false`.
 - `agentops worker readiness` returns all adapter routes, includes
-  `summary.recommended_adapter`, and still reports
+  `summary.recommended_adapter` plus `worker_connection_policy`, and still reports
   `live_execution_performed=false`.
 - Confirmed customer worker dispatch returns `adapter_not_ready` before live
   execution when a selected Hermes/OpenClaw adapter is unavailable.
@@ -521,8 +598,12 @@ The expected proof is:
 - Async template worker submit follows the same live-route gate.
 - `agentops worker service-install` defaults to dry-run and only writes a
   placeholder template when `--confirm-install` is present.
-- `agentops worker service-check` returns JSON, omits raw service content, and
-  detects token-like values without printing them.
+- `agentops worker service-check` returns JSON, omits raw service content,
+  verifies the launchd/systemd relaunch policy, and detects token-like values
+  without printing them.
+- `agentops worker service-control` is preview-only by default, refuses unsafe
+  token-like service files, and refuses Hermes/OpenClaw load/restart when the
+  service template lacks `--confirm-run`.
 - Hermes/OpenClaw daemon starts without `--confirm-run` fail closed.
 - Remote launch packet commands can create ledger evidence through Agent Gateway.
 - `agentops worker status` reports remote worker heartbeat/session health without

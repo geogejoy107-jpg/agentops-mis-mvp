@@ -43,6 +43,11 @@ agentops worker status
 agentops security production-readiness
 ```
 
+`agentops local readiness` also returns a `local_run_path`: a copy-only sequence
+for booting MIS, selecting a worker adapter, starting the worker, dispatching a
+customer task, and verifying ledger evidence. These are operator commands; the
+server reports them but does not execute shell commands.
+
 `agentops doctor` is fail-closed for unsafe shared/production targets: it exits
 with code `2` when `AGENTOPS_DEPLOYMENT_MODE=production|shared|hosted` or the
 target is non-loopback and no Gateway token is configured. It still prints
@@ -95,6 +100,12 @@ agentops worker logs --adapter mock
 agentops worker restart --adapter mock
 agentops worker stop --adapter mock
 ```
+
+Repo-local worker daemon logs rotate on daemon start/restart when the active
+adapter log exceeds `AGENTOPS_WORKER_LOG_MAX_BYTES` (default 2 MiB). Keep up to
+`AGENTOPS_WORKER_LOG_BACKUPS` backups (default 5), or set either value to `0` to
+disable rotation. Installed launchd/systemd service logs still use the host log
+system configured in the service file.
 
 Hermes/OpenClaw require explicit live confirmation:
 

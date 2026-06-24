@@ -51,6 +51,16 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def safe_ref(prefix: str, raw: str) -> str:
+    import hashlib
+    import re
+
+    slug = re.sub(r"[^a-zA-Z0-9_]+", "_", raw or "").strip("_").lower()
+    if slug and len(slug) <= 64:
+        return f"{prefix}_{slug}"[-12:]
+    return f"{prefix}_{hashlib.sha256((raw or '').encode('utf-8')).hexdigest()[:16]}"[-12:]
+
+
 def smoke(base_url: str, stamp: str) -> dict:
     agent_id = f"agt_session_smoke_{stamp}"
     task_id = f"tsk_session_smoke_{stamp}"
@@ -109,13 +119,28 @@ def smoke(base_url: str, stamp: str) -> dict:
         status, listed = http_json("GET", base_url, "/api/agent-gateway/sessions")
         require(status == 200, f"session list failed: {status} {listed}")
         session_rows = listed.get("sessions", [])
-        listed_ids = {item.get("session_id") for item in session_rows}
-        require({session_id, revoke_session_id, cascade_session_id, expire_session_id}.issubset(listed_ids), f"session list missing ids: {listed_ids}")
+        listed_refs = {item.get("session_ref") for item in session_rows}
+        expected_refs = {
+            safe_ref("session_ref", session_id),
+            safe_ref("session_ref", revoke_session_id),
+            safe_ref("session_ref", cascade_session_id),
+            safe_ref("session_ref", expire_session_id),
+        }
+        require(expected_refs.issubset(listed_refs), f"session list missing refs: {listed_refs}")
         require(all("session_hash" not in item for item in session_rows), "session list leaked session_hash")
+        require(all(item.get("session_id_omitted") is True for item in session_rows), f"session list missing omission proof: {session_rows}")
+        listed_serialized = json.dumps(listed, ensure_ascii=False)
+        require(all("session_id" not in item for item in session_rows), f"session list leaked session_id field: {listed}")
+        require(all("parent_token_id" not in item for item in session_rows), f"session list leaked parent_token_id field: {listed}")
+        require(session_id not in listed_serialized, f"session list leaked raw session id: {listed}")
+        require(token_id not in listed_serialized, f"session list leaked raw parent token id: {listed}")
 
         status, revoked = http_json("POST", base_url, "/api/agent-gateway/session/revoke", {"session_id": revoke_session_id})
         require(status == 200, f"session revoke failed: {status} {revoked}")
-        require(revoked.get("revoked") == 1 and revoke_session_id in revoked.get("sessions", []), f"session revoke result wrong: {revoked}")
+        require(revoked.get("revoked") == 1, f"session revoke result wrong: {revoked}")
+        require(revoked.get("session_id_omitted") is True, f"session revoke should omit raw session id: {revoked}")
+        require(revoke_session_id not in json.dumps(revoked, ensure_ascii=False), f"session revoke leaked raw session id: {revoked}")
+        require(safe_ref("session_ref", revoke_session_id) in set(revoked.get("session_refs", [])), f"session revoke missing safe ref: {revoked}")
         status, rejected = http_json("POST", base_url, "/api/agent-gateway/heartbeat", {
             "status": "idle",
             "summary": "revoked session heartbeat",
@@ -137,7 +162,17 @@ def smoke(base_url: str, stamp: str) -> dict:
 
         status, gateway_status = http_json("GET", base_url, "/api/agent-gateway/status", token=session_token)
         require(status == 200, f"session status failed: {status} {gateway_status}")
-        require((gateway_status.get("auth") or {}).get("mode") == "agent_session", f"wrong auth mode: {gateway_status}")
+        gateway_auth = gateway_status.get("auth") or {}
+        gateway_auth_serialized = json.dumps(gateway_auth, ensure_ascii=False)
+        require(gateway_auth.get("mode") == "agent_session", f"wrong auth mode: {gateway_status}")
+        require(gateway_auth.get("session_ref") == safe_ref("session_ref", session_id), f"wrong session ref: {gateway_status}")
+        require(gateway_auth.get("parent_token_ref") == safe_ref("token_ref", token_id), f"wrong parent token ref: {gateway_status}")
+        require(gateway_auth.get("session_id_omitted") is True, f"session id omission flag missing: {gateway_status}")
+        require(gateway_auth.get("parent_token_id_omitted") is True, f"parent token id omission flag missing: {gateway_status}")
+        require("session_id" not in gateway_auth, f"status auth leaked session_id field: {gateway_status}")
+        require("parent_token_id" not in gateway_auth, f"status auth leaked parent_token_id field: {gateway_status}")
+        require(session_id not in gateway_auth_serialized, f"status auth leaked raw session id: {gateway_status}")
+        require(token_id not in gateway_auth_serialized, f"status auth leaked raw parent token id: {gateway_status}")
 
         status, heartbeat = http_json("POST", base_url, "/api/agent-gateway/heartbeat", {
             "status": "idle",
@@ -164,8 +199,14 @@ def smoke(base_url: str, stamp: str) -> dict:
         status, revoke_parent = http_json("POST", base_url, "/api/agent-gateway/enrollment/revoke", {"token_id": token_id})
         require(status == 200, f"enrollment revoke failed: {status} {revoke_parent}")
         require(revoke_parent.get("sessions_revoked", 0) >= 1, f"parent revoke did not cascade to sessions: {revoke_parent}")
-        require(cascade_session_id in revoke_parent.get("sessions", []), f"cascade session missing from revoke result: {revoke_parent}")
-        require(session_id in revoke_parent.get("sessions", []), f"active session missing from parent revoke result: {revoke_parent}")
+        require(revoke_parent.get("token_id_omitted") is True, f"parent revoke should omit raw token ids: {revoke_parent}")
+        require(revoke_parent.get("session_id_omitted") is True, f"parent revoke should omit raw session ids: {revoke_parent}")
+        revoke_parent_serialized = json.dumps(revoke_parent, ensure_ascii=False)
+        require(token_id not in revoke_parent_serialized, f"parent revoke leaked raw token id: {revoke_parent}")
+        require(cascade_session_id not in revoke_parent_serialized, f"parent revoke leaked cascade session id: {revoke_parent}")
+        require(session_id not in revoke_parent_serialized, f"parent revoke leaked active session id: {revoke_parent}")
+        require(safe_ref("session_ref", cascade_session_id) in set(revoke_parent.get("session_refs", [])), f"cascade session ref missing from revoke result: {revoke_parent}")
+        require(safe_ref("session_ref", session_id) in set(revoke_parent.get("session_refs", [])), f"active session ref missing from parent revoke result: {revoke_parent}")
         status, parent_revoked = http_json("POST", base_url, "/api/agent-gateway/heartbeat", {
             "status": "idle",
             "summary": "parent-revoked session heartbeat",
@@ -177,13 +218,15 @@ def smoke(base_url: str, stamp: str) -> dict:
         return {
             "agent_id": agent_id,
             "task_id": task_id,
-            "token_id": enrollment.get("token_id"),
-            "session_id": session_id,
-            "revoked_session_id": revoke_session_id,
-            "cascade_session_id": cascade_session_id,
-            "expired_session_id": expire_session_id,
+            "token_ref": safe_ref("token_ref", enrollment.get("token_id") or ""),
+            "session_ref": safe_ref("session_ref", session_id),
+            "revoked_session_ref": safe_ref("session_ref", revoke_session_id),
+            "cascade_session_ref": safe_ref("session_ref", cascade_session_id),
+            "expired_session_ref": safe_ref("session_ref", expire_session_id),
             "session_scopes": session.get("scopes", []),
-            "auth_mode": (gateway_status.get("auth") or {}).get("mode"),
+            "auth_mode": gateway_auth.get("mode"),
+            "status_session_ref": gateway_auth.get("session_ref"),
+            "status_parent_token_ref": gateway_auth.get("parent_token_ref"),
             "listed_session_count": len(session_rows),
             "revoke_status": rejected.get("error"),
             "expired_status": expired.get("error"),

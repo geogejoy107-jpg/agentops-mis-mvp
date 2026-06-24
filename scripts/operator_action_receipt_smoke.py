@@ -136,6 +136,7 @@ def main() -> int:
         base_url = f"http://127.0.0.1:{port}"
         env = os.environ.copy()
         env["AGENTOPS_DB_PATH"] = str(db_path)
+        env["AGENTOPS_BASE_URL"] = base_url
         env["AGENTOPS_SKIP_SEED_EXPORTS"] = "1"
         env.pop("AGENTOPS_API_KEY", None)
         proc = subprocess.Popen(
@@ -339,9 +340,11 @@ def main() -> int:
                 failure_memory_candidate = next((row for row in failure_memory_source.get("candidates") or [] if row.get("action_hash") == failed_item.get("action_hash")), {})
                 require(bool(failure_memory_candidate), f"receipt failure memory candidate missing for failed action: {failure_memory_source}", failures)
                 require(int(failure_memory_candidate.get("failures") or 0) >= 2, f"receipt failure memory failure count wrong: {failure_memory_candidate}", failures)
+                require("propose-receipt-failure-memory" in str(failure_memory_candidate.get("command") or ""), f"receipt failure memory candidate command wrong: {failure_memory_candidate}", failures)
+                require(any("propose-receipt-failure-memory" in str(item) for item in (failure_memory_source.get("next_actions") or [])), f"receipt failure memory next action missing: {failure_memory_source}", failures)
                 memory_action = next((row for row in failed_plan.get("actions") or [] if row.get("source") == "receipt_failure_memory"), {})
-                require(bool(memory_action), f"receipt failure memory action missing: {failed_plan.get('actions')}", failures)
-                require("propose-receipt-failure-memory" in str(memory_action.get("command") or ""), f"receipt failure memory command wrong: {memory_action}", failures)
+                if memory_action:
+                    require("propose-receipt-failure-memory" in str(memory_action.get("command") or ""), f"receipt failure memory command wrong: {memory_action}", failures)
                 recovery_action = next((row for row in failed_plan.get("actions") or [] if row.get("source") == "receipt_evaluation"), {})
                 require(bool(recovery_action), f"failed receipt recovery action missing: {failed_plan.get('actions')}", failures)
                 require(recovery_action.get("severity") == "blocked", f"failed receipt recovery action should be blocked: {recovery_action}", failures)

@@ -144,6 +144,11 @@ prepared actions.
 Worker-created `agent_worker.<adapter>` tool calls consume the same manifest:
 Hermes/OpenClaw record at least a medium risk floor plus observation and
 commercial restriction metadata instead of being treated as always low risk.
+The live worker prompt also keeps Hermes/OpenClaw in the same
+`ledger_summary_only` boundary: the model turn must not call terminal/shell,
+browser, filesystem, MIS/API, external tools, or publish/upload/deploy targets.
+If those actions are needed, the model returns them as next-step
+recommendations for the MIS ledger path to execute and verify.
 
 Runtime-internal events can now be ingested when a runtime or adapter can expose
 them:
@@ -411,14 +416,98 @@ the `task_intake` source and reports `task_intake_checked`,
 `task_intake_missing_agent_plan`.
 
 `GET /api/operator/loop-launch-packet` is the read-only Agent Work Method
-handoff packet for Hermes, OpenClaw, Codex, or remote agents. Its RETRIEVE
-phase includes both safe knowledge-search metadata and a
+handoff packet for Hermes, OpenClaw, Codex, or remote agents. By default it uses
+the lightweight `operator loop-control` read model for next-step control so
+agents do not wait on the heavier full handoff graph before starting READ/PLAN
+work. Pass `handoff_mode=full` or `full_handoff=true` when deeper
+`operator handoff` diagnostics are required. Its RETRIEVE phase includes both
+safe knowledge-search metadata and a
 `GET /api/commander/repo-map` localization source: sanitized paths, symbols,
 content hashes, provenance, ranking proof, omission flags, and the exact
 `agentops commander repo-map` command to rerun. The embedded agent-plan draft
 uses those repo-map paths as initial `proposed_files_to_change` candidates
-when localization succeeds. The packet does not create plans, run workers,
-approve gates, create memories, mutate ledgers, or return raw file bodies.
+when localization succeeds. The response includes `sources.operator_control`
+plus a backward-compatible `sources.handoff` alias that names the active control
+source (`operator_loop_control` by default, `operator_handoff` in full mode).
+The packet does not create plans, run workers, approve gates, create memories,
+mutate ledgers, or return raw file bodies.
+
+`GET /api/operator/runtime-doctor` is the lightweight, read-only local runtime
+doctor for Hermes, OpenClaw, Codex supervision, and remote Agents. It samples
+adapter readiness, worker fleet state, and ledger evidence counts into gates for
+local MIS API reachability, runtime availability, `--confirm-run`, prepared
+actions for external writes, remote worker freshness, launch-packet
+availability, handoff/evidence-chain status, Codex supervision, and redaction.
+It deliberately does not run the heavier `operator health` or `operator
+handoff` aggregators inline; instead it returns copyable commands for those
+checks plus preflight, launch packet, loop audit, evidence report, guarded live
+execution, and Action Queue receipts. It requires `tasks:read` for supplied
+Agent Gateway tokens/sessions and never starts runtimes, executes tasks, mutates
+ledgers/connectors, or exposes tokens/raw prompts/raw responses.
+
+`GET /api/operator/start-check` is the recommended pre-task read model for
+Codex, Hermes, OpenClaw, and remote Agents before they accept or advance local
+work. It accepts `adapter=mock|hermes|openclaw`, `limit=<n>`, optional
+`task_id`, `agent_id`, `q`, `handoff_mode=lightweight|full`,
+`full_handoff=true`, and `freshness_hours=<n>`. It composes local readiness,
+worker adapter readiness, the worker connection policy, runtime doctor,
+live-product ledger proof, a compact Agent Work Method launch brief,
+`loop_driver_entry`, `local_run_path`, service-control preview, Agent Plan
+boundary, `agent_loop_packet`, `local_loop_admission_packet`, and copyable next
+commands into one machine-readable packet.
+`loop_driver_entry` exposes copy-only loop-driver preview, `--confirm-loop`,
+review queue, and receipt/evidence commands plus a compact RECORD review
+snapshot with approval/memory/review counts and raw item summaries/content
+omitted. `local_loop_admission_packet` binds Method Block gates to the local
+worker-start command, service-control preview, customer-worker dispatch
+template, ledger verification, first safe commands, and confirm-required
+commands. It requires `tasks:read` for supplied Agent Gateway tokens/sessions
+and never starts runtimes, executes server shell, creates tasks, mutates
+ledgers/connectors, or exposes tokens/raw prompts/raw responses.
+
+`GET /api/operator/live-acceptance` is the read-only Hermes/OpenClaw live
+customer-worker acceptance freshness projection. It samples recent local worker
+runs per adapter, including in-flight `agt_customer_worker_*` attempts before a
+delivery artifact exists, and checks tool calls, evaluations, runtime events,
+audit logs, artifacts, memory candidates, approvals, and verified
+plan-evidence manifests. Each adapter returns `fresh`, `stale`, `missing`,
+`latest_failed`, or `latest_incomplete`, with `latest_attempt`,
+`latest_passing`, optional `active_attempt`, and a manual
+`customer_worker_real_runtime_acceptance.py --confirm-live ... --hermes-max-tokens 512`
+command. Active attempts are visible for scheduling and duplicate-run
+avoidance, but they do not pass readiness until the run is completed and the
+delivery artifact/evidence chain exists. It requires `tasks:read` for supplied
+Agent Gateway tokens/sessions and never calls runtimes, starts workers, creates
+tasks, mutates ledgers, or exposes tokens/raw prompts/raw responses.
+
+`GET /api/operator/execution-mode` is the read-only dispatch-mode projection
+used by UI, CLI operators, and external agents before choosing a worker path.
+It accepts `adapter=mock|hermes|openclaw` and optional `confirm_run=true`, then
+returns the selected path (`dry_run_or_mock`, `live_confirmation_required`,
+`live_confirmed`, or `adapter_route_blocked`), selected adapter readiness,
+confirm-run wall, prepared-action wall, pending approval count, active async
+workflow job count, live acceptance freshness, and copyable next commands. It
+reuses runtime-doctor, adapter-readiness, and live-acceptance evidence, requires
+`tasks:read` for supplied Agent Gateway tokens/sessions, and never starts
+adapters, creates tasks, writes approvals, or mutates ledgers.
+
+`GET /api/operator/loop-control` is the lightweight, read-only next-step control
+projection for real local ledgers. It accepts optional `loop_id=<id>` and
+`limit=<n>`, samples bounded counts, recent Action Queue receipt coverage, and
+optional `loop://...` readback counts, then returns a copy-only
+`work_order.advance_loop.selected_item` with preview/confirm commands for
+`agentops operator advance-loop --fast-control`. Unscoped calls select
+`operator runtime-doctor` as the first local readiness check; scoped `loop_id`
+calls select the next safe loop RECORD/VERIFY action, including a review-queue
+step or a reviewable `memory propose --type loop_record` command. It is
+receipt-aware: once `advance-loop --fast-control` records a verified receipt for
+the unscoped runtime-doctor step, the next unscoped recommendation advances to
+handoff, then action-plan, then review-queue when review pressure exists,
+instead of looping on the same diagnostic. It remains deliberately cheaper than
+full `operator handoff`: it does not call handoff,
+action-plan, evidence report, workers, runtimes, or shell commands; it requires
+`tasks:read` for Agent Gateway tokens/sessions and never mutates ledgers or
+exposes tokens/raw prompts/raw responses.
 
 `GET /api/operator/loop-audit` is the read-only Agent Work Method Block audit.
 It turns `READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD`

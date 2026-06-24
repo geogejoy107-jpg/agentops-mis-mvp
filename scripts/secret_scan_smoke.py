@@ -14,6 +14,7 @@ MAX_TEXT_FILE_BYTES = 2_000_000
 ALLOW_FIXTURE_PATHS = {
     "scripts/agent_gateway_runtime_event_smoke.py",
     "scripts/agentops_worker_service_check_smoke.py",
+    "scripts/agentops_worker_service_control_smoke.py",
     "scripts/agentops_worker_service_install_smoke.py",
     "scripts/prepared_action_approval_wall_smoke.py",
     "scripts/redaction_fuzz_smoke.py",

@@ -110,11 +110,15 @@ def main() -> int:
                 "scripts/hermes_openclaw_loop_smoke.py",
                 "scripts/runtime_capability_manifest_smoke.py",
                 "scripts/runtime_connector_trust_smoke.py",
+                "scripts/runtime_connector_trust_ui_smoke.py",
                 "scripts/worker_adapter_readiness_smoke.py",
+                "scripts/v1_5_live_product_readiness_smoke.py",
+                "scripts/worker_prompt_profile_smoke.py",
             ],
             source_markers={
-                "agentops_mis_cli/worker.py": ["--adapter", "hermes", "openclaw"],
+                "agentops_mis_cli/worker.py": ["--adapter", "hermes", "openclaw", "select_task_prompt_profile", "prompt_profile_hash"],
                 "server.py": ["runtime_connector_trust_blocked", "runtime-capability-manifest-v1"],
+                "ui/start-building-app/src/app/components/pages/RuntimeConnectors.tsx": ["runtime-connector-trust-impact", "liveWorkerGate", "auditRefs"],
             },
         ),
         item(
@@ -142,11 +146,14 @@ def main() -> int:
                 "scripts/remote_agent_token_worker_smoke.py",
                 "scripts/remote_launch_packet_worker_smoke.py",
                 "scripts/enrollment_policy_preview_smoke.py",
+                "scripts/enrollment_hosted_policy_ui_smoke.py",
+                "scripts/agent_gateway_scope_effects_ui_smoke.py",
                 "scripts/workspace_isolation_smoke.py",
             ],
             source_markers={
-                "server.py": ["/api/agent-gateway/enrollment/create", "/api/agent-gateway/session/create", "workspace_id"],
+                "server.py": ["/api/agent-gateway/enrollment/create", "/api/agent-gateway/session/create", "deployment_policy", "workspace_id"],
                 "agentops_mis_cli/agentops.py": ["cmd_enrollment_create", "session/create"],
+                "ui/start-building-app/src/app/components/pages/AIEmployees.tsx": ["hosted-enrollment-policy-gate", "createEnrollmentBlockedByPolicy", "agent-gateway-scope-effects", "agent-gateway-worker-scope-readiness"],
             },
         ),
         item(
@@ -170,15 +177,25 @@ def main() -> int:
             "UI Operation Loop",
             docs=["docs/PIXEL_OPERATING_MAP_SPEC.md", "docs/DEMO_VIDEO_SCRIPT.md"],
             scripts=[
+                "scripts/operator_runtime_doctor_smoke.py",
+                "scripts/operator_start_check_api_smoke.py",
+                "scripts/operator_start_check_smoke.py",
+                "scripts/operator_execution_mode_smoke.py",
+                "scripts/operator_loop_launch_packet_smoke.py",
                 "scripts/operator_action_queue_ui_smoke.py",
+                "scripts/worker_console_ui_smoke.py",
+                "scripts/commander_team_board_ui_smoke.py",
                 "scripts/operator_advance_loop_smoke.py",
                 "scripts/ai_employees_responsiveness_smoke.py",
                 "scripts/production_security_warning_ui_smoke.py",
                 "scripts/real_runtime_ui_confirm_smoke.py",
             ],
             source_markers={
-                "ui/start-building-app/src/app/components/pages/AIEmployees.tsx": ["operator_loop_launch_packet", "receipt_state", "Worker Fleet", "operatorHealthLoopControl"],
-                "ui/start-building-app/src/app/data/liveApi.ts": ["loadOperatorLoopLaunchPacket", "loadWorkerStatus", "loop_control"],
+                "server.py": ["/api/operator/runtime-doctor", "/api/operator/start-check", "/api/operator/execution-mode", "operator_runtime_doctor", "operator_start_check", "operator_execution_mode"],
+                "agentops_mis_cli/agentops.py": ["operator_runtime_doctor", "operator_start_check", "operator_execution_mode", "runtime-doctor", "start-check", "execution-mode"],
+                "ui/start-building-app/src/app/components/pages/AIEmployees.tsx": ["operator_loop_launch_packet", "operator_runtime_doctor", "operatorExecutionMode", "receipt_state", "Worker Fleet", "operatorHealthLoopControl", "commander-team-board", "workerRuntimeSummary", "worker_runtime_summary_ready"],
+                "ui/start-building-app/src/app/components/pages/WorkerConsole.tsx": ["Worker Control Console", "loadWorkerStatus", "loadWorkerAdapterReadiness", "loadWorkerFleetHygiene", "applyWorkerFleetHygiene", "worker-fleet-hygiene-panel", "dispatchLocalWorkerOnce", "startLocalWorkerDaemon", "liveBlocked"],
+                "ui/start-building-app/src/app/data/liveApi.ts": ["loadOperatorLoopLaunchPacket", "loadOperatorRuntimeDoctor", "loadOperatorExecutionMode", "loadWorkerStatus", "loop_control", "loadCommanderProjectBoard", "worker_runtime_summary"],
             },
         ),
         item(
@@ -191,14 +208,36 @@ def main() -> int:
                 "scripts/customer_task_template_smoke.py",
                 "scripts/customer_project_report_smoke.py",
                 "scripts/customer_delivery_boundary_smoke.py",
+                "scripts/delivery_approval_manifest_gate_smoke.py",
+                "scripts/customer_dispatch_desk_ui_smoke.py",
                 "scripts/task_detail_evidence_ui_smoke.py",
+                "scripts/run_detail_evidence_ui_smoke.py",
             ],
             source_markers={
                 "server.py": ["/api/workflows/customer-task-templates", "/api/workflows/customer-projects", "report-artifact"],
+                "ui/start-building-app/src/app/App.tsx": ["CustomerDispatchDesk", "/workspace/dispatch"],
+                "ui/start-building-app/src/app/components/layout/Sidebar.tsx": ["dispatchDesk", "/workspace/dispatch", "派活台"],
+                "ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx": ["/workspace/dispatch", "Dispatch customer task"],
+                "ui/start-building-app/src/app/components/pages/CustomerDispatchDesk.tsx": ["CustomerDispatchPanel", "loadAgents(metrics)", "loadDashboard()", "confirm_run", "prepared-action"],
                 "ui/start-building-app/src/app/components/pages/PixelOffice.tsx": ["CustomerDispatchPanel"],
-                "ui/start-building-app/src/app/components/pages/TaskDetail.tsx": ["Delivery Evidence Summary", "交付证据摘要", "evidenceCounts"],
+                "ui/start-building-app/src/app/components/pages/TaskDetail.tsx": [
+                    "Delivery Evidence Summary",
+                    "交付证据摘要",
+                    "evidenceCounts",
+                    "Execution Posture",
+                    "执行状态",
+                    "task-detail-execution-posture",
+                ],
+                "ui/start-building-app/src/app/components/pages/RunDetail.tsx": [
+                    "Run Evidence Chain",
+                    "run-detail-evidence-chain",
+                    "evidenceChainStatus",
+                    "runtimeEvidenceStatus",
+                ],
                 "ui/start-building-app/src/app/components/pixel/CustomerDispatchPanel.tsx": [
                     "loadCustomerTaskTemplates",
+                    "loadOperatorExecutionMode",
+                    "pixel-customer-execution-mode",
                     "runCustomerTaskTemplateWorkflow",
                     "submitCustomerTaskTemplateJob",
                 ],
@@ -225,6 +264,7 @@ def main() -> int:
                 "scripts/merge_readiness_status_smoke.py",
                 "scripts/github_required_checks_smoke.py",
                 "scripts/open_source_adoption_boundary_smoke.py",
+                "scripts/v1_5_live_product_readiness_smoke.py",
             ],
             source_markers={
                 "docs/V1_5_MERGE_READINESS_CHECKLIST.md": ["READY_TO_MERGE", "Backend deterministic smokes", "UI build"],
@@ -245,11 +285,32 @@ def main() -> int:
     advance_loop_command = "python3 scripts/operator_advance_loop_smoke.py"
     require(advance_loop_command in release_text, "release evidence packet missing operator advance-loop smoke", failures)
     require(advance_loop_command in ci_text, "CI workflow missing operator advance-loop smoke", failures)
+    loop_control_command = "python3 scripts/operator_loop_control_smoke.py"
+    require(loop_control_command in release_text, "release evidence packet missing operator loop-control smoke", failures)
+    require(loop_control_command in ci_text, "CI workflow missing operator loop-control smoke", failures)
+    launch_packet_command = "python3 scripts/operator_loop_launch_packet_smoke.py"
+    require(launch_packet_command in release_text, "release evidence packet missing operator loop-launch-packet smoke", failures)
+    require(launch_packet_command in ci_text, "CI workflow missing operator loop-launch-packet smoke", failures)
+    runtime_doctor_command = "python3 scripts/operator_runtime_doctor_smoke.py"
+    require(runtime_doctor_command in release_text, "release evidence packet missing operator runtime-doctor smoke", failures)
+    require(runtime_doctor_command in ci_text, "CI workflow missing operator runtime-doctor smoke", failures)
+    start_check_api_command = "python3 scripts/operator_start_check_api_smoke.py"
+    require(start_check_api_command in release_text, "release evidence packet missing operator start-check API smoke", failures)
+    require(start_check_api_command in ci_text, "CI workflow missing operator start-check API smoke", failures)
+    start_check_cli_markers = ["python3 scripts/operator_start_check_smoke.py", "--adapter hermes", "--adapter openclaw"]
+    require(has_all(release_text, start_check_cli_markers), "release evidence packet missing operator start-check CLI/API smoke", failures)
+    require(has_all(ci_text, start_check_cli_markers), "CI workflow missing operator start-check CLI/API smoke", failures)
+    live_readiness_command = "python3 scripts/v1_5_live_product_readiness_smoke.py --require-adapter hermes --require-adapter openclaw"
+    require(live_readiness_command in release_text, "release evidence packet missing live product-readiness proof command", failures)
+    require(live_readiness_command not in ci_text, "live product-readiness proof must remain manual-live and out of CI", failures)
+    current_code_command = "python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:<current-code-port> --db-path /tmp/<current-code-agentops>.db --confirm-live"
+    require(current_code_command in release_text, "release evidence packet missing current-code product evidence command", failures)
+    require(current_code_command not in ci_text, "current-code live product evidence must remain manual-live and out of CI", failures)
 
-    output = json.dumps({"operation": "v1_5_product_closure_evidence", "ok": not failures, "items": items, "failures": failures, "safety": {"read_only": True, "ledger_mutated": False, "live_execution_performed": False, "token_omitted": True}}, ensure_ascii=False, indent=2)
+    output = json.dumps({"operation": "v1_5_product_closure_evidence", "ok": not failures, "evidence_class": "static_ci_matrix", "product_readiness_proof": False, "items": items, "failures": failures, "safety": {"read_only": True, "ledger_mutated": False, "live_execution_performed": False, "token_omitted": True}}, ensure_ascii=False, indent=2)
     require(not any(pattern.search(output) for pattern in SECRET_PATTERNS), "evidence output leaked token-like material", failures)
     if failures:
-        output = json.dumps({"operation": "v1_5_product_closure_evidence", "ok": False, "items": items, "failures": failures, "safety": {"read_only": True, "ledger_mutated": False, "live_execution_performed": False, "token_omitted": True}}, ensure_ascii=False, indent=2)
+        output = json.dumps({"operation": "v1_5_product_closure_evidence", "ok": False, "evidence_class": "static_ci_matrix", "product_readiness_proof": False, "items": items, "failures": failures, "safety": {"read_only": True, "ledger_mutated": False, "live_execution_performed": False, "token_omitted": True}}, ensure_ascii=False, indent=2)
     print(output)
     return 0 if not failures else 1
 

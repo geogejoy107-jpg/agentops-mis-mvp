@@ -287,7 +287,7 @@ Workspace isolation smoke 会验证：token 绑定 workspace A 后，只能 pull
 - `./scripts/agentops commander plan --goal "..."` 可把一个客户/项目目标预览拆成多条 AI 团队工作包；加 `--confirm-create` 后才写入 planned MIS tasks，并记录 commander runtime/audit evidence。`./scripts/agentops commander packages` 可读回持久化工作包状态、最新 run 和 evidence counts。浏览器入口在 `/workspace/agents` 的 Commander Work Package Planner，详见 `docs/COMMANDER_WORK_PACKAGE_PLANNER.md`。
 - `./scripts/agentops worker status` 可从命令行查看 worker fleet、daemon、pending task 和 stuck task 状态。
 - `./scripts/agentops worker hygiene` 默认只读，会列出 stuck worker tasks 和超过阈值仍 never-seen 的 enrollment；只有加 `--apply --confirm-cleanup` 才释放任务、吊销 stale token，并写入 audit/runtime evidence。
-- `./scripts/agentops local readiness` 可查看单机开源版闭环体检：Agent Gateway、worker route、memory/knowledge、approval、task->run->tool/eval/audit/artifact 证据、runbook 是否齐备。它只读，不启动 worker、不拉任务、不触发 Hermes/OpenClaw live runtime。
+- `./scripts/agentops local readiness` 可查看单机开源版闭环体检：Agent Gateway、worker route、memory/knowledge、approval、task->run->tool/eval/audit/artifact 证据、runbook 是否齐备。它只读，不启动 worker、不拉任务、不触发 Hermes/OpenClaw live runtime。返回里的 `local_run_path` 会给出可复制的启动、预检、worker、service-control 预览、派活和验收命令；这些命令只展示给操作者复制执行，server 不会代替用户执行 shell。
 - `./scripts/agentops worker preflight --adapter mock|hermes|openclaw` 可从主 CLI 执行只读 Gateway/adapter 预检，不拉任务、不写账本、不触发 live runtime。
 - `./scripts/agentops worker start|stop|logs` 可从命令行控制本地 worker daemon；Hermes/OpenClaw start 必须显式 `--confirm-run`。
 - `./scripts/agentops enrollment revoke --agent-id agt_remote_builder` 可吊销该 agent 的 active token。
@@ -437,13 +437,15 @@ agentops-worker service-template --manager systemd --adapter mock --agent-id agt
 agentops-worker service-check --manager launchd --adapter mock --agent-id agt_worker_local
 agentops worker service-check --manager launchd --adapter mock --agent-id agt_worker_local
 agentops worker service-install --manager launchd --adapter mock --agent-id agt_worker_local
+agentops worker service-control --manager launchd --action restart --adapter mock --agent-id agt_worker_local
 ```
 
 安装版 worker 默认把 state 写入 `~/.agentops/workers`；repo 内 wrapper 默认写入 `.agentops_runtime/workers`。可用 `AGENTOPS_WORKER_RUNTIME_DIR` 覆盖 state 目录，用 `AGENTOPS_WORKER_CWD` 覆盖 OpenClaw adapter 的执行目录。
 `service-template` 只生成带 token placeholder 的 launchd/systemd 模板，不会自动安装、加载服务，也不会写入真实 token。
 `agentops-worker service-install` 和 `agentops worker service-install` 默认只做 dry-run；加 `--confirm-install` 后才把安全模板写到 launchd/systemd 路径，文件权限为 `0600`，仍不会写入真实 token、不会加载服务、不会启动 worker。
 `agentops worker preflight` 和 `agentops-worker preflight` 都是只读 adapter 预检：检查 Gateway/adapter 可用性，不执行真实任务、不写账本、不保存 prompt/response。
-`agentops-worker service-check` 和 `agentops worker service-check` 是只读服务诊断：检查 launchd/systemd 模板文件、adapter 参数、session/confirm-run 保护、服务加载状态和 token-like 泄露风险，不会安装、加载、重启服务，也不会打印服务文件原文。
+`agentops-worker service-check` 和 `agentops worker service-check` 是只读服务诊断：检查 launchd/systemd 模板文件、adapter 参数、session/confirm-run 保护、自动重启策略（launchd `KeepAlive=true` / systemd `Restart=always`）、服务加载状态和 token-like 泄露风险，不会安装、加载、重启服务，也不会打印服务文件原文。
+`agentops-worker service-control` 和 `agentops worker service-control` 默认只预览 launchd/systemd load/unload/restart 命令；只有加 `--confirm-control` 才调用本机服务管理器。Hermes/OpenClaw 服务模板如果缺少 `--confirm-run` 会拒绝 load/restart，含 token-like 内容的服务文件也会被拦截。
 完整本地/远程 worker 运维路径见 `docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md`。
 
 单轮 mock：

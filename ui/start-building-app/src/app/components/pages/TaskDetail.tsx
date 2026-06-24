@@ -35,6 +35,20 @@ export function TaskDetail() {
   const evidenceStatus = pendingApprovals.length > 0 ? "attention" : taskArtifacts.length > 0 && taskRuns.length > 0 ? "pass" : "planned";
   const latestEval = taskEvals[taskEvals.length - 1];
   const latestScore = latestEval ? (latestEval.score <= 1 ? Math.round(latestEval.score * 100) : Math.round(latestEval.score)) : 0;
+  const liveRuntimeRuns = taskRuns.filter(run => run.runtime_type === "hermes" || run.runtime_type === "openclaw");
+  const mockRuntimeRuns = taskRuns.filter(run => run.runtime_type === "mock");
+  const failedOrBlockedRuns = taskRuns.filter(run => ["failed", "fail", "error", "blocked", "timeout"].includes(run.status));
+  const runningRuns = taskRuns.filter(run => ["running", "queued", "started"].includes(run.status));
+  const deliveryGateStatus = failedEvals > 0 || failedOrBlockedRuns.length > 0
+    ? "fail"
+    : pendingApprovals.length > 0 || latestRun?.approval_required || task.status === "waiting_approval"
+      ? "attention"
+      : taskArtifacts.length > 0 && taskRuns.length > 0 && taskEvals.length > 0
+        ? "pass"
+        : runningRuns.length > 0
+          ? "running"
+          : "planned";
+  const runtimePostureStatus = liveRuntimeRuns.length > 0 ? "pass" : mockRuntimeRuns.length > 0 ? "attention" : "planned";
 
   const ownerAgent = data.agents.find(a => a.agent_id === task.owner_agent_id);
   const collabAgents = data.agents.filter(a => task.collaborator_agent_ids.includes(a.agent_id));
@@ -62,6 +76,20 @@ export function TaskDetail() {
       benchmarkEvidence: "Benchmark Evidence",
       noBenchmarkEvidence: "No approved evaluation case runs recorded yet.",
       evidenceSummary: "Delivery Evidence Summary",
+      executionPosture: "Execution Posture",
+      runtimeMode: "Runtime mode",
+      approvalWall: "Approval wall",
+      deliveryGate: "Delivery gate",
+      liveRuntimeEvidence: "Hermes/OpenClaw live evidence",
+      mixedRuntimeEvidence: "Mixed live + mock evidence",
+      mockRuntimeEvidence: "Mock/offline evidence only",
+      noRuntimeEvidence: "No worker run evidence yet",
+      approvalPending: "Pending human approval",
+      approvalClear: "No pending approval",
+      gateReady: "Ready for delivery review",
+      gateWaiting: "Waiting for evidence",
+      gateBlocked: "Failed or blocked evidence",
+      gateRunning: "Worker is still running",
       ledgerState: "Ledger state",
       latestRun: "Latest run",
       openRun: "Open run",
@@ -95,6 +123,20 @@ export function TaskDetail() {
       benchmarkEvidence: "基准证据",
       noBenchmarkEvidence: "暂无已批准评估用例执行记录。",
       evidenceSummary: "交付证据摘要",
+      executionPosture: "执行状态",
+      runtimeMode: "运行模式",
+      approvalWall: "审批墙",
+      deliveryGate: "交付门",
+      liveRuntimeEvidence: "Hermes/OpenClaw 真实运行证据",
+      mixedRuntimeEvidence: "真实运行 + mock 混合证据",
+      mockRuntimeEvidence: "仅 mock / 离线证据",
+      noRuntimeEvidence: "暂无 worker 运行证据",
+      approvalPending: "等待人工审批",
+      approvalClear: "暂无待处理审批",
+      gateReady: "可进入交付审查",
+      gateWaiting: "等待证据补齐",
+      gateBlocked: "存在失败或阻塞证据",
+      gateRunning: "Worker 仍在运行",
       ledgerState: "账本状态",
       latestRun: "最新运行",
       openRun: "打开运行",
@@ -213,6 +255,65 @@ export function TaskDetail() {
               <div className="mt-1 text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{item.value}</div>
             </div>
           ))}
+        </div>
+        <div
+          data-testid="task-detail-execution-posture"
+          className="mt-3 rounded-lg p-3"
+          style={{ background: "var(--mis-bg)", border: "1px solid rgba(148,163,184,0.14)" }}
+        >
+          <div className="text-[10px] uppercase tracking-wide mb-2" style={{ color: "var(--mis-muted)" }}>
+            {copy.executionPosture}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            <div className="rounded px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.runtimeMode}</span>
+                <StatusBadge status={runtimePostureStatus} />
+              </div>
+              <div className="mt-1 text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>
+                {liveRuntimeRuns.length > 0 && mockRuntimeRuns.length > 0
+                  ? copy.mixedRuntimeEvidence
+                  : liveRuntimeRuns.length > 0
+                    ? copy.liveRuntimeEvidence
+                    : mockRuntimeRuns.length > 0
+                      ? copy.mockRuntimeEvidence
+                      : copy.noRuntimeEvidence}
+              </div>
+              <div className="mt-1 text-[10px]" style={{ color: "var(--mis-muted)" }}>
+                hermes/openclaw {liveRuntimeRuns.length} · mock {mockRuntimeRuns.length}
+              </div>
+            </div>
+            <div className="rounded px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.approvalWall}</span>
+                <StatusBadge status={pendingApprovals.length > 0 || latestRun?.approval_required ? "attention" : "pass"} />
+              </div>
+              <div className="mt-1 text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>
+                {pendingApprovals.length > 0 || latestRun?.approval_required ? copy.approvalPending : copy.approvalClear}
+              </div>
+              <div className="mt-1 text-[10px]" style={{ color: "var(--mis-muted)" }}>
+                pending {pendingApprovals.length} / total {taskApprovals.length}
+              </div>
+            </div>
+            <div className="rounded px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.deliveryGate}</span>
+                <StatusBadge status={deliveryGateStatus} />
+              </div>
+              <div className="mt-1 text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>
+                {deliveryGateStatus === "pass"
+                  ? copy.gateReady
+                  : deliveryGateStatus === "fail"
+                    ? copy.gateBlocked
+                    : deliveryGateStatus === "running"
+                      ? copy.gateRunning
+                      : copy.gateWaiting}
+              </div>
+              <div className="mt-1 text-[10px]" style={{ color: "var(--mis-muted)" }}>
+                eval pass/fail {passedEvals}/{failedEvals} · artifacts {taskArtifacts.length}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
