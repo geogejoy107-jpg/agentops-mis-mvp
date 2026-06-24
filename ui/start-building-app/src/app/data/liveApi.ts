@@ -2509,7 +2509,35 @@ export interface OperatorLoopSupervisionItemPayload {
   blockers: string[];
   attention: string[];
   review_pressure: Record<string, unknown>;
-  gates: { id: string; ok?: boolean; status?: string; command?: string | null; token_omitted?: boolean }[];
+  gates: {
+    id: string;
+    ok?: boolean;
+    status?: string;
+    command?: string | null;
+    recommended_adapter?: string | null;
+    service_managed_adapter?: string | null;
+    server_executes_shell?: boolean;
+    token_omitted?: boolean;
+  }[];
+  local_deployment?: {
+    local_run_path?: {
+      operation?: string;
+      recommended_adapter?: string | null;
+      safety?: {
+        server_executes_shell?: boolean;
+        token_omitted?: boolean;
+      };
+      token_omitted?: boolean;
+    };
+    service_managed_loop?: {
+      operation?: string;
+      adapter?: string | null;
+      service_managed_loop_ready?: boolean;
+      status?: string;
+      token_omitted?: boolean;
+    };
+    token_omitted?: boolean;
+  };
   next_commands: {
     safe_read_commands: string[];
     preview_commands: string[];
@@ -7229,6 +7257,10 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
     items: asArray<Record<string, unknown>>(raw.items).map((item) => {
       const itemSafety = typeof item.safety === "object" && item.safety !== null ? item.safety as Record<string, unknown> : {};
       const nextCommands = typeof item.next_commands === "object" && item.next_commands !== null ? item.next_commands as Record<string, unknown> : {};
+      const localDeploymentRaw = typeof item.local_deployment === "object" && item.local_deployment !== null ? item.local_deployment as Record<string, unknown> : {};
+      const localRunPathRaw = typeof localDeploymentRaw.local_run_path === "object" && localDeploymentRaw.local_run_path !== null ? localDeploymentRaw.local_run_path as Record<string, unknown> : {};
+      const localRunSafetyRaw = typeof localRunPathRaw.safety === "object" && localRunPathRaw.safety !== null ? localRunPathRaw.safety as Record<string, unknown> : {};
+      const serviceManagedRaw = typeof localDeploymentRaw.service_managed_loop === "object" && localDeploymentRaw.service_managed_loop !== null ? localDeploymentRaw.service_managed_loop as Record<string, unknown> : {};
       const runStartAdmissionRaw = typeof item.run_start_admission === "object" && item.run_start_admission !== null ? item.run_start_admission as Record<string, unknown> : {};
       const runStartSafetyRaw = typeof runStartAdmissionRaw.safety === "object" && runStartAdmissionRaw.safety !== null ? runStartAdmissionRaw.safety as Record<string, unknown> : {};
       return {
@@ -7247,8 +7279,30 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
           ok: gate.ok === undefined ? undefined : boolValue(gate.ok),
           status: gate.status ? String(gate.status) : undefined,
           command: gate.command === undefined || gate.command === null ? null : String(gate.command),
+          recommended_adapter: gate.recommended_adapter === undefined || gate.recommended_adapter === null ? null : String(gate.recommended_adapter),
+          service_managed_adapter: gate.service_managed_adapter === undefined || gate.service_managed_adapter === null ? null : String(gate.service_managed_adapter),
+          server_executes_shell: gate.server_executes_shell === undefined ? undefined : boolValue(gate.server_executes_shell),
           token_omitted: gate.token_omitted === undefined ? undefined : boolValue(gate.token_omitted),
         })).filter((gate) => gate.id),
+        local_deployment: Object.keys(localDeploymentRaw).length ? {
+          local_run_path: Object.keys(localRunPathRaw).length ? {
+            operation: localRunPathRaw.operation === undefined || localRunPathRaw.operation === null ? undefined : String(localRunPathRaw.operation),
+            recommended_adapter: localRunPathRaw.recommended_adapter === undefined || localRunPathRaw.recommended_adapter === null ? null : String(localRunPathRaw.recommended_adapter),
+            safety: {
+              server_executes_shell: localRunSafetyRaw.server_executes_shell === undefined ? undefined : boolValue(localRunSafetyRaw.server_executes_shell),
+              token_omitted: localRunSafetyRaw.token_omitted === undefined ? undefined : boolValue(localRunSafetyRaw.token_omitted),
+            },
+            token_omitted: localRunPathRaw.token_omitted === undefined ? undefined : boolValue(localRunPathRaw.token_omitted),
+          } : undefined,
+          service_managed_loop: Object.keys(serviceManagedRaw).length ? {
+            operation: serviceManagedRaw.operation === undefined || serviceManagedRaw.operation === null ? undefined : String(serviceManagedRaw.operation),
+            adapter: serviceManagedRaw.adapter === undefined || serviceManagedRaw.adapter === null ? null : String(serviceManagedRaw.adapter),
+            service_managed_loop_ready: serviceManagedRaw.service_managed_loop_ready === undefined ? undefined : boolValue(serviceManagedRaw.service_managed_loop_ready),
+            status: serviceManagedRaw.status === undefined || serviceManagedRaw.status === null ? undefined : String(serviceManagedRaw.status),
+            token_omitted: serviceManagedRaw.token_omitted === undefined ? undefined : boolValue(serviceManagedRaw.token_omitted),
+          } : undefined,
+          token_omitted: localDeploymentRaw.token_omitted === undefined ? undefined : boolValue(localDeploymentRaw.token_omitted),
+        } : undefined,
         next_commands: {
           safe_read_commands: asArray<unknown>(nextCommands.safe_read_commands).map(String).filter(Boolean),
           preview_commands: asArray<unknown>(nextCommands.preview_commands).map(String).filter(Boolean),

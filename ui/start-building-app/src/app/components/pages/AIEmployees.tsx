@@ -848,6 +848,10 @@ export function AIEmployees() {
       agentLoopHandoffSummary: "Compact shared handoff for Hermes, OpenClaw, and Codex: current-code proof, fresh live evidence, Method gates, and copyable next commands.",
       loopSupervisionTitle: "Loop supervision",
       loopSupervisionSummary: "Pre-confirm gate for Hermes/OpenClaw: record pressure, bounded confirm readiness, and the next copy-only command.",
+      localDeploymentGate: "Local deployment",
+      deploymentRecommendedAdapter: "Recommended adapter",
+      serviceManagedAdapter: "Service adapter",
+      serverShellBoundary: "Server shell",
       gatewayRunStartGate: "Gateway run_start gate",
       gatewayRunStartSummary: "Agent Gateway consumes this supervision before run creation; blocked gates fail closed with 428 and create no run.",
       wouldAllowRunStart: "Would allow run_start",
@@ -1459,6 +1463,10 @@ export function AIEmployees() {
       agentLoopHandoffSummary: "Hermes、OpenClaw、Codex 共享的紧凑交接包：current-code 证明、fresh live 证据、Method gate 和下一条可复制命令。",
       loopSupervisionTitle: "Loop 监管",
       loopSupervisionSummary: "Hermes/OpenClaw 确认执行前的 gate：RECORD 压力、bounded confirm 状态和下一条 copy-only 命令。",
+      localDeploymentGate: "本地部署 Gate",
+      deploymentRecommendedAdapter: "推荐 adapter",
+      serviceManagedAdapter: "服务 adapter",
+      serverShellBoundary: "Server shell",
       gatewayRunStartGate: "Gateway run_start Gate",
       gatewayRunStartSummary: "Agent Gateway 会在创建 run 之前消费这个监管 gate；阻塞时返回 428，且不创建 run。",
       wouldAllowRunStart: "允许 run_start",
@@ -4929,7 +4937,18 @@ export function AIEmployees() {
                         ))}
                       </div>
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-1.5 mt-1.5">
-                        {loopSupervisionItems.map((item) => (
+                        {loopSupervisionItems.map((item) => {
+                          const localDeploymentGate = item.gates.find((gate) => gate.id === "local_deployment");
+                          const localRunPath = item.local_deployment?.local_run_path;
+                          const serviceManagedLoop = item.local_deployment?.service_managed_loop;
+                          const localDeploymentServerShell = localRunPath?.safety?.server_executes_shell === true || localDeploymentGate?.server_executes_shell === true;
+                          const recommendedAdapter = localRunPath?.recommended_adapter || localDeploymentGate?.recommended_adapter || "missing";
+                          const serviceManagedAdapter = serviceManagedLoop?.adapter || localDeploymentGate?.service_managed_adapter || "missing";
+                          const localDeploymentOk = localDeploymentGate?.ok === true
+                            && recommendedAdapter === item.adapter
+                            && serviceManagedAdapter === item.adapter
+                            && !localDeploymentServerShell;
+                          return (
                           <div key={`loop-supervision-item:${item.adapter}`} className="rounded p-1.5 min-w-0" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                             <div className="flex flex-wrap items-center justify-between gap-1">
                               <div className="text-[8px] font-semibold uppercase" style={{ color: "var(--mis-text)" }}>{item.adapter}</div>
@@ -4954,6 +4973,35 @@ export function AIEmployees() {
                                   </div>
                                 </div>
                               ))}
+                            </div>
+                            <div
+                              data-testid="operator-loop-supervision-local-deployment"
+                              className="mt-1.5 rounded p-1.5 min-w-0"
+                              style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-1">
+                                <div className="text-[8px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.localDeploymentGate}</div>
+                                <div className="flex flex-wrap gap-1">
+                                  <StatusBadge status={localDeploymentOk ? "pass" : "blocked"} />
+                                  <StatusBadge status={localDeploymentServerShell ? "blocked" : "pass"} label={localDeploymentServerShell ? "server shell" : "no server shell"} />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-1 mt-1">
+                                {[
+                                  { label: copy.deploymentRecommendedAdapter, value: String(recommendedAdapter), status: recommendedAdapter === item.adapter ? "pass" : "blocked" },
+                                  { label: copy.serviceManagedAdapter, value: String(serviceManagedAdapter), status: serviceManagedAdapter === item.adapter ? "pass" : "blocked" },
+                                  { label: "Run path", value: localRunPath?.operation || "missing", status: localRunPath?.operation ? "pass" : "blocked" },
+                                  { label: copy.serverShellBoundary, value: String(localDeploymentServerShell), status: localDeploymentServerShell ? "blocked" : "pass" },
+                                ].map((metric) => (
+                                  <div key={`${item.adapter}:local-deployment:${metric.label}`} className="rounded px-1.5 py-0.5 min-w-0" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                                    <div className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{metric.label}</div>
+                                    <div className="flex items-center justify-between gap-1 mt-0.5">
+                                      <span className="text-[8px] font-semibold truncate" style={{ color: "var(--mis-text)" }} title={metric.value}>{metric.value}</span>
+                                      <StatusBadge status={metric.status} />
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                             {item.run_start_admission && (
                               <div
@@ -5001,7 +5049,8 @@ export function AIEmployees() {
                               </div>
                             )}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}
