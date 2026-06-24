@@ -18650,6 +18650,17 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         if matched is None and stale_candidate:
             matched = stale_candidate
             match = "stale"
+        control_readback = (matched or {}).get("control_readback")
+        if isinstance(control_readback, dict):
+            control_readback = json.loads(json.dumps(control_readback))
+            self_check = control_readback.get("self_check")
+            if isinstance(self_check, dict) and self_check.get("live_execution_performed") is not False:
+                self_check["historical_live_execution_performed"] = bool(self_check.get("live_execution_performed"))
+                self_check["historical_live_execution_marker_suppressed"] = True
+                self_check["live_execution_performed"] = False
+                self_check.setdefault("read_only_projection", True)
+        else:
+            control_readback = None
         underlying_status = str((matched or {}).get("status") or "missing")
         evaluation = (matched or {}).get("evaluation") or {}
         receipt_hash = (
@@ -18667,8 +18678,8 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
             "verified": match == "current" and underlying_status == "verified",
             "receipt_id": (matched or {}).get("receipt_id"),
             "receipt_hash": receipt_hash,
-            "control_readback_attached": bool((matched or {}).get("control_readback")),
-            "control_readback": (matched or {}).get("control_readback") if isinstance((matched or {}).get("control_readback"), dict) else None,
+            "control_readback_attached": bool(control_readback),
+            "control_readback": control_readback,
             "control_readback_id": (matched or {}).get("control_readback_id"),
             "control_readback_hash": (matched or {}).get("control_readback_hash"),
             "evaluation_id": (matched or {}).get("evaluation_id") or evaluation.get("evaluation_id"),
