@@ -1,0 +1,1 @@
+export const AGENT_GLYPH_GEOMETRY_VERSION = "v1";
