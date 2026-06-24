@@ -344,7 +344,10 @@ def build_commander_project_board_gates(
                 f"{synthesis_summary.get('pending_reviews', 0)} pending review(s), "
                 f"{synthesis_summary.get('promoted_delivery_artifacts', 0)} promoted delivery artifact(s)"
             ),
-            "next_action": (synthesis_lifecycle.get("next_actions") or ["agentops commander synthesize --status ready_for_review --confirm-create"])[0],
+            "next_action": (
+                synthesis_lifecycle.get("next_actions")
+                or ['agentops commander plan --goal "Prepare next customer delivery work packages" --confirm-create']
+            )[0],
         },
         {
             "id": "adapter_readiness",

@@ -17146,7 +17146,10 @@ def commander_synthesis_lifecycle(conn: sqlite3.Connection, limit: int = 5) -> d
         if action and action not in next_actions:
             next_actions.append(action)
     if not next_actions:
-        next_actions = ["agentops commander synthesize --status ready_for_review --confirm-create"]
+        next_actions = [
+            'agentops commander plan --goal "Prepare next customer delivery work packages" --confirm-create',
+            "agentops commander packages --status ready_for_review --limit 8",
+        ]
     return {
         "status": status,
         "summary": summary,

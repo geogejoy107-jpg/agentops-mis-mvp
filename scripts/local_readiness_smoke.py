@@ -184,6 +184,10 @@ def validate(payload: dict) -> None:
     lifecycle = payload.get("commander_synthesis_lifecycle") or {}
     require(lifecycle.get("status") in {"empty", "created", "review_pending", "promotion_available", "promoted"}, f"bad synthesis lifecycle: {lifecycle}")
     require((lifecycle.get("safety") or {}).get("read_only") is True, f"synthesis lifecycle must be read-only: {lifecycle}")
+    if lifecycle.get("status") == "empty":
+        lifecycle_next = " ".join(str(action) for action in (lifecycle.get("next_actions") or []))
+        require("commander plan" in lifecycle_next, f"empty synthesis lifecycle should route agents to planning before synthesis: {lifecycle}")
+        require("commander synthesize" not in lifecycle_next, f"empty synthesis lifecycle should not suggest impossible synthesis: {lifecycle}")
     require(isinstance(payload.get("next_actions"), list), "next_actions must be a list")
     local_run_path = payload.get("local_run_path") or []
     require(isinstance(local_run_path, list) and len(local_run_path) >= 8, f"local_run_path missing or too short: {local_run_path}")
