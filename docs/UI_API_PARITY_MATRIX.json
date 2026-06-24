@@ -28,7 +28,8 @@
         "nextjs_worker_daemon_control_v1",
         "nextjs_worker_console_parity_v1",
         "operator_execution_mode_v1",
-        "nextjs_template_switching_parity_v1"
+        "nextjs_template_switching_parity_v1",
+        "nextjs_control_tower_parity_v1"
       ],
     "retirement_rule": "A Vite route can be retired only after the matrix marks its capability covered, Vite and Next browser evidence both pass, API contracts match, and the route has an explicit retirement decision."
   },
@@ -611,18 +612,20 @@
     {
       "id": "control_tower",
       "capability": "Admin dashboard and control tower.",
-      "status": "partial",
+      "status": "covered",
       "gate4_required": false,
       "vite_routes": [
         "/admin"
       ],
       "next_routes": [
         "/workspace",
+        "/workspace/agents",
         "/workspace/governance",
         "/workspace/deployment"
       ],
       "api_contracts": [
         "GET /dashboard/metrics",
+        "GET /agents",
         "GET /security/production-readiness",
         "GET /local/readiness",
         "GET /storage/backend-status"
@@ -637,11 +640,12 @@
         "ui/next-app/src/components/DeploymentPage.tsx"
       ],
       "evidence_commands": [
+        "python3 scripts/nextjs_control_tower_parity_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Admin control tower is split across Next cockpit, governance, and deployment routes; needs operator workflow review before retirement."
+      "retirement_gate": "Next now has split-route control tower proof: /workspace renders live /dashboard/metrics cockpit readback including runtime health, OpenClaw import, task status, cost leaders, failure/cost/memory/approval KPIs; /workspace/agents carries the agent performance drilldown from GET /agents; /workspace/governance renders production, RBAC, session, and audit evidence; and /workspace/deployment renders BYOC storage, backup, retention, signed export, and connector-policy gates. Vite /admin remains until an explicit route retirement commit preserves deep links, reruns Vite/Next browser evidence, and keeps Agent Gateway CLI/API/MCP unchanged."
     },
     {
       "id": "runtime_connectors",

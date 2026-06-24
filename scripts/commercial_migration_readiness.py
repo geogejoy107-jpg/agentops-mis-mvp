@@ -334,6 +334,19 @@ def main() -> int:
             and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "owner-dispatch-workflow")
             and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "template intake /workspace/dispatch")
             and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "delivery reports /workspace/reports")
+            and file_contains("ui/next-app/src/components/WorkspaceDashboard.tsx", "control-tower-live-metrics")
+            and file_contains("ui/next-app/src/components/WorkspaceDashboard.tsx", "control-tower-split-proof")
+            and file_contains("ui/next-app/src/components/WorkspaceDashboard.tsx", "/workspace/agents agent performance drilldown")
+            and file_contains("ui/next-app/src/components/WorkspaceDashboard.tsx", "control-tower-runtime-health")
+            and file_contains("ui/next-app/src/components/WorkspaceDashboard.tsx", "control-tower-openclaw-imports")
+            and file_contains("ui/next-app/src/components/WorkspaceDashboard.tsx", "control-tower-task-status")
+            and file_contains("ui/next-app/src/components/WorkspaceDashboard.tsx", "control-tower-cost-leaders")
+            and file_contains("scripts/nextjs_control_tower_parity_smoke.py", "nextjs_control_tower_parity_v1")
+            and file_contains("scripts/nextjs_control_tower_parity_smoke.py", "/api/mis/dashboard/metrics")
+            and file_contains("scripts/nextjs_control_tower_parity_smoke.py", "/api/mis/agents")
+            and file_contains("scripts/nextjs_control_tower_parity_smoke.py", "/api/mis/security/production-readiness")
+            and file_contains("scripts/nextjs_control_tower_parity_smoke.py", "/api/mis/local/readiness")
+            and file_contains("scripts/nextjs_control_tower_parity_smoke.py", "/api/mis/storage/backend-status")
             and file_contains("ui/next-app/app/workspace/dispatch/customer-task/route.ts", "/workflows/customer-task")
             and file_contains("ui/next-app/app/workspace/dispatch/template-job/route.ts", "/workflows/customer-task-templates/submit")
             and file_contains("ui/next-app/app/workspace/dispatch/page.tsx", "loadServerAgents")
@@ -366,6 +379,8 @@ def main() -> int:
             and file_contains("scripts/nextjs_pixel_office_dispatch_smoke.py", "nextjs_pixel_office_dispatch_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_pixel_office_dispatch_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_template_switching_parity_v1")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_control_tower_parity_v1")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "split-route control tower proof")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "GET /template-packages")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "GET /template-bindings")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "GET /bases")
@@ -500,6 +515,7 @@ def main() -> int:
             and (ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_pixel_office_dispatch_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_template_switching_smoke.py").exists()
+            and (ROOT / "scripts" / "nextjs_control_tower_parity_smoke.py").exists()
             and (ROOT / "scripts" / "pixel_office_dispatch_retirement_evidence_smoke.py").exists()
             and (ROOT / "docs" / "PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.json").exists()
             and (ROOT / "docs" / "PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.md").exists()
@@ -515,7 +531,7 @@ def main() -> int:
             and (ROOT / "scripts" / "nextjs_worker_console_parity_smoke.py").exists()
             and (ROOT / "scripts" / "operator_execution_mode_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py").exists(),
-            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, CLI worker dogfood proof through the Next proxy, read-only Pixel Operating Map parity, template/base switching readback for /template-packages, /template-bindings, /bases, and /migration/preview, local brief prepared-action exact resume with approval/hash/replay guards, worker mock dispatch, focused Worker Console read-model parity for fleet/hygiene/readiness/session safety plus operator execution-mode readback, customer-worker prepared-action exact resume for Hermes/OpenClaw plus ledger-derived safe resume readback, async customer-worker prepared-action submit/resume plus mock job status readback, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, Agent Gateway session/enrollment lifecycle writes blocked at the Next proxy with safe session hygiene readback, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
+            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, CLI worker dogfood proof through the Next proxy, read-only Pixel Operating Map parity, split-route Control Tower parity across workspace/agents/governance/deployment, template/base switching readback for /template-packages, /template-bindings, /bases, and /migration/preview, local brief prepared-action exact resume with approval/hash/replay guards, worker mock dispatch, focused Worker Console read-model parity for fleet/hygiene/readiness/session safety plus operator execution-mode readback, customer-worker prepared-action exact resume for Hermes/OpenClaw plus ledger-derived safe resume readback, async customer-worker prepared-action submit/resume plus mock job status readback, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, Agent Gateway session/enrollment lifecycle writes blocked at the Next proxy with safe session hygiene readback, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
         ),
         check(
             "pixel_office_dispatch_retirement_evidence_surface_exists",
@@ -1019,6 +1035,7 @@ def main() -> int:
                 "python3 scripts/nextjs_worker_dispatch_once_smoke.py",
                 "python3 scripts/nextjs_pixel_office_floor_smoke.py",
                 "python3 scripts/nextjs_pixel_office_dispatch_smoke.py",
+                "python3 scripts/nextjs_control_tower_parity_smoke.py",
                 "python3 scripts/nextjs_template_switching_smoke.py",
                 "python3 scripts/local_brief_prepared_action_smoke.py",
                 "python3 scripts/nextjs_local_brief_smoke.py",

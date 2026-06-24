@@ -116,6 +116,7 @@ def main() -> int:
         ROOT / "scripts" / "nextjs_worker_console_parity_smoke.py",
         ROOT / "scripts" / "operator_execution_mode_smoke.py",
         ROOT / "scripts" / "nextjs_template_switching_smoke.py",
+        ROOT / "scripts" / "nextjs_control_tower_parity_smoke.py",
         ROOT / "scripts" / "audit_retention_policy_smoke.py",
         ROOT / "scripts" / "audit_retention_controls_smoke.py",
         ROOT / "docs" / "UI_NAVIGATION_INVENTORY.json",
@@ -191,6 +192,7 @@ def main() -> int:
     worker_console_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_console_parity_smoke.py")
     operator_execution_mode_smoke_text = read_text(ROOT / "scripts" / "operator_execution_mode_smoke.py")
     template_switching_smoke_text = read_text(ROOT / "scripts" / "nextjs_template_switching_smoke.py")
+    control_tower_smoke_text = read_text(ROOT / "scripts" / "nextjs_control_tower_parity_smoke.py")
     route_parity_smoke_text = read_text(ROOT / "scripts" / "ui_task_run_route_parity_smoke.py")
     route_alias_smoke_text = read_text(ROOT / "scripts" / "ui_legacy_route_alias_smoke.py")
     navigation_inventory_smoke_text = read_text(ROOT / "scripts" / "ui_navigation_inventory_smoke.py")
@@ -202,6 +204,14 @@ def main() -> int:
     require(dependencies.get("react") == "19.2.7", "React version is not pinned to the selected migration version")
     require("build" in scripts and "next build" in scripts["build"], "Next.js build script is missing")
     require("AGENTOPS_API_BASE" in route_text, "API proxy must be configurable with AGENTOPS_API_BASE")
+    require("Workspace control plane" in dashboard_text and "control-tower-live-metrics" in dashboard_text, "Workspace dashboard must expose Control Tower live metrics")
+    require("control-tower-split-proof" in dashboard_text and "/workspace/agents agent performance drilldown" in dashboard_text and "/workspace/governance production and session governance" in dashboard_text and "/workspace/deployment BYOC storage and recovery gates" in dashboard_text, "Workspace dashboard must expose split-route Control Tower proof")
+    require("control-tower-runtime-health" in dashboard_text and "Runtime health" in dashboard_text, "Workspace dashboard must expose runtime health readback")
+    require("control-tower-openclaw-imports" in dashboard_text and "OpenClaw import readback" in dashboard_text, "Workspace dashboard must expose OpenClaw import readback")
+    require("control-tower-task-status" in dashboard_text and "Task status distribution" in dashboard_text, "Workspace dashboard must expose task status distribution")
+    require("control-tower-cost-leaders" in dashboard_text and "Cost leaders" in dashboard_text, "Workspace dashboard must expose cost leader readback")
+    require("nextjs_control_tower_parity_v1" in control_tower_smoke_text and "/workspace/agents" in control_tower_smoke_text and "/workspace/governance" in control_tower_smoke_text and "/workspace/deployment" in control_tower_smoke_text, "Next control tower smoke contract is missing")
+    require("/api/mis/dashboard/metrics" in control_tower_smoke_text and "/api/mis/agents" in control_tower_smoke_text and "/api/mis/security/production-readiness" in control_tower_smoke_text and "/api/mis/local/readiness" in control_tower_smoke_text and "/api/mis/storage/backend-status" in control_tower_smoke_text, "Next control tower smoke must exercise dashboard/agents/security/local/storage APIs")
     require("mock_only_next_parity" in route_text and "isWorkerDispatchPath" in route_text, "API proxy must fail closed for non-mock worker dispatch")
     require("customerWorkerWorkflowGuard" in route_text and "isCustomerWorkerWorkflowPath" in route_text and "prepared_action_required" in route_text, "API proxy must route customer-worker live requests to prepared-action gates")
     require("prepared_action_required" in route_text and "isLocalBriefPath" in route_text, "API proxy must preserve local brief prepared-action routing")
@@ -546,6 +556,7 @@ def main() -> int:
             "nextjs_worker_console_parity_v1",
             "operator_execution_mode_v1",
             "nextjs_template_switching_parity_v1",
+            "nextjs_control_tower_parity_v1",
         ],
         "stack": {
             "next": dependencies.get("next"),

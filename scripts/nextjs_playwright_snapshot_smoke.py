@@ -53,7 +53,7 @@ READ_ONLY_LEDGER_TABLES = [
 ]
 
 ROUTES = [
-    ("/workspace", ["Workspace control plane", "Active tasks", "Pending approval queue"]),
+    ("/workspace", ["Workspace control plane", "Control Tower split proof", "/workspace/agents agent performance drilldown", "Runtime health", "OpenClaw import readback", "Task status distribution", "Cost leaders", "route retirement blocked", "Active tasks", "Pending approval queue"]),
     ("/workspace/agents", ["Agents", "Production security", "Remote enrollment request", "session token omitted", "session create blocked", "live daemon blocked", "Adapter readiness"]),
     ("/workspace/workers", ["Worker Console", "Worker fleet lanes", "Fleet hygiene plan", "worker_console_read_model_parity", "session token omitted", "live daemon blocked", "fleet cleanup preview only", "Operator execution mode", "operator execution-mode readback"]),
     ("/workspace/agents/agt_cos", ["Agent Detail", "Per-agent performance", "Recent Runs"]),

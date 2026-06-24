@@ -154,6 +154,7 @@ def main() -> int:
     require("nextjs_worker_console_parity_v1" in route_contracts, "matrix policy must include the focused Next Worker Console parity contract")
     require("operator_execution_mode_v1" in route_contracts, "matrix policy must include the operator execution-mode readback contract")
     require("nextjs_template_switching_parity_v1" in route_contracts, "matrix policy must include the Next template switching parity contract")
+    require("nextjs_control_tower_parity_v1" in route_contracts, "matrix policy must include the Next control tower parity contract")
 
     entries = matrix.get("entries")
     require(isinstance(entries, list) and entries, "matrix entries must be a non-empty list")
@@ -287,6 +288,21 @@ def main() -> int:
     require("explicit route retirement commit" in pixel_dispatch_gate, "pixel_office_and_dispatch retirement gate must still require an explicit route retirement commit")
     pixel_dispatch_contracts = entries_by_id.get("pixel_office_and_dispatch", {}).get("api_contracts") or []
     require("GET /workflows/customer-worker-prepared-actions" in pixel_dispatch_contracts, "pixel_office_and_dispatch must include customer-worker prepared-action readback API")
+    assert_entry_routes(entries_by_id.get("control_tower"), "control_tower", ["/admin"], ["/workspace", "/workspace/agents", "/workspace/governance", "/workspace/deployment"])
+    require(entries_by_id.get("control_tower", {}).get("status") == "covered", "control_tower should be covered once split Next cockpit/governance/deployment evidence exists")
+    control_evidence = entries_by_id.get("control_tower", {}).get("evidence_commands") or []
+    require("python3 scripts/nextjs_control_tower_parity_smoke.py" in control_evidence, "control_tower must include focused Next control tower evidence")
+    require("python3 scripts/nextjs_parity_smoke.py" in control_evidence, "control_tower must include Next static parity evidence")
+    require("python3 scripts/nextjs_playwright_snapshot_smoke.py" in control_evidence, "control_tower must include Next browser evidence")
+    control_contracts = entries_by_id.get("control_tower", {}).get("api_contracts") or []
+    for contract in ["GET /dashboard/metrics", "GET /agents", "GET /security/production-readiness", "GET /local/readiness", "GET /storage/backend-status"]:
+        require(contract in control_contracts, f"control_tower must include {contract}")
+    control_gate = str(entries_by_id.get("control_tower", {}).get("retirement_gate") or "")
+    require("split-route control tower proof" in control_gate, "control_tower gate must record split-route evidence")
+    require("/dashboard/metrics cockpit readback" in control_gate, "control_tower gate must record dashboard metrics readback")
+    require("/workspace/agents" in control_gate and "agent performance drilldown" in control_gate, "control_tower gate must record agent performance drilldown")
+    require("/workspace/governance" in control_gate and "/workspace/deployment" in control_gate, "control_tower gate must record governance/deployment split")
+    require("explicit route retirement commit" in control_gate, "control_tower gate must still require explicit route retirement")
     assert_entry_routes(entries_by_id.get("template_switching"), "template_switching", ["/admin/templates"], ["/workspace/dispatch", "/workspace/templates", "/workspace/templates/migration-preview"])
     require(entries_by_id.get("template_switching", {}).get("status") == "covered", "template_switching should be covered once Next template/base switching readback exists")
     template_switching_evidence = entries_by_id.get("template_switching", {}).get("evidence_commands") or []

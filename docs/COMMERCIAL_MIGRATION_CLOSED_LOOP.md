@@ -236,6 +236,7 @@ python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_pixel_office_floor_smoke.py
 python3 scripts/nextjs_pixel_office_dispatch_smoke.py
+python3 scripts/nextjs_control_tower_parity_smoke.py
 python3 scripts/local_brief_prepared_action_smoke.py
 python3 scripts/nextjs_local_brief_smoke.py
 python3 scripts/nextjs_customer_worker_dispatch_smoke.py
@@ -278,6 +279,14 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   exercises the Next Dispatch owner task dry-run and template async job form
   fallbacks with team/risk/priority forwarding, task/job readback through the
   Next proxy, and token/raw-prompt omission.
+
+  `python3 scripts/nextjs_control_tower_parity_smoke.py`
+  (`nextjs_control_tower_parity_v1`) starts isolated MIS API and Next.js
+  servers, verifies the split Control Tower surface across `/workspace`,
+  `/workspace/agents`, `/workspace/governance`, and `/workspace/deployment`,
+  compares direct and proxied `/dashboard/metrics`, reads `GET /agents`,
+  production-readiness, local-readiness, and storage-backend evidence through
+  Next, and checks the transcript for token-like leakage.
 
   `python3 scripts/nextjs_template_switching_smoke.py`
   (`nextjs_template_switching_parity_v1`) starts isolated MIS API and Next.js
@@ -503,6 +512,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/src/components/CommercialPage.tsx`
   - `ui/next-app/src/components/GovernancePage.tsx`
   - `ui/next-app/src/components/DeploymentPage.tsx`
+  - `ui/next-app/src/components/WorkspaceDashboard.tsx`
   - `ui/next-app/src/components/PixelOfficePage.tsx`
   - `ui/next-app/src/components/DispatchPage.tsx`
   - `ui/next-app/src/components/TemplateSwitchingPage.tsx`
@@ -513,6 +523,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py`
   - `scripts/nextjs_worker_dispatch_once_smoke.py`
   - `scripts/nextjs_pixel_office_floor_smoke.py`
+  - `scripts/nextjs_control_tower_parity_smoke.py`
   - `scripts/nextjs_template_switching_smoke.py`
   - `scripts/local_brief_prepared_action_smoke.py`
   - `scripts/nextjs_local_brief_smoke.py`

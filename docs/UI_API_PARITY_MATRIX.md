@@ -36,6 +36,7 @@ route retirement:
 
 | Capability | Matrix ID | Current status | Retirement state |
 | --- | --- | --- | --- |
+| Control tower | `control_tower` | `covered` | Not allowed |
 | Customer dispatch / Pixel Office | `pixel_office_and_dispatch` | `covered` | Not allowed |
 | Worker console | `worker_console` | `partial` | Not allowed |
 | Agent detail | `agent_detail` | `covered` | Not allowed |
@@ -61,6 +62,16 @@ route retirement:
   customer-worker prepared-action exact resume, and ledger-derived resume
   readback. Vite remains canonical until an explicit route retirement commit
   preserves `/workspace/pixel-office` deep links and reruns browser evidence.
+- Control Tower is now covered by split Next.js routes instead of a single
+  Vite `/admin` replacement. `/workspace` renders live `/dashboard/metrics`
+  cockpit readback with runtime health, OpenClaw import, task status, cost
+  leader, failure-rate, cost, memory, and approval KPIs; `/workspace/agents`
+  carries the agent performance drilldown from `GET /agents`;
+  `/workspace/governance` renders production, RBAC, session, and audit
+  evidence; and `/workspace/deployment` renders BYOC storage, backup, retention,
+  signed export, and connector-policy gates. Vite `/admin` remains until an
+  explicit route retirement commit preserves deep links, reruns browser
+  evidence, and keeps Agent Gateway CLI/API/MCP unchanged.
 - Worker console is still partial but now has a focused Next.js
   `/workspace/workers` surface. Next proves worker status, `/workers/fleet`
   lane readback, `/workers/fleet/hygiene` read-only cleanup preview, adapter
@@ -155,6 +166,7 @@ python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_pixel_office_floor_smoke.py
 python3 scripts/nextjs_pixel_office_dispatch_smoke.py
+python3 scripts/nextjs_control_tower_parity_smoke.py
 python3 scripts/local_brief_prepared_action_smoke.py
 python3 scripts/nextjs_local_brief_smoke.py
 python3 scripts/nextjs_customer_worker_dispatch_smoke.py
@@ -219,6 +231,14 @@ servers, proves `/workspace/pixel-office` exposes the owner dispatch workflow
 bridge, then exercises `/workspace/dispatch/customer-task` and
 `/workspace/dispatch/template-job` form fallbacks with team/risk/priority
 forwarding and Next proxy task/job readback without token leakage.
+
+`python3 scripts/nextjs_control_tower_parity_smoke.py`
+(`nextjs_control_tower_parity_v1`) starts isolated MIS API and Next.js servers,
+verifies `/workspace` split proof plus `/api/mis/dashboard/metrics`,
+`/api/mis/agents`, `/api/mis/security/production-readiness`,
+`/api/mis/local/readiness`, and `/api/mis/storage/backend-status`, opens
+`/workspace`, `/workspace/agents`, `/workspace/governance`, and
+`/workspace/deployment`, and checks the transcript for token-like leakage.
 
 `python3 scripts/nextjs_local_brief_smoke.py` (`nextjs_local_brief_v1`) starts
 isolated MIS API and Next.js servers, proves the Next

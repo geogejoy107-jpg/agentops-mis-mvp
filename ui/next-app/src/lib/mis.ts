@@ -9,6 +9,22 @@ export type DashboardMetrics = {
   pending_approvals?: number;
   stale_or_due_memories?: number;
   recent_runs?: RunSummary[];
+  task_status_distribution?: { status?: string; count?: number }[];
+  top_cost_agents?: { agent_id?: string; name?: string; cost_usd?: number }[];
+  runtime_health?: {
+    provider?: string;
+    status?: string;
+    detail?: string;
+    last_error?: string | null;
+    configured?: boolean;
+  }[];
+  openclaw_import?: {
+    agents?: number;
+    cron_jobs?: number;
+    enabled_cron_jobs?: number;
+    cron_runs?: number;
+    cron_tasks?: number;
+  };
 };
 
 export type TaskSummary = {
