@@ -489,6 +489,10 @@ layered `safe_read_commands`, `preview_commands`, and
 read immediately before copying a bounded `operator loop-driver --confirm-loop`
 command. It requires `tasks:read`, remains workspace-bound, and never runs
 loop-driver, workers, runtimes, approvals, shell commands, or ledger writes.
+Confirmed Hermes/OpenClaw customer-worker and installable worker execution
+paths consume this projection before live runtime invocation; they write only
+compact gate metadata/hash/status to audit/evidence and fail closed when bounded
+confirm or no-server-shell safety is not proven.
 
 `GET /api/operator/live-acceptance` is the read-only Hermes/OpenClaw live
 customer-worker acceptance freshness projection. It samples recent local worker

@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""Verify Hermes/OpenClaw worker entry points consume loop-supervision before live execution."""
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+import server  # noqa: E402
+from agentops_mis_cli import worker  # noqa: E402
+
+
+TOKEN_PATTERNS = [
+    re.compile(r"Authorization:", re.IGNORECASE),
+    re.compile(r"Bearer\s+(?!\[REDACTED\])[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
+    re.compile(r"agtok_[A-Za-z0-9_-]{16,}"),
+    re.compile(r"agtsess_[A-Za-z0-9_-]{16,}"),
+    re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"ntn_[A-Za-z0-9_-]{8,}"),
+]
+
+
+def require(condition: bool, message: str, failures: list[str]) -> None:
+    if not condition:
+        failures.append(message)
+
+
+def leaked(text: str) -> bool:
+    return any(pattern.search(text) for pattern in TOKEN_PATTERNS)
+
+
+def blocked_supervision(adapter: str, *, task_id: str | None = None, agent_id: str | None = None) -> dict:
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_loop_supervision",
+        "status": "blocked",
+        "summary": {
+            "items": 1,
+            "current_code_ok": True,
+            "can_confirm_all": False,
+            "record_required": False,
+        },
+        "items": [
+            {
+                "operation": "operator_loop_supervision_item",
+                "adapter": adapter,
+                "status": "blocked",
+                "can_preview_loop": True,
+                "can_confirm_bounded_loop": False,
+                "should_record_before_execute": False,
+                "ready_for_live_dispatch": False,
+                "blockers": ["smoke_blocked_supervision"],
+                "attention": [],
+                "review_pressure": {"token_omitted": True},
+                "gates": [
+                    {"id": "bounded_confirm", "ok": False, "status": "blocked", "confirm_required": True, "token_omitted": True},
+                    {"id": "server_shell_boundary", "ok": True, "status": "pass", "server_executes_shell": False, "token_omitted": True},
+                ],
+                "commands": {
+                    "recommended_next": f"agentops operator loop-supervision --adapter {adapter} --task-id {task_id or '<task_id>'}",
+                    "record_review": "agentops review queue --limit 20",
+                },
+                "next_commands": {
+                    "safe_read_commands": [f"agentops operator start-check --adapter {adapter} --limit 8"],
+                    "preview_commands": [],
+                    "confirm_required_commands": [],
+                    "recommended_next": f"agentops operator loop-supervision --adapter {adapter} --task-id {task_id or '<task_id>'}",
+                    "token_omitted": True,
+                },
+                "safety": {
+                    "read_only": True,
+                    "ledger_mutated": False,
+                    "live_execution_performed": False,
+                    "server_executes_shell": False,
+                    "token_omitted": True,
+                },
+                "token_omitted": True,
+            }
+        ],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "auth": {"mode": "local_dev_no_token", "required_scope": "tasks:read", "agent_id": agent_id, "token_omitted": True},
+        "token_omitted": True,
+    }
+
+
+def verify_server_customer_worker_consumption(failures: list[str]) -> dict:
+    original_operator_loop_supervision = server.operator_loop_supervision
+    blocked_payload = None
+    external_payload = None
+    try:
+        def fake_blocked(conn, headers, qs=None, auth_ctx=None):
+            adapter = ((qs or {}).get("adapter") or ["hermes"])[0]
+            task_id = ((qs or {}).get("task_id") or [None])[0]
+            agent_id = ((qs or {}).get("agent_id") or [None])[0]
+            return blocked_supervision(adapter, task_id=task_id, agent_id=agent_id)
+
+        server.operator_loop_supervision = fake_blocked
+        with server.db() as conn:
+            server.refresh_runtime_connectors(conn)
+            conn.execute("UPDATE runtime_connectors SET trust_status='trusted', trust_note=NULL WHERE runtime_connector_id='rtc_hermes_default_gateway'")
+            blocked_payload, status = server.run_customer_worker_task_workflow(conn, {
+                "adapter": "hermes",
+                "confirm_run": True,
+                "title": "Loop supervision blocked customer task",
+                "description": "This must stop before live Hermes execution because supervision is blocked.",
+                "acceptance_criteria": "Do not invoke Hermes.",
+            })
+            task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (blocked_payload.get("task_id"),)).fetchone()
+            audit_count = conn.execute(
+                "SELECT COUNT(*) c FROM audit_logs WHERE entity_id=? AND action='workflow.customer_worker_task.loop_supervision_blocked'",
+                (blocked_payload.get("task_id"),),
+            ).fetchone()["c"]
+        gate = blocked_payload.get("loop_supervision_gate") or {}
+        require(status == 409, f"server supervision block status mismatch: {status} {blocked_payload}", failures)
+        require(blocked_payload.get("reason") == "loop_supervision_blocked", f"server wrong block reason: {blocked_payload}", failures)
+        require(blocked_payload.get("live_execution_performed") is False, f"server block should not execute live runtime: {blocked_payload}", failures)
+        require(gate.get("operation") == "customer_worker_loop_supervision_gate", f"server gate missing: {blocked_payload}", failures)
+        require(gate.get("ok") is False and gate.get("can_confirm_bounded_loop") is False, f"server gate should fail confirm: {gate}", failures)
+        require(task is not None and task["status"] == "blocked", f"server blocked task missing: {blocked_payload}", failures)
+        require(audit_count >= 1, "server block audit missing", failures)
+
+        server.operator_loop_supervision = original_operator_loop_supervision
+        with server.db() as conn:
+            server.refresh_runtime_connectors(conn)
+            conn.execute("UPDATE runtime_connectors SET trust_status='trusted', trust_note=NULL WHERE runtime_connector_id='rtc_hermes_default_gateway'")
+            external_payload, status = server.run_customer_worker_task_workflow(conn, {
+                "adapter": "hermes",
+                "confirm_run": True,
+                "external_write_intent": True,
+                "external_action_type": "customer.portal.publish",
+                "target_resource": "mock://customer-portal/supervision",
+                "title": "Loop supervision external write gate",
+                "description": "Use live Hermes only after exact external write approval.",
+                "acceptance_criteria": "Prepared action must be created before live execution.",
+            })
+        external_gate = external_payload.get("loop_supervision_gate") or {}
+        require(status == 202, f"server external write gate status mismatch: {status} {external_payload}", failures)
+        require(external_payload.get("reason") == "external_write_prepared_action_required", f"server external reason mismatch: {external_payload}", failures)
+        require(external_payload.get("live_execution_performed") is False, f"server external path should not execute live runtime: {external_payload}", failures)
+        require(external_gate.get("operation") == "customer_worker_loop_supervision_gate", f"server external gate missing: {external_payload}", failures)
+        require(external_gate.get("live_execution_performed") is not True, f"server external gate should not execute live runtime: {external_gate}", failures)
+        require(external_gate.get("safety", {}).get("server_executes_shell") is False, f"server external gate shell proof missing: {external_gate}", failures)
+    finally:
+        server.operator_loop_supervision = original_operator_loop_supervision
+    return {"blocked": blocked_payload, "external": external_payload}
+
+
+class FakeWorkerClient:
+    workspace_id = "local-demo"
+    agent_id = "agt_worker_supervision_smoke"
+    api_key = ""
+
+    def __init__(self) -> None:
+        self.posts: list[tuple[str, dict]] = []
+        self.gets: list[tuple[str, dict | None]] = []
+
+    def get(self, path: str, query: dict | None = None):
+        self.gets.append((path, query))
+        if path == "/api/agent-gateway/tasks/pull":
+            return {
+                "tasks": [
+                    {
+                        "task_id": "tsk_worker_supervision_smoke",
+                        "title": "Worker supervision smoke",
+                        "description": "This live Hermes worker must stop before adapter execution when supervision blocks.",
+                        "acceptance_criteria": "No live adapter call.",
+                        "risk_level": "medium",
+                    }
+                ]
+            }
+        if path == "/api/agent-gateway/knowledge/evidence-packet":
+            return {
+                "operation": "knowledge_retrieval_evidence_packet",
+                "status": "ready",
+                "query_hash": "hash_query",
+                "metrics": {"recall_at_5": 1.0, "mrr": 1.0},
+                "task_context": {"task_id": "tsk_worker_supervision_smoke", "task_found": True, "query_source": "task_id", "task_text_omitted": True, "token_omitted": True},
+                "primary_search": {
+                    "results": [
+                        {
+                            "retrieval_id": "ret_worker_supervision",
+                            "doc_id": "doc_method",
+                            "chunk_id": "chunk_method",
+                            "path": "docs/AGENT_WORK_METHOD_BLOCK.md",
+                            "source_hash": "source_hash",
+                            "rank": 1,
+                        }
+                    ]
+                },
+            }
+        if path == "/api/operator/loop-supervision":
+            return blocked_supervision("hermes", task_id="tsk_worker_supervision_smoke", agent_id=self.agent_id)
+        if path.startswith("/api/agent-gateway/agent-plans/") and path.endswith("/verify"):
+            return {"verification": {"pass": True, "token_omitted": True}}
+        raise AssertionError(f"unexpected GET {path} {query}")
+
+    def post(self, path: str, payload: dict, timeout: int = 180):
+        self.posts.append((path, payload))
+        if path.endswith("/claim"):
+            return {"ok": True}
+        if path == "/api/agent-gateway/agent-plans":
+            return {"agent_plan": {"plan_id": "aplan_worker_supervision"}}
+        if path == "/api/agent-gateway/runs/start":
+            return {"run": {"run_id": "run_worker_supervision"}}
+        if path.endswith("/heartbeat"):
+            return {"ok": True}
+        if path == "/api/agent-gateway/audit":
+            return {"audit": {"audit_id": "aud_worker_supervision"}}
+        raise AssertionError(f"unexpected POST {path} {payload}")
+
+
+def verify_worker_consumption(failures: list[str]) -> dict:
+    parser = worker.build_parser()
+    args = parser.parse_args([
+        "--once",
+        "--adapter",
+        "hermes",
+        "--confirm-run",
+        "--allow-high-risk",
+        "--no-enforce-intake",
+    ])
+    called_adapter = {"value": False}
+    original_execute = worker.execute_adapter_with_retries
+    try:
+        def fail_if_called(_task, _args):
+            called_adapter["value"] = True
+            raise AssertionError("adapter execution should be blocked by loop supervision")
+
+        worker.execute_adapter_with_retries = fail_if_called
+        client = FakeWorkerClient()
+        result = worker.process_one_task(client, args)
+    finally:
+        worker.execute_adapter_with_retries = original_execute
+    gate = result.get("loop_supervision_gate") or {}
+    audit_posts = [payload for path, payload in client.posts if path == "/api/agent-gateway/audit"]
+    heartbeat_posts = [payload for path, payload in client.posts if path.endswith("/heartbeat")]
+    require(called_adapter["value"] is False, "worker called adapter despite blocked supervision", failures)
+    require(result.get("reason") == "loop_supervision_blocked", f"worker wrong block reason: {result}", failures)
+    require(result.get("live_execution_performed") is False, f"worker should not execute live runtime: {result}", failures)
+    require(gate.get("operation") == "worker_loop_supervision_gate", f"worker gate missing: {result}", failures)
+    require(gate.get("ok") is False and gate.get("can_confirm_bounded_loop") is False, f"worker gate should block confirm: {gate}", failures)
+    require(any(payload.get("status") == "failed" and payload.get("error_type") == "LoopSupervisionBlocked" for payload in heartbeat_posts), "worker failed heartbeat missing", failures)
+    require(any((payload.get("metadata") or {}).get("loop_supervision") for payload in audit_posts), "worker audit missing loop supervision metadata", failures)
+    return result
+
+
+def main() -> int:
+    failures: list[str] = []
+    server_result = verify_server_customer_worker_consumption(failures)
+    worker_result = verify_worker_consumption(failures)
+    serialized = json.dumps({"server": server_result, "worker": worker_result}, ensure_ascii=False)
+    require(not leaked(serialized), "loop supervision consumption leaked token-like material", failures)
+    print(json.dumps({
+        "ok": not failures,
+        "operation": "operator_loop_supervision_consumption_smoke",
+        "server_block_reason": (server_result.get("blocked") or {}).get("reason"),
+        "server_external_reason": (server_result.get("external") or {}).get("reason"),
+        "worker_block_reason": worker_result.get("reason"),
+        "live_execution_performed": False,
+        "secret_leaked": leaked(serialized),
+        "failures": failures,
+    }, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if not failures else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

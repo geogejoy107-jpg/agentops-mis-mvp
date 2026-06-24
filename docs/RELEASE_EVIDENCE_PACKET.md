@@ -124,6 +124,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/operator_loop_launch_packet_smoke.py`
 - `python3 scripts/operator_agent_loop_handoff_smoke.py`
 - `python3 scripts/operator_loop_supervision_smoke.py`
+- `python3 scripts/operator_loop_supervision_consumption_smoke.py`
 - `python3 scripts/operator_evidence_report_smoke.py`
 - `python3 scripts/operator_live_product_readiness_smoke.py`
 - `python3 scripts/local_runtime_identity_smoke.py`

@@ -64,6 +64,12 @@ safe read/preview/confirm-required commands, and no-server-shell proof. It is
 read-only: it does not run loop-driver, workers, Hermes/OpenClaw, approvals,
 shell commands, or ledger writes.
 
+Confirmed Hermes/OpenClaw customer-worker and installable worker paths now read
+the same gate before live runtime invocation. A blocked supervision gate stops
+before the adapter call and records compact audit/evidence metadata; RECORD
+pressure remains visible through `should_record_before_execute` and
+`recommended_next`.
+
 `start-check` is the preferred first read for a local loop. The CLI reads
 `GET /api/operator/start-check`, so Hermes/OpenClaw/Codex can use either the
 CLI or the local MIS HTTP API. It merges local readiness, worker readiness,

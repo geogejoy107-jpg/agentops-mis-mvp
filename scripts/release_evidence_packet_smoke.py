@@ -339,6 +339,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "operator_loop_supervision_consumption",
+        "command": "python3 scripts/operator_loop_supervision_consumption_smoke.py",
+        "summary": "Customer-worker and installable worker live Hermes/OpenClaw entry points consume loop-supervision before runtime execution, audit the gate, and block when bounded confirm is not ready.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "operator_evidence_report",
         "command": "python3 scripts/operator_evidence_report_smoke.py",
         "summary": "Run-level evidence report checks Agent Plan binding, approval, verified plan evidence, tool/eval/artifact/audit rows, memory review closure, worker knowledge retrieval, worker runtime summary events, raw memory/runtime omission and read-only DB stability.",

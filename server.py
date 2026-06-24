@@ -25636,7 +25636,119 @@ def customer_worker_loop_admission_readback(
     return packet if isinstance(packet, dict) else None
 
 
-def create_customer_worker_external_write_gate(conn, body: dict, adapter: str, connector_id: str | None, adapter_readiness: dict, title: str, description: str, acceptance: str, worker_agent_id: str) -> tuple[dict, int]:
+def customer_worker_loop_supervision_readback(
+    conn: sqlite3.Connection,
+    *,
+    adapter: str,
+    task_id: str | None = None,
+    agent_id: str | None = None,
+) -> dict | None:
+    """Return the pre-confirm loop supervision gate for customer-worker intake."""
+    if adapter not in {"hermes", "openclaw"}:
+        return None
+    qs: dict[str, list[str]] = {
+        "adapter": [adapter],
+        "limit": ["8"],
+    }
+    if task_id:
+        qs["task_id"] = [str(task_id)]
+    if agent_id:
+        qs["agent_id"] = [str(agent_id)]
+    try:
+        supervision = operator_loop_supervision(
+            conn,
+            {},
+            qs,
+            {"workspace_id": "local-demo", "agent_id": agent_id or ""},
+        )
+    except Exception as exc:
+        return {
+            "operation": "customer_worker_loop_supervision_gate",
+            "source_operation": "operator_loop_supervision",
+            "adapter": adapter,
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "status": "unavailable",
+            "ok": False,
+            "reason": "loop_supervision_unavailable",
+            "error": redact_text(str(exc), 220),
+            "contract": "customer-worker confirmed live execution could not read the pre-confirm supervision gate; live execution remains blocked before worker/runtime invocation",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }
+    items = supervision.get("items") if isinstance(supervision, dict) else []
+    item = next((row for row in items if isinstance(row, dict) and row.get("adapter") == adapter), {})
+    safety = item.get("safety") if isinstance(item.get("safety"), dict) else {}
+    next_commands = item.get("next_commands") if isinstance(item.get("next_commands"), dict) else {}
+    commands = item.get("commands") if isinstance(item.get("commands"), dict) else {}
+    gates = [
+        {
+            "id": gate.get("id"),
+            "ok": gate.get("ok") is True,
+            "status": gate.get("status"),
+            "confirm_required": gate.get("confirm_required") is True,
+            "server_executes_shell": gate.get("server_executes_shell") is True,
+            "token_omitted": True,
+        }
+        for gate in (item.get("gates") or [])
+        if isinstance(gate, dict)
+    ]
+    can_confirm = item.get("can_confirm_bounded_loop") is True
+    server_shell = safety.get("server_executes_shell") is True
+    blockers = [str(entry) for entry in (item.get("blockers") or []) if entry]
+    status = str(item.get("status") or supervision.get("status") or "unavailable")
+    ok = bool(can_confirm and not server_shell and not blockers and status not in {"blocked", "attention", "preview_only", "unavailable"})
+    return {
+        "operation": "customer_worker_loop_supervision_gate",
+        "source_operation": supervision.get("operation"),
+        "adapter": adapter,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "status": status,
+        "ok": ok,
+        "can_preview_loop": item.get("can_preview_loop") is True,
+        "can_confirm_bounded_loop": can_confirm,
+        "should_record_before_execute": item.get("should_record_before_execute") is True,
+        "ready_for_live_dispatch": item.get("ready_for_live_dispatch") is True,
+        "blockers": blockers,
+        "attention": [str(entry) for entry in (item.get("attention") or []) if entry],
+        "review_pressure": item.get("review_pressure") if isinstance(item.get("review_pressure"), dict) else {},
+        "gates": gates,
+        "commands": {
+            "recommended_next": commands.get("recommended_next") or next_commands.get("recommended_next"),
+            "preview_loop": commands.get("preview_loop"),
+            "confirm_loop": commands.get("confirm_loop"),
+            "record_review": commands.get("record_review"),
+        },
+        "next_commands": {
+            "safe_read_commands": next_commands.get("safe_read_commands") or [],
+            "preview_commands": next_commands.get("preview_commands") or [],
+            "confirm_required_commands": next_commands.get("confirm_required_commands") or [],
+            "recommended_next": next_commands.get("recommended_next") or commands.get("recommended_next"),
+            "token_omitted": True,
+        },
+        "contract": "customer-worker pre-confirm supervision gate; it is read before confirmed Hermes/OpenClaw execution and blocks live worker/runtime invocation when bounded confirm or safety gates fail",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
+def create_customer_worker_external_write_gate(conn, body: dict, adapter: str, connector_id: str | None, adapter_readiness: dict, title: str, description: str, acceptance: str, worker_agent_id: str, loop_supervision_gate: dict | None = None) -> tuple[dict, int]:
     now = now_iso()
     task_id = body.get("task_id") or stable_id("tsk_customer_worker_external_write_gate", adapter, title, now)
     agent_id = worker_agent_id
@@ -25748,7 +25860,17 @@ def create_customer_worker_external_write_gate(conn, body: dict, adapter: str, c
     })
     loop_admission_packet = customer_worker_loop_admission_readback(conn, adapter=adapter, task_id=task_id, agent_id=agent_id)
     runtime_event(conn, connector_id or "rtc_agent_gateway_local", "customer_worker_task.external_write_prepared_action_required", "waiting_approval", run_id=run_id, task_id=task_id, agent_id=agent_id, input_summary=f"{adapter} external write intent requires prepared action.", output_summary="Live execution paused before runtime invocation.", raw_payload_hash=stable_hash(normalized_args))
-    audit(conn, "system", "runtime-capability-policy", "workflow.customer_worker_task.external_write_prepared_action_required", "runs", run_id, None, {"status": "waiting_approval"}, {"adapter": adapter, "connector_id": connector_id, "approval_status": approval_status, "local_loop_admission": (loop_admission_packet or {}).get("operation"), "raw_output_omitted": True, "token_omitted": True})
+    audit(conn, "system", "runtime-capability-policy", "workflow.customer_worker_task.external_write_prepared_action_required", "runs", run_id, None, {"status": "waiting_approval"}, {
+        "adapter": adapter,
+        "connector_id": connector_id,
+        "approval_status": approval_status,
+        "local_loop_admission": (loop_admission_packet or {}).get("operation"),
+        "loop_supervision_status": (loop_supervision_gate or {}).get("status"),
+        "can_confirm_bounded_loop": (loop_supervision_gate or {}).get("can_confirm_bounded_loop") is True,
+        "should_record_before_execute": (loop_supervision_gate or {}).get("should_record_before_execute") is True,
+        "raw_output_omitted": True,
+        "token_omitted": True,
+    })
     conn.commit()
     return build_prepared_action_waiting_response(
         base={
@@ -25764,6 +25886,7 @@ def create_customer_worker_external_write_gate(conn, body: dict, adapter: str, c
             "note": "Live runtime execution was not started. Approve and resume the exact prepared action before external write execution.",
             "live_execution_performed": False,
             "local_loop_admission_packet": loop_admission_packet,
+            "loop_supervision_gate": loop_supervision_gate,
             "token_omitted": True,
         },
         approval_wall=approval_wall,
@@ -25790,8 +25913,10 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
     connector_trust = runtime_connector_trust(conn, connector_id, refresh_connectors=refresh_runtime_connectors)
     adapter_readiness = (worker_adapter_readiness(conn).get("adapters") or {}).get(adapter) or {}
     manifest_governance = ((adapter_readiness.get("capability_manifest") or {}).get("governance") or {})
+    live_task_id = body.get("task_id") or stable_id("tsk_customer_worker_task", adapter, title, call_id)
+    loop_supervision_gate = customer_worker_loop_supervision_readback(conn, adapter=adapter, task_id=live_task_id, agent_id=worker_agent_id)
     if adapter in {"hermes", "openclaw"} and confirm_run and connector_trust and connector_trust.get("trust_status") == "blocked":
-        task_id = body.get("task_id") or stable_id("tsk_customer_worker_trust_blocked", adapter, title, now_iso())
+        task_id = live_task_id
         agent_id = worker_agent_id
         ensure_gateway_agent(conn, agent_id, name=f"Customer {adapter} Worker", role="Customer Task Worker", runtime_type=adapter)
         now = now_iso()
@@ -25834,6 +25959,7 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "reason": "runtime_connector_trust_blocked",
             "note": reason,
             "local_loop_admission_packet": loop_admission_packet,
+            "loop_supervision_gate": loop_supervision_gate,
             "token_omitted": True,
         }, 409
     if (
@@ -25842,9 +25968,9 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
         and manifest_governance.get("requires_prepared_action_for_external_write") is True
         and customer_worker_external_write_intent(body, title, description, acceptance)
     ):
-        return create_customer_worker_external_write_gate(conn, body, adapter, connector_id, adapter_readiness, title, description, acceptance, worker_agent_id)
+        return create_customer_worker_external_write_gate(conn, {**body, "task_id": live_task_id}, adapter, connector_id, adapter_readiness, title, description, acceptance, worker_agent_id, loop_supervision_gate)
     if adapter in {"hermes", "openclaw"} and confirm_run and adapter_readiness.get("readiness") in {"unavailable", "blocked"}:
-        task_id = body.get("task_id") or stable_id("tsk_customer_worker_adapter_not_ready", adapter, title, now_iso())
+        task_id = live_task_id
         agent_id = worker_agent_id
         ensure_gateway_agent(conn, agent_id, name=f"Customer {adapter} Worker", role="Customer Task Worker", runtime_type=adapter)
         now = now_iso()
@@ -25896,10 +26022,11 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "recommended_action": adapter_readiness.get("recommended_action"),
             "note": reason,
             "local_loop_admission_packet": loop_admission_packet,
+            "loop_supervision_gate": loop_supervision_gate,
             "token_omitted": True,
         }, 409
     if adapter in {"hermes", "openclaw"} and not confirm_run:
-        task_id = body.get("task_id") or stable_id("tsk_customer_worker_plan", adapter, title, now_iso())
+        task_id = live_task_id
         agent_id = worker_agent_id
         ensure_gateway_agent(conn, agent_id, name=f"Customer {adapter} Worker", role="Customer Task Worker", runtime_type=adapter)
         now = now_iso()
@@ -25936,13 +26063,74 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "reason": "confirm_run_required_for_live_adapter",
             "note": "Task was planned but live Hermes/OpenClaw worker execution requires explicit confirmation.",
             "local_loop_admission_packet": loop_admission_packet,
+            "loop_supervision_gate": loop_supervision_gate,
             "token_omitted": True,
         }, 201
+
+    if adapter in {"hermes", "openclaw"} and confirm_run and loop_supervision_gate and loop_supervision_gate.get("ok") is not True:
+        task_id = live_task_id
+        agent_id = worker_agent_id
+        ensure_gateway_agent(conn, agent_id, name=f"Customer {adapter} Worker", role="Customer Task Worker", runtime_type=adapter)
+        now = now_iso()
+        row = {
+            "task_id": task_id,
+            "title": title,
+            "description": description,
+            "requester_id": body.get("requester_id", "usr_customer_demo"),
+            "owner_agent_id": agent_id,
+            "collaborator_agent_ids": json.dumps(body.get("selected_agent_ids") or [], ensure_ascii=False),
+            "status": "blocked",
+            "priority": coerce_choice(body.get("priority"), VALID_PRIORITIES, "high"),
+            "due_date": body.get("due_date"),
+            "acceptance_criteria": acceptance,
+            "risk_level": coerce_choice(body.get("risk_level"), VALID_RISK_LEVELS, "medium"),
+            "budget_limit_usd": float(body.get("budget_limit_usd") or 1.0),
+            "created_at": now,
+            "updated_at": now,
+        }
+        upsert_task(conn, row, "customer-worker-task")
+        loop_admission_packet = customer_worker_loop_admission_readback(conn, adapter=adapter, task_id=task_id, agent_id=agent_id)
+        reason = redact_text(
+            (loop_supervision_gate.get("commands") or {}).get("recommended_next")
+            or loop_supervision_gate.get("reason")
+            or f"{adapter} loop supervision is not ready for confirmed live execution.",
+            260,
+        )
+        runtime_event(conn, connector_id, "customer_worker_task.loop_supervision_blocked", "blocked", task_id=task_id, agent_id=agent_id, input_summary=f"{adapter} worker live execution blocked by loop supervision.", output_summary=reason)
+        audit(conn, "system", "operator-loop-supervision", "workflow.customer_worker_task.loop_supervision_blocked", "tasks", task_id, None, row, {
+            "adapter": adapter,
+            "connector_id": connector_id,
+            "loop_supervision_status": loop_supervision_gate.get("status"),
+            "can_confirm_bounded_loop": loop_supervision_gate.get("can_confirm_bounded_loop") is True,
+            "should_record_before_execute": loop_supervision_gate.get("should_record_before_execute") is True,
+            "recommended_next": (loop_supervision_gate.get("commands") or {}).get("recommended_next"),
+            "local_loop_admission": (loop_admission_packet or {}).get("operation"),
+            "live_execution_performed": False,
+            "raw_output_omitted": True,
+            "token_omitted": True,
+        })
+        conn.commit()
+        return {
+            "provider": "agentops-worker",
+            "workflow": "customer_worker_task",
+            "dry_run": True,
+            "ok": False,
+            "adapter": adapter,
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "connector_id": connector_id,
+            "reason": "loop_supervision_blocked",
+            "note": reason,
+            "local_loop_admission_packet": loop_admission_packet,
+            "loop_supervision_gate": loop_supervision_gate,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        }, 409
 
     dispatch = dispatch_local_worker_once(conn, {
         "adapter": adapter,
         "confirm_run": confirm_run,
-        "task_id": body.get("task_id"),
+        "task_id": live_task_id if adapter in {"hermes", "openclaw"} else body.get("task_id"),
         "title": title,
         "description": description,
         "acceptance_criteria": acceptance,
@@ -26102,6 +26290,7 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
                 "worker_result": dispatch.get("worker_result"),
                 "error": dispatch.get("error") or "Customer delivery approval blocked by plan evidence manifest gate.",
                 "local_loop_admission_packet": loop_admission_packet,
+                "loop_supervision_gate": loop_supervision_gate,
                 "token_omitted": True,
             }, 409
         delivery_approval_id = stable_id("ap_customer_worker_delivery", run_id)
@@ -26169,6 +26358,7 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
         "worker_result": dispatch.get("worker_result"),
         "error": dispatch.get("error"),
         "local_loop_admission_packet": loop_admission_packet,
+        "loop_supervision_gate": loop_supervision_gate,
         "token_omitted": True,
     }, 201
 

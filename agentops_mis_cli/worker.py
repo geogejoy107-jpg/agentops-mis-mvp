@@ -703,7 +703,7 @@ def worker_external_write_intent(task: dict, args, capability: dict) -> bool:
     return any(keyword.lower() in combined for keyword in EXTERNAL_WRITE_INTENT_KEYWORDS)
 
 
-def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, plan_id: str, run_id: str, capability: dict) -> dict:
+def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, plan_id: str, run_id: str, capability: dict, loop_supervision_gate: dict | None = None) -> dict:
     task_id = task["task_id"]
     action_type = f"agent_worker.{args.adapter}.external_write"
     target_resource = f"{args.adapter}://external-write/{task_id}"
@@ -769,6 +769,7 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
             "tool_call_id": tool_call.get("tool_call_id"),
             "approval_id": approval.get("approval_id"),
             "prepared_action_id": prepared_action.get("action_id"),
+            "loop_supervision": loop_supervision_gate,
             "prompt_profile_id": prompt_profile.get("profile_id"),
             "prompt_profile_version": prompt_profile.get("version"),
             "prompt_profile_hash": prompt_profile.get("profile_hash"),
@@ -789,6 +790,7 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
         "approval_id": approval.get("approval_id"),
         "prepared_action_id": prepared_action.get("action_id"),
         "prepared_action_hash": prepared_action.get("action_hash"),
+        "loop_supervision_gate": loop_supervision_gate,
         "prompt_profile": {
             "profile_id": prompt_profile.get("profile_id"),
             "version": prompt_profile.get("version"),
@@ -989,6 +991,111 @@ def compact_worker_knowledge_evidence(packet: dict) -> dict:
     return core
 
 
+def compact_worker_loop_supervision_gate(payload: dict, *, adapter: str, task_id: str, agent_id: str) -> dict:
+    items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    item = next((row for row in items if isinstance(row, dict) and row.get("adapter") == adapter), {})
+    safety = item.get("safety") if isinstance(item.get("safety"), dict) else {}
+    next_commands = item.get("next_commands") if isinstance(item.get("next_commands"), dict) else {}
+    commands = item.get("commands") if isinstance(item.get("commands"), dict) else {}
+    gates = [
+        {
+            "id": gate.get("id"),
+            "ok": gate.get("ok") is True,
+            "status": gate.get("status"),
+            "confirm_required": gate.get("confirm_required") is True,
+            "server_executes_shell": gate.get("server_executes_shell") is True,
+            "token_omitted": True,
+        }
+        for gate in (item.get("gates") or [])
+        if isinstance(gate, dict)
+    ]
+    blockers = [str(entry) for entry in (item.get("blockers") or []) if entry]
+    status = str(item.get("status") or payload.get("status") or "unavailable")
+    can_confirm = item.get("can_confirm_bounded_loop") is True
+    server_shell = safety.get("server_executes_shell") is True
+    ok = bool(can_confirm and not server_shell and not blockers and status not in {"blocked", "attention", "preview_only", "unavailable"})
+    core = {
+        "operation": "worker_loop_supervision_gate",
+        "source_operation": payload.get("operation"),
+        "source": "/api/operator/loop-supervision",
+        "adapter": adapter,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "status": status,
+        "ok": ok,
+        "can_preview_loop": item.get("can_preview_loop") is True,
+        "can_confirm_bounded_loop": can_confirm,
+        "should_record_before_execute": item.get("should_record_before_execute") is True,
+        "ready_for_live_dispatch": item.get("ready_for_live_dispatch") is True,
+        "current_code_ok": ((payload.get("summary") or {}).get("current_code_ok") is True) if isinstance(payload.get("summary"), dict) else None,
+        "blockers": blockers,
+        "attention": [str(entry) for entry in (item.get("attention") or []) if entry],
+        "review_pressure": item.get("review_pressure") if isinstance(item.get("review_pressure"), dict) else {},
+        "blocked_gate_ids": [gate.get("id") for gate in gates if gate.get("ok") is not True and gate.get("status") == "blocked"],
+        "gates": gates,
+        "recommended_next": commands.get("recommended_next") or next_commands.get("recommended_next"),
+        "commands": {
+            "recommended_next": commands.get("recommended_next") or next_commands.get("recommended_next"),
+            "preview_loop": commands.get("preview_loop"),
+            "confirm_loop": commands.get("confirm_loop"),
+            "record_review": commands.get("record_review"),
+        },
+        "read_only": True,
+        "live_execution_performed": False,
+        "server_executes_shell": False,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    }
+    core["supervision_hash"] = stable_hash({
+        "operation": core["operation"],
+        "adapter": adapter,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "status": core["status"],
+        "ok": core["ok"],
+        "can_confirm_bounded_loop": core["can_confirm_bounded_loop"],
+        "should_record_before_execute": core["should_record_before_execute"],
+        "blocked_gate_ids": core["blocked_gate_ids"],
+        "recommended_next": core["recommended_next"],
+    })
+    return core
+
+
+def fetch_worker_loop_supervision_gate(client: AgentOpsClient, task: dict, args) -> dict | None:
+    if args.adapter not in {"hermes", "openclaw"}:
+        return None
+    task_id = str(task.get("task_id") or "").strip()
+    try:
+        payload = client.get("/api/operator/loop-supervision", {
+            "adapter": args.adapter,
+            "limit": 8,
+            "task_id": task_id,
+            "agent_id": client.agent_id,
+        })
+        return compact_worker_loop_supervision_gate(payload, adapter=args.adapter, task_id=task_id, agent_id=client.agent_id)
+    except Exception as exc:
+        return {
+            "operation": "worker_loop_supervision_gate",
+            "source": "/api/operator/loop-supervision",
+            "adapter": args.adapter,
+            "task_id": task_id,
+            "agent_id": client.agent_id,
+            "status": "unavailable",
+            "ok": False,
+            "reason": "loop_supervision_unavailable",
+            "error": redact_text(str(exc), 220),
+            "read_only": True,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        }
+
+
 def create_worker_agent_plan(client: AgentOpsClient, task: dict, args, knowledge_evidence: dict | None = None) -> dict:
     risk = task.get("risk_level") or "medium"
     knowledge_evidence = knowledge_evidence or {}
@@ -1176,8 +1283,56 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
 
     capability = adapter_capability_profile(args.adapter)
     secret_boundary = worker_secret_boundary_metadata()
+    loop_supervision_gate = fetch_worker_loop_supervision_gate(client, task, args) if args.confirm_run else None
+    if args.adapter in {"hermes", "openclaw"} and args.confirm_run and (loop_supervision_gate or {}).get("ok") is not True:
+        output_summary = redact_text(
+            (loop_supervision_gate or {}).get("recommended_next")
+            or (loop_supervision_gate or {}).get("reason")
+            or f"{args.adapter} loop supervision blocked live worker execution.",
+            260,
+        )
+        client.post(f"/api/agent-gateway/runs/{run_id}/heartbeat", {
+            "workspace_id": client.workspace_id,
+            "status": "failed",
+            "output_summary": output_summary,
+            "duration_ms": 0,
+            "output_tokens": 0,
+            "cost_usd": 0.0,
+            "error_type": "LoopSupervisionBlocked",
+            "error_message": output_summary,
+        })
+        client.post("/api/agent-gateway/audit", {
+            "workspace_id": client.workspace_id,
+            "agent_id": client.agent_id,
+            "action": "agent_worker.loop_supervision_blocked",
+            "entity_type": "runs",
+            "entity_id": run_id,
+            "task_id": task_id,
+            "run_id": run_id,
+            "metadata": {
+                "adapter": args.adapter,
+                "agent_plan_id": plan_id,
+                "loop_supervision": loop_supervision_gate,
+                "live_execution_performed": False,
+                **secret_boundary,
+            },
+        })
+        return {
+            "processed": False,
+            "ok": False,
+            "task_id": task_id,
+            "run_id": run_id,
+            "plan_id": plan_id,
+            "adapter": args.adapter,
+            "reason": "loop_supervision_blocked",
+            "live_execution_performed": False,
+            "loop_supervision_gate": loop_supervision_gate,
+            "output_summary": output_summary,
+            "secret_boundary": secret_boundary,
+            "token_omitted": True,
+        }
     if worker_external_write_intent(task, args, capability):
-        return create_worker_external_write_gate(client, task, args, plan_id, run_id, capability)
+        return create_worker_external_write_gate(client, task, args, plan_id, run_id, capability, loop_supervision_gate)
 
     result = execute_adapter_with_retries(task, args)
     tool_risk = max_risk(task.get("risk_level"), capability.get("risk_floor"))
@@ -1229,6 +1384,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "knowledge_retrieval_paths": knowledge_evidence.get("paths") or [],
             "knowledge_retrieval_source_hashes": knowledge_evidence.get("source_hashes") or [],
             "knowledge_retrieval_metrics": knowledge_evidence.get("metrics") or {},
+            "loop_supervision_gate": loop_supervision_gate,
             "knowledge_retrieval_omissions": {
                 "query_omitted": True,
                 "snippet_omitted": True,
@@ -1305,6 +1461,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "knowledge_retrieval_status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
             "knowledge_retrieval_task_context": knowledge_evidence.get("task_context") or {},
             "knowledge_retrieval_metrics": knowledge_evidence.get("metrics") or {},
+            "loop_supervision_gate": loop_supervision_gate,
             "knowledge_retrieval_omissions": {
                 "query_omitted": True,
                 "snippet_omitted": True,
@@ -1385,6 +1542,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "knowledge_retrieval_ids": knowledge_evidence.get("retrieval_ids") or [],
             "knowledge_retrieval_paths": knowledge_evidence.get("paths") or [],
             "knowledge_retrieval_source_hashes": knowledge_evidence.get("source_hashes") or [],
+            "loop_supervision_gate": loop_supervision_gate,
             "knowledge_retrieval_omissions": {
                 "query_omitted": True,
                 "snippet_omitted": True,
@@ -1445,6 +1603,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "raw_response_omitted": True,
             "token_omitted": True,
         },
+        "loop_supervision_gate": loop_supervision_gate,
         "secret_boundary": secret_boundary,
     }
 
