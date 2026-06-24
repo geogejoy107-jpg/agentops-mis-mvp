@@ -1400,7 +1400,10 @@ now add preview-first launchd/systemd load, unload, and restart control. Without
 `--confirm-control` the command only returns planned OS commands and service
 check evidence. With `--confirm-control` it may mutate local OS service state on
 the agent machine, while still refusing load/restart for token-like service
-files or Hermes/OpenClaw templates missing `--confirm-run`.
+files or Hermes/OpenClaw templates missing `--confirm-run`. Confirmed `load`
+is idempotent when the service is already loaded: it returns
+`service_control_skipped:true`, does not call launchd/systemd again, and does
+not count as live runtime execution.
 
 Latest remote worker fleet status smoke:
 
