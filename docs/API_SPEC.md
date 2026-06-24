@@ -321,6 +321,13 @@ but they are reported separately from approved memory authority.
 workspace, task, and agent and passes verification. Pass `agent_plan_id` in the
 run-start request to make the binding explicit; the run stores `agent_plan_id`
 and `plan_hash` for later plan-evidence manifest checks.
+For governed live runtimes (`hermes`, `openclaw`, `codex`), run-start also
+reads `/api/operator/loop-supervision` before creating the run. If bounded
+confirm or no-server-shell safety is not proven, it fails closed with
+`428 run_start_loop_supervision_blocked`, writes audit/runtime-event evidence,
+and does not create a run. When allowed, the response includes a compact
+`loop_supervision_gate` and safe `supervision_hash`; raw prompts, responses,
+runtime payloads and tokens remain omitted.
 
 `POST /api/agent-gateway/prepared-actions` creates the durable Approval Wall
 pause/resume primitive. The request binds a run, optional tool call, action

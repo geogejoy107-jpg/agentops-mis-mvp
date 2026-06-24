@@ -279,13 +279,16 @@ def verify_worker_consumption(failures: list[str]) -> dict:
         worker.execute_adapter_with_retries = original_execute
     gate = result.get("loop_supervision_gate") or {}
     audit_posts = [payload for path, payload in client.posts if path == "/api/agent-gateway/audit"]
+    run_start_posts = [payload for path, payload in client.posts if path == "/api/agent-gateway/runs/start"]
     heartbeat_posts = [payload for path, payload in client.posts if path.endswith("/heartbeat")]
     require(called_adapter["value"] is False, "worker called adapter despite blocked supervision", failures)
+    require(not run_start_posts, f"worker should block before run_start when supervision blocks: {run_start_posts}", failures)
     require(result.get("reason") == "loop_supervision_blocked", f"worker wrong block reason: {result}", failures)
     require(result.get("live_execution_performed") is False, f"worker should not execute live runtime: {result}", failures)
+    require(result.get("run_start_attempted") is False, f"worker should report pre-run_start block: {result}", failures)
     require(gate.get("operation") == "worker_loop_supervision_gate", f"worker gate missing: {result}", failures)
     require(gate.get("ok") is False and gate.get("can_confirm_bounded_loop") is False, f"worker gate should block confirm: {gate}", failures)
-    require(any(payload.get("status") == "failed" and payload.get("error_type") == "LoopSupervisionBlocked" for payload in heartbeat_posts), "worker failed heartbeat missing", failures)
+    require(not heartbeat_posts, f"worker should not heartbeat a run that was never started: {heartbeat_posts}", failures)
     require(any((payload.get("metadata") or {}).get("loop_supervision") for payload in audit_posts), "worker audit missing loop supervision metadata", failures)
     return result
 

@@ -1664,6 +1664,15 @@ Example:
 The created run stores `agent_plan_id` and `plan_hash`; the response includes
 an `agent_plan.verification_pass` summary so operators can audit the execution
 boundary before later binding a plan-evidence manifest.
+For `runtime_type` `hermes`, `openclaw`, or `codex`, `runs/start` also consumes
+the read-only loop-supervision gate before a run row is created. If the gate is
+blocked, unavailable, preview-only, or cannot prove bounded confirm plus
+no-server-shell safety, the endpoint returns
+`428 run_start_loop_supervision_blocked`, writes task-scoped audit/runtime-event
+evidence, and reports `live_execution_performed:false`. If the gate allows
+run-start, the response includes `loop_supervision_gate` and
+`agent_plan.loop_supervision_hash`; these are safe hashes/statuses, not raw
+runtime transcripts or credentials.
 If `run_id` already exists, `runs/start` is idempotent only for the same
 `workspace_id`, `task_id`, `agent_id`, `agent_plan_id`, and `plan_hash`.
 Attempts to rebind an existing run to another Agent Plan or hash fail with

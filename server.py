@@ -199,6 +199,7 @@ VALID_PRIORITIES = {"low", "medium", "high", "critical"}
 VALID_EXECUTION_EVIDENCE_GAP_DECISIONS = {"accepted_remediation", "waived", "reopen"}
 VALID_TOOL_CATEGORIES = {"browser", "github", "file", "shell", "email", "notion", "discord", "database", "mcp", "custom"}
 VALID_RUNTIME_TYPES = {"mock", "claude_code", "codex", "openhands", "crewai", "langgraph", "openclaw", "hermes"}
+RUN_START_LOOP_SUPERVISION_RUNTIME_TYPES = {"hermes", "openclaw", "codex"}
 VALID_MEMORY_TYPES = {
     "policy",
     "sop",
@@ -7624,6 +7625,152 @@ def resolve_agent_plan_for_run(conn: sqlite3.Connection, body: dict, task: sqlit
     }, None
 
 
+def agent_gateway_run_start_loop_supervision_readback(
+    conn: sqlite3.Connection,
+    *,
+    runtime_type: str,
+    workspace_id: str,
+    task_id: str,
+    agent_id: str,
+) -> dict | None:
+    if runtime_type not in RUN_START_LOOP_SUPERVISION_RUNTIME_TYPES:
+        return None
+    qs: dict[str, list[str]] = {
+        "limit": ["8"],
+        "task_id": [str(task_id)],
+        "agent_id": [str(agent_id)],
+        "include_codex": ["true"],
+    }
+    if runtime_type in {"hermes", "openclaw"}:
+        qs["adapter"] = [runtime_type]
+    try:
+        supervision = operator_loop_supervision(
+            conn,
+            {},
+            qs,
+            {"workspace_id": workspace_id, "agent_id": agent_id},
+        )
+    except Exception as exc:
+        return {
+            "operation": "agent_gateway_run_start_loop_supervision_gate",
+            "source_operation": "operator_loop_supervision",
+            "runtime_type": runtime_type,
+            "adapter": runtime_type if runtime_type in {"hermes", "openclaw"} else None,
+            "workspace_id": workspace_id,
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "status": "unavailable",
+            "ok": False,
+            "reason": "loop_supervision_unavailable",
+            "error": redact_text(str(exc), 220),
+            "contract": "Agent Gateway run_start could not read loop supervision; live-runtime run_start remains blocked before run creation.",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "raw_content_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }
+    items = supervision.get("items") if isinstance(supervision, dict) else []
+    item = {}
+    if runtime_type in {"hermes", "openclaw"}:
+        item = next((row for row in items if isinstance(row, dict) and row.get("adapter") == runtime_type), {})
+    safety = item.get("safety") if isinstance(item.get("safety"), dict) else {}
+    summary = supervision.get("summary") if isinstance(supervision, dict) and isinstance(supervision.get("summary"), dict) else {}
+    commands = item.get("commands") if isinstance(item.get("commands"), dict) else {}
+    next_commands = item.get("next_commands") if isinstance(item.get("next_commands"), dict) else {}
+    gates = [
+        {
+            "id": gate.get("id"),
+            "ok": gate.get("ok") is True,
+            "status": gate.get("status"),
+            "confirm_required": gate.get("confirm_required") is True,
+            "server_executes_shell": gate.get("server_executes_shell") is True,
+            "token_omitted": True,
+        }
+        for gate in (item.get("gates") or [])
+        if isinstance(gate, dict)
+    ]
+    blockers = [str(entry) for entry in (item.get("blockers") or []) if entry]
+    if runtime_type == "codex":
+        status = "ready_to_confirm" if summary.get("current_code_ok") is True and not any(str((row or {}).get("status")) == "blocked" for row in items if isinstance(row, dict)) else str(supervision.get("status") or "attention")
+        can_confirm = summary.get("current_code_ok") is True
+        server_shell = False
+        ok = bool(can_confirm and status not in {"blocked", "attention", "preview_only", "unavailable"})
+    else:
+        status = str(item.get("status") or supervision.get("status") or "unavailable")
+        can_confirm = item.get("can_confirm_bounded_loop") is True
+        server_shell = safety.get("server_executes_shell") is True
+        ok = bool(can_confirm and not server_shell and not blockers and status not in {"blocked", "attention", "preview_only", "unavailable"})
+    core = {
+        "operation": "agent_gateway_run_start_loop_supervision_gate",
+        "source_operation": supervision.get("operation") if isinstance(supervision, dict) else None,
+        "source": "/api/operator/loop-supervision",
+        "runtime_type": runtime_type,
+        "adapter": runtime_type if runtime_type in {"hermes", "openclaw"} else None,
+        "workspace_id": workspace_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "status": status,
+        "ok": ok,
+        "can_preview_loop": item.get("can_preview_loop") is True if item else None,
+        "can_confirm_bounded_loop": can_confirm,
+        "should_record_before_execute": item.get("should_record_before_execute") is True if item else False,
+        "ready_for_live_dispatch": item.get("ready_for_live_dispatch") is True if item else None,
+        "current_code_ok": summary.get("current_code_ok") is True,
+        "blockers": blockers,
+        "attention": [str(entry) for entry in (item.get("attention") or []) if entry] if item else [],
+        "review_pressure": item.get("review_pressure") if isinstance(item.get("review_pressure"), dict) else {},
+        "gates": gates,
+        "commands": {
+            "recommended_next": commands.get("recommended_next") or next_commands.get("recommended_next"),
+            "preview_loop": commands.get("preview_loop"),
+            "confirm_loop": commands.get("confirm_loop"),
+            "record_review": commands.get("record_review"),
+        },
+        "next_commands": {
+            "safe_read_commands": next_commands.get("safe_read_commands") or [],
+            "preview_commands": next_commands.get("preview_commands") or [],
+            "confirm_required_commands": next_commands.get("confirm_required_commands") or [],
+            "recommended_next": next_commands.get("recommended_next") or commands.get("recommended_next"),
+            "token_omitted": True,
+        },
+        "contract": "Agent Gateway run_start precondition for governed live runtimes; it reads loop supervision before run creation and blocks Hermes/OpenClaw/Codex starts when bounded confirm or no-server-shell safety is not proven.",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+    core["supervision_hash"] = stable_hash({
+        "operation": core["operation"],
+        "runtime_type": runtime_type,
+        "adapter": core["adapter"],
+        "workspace_id": workspace_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "status": core["status"],
+        "ok": core["ok"],
+        "can_confirm_bounded_loop": core["can_confirm_bounded_loop"],
+        "should_record_before_execute": core["should_record_before_execute"],
+        "current_code_ok": core["current_code_ok"],
+        "blockers": core["blockers"],
+        "recommended_next": core["commands"]["recommended_next"],
+    })
+    return core
+
+
 def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["20"])[0]), 1), 100)
@@ -7768,6 +7915,59 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
         return plan_error
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
     agent = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
+    runtime_type = coerce_choice(body.get("runtime_type") or agent["runtime_type"], VALID_RUNTIME_TYPES, "mock")
+    loop_supervision_gate = agent_gateway_run_start_loop_supervision_readback(
+        conn,
+        runtime_type=runtime_type,
+        workspace_id=ident["workspace_id"],
+        task_id=task_id,
+        agent_id=agent_id,
+    )
+    if loop_supervision_gate and loop_supervision_gate.get("ok") is not True:
+        reason = redact_text(
+            ((loop_supervision_gate.get("commands") or {}).get("recommended_next"))
+            or loop_supervision_gate.get("reason")
+            or f"{runtime_type} loop supervision is not ready for Agent Gateway run_start.",
+            260,
+        )
+        runtime_event(
+            conn,
+            "rtc_agent_gateway_local",
+            "run.start.loop_supervision_blocked",
+            "blocked",
+            task_id=task_id,
+            agent_id=agent_id,
+            input_summary=f"{runtime_type} run_start blocked by loop supervision.",
+            output_summary=reason,
+        )
+        audit(conn, "agent", agent_id, "agent_gateway.run_start_loop_supervision_blocked", "tasks", task_id, None, dict(task), {
+            "runtime_type": runtime_type,
+            "agent_plan_id": plan_binding["plan_id"],
+            "plan_hash": plan_binding["plan_hash"],
+            "loop_supervision": loop_supervision_gate,
+            "loop_supervision_hash": loop_supervision_gate.get("supervision_hash"),
+            "live_execution_performed": False,
+            "token_omitted": True,
+        })
+        conn.commit()
+        return {
+            "error": "run_start_loop_supervision_blocked",
+            "message": "Agent Gateway run_start for governed live runtimes requires loop supervision to prove bounded confirm and no-server-shell safety before a run is created.",
+            "runtime_type": runtime_type,
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "agent_plan": {
+                "plan_id": plan_binding["plan_id"],
+                "plan_hash": plan_binding["plan_hash"],
+                "verification_pass": (plan_binding.get("verification") or {}).get("pass") is True,
+                "verification_result_hash": plan_binding.get("verification_result_hash"),
+                "token_omitted": True,
+            },
+            "loop_supervision_gate": loop_supervision_gate,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        }, 428
     started = now_iso()
     run_id = body.get("run_id") or new_id("run_gw")
     existing_run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
@@ -7801,7 +8001,7 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
         "workspace_id": ident["workspace_id"],
         "task_id": task_id,
         "agent_id": agent_id,
-        "runtime_type": coerce_choice(body.get("runtime_type") or agent["runtime_type"], VALID_RUNTIME_TYPES, "mock"),
+        "runtime_type": runtime_type,
         "status": coerce_choice(body.get("status"), {"running", "completed", "failed", "blocked", "waiting_approval"}, "running"),
         "started_at": body.get("started_at") or started,
         "ended_at": body.get("ended_at"),
@@ -7830,11 +8030,18 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
         "agent_plan_id": plan_binding["plan_id"],
         "plan_hash": plan_binding["plan_hash"],
         "verification_result_hash": plan_binding.get("verification_result_hash"),
+        "loop_supervision": loop_supervision_gate,
+        "loop_supervision_hash": (loop_supervision_gate or {}).get("supervision_hash"),
+        "live_execution_performed": False,
     })
     conn.execute("UPDATE tasks SET status='running', owner_agent_id=COALESCE(NULLIF(owner_agent_id,''), ?), updated_at=? WHERE task_id=?", (agent_id, now_iso(), task_id))
     conn.execute("UPDATE agents SET status='running', updated_at=? WHERE agent_id=?", (now_iso(), agent_id))
     runtime_event(conn, "rtc_agent_gateway_local", "run.start", "running", task_id=task_id, run_id=run_id, agent_id=agent_id, input_summary=row["input_summary"], output_summary=f"Run bound to agent_plan {plan_binding['plan_id']}.")
-    return build_run_start_success_response(run=row, outcome=outcome, plan_binding=plan_binding), 201 if outcome == "created" else 200
+    payload = build_run_start_success_response(run=row, outcome=outcome, plan_binding=plan_binding)
+    if loop_supervision_gate:
+        payload["loop_supervision_gate"] = loop_supervision_gate
+        payload["agent_plan"]["loop_supervision_hash"] = loop_supervision_gate.get("supervision_hash")
+    return payload, 201 if outcome == "created" else 200
 
 
 def agent_gateway_run_heartbeat(conn, run_id: str, body) -> tuple[dict, int]:

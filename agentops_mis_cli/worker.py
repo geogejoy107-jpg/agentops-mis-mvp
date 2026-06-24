@@ -1269,6 +1269,49 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     verified_plan = client.get(f"/api/agent-gateway/agent-plans/{plan_id}/verify")
     if not (verified_plan.get("verification") or {}).get("pass"):
         raise RuntimeError(f"agent plan verification failed before run_start: {json_dumps(verified_plan.get('verification') or {})}")
+
+    capability = adapter_capability_profile(args.adapter)
+    secret_boundary = worker_secret_boundary_metadata()
+    loop_supervision_gate = fetch_worker_loop_supervision_gate(client, task, args) if args.confirm_run else None
+    if args.adapter in {"hermes", "openclaw"} and args.confirm_run and (loop_supervision_gate or {}).get("ok") is not True:
+        output_summary = redact_text(
+            (loop_supervision_gate or {}).get("recommended_next")
+            or (loop_supervision_gate or {}).get("reason")
+            or f"{args.adapter} loop supervision blocked live worker execution.",
+            260,
+        )
+        client.post("/api/agent-gateway/audit", {
+            "workspace_id": client.workspace_id,
+            "agent_id": client.agent_id,
+            "action": "agent_worker.loop_supervision_blocked",
+            "entity_type": "tasks",
+            "entity_id": task_id,
+            "task_id": task_id,
+            "metadata": {
+                "adapter": args.adapter,
+                "agent_plan_id": plan_id,
+                "loop_supervision": loop_supervision_gate,
+                "live_execution_performed": False,
+                "run_start_attempted": False,
+                **secret_boundary,
+            },
+        })
+        return {
+            "processed": False,
+            "ok": False,
+            "task_id": task_id,
+            "run_id": None,
+            "plan_id": plan_id,
+            "adapter": args.adapter,
+            "reason": "loop_supervision_blocked",
+            "live_execution_performed": False,
+            "run_start_attempted": False,
+            "loop_supervision_gate": loop_supervision_gate,
+            "output_summary": output_summary,
+            "secret_boundary": secret_boundary,
+            "token_omitted": True,
+        }
+
     run_payload = client.post("/api/agent-gateway/runs/start", {
         "workspace_id": client.workspace_id,
         "agent_id": client.agent_id,
@@ -1281,56 +1324,6 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     run = run_payload["run"]
     run_id = run["run_id"]
 
-    capability = adapter_capability_profile(args.adapter)
-    secret_boundary = worker_secret_boundary_metadata()
-    loop_supervision_gate = fetch_worker_loop_supervision_gate(client, task, args) if args.confirm_run else None
-    if args.adapter in {"hermes", "openclaw"} and args.confirm_run and (loop_supervision_gate or {}).get("ok") is not True:
-        output_summary = redact_text(
-            (loop_supervision_gate or {}).get("recommended_next")
-            or (loop_supervision_gate or {}).get("reason")
-            or f"{args.adapter} loop supervision blocked live worker execution.",
-            260,
-        )
-        client.post(f"/api/agent-gateway/runs/{run_id}/heartbeat", {
-            "workspace_id": client.workspace_id,
-            "status": "failed",
-            "output_summary": output_summary,
-            "duration_ms": 0,
-            "output_tokens": 0,
-            "cost_usd": 0.0,
-            "error_type": "LoopSupervisionBlocked",
-            "error_message": output_summary,
-        })
-        client.post("/api/agent-gateway/audit", {
-            "workspace_id": client.workspace_id,
-            "agent_id": client.agent_id,
-            "action": "agent_worker.loop_supervision_blocked",
-            "entity_type": "runs",
-            "entity_id": run_id,
-            "task_id": task_id,
-            "run_id": run_id,
-            "metadata": {
-                "adapter": args.adapter,
-                "agent_plan_id": plan_id,
-                "loop_supervision": loop_supervision_gate,
-                "live_execution_performed": False,
-                **secret_boundary,
-            },
-        })
-        return {
-            "processed": False,
-            "ok": False,
-            "task_id": task_id,
-            "run_id": run_id,
-            "plan_id": plan_id,
-            "adapter": args.adapter,
-            "reason": "loop_supervision_blocked",
-            "live_execution_performed": False,
-            "loop_supervision_gate": loop_supervision_gate,
-            "output_summary": output_summary,
-            "secret_boundary": secret_boundary,
-            "token_omitted": True,
-        }
     if worker_external_write_intent(task, args, capability):
         return create_worker_external_write_gate(client, task, args, plan_id, run_id, capability, loop_supervision_gate)
 

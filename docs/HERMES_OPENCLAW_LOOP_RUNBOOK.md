@@ -70,6 +70,15 @@ before the adapter call and records compact audit/evidence metadata; RECORD
 pressure remains visible through `should_record_before_execute` and
 `recommended_next`.
 
+Agent Gateway `runs/start` is also supervised for governed live runtimes. When
+an agent starts a `hermes`, `openclaw`, or `codex` run, MIS reads
+`loop-supervision` after the Agent Plan gate and before inserting the run. If
+bounded confirm or no-server-shell safety is not proven, run-start returns
+`run_start_loop_supervision_blocked` with `live_execution_performed:false`; if
+allowed, the response includes `loop_supervision_gate.supervision_hash` so the
+run's first evidence packet shows which Method Block supervision state was
+crossed.
+
 `start-check` is the preferred first read for a local loop. The CLI reads
 `GET /api/operator/start-check`, so Hermes/OpenClaw/Codex can use either the
 CLI or the local MIS HTTP API. It merges local readiness, worker readiness,
