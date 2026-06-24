@@ -16,6 +16,7 @@ import hashlib
 import io
 import json
 import os
+import shlex
 import stat
 import subprocess
 import sys
@@ -142,6 +143,16 @@ def parse_json_value(raw: str | None, fallback):
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         raise SystemExit(f"Invalid JSON: {exc}") from exc
+
+
+def read_json_argument(value: str | None, *, label: str) -> dict:
+    if not value:
+        return {}
+    raw = sys.stdin.read() if value == "-" else Path(value).expanduser().read_text(encoding="utf-8")
+    parsed = parse_json_value(raw, {})
+    if not isinstance(parsed, dict):
+        raise SystemExit(f"{label} must decode to a JSON object")
+    return parsed
 
 
 def split_csv(value: str | None) -> list[str]:
@@ -1265,6 +1276,202 @@ def cmd_operator_loop_supervision(args, client: AgentOpsClient) -> dict:
     if getattr(args, "work_packet", False):
         return compact_loop_supervision_work_packets(payload)
     return payload
+
+
+def _shell_option(command: str, name: str, default: str = "") -> str:
+    if not command:
+        return default
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return default
+    for index, part in enumerate(parts):
+        if part == name and index + 1 < len(parts):
+            return parts[index + 1]
+        if part.startswith(name + "="):
+            return part.split("=", 1)[1]
+    return default
+
+
+def _service_check_readback(adapter: str, service_check: dict, *, verify_command: str) -> dict:
+    service_file = service_check.get("service_file") if isinstance(service_check.get("service_file"), dict) else {}
+    service_status = service_check.get("service_status") if isinstance(service_check.get("service_status"), dict) else {}
+    relaunch_policy = service_check.get("relaunch_policy") if isinstance(service_check.get("relaunch_policy"), dict) else {}
+    return {
+        "verify_command": verify_command,
+        "service_check_expected": True,
+        "service_check_ok": service_check.get("ok") is True,
+        "service_file_exists": service_file.get("exists") is True,
+        "service_loaded": service_status.get("loaded") is True,
+        "confirm_gate_ok": service_file.get("confirm_gate_ok") is True,
+        "relaunch_policy_ok": service_file.get("relaunch_policy_ok") is True or relaunch_policy.get("enabled") is True,
+        "adapter": adapter,
+        "manager": service_check.get("manager"),
+        "service_path": redact_text(service_check.get("service_path"), 240),
+        "service_label": redact_text(service_check.get("label"), 120),
+        "token_omitted": True,
+    }
+
+
+def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
+    supervision = client.get(
+        "/api/operator/loop-supervision",
+        query={
+            "adapter": args.adapter,
+            "limit": args.limit,
+            "task_id": args.task_id,
+            "agent_id": args.agent_id,
+            "q": args.query,
+            "handoff_mode": args.handoff_mode,
+            "full_handoff": "true" if args.full_handoff else None,
+            "include_codex": "false",
+        },
+    )
+    items = supervision.get("items") if isinstance(supervision.get("items"), list) else []
+    item = next((row for row in items if isinstance(row, dict) and row.get("adapter") == args.adapter), {})
+    local_deployment = item.get("local_deployment") if isinstance(item.get("local_deployment"), dict) else {}
+    service_managed_loop = local_deployment.get("service_managed_loop") if isinstance(local_deployment.get("service_managed_loop"), dict) else {}
+    commands = service_managed_loop.get("commands") if isinstance(service_managed_loop.get("commands"), dict) else {}
+    service_closure = item.get("service_closure") if isinstance(item.get("service_closure"), dict) else {}
+    record_command = args.receipt_command or commands.get("record_verified_receipt") or service_closure.get("command") or ""
+    action_command = _shell_option(record_command, "--action-command", commands.get("service_control_preview") or "")
+    verify_command = _shell_option(record_command, "--verify-command", commands.get("service_check") or "")
+    action_id = _shell_option(record_command, "--action-id", f"local_readiness.service_control_preview.{args.adapter}")
+    action_signature = _shell_option(record_command, "--action-signature", "")
+    source = _shell_option(record_command, "--source", action_id)
+    before = {
+        "step_id": "preview_worker_service_control",
+        "status": "preview",
+        "adapter": args.adapter,
+        "service_control_preview": True,
+        "service_closure_step": service_closure.get("step"),
+        "service_closure_status": service_closure.get("status"),
+        "service_managed_loop_ready": service_managed_loop.get("service_managed_loop_ready") is True,
+        "receipt_verified": service_managed_loop.get("receipt_verified") is True,
+        "control_readback_attached": service_managed_loop.get("control_readback_attached") is True,
+        "token_omitted": True,
+    }
+    service_check = read_json_argument(args.service_check_json, label="--service-check-json")
+    after = _service_check_readback(args.adapter, service_check, verify_command=verify_command) if service_check else None
+    control_readback = {
+        "before": before,
+        "after": after,
+        "self_check": {
+            "copy_only": True,
+            "server_executes_shell": False,
+            "writes_ledger_for_service_control": False,
+            "live_execution_performed": False,
+            "raw_service_check_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+    preview = {
+        "provider": "agentops-operator",
+        "operation": "operator_service_closure",
+        "adapter": args.adapter,
+        "status": "preview",
+        "recorded": False,
+        "service_closure": {
+            "required": service_closure.get("required") is True,
+            "status": service_closure.get("status"),
+            "step": service_closure.get("step"),
+            "phase": service_closure.get("phase"),
+            "command": service_closure.get("command"),
+            "token_omitted": True,
+        },
+        "service_managed_loop": {
+            "status": service_managed_loop.get("status"),
+            "manager": service_managed_loop.get("manager"),
+            "receipt_verified": service_managed_loop.get("receipt_verified") is True,
+            "control_readback_attached": service_managed_loop.get("control_readback_attached") is True,
+            "service_managed_loop_ready": service_managed_loop.get("service_managed_loop_ready") is True,
+            "service_loaded": service_managed_loop.get("service_loaded") is True,
+            "token_omitted": True,
+        },
+        "planned_receipt": {
+            "action_command": redact_text(action_command, 500),
+            "verify_command": redact_text(verify_command, 500),
+            "action_id": action_id,
+            "action_signature": action_signature,
+            "source": source,
+            "status": args.receipt_status,
+            "token_omitted": True,
+        },
+        "control_readback_preview": control_readback,
+        "next_actions": [
+            commands.get("service_check"),
+            "agentops operator service-closure --adapter "
+            f"{args.adapter} --service-check-json <service-check.json> --confirm-record",
+            "agentops operator action-receipts --limit 20",
+        ],
+        "contract": "preview-only by default; --confirm-record appends receipt and control-readback evidence, but never executes service-control, service-check, shell, or live adapter work",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+    if not args.confirm_record:
+        return preview
+    missing = [
+        name
+        for name, value in {
+            "action_command": action_command,
+            "verify_command": verify_command,
+            "service_check_json": service_check,
+        }.items()
+        if not value
+    ]
+    if missing:
+        return {
+            **preview,
+            "status": "blocked",
+            "ok": False,
+            "recorded": False,
+            "missing": missing,
+            "_exit_code": 2,
+        }
+    receipt = client.post("/api/operator/action-receipts", {
+        "workspace_id": client.workspace_id,
+        "actor_id": args.actor_id,
+        "action_command": action_command,
+        "verify_command": verify_command,
+        "action_id": action_id,
+        "action_signature": action_signature,
+        "source": source,
+        "status": args.receipt_status,
+        "result_summary": args.result_summary or f"{args.adapter} worker service-control preview inspected and service-check readback recorded.",
+    })
+    receipt_id = ((receipt.get("receipt") or {}).get("receipt_id") or receipt.get("receipt_id"))
+    readback_receipt = None
+    if receipt_id:
+        readback_receipt = client.post("/api/operator/action-receipts/control-readback", {
+            "workspace_id": client.workspace_id,
+            "actor_id": args.actor_id,
+            "receipt_id": receipt_id,
+            "source": f"{source}.control_readback",
+            "control_readback": control_readback,
+        })
+    return {
+        **preview,
+        "status": "recorded",
+        "ok": True,
+        "recorded": True,
+        "receipt_id": receipt_id,
+        "receipt": receipt,
+        "control_readback_receipt": readback_receipt,
+        "safety": {
+            "read_only": False,
+            "ledger_mutated": True,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+    }
 
 
 def compact_loop_supervision_work_packets(payload: dict) -> dict:
@@ -3915,6 +4122,21 @@ def build_parser() -> argparse.ArgumentParser:
     operator_record_readback.add_argument("--actor-id", default="usr_founder")
     operator_record_readback.add_argument("--confirm-record", action="store_true", help="Actually append control-readback evidence. Default is preview only.")
     operator_record_readback.set_defaults(handler="operator_record_control_readback")
+    operator_service_closure = operator_sub.add_parser("service-closure", help="Preview or record service-managed loop receipt/readback closure for Hermes/OpenClaw.")
+    operator_service_closure.add_argument("--adapter", choices=["hermes", "openclaw"], required=True)
+    operator_service_closure.add_argument("--service-check-json", default="", help="Path to JSON from agentops worker service-check, or '-' for stdin.")
+    operator_service_closure.add_argument("--receipt-command", default="", help="Optional exact record-action-receipt command to parse; defaults to loop-supervision command.")
+    operator_service_closure.add_argument("--receipt-status", default="verified", choices=["verified", "failed", "recorded", "skipped"])
+    operator_service_closure.add_argument("--result-summary", default="")
+    operator_service_closure.add_argument("--actor-id", default="usr_founder")
+    operator_service_closure.add_argument("--limit", type=int, default=8)
+    operator_service_closure.add_argument("--task-id", default=None)
+    operator_service_closure.add_argument("--agent-id", default=None)
+    operator_service_closure.add_argument("--query", default="READ PLAN RETRIEVE COMPARE VERIFY RECORD")
+    operator_service_closure.add_argument("--handoff-mode", choices=["lightweight", "full"], default="lightweight")
+    operator_service_closure.add_argument("--full-handoff", action="store_true")
+    operator_service_closure.add_argument("--confirm-record", action="store_true", help="Append receipt/readback evidence. Default is preview only.")
+    operator_service_closure.set_defaults(handler="operator_service_closure")
     operator_receipt_memory_lane = operator_sub.add_parser("receipt-failure-memories", help="Read repeated failed receipt evaluations that should become memory candidates.")
     operator_receipt_memory_lane.add_argument("--min-failures", type=int, default=2)
     operator_receipt_memory_lane.add_argument("--limit", type=int, default=8)
@@ -4963,6 +5185,7 @@ HANDLERS = {
     "operator_start_check": cmd_operator_start_check,
     "operator_agent_loop_handoff": cmd_operator_agent_loop_handoff,
     "operator_loop_supervision": cmd_operator_loop_supervision,
+    "operator_service_closure": cmd_operator_service_closure,
     "operator_loop_driver": cmd_operator_loop_driver,
     "operator_remediate_evidence_gap": cmd_operator_remediate_evidence_gap,
     "operator_close_evidence_gap": cmd_operator_close_evidence_gap,

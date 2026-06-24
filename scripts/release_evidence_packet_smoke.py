@@ -357,6 +357,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "operator_service_closure_cli",
+        "command": "python3 scripts/operator_service_closure_cli_smoke.py",
+        "summary": "Hermes/OpenClaw service-managed loop closure CLI previews receipt/readback work without mutating ledgers, requires explicit service-check JSON before confirmed recording, and moves service closure from required to ready without executing service-control, service-check, shell, or live adapter work.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "run_start_loop_supervision_gate",
         "command": "python3 scripts/run_start_loop_supervision_gate_smoke.py",
         "summary": "Agent Gateway run_start consumes loop-supervision before Hermes/OpenClaw/Codex run creation, blocks unsafe live starts, and attaches safe gate hashes when allowed.",
