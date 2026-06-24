@@ -1,5 +1,5 @@
 import { DispatchParityPage } from "@/components/DispatchPage";
-import { loadServerCommercialEntitlements, loadServerCustomerTaskTemplates, loadServerCustomerWorkerPreparedActions, loadServerWorkflowJobs } from "@/lib/misServer";
+import { loadServerAgents, loadServerCommercialEntitlements, loadServerCustomerTaskTemplates, loadServerCustomerWorkerPreparedActions, loadServerWorkflowJobs } from "@/lib/misServer";
 
 export const dynamic = "force-dynamic";
 
@@ -14,8 +14,9 @@ function one(value: string | string[] | undefined) {
 }
 
 export default async function DispatchPage({ searchParams }: PageProps) {
-  const [entitlements, templates, workflowJobs, preparedActions, params] = await Promise.all([
+  const [entitlements, agents, templates, workflowJobs, preparedActions, params] = await Promise.all([
     loadServerCommercialEntitlements(),
+    loadServerAgents(),
     loadServerCustomerTaskTemplates(),
     loadServerWorkflowJobs(),
     loadServerCustomerWorkerPreparedActions(),
@@ -25,6 +26,8 @@ export default async function DispatchPage({ searchParams }: PageProps) {
     <DispatchParityPage
       entitlements={entitlements.data}
       entitlementsError={entitlements.error}
+      agents={agents.data}
+      agentsError={agents.error}
       templates={templates.data}
       templatesError={templates.error}
       workflowJobs={workflowJobs.data}
@@ -38,6 +41,14 @@ export default async function DispatchPage({ searchParams }: PageProps) {
         currentEdition: one(params.current_edition),
         projectId: one(params.project_id),
         error: one(params.error),
+        customerTaskStatus: one(params.customer_task_status),
+        customerTaskId: one(params.customer_task_id),
+        customerTaskRunId: one(params.customer_task_run_id),
+        customerTaskPromptHash: one(params.customer_task_prompt_hash),
+        customerTaskError: one(params.customer_task_error),
+        templateJobStatus: one(params.template_job_status),
+        templateJobId: one(params.template_job_id),
+        templateJobError: one(params.template_job_error),
         customerWorkerStatus: one(params.customer_worker_status),
         customerWorkerAdapter: one(params.customer_worker_adapter),
         customerWorkerTaskId: one(params.customer_worker_task_id),

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Clock3, LockKeyhole, Play, ShieldCheck, Workflow } from "lucide-react";
 import { AppFrame } from "./AppFrame";
-import type { CommercialEntitlementStatus, CustomerTaskTemplateListPayload, CustomerWorkerPreparedAction, CustomerWorkerPreparedActionListPayload, WorkflowJobListPayload } from "@/lib/mis";
+import type { AgentSummary, CommercialEntitlementStatus, CustomerTaskTemplateListPayload, CustomerWorkerPreparedAction, CustomerWorkerPreparedActionListPayload, WorkflowJobListPayload } from "@/lib/mis";
 
 type DispatchFeedback = {
   status?: string;
@@ -10,6 +10,14 @@ type DispatchFeedback = {
   currentEdition?: string;
   projectId?: string;
   error?: string;
+  customerTaskStatus?: string;
+  customerTaskId?: string;
+  customerTaskRunId?: string;
+  customerTaskPromptHash?: string;
+  customerTaskError?: string;
+  templateJobStatus?: string;
+  templateJobId?: string;
+  templateJobError?: string;
   customerWorkerStatus?: string;
   customerWorkerAdapter?: string;
   customerWorkerTaskId?: string;
@@ -68,6 +76,8 @@ function workerDefaults(action: CustomerWorkerPreparedAction) {
 export function DispatchParityPage({
   entitlements,
   entitlementsError,
+  agents,
+  agentsError,
   templates,
   templatesError,
   workflowJobs,
@@ -78,6 +88,8 @@ export function DispatchParityPage({
 }: Readonly<{
   entitlements: CommercialEntitlementStatus;
   entitlementsError?: string | null;
+  agents: AgentSummary[];
+  agentsError?: string | null;
   templates: CustomerTaskTemplateListPayload;
   templatesError?: string | null;
   workflowJobs: WorkflowJobListPayload;
@@ -91,6 +103,19 @@ export function DispatchParityPage({
   const rows = templates.templates || [];
   const jobs = workflowJobs.jobs || [];
   const preparedQueue = preparedActions.prepared_actions || [];
+  const runnableAgents = (agents || [])
+    .filter((agent) => ["mock", "hermes", "openclaw", "codex", "claude_code"].includes(String(agent.runtime_type || "").toLowerCase()))
+    .slice(0, 8);
+  const defaultOwner = runnableAgents.find((agent) => ["hermes", "openclaw"].includes(String(agent.runtime_type || "").toLowerCase()))?.agent_id
+    || runnableAgents[0]?.agent_id
+    || "agt_next_customer_owner";
+  const defaultTemplate = rows[0]?.template_id || "tpl_customer_kb_qa_bot";
+  const defaultTemplateRow = rows.find((template) => template.template_id === defaultTemplate) || rows[0];
+  const defaultTitle = defaultTemplateRow?.default_title || "Next owner customer task";
+  const defaultDescription = defaultTemplateRow?.default_description || "Next.js creates a customer task from the owner dispatch composer.";
+  const defaultAcceptance = defaultTemplateRow?.default_acceptance || "MIS must record task, run-plan, audit, and safe evidence without raw prompt leakage.";
+  const defaultRisk = defaultTemplateRow?.risk_level || "medium";
+  const defaultPriority = defaultTemplateRow?.priority || "high";
 
   return (
     <AppFrame>
@@ -104,6 +129,7 @@ export function DispatchParityPage({
       </header>
 
       {entitlementsError ? <div className="banner error">Entitlements unavailable: {entitlementsError}</div> : null}
+      {agentsError ? <div className="banner error">Agents unavailable: {agentsError}</div> : null}
       {templatesError ? <div className="banner error">Templates unavailable: {templatesError}</div> : null}
       {workflowJobsError ? <div className="banner error">Workflow jobs unavailable: {workflowJobsError}</div> : null}
       {preparedActionsError ? <div className="banner error">Prepared actions unavailable: {preparedActionsError}</div> : null}
@@ -117,6 +143,25 @@ export function DispatchParityPage({
           Customer project started: <Link href={`/workspace/customer-projects/${encodeURIComponent(feedback.projectId)}/report`}>{feedback.projectId}</Link>
         </div>
       ) : null}
+      {feedback?.customerTaskStatus === "dry_run" && feedback.customerTaskId ? (
+        <div className="banner success">
+          Owner task dry-run recorded: <Link href={`/workspace/tasks/${encodeURIComponent(feedback.customerTaskId)}`}>{feedback.customerTaskId}</Link> · prompt {shortId(feedback.customerTaskPromptHash)}
+        </div>
+      ) : null}
+      {feedback?.customerTaskStatus === "started" && feedback.customerTaskId ? (
+        <div className="banner success">
+          Owner task live request recorded: <Link href={`/workspace/tasks/${encodeURIComponent(feedback.customerTaskId)}`}>{feedback.customerTaskId}</Link>
+          {feedback.customerTaskRunId ? <> · run <Link href={`/workspace/runs/${encodeURIComponent(feedback.customerTaskRunId)}`}>{feedback.customerTaskRunId}</Link></> : null}
+        </div>
+      ) : null}
+      {feedback?.customerTaskStatus === "failed" ? <div className="banner error">Owner task failed: {feedback.customerTaskError || "unknown"}</div> : null}
+      {feedback?.templateJobStatus === "blocked" ? (
+        <div className="banner warn">
+          <strong>Template async job blocked:</strong> {feedback.templateJobError || feedback.capability || "report_templates"} requires {feedback.requiredEdition || "pro_workspace"}; current edition is {feedback.currentEdition || entitlements.edition || "free_local"}.
+        </div>
+      ) : null}
+      {feedback?.templateJobStatus === "submitted" && feedback.templateJobId ? <div className="banner success">Template async job submitted: {feedback.templateJobId}</div> : null}
+      {feedback?.templateJobStatus === "failed" ? <div className="banner error">Template async job failed: {feedback.templateJobError || "unknown"}</div> : null}
       {feedback?.customerWorkerStatus === "blocked" ? (
         <div className="banner warn">
           <strong>Worker dispatch blocked:</strong> {feedback.customerWorkerError || "adapter_invalid"} · adapter {feedback.customerWorkerAdapter || "unknown"}
@@ -171,6 +216,89 @@ export function DispatchParityPage({
             Free Local can inspect templates and reports, but template execution is blocked until the report_templates capability is enabled.
           </p>
         </div>
+      </section>
+
+      <section className="panel wide" data-smoke="owner-task-composer">
+        <div className="panelHeader">
+          <h2><Workflow size={14} /> Owner task composer</h2>
+          <span>dry-run / confirm / async template job</span>
+        </div>
+        <div className="proofStrip">
+          <span>customer task /workspace/dispatch/customer-task</span>
+          <span>template job /workspace/dispatch/template-job</span>
+          <span>team selection forwarded</span>
+          <span>risk and priority forwarded</span>
+          <span>raw prompt omitted</span>
+        </div>
+        <form className="formGrid" method="post" action="/workspace/dispatch/customer-task">
+          <label className="field">
+            <span>Template</span>
+            <select name="template_id" defaultValue={defaultTemplate}>
+              {rows.length ? rows.map((template) => (
+                <option key={template.template_id} value={template.template_id}>{template.name_en || template.name || template.template_id}</option>
+              )) : <option value="tpl_customer_kb_qa_bot">KB Q&amp;A bot</option>}
+            </select>
+          </label>
+          <label className="field">
+            <span>Owner agent</span>
+            <select name="owner_agent_id" defaultValue={defaultOwner}>
+              {runnableAgents.length ? runnableAgents.map((agent) => (
+                <option key={agent.agent_id} value={agent.agent_id}>{agent.name || agent.agent_id}</option>
+              )) : <option value={defaultOwner}>{defaultOwner}</option>}
+            </select>
+          </label>
+          <label className="field">
+            <span>Priority</span>
+            <select name="priority" defaultValue={defaultPriority}>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="urgent">urgent</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Risk</span>
+            <select name="risk_level" defaultValue={defaultRisk}>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="critical">critical</option>
+            </select>
+          </label>
+          <label className="field wideField">
+            <span>Title</span>
+            <input name="title" defaultValue={defaultTitle} />
+          </label>
+          <label className="field wideField">
+            <span>Description</span>
+            <textarea name="description" defaultValue={defaultDescription} />
+          </label>
+          <label className="field wideField">
+            <span>Acceptance</span>
+            <textarea name="acceptance_criteria" defaultValue={defaultAcceptance} />
+          </label>
+          <div className="field wideField">
+            <span>AI team</span>
+            <div className="checkGrid">
+              {runnableAgents.length ? runnableAgents.map((agent, index) => (
+                <label className="checkItem" key={agent.agent_id}>
+                  <input type="checkbox" name="selected_agent_ids" value={agent.agent_id} defaultChecked={index < 2 || agent.agent_id === defaultOwner} />
+                  <span>{agent.name || agent.agent_id} · {agent.runtime_type || "runtime"}</span>
+                </label>
+              )) : (
+                <label className="checkItem">
+                  <input type="checkbox" name="selected_agent_ids" value={defaultOwner} defaultChecked />
+                  <span>{defaultOwner}</span>
+                </label>
+              )}
+            </div>
+          </div>
+          <div className="buttonRow">
+            <button className="miniButton" type="submit" name="confirm_run" value="false"><Play size={13} /> Dry-run task</button>
+            <button className="miniButton good" type="submit" name="confirm_run" value="true"><ShieldCheck size={13} /> Confirm task</button>
+            <button className="miniButton" type="submit" formAction="/workspace/dispatch/template-job" name="confirm_run" value="true"><Clock3 size={13} /> Submit template job</button>
+          </div>
+        </form>
       </section>
 
       <section className="panel wide">
@@ -231,8 +359,42 @@ export function DispatchParityPage({
             </select>
           </label>
           <label className="field">
+            <span>Template</span>
+            <select name="template_id" defaultValue={defaultTemplate}>
+              {rows.length ? rows.map((template) => (
+                <option key={template.template_id} value={template.template_id}>{template.name_en || template.name || template.template_id}</option>
+              )) : <option value="tpl_customer_kb_qa_bot">KB Q&amp;A bot</option>}
+            </select>
+          </label>
+          <label className="field">
             <span>Worker agent</span>
             <input name="worker_agent_id" defaultValue="agt_next_customer_worker" />
+          </label>
+          <label className="field">
+            <span>Owner agent</span>
+            <input name="owner_agent_id" defaultValue={defaultOwner} />
+          </label>
+          <label className="field">
+            <span>Priority</span>
+            <select name="priority" defaultValue="high">
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="critical">critical</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Risk</span>
+            <select name="risk_level" defaultValue="medium">
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="critical">critical</option>
+            </select>
+          </label>
+          <label className="field wideField">
+            <span>Selected team</span>
+            <input name="selected_agent_ids" defaultValue={`agt_next_customer_worker,${defaultOwner}`} />
           </label>
           <label className="field wideField">
             <span>Description</span>
@@ -249,10 +411,15 @@ export function DispatchParityPage({
             <input type="hidden" name="adapter" value={feedback.customerWorkerAdapter || "openclaw"} />
             <input type="hidden" name="prepared_action_id" value={feedback.customerWorkerPreparedActionId} />
             <input type="hidden" name="request_hash" value={feedback.customerWorkerRequestHash} />
+            <input type="hidden" name="template_id" value={defaultTemplate} />
             <input type="hidden" name="title" value="Next customer worker dispatch" />
             <input type="hidden" name="worker_agent_id" value="agt_next_customer_worker" />
+            <input type="hidden" name="owner_agent_id" value={defaultOwner} />
+            <input type="hidden" name="selected_agent_ids" value={`agt_next_customer_worker,${defaultOwner}`} />
             <input type="hidden" name="description" value="Next.js dispatches one safe mock customer-worker task and reads back ledger evidence." />
             <input type="hidden" name="acceptance_criteria" value="Worker must write run, tool, evaluation, audit, artifact, memory, approval, and verified plan evidence." />
+            <input type="hidden" name="priority" value="high" />
+            <input type="hidden" name="risk_level" value="medium" />
             <button className="miniButton" type="submit"><ShieldCheck size={13} /> Resume approved worker</button>
           </form>
         ) : null}
@@ -333,8 +500,42 @@ export function DispatchParityPage({
             </select>
           </label>
           <label className="field">
+            <span>Template</span>
+            <select name="template_id" defaultValue={defaultTemplate}>
+              {rows.length ? rows.map((template) => (
+                <option key={template.template_id} value={template.template_id}>{template.name_en || template.name || template.template_id}</option>
+              )) : <option value="tpl_customer_kb_qa_bot">KB Q&amp;A bot</option>}
+            </select>
+          </label>
+          <label className="field">
             <span>Worker agent</span>
             <input name="worker_agent_id" defaultValue="agt_next_customer_worker_async" />
+          </label>
+          <label className="field">
+            <span>Owner agent</span>
+            <input name="owner_agent_id" defaultValue={defaultOwner} />
+          </label>
+          <label className="field">
+            <span>Priority</span>
+            <select name="priority" defaultValue="high">
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="critical">critical</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Risk</span>
+            <select name="risk_level" defaultValue="medium">
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="critical">critical</option>
+            </select>
+          </label>
+          <label className="field wideField">
+            <span>Selected team</span>
+            <input name="selected_agent_ids" defaultValue={`agt_next_customer_worker_async,${defaultOwner}`} />
           </label>
           <label className="field wideField">
             <span>Description</span>
@@ -351,10 +552,15 @@ export function DispatchParityPage({
             <input type="hidden" name="adapter" value={feedback.customerWorkerAdapter || "hermes"} />
             <input type="hidden" name="prepared_action_id" value={feedback.customerWorkerJobPreparedActionId} />
             <input type="hidden" name="request_hash" value={feedback.customerWorkerJobRequestHash} />
+            <input type="hidden" name="template_id" value={defaultTemplate} />
             <input type="hidden" name="title" value="Next async customer worker job" />
             <input type="hidden" name="worker_agent_id" value="agt_next_customer_worker_async" />
+            <input type="hidden" name="owner_agent_id" value={defaultOwner} />
+            <input type="hidden" name="selected_agent_ids" value={`agt_next_customer_worker_async,${defaultOwner}`} />
             <input type="hidden" name="description" value="Next.js submits one safe async customer-worker job and reads job status back through the MIS proxy." />
             <input type="hidden" name="acceptance_criteria" value="Workflow job must complete with run, artifact, delivery approval, and verified plan evidence without token leakage." />
+            <input type="hidden" name="priority" value="high" />
+            <input type="hidden" name="risk_level" value="medium" />
             <button className="miniButton" type="submit"><ShieldCheck size={13} /> Resume approved job</button>
           </form>
         ) : null}

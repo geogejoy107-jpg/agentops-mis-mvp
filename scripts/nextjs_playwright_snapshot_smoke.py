@@ -59,7 +59,7 @@ ROUTES = [
     ("/workspace/commercial", ["Commercial", "Capability matrix", "Fail-closed gates"]),
     ("/workspace/governance", ["Governance", "Production readiness", "Session governance"]),
     ("/workspace/deployment", ["Deployment", "Deployment readiness verdict", "Storage backend migration gate", "Storage and retention", "audit_retention_policy_v1", "audit_retention_controls_v1"]),
-    ("/workspace/pixel-office", ["Pixel Office", "Pixel Operating Map", "Local brief controls", "commercial-safe geometry", "live runtime disabled"]),
+    ("/workspace/pixel-office", ["Pixel Office", "Pixel Operating Map", "Owner dispatch workflow", "Local brief controls", "commercial-safe geometry", "live runtime disabled"]),
     ("/workspace/tasks", ["Tasks", "running", "planned"]),
     ("/workspace/runs", ["Run Ledger", "Run", "Status"]),
     ("/workspace/tool-calls", ["Tool Call Ledger", "high-risk", "Run"]),
@@ -1125,7 +1125,7 @@ def main() -> int:
             routes = [
                 *ROUTES,
                 ("/workspace/reports", ["Reports", "Customer delivery board", "Customer project reports"]),
-                ("/workspace/dispatch", ["Dispatch", "Customer task templates", "report_templates"]),
+                ("/workspace/dispatch", ["Dispatch", "Owner task composer", "Customer task templates", "report_templates"]),
                 (f"/workspace/customer-projects/{project_id}/report", ["Delivery Report", project_id, "Safety boundary"]),
             ]
             snapshots = [snapshot_route(next_base, path, expected, pw_env) for path, expected in routes]

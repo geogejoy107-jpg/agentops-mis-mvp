@@ -234,6 +234,7 @@ python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_pixel_office_floor_smoke.py
+python3 scripts/nextjs_pixel_office_dispatch_smoke.py
 python3 scripts/local_brief_prepared_action_smoke.py
 python3 scripts/nextjs_local_brief_smoke.py
 python3 scripts/nextjs_customer_worker_dispatch_smoke.py
@@ -255,7 +256,15 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   proves `/workspace/pixel-office` renders a read-only Pixel Operating Map from
   dashboard/agent/task/run/approval/memory/audit read models, exposes
   commercial-safe geometry/no-Star-Office/live-runtime-disabled proof, links
-  zones into formal Next ledgers, and leaks no token-like material.
+  zones into formal Next ledgers, exposes the owner dispatch workflow route
+  bridge to Dispatch/Approvals/Reports/Runs, and leaks no token-like material.
+
+  `python3 scripts/nextjs_pixel_office_dispatch_smoke.py`
+  (`nextjs_pixel_office_dispatch_v1`) starts isolated Pro MIS API and Next.js
+  servers, proves Pixel Office exposes the owner dispatch workflow bridge, then
+  exercises the Next Dispatch owner task dry-run and template async job form
+  fallbacks with team/risk/priority forwarding, task/job readback through the
+  Next proxy, and token/raw-prompt omission.
 
   `python3 scripts/nextjs_local_brief_smoke.py` (`nextjs_local_brief_v1`)
   starts isolated MIS API and Next.js servers, proves the Next

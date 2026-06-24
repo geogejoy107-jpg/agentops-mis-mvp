@@ -53,11 +53,13 @@ route retirement:
 ## Current Important Gaps
 
 - Pixel Office is only partially represented in Next.js. Next currently proves
-  a read-only Pixel Operating Map, local-brief prepared-action exact resume with
-  approval before live Agnesfallback execution, template entitlement dispatch,
-  safe mock customer-worker dispatch/readback, and Hermes/OpenClaw
-  customer-worker prepared-action exact resume, but Vite remains canonical for
-  the richer owner dispatch workflow and final visual route retirement evidence.
+  a read-only Pixel Operating Map, the owner dispatch workflow route bridge,
+  owner task dry-run, template async job form fallback, local-brief
+  prepared-action exact resume with approval before live Agnesfallback execution,
+  template entitlement dispatch, safe mock customer-worker dispatch/readback,
+  Hermes/OpenClaw customer-worker prepared-action exact resume, and
+  ledger-derived resume readback. Vite remains canonical until final visual
+  route retirement evidence is explicit.
 - Worker console is only partially represented in Next.js. Next is read-only for
   production safety and readiness; Vite remains canonical for local worker
   start/stop/restart, task release, remote enrollment mutation, and detailed
@@ -140,6 +142,7 @@ python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_pixel_office_floor_smoke.py
+python3 scripts/nextjs_pixel_office_dispatch_smoke.py
 python3 scripts/local_brief_prepared_action_smoke.py
 python3 scripts/nextjs_local_brief_smoke.py
 python3 scripts/nextjs_customer_worker_dispatch_smoke.py
@@ -186,6 +189,13 @@ opens `/workspace/pixel-office`, verifies the read-only Pixel Operating Map,
 commercial-safe geometry, no-Star-Office asset boundary, live-runtime-disabled
 proof, core zone routing links, and live MIS proxy readback for agents, tasks,
 and runs without token leakage.
+
+`python3 scripts/nextjs_pixel_office_dispatch_smoke.py`
+(`nextjs_pixel_office_dispatch_v1`) starts isolated Pro MIS API and Next.js
+servers, proves `/workspace/pixel-office` exposes the owner dispatch workflow
+bridge, then exercises `/workspace/dispatch/customer-task` and
+`/workspace/dispatch/template-job` form fallbacks with team/risk/priority
+forwarding and Next proxy task/job readback without token leakage.
 
 `python3 scripts/nextjs_local_brief_smoke.py` (`nextjs_local_brief_v1`) starts
 isolated MIS API and Next.js servers, proves the Next

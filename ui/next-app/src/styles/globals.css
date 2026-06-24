@@ -586,6 +586,37 @@ h2 {
   grid-column: span 3;
 }
 
+.checkGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.checkItem {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: #0d1118;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.checkItem input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--cyan);
+}
+
+.checkItem span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .progressTrack {
   display: block;
   width: 100%;

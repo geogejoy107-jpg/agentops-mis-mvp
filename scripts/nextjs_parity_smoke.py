@@ -41,6 +41,8 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "pixel-office" / "local-brief" / "route.ts",
         NEXT_APP / "app" / "workspace" / "dispatch" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts",
+        NEXT_APP / "app" / "workspace" / "dispatch" / "customer-task" / "route.ts",
+        NEXT_APP / "app" / "workspace" / "dispatch" / "template-job" / "route.ts",
         NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker" / "route.ts",
         NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker-job" / "route.ts",
         NEXT_APP / "app" / "workspace" / "evidence" / "[manifestId]" / "page.tsx",
@@ -95,6 +97,7 @@ def main() -> int:
         ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py",
         ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py",
         ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py",
+        ROOT / "scripts" / "nextjs_pixel_office_dispatch_smoke.py",
         ROOT / "scripts" / "local_brief_prepared_action_smoke.py",
         ROOT / "scripts" / "nextjs_local_brief_smoke.py",
         ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py",
@@ -117,6 +120,8 @@ def main() -> int:
     memory_review_route_text = read_text(NEXT_APP / "app" / "workspace" / "memory" / "review" / "route.ts")
     report_archive_route_text = read_text(NEXT_APP / "app" / "workspace" / "customer-projects" / "[projectId]" / "report" / "archive" / "route.ts")
     dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts")
+    customer_task_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "customer-task" / "route.ts")
+    template_job_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "template-job" / "route.ts")
     customer_worker_dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker" / "route.ts")
     customer_worker_job_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker-job" / "route.ts")
     local_brief_route_text = read_text(NEXT_APP / "app" / "workspace" / "pixel-office" / "local-brief" / "route.ts")
@@ -155,6 +160,7 @@ def main() -> int:
     gateway_cli_worker_dogfood_smoke_text = read_text(ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py")
     worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py")
     pixel_office_floor_smoke_text = read_text(ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py")
+    pixel_office_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_pixel_office_dispatch_smoke.py")
     local_brief_prepared_action_smoke_text = read_text(ROOT / "scripts" / "local_brief_prepared_action_smoke.py")
     local_brief_smoke_text = read_text(ROOT / "scripts" / "nextjs_local_brief_smoke.py")
     customer_worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py")
@@ -198,6 +204,10 @@ def main() -> int:
     require("nextjs_pixel_office_floor_v1" in pixel_office_floor_smoke_text, "Next Pixel Office floor smoke contract is missing")
     require("/workspace/pixel-office" in pixel_office_floor_smoke_text, "Next Pixel Office smoke must exercise the App Router page")
     require("commercial-safe geometry" in pixel_office_floor_smoke_text and "live runtime disabled" in pixel_office_floor_smoke_text, "Next Pixel Office smoke must prove read-only safe map evidence")
+    require("nextjs_pixel_office_dispatch_v1" in pixel_office_dispatch_smoke_text, "Next Pixel Office owner dispatch smoke contract is missing")
+    require("/workspace/dispatch/customer-task" in pixel_office_dispatch_smoke_text and "/workspace/dispatch/template-job" in pixel_office_dispatch_smoke_text, "Next Pixel Office dispatch smoke must exercise owner task and template job form fallbacks")
+    require("Owner dispatch workflow" in pixel_office_page_text and "owner-dispatch-workflow" in pixel_office_page_text, "Pixel Office page must expose the owner dispatch workflow bridge")
+    require("template intake /workspace/dispatch" in pixel_office_floor_smoke_text and "delivery reports /workspace/reports" in pixel_office_floor_smoke_text, "Next Pixel Office smoke must prove owner dispatch workflow route bridge")
     require("nextjs_local_brief_v1" in local_brief_smoke_text, "Next local brief smoke contract is missing")
     require("/api/mis/workflows/local-brief" in local_brief_smoke_text, "Next local brief smoke must exercise the /api/mis proxy route")
     require("/workspace/pixel-office/local-brief" in local_brief_smoke_text, "Next local brief smoke must exercise the form fallback route")
@@ -218,10 +228,14 @@ def main() -> int:
     require("prepared_action_request_hash_mismatch" in customer_worker_prepared_action_smoke_text and "prepared_action_already_consumed" in customer_worker_prepared_action_smoke_text, "Next customer-worker prepared-action smoke must prove hash mismatch and replay blocking")
     require("/api/mis/workflows/customer-worker-prepared-actions" in customer_worker_prepared_action_smoke_text and "resume_form" in customer_worker_prepared_action_smoke_text, "Next customer-worker prepared-action smoke must prove ledger-derived safe resume readback")
     require("CustomerWorkerPreparedActionListPayload" in lib_text and "resume_form" in lib_text, "Next MIS types must include customer-worker prepared-action readback")
+    require("/workflows/customer-task" in customer_task_route_text and "selected_agent_ids" in customer_task_route_text, "Customer task form route must forward owner task payload and selected team")
+    require("/workflows/customer-task-templates/submit" in template_job_route_text and "template_job_status" in template_job_route_text, "Template async job form route must submit through the MIS workflow job API")
+    require("Owner task composer" in dispatch_page_text and "/workspace/dispatch/customer-task" in dispatch_page_text and "/workspace/dispatch/template-job" in dispatch_page_text, "Dispatch page must expose owner dry-run/confirm and template async job controls")
+    require("loadServerAgents" in read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "page.tsx"), "Dispatch page must load agents for owner team selection")
     require("Prepared worker actions" in dispatch_page_text and "customer-worker-prepared-actions" in dispatch_page_text, "Dispatch page must expose the ledger-derived prepared-action queue")
     require("Resume approved worker" in dispatch_page_text and "Resume approved job" in dispatch_page_text, "Dispatch page must expose prepared-action resume controls")
-    require("prepared_action_id" in customer_worker_dispatch_route_text and "request_hash" in customer_worker_dispatch_route_text, "Customer-worker form route must preserve prepared-action resume ids")
-    require("prepared_action_id" in customer_worker_job_route_text and "request_hash" in customer_worker_job_route_text, "Customer-worker async form route must preserve prepared-action resume ids")
+    require("prepared_action_id" in customer_worker_dispatch_route_text and "request_hash" in customer_worker_dispatch_route_text and "selected_agent_ids" in customer_worker_dispatch_route_text and "template_id" in customer_worker_dispatch_route_text, "Customer-worker form route must preserve prepared-action resume ids plus owner/team/template payload")
+    require("prepared_action_id" in customer_worker_job_route_text and "request_hash" in customer_worker_job_route_text and "selected_agent_ids" in customer_worker_job_route_text and "template_id" in customer_worker_job_route_text, "Customer-worker async form route must preserve prepared-action resume ids plus owner/team/template payload")
     require("nextjs_worker_stuck_release_v1" in worker_release_smoke_text, "Next worker stuck release smoke contract is missing")
     require("/api/mis/workers/tasks/release" in worker_release_smoke_text, "Next worker stuck release smoke must exercise the /api/mis release route")
     require("/workspace/agents/release-task" in worker_release_smoke_text, "Next worker stuck release smoke must exercise the release form fallback")
@@ -416,6 +430,8 @@ def main() -> int:
             "/workspace/pixel-office",
             "/workspace/pixel-office/local-brief",
             "/workspace/dispatch",
+            "/workspace/dispatch/customer-task",
+            "/workspace/dispatch/template-job",
             "/workspace/dispatch/customer-worker",
             "/workspace/dispatch/customer-worker-job",
             "/workspace/evidence/[manifestId]",
@@ -442,6 +458,7 @@ def main() -> int:
             "nextjs_agent_gateway_cli_worker_dogfood_v1",
             "nextjs_worker_dispatch_once_v1",
             "nextjs_pixel_office_floor_v1",
+            "nextjs_pixel_office_dispatch_v1",
             "local_brief_prepared_action_v1",
             "nextjs_local_brief_v1",
             "nextjs_customer_worker_dispatch_v1",

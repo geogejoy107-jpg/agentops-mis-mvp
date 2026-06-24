@@ -330,6 +330,18 @@ def main() -> int:
             and file_contains("ui/next-app/src/lib/misServer.ts", "loadServerAgents")
             and file_contains("scripts/nextjs_pixel_office_floor_smoke.py", "nextjs_pixel_office_floor_v1")
             and file_contains("scripts/nextjs_pixel_office_floor_smoke.py", "/workspace/pixel-office")
+            and file_contains("scripts/nextjs_pixel_office_floor_smoke.py", "Owner dispatch workflow")
+            and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "owner-dispatch-workflow")
+            and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "template intake /workspace/dispatch")
+            and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "delivery reports /workspace/reports")
+            and file_contains("ui/next-app/app/workspace/dispatch/customer-task/route.ts", "/workflows/customer-task")
+            and file_contains("ui/next-app/app/workspace/dispatch/template-job/route.ts", "/workflows/customer-task-templates/submit")
+            and file_contains("ui/next-app/app/workspace/dispatch/page.tsx", "loadServerAgents")
+            and file_contains("ui/next-app/src/components/DispatchPage.tsx", "Owner task composer")
+            and file_contains("ui/next-app/src/components/DispatchPage.tsx", "/workspace/dispatch/customer-task")
+            and file_contains("ui/next-app/src/components/DispatchPage.tsx", "/workspace/dispatch/template-job")
+            and file_contains("scripts/nextjs_pixel_office_dispatch_smoke.py", "nextjs_pixel_office_dispatch_v1")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_pixel_office_dispatch_v1")
             and file_contains("scripts/local_brief_prepared_action_smoke.py", "local_brief_prepared_action_v1")
             and file_contains("scripts/nextjs_local_brief_smoke.py", "nextjs_local_brief_v1")
             and file_contains("scripts/nextjs_local_brief_smoke.py", "/api/mis/workflows/local-brief")
@@ -407,6 +419,8 @@ def main() -> int:
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "pixel-office" / "local-brief" / "route.ts").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "agents" / "[agentId]" / "page.tsx").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "agents" / "dispatch-once" / "route.ts").exists()
+            and (ROOT / "ui" / "next-app" / "app" / "workspace" / "dispatch" / "customer-task" / "route.ts").exists()
+            and (ROOT / "ui" / "next-app" / "app" / "workspace" / "dispatch" / "template-job" / "route.ts").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "dispatch" / "customer-worker" / "route.ts").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "dispatch" / "customer-worker-job" / "route.ts").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "agents" / "release-task" / "route.ts").exists()
@@ -422,6 +436,7 @@ def main() -> int:
             and (ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py").exists()
+            and (ROOT / "scripts" / "nextjs_pixel_office_dispatch_smoke.py").exists()
             and (ROOT / "scripts" / "local_brief_prepared_action_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_local_brief_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py").exists()
@@ -920,6 +935,7 @@ def main() -> int:
                 "python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py",
                 "python3 scripts/nextjs_worker_dispatch_once_smoke.py",
                 "python3 scripts/nextjs_pixel_office_floor_smoke.py",
+                "python3 scripts/nextjs_pixel_office_dispatch_smoke.py",
                 "python3 scripts/local_brief_prepared_action_smoke.py",
                 "python3 scripts/nextjs_local_brief_smoke.py",
                 "python3 scripts/nextjs_customer_worker_dispatch_smoke.py",

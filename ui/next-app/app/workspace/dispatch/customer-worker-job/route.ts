@@ -20,6 +20,15 @@ function safeChoice(value: FormDataEntryValue | null, choices: string[], fallbac
   return choices.includes(text) ? text : fallback;
 }
 
+function selectedAgentIds(form: FormData, workerAgentId: string) {
+  const ids = form
+    .getAll("selected_agent_ids")
+    .flatMap((value) => String(value || "").split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return Array.from(new Set(ids.length ? ids : [workerAgentId]));
+}
+
 export async function POST(request: Request) {
   const form = await request.formData();
   const adapter = safeText(form.get("adapter"), "mock");
@@ -38,13 +47,15 @@ export async function POST(request: Request) {
   const payload = {
     adapter,
     confirm_run: isLiveAdapter,
+    template_id: safeText(form.get("template_id"), "tpl_customer_kb_qa_bot"),
+    owner_agent_id: safeText(form.get("owner_agent_id"), workerAgentId),
     title: safeText(form.get("title"), "Next async customer worker job"),
     description: safeText(form.get("description"), "Next.js submits one safe async customer-worker job."),
     acceptance_criteria: safeText(form.get("acceptance_criteria"), "Workflow job must complete with run, artifact, approval, and verified plan evidence."),
     priority: safeChoice(form.get("priority"), ["low", "medium", "high", "critical"], "high"),
     risk_level: safeChoice(form.get("risk_level"), ["low", "medium", "high", "critical"], "medium"),
     worker_agent_id: workerAgentId,
-    selected_agent_ids: [workerAgentId],
+    selected_agent_ids: selectedAgentIds(form, workerAgentId),
     ...(preparedActionId ? { prepared_action_id: preparedActionId } : {}),
     ...(requestHash ? { request_hash: requestHash } : {}),
   };

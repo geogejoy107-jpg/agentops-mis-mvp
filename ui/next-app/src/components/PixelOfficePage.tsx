@@ -151,6 +151,9 @@ export function PixelOfficeParityPage({
   const activeErrors = Object.entries(errors).filter(([, value]) => value);
   const recentTasks = tasks.slice(0, 6);
   const recentRuns = runs.slice(0, 6);
+  const openCustomerTasks = countWhere(tasks, (task) => statusIs(task, ["planned", "backlog", "running", "waiting_approval", "blocked"]));
+  const completedRuns = countWhere(runs, (run) => statusIs(run, ["completed", "succeeded", "success"]));
+  const pendingApprovals = metrics.pending_approvals ?? countWhere(approvals, (approval) => approval.decision === "pending");
 
   return (
     <AppFrame>
@@ -189,7 +192,59 @@ export function PixelOfficeParityPage({
         <div className="metric compactMetric"><Map className="metricIcon" size={18} /><span>mapped rooms</span><strong>{zones.length}</strong></div>
         <div className="metric compactMetric"><Bot className="metricIcon" size={18} /><span>agents placed</span><strong>{pixelAgents.length}</strong></div>
         <div className="metric compactMetric"><ClipboardList className="metricIcon" size={18} /><span>task cards</span><strong>{tasks.length}</strong></div>
-        <div className="metric compactMetric"><ShieldCheck className="metricIcon" size={18} /><span>pending approvals</span><strong>{metrics.pending_approvals ?? countWhere(approvals, (approval) => approval.decision === "pending")}</strong></div>
+        <div className="metric compactMetric"><ShieldCheck className="metricIcon" size={18} /><span>pending approvals</span><strong>{pendingApprovals}</strong></div>
+      </section>
+
+      <section className="panel wide" data-smoke="owner-dispatch-workflow">
+        <div className="panelHeader">
+          <h2><Workflow size={14} /> Owner dispatch workflow</h2>
+          <span>Next route bridge</span>
+        </div>
+        <div className="proofStrip">
+          <span>template intake /workspace/dispatch</span>
+          <span>worker dispatch /workspace/dispatch/customer-worker</span>
+          <span>prepared actions /workspace/dispatch</span>
+          <span>approval wall /workspace/approvals</span>
+          <span>delivery reports /workspace/reports</span>
+          <span>evidence ledger /workspace/runs</span>
+        </div>
+        <div className="list compact">
+          <Link className="row linkRow" href="/workspace/dispatch">
+            <div>
+              <strong>1. Customer template intake</strong>
+              <span>Entitlement gate, template defaults, worker job entry, and prepared-action resume queue.</span>
+            </div>
+            <span className="status">{openCustomerTasks} open</span>
+          </Link>
+          <Link className="row linkRow" href="/workspace/dispatch">
+            <div>
+              <strong>2. Worker dispatch and async jobs</strong>
+              <span>Mock-safe dispatch, Hermes/OpenClaw prepared-action exact resume, and job status readback.</span>
+            </div>
+            <span className="status">{recentRuns.length} recent runs</span>
+          </Link>
+          <Link className="row linkRow" href="/workspace/approvals">
+            <div>
+              <strong>3. Approval wall</strong>
+              <span>External writes and live adapter resumes remain approval-gated before execution.</span>
+            </div>
+            <span className={pendingApprovals ? "status statusWarn" : "status statusGood"}>{pendingApprovals} pending</span>
+          </Link>
+          <Link className="row linkRow" href="/workspace/reports">
+            <div>
+              <strong>4. Delivery report desk</strong>
+              <span>Customer delivery board, project reports, report artifact archive, and approval readback.</span>
+            </div>
+            <span className="status">reports</span>
+          </Link>
+          <Link className="row linkRow" href="/workspace/runs">
+            <div>
+              <strong>5. Evidence ledger</strong>
+              <span>Runs, tool calls, evaluations, audit events, artifacts, and plan evidence remain canonical.</span>
+            </div>
+            <span className="status">{completedRuns} complete</span>
+          </Link>
+        </div>
       </section>
 
       <section className="panel wide">
