@@ -1353,22 +1353,121 @@ def _local_service_check_from_command(args, client: AgentOpsClient, command: str
     return payload, []
 
 
-def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
-    supervision = client.get(
-        "/api/operator/loop-supervision",
-        query={
-            "adapter": args.adapter,
-            "limit": args.limit,
-            "task_id": args.task_id,
-            "agent_id": args.agent_id,
-            "q": args.query,
-            "handoff_mode": args.handoff_mode,
-            "full_handoff": "true" if args.full_handoff else None,
-            "include_codex": "false",
+def _fast_service_closure_context(args, client: AgentOpsClient) -> dict:
+    manager = args.service_check_manager or "launchd"
+    agent_id = args.service_check_agent_id or client.agent_id or f"agt_worker_daemon_{args.adapter}"
+    service_check_command = args.service_check_command or " ".join(shlex.quote(str(part)) for part in [
+        "agentops",
+        "worker",
+        "service-check",
+        "--manager",
+        manager,
+        "--adapter",
+        args.adapter,
+        "--agent-id",
+        agent_id,
+    ])
+    service_control_preview = " ".join(shlex.quote(str(part)) for part in [
+        "agentops",
+        "worker",
+        "service-control",
+        "--manager",
+        manager,
+        "--action",
+        "restart",
+        "--adapter",
+        args.adapter,
+        "--agent-id",
+        agent_id,
+    ])
+    action_id = f"local_readiness.service_control_preview.{args.adapter}"
+    action_signature = hashlib.sha256(
+        f"local_readiness.service_control_preview:{args.adapter}:{service_control_preview}:{service_check_command}".encode("utf-8")
+    ).hexdigest()
+    record_command = " ".join(shlex.quote(str(part)) for part in [
+        "agentops",
+        "operator",
+        "record-action-receipt",
+        "--action-command",
+        service_control_preview,
+        "--verify-command",
+        service_check_command,
+        "--action-id",
+        action_id,
+        "--action-signature",
+        action_signature,
+        "--source",
+        action_id,
+        "--status",
+        args.receipt_status,
+        "--result-summary",
+        f"{args.adapter} fast service-check readback inspected for canonical service-managed loop closure.",
+        "--confirm-record",
+    ])
+    return {
+        "supervision": {
+            "operation": "operator_loop_supervision",
+            "status": "not_read_fast_service_closure",
+            "mode": "fast",
+            "token_omitted": True,
         },
-    )
-    items = supervision.get("items") if isinstance(supervision.get("items"), list) else []
-    item = next((row for row in items if isinstance(row, dict) and row.get("adapter") == args.adapter), {})
+        "item": {
+            "operation": "operator_loop_supervision_item",
+            "adapter": args.adapter,
+            "status": "not_read_fast_service_closure",
+            "local_deployment": {
+                "service_managed_loop": {
+                    "status": "fast_record_required",
+                    "manager": manager,
+                    "receipt_verified": False,
+                    "control_readback_attached": False,
+                    "service_managed_loop_ready": False,
+                    "service_loaded": False,
+                    "commands": {
+                        "service_control_preview": service_control_preview,
+                        "service_check": service_check_command,
+                        "record_verified_receipt": record_command,
+                        "token_omitted": True,
+                    },
+                    "token_omitted": True,
+                },
+                "token_omitted": True,
+            },
+            "service_closure": {
+                "required": True,
+                "status": "attention",
+                "step": "fast_record_service_check",
+                "phase": "RECORD",
+                "command": f"agentops operator service-closure --adapter {args.adapter} --fast --run-service-check --confirm-record",
+                "fast": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        },
+    }
+
+
+def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
+    if args.fast:
+        fast_context = _fast_service_closure_context(args, client)
+        supervision = fast_context["supervision"]
+        item = fast_context["item"]
+    else:
+        supervision = client.get(
+            "/api/operator/loop-supervision",
+            query={
+                "adapter": args.adapter,
+                "limit": args.limit,
+                "task_id": args.task_id,
+                "agent_id": args.agent_id,
+                "q": args.query,
+                "handoff_mode": args.handoff_mode,
+                "full_handoff": "true" if args.full_handoff else None,
+                "include_codex": "false",
+            },
+        )
+        items = supervision.get("items") if isinstance(supervision.get("items"), list) else []
+        item = next((row for row in items if isinstance(row, dict) and row.get("adapter") == args.adapter), {})
     local_deployment = item.get("local_deployment") if isinstance(item.get("local_deployment"), dict) else {}
     service_managed_loop = local_deployment.get("service_managed_loop") if isinstance(local_deployment.get("service_managed_loop"), dict) else {}
     commands = service_managed_loop.get("commands") if isinstance(service_managed_loop.get("commands"), dict) else {}
@@ -1422,6 +1521,7 @@ def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
         "provider": "agentops-operator",
         "operation": "operator_service_closure",
         "adapter": args.adapter,
+        "mode": "fast" if args.fast else "deep",
         "status": "preview",
         "recorded": False,
         "service_closure": {
@@ -1430,6 +1530,7 @@ def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
             "step": service_closure.get("step"),
             "phase": service_closure.get("phase"),
             "command": service_closure.get("command"),
+            "fast": args.fast,
             "token_omitted": True,
         },
         "service_managed_loop": {
@@ -1439,6 +1540,8 @@ def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
             "control_readback_attached": service_managed_loop.get("control_readback_attached") is True,
             "service_managed_loop_ready": service_managed_loop.get("service_managed_loop_ready") is True,
             "service_loaded": service_managed_loop.get("service_loaded") is True,
+            "supervision_status": supervision.get("status"),
+            "fast": args.fast,
             "token_omitted": True,
         },
         "planned_receipt": {
@@ -1471,13 +1574,14 @@ def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
             f"{args.adapter} --run-service-check --confirm-record",
             "agentops operator action-receipts --limit 20",
         ],
-        "contract": "preview-only by default; --confirm-record appends receipt and control-readback evidence; --run-service-check performs only the local CLI read-only service-check in this process and never executes service-control, shell, server-side commands, or live adapter work",
+        "contract": "preview-only by default; --confirm-record appends receipt and control-readback evidence; --run-service-check performs only the local CLI read-only service-check in this process and never executes service-control, shell, server-side commands, or live adapter work; --fast skips heavy loop-supervision reads and records only adapter-scoped service-check readback",
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
             "live_execution_performed": False,
             "server_executes_shell": False,
             "local_cli_service_check_performed": bool(args.run_service_check and service_check_source == "local_cli_service_check"),
+            "loop_supervision_read": not args.fast,
             "token_omitted": True,
         },
         "token_omitted": True,
@@ -1537,6 +1641,7 @@ def cmd_operator_service_closure(args, client: AgentOpsClient) -> dict:
             "live_execution_performed": False,
             "server_executes_shell": False,
             "local_cli_service_check_performed": bool(args.run_service_check and service_check_source == "local_cli_service_check"),
+            "loop_supervision_read": not args.fast,
             "token_omitted": True,
         },
     }
@@ -4983,6 +5088,7 @@ def build_parser() -> argparse.ArgumentParser:
     operator_record_readback.set_defaults(handler="operator_record_control_readback")
     operator_service_closure = operator_sub.add_parser("service-closure", help="Preview or record service-managed loop receipt/readback closure for Hermes/OpenClaw.")
     operator_service_closure.add_argument("--adapter", choices=["hermes", "openclaw"], required=True)
+    operator_service_closure.add_argument("--fast", action="store_true", help="Skip heavy loop-supervision reads and build the service closure receipt from local service-check commands.")
     operator_service_closure.add_argument("--service-check-json", default="", help="Path to JSON from agentops worker service-check, or '-' for stdin.")
     operator_service_closure.add_argument("--run-service-check", action="store_true", help="Run the local read-only worker service-check in this CLI process when no JSON file is supplied.")
     operator_service_closure.add_argument("--service-check-command", default="", help="Optional exact worker service-check command to parse for --run-service-check.")
