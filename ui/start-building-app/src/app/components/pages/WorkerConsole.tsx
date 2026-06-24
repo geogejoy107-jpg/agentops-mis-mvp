@@ -18,6 +18,7 @@ import { StatusBadge } from "../shared/StatusBadge";
 import {
   dispatchLocalWorkerOnce,
   loadOperatorExecutionMode,
+  loadOperatorStartCheck,
   loadWorkerAdapterReadiness,
   loadWorkerFleet,
   loadWorkerFleetHygiene,
@@ -28,6 +29,7 @@ import {
   stopLocalWorkerDaemon,
   useLiveData,
   type OperatorExecutionModePayload,
+  type OperatorStartCheckPayload,
   type WorkerAdapterName,
   type WorkerAdapterReadinessPayload,
   type WorkerDaemonResult,
@@ -46,6 +48,7 @@ interface WorkerConsoleData {
   fleetHygiene: WorkerFleetHygienePayload;
   adapterReadiness: WorkerAdapterReadinessPayload;
   executionMode: OperatorExecutionModePayload;
+  startCheck: OperatorStartCheckPayload;
 }
 
 function adapterColor(adapter: string) {
@@ -124,6 +127,14 @@ export function WorkerConsole() {
       copyCommand: "Copy command",
       copied: "Copied",
       noCommand: "No command",
+      localInstallPacket: "Local install packet",
+      installPacketSummary: "Copy-only start-check deployment packet for this adapter.",
+      serviceInstallPreview: "Service install preview",
+      confirmInstall: "Confirm install file",
+      serviceCheck: "Service check",
+      previewFirst: "preview first",
+      noServiceLoad: "does not load service",
+      firstSafeIncludesInstall: "install in first-safe",
       readOnlyProof: "read-only proof",
       noServerShell: "no server shell",
       noLiveExecution: "no live execution",
@@ -194,6 +205,14 @@ export function WorkerConsole() {
       copyCommand: "复制命令",
       copied: "已复制",
       noCommand: "暂无命令",
+      localInstallPacket: "本地安装包",
+      installPacketSummary: "当前 adapter 的 start-check 只读部署包。",
+      serviceInstallPreview: "安装预览",
+      confirmInstall: "确认写服务文件",
+      serviceCheck: "服务自检",
+      previewFirst: "先预览",
+      noServiceLoad: "不加载服务",
+      firstSafeIncludesInstall: "first-safe 含安装",
       readOnlyProof: "只读证明",
       noServerShell: "服务端不执行 shell",
       noLiveExecution: "未触发真实运行",
@@ -215,14 +234,15 @@ export function WorkerConsole() {
   });
 
   const { data, loading, error, refresh } = useLiveData<WorkerConsoleData>(async () => {
-    const [workerStatus, workerFleet, fleetHygiene, adapterReadiness, executionMode] = await Promise.all([
+    const [workerStatus, workerFleet, fleetHygiene, adapterReadiness, executionMode, startCheck] = await Promise.all([
       loadWorkerStatus(),
       loadWorkerFleet(),
       loadWorkerFleetHygiene({ limit: 8 }),
       loadWorkerAdapterReadiness(),
       loadOperatorExecutionMode(selectedAdapter, confirmRun, 8),
+      loadOperatorStartCheck(selectedAdapter, 8),
     ]);
-    return { workerStatus, workerFleet, fleetHygiene, adapterReadiness, executionMode };
+    return { workerStatus, workerFleet, fleetHygiene, adapterReadiness, executionMode, startCheck };
   }, [selectedAdapter, confirmRun]);
 
   const workerStatus = data?.workerStatus;
@@ -230,6 +250,7 @@ export function WorkerConsole() {
   const fleetHygiene = lastHygieneResult || data?.fleetHygiene;
   const adapterReadiness = data?.adapterReadiness;
   const executionMode = data?.executionMode;
+  const startCheck = data?.startCheck;
   const selectedRoute = executionMode?.selected_route;
   const selectedReadiness = adapterReadiness?.adapters?.[selectedAdapter];
   const liveBlocked = selectedAdapter !== "mock" && !confirmRun;
@@ -319,6 +340,29 @@ export function WorkerConsole() {
   const hygieneActionsAvailable = fleetHygiene?.summary.actions_available || 0;
   const remoteLaneCount = workerFleet?.summary.remote_worker_count ?? workerStatus?.remote_worker_count ?? 0;
   const localLaneCount = workerFleet?.summary.local_daemon_count ?? workerStatus?.worker_count ?? 0;
+  const localAdmissionPacket = (startCheck?.local_loop_admission_packet || {}) as Record<string, unknown>;
+  const localDeployment = (typeof localAdmissionPacket.local_deployment === "object" && localAdmissionPacket.local_deployment !== null
+    ? localAdmissionPacket.local_deployment
+    : {}) as Record<string, unknown>;
+  const serviceInstall = (typeof localDeployment.service_install === "object" && localDeployment.service_install !== null
+    ? localDeployment.service_install
+    : {}) as Record<string, unknown>;
+  const serviceInstallCommands = [
+    { label: copy.serviceInstallPreview, command: serviceInstall.preview_command, status: serviceInstall.preview_command ? "pass" : "attention", confirm: false },
+    { label: copy.confirmInstall, command: serviceInstall.confirm_command, status: serviceInstall.confirm_command ? "attention" : "blocked", confirm: true },
+    { label: copy.serviceCheck, command: serviceInstall.verify_command, status: serviceInstall.verify_command ? "pass" : "attention", confirm: false },
+  ];
+  const firstSafeCommands = Array.isArray(localAdmissionPacket.first_safe_commands)
+    ? localAdmissionPacket.first_safe_commands.map(String).filter(Boolean)
+    : [];
+  const firstSafeHasInstall = firstSafeCommands.slice(0, 8).some((command) => command.includes("service-install"));
+  const serviceInstallSafety = [
+    { label: copy.previewFirst, status: serviceInstall.preview_only_by_default === false ? "attention" : "pass" },
+    { label: copy.noServiceLoad, status: serviceInstall.loads_service ? "attention" : "pass" },
+    { label: copy.noServerShell, status: serviceInstall.server_executes_shell === false ? "pass" : "attention" },
+    { label: copy.firstSafeIncludesInstall, status: firstSafeHasInstall ? "pass" : "attention" },
+    { label: copy.tokenOmitted, status: serviceInstall.token_omitted === false ? "attention" : "pass" },
+  ];
 
   const statCards = [
     { label: copy.runningDaemons, value: workerStatus?.running_workers ?? workerFleet?.summary.running_local_daemons ?? "—", status: (workerStatus?.running_workers || 0) > 0 ? "running" : "ready" },
@@ -446,6 +490,45 @@ export function WorkerConsole() {
               {actionMessage}
             </div>
           )}
+
+          <div data-testid="worker-local-install-packet" className="rounded p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <ShieldCheck size={13} style={{ color: "var(--mis-cyan)" }} />
+                  <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.localInstallPacket}</div>
+                  <StatusBadge status={startCheck?.status || "unknown"} label={selectedAdapter} />
+                </div>
+                <p className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-dim)" }}>{copy.installPacketSummary}</p>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {serviceInstallSafety.map((item) => (
+                  <StatusBadge key={item.label} status={item.status} label={item.label} />
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-3">
+              {serviceInstallCommands.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  disabled={!item.command}
+                  onClick={() => void copyCommand(String(item.command || ""))}
+                  className="flex items-center justify-between gap-2 rounded px-2 py-1.5 text-left disabled:opacity-45"
+                  style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: item.confirm ? "var(--mis-warning)" : "var(--mis-cyan)" }}
+                  title={String(item.command || copy.noCommand)}
+                >
+                  <span className="min-w-0">
+                    <span className="block text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.label}</span>
+                    <span className="block text-[9px] truncate" style={{ color: item.confirm ? "var(--mis-warning)" : "var(--mis-cyan)" }}>
+                      {item.command ? (copiedCommand === item.command ? copy.copied : commandLabel(String(item.command))) : copy.noCommand}
+                    </span>
+                  </span>
+                  <Copy size={10} className="shrink-0" />
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
             {(workerStatus?.daemons || []).map((daemon) => (
