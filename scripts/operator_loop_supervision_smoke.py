@@ -227,6 +227,9 @@ def validate(payload: dict, failures: list[str], *, expect_quality_attention: bo
         require(int(summary.get("agent_plan_quality_attention") or 0) >= 1, f"plan quality attention count should be positive: {summary}", failures)
     work_packets = payload.get("work_packets") or []
     require(len(work_packets) == 2, f"top-level work packets missing: {work_packets}", failures)
+    require(summary.get("research_lab_packets") == 2, f"top-level research lab packet summary missing: {summary}", failures)
+    require(len(summary.get("research_lab_packet_hashes") or []) == 2, f"top-level research lab packet hashes missing: {summary}", failures)
+    require(len(payload.get("research_lab_packets") or []) == 2, f"top-level research lab packets missing: {payload.get('research_lab_packets')}", failures)
     handoff_summary = payload.get("handoff_summary") or {}
     require(handoff_summary.get("ready_for_handoff") is True, f"handoff source should be ready: {handoff_summary}", failures)
     items = payload.get("items") or []
@@ -290,6 +293,27 @@ def validate(payload: dict, failures: list[str], *, expect_quality_attention: bo
             require(contract_service.get("phase") in {"RECORD", "PREFLIGHT"}, f"{adapter} service closure phase missing: {contract_service}", failures)
             require_adapter_command(contract_service.get("command"), adapter, f"{adapter} service closure command", failures)
         require(evidence_contract.get("knowledge_retrieval_required") is True, f"{adapter} work packet retrieval contract missing: {evidence_contract}", failures)
+        research_lab_packet = work_packet.get("research_lab_packet") or {}
+        require(research_lab_packet.get("operation") == "operator_research_lab_packet", f"{adapter} embedded Research Lab packet missing: {research_lab_packet}", failures)
+        require(research_lab_packet.get("schema_version") == "research_lab_agent_work_packet_v1", f"{adapter} embedded Research Lab packet schema missing: {research_lab_packet}", failures)
+        require(research_lab_packet.get("adapter") == adapter, f"{adapter} embedded Research Lab adapter mismatch: {research_lab_packet}", failures)
+        require(research_lab_packet.get("status") == "ready", f"{adapter} embedded Research Lab packet not ready: {research_lab_packet}", failures)
+        require(research_lab_packet.get("packet_hash"), f"{adapter} embedded Research Lab packet hash missing: {research_lab_packet}", failures)
+        research_lab_safety = research_lab_packet.get("safety") or {}
+        require(research_lab_safety.get("read_only") is True, f"{adapter} embedded Research Lab read-only proof missing: {research_lab_safety}", failures)
+        require(research_lab_safety.get("ledger_mutated") is False, f"{adapter} embedded Research Lab ledger proof missing: {research_lab_safety}", failures)
+        require(research_lab_safety.get("server_executes_shell") is False, f"{adapter} embedded Research Lab server-shell proof missing: {research_lab_safety}", failures)
+        require(research_lab_safety.get("ssh_command_executed") is False, f"{adapter} embedded Research Lab SSH proof missing: {research_lab_safety}", failures)
+        require(research_lab_safety.get("network_probe_performed") is False, f"{adapter} embedded Research Lab network proof missing: {research_lab_safety}", failures)
+        research_lab_contract = evidence_contract.get("research_lab_packet") or {}
+        require(evidence_contract.get("research_lab_packet_required") is True, f"{adapter} Research Lab packet contract missing: {evidence_contract}", failures)
+        require(research_lab_contract.get("status") == "pass", f"{adapter} Research Lab packet contract not passing: {research_lab_contract}", failures)
+        require(research_lab_contract.get("packet_hash") == research_lab_packet.get("packet_hash"), f"{adapter} Research Lab contract hash mismatch: {research_lab_contract}", failures)
+        require("agentops operator research-lab-packet" in str(research_lab_contract.get("read_command") or ""), f"{adapter} Research Lab read command missing: {research_lab_contract}", failures)
+        require("validate-spec --spec examples/ssh_experiment.json" in str(research_lab_contract.get("verify_command") or ""), f"{adapter} Research Lab verify command missing: {research_lab_contract}", failures)
+        require(research_lab_contract.get("local_spec_validation_requires_approval") is False, f"{adapter} Research Lab local approval boundary wrong: {research_lab_contract}", failures)
+        require(research_lab_contract.get("real_ssh_execution_requires_approval") is True, f"{adapter} Research Lab SSH approval boundary wrong: {research_lab_contract}", failures)
+        require(research_lab_contract.get("server_executes_shell") is False, f"{adapter} Research Lab contract shell proof missing: {research_lab_contract}", failures)
         require(evidence_contract.get("audit_ledger_required") is True, f"{adapter} work packet audit contract missing: {evidence_contract}", failures)
         work_safety = work_packet.get("safety") or {}
         require(work_safety.get("read_only") is True, f"{adapter} work packet read-only safety missing: {work_safety}", failures)
@@ -300,7 +324,7 @@ def validate(payload: dict, failures: list[str], *, expect_quality_attention: bo
         require(item_safety.get("ledger_mutated") is False, f"{adapter} ledger safety missing: {item_safety}", failures)
         require(item_safety.get("server_executes_shell") is False, f"{adapter} shell safety missing: {item_safety}", failures)
         gate_ids = {gate.get("id") for gate in (item.get("gates") or [])}
-        require({"handoff_ready", "current_code", "method_gates", "preview_loop", "local_deployment", "bounded_confirm", "plan_quality", "service_managed_loop", "record_pressure", "server_shell_boundary"}.issubset(gate_ids), f"{adapter} gates missing: {gate_ids}", failures)
+        require({"handoff_ready", "current_code", "method_gates", "preview_loop", "local_deployment", "bounded_confirm", "plan_quality", "service_managed_loop", "record_pressure", "server_shell_boundary", "research_lab_packet"}.issubset(gate_ids), f"{adapter} gates missing: {gate_ids}", failures)
         quality_gate = next((gate for gate in (item.get("gates") or []) if gate.get("id") == "plan_quality"), {})
         require(quality_gate.get("status") in {"pass", "attention"}, f"{adapter} quality gate status missing: {quality_gate}", failures)
         require(quality_gate.get("hard_run_start_gate") is False, f"{adapter} quality gate should not hard-block run_start: {quality_gate}", failures)
@@ -314,6 +338,10 @@ def validate(payload: dict, failures: list[str], *, expect_quality_attention: bo
         if service_gate.get("status") == "attention":
             require(service_gate.get("step") in {"record_service_control_receipt", "record_control_readback", "confirm_service_control_load"}, f"{adapter} service gate step missing: {service_gate}", failures)
             require_adapter_command(service_gate.get("command"), adapter, f"{adapter} service gate command", failures)
+        research_lab_gate = next((gate for gate in (item.get("gates") or []) if gate.get("id") == "research_lab_packet"), {})
+        require(research_lab_gate.get("status") == "pass", f"{adapter} Research Lab gate should pass: {research_lab_gate}", failures)
+        require("agentops operator research-lab-packet" in str(research_lab_gate.get("command") or ""), f"{adapter} Research Lab gate command missing: {research_lab_gate}", failures)
+        require(research_lab_gate.get("packet_hash") == research_lab_packet.get("packet_hash"), f"{adapter} Research Lab gate hash mismatch: {research_lab_gate}", failures)
         service_closure = item.get("service_closure") or {}
         require(service_closure.get("status") in {"pass", "attention"}, f"{adapter} service closure missing: {service_closure}", failures)
         require(service_closure.get("hard_run_start_gate") is False, f"{adapter} service closure should remain non-hard gate: {service_closure}", failures)
@@ -475,7 +503,10 @@ def main() -> int:
             packet_summary = packet_payload.get("summary") or {}
             packet_items = packet_payload.get("work_packets") or []
             require(packet_summary.get("work_packets") == 2, f"work packet bundle summary missing: {packet_summary}", failures)
+            require(packet_summary.get("research_lab_packets") == 2, f"work packet bundle Research Lab summary missing: {packet_summary}", failures)
+            require(len(packet_summary.get("research_lab_packet_hashes") or []) == 2, f"work packet bundle Research Lab hashes missing: {packet_summary}", failures)
             require(len(packet_items) == 2, f"work packet bundle items missing: {packet_payload}", failures)
+            require(len(packet_payload.get("research_lab_packets") or []) == 2, f"work packet bundle Research Lab packets missing: {packet_payload}", failures)
             require({"hermes", "openclaw"}.issubset({item.get("adapter") for item in packet_items}), f"work packet bundle adapters missing: {packet_items}", failures)
             require(all((item.get("safety") or {}).get("server_executes_shell") is False for item in packet_items), f"work packet bundle shell safety missing: {packet_items}", failures)
             require(all((item.get("safety") or {}).get("live_execution_performed") is False for item in packet_items), f"work packet bundle live safety missing: {packet_items}", failures)
@@ -485,6 +516,9 @@ def main() -> int:
             require(all((item.get("evidence_contract") or {}).get("service_managed_loop_required") is True for item in packet_items), f"work packet bundle service contract missing: {packet_items}", failures)
             require(all(((item.get("evidence_contract") or {}).get("service_managed_loop") or {}).get("status") in {"pass", "attention"} for item in packet_items), f"work packet bundle service closure missing: {packet_items}", failures)
             require(all(((item.get("evidence_contract") or {}).get("service_managed_loop") or {}).get("hard_run_start_gate") is False for item in packet_items), f"work packet bundle service hard gate drift: {packet_items}", failures)
+            require(all((item.get("research_lab_packet") or {}).get("operation") == "operator_research_lab_packet" for item in packet_items), f"work packet bundle embedded Research Lab packet missing: {packet_items}", failures)
+            require(all(((item.get("research_lab_packet") or {}).get("safety") or {}).get("server_executes_shell") is False for item in packet_items), f"work packet bundle Research Lab shell proof missing: {packet_items}", failures)
+            require(all(((item.get("evidence_contract") or {}).get("research_lab_packet") or {}).get("status") == "pass" for item in packet_items), f"work packet bundle Research Lab contract missing: {packet_items}", failures)
             after = db_counts(db_path)
             require(before == after, f"loop-supervision mutated ledger: before={before} after={after}", failures)
             require(not leaked("\n".join(outputs)), "loop-supervision leaked token-like material", failures)

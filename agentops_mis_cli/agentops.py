@@ -1284,6 +1284,7 @@ def cmd_operator_loop_supervision(args, client: AgentOpsClient) -> dict:
             "full_handoff": "true" if args.full_handoff else None,
             "freshness_hours": args.freshness_hours,
             "include_codex": "true" if args.include_codex else "false",
+            "research_profile": args.research_profile or None,
         },
     )
     if getattr(args, "work_packet", False):
@@ -2379,6 +2380,11 @@ def compact_loop_supervision_work_packets(payload: dict) -> dict:
             for item in (payload.get("items") if isinstance(payload.get("items"), list) else [])
             if isinstance(item, dict) and isinstance(item.get("agent_work_packet"), dict)
         ]
+    research_lab_packets = [
+        item.get("research_lab_packet")
+        for item in work_packets
+        if isinstance(item, dict) and isinstance(item.get("research_lab_packet"), dict)
+    ]
     return {
         "provider": payload.get("provider", "agentops-operator"),
         "operation": "operator_loop_work_packet_bundle",
@@ -2391,8 +2397,11 @@ def compact_loop_supervision_work_packets(payload: dict) -> dict:
             **(payload.get("summary") if isinstance(payload.get("summary"), dict) else {}),
             "work_packets": len(work_packets),
             "packet_hashes": [item.get("packet_hash") for item in work_packets if item.get("packet_hash")],
+            "research_lab_packets": len(research_lab_packets),
+            "research_lab_packet_hashes": [item.get("packet_hash") for item in research_lab_packets if item.get("packet_hash")],
         },
         "work_packets": work_packets,
+        "research_lab_packets": research_lab_packets,
         "next_actions": payload.get("next_actions") or [],
         "contract": "compact machine-consumable loop work-packet bundle for Hermes/OpenClaw/Codex; read-only and copy-only, with live execution still gated by local confirmation, Agent Plan, retrieval, approvals, receipts, evidence and memory review",
         "safety": payload.get("safety") if isinstance(payload.get("safety"), dict) else {
@@ -5253,6 +5262,7 @@ def build_parser() -> argparse.ArgumentParser:
     operator_loop_supervision.add_argument("--handoff-mode", choices=["lightweight", "full"], default="lightweight")
     operator_loop_supervision.add_argument("--full-handoff", action="store_true", help="Shortcut for --handoff-mode full when reading supervision sources.")
     operator_loop_supervision.add_argument("--freshness-hours", type=int, default=72)
+    operator_loop_supervision.add_argument("--research-profile", default="", help="Optional Research Lab server profile selector for the embedded redacted packet.")
     operator_loop_supervision.add_argument("--include-codex", dest="include_codex", action="store_true", default=True, help="Include Codex handoff context in the source handoff. Enabled by default.")
     operator_loop_supervision.add_argument("--no-codex", dest="include_codex", action="store_false", help="Omit Codex handoff context from the source handoff.")
     operator_loop_supervision.add_argument("--work-packet", action="store_true", help="Return only the compact machine-consumable loop work-packet bundle.")

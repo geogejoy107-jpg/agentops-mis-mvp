@@ -25246,6 +25246,7 @@ def loop_supervision_item(
     limit: int,
     start_check_payload: dict | None = None,
     plan_quality_evidence: dict | None = None,
+    research_lab_packet: dict | None = None,
 ) -> dict:
     adapter = str(consumer.get("adapter") or "mock")
     start_check = consumer.get("start_check") if isinstance(consumer.get("start_check"), dict) else {}
@@ -25263,6 +25264,22 @@ def loop_supervision_item(
     managed_execution = local_deployment.get("managed_execution_path") if isinstance(local_deployment.get("managed_execution_path"), dict) else {}
     managed_execution_commands = managed_execution.get("commands") if isinstance(managed_execution.get("commands"), dict) else {}
     service_commands = service_managed_loop.get("commands") if isinstance(service_managed_loop.get("commands"), dict) else {}
+    research_lab_packet = research_lab_packet if isinstance(research_lab_packet, dict) else {}
+    research_lab_safety = research_lab_packet.get("safety") if isinstance(research_lab_packet.get("safety"), dict) else {}
+    research_lab_phase_commands = research_lab_packet.get("phase_commands") if isinstance(research_lab_packet.get("phase_commands"), dict) else {}
+    research_lab_ready = (
+        research_lab_packet.get("operation") == "operator_research_lab_packet"
+        and research_lab_packet.get("schema_version") == "research_lab_agent_work_packet_v1"
+        and research_lab_packet.get("status") == "ready"
+        and research_lab_safety.get("read_only") is True
+        and research_lab_safety.get("server_executes_shell") is False
+        and research_lab_safety.get("ssh_command_executed") is False
+        and research_lab_safety.get("network_probe_performed") is False
+        and bool(research_lab_packet.get("packet_hash"))
+    )
+    research_lab_read_command = research_lab_phase_commands.get("READ") or f"agentops operator research-lab-packet --adapter {adapter} --limit {limit}"
+    research_lab_verify_command = research_lab_phase_commands.get("VERIFY") or "python3 scripts/operator_research_lab_packet_smoke.py"
+    research_lab_record_command = research_lab_phase_commands.get("RECORD") or "agentops plan-evidence create --agent-plan-id <agent_plan_id> --evidence-kind research_lab_packet"
     local_deployment_safety = local_run_path.get("safety") if isinstance(local_run_path.get("safety"), dict) else {}
     local_deployment_adapter_ok = (
         adapter not in {"hermes", "openclaw"}
@@ -25449,6 +25466,17 @@ def loop_supervision_item(
             "server_executes_shell": server_shell,
             "token_omitted": True,
         },
+        {
+            "id": "research_lab_packet",
+            "ok": research_lab_ready,
+            "status": "pass" if research_lab_ready else "attention",
+            "command": research_lab_read_command,
+            "packet_hash": research_lab_packet.get("packet_hash"),
+            "server_executes_shell": research_lab_safety.get("server_executes_shell") is True,
+            "ssh_command_executed": research_lab_safety.get("ssh_command_executed") is True,
+            "network_probe_performed": research_lab_safety.get("network_probe_performed") is True,
+            "token_omitted": True,
+        },
     ]
     would_allow_run_start = bool(can_confirm and not server_shell)
     phase_commands = method.get("phase_commands") if isinstance(method.get("phase_commands"), dict) else {}
@@ -25547,6 +25575,7 @@ def loop_supervision_item(
                     commands.get("live_product_readiness"),
                     plan_quality_command,
                     review_pressure["record_command"],
+                    research_lab_read_command,
                     "agentops operator loop-audit --limit 20",
                     "agentops operator action-receipts --limit 20",
                 ]
@@ -25558,6 +25587,9 @@ def loop_supervision_item(
                     managed_execution_commands.get("agent_plan_create"),
                     managed_execution_commands.get("knowledge_search"),
                     managed_execution_commands.get("base_reference"),
+                    research_lab_phase_commands.get("PLAN"),
+                    research_lab_phase_commands.get("RETRIEVE"),
+                    research_lab_phase_commands.get("COMPARE"),
                     service_commands.get("record_verified_receipt"),
                     service_commands.get("record_control_readback"),
                 ]
@@ -25576,6 +25608,8 @@ def loop_supervision_item(
                 for command in [
                     managed_execution_commands.get("evidence_report"),
                     managed_execution_commands.get("review_queue"),
+                    research_lab_verify_command,
+                    "python3 scripts/operator_research_lab_packet_smoke.py",
                     commands.get("live_product_readiness"),
                     "agentops operator loop-audit --limit 20",
                     "agentops operator action-receipts --limit 20",
@@ -25630,12 +25664,29 @@ def loop_supervision_item(
             "service_managed_loop": service_closure,
             "knowledge_retrieval_required": True,
             "base_reference_required": True,
+            "research_lab_packet_required": True,
+            "research_lab_packet": {
+                "status": "pass" if research_lab_ready else "attention",
+                "operation": research_lab_packet.get("operation"),
+                "schema_version": research_lab_packet.get("schema_version"),
+                "packet_hash": research_lab_packet.get("packet_hash"),
+                "read_command": research_lab_read_command,
+                "verify_command": research_lab_verify_command,
+                "record_command": research_lab_record_command,
+                "local_spec_validation_requires_approval": ((research_lab_packet.get("approval_boundary") or {}).get("local_spec_validation_requires_approval") if isinstance(research_lab_packet.get("approval_boundary"), dict) else None),
+                "real_ssh_execution_requires_approval": ((research_lab_packet.get("approval_boundary") or {}).get("real_ssh_execution_requires_approval") if isinstance(research_lab_packet.get("approval_boundary"), dict) else None),
+                "server_executes_shell": research_lab_safety.get("server_executes_shell") is True,
+                "ssh_command_executed": research_lab_safety.get("ssh_command_executed") is True,
+                "network_probe_performed": research_lab_safety.get("network_probe_performed") is True,
+                "token_omitted": True,
+            },
             "plan_evidence_required": True,
             "review_queue_required": True,
             "audit_ledger_required": True,
             "memory_review_required": review_pressure["memory_candidates"] > 0,
             "token_omitted": True,
         },
+        "research_lab_packet": research_lab_packet,
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
@@ -25678,6 +25729,7 @@ def loop_supervision_item(
         "gates": gates,
         "local_deployment": local_deployment,
         "agent_loop_packet": start_check_payload.get("agent_loop_packet") if isinstance(start_check_payload.get("agent_loop_packet"), dict) else None,
+        "research_lab_packet": research_lab_packet,
         "agent_work_packet": agent_work_packet,
         "next_commands": {
             "safe_read_commands": [
@@ -25765,6 +25817,7 @@ def loop_supervision_item(
 def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
+    research_profile = redact_text((qs.get("research_profile") or qs.get("profile") or [""])[0], 120)
     handoff = operator_agent_loop_handoff(conn, headers, qs, auth_ctx)
     current_code = handoff.get("current_code") if isinstance(handoff.get("current_code"), dict) else {}
     consumers = handoff.get("consumers") if isinstance(handoff.get("consumers"), list) else []
@@ -25806,6 +25859,12 @@ def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_c
             current_code=current_code,
             limit=limit,
             plan_quality_evidence=plan_quality_evidence,
+            research_lab_packet=build_research_lab_packet(
+                ROOT,
+                adapter=str(consumer.get("adapter") or "mock"),
+                limit=min(limit, 8),
+                profile=research_profile,
+            ),
             start_check_payload=operator_start_check(
                 conn,
                 headers,
@@ -25838,6 +25897,11 @@ def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_c
         for item in items
         if isinstance(item.get("agent_work_packet"), dict)
     ]
+    research_lab_packets = [
+        packet.get("research_lab_packet")
+        for packet in work_packets
+        if isinstance(packet.get("research_lab_packet"), dict)
+    ]
     return {
         "provider": "agentops-operator",
         "operation": "operator_loop_supervision",
@@ -25855,12 +25919,15 @@ def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_c
             "agent_plan_quality_attention": int(plan_quality_evidence.get("attention") or 0),
             "agent_plan_quality_blocked": int(plan_quality_evidence.get("blocked") or 0),
             "agent_plan_quality_min_score": plan_quality_evidence.get("min_score"),
+            "research_lab_packets": len(research_lab_packets),
+            "research_lab_packet_hashes": [item.get("packet_hash") for item in research_lab_packets if item.get("packet_hash")],
             "can_confirm_all": bool(items) and all(item.get("can_confirm_bounded_loop") for item in items),
             "record_required": any(item.get("should_record_before_execute") for item in items),
             "current_code_ok": current_code.get("ok") is True,
         },
         "items": items,
         "work_packets": work_packets,
+        "research_lab_packets": research_lab_packets,
         "next_actions": next_actions[:8],
         "contract": "read-only execution supervision projection and machine work-packet bundle for Hermes/OpenClaw/Codex after handoff and before confirm-loop; use it to decide whether to preview, record/review first, or copy the bounded confirm command locally",
         "auth": handoff.get("auth") if isinstance(handoff.get("auth"), dict) else {
