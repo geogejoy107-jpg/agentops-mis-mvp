@@ -68,6 +68,7 @@ def main() -> int:
     require(payload.get("live_execution_performed") is False, f"plan-only executed live work: {payload}", failures)
     require(payload.get("ledger_mutated") is False, f"plan-only mutated ledger: {payload}", failures)
     require(payload.get("confirm_live_required") is True, f"confirm wall missing: {payload}", failures)
+    require(payload.get("confirm_service_control_required") is True, f"service-control confirm wall missing: {payload}", failures)
     require(payload.get("confirm_service_closure_required") is True, f"service-closure confirm wall missing: {payload}", failures)
     steps = payload.get("steps") or []
     require(steps and steps[0].get("advisory") is True, f"readiness probe should be advisory: {payload}", failures)
@@ -76,11 +77,14 @@ def main() -> int:
     require("--confirm-live" in str(commands.get("real_worker_loop")), f"confirm-live flag missing: {commands}", failures)
     combined = str(commands.get("service_closure_live_demo") or "")
     require("live_worker_loop_demo_slice.py" in combined, f"combined service-closure/live command missing: {commands}", failures)
-    require("--confirm-live" in combined and "--confirm-service-closure" in combined, f"combined command confirmation flags missing: {combined}", failures)
+    require("--confirm-live" in combined and "--confirm-service-control" in combined and "--confirm-service-closure" in combined, f"combined command confirmation flags missing: {combined}", failures)
     require("v1_5_live_product_readiness_smoke.py" in str(commands.get("live_readback")), f"readback command missing: {commands}", failures)
     require("operator live-product-readiness" in str(commands.get("operator_readback")), f"operator readback command missing: {commands}", failures)
     for adapter in ["hermes", "openclaw"]:
         require(f"operator start-check --adapter {adapter}" in str(commands.get(f"{adapter}_start_check")), f"{adapter} start-check command missing: {commands}", failures)
+        control = str(commands.get(f"{adapter}_service_control") or "")
+        require(f"worker service-control --manager launchd --action load --adapter {adapter}" in control, f"{adapter} service-control command missing: {commands}", failures)
+        require("--confirm-control" in control and f"--agent-id agt_worker_daemon_{adapter}" in control, f"{adapter} service-control flags missing: {control}", failures)
         closure = str(commands.get(f"{adapter}_service_closure") or "")
         require(f"operator service-closure --adapter {adapter}" in closure, f"{adapter} service-closure command missing: {commands}", failures)
         require("--fast" in closure and "--run-service-check" in closure and "--confirm-record" in closure, f"{adapter} service-closure flags missing: {closure}", failures)
@@ -88,11 +92,13 @@ def main() -> int:
         require("--confirm-loop" in loop and "--auto-service-closure" in loop, f"{adapter} auto service closure loop missing: {loop}", failures)
     sequence = payload.get("recommended_sequence") or []
     require("real_worker_loop" in sequence and "live_readback" in sequence, f"recommended sequence missing run/readback: {sequence}", failures)
+    require("hermes_service_control" in sequence and "openclaw_service_control" in sequence, f"recommended sequence missing service control: {sequence}", failures)
     require("hermes_service_closure" in sequence and "openclaw_service_closure" in sequence, f"recommended sequence missing service closure: {sequence}", failures)
     require("service_closure_live_demo" in sequence, f"recommended sequence missing combined demo command: {sequence}", failures)
     safety = payload.get("safety") or {}
     require(safety.get("uses_saved_cli_config") is False, f"saved config should not be used: {safety}", failures)
     require(safety.get("token_omitted") is True, f"token omission proof missing: {safety}", failures)
+    require(safety.get("requires_explicit_confirm_service_control") is True, f"service-control safety proof missing: {safety}", failures)
     require(safety.get("requires_explicit_confirm_service_closure") is True, f"service-closure safety proof missing: {safety}", failures)
 
     demo_module = load_demo_module()
@@ -158,6 +164,7 @@ def main() -> int:
             "base_url_explicit",
             "no_saved_cli_config",
             "no_token_like_output",
+            "service_control_confirm_wall",
             "service_closure_fail_closed_helper",
         ],
     }, ensure_ascii=False, indent=2, sort_keys=True))

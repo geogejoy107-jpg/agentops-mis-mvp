@@ -73,7 +73,15 @@ def run_json(command: list[str], env: dict[str, str], timeout: int) -> tuple[boo
     return proc.returncode == 0 and payload.get("ok", True) is not False, {"returncode": proc.returncode, "payload": payload}
 
 
-def planned_commands(base_url: str, adapters: list[str], request_timeout: int, hermes_timeout: int, hermes_max_tokens: int) -> dict[str, str]:
+def planned_commands(
+    base_url: str,
+    adapters: list[str],
+    request_timeout: int,
+    hermes_timeout: int,
+    hermes_max_tokens: int,
+    service_control_manager: str,
+    service_control_action: str,
+) -> dict[str, str]:
     adapter_flags = " ".join(f"--adapter {adapter}" for adapter in adapters)
     require_flags = " ".join(f"--require-adapter {adapter}" for adapter in adapters)
     env_prefix = f"AGENTOPS_BASE_URL={base_url}"
@@ -81,7 +89,7 @@ def planned_commands(base_url: str, adapters: list[str], request_timeout: int, h
         "readiness": f"{env_prefix} ./scripts/agentops local readiness --require-current-code",
         "service_closure_live_demo": (
             f"{env_prefix} python3 scripts/live_worker_loop_demo_slice.py "
-            f"--base-url {base_url} --confirm-live --confirm-service-closure {adapter_flags} "
+            f"--base-url {base_url} --confirm-live --confirm-service-control --confirm-service-closure {adapter_flags} "
             f"--request-timeout {request_timeout} --hermes-timeout {hermes_timeout} "
             f"--hermes-max-tokens {hermes_max_tokens}"
         ),
@@ -96,6 +104,11 @@ def planned_commands(base_url: str, adapters: list[str], request_timeout: int, h
     }
     for adapter in adapters:
         commands[f"{adapter}_start_check"] = f"{env_prefix} ./scripts/agentops operator start-check --adapter {adapter} --limit 8"
+        commands[f"{adapter}_service_control"] = (
+            f"{env_prefix} ./scripts/agentops worker service-control "
+            f"--manager {service_control_manager} --action {service_control_action} "
+            f"--adapter {adapter} --agent-id agt_worker_daemon_{adapter} --confirm-control"
+        )
         commands[f"{adapter}_service_closure"] = (
             f"{env_prefix} ./scripts/agentops operator service-closure "
             f"--adapter {adapter} --fast --run-service-check --confirm-record"
@@ -168,6 +181,30 @@ def compact_service_closure(adapter: str, payload: dict[str, Any]) -> dict[str, 
         "local_cli_service_check_performed": safety.get("local_cli_service_check_performed") is True,
         "live_execution_performed": safety.get("live_execution_performed") is True,
         "ledger_mutated": safety.get("ledger_mutated") is True,
+        "token_omitted": payload.get("token_omitted") is True,
+    }
+
+
+def compact_service_control(adapter: str, payload: dict[str, Any]) -> dict[str, Any]:
+    service_check = payload.get("service_check") if isinstance(payload.get("service_check"), dict) else {}
+    service_file = service_check.get("service_file") if isinstance(service_check.get("service_file"), dict) else {}
+    service_status = service_check.get("service_status") if isinstance(service_check.get("service_status"), dict) else {}
+    return {
+        "adapter": adapter,
+        "provider": payload.get("provider"),
+        "command": payload.get("command"),
+        "ok": payload.get("ok"),
+        "action": payload.get("action"),
+        "manager": payload.get("manager"),
+        "dry_run": payload.get("dry_run"),
+        "confirmed_control": payload.get("confirmed_control") is True,
+        "service_mutated": payload.get("service_mutated") is True,
+        "live_execution_performed": payload.get("live_execution_performed") is True,
+        "service_path": payload.get("service_path"),
+        "service_file_exists": service_file.get("exists") is True,
+        "service_loaded": service_status.get("loaded") is True,
+        "failures": [str(item)[:240] for item in (payload.get("failures") or [])[:3]],
+        "raw_content_omitted": payload.get("raw_content_omitted") is True,
         "token_omitted": payload.get("token_omitted") is True,
     }
 
@@ -258,6 +295,11 @@ def main() -> int:
     parser.add_argument("--adapter", action="append", choices=["hermes", "openclaw"], default=None)
     parser.add_argument("--confirm-live", action="store_true", help="Run real local Hermes/OpenClaw customer-worker acceptance.")
     parser.add_argument(
+        "--confirm-service-control",
+        action="store_true",
+        help="Before service-closure, explicitly run local worker service-control for each adapter. This may mutate local OS service state.",
+    )
+    parser.add_argument(
         "--confirm-service-closure",
         action="store_true",
         help="Before the live worker run, record fast service-closure receipt/readback evidence for each selected adapter.",
@@ -265,13 +307,24 @@ def main() -> int:
     parser.add_argument("--request-timeout", type=int, default=720)
     parser.add_argument("--hermes-timeout", type=int, default=600)
     parser.add_argument("--hermes-max-tokens", type=int, default=512)
+    parser.add_argument("--service-control-manager", choices=["launchd", "systemd"], default="launchd")
+    parser.add_argument("--service-control-action", choices=["load", "restart"], default="load")
+    parser.add_argument("--service-control-timeout", type=int, default=30)
     parser.add_argument("--service-closure-timeout", type=int, default=30)
     parser.add_argument("--probe-timeout", type=int, default=5)
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
     adapters = args.adapter or ["hermes", "openclaw"]
-    commands = planned_commands(base_url, adapters, args.request_timeout, args.hermes_timeout, args.hermes_max_tokens)
+    commands = planned_commands(
+        base_url,
+        adapters,
+        args.request_timeout,
+        args.hermes_timeout,
+        args.hermes_max_tokens,
+        args.service_control_manager,
+        args.service_control_action,
+    )
     env = os.environ.copy()
     env["AGENTOPS_BASE_URL"] = base_url
 
@@ -295,11 +348,13 @@ def main() -> int:
             "live_execution_performed": False,
             "ledger_mutated": False,
             "confirm_live_required": True,
+            "confirm_service_control_required": True,
             "confirm_service_closure_required": True,
             "commands": commands,
             "recommended_sequence": [
                 "readiness",
                 *[f"{adapter}_start_check" for adapter in adapters],
+                *[f"{adapter}_service_control" for adapter in adapters],
                 *[f"{adapter}_service_closure" for adapter in adapters],
                 "service_closure_live_demo",
                 "real_worker_loop",
@@ -314,6 +369,7 @@ def main() -> int:
                 "token_omitted": True,
                 "uses_saved_cli_config": False,
                 "requires_explicit_confirm_live": True,
+                "requires_explicit_confirm_service_control": True,
                 "requires_explicit_confirm_service_closure": True,
             },
             "token_omitted": True,
@@ -325,8 +381,41 @@ def main() -> int:
         print(serialized)
         return 0
 
+    service_control_attempted = False
+    service_control_mutated = False
+    if args.confirm_service_control:
+        for adapter in adapters:
+            control_command = [
+                str(ROOT / "scripts" / "agentops"),
+                "--base-url",
+                base_url,
+                "worker",
+                "service-control",
+                "--manager",
+                args.service_control_manager,
+                "--action",
+                args.service_control_action,
+                "--adapter",
+                adapter,
+                "--agent-id",
+                f"agt_worker_daemon_{adapter}",
+                "--confirm-control",
+            ]
+            service_control_attempted = True
+            ok, result = run_json(control_command, env, args.service_control_timeout)
+            payload = result.get("payload") if isinstance(result.get("payload"), dict) else {}
+            summary = compact_service_control(adapter, payload)
+            service_control_mutated = service_control_mutated or summary.get("service_mutated") is True
+            steps.append({
+                "name": f"{adapter}_service_control",
+                "ok": ok,
+                "summary": summary,
+            })
+            if not ok:
+                failures.append(f"{adapter}_service_control_failed")
+
     service_closure_attempted = False
-    if args.confirm_service_closure:
+    if args.confirm_service_closure and not failures:
         for adapter in adapters:
             closure_command = [
                 str(ROOT / "scripts" / "agentops"),
@@ -422,12 +511,15 @@ def main() -> int:
         "base_url": base_url,
         "adapters": adapters,
         "live_execution_performed": live_attempted,
+        "service_control_attempted": service_control_attempted,
+        "service_control_mutated": service_control_mutated,
         "service_closure_attempted": service_closure_attempted,
         "ledger_mutated": live_attempted or service_closure_attempted,
         "commands": commands,
         "recommended_sequence": [
             "readiness",
             *[f"{adapter}_start_check" for adapter in adapters],
+            *[f"{adapter}_service_control" for adapter in adapters],
             *[f"{adapter}_service_closure" for adapter in adapters],
             "service_closure_live_demo",
             "real_worker_loop",
@@ -442,6 +534,7 @@ def main() -> int:
             "token_omitted": True,
             "uses_saved_cli_config": False,
             "requires_explicit_confirm_live": True,
+            "requires_explicit_confirm_service_control": True,
             "requires_explicit_confirm_service_closure": True,
             "summary_hash_only_ledger": True,
         },
