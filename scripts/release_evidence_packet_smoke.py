@@ -345,6 +345,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "operator_loop_supervision_work_packet_api",
+        "command": "python3 scripts/operator_loop_supervision_smoke.py",
+        "summary": "Loop supervision exposes the same compact agent_work_packet_bundle_v1 through CLI --work-packet and HTTP work_packet=1 for Hermes/OpenClaw HTTP-only agents without mutating ledgers, executing server shell, running live adapters, or leaking tokens.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "operator_loop_launch_packet",
         "command": "python3 scripts/operator_loop_launch_packet_smoke.py",
         "summary": "Agent Work Method launch packet supports default lightweight loop-control and explicit full handoff modes without mutating ledgers.",

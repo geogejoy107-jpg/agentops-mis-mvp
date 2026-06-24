@@ -25863,6 +25863,46 @@ def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_c
     }
 
 
+def compact_loop_supervision_work_packet_bundle(payload: dict) -> dict:
+    work_packets = [
+        item
+        for item in (payload.get("work_packets") if isinstance(payload.get("work_packets"), list) else [])
+        if isinstance(item, dict)
+    ]
+    if not work_packets:
+        work_packets = [
+            item.get("agent_work_packet")
+            for item in (payload.get("items") if isinstance(payload.get("items"), list) else [])
+            if isinstance(item, dict) and isinstance(item.get("agent_work_packet"), dict)
+        ]
+    return {
+        "provider": payload.get("provider", "agentops-operator"),
+        "operation": "operator_loop_work_packet_bundle",
+        "schema_version": "agent_work_packet_bundle_v1",
+        "source_operation": payload.get("operation", "operator_loop_supervision"),
+        "status": payload.get("status"),
+        "workspace_id": payload.get("workspace_id"),
+        "adapters": payload.get("adapters") or [item.get("adapter") for item in work_packets],
+        "summary": {
+            **(payload.get("summary") if isinstance(payload.get("summary"), dict) else {}),
+            "work_packets": len(work_packets),
+            "packet_hashes": [item.get("packet_hash") for item in work_packets if item.get("packet_hash")],
+        },
+        "work_packets": work_packets,
+        "next_actions": payload.get("next_actions") or [],
+        "contract": "compact machine-consumable loop work-packet bundle for Hermes/OpenClaw/Codex; read-only and copy-only, with live execution still gated by local confirmation, Agent Plan, retrieval, approvals, receipts, evidence and memory review",
+        "safety": payload.get("safety") if isinstance(payload.get("safety"), dict) else {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def operator_loop_bootstrap_append_option(command: str, name: str, value: str | None) -> str:
     command = str(command or "").strip()
     if not command or not value or name in command:
@@ -28680,6 +28720,8 @@ class Handler(BaseHTTPRequestHandler):
                     lambda: operator_loop_supervision(conn, self.headers, qs, auth_ctx),
                     auth_ctx,
                 )
+                if str((qs.get("work_packet") or qs.get("work-packet") or [""])[0]).strip().lower() in {"1", "true", "yes", "on"}:
+                    payload = compact_loop_supervision_work_packet_bundle(payload)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/loop-bootstrap":

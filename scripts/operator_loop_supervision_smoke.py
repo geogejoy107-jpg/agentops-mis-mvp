@@ -442,6 +442,20 @@ def main() -> int:
             outputs.append(json.dumps(http_payload, ensure_ascii=False))
             require(http_status == 200, f"HTTP loop-supervision status {http_status}: {http_payload}", failures)
             validate(http_payload, failures, expect_quality_attention=True)
+            http_packet_status, http_packet_payload = http_json(base_url, f"/api/operator/loop-supervision?limit=5&task_id={fixture_task_id}&work_packet=1")
+            outputs.append(json.dumps(http_packet_payload, ensure_ascii=False))
+            require(http_packet_status == 200, f"HTTP loop-supervision work_packet status {http_packet_status}: {http_packet_payload}", failures)
+            require(http_packet_payload.get("operation") == "operator_loop_work_packet_bundle", f"HTTP work packet bundle operation mismatch: {http_packet_payload}", failures)
+            require(http_packet_payload.get("schema_version") == "agent_work_packet_bundle_v1", f"HTTP work packet bundle schema mismatch: {http_packet_payload}", failures)
+            require(http_packet_payload.get("source_operation") == "operator_loop_supervision", f"HTTP work packet source mismatch: {http_packet_payload}", failures)
+            http_packet_summary = http_packet_payload.get("summary") or {}
+            http_packet_items = http_packet_payload.get("work_packets") or []
+            require(http_packet_summary.get("work_packets") == 2, f"HTTP work packet summary missing: {http_packet_summary}", failures)
+            require(len(http_packet_items) == 2, f"HTTP work packet items missing: {http_packet_payload}", failures)
+            require({"hermes", "openclaw"}.issubset({item.get("adapter") for item in http_packet_items}), f"HTTP work packet adapters missing: {http_packet_items}", failures)
+            require(all((item.get("safety") or {}).get("server_executes_shell") is False for item in http_packet_items), f"HTTP work packet shell safety missing: {http_packet_items}", failures)
+            require(all((item.get("safety") or {}).get("live_execution_performed") is False for item in http_packet_items), f"HTTP work packet live safety missing: {http_packet_items}", failures)
+            require(all(item.get("packet_hash") for item in http_packet_items), f"HTTP work packet hashes missing: {http_packet_items}", failures)
             cli_env = env.copy()
             cli_env["AGENTOPS_BASE_URL"] = base_url
             result = subprocess.run(
@@ -472,6 +486,22 @@ def main() -> int:
             packet_payload = json.loads(packet_result.stdout or "{}")
             require(packet_payload.get("operation") == "operator_loop_work_packet_bundle", f"work packet bundle operation mismatch: {packet_payload}", failures)
             require(packet_payload.get("schema_version") == "agent_work_packet_bundle_v1", f"work packet bundle schema mismatch: {packet_payload}", failures)
+            require(packet_payload.get("source_operation") == http_packet_payload.get("source_operation"), f"CLI/HTTP work packet source drift: cli={packet_payload.get('source_operation')} http={http_packet_payload.get('source_operation')}", failures)
+            for key in [
+                "items",
+                "ready_to_confirm",
+                "record_first",
+                "preview_only",
+                "blocked",
+                "agent_plan_quality_status",
+                "agent_plan_quality_attention",
+                "agent_plan_quality_blocked",
+                "can_confirm_all",
+                "record_required",
+                "current_code_ok",
+                "work_packets",
+            ]:
+                require((packet_payload.get("summary") or {}).get(key) == http_packet_summary.get(key), f"CLI/HTTP work packet summary drift for {key}: cli={packet_payload.get('summary')} http={http_packet_summary}", failures)
             packet_summary = packet_payload.get("summary") or {}
             packet_items = packet_payload.get("work_packets") or []
             require(packet_summary.get("work_packets") == 2, f"work packet bundle summary missing: {packet_summary}", failures)
