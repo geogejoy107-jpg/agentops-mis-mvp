@@ -77,6 +77,7 @@ jobs:
           python3 scripts/commercial_config_operator_action_ui_smoke.py
           python3 scripts/commercial_evidence_packet_index_smoke.py
           python3 scripts/commercial_current_evidence_status_smoke.py
+          python3 scripts/commercial_handoff_status_smoke.py
           python3 scripts/commercial_migration_breakdown_smoke.py
           python3 scripts/p0_open_source_plan_smoke.py
           python3 scripts/notion_open_source_loop_convergence_smoke.py
