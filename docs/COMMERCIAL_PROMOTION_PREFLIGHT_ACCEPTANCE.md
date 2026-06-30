@@ -31,6 +31,12 @@ python3 scripts/commercial_promotion_preflight_smoke.py --require-promotable
   failures are present.
 - `--require-promotable` fails until the same strict conditions are true.
 
+## Evidence Shape
+
+The packet emits `commercial_promotion_preflight` evidence with explicit
+`blocking_reasons`. A clean packet with pending CI is still useful review input,
+but it is not promotable until `blocking_reasons` is empty.
+
 ## Safety Boundaries
 
 - No server start.
