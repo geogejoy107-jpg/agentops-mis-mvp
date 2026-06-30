@@ -54,9 +54,10 @@ Expected result:
 - live API loader normalizes omission/safety fields and uses optional fallback
 - no token-like material is introduced
 
-## Next Slice
+## Follow-up Slice
 
-The next commercial slice can add a narrow admin task/action that points
-operators from this panel to the exact CLI command (`agentops commercial
-config-status`) and docs. Keep billing, hosted mode, Postgres and cleanup
+The narrow operator action follow-up is tracked in
+`docs/COMMERCIAL_CONFIG_OPERATOR_ACTION_UI_ACCEPTANCE.md`. It points operators
+from this panel to the exact CLI command (`agentops commercial config-status`)
+and evidence docs while keeping billing, hosted mode, Postgres and cleanup
 execution out of scope until production gates are current.

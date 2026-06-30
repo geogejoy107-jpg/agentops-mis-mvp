@@ -70,6 +70,12 @@ export function RuntimeConnectors() {
       tokenOmitted: "Token omitted",
       source: "Source",
       notConfigured: "Not configured",
+      operatorNextAction: "Operator next action",
+      operatorNextActionSummary: "Verify the same read-only state from CLI before promoting hosted, billing or cleanup work.",
+      verifyFromCli: "Verify from CLI",
+      evidenceDoc: "Evidence doc",
+      productionBoundary: "Production boundary",
+      noBillingCleanup: "No billing, cleanup, hosted-readiness or live-runtime action is performed from this panel.",
       plannedConnectors: "Planned Connectors",
       recentRuntimeEvents: "Recent Runtime Events",
     },
@@ -119,6 +125,12 @@ export function RuntimeConnectors() {
       tokenOmitted: "Token 已省略",
       source: "来源",
       notConfigured: "未配置",
+      operatorNextAction: "操作员下一步",
+      operatorNextActionSummary: "在推进 hosted、billing 或 cleanup 工作前，用 CLI 回读同一份只读状态。",
+      verifyFromCli: "CLI 验证",
+      evidenceDoc: "证据文档",
+      productionBoundary: "生产边界",
+      noBillingCleanup: "此面板不会执行 billing、cleanup、hosted-readiness 或真实运行时动作。",
       plannedConnectors: "计划接入的连接器",
       recentRuntimeEvents: "最近运行时事件",
     },
@@ -265,6 +277,31 @@ export function RuntimeConnectors() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-3 text-[10px]" style={{ color: "var(--mis-muted)" }}>
             <div>{copy.source}: {String(commercialConfigStatus.sources.entitlements?.source || "—")} · {String(commercialConfigStatus.sources.entitlements?.path || "—")}</div>
             <div>{copy.source}: {String(commercialConfigStatus.sources.retention?.source || "—")} · {String(commercialConfigStatus.sources.retention?.path || "—")}</div>
+          </div>
+          <div
+            data-testid="commercial-config-operator-action"
+            className="rounded p-3 mt-3"
+            style={{ background: "rgba(34,211,238,0.06)", border: "1px solid rgba(34,211,238,0.16)" }}
+          >
+            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.operatorNextAction}</div>
+                <p className="mt-1 text-[11px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>{copy.operatorNextActionSummary}</p>
+              </div>
+              <StatusBadge status="pass" label="read_only_cli" />
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-2 mt-3 text-[10px]">
+              {[
+                { label: copy.verifyFromCli, value: "agentops commercial config-status" },
+                { label: copy.evidenceDoc, value: "docs/COMMERCIAL_CONFIG_STATUS_UI_ACCEPTANCE.md" },
+                { label: copy.productionBoundary, value: copy.noBillingCleanup },
+              ].map(item => (
+                <div key={item.label} className="rounded p-2 min-w-0" style={{ background: "rgba(2,6,23,0.28)", border: "1px solid rgba(148,163,184,0.10)" }}>
+                  <div style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                  <div className="mt-0.5 font-medium break-words" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

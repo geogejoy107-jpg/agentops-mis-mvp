@@ -177,6 +177,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commercial_config_operator_action_ui",
+        "command": "python3 scripts/commercial_config_operator_action_ui_smoke.py",
+        "summary": "Admin Connectors points operators to the safe commercial config CLI readback and evidence doc without billing, cleanup, hosted-readiness or live-runtime action.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "external_connector_runtime_inventory",
         "command": "python3 scripts/external_connector_runtime_inventory_smoke.py",
         "summary": "High-risk external connector/runtime prepared-action inventory and guard coverage.",
