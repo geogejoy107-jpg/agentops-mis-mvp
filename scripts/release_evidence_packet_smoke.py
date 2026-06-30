@@ -183,6 +183,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commercial_evidence_packet_index",
+        "command": "python3 scripts/commercial_evidence_packet_index_smoke.py",
+        "summary": "Read-only commercial evidence packet index stays static/current-source derived without billing, cleanup, hosted-readiness, live runtime execution, raw logs, prompts, responses, DBs, or secrets.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commercial_migration_breakdown",
         "command": "python3 scripts/commercial_migration_breakdown_smoke.py",
         "summary": "Clean-room breakdown plan for decomposing the large conflicting commercial migration branch into reviewable product slices.",
