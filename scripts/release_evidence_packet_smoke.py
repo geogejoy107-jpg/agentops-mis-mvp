@@ -183,6 +183,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commercial_migration_breakdown",
+        "command": "python3 scripts/commercial_migration_breakdown_smoke.py",
+        "summary": "Clean-room breakdown plan for decomposing the large conflicting commercial migration branch into reviewable product slices.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "external_connector_runtime_inventory",
         "command": "python3 scripts/external_connector_runtime_inventory_smoke.py",
         "summary": "High-risk external connector/runtime prepared-action inventory and guard coverage.",
