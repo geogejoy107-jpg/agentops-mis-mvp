@@ -81,6 +81,7 @@ jobs:
           python3 scripts/local_open_source_experiment_base_smoke.py
           python3 scripts/spatial_os_manifest_smoke.py
           python3 scripts/spatial_research_semantic_contract_smoke.py
+          python3 scripts/spatial_zone_authority_readback_smoke.py
           python3 scripts/live_worker_loop_demo_slice_smoke.py
           python3 scripts/pixel_office_template_foundation_smoke.py
           python3 scripts/external_connector_runtime_inventory_smoke.py

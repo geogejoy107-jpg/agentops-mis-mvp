@@ -1,6 +1,7 @@
 import { ArrowRight, Bot, ExternalLink, MapPin } from "lucide-react";
 import { RiskBadge } from "../shared/RiskBadge";
 import { StatusBadge } from "../shared/StatusBadge";
+import { RESEARCH_DISTRICT_SEMANTIC_BY_ZONE } from "../../spatial/researchDistrictSemanticContract";
 import type { PixelAgent, PixelLocale, PixelMetrics, PixelTaskCard, PixelZoneDefinition } from "./pixelModel";
 import { PIXEL_ZONE_BY_ID, statusDisplay, taskGroupDisplay, zoneDisplay } from "./pixelModel";
 
@@ -28,6 +29,7 @@ export function ZoneInspector({
   const zh = locale === "zh";
   const focusZone = selectedAgent ? PIXEL_ZONE_BY_ID[selectedAgent.targetZone] : selectedZone || hoveredZone || PIXEL_ZONE_BY_ID.control_tower;
   const focusCopy = zoneDisplay(focusZone, locale);
+  const semanticObject = RESEARCH_DISTRICT_SEMANTIC_BY_ZONE.get(focusZone.id);
   const zoneAgents = agents.filter((agent) => agent.targetZone === focusZone.id);
   const zoneTasks = focusZone.id === "task_hall" ? taskCards.slice(0, 5) : [];
 
@@ -111,6 +113,37 @@ export function ZoneInspector({
           </div>
         ))}
       </section>
+
+      {semanticObject && (
+        <section
+          data-testid="semantic-authority-readback"
+          className="mt-4 rounded p-3"
+          style={{ background: "rgba(34,211,238,0.07)", border: "1px solid rgba(34,211,238,0.16)" }}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>
+              {zh ? "语义权威" : "Semantic authority"}
+            </div>
+            <StatusBadge status="pass" label={semanticObject.routeAuthority} />
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]">
+            {[
+              { label: zh ? "权威类别" : "Authority class", value: semanticObject.authorityClass },
+              { label: zh ? "权威对象" : "Authority kind", value: semanticObject.authorityKind },
+              { label: zh ? "正式路由" : "Formal route", value: semanticObject.formalRoute },
+              { label: zh ? "视觉边界" : "Visual boundary", value: semanticObject.visualAuthority },
+            ].map((item) => (
+              <div key={item.label} className="min-w-0 rounded p-2" style={{ background: "rgba(2,6,23,0.28)", border: "1px solid rgba(148,163,184,0.10)" }}>
+                <div style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                <div className="mt-0.5 truncate font-medium" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>
+            {semanticObject.description[locale]}
+          </p>
+        </section>
+      )}
 
       <section className="mt-4">
         <div className="flex items-center justify-between mb-2">
