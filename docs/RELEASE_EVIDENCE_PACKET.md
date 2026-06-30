@@ -99,6 +99,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/commercial_config_status_ui_smoke.py`
 - `python3 scripts/commercial_config_operator_action_ui_smoke.py`
 - `python3 scripts/commercial_evidence_packet_index_smoke.py`
+- `python3 scripts/commercial_current_evidence_status_smoke.py`
 - `python3 scripts/commercial_migration_breakdown_smoke.py`
 - `python3 scripts/external_connector_runtime_inventory_smoke.py`
 - `python3 scripts/sqlite_concurrency_smoke.py`

@@ -189,6 +189,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commercial_current_evidence_status",
+        "command": "python3 scripts/commercial_current_evidence_status_smoke.py",
+        "summary": "Read-only current commercial evidence status reports git/checklist/CI command-manifest posture without DB, server, live runtime, billing, cleanup, hosted or Postgres claims.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commercial_migration_breakdown",
         "command": "python3 scripts/commercial_migration_breakdown_smoke.py",
         "summary": "Clean-room breakdown plan for decomposing the large conflicting commercial migration branch into reviewable product slices.",

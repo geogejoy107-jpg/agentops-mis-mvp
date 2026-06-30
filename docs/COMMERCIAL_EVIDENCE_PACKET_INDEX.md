@@ -37,7 +37,7 @@ Evidence packet generators must not read, store, or commit:
 
 | Packet | Purpose | Source Of Truth | Current Status | Required Smoke |
 | --- | --- | --- | --- | --- |
-| Current Evidence Status | Summarize current local MVP gates and known commercial limits. | `docs/V1_5_MERGE_READINESS_CHECKLIST.md`, `docs/RELEASE_EVIDENCE_PACKET.md`, current git/CI readback. | indexed only | `commercial_current_evidence_status_smoke.py` |
+| Current Evidence Status | Summarize current local MVP gates and known commercial limits. | `docs/V1_5_MERGE_READINESS_CHECKLIST.md`, `docs/RELEASE_EVIDENCE_PACKET.md`, current git/CI readback. | generator smoke added | `commercial_current_evidence_status_smoke.py` |
 | Release Evidence Packet | Emit exact SHA, CI state, canonical commands, and release posture. | `scripts/release_evidence_packet_smoke.py`, `.github/workflows/ci.yml`, GitHub Actions readback. | existing generator | `release_evidence_packet_smoke.py` |
 | Commercial Handoff Status | Show which clean-room lanes are complete, blocked, or queued. | `docs/COMMERCIAL_MIGRATION_CLEAN_ROOM_BREAKDOWN.md`, lane acceptance docs, merged PR history. | indexed only | `commercial_handoff_status_smoke.py` |
 | Promotion Preflight | Check whether a branch can be promoted to review without unsafe claims. | current `HEAD`, `git status`, branch control smoke, secret scan, release evidence smoke. | indexed only | `commercial_promotion_preflight_smoke.py` |
@@ -64,7 +64,8 @@ Evidence packet generators must not read, store, or commit:
 
 ## Next Implementation Slice
 
-Implement `commercial_current_evidence_status_smoke.py` first. It should read
-only current tracked docs and command manifests, emit a redacted JSON summary,
-and fail if it finds unsafe readiness claims or stale generated packet output.
-
+Use `python3 scripts/commercial_current_evidence_status_smoke.py` as the first
+generator. It reads only current tracked docs and command manifests, emits a
+redacted JSON summary, and fails if it finds unsafe readiness claims or stale
+generated packet output. The next generator should be
+`commercial_handoff_status_smoke.py`.
