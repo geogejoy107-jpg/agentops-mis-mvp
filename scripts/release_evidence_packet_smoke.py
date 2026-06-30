@@ -153,6 +153,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "spatial_zone_authority_readback",
+        "command": "python3 scripts/spatial_zone_authority_readback_smoke.py",
+        "summary": "Pixel Office Zone Inspector displays semantic authority class, formal route and visual non-ledger boundary from the Research District contract.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commercial_config_boundary",
         "command": "python3 scripts/commercial_config_boundary_smoke.py",
         "summary": "Commercial config examples stay safe-by-default: Free Local, no billing calls, no hosted mode, no destructive cleanup, and no secret material.",
