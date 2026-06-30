@@ -2,7 +2,7 @@ import { Plug, Radio } from "lucide-react";
 import { useState } from "react";
 import { ConnectorCard } from "../shared/ConnectorCard";
 import { StatusBadge } from "../shared/StatusBadge";
-import { loadAudit, loadRuntimeConnectors, updateRuntimeConnectorTrust, useLiveData } from "../../data/liveApi";
+import { loadAudit, loadCommercialConfigStatus, loadRuntimeConnectors, updateRuntimeConnectorTrust, useLiveData } from "../../data/liveApi";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 
 export function RuntimeConnectors() {
@@ -10,14 +10,19 @@ export function RuntimeConnectors() {
   const [trustAction, setTrustAction] = useState<string | null>(null);
   const [trustMessage, setTrustMessage] = useState<string | null>(null);
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [runtimeConnectors, auditLogs] = await Promise.all([loadRuntimeConnectors(), loadAudit()]);
+    const [runtimeConnectors, auditLogs, commercialConfigStatus] = await Promise.all([
+      loadRuntimeConnectors(),
+      loadAudit(),
+      loadCommercialConfigStatus(),
+    ]);
     const connectorAuditLogs = auditLogs.filter(a =>
       a.entity_type === "runtime_connectors" || a.entity_type === "runtime_connector" || a.entity_type === "connector"
     );
-    return { runtimeConnectors, connectorAuditLogs };
+    return { runtimeConnectors, connectorAuditLogs, commercialConfigStatus };
   }, []);
   const runtimeConnectors = data?.runtimeConnectors || [];
   const connectorAuditLogs = data?.connectorAuditLogs || [];
+  const commercialConfigStatus = data?.commercialConfigStatus;
   const copy = pick(locale, {
     en: {
       title: "Runtime Connectors",
@@ -51,6 +56,20 @@ export function RuntimeConnectors() {
       confirm: "Confirm",
       trustPolicy: "Trust policy",
       commercial: "Commercial",
+      commercialConfig: "Commercial config",
+      commercialConfigSummary: "Read-only entitlement and retention controls. This panel never calls billing, cleanup, live runtimes, or exposes raw config.",
+      edition: "Edition",
+      billingProvider: "Billing provider",
+      billingCalls: "Billing calls",
+      cleanupExecution: "Cleanup execution",
+      approvalGate: "Approval gate",
+      legalHoldGate: "Legal hold gate",
+      enabledCapabilities: "Enabled capabilities",
+      disabledCapabilities: "Disabled capabilities",
+      rawConfigOmitted: "Raw config omitted",
+      tokenOmitted: "Token omitted",
+      source: "Source",
+      notConfigured: "Not configured",
       plannedConnectors: "Planned Connectors",
       recentRuntimeEvents: "Recent Runtime Events",
     },
@@ -86,6 +105,20 @@ export function RuntimeConnectors() {
       confirm: "确认要求",
       trustPolicy: "信任策略",
       commercial: "商业状态",
+      commercialConfig: "商业配置",
+      commercialConfigSummary: "只读 entitlement 与 retention 控制面板；不会调用 billing、cleanup、真实运行时，也不会暴露原始配置。",
+      edition: "版本",
+      billingProvider: "计费提供方",
+      billingCalls: "计费调用",
+      cleanupExecution: "清理执行",
+      approvalGate: "审批 Gate",
+      legalHoldGate: "Legal hold Gate",
+      enabledCapabilities: "已启用能力",
+      disabledCapabilities: "已禁用能力",
+      rawConfigOmitted: "原始配置已省略",
+      tokenOmitted: "Token 已省略",
+      source: "来源",
+      notConfigured: "未配置",
       plannedConnectors: "计划接入的连接器",
       recentRuntimeEvents: "最近运行时事件",
     },
@@ -170,6 +203,71 @@ export function RuntimeConnectors() {
           </div>
         ))}
       </div>
+
+      {commercialConfigStatus && (
+        <div
+          data-testid="commercial-config-status-panel"
+          className="rounded-xl p-4"
+          style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+        >
+          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <div className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>{copy.commercialConfig}</div>
+                <StatusBadge status={commercialConfigStatus.status} label={commercialConfigStatus.status} />
+                {!commercialConfigStatus.configured && <StatusBadge status="attention" label={copy.notConfigured} />}
+              </div>
+              <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>{copy.commercialConfigSummary}</p>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <StatusBadge status={commercialConfigStatus.safety.read_only ? "pass" : "blocked"} label="read_only" />
+              <StatusBadge status={commercialConfigStatus.safety.billing_call_performed ? "blocked" : "pass"} label={copy.billingCalls} />
+              <StatusBadge status={commercialConfigStatus.safety.cleanup_execution_performed ? "blocked" : "pass"} label={copy.cleanupExecution} />
+              <StatusBadge status={commercialConfigStatus.safety.raw_config_omitted ? "pass" : "attention"} label={copy.rawConfigOmitted} />
+              <StatusBadge status={commercialConfigStatus.safety.token_omitted ? "pass" : "attention"} label={copy.tokenOmitted} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mt-4">
+            {[
+              { label: copy.edition, value: commercialConfigStatus.entitlements.edition || "—" },
+              { label: copy.billingProvider, value: commercialConfigStatus.entitlements.billing_provider || "—" },
+              { label: copy.approvalGate, value: commercialConfigStatus.retention.cleanup_approval_required ? "required" : "missing" },
+              { label: copy.legalHoldGate, value: commercialConfigStatus.retention.legal_hold_required_before_cleanup ? "required" : "missing" },
+            ].map(item => (
+              <div key={item.label} className="rounded px-3 py-2 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
+            <div className="rounded p-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[10px] font-semibold mb-2" style={{ color: "var(--mis-text)" }}>{copy.enabledCapabilities}</div>
+              <div className="flex flex-wrap gap-1.5">
+                {commercialConfigStatus.entitlements.enabled_capabilities.map(capability => (
+                  <span key={capability} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>
+                    {capability}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="rounded p-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[10px] font-semibold mb-2" style={{ color: "var(--mis-text)" }}>{copy.disabledCapabilities}</div>
+              <div className="flex flex-wrap gap-1.5">
+                {commercialConfigStatus.entitlements.disabled_capabilities.map(capability => (
+                  <span key={capability} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(148,163,184,0.08)", color: "var(--mis-muted)", border: "1px solid var(--mis-border)" }}>
+                    {capability}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-3 text-[10px]" style={{ color: "var(--mis-muted)" }}>
+            <div>{copy.source}: {String(commercialConfigStatus.sources.entitlements?.source || "—")} · {String(commercialConfigStatus.sources.entitlements?.path || "—")}</div>
+            <div>{copy.source}: {String(commercialConfigStatus.sources.retention?.source || "—")} · {String(commercialConfigStatus.sources.retention?.path || "—")}</div>
+          </div>
+        </div>
+      )}
 
       {/* Connector cards grid */}
       <div className="grid grid-cols-2 gap-4">
