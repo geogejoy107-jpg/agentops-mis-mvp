@@ -195,6 +195,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commercial_handoff_status",
+        "command": "python3 scripts/commercial_handoff_status_smoke.py",
+        "summary": "Read-only commercial handoff status reports clean-room lane and packet states without DB, server, live runtime, billing, cleanup, hosted, Postgres or direct PR #22 merge claims.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commercial_migration_breakdown",
         "command": "python3 scripts/commercial_migration_breakdown_smoke.py",
         "summary": "Clean-room breakdown plan for decomposing the large conflicting commercial migration branch into reviewable product slices.",
