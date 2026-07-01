@@ -4243,6 +4243,18 @@ def agent_gateway_get_run_graph(conn: sqlite3.Connection, run_id: str, headers, 
     return data, 200
 
 
+def agent_gateway_get_run_evidence_graph(conn: sqlite3.Connection, run_id: str, headers, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers, auth_ctx=auth_ctx)
+    _run, access_error = agent_gateway_run_read_access(conn, run_id, ident, auth_ctx)
+    if access_error:
+        return access_error
+    data = run_evidence_graph(conn, run_id)
+    if not data:
+        return {"error": "not found"}, 404
+    data.update({"provider": "agent_gateway", "workspace_id": ident["workspace_id"], "gateway_scope": agent_gateway_scope_metadata(ident, auth_ctx), "token_omitted": True})
+    return data, 200
+
+
 def agent_gateway_list_artifacts(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 200)
@@ -28446,6 +28458,102 @@ def run_graph(conn, run_id: str) -> dict | None:
     return {"run": dict(run), "parent": dict(parent) if parent else None, "children": children, "siblings_by_delegation": siblings}
 
 
+def run_evidence_graph(conn: sqlite3.Connection, run_id: str) -> dict | None:
+    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    if not run:
+        return None
+    return work_delivery_graph_for_run(conn, run)
+
+
+def work_delivery_graph_for_run(conn: sqlite3.Connection, run: sqlite3.Row | dict) -> dict:
+    run_data = dict(run)
+    run_id = str(run_data.get("run_id") or "")
+    task_id = str(run_data.get("task_id") or "")
+    agent_id = str(run_data.get("agent_id") or "")
+    plan_id = str(run_data.get("agent_plan_id") or "")
+    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone() if task_id else None
+    agent = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone() if agent_id else None
+    plan = conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone() if plan_id else None
+    task_data = dict(task) if task else {}
+    agent_data = dict(agent) if agent else {}
+    plan_data = dict(plan) if plan else {}
+    latest_manifest = conn.execute(
+        "SELECT * FROM plan_evidence_manifests WHERE run_id=? OR (task_id=? AND plan_id=?) ORDER BY updated_at DESC, created_at DESC LIMIT 1",
+        (run_id, task_id, plan_id),
+    ).fetchone() if run_id or task_id else None
+    evidence_counts = {
+        "tool_calls": scalar_count(conn, "SELECT COUNT(*) FROM tool_calls WHERE run_id=?", (run_id,)),
+        "runtime_events": scalar_count(conn, "SELECT COUNT(*) FROM runtime_events WHERE run_id=?", (run_id,)),
+        "evaluations": scalar_count(conn, "SELECT COUNT(*) FROM evaluations WHERE run_id=? OR task_id=?", (run_id, task_id)),
+        "approvals": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE run_id=? OR task_id=?", (run_id, task_id)),
+        "artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts WHERE run_id=? OR task_id=?", (run_id, task_id)),
+        "memories": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE task_id=? OR source_ref LIKE ?", (task_id, f"%{run_id}%")),
+        "audit_logs": scalar_count(conn, "SELECT COUNT(*) FROM audit_logs WHERE entity_id IN (?, ?, ?)", (run_id, task_id, plan_id)),
+        "plan_evidence_manifests": scalar_count(conn, "SELECT COUNT(*) FROM plan_evidence_manifests WHERE run_id=? OR task_id=?", (run_id, task_id)),
+    }
+    nodes = [
+        {"kind": "workspace", "id": row_workspace(task or run_data), "status": "authority"},
+        {"kind": "task", "id": task_id or None, "status": task_data.get("status")},
+        {"kind": "agent", "id": agent_id or None, "status": agent_data.get("status")},
+        {"kind": "agent_plan", "id": plan_id or None, "status": plan_data.get("status"), "hash": run_data.get("plan_hash")},
+        {"kind": "run", "id": run_id, "status": run_data.get("status"), "runtime_type": run_data.get("runtime_type")},
+        {"kind": "plan_evidence_manifest", "id": latest_manifest["manifest_id"] if latest_manifest else None, "status": latest_manifest["status"] if latest_manifest else "missing"},
+        {"kind": "tool_calls", "count": evidence_counts["tool_calls"]},
+        {"kind": "runtime_events", "count": evidence_counts["runtime_events"]},
+        {"kind": "evaluations", "count": evidence_counts["evaluations"]},
+        {"kind": "approvals", "count": evidence_counts["approvals"]},
+        {"kind": "artifacts", "count": evidence_counts["artifacts"]},
+        {"kind": "memories", "count": evidence_counts["memories"]},
+        {"kind": "audit_logs", "count": evidence_counts["audit_logs"]},
+    ]
+    edges = [
+        {"from": "workspace", "to": "task", "relationship": "owns"},
+        {"from": "task", "to": "agent_plan", "relationship": "planned_by"},
+        {"from": "agent_plan", "to": "run", "relationship": "binds"},
+        {"from": "agent", "to": "run", "relationship": "executes"},
+        {"from": "run", "to": "tool_calls", "relationship": "records"},
+        {"from": "run", "to": "runtime_events", "relationship": "emits"},
+        {"from": "run", "to": "evaluations", "relationship": "evaluated_by"},
+        {"from": "run", "to": "artifacts", "relationship": "produces"},
+        {"from": "run", "to": "audit_logs", "relationship": "audited_by"},
+        {"from": "plan_evidence_manifest", "to": "run", "relationship": "verifies"},
+    ]
+    return {
+        "operation": "work_delivery_graph_readback",
+        "schema_version": "work_delivery_graph_v1",
+        "run_id": run_id,
+        "task_id": task_id or None,
+        "agent_id": agent_id or None,
+        "agent_plan_id": plan_id or None,
+        "plan_hash": run_data.get("plan_hash"),
+        "plan_evidence_manifest_id": latest_manifest["manifest_id"] if latest_manifest else None,
+        "evidence_counts": evidence_counts,
+        "nodes": nodes,
+        "edges": edges,
+        "graph_hash": stable_hash({
+            "schema_version": "work_delivery_graph_v1",
+            "run_id": run_id,
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "agent_plan_id": plan_id,
+            "plan_hash": run_data.get("plan_hash"),
+            "plan_evidence_manifest_id": latest_manifest["manifest_id"] if latest_manifest else None,
+            "evidence_counts": evidence_counts,
+        }),
+        "authority": "read_model_over_mis_ledgers",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
 def agent_performance(conn, agent_id: str) -> dict | None:
     agent = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
     if not agent:
@@ -29396,6 +29504,18 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status = agent_gateway_list_runs(conn, query, self.headers, auth_ctx)
                 conn.commit()
                 return self.send_json(payload, status)
+            if path.startswith("/api/agent-gateway/runs/") and path.endswith("/evidence-graph"):
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                run_id = path_segment(path, -2)
+                payload, status = agent_gateway_get_run_evidence_graph(conn, run_id, self.headers, auth_ctx)
+                conn.commit()
+                return self.send_json(payload, status)
             if path.startswith("/api/agent-gateway/runs/") and path.endswith("/graph"):
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
                 if auth_error:
@@ -29639,6 +29759,12 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/runs/") and path.endswith("/graph"):
                 run_id = path.split("/")[-2]
                 data = run_graph(conn, run_id)
+                if not data:
+                    return self.send_json({"error": "not found"}, 404)
+                return self.send_json(data)
+            if path.startswith("/api/runs/") and path.endswith("/evidence-graph"):
+                run_id = path.split("/")[-2]
+                data = run_evidence_graph(conn, run_id)
                 if not data:
                     return self.send_json({"error": "not found"}, 404)
                 return self.send_json(data)

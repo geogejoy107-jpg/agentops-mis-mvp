@@ -327,6 +327,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "work_delivery_graph_readback",
+        "command": "python3 scripts/work_delivery_graph_readback_smoke.py",
+        "summary": "CLI/API read-only work delivery graph over MIS ledgers: task, agent, plan, run, tools, runtime events, evaluations, artifacts, audit and plan evidence.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commander_repo_map",
         "command": "python3 scripts/commander_repo_map_smoke.py",
         "summary": "Commander repo-map localization returns deterministic file/symbol candidates with provenance and redacted snippets.",

@@ -4167,6 +4167,14 @@ def cmd_run_graph(args, client: AgentOpsClient) -> dict:
     return payload
 
 
+def cmd_run_evidence_graph(args, client: AgentOpsClient) -> dict:
+    payload = client.get(f"/api/agent-gateway/runs/{args.run_id}/evidence-graph")
+    payload["provider"] = payload.get("provider") or "agentops-mis"
+    payload["operation"] = "work_delivery_graph_readback"
+    payload["token_omitted"] = True
+    return payload
+
+
 def cmd_run_heartbeat(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -5782,6 +5790,10 @@ def build_parser() -> argparse.ArgumentParser:
     graph.add_argument("--run-id", required=True)
     graph.set_defaults(handler="run_graph")
 
+    evidence_graph = run_sub.add_parser("evidence-graph", help="Inspect task/run/evidence readback graph for one run.")
+    evidence_graph.add_argument("--run-id", required=True)
+    evidence_graph.set_defaults(handler="run_evidence_graph")
+
     start = run_sub.add_parser("start", help="Start a run for a task.")
     start.add_argument("--task-id", required=True)
     start.add_argument("--agent-id", default=None)
@@ -6495,6 +6507,7 @@ HANDLERS = {
     "run_list": cmd_run_list,
     "run_get": cmd_run_get,
     "run_graph": cmd_run_graph,
+    "run_evidence_graph": cmd_run_evidence_graph,
     "run_start": cmd_run_start,
     "run_heartbeat": cmd_run_heartbeat,
     "runtime_connectors": cmd_runtime_connectors,
