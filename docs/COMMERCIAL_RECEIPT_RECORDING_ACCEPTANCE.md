@@ -43,6 +43,11 @@ It proves the exact metadata shape that a later operator-confirmed transaction
 would record, while preserving the current release freeze and Approval Wall
 boundaries.
 
+The word "recording" here means "prepare the receipt record shape for review."
+It intentionally stops before `operator.action_queue_receipt` writes so this
+CI-safe packet can be reviewed on any machine without local runtime, billing,
+cleanup, hosted, or storage side effects.
+
 ## Safety Boundaries
 
 - No server start.
