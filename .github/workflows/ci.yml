@@ -72,6 +72,7 @@ jobs:
           python3 scripts/read_model_cache_smoke.py
           python3 scripts/open_source_adoption_boundary_smoke.py
           python3 scripts/open_source_mainline_governance_smoke.py
+          python3 scripts/harness_engineering_control_plane_smoke.py
           python3 scripts/commercial_config_boundary_smoke.py
           python3 scripts/commercial_config_status_smoke.py
           python3 scripts/commercial_config_status_ui_smoke.py
