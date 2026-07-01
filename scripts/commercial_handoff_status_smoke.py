@@ -47,7 +47,7 @@ PACKET_STATUS = {
     "Commercial Handoff Status": "generator_smoke_added",
     "Promotion Preflight": "generator_smoke_added",
     "Promotion Packet": "generator_smoke_added",
-    "Receipt Plan": "queued",
+    "Receipt Plan": "generator_smoke_added",
     "Receipt Recording": "queued",
     "Rerun Bundle Preview": "queued",
 }
@@ -248,7 +248,7 @@ def main() -> int:
         "source_docs": [str(path.relative_to(ROOT)) for path in SOURCE_DOCS],
         "clean_room_lanes": lane_status(),
         "packet_status": packets,
-        "next_recommended_generator": "commercial_receipt_plan_smoke.py",
+        "next_recommended_generator": "commercial_receipt_recording_smoke.py",
         "commercial_limits": {
             "hosted_ready": False,
             "billing_ready": False,

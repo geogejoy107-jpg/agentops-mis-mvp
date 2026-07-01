@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Emit and guard the commercial promotion packet."""
+"""Emit and guard the commercial receipt plan packet."""
 from __future__ import annotations
 
 import argparse
@@ -17,25 +17,30 @@ ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "docs" / "COMMERCIAL_EVIDENCE_PACKET_INDEX.md"
 RELEASE_PACKET = ROOT / "docs" / "RELEASE_EVIDENCE_PACKET.md"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
-PREFLIGHT_ACCEPTANCE = ROOT / "docs" / "COMMERCIAL_PROMOTION_PREFLIGHT_ACCEPTANCE.md"
-PACKET_ACCEPTANCE = ROOT / "docs" / "COMMERCIAL_PROMOTION_PACKET_ACCEPTANCE.md"
+APPROVAL_BOUNDARY = ROOT / "docs" / "APPROVAL_SEMANTICS_BOUNDARY.md"
+FREEZE_PROTOCOL = ROOT / "docs" / "RELEASE_FREEZE_PROTOCOL.md"
+PROMOTION_PACKET_ACCEPTANCE = ROOT / "docs" / "COMMERCIAL_PROMOTION_PACKET_ACCEPTANCE.md"
+RECEIPT_PLAN_ACCEPTANCE = ROOT / "docs" / "COMMERCIAL_RECEIPT_PLAN_ACCEPTANCE.md"
 
 SOURCE_DOCS = [
     INDEX,
     RELEASE_PACKET,
     CI_WORKFLOW,
-    PREFLIGHT_ACCEPTANCE,
-    PACKET_ACCEPTANCE,
+    APPROVAL_BOUNDARY,
+    FREEZE_PROTOCOL,
+    PROMOTION_PACKET_ACCEPTANCE,
+    RECEIPT_PLAN_ACCEPTANCE,
 ]
-COMMAND = "python3 scripts/commercial_promotion_packet_smoke.py"
-PREFLIGHT_COMMAND = "python3 scripts/commercial_promotion_preflight_smoke.py"
+COMMAND = "python3 scripts/commercial_receipt_plan_smoke.py"
+PROMOTION_PACKET_COMMAND = "python3 scripts/commercial_promotion_packet_smoke.py"
 
 CANONICAL_GATES = {
-    "promotion_preflight": PREFLIGHT_COMMAND,
-    "branch_control": "python3 scripts/release_branch_control_smoke.py",
-    "secret_scan": "python3 scripts/secret_scan_smoke.py",
+    "promotion_packet": PROMOTION_PACKET_COMMAND,
+    "approval_semantics_boundary": "python3 scripts/approval_semantics_boundary_smoke.py",
+    "prepared_action_wall": "python3 scripts/prepared_action_approval_wall_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+    "release_freeze": "python3 scripts/release_freeze_protocol_smoke.py",
     "release_evidence": "python3 scripts/release_evidence_packet_smoke.py",
-    "strict_release_evidence": "python3 scripts/release_evidence_packet_smoke.py --require-clean --require-green-ci",
+    "secret_scan": "python3 scripts/secret_scan_smoke.py",
 }
 
 SECRET_PATTERNS = [
@@ -135,52 +140,49 @@ def validate_sources(texts: dict[Path, str], failures: list[str]) -> None:
     index_text = texts.get(INDEX, "")
     release_text = texts.get(RELEASE_PACKET, "")
     ci_text = texts.get(CI_WORKFLOW, "")
-    acceptance_text = texts.get(PACKET_ACCEPTANCE, "")
+    approval_text = texts.get(APPROVAL_BOUNDARY, "")
+    freeze_text = texts.get(FREEZE_PROTOCOL, "")
+    acceptance_text = texts.get(RECEIPT_PLAN_ACCEPTANCE, "")
 
-    require("Promotion Packet" in index_text, "index missing Promotion Packet row", failures)
-    require("generator smoke added" in index_text, "index must mark promotion packet as generator-smoke guarded", failures)
-    require(COMMAND in index_text, "index missing promotion packet command", failures)
-    require(COMMAND in release_text, "release packet doc missing promotion packet command", failures)
-    require(COMMAND in ci_text, "CI workflow missing promotion packet command", failures)
-    require(COMMAND in acceptance_text, "promotion packet acceptance missing verification command", failures)
-    require("commercial_receipt_plan_smoke.py" in index_text, "index must keep receipt plan dependency", failures)
+    require("Receipt Plan" in index_text, "index missing Receipt Plan row", failures)
+    require("generator smoke added" in index_text, "index must mark receipt plan as generator-smoke guarded", failures)
+    require(COMMAND in index_text, "index missing receipt plan command", failures)
+    require(COMMAND in release_text, "release packet doc missing receipt plan command", failures)
+    require(COMMAND in ci_text, "CI workflow missing receipt plan command", failures)
+    require(COMMAND in acceptance_text, "receipt plan acceptance missing verification command", failures)
     require("commercial_receipt_recording_smoke.py" in index_text, "index must advance next generator to receipt recording", failures)
 
     for gate_name, gate_command in CANONICAL_GATES.items():
         require(gate_command in release_text, f"release packet missing canonical gate: {gate_name}", failures)
 
+    for phrase in [
+        "prepared_actions",
+        "immutable `action_hash`",
+        "idempotency key",
+        "checkpoint",
+        "Execution evidence",
+    ]:
+        require(phrase in approval_text, f"approval semantics boundary missing phrase: {phrase}", failures)
+    require("ACTIVE_HARDENING_FREEZE" in freeze_text, "release freeze state missing", failures)
+    require("Public/commercial readiness claims" in freeze_text, "release freeze commercial claim guard missing", failures)
+
     joined = "\n".join(texts.values())
     for claim in unsafe_claim_hits(joined):
         require(False, f"unsafe positive commercial claim found: {claim}", failures)
     secret_hits = [pattern.pattern for pattern in SECRET_PATTERNS if pattern.search(joined)]
-    require(not secret_hits, f"secret-like marker found in promotion packet sources: {secret_hits}", failures)
+    require(not secret_hits, f"secret-like marker found in receipt plan sources: {secret_hits}", failures)
 
-    generated_docs = [INDEX, PACKET_ACCEPTANCE]
+    generated_docs = [INDEX, RECEIPT_PLAN_ACCEPTANCE]
     hardcoded = [path.name for path in generated_docs if has_hardcoded_sha(texts.get(path, ""))]
-    require(not hardcoded, f"hard-coded SHA found in promotion packet docs: {hardcoded}", failures)
-
-
-def packet_blockers(ci: dict[str, Any], sync: dict[str, int | None], dirty_count: int) -> list[str]:
-    blockers: list[str] = []
-    if dirty_count:
-        blockers.append("working_tree_not_clean")
-    if sync.get("behind") not in (0, None):
-        blockers.append("branch_behind_upstream")
-    if ci.get("head_matches") is not True:
-        blockers.append("ci_head_not_matched")
-    if ci.get("status") != "completed":
-        blockers.append("ci_not_completed")
-    if ci.get("conclusion") != "success":
-        blockers.append("ci_not_success")
-    return blockers
+    require(not hardcoded, f"hard-coded SHA found in receipt plan docs: {hardcoded}", failures)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--require-ready",
+        "--require-current-ci",
         action="store_true",
-        help="Fail unless the current branch can emit a ready promotion packet.",
+        help="Fail unless the current branch has clean exact-head green CI.",
     )
     args = parser.parse_args()
 
@@ -193,16 +195,20 @@ def main() -> int:
     sync = upstream_sync()
     dirty_count = len(status_entries())
     ci = shared_ci_status(ROOT, head_sha, branch, required_before_ready=True)
-    blockers = packet_blockers(ci, sync, dirty_count)
-    packet_ready = not blockers and not failures
-
-    if args.require_ready and not packet_ready:
-        failures.append("promotion_packet_ready_required")
+    ci_ready = (
+        dirty_count == 0
+        and sync.get("behind") in (0, None)
+        and ci.get("head_matches") is True
+        and ci.get("status") == "completed"
+        and ci.get("conclusion") == "success"
+    )
+    if args.require_current_ci and not ci_ready:
+        failures.append("current_head_green_ci_required")
 
     output: dict[str, Any] = {
-        "operation": "commercial_promotion_packet_smoke",
+        "operation": "commercial_receipt_plan_smoke",
         "ok": not failures,
-        "evidence_class": "commercial_promotion_packet",
+        "evidence_class": "commercial_receipt_plan",
         "head": {
             "sha": head_sha,
             "branch": branch,
@@ -210,20 +216,28 @@ def main() -> int:
             "working_tree_entries": dirty_count,
         },
         "ci": ci,
-        "promotion_packet_ready": packet_ready,
-        "blocking_reasons": blockers,
-        "included_packets": [
-            "commercial_current_evidence_status",
-            "release_evidence_packet",
-            "commercial_handoff_status",
-            "commercial_promotion_preflight",
-        ],
+        "receipt_plan_ready": not failures,
+        "current_head_ci_ready": ci_ready,
         "source_docs": [str(path.relative_to(ROOT)) for path in SOURCE_DOCS],
-        "evidence_refs": {
-            "promotion_preflight": PREFLIGHT_COMMAND,
-            "strict_release_evidence": CANONICAL_GATES["strict_release_evidence"],
-            "release_manifest": "docs/RELEASE_EVIDENCE_PACKET.md",
-            "packet_index": "docs/COMMERCIAL_EVIDENCE_PACKET_INDEX.md",
+        "review_receipt_requirements": {
+            "reviewer_role": "admin_owner_or_human_approver",
+            "required_before": [
+                "billing_provider_call",
+                "destructive_cleanup",
+                "hosted_customer_data_migration",
+                "postgres_storage_cutover",
+                "live_external_side_effect",
+            ],
+            "prepared_action_fields": [
+                "normalized_action_arguments",
+                "target_resource",
+                "policy_version",
+                "checkpoint",
+                "idempotency_key",
+                "immutable_action_hash",
+            ],
+            "generic_ledger_approval_is_not_exact_resume": True,
+            "execution_allowed_by_this_packet": False,
         },
         "canonical_commands": CANONICAL_GATES,
         "next_recommended_generator": "commercial_receipt_recording_smoke.py",
