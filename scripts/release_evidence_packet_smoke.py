@@ -425,7 +425,7 @@ TEST_COMMANDS = [
     {
         "id": "operator_loop_driver",
         "command": "python3 scripts/operator_loop_driver_smoke.py",
-        "summary": "Hermes/OpenClaw/Codex loop driver consumes start-check acceptance gates, returns machine-readable agent loop packets, previews compact launch briefs, can explicitly auto-close local service readback receipts before bounded advance, and confirms bounded multi-step advance-loop receipts without live execution.",
+        "summary": "Hermes/OpenClaw/Codex loop driver consumes start-check acceptance gates and compact work-packet decisions before confirmed bounded advance, returns machine-readable agent loop packets, previews compact launch briefs, can explicitly auto-close local service readback receipts before bounded advance, and confirms bounded multi-step advance-loop receipts without live execution.",
         "ci_step": "Offline safety smokes",
     },
     {
