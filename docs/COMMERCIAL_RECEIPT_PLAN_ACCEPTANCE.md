@@ -32,6 +32,13 @@ python3 scripts/commercial_receipt_plan_smoke.py --require-current-ci
 - `--require-current-ci` fails until the current branch is clean, not behind
   upstream, and exact-head CI is green.
 
+## Evidence Shape
+
+The packet is a planning contract, not a receipt. It records `required_before`
+categories and `prepared_action_fields` so the later receipt-recording packet
+can prove the operator reviewed the same commercial-risk boundary without
+running the risky action.
+
 ## Safety Boundaries
 
 - No server start.
