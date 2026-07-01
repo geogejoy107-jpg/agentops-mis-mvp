@@ -201,6 +201,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commercial_promotion_preflight",
+        "command": "python3 scripts/commercial_promotion_preflight_smoke.py",
+        "summary": "Read-only commercial promotion preflight reports clean branch, exact-head CI and safety gate readiness without DB, server, live runtime, billing, cleanup, hosted, Postgres or PR #22 contents.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commercial_migration_breakdown",
         "command": "python3 scripts/commercial_migration_breakdown_smoke.py",
         "summary": "Clean-room breakdown plan for decomposing the large conflicting commercial migration branch into reviewable product slices.",
