@@ -148,6 +148,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/operator_service_closure_cli_smoke.py`
 - `python3 scripts/operator_service_closure_fast_smoke.py`
 - `python3 scripts/run_start_loop_supervision_gate_smoke.py`
+- `python3 scripts/run_start_work_packet_decision_gate_smoke.py`
 - `python3 scripts/operator_evidence_report_smoke.py`
 - `python3 scripts/operator_live_product_readiness_smoke.py`
 - `python3 scripts/local_runtime_identity_smoke.py`
