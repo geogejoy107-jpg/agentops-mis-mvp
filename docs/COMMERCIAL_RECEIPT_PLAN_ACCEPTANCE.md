@@ -72,6 +72,6 @@ git diff --check
 
 ## Next Slice
 
-Add `commercial_receipt_recording_smoke.py` to prove a review receipt can be
-recorded without executing billing, cleanup, hosted, Postgres, or live runtime
-actions.
+Add `commercial_receipt_recording_smoke.py` to prove review receipt requests can
+be materialized without executing billing, cleanup, hosted, Postgres, or live
+runtime actions.

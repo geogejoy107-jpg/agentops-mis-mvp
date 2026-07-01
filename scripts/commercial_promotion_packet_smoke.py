@@ -144,7 +144,8 @@ def validate_sources(texts: dict[Path, str], failures: list[str]) -> None:
     require(COMMAND in ci_text, "CI workflow missing promotion packet command", failures)
     require(COMMAND in acceptance_text, "promotion packet acceptance missing verification command", failures)
     require("commercial_receipt_plan_smoke.py" in index_text, "index must keep receipt plan dependency", failures)
-    require("commercial_receipt_recording_smoke.py" in index_text, "index must advance next generator to receipt recording", failures)
+    require("commercial_receipt_recording_smoke.py" in index_text, "index must include receipt recording dependency", failures)
+    require("commercial_rerun_bundle_preview_smoke.py" in index_text, "index must advance next generator to rerun bundle preview", failures)
 
     for gate_name, gate_command in CANONICAL_GATES.items():
         require(gate_command in release_text, f"release packet missing canonical gate: {gate_name}", failures)
@@ -226,7 +227,7 @@ def main() -> int:
             "packet_index": "docs/COMMERCIAL_EVIDENCE_PACKET_INDEX.md",
         },
         "canonical_commands": CANONICAL_GATES,
-        "next_recommended_generator": "commercial_receipt_recording_smoke.py",
+        "next_recommended_generator": "commercial_rerun_bundle_preview_smoke.py",
         "commercial_limits": {
             "hosted_ready": False,
             "billing_ready": False,
