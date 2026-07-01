@@ -79,6 +79,13 @@ allowed, the response includes `loop_supervision_gate.supervision_hash` so the
 run's first evidence packet shows which Method Block supervision state was
 crossed.
 
+For Hermes/OpenClaw, the same `runs/start` path also reads the compact
+`agent_work_packet_decision_v1` projection before run insertion. A stop,
+blocked, missing, server-shell or live-execution decision returns
+`run_start_work_packet_decision_blocked`; an allowed governance-first decision
+is attached as `work_packet_decision_gate` plus
+`agent_plan.work_packet_decision_hash`.
+
 The local `/workspace/agents` console mirrors this boundary: the Loop
 Supervision panel shows the read-only `run_start_admission` projection before a
 run exists, and the latest worker dispatch result shows the actual
