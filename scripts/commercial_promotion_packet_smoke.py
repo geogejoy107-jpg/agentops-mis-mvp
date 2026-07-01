@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Emit and guard the commercial handoff status packet."""
+"""Emit and guard the commercial promotion packet."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -14,42 +15,27 @@ from github_ci_evidence import ci_status as shared_ci_status
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "docs" / "COMMERCIAL_EVIDENCE_PACKET_INDEX.md"
-BREAKDOWN = ROOT / "docs" / "COMMERCIAL_MIGRATION_CLEAN_ROOM_BREAKDOWN.md"
 RELEASE_PACKET = ROOT / "docs" / "RELEASE_EVIDENCE_PACKET.md"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
-INDEX_ACCEPTANCE = ROOT / "docs" / "COMMERCIAL_EVIDENCE_PACKET_INDEX_ACCEPTANCE.md"
-CURRENT_ACCEPTANCE = ROOT / "docs" / "COMMERCIAL_CURRENT_EVIDENCE_STATUS_ACCEPTANCE.md"
-HANDOFF_ACCEPTANCE = ROOT / "docs" / "COMMERCIAL_HANDOFF_STATUS_ACCEPTANCE.md"
+PREFLIGHT_ACCEPTANCE = ROOT / "docs" / "COMMERCIAL_PROMOTION_PREFLIGHT_ACCEPTANCE.md"
+PACKET_ACCEPTANCE = ROOT / "docs" / "COMMERCIAL_PROMOTION_PACKET_ACCEPTANCE.md"
 
 SOURCE_DOCS = [
     INDEX,
-    BREAKDOWN,
     RELEASE_PACKET,
     CI_WORKFLOW,
-    INDEX_ACCEPTANCE,
-    CURRENT_ACCEPTANCE,
-    HANDOFF_ACCEPTANCE,
+    PREFLIGHT_ACCEPTANCE,
+    PACKET_ACCEPTANCE,
 ]
-COMMAND = "python3 scripts/commercial_handoff_status_smoke.py"
+COMMAND = "python3 scripts/commercial_promotion_packet_smoke.py"
+PREFLIGHT_COMMAND = "python3 scripts/commercial_promotion_preflight_smoke.py"
 
-EXPECTED_LANES = [
-    "Commercial Read Models",
-    "Workspace And RBAC Scope",
-    "Storage Boundary",
-    "Commercial Evidence Packets",
-    "UI Route Retirement And Parity",
-    "Deployment And BYOC Readiness",
-]
-
-PACKET_STATUS = {
-    "Current Evidence Status": "generator_smoke_added",
-    "Release Evidence Packet": "existing_generator",
-    "Commercial Handoff Status": "generator_smoke_added",
-    "Promotion Preflight": "generator_smoke_added",
-    "Promotion Packet": "generator_smoke_added",
-    "Receipt Plan": "queued",
-    "Receipt Recording": "queued",
-    "Rerun Bundle Preview": "queued",
+CANONICAL_GATES = {
+    "promotion_preflight": PREFLIGHT_COMMAND,
+    "branch_control": "python3 scripts/release_branch_control_smoke.py",
+    "secret_scan": "python3 scripts/secret_scan_smoke.py",
+    "release_evidence": "python3 scripts/release_evidence_packet_smoke.py",
+    "strict_release_evidence": "python3 scripts/release_evidence_packet_smoke.py --require-clean --require-green-ci",
 }
 
 SECRET_PATTERNS = [
@@ -147,107 +133,98 @@ def validate_sources(texts: dict[Path, str], failures: list[str]) -> None:
         require(path.exists(), f"missing source: {path.relative_to(ROOT)}", failures)
 
     index_text = texts.get(INDEX, "")
-    breakdown_text = texts.get(BREAKDOWN, "")
     release_text = texts.get(RELEASE_PACKET, "")
     ci_text = texts.get(CI_WORKFLOW, "")
-    handoff_text = texts.get(HANDOFF_ACCEPTANCE, "")
+    acceptance_text = texts.get(PACKET_ACCEPTANCE, "")
 
-    require("Commercial Handoff Status" in index_text, "index missing Commercial Handoff Status row", failures)
-    require("generator smoke added" in index_text, "index must mark handoff status as generator-smoke guarded", failures)
-    require(COMMAND in index_text, "index missing handoff command", failures)
-    require(COMMAND in release_text, "release packet doc missing handoff command", failures)
-    require(COMMAND in ci_text, "CI workflow missing handoff command", failures)
-    require("read-only handoff packet" in handoff_text, "handoff acceptance missing read-only packet boundary", failures)
+    require("Promotion Packet" in index_text, "index missing Promotion Packet row", failures)
+    require("generator smoke added" in index_text, "index must mark promotion packet as generator-smoke guarded", failures)
+    require(COMMAND in index_text, "index missing promotion packet command", failures)
+    require(COMMAND in release_text, "release packet doc missing promotion packet command", failures)
+    require(COMMAND in ci_text, "CI workflow missing promotion packet command", failures)
+    require(COMMAND in acceptance_text, "promotion packet acceptance missing verification command", failures)
+    require("commercial_receipt_plan_smoke.py" in index_text, "index must advance next generator to receipt plan", failures)
 
-    for lane in EXPECTED_LANES:
-        require(f"Lane {EXPECTED_LANES.index(lane) + 1}: {lane}" in breakdown_text, f"missing clean-room lane: {lane}", failures)
-    require("Do not merge PR #22 directly." in breakdown_text, "PR #22 direct-merge block missing", failures)
-    require("Start with Lane 1 or Lane 4." in breakdown_text, "recommended starting lane missing", failures)
-
-    for packet, status in PACKET_STATUS.items():
-        require(packet in index_text, f"missing packet row: {packet}", failures)
-        require(status != "generator_smoke_added" or "generator smoke added" in index_text, f"missing generator status for packet: {packet}", failures)
+    for gate_name, gate_command in CANONICAL_GATES.items():
+        require(gate_command in release_text, f"release packet missing canonical gate: {gate_name}", failures)
 
     joined = "\n".join(texts.values())
     for claim in unsafe_claim_hits(joined):
         require(False, f"unsafe positive commercial claim found: {claim}", failures)
     secret_hits = [pattern.pattern for pattern in SECRET_PATTERNS if pattern.search(joined)]
-    require(not secret_hits, f"secret-like marker found in handoff sources: {secret_hits}", failures)
+    require(not secret_hits, f"secret-like marker found in promotion packet sources: {secret_hits}", failures)
 
-    generated_docs = [INDEX, HANDOFF_ACCEPTANCE]
+    generated_docs = [INDEX, PACKET_ACCEPTANCE]
     hardcoded = [path.name for path in generated_docs if has_hardcoded_sha(texts.get(path, ""))]
-    require(not hardcoded, f"hard-coded SHA found in commercial handoff docs: {hardcoded}", failures)
+    require(not hardcoded, f"hard-coded SHA found in promotion packet docs: {hardcoded}", failures)
 
 
-def lane_status() -> list[dict[str, str]]:
-    return [
-        {
-            "lane": "Lane 1",
-            "name": "Commercial Read Models",
-            "status": "partially_started",
-            "evidence": "commercial config status and current-evidence status readbacks exist; no billing or cleanup.",
-        },
-        {
-            "lane": "Lane 4",
-            "name": "Commercial Evidence Packets",
-            "status": "active",
-            "evidence": "packet index, current evidence status and handoff status are generator-smoke guarded.",
-        },
-        {
-            "lane": "Lane 2",
-            "name": "Workspace And RBAC Scope",
-            "status": "queued",
-            "evidence": "requires separate workspace/RBAC scope slice.",
-        },
-        {
-            "lane": "Lane 3",
-            "name": "Storage Boundary",
-            "status": "queued",
-            "evidence": "requires separate storage helper parity slice.",
-        },
-        {
-            "lane": "Lane 5",
-            "name": "UI Route Retirement And Parity",
-            "status": "queued",
-            "evidence": "requires separate route inventory and parity slice.",
-        },
-        {
-            "lane": "Lane 6",
-            "name": "Deployment And BYOC Readiness",
-            "status": "queued",
-            "evidence": "requires separate local/customer deployment slice; hosted readiness stays unclaimed.",
-        },
-    ]
+def packet_blockers(ci: dict[str, Any], sync: dict[str, int | None], dirty_count: int) -> list[str]:
+    blockers: list[str] = []
+    if dirty_count:
+        blockers.append("working_tree_not_clean")
+    if sync.get("behind") not in (0, None):
+        blockers.append("branch_behind_upstream")
+    if ci.get("head_matches") is not True:
+        blockers.append("ci_head_not_matched")
+    if ci.get("status") != "completed":
+        blockers.append("ci_not_completed")
+    if ci.get("conclusion") != "success":
+        blockers.append("ci_not_success")
+    return blockers
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--require-ready",
+        action="store_true",
+        help="Fail unless the current branch can emit a ready promotion packet.",
+    )
+    args = parser.parse_args()
+
     failures: list[str] = []
     texts = {path: read(path) for path in SOURCE_DOCS}
     validate_sources(texts, failures)
 
     head_sha = git_text(["rev-parse", "HEAD"])
     branch = current_branch()
+    sync = upstream_sync()
+    dirty_count = len(status_entries())
     ci = shared_ci_status(ROOT, head_sha, branch, required_before_ready=True)
-    packets = [
-        {"packet": packet, "status": status, "source": "docs/COMMERCIAL_EVIDENCE_PACKET_INDEX.md"}
-        for packet, status in PACKET_STATUS.items()
-    ]
+    blockers = packet_blockers(ci, sync, dirty_count)
+    packet_ready = not blockers and not failures
+
+    if args.require_ready and not packet_ready:
+        failures.append("promotion_packet_ready_required")
 
     output: dict[str, Any] = {
-        "operation": "commercial_handoff_status_smoke",
+        "operation": "commercial_promotion_packet_smoke",
         "ok": not failures,
-        "evidence_class": "commercial_handoff_status",
-        "handoff_class": "commercial_handoff_status",
+        "evidence_class": "commercial_promotion_packet",
         "head": {
             "sha": head_sha,
             "branch": branch,
-            "upstream_sync": upstream_sync(),
-            "working_tree_entries": len(status_entries()),
+            "upstream_sync": sync,
+            "working_tree_entries": dirty_count,
         },
         "ci": ci,
+        "promotion_packet_ready": packet_ready,
+        "blocking_reasons": blockers,
+        "included_packets": [
+            "commercial_current_evidence_status",
+            "release_evidence_packet",
+            "commercial_handoff_status",
+            "commercial_promotion_preflight",
+        ],
         "source_docs": [str(path.relative_to(ROOT)) for path in SOURCE_DOCS],
-        "clean_room_lanes": lane_status(),
-        "packet_status": packets,
+        "evidence_refs": {
+            "promotion_preflight": PREFLIGHT_COMMAND,
+            "strict_release_evidence": CANONICAL_GATES["strict_release_evidence"],
+            "release_manifest": "docs/RELEASE_EVIDENCE_PACKET.md",
+            "packet_index": "docs/COMMERCIAL_EVIDENCE_PACKET_INDEX.md",
+        },
+        "canonical_commands": CANONICAL_GATES,
         "next_recommended_generator": "commercial_receipt_plan_smoke.py",
         "commercial_limits": {
             "hosted_ready": False,
@@ -262,10 +239,10 @@ def main() -> int:
             "ledger_mutated": False,
             "db_read": False,
             "env_dumped": False,
-            "pr22_contents_read": False,
             "billing_call_performed": False,
             "cleanup_execution_performed": False,
             "live_execution_performed": False,
+            "pr22_contents_read": False,
             "raw_logs_omitted": True,
             "raw_prompts_omitted": True,
             "raw_responses_omitted": True,
@@ -274,6 +251,7 @@ def main() -> int:
         "failure_count": len(failures),
         "failures": failures,
     }
+
     rendered = json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True)
     output_secret_hits = [pattern.pattern for pattern in SECRET_PATTERNS if pattern.search(rendered)]
     if output_secret_hits:
