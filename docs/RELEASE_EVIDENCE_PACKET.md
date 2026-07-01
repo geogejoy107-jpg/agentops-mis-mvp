@@ -103,6 +103,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/commercial_handoff_status_smoke.py`
 - `python3 scripts/commercial_promotion_preflight_smoke.py`
 - `python3 scripts/commercial_promotion_packet_smoke.py`
+- `python3 scripts/commercial_receipt_plan_smoke.py`
 - `python3 scripts/commercial_migration_breakdown_smoke.py`
 - `python3 scripts/external_connector_runtime_inventory_smoke.py`
 - `python3 scripts/sqlite_concurrency_smoke.py`

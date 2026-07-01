@@ -213,6 +213,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commercial_receipt_plan",
+        "command": "python3 scripts/commercial_receipt_plan_smoke.py",
+        "summary": "Read-only commercial receipt plan defines human review and prepared-action requirements before risky commercial changes without DB, server, receipt recording, live runtime, billing, cleanup, hosted, Postgres or PR #22 contents.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commercial_migration_breakdown",
         "command": "python3 scripts/commercial_migration_breakdown_smoke.py",
         "summary": "Clean-room breakdown plan for decomposing the large conflicting commercial migration branch into reviewable product slices.",
