@@ -25,6 +25,10 @@ constraints.
 - Harness blog/product posts about AI-native delivery, Cursor, VS Code, MCP,
   Software Delivery Knowledge Graph, and approvals:
   `https://www.harness.io/blog`
+- Harness June 30, 2026 press release for Autonomous Worker Agents:
+  `https://www.harness.io/press-and-news/harness-launches-autonomous-worker-agents-for-software-delivery`
+- OpenAI February 11, 2026 article on harness engineering with Codex:
+  `https://openai.com/index/harness-engineering/`
 - Hacker News launch discussion for Harness Open Source:
   `https://news.ycombinator.com/item?id=41647665`
 - DevOps.com June 30, 2026 coverage of Harness autonomous AI agents:
@@ -152,6 +156,43 @@ Do not replace MIS with it because:
 - Harness/Gitness/CI can be a connector/runtime or reference platform, not the
   AgentOps MIS source of truth.
 
+### 7. Harness Worker Agents Reinforce The Control-Plane Boundary
+
+Harness announced Autonomous Worker Agents on June 30, 2026 as a software
+delivery layer for work between code and production, with an agent marketplace
+and bring-your-own-model support. Treat this as a market signal: customers will
+expect AI workers to connect to existing delivery systems, policies and model
+choices.
+
+Implication for MIS:
+
+AgentOps MIS should not hard-code one runtime or model path. The product needs
+stable control-plane contracts:
+
+- agent registration and scoped enrollment,
+- task pull/claim/start/writeback,
+- compact work packets for machine callers,
+- prepared actions for write/external side effects,
+- runtime trust/readiness gates,
+- evidence/audit/report artifacts independent of the worker runtime.
+
+This supports using Hermes, OpenClaw, Dify or a future Harness-like connector
+as workers/adapters while keeping MIS task/run/approval/memory authority local.
+
+### 8. Harness Engineering Is A Repository And Runtime Discipline
+
+OpenAI's harness-engineering writeup frames the engineer's job as specifying
+intent, building feedback loops, making repository knowledge legible, enforcing
+architecture/taste and changing merge philosophy for high-throughput agent
+work.
+
+Implication for MIS:
+
+The AgentOps MIS repo should keep treating specs, runbooks, smoke tests,
+acceptance docs, release evidence packets and operator work packets as product
+surface area. Agents should receive small, typed, verifiable packets instead of
+long chat history or broad raw API access.
+
 ## Candidate Ideas To Borrow
 
 | Harness pattern | AgentOps MIS adaptation | v1.x priority |
@@ -160,6 +201,8 @@ Do not replace MIS with it because:
 | AI editor/agent delivery context | `agentops operator ... --work-packet` plus MCP resources | High |
 | Policy as Code | First-party policy decisions with policy id/version/evidence refs | Medium |
 | Inline approvals | Approval Wall and action receipts on task/run surfaces | High |
+| Autonomous worker agents | Agent Gateway worker loop plus adapter readiness/trust gates | High |
+| BYO model/runtime | Runtime connector registry with scoped trust policy | High |
 | Pipeline/entity status | Worker/run/eval/readiness cards in command center | High |
 | Artifact registry | MIS artifact table with URI/hash/provenance, not raw blobs | Medium |
 | Migration from existing tools | Connector import/export adapters, never authority replacement | Medium |

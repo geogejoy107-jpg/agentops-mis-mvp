@@ -128,6 +128,7 @@ jobs:
           python3 scripts/operator_loop_bootstrap_smoke.py
           python3 scripts/operator_loop_bootstrap_api_ui_smoke.py
           python3 scripts/operator_loop_driver_smoke.py
+          python3 scripts/operator_loop_driver_dogfood_smoke.py
           python3 scripts/operator_loop_launch_packet_smoke.py
           python3 scripts/operator_agent_loop_handoff_smoke.py
           python3 scripts/operator_loop_supervision_smoke.py
