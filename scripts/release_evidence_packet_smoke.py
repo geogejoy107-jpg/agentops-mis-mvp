@@ -533,7 +533,7 @@ TEST_COMMANDS = [
     {
         "id": "run_detail_evidence_ui",
         "command": "python3 scripts/run_detail_evidence_ui_smoke.py",
-        "summary": "Run detail page exposes run evidence-chain state across tools, evaluations, artifacts, approvals, audit refs, benchmarks and live/mock runtime posture.",
+        "summary": "Run detail page exposes run evidence-chain state and work-delivery graph readback across tools, runtime events, evaluations, artifacts, approvals, audit refs, benchmarks and live/mock runtime posture.",
         "ci_step": "Offline safety smokes",
     },
     {

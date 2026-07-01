@@ -46,6 +46,18 @@ def main() -> int:
         "run_detail_approval_link": 'to="/workspace/approvals"',
         "run_detail_api_returns_artifacts": "artifacts: asArray(raw.artifacts)",
         "run_detail_api_returns_case_runs": "evaluation_case_runs: asArray<Record<string, unknown>>(raw.evaluation_case_runs).map(normalizeEvaluationCaseRun)",
+        "run_detail_loads_work_delivery_graph": "loadRunEvidenceGraph",
+        "run_detail_work_delivery_graph_testid": 'data-testid="run-detail-work-delivery-graph"',
+        "run_detail_work_delivery_graph_title": "Work Delivery Evidence Graph",
+        "run_detail_work_delivery_graph_hash": "graph_hash",
+        "run_detail_work_delivery_graph_counts": "graphCounts",
+        "run_detail_work_delivery_graph_runtime_events": "runtime_events",
+        "run_detail_work_delivery_graph_plan_manifest": "plan_evidence_manifests",
+        "run_detail_work_delivery_graph_safety": "graphSafety",
+        "run_detail_work_delivery_graph_authority": "read_model_over_mis_ledgers",
+        "live_api_run_evidence_graph_payload": "RunEvidenceGraphPayload",
+        "live_api_run_evidence_graph_endpoint": "/evidence-graph",
+        "live_api_run_evidence_graph_fallback": 'status: "unavailable"',
     }
     for label, marker in expected_markers.items():
         if marker not in source_bundle:

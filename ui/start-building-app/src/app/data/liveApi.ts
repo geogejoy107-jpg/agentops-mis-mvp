@@ -57,6 +57,34 @@ export interface RunDetailPayload {
   evaluation_case_runs?: EvaluationCaseRun[];
 }
 
+export interface RunEvidenceGraphPayload {
+  provider: string;
+  operation: string;
+  schema_version?: string;
+  status?: string;
+  run_id: string;
+  task_id?: string | null;
+  agent_id?: string | null;
+  agent_plan_id?: string | null;
+  plan_hash?: string | null;
+  plan_evidence_manifest_id?: string | null;
+  evidence_counts: Record<string, number>;
+  nodes?: Record<string, unknown>[];
+  edges?: Record<string, unknown>[];
+  graph_hash?: string;
+  authority?: string;
+  safety?: {
+    read_only?: boolean;
+    ledger_mutated?: boolean;
+    live_execution_performed?: boolean;
+    raw_prompt_omitted?: boolean;
+    raw_response_omitted?: boolean;
+    raw_content_omitted?: boolean;
+    token_omitted?: boolean;
+  };
+  token_omitted?: boolean;
+}
+
 export interface TaskDetailPayload {
   task: Task;
   runs: Run[];
@@ -4242,6 +4270,57 @@ export async function loadRunDetail(id: string): Promise<RunDetailPayload> {
     evaluations: asArray<Record<string, unknown>>(raw.evaluations).map(normalizeEvaluation),
     artifacts: asArray(raw.artifacts),
     evaluation_case_runs: asArray<Record<string, unknown>>(raw.evaluation_case_runs).map(normalizeEvaluationCaseRun),
+  };
+}
+
+export async function loadRunEvidenceGraph(id: string): Promise<RunEvidenceGraphPayload> {
+  const raw = await optionalApiJson<Record<string, unknown>>(`/runs/${encodeURIComponent(id)}/evidence-graph`, {
+    provider: "agentops-run-graph",
+    operation: "work_delivery_graph_readback",
+    status: "unavailable",
+    run_id: id,
+    evidence_counts: {},
+    nodes: [],
+    edges: [],
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      raw_content_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+  });
+  const safetyRaw = parseJsonObject(raw.safety);
+  const countsRaw = parseJsonObject(raw.evidence_counts);
+  return {
+    provider: String(raw.provider || "agentops-run-graph"),
+    operation: String(raw.operation || "work_delivery_graph_readback"),
+    schema_version: raw.schema_version ? String(raw.schema_version) : undefined,
+    status: raw.status ? String(raw.status) : undefined,
+    run_id: String(raw.run_id || id),
+    task_id: raw.task_id ? String(raw.task_id) : null,
+    agent_id: raw.agent_id ? String(raw.agent_id) : null,
+    agent_plan_id: raw.agent_plan_id ? String(raw.agent_plan_id) : null,
+    plan_hash: raw.plan_hash ? String(raw.plan_hash) : null,
+    plan_evidence_manifest_id: raw.plan_evidence_manifest_id ? String(raw.plan_evidence_manifest_id) : null,
+    evidence_counts: Object.fromEntries(Object.entries(countsRaw).map(([key, value]) => [key, numberValue(value, 0)])),
+    nodes: asArray<Record<string, unknown>>(raw.nodes),
+    edges: asArray<Record<string, unknown>>(raw.edges),
+    graph_hash: raw.graph_hash ? String(raw.graph_hash) : undefined,
+    authority: raw.authority ? String(raw.authority) : undefined,
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      raw_content_omitted: boolValue(safetyRaw.raw_content_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
   };
 }
 

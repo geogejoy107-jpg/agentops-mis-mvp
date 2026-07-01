@@ -1,19 +1,20 @@
 import { Link, useParams } from "react-router";
-import { Cpu, DollarSign, Clock, GitBranch, AlertTriangle, ShieldCheck } from "lucide-react";
+import { Cpu, DollarSign, Clock, GitBranch, AlertTriangle, ShieldCheck, Network } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import { RiskBadge } from "../shared/RiskBadge";
 import { AuditTimeline } from "../shared/AuditTimeline";
-import { loadAudit, loadRunDetail, loadRuns, useLiveData } from "../../data/liveApi";
+import { loadAudit, loadRunDetail, loadRunEvidenceGraph, loadRuns, useLiveData } from "../../data/liveApi";
 
 export function RunDetail() {
   const { id } = useParams<{ id: string }>();
   const { data, loading, error } = useLiveData(async () => {
-    const [detail, allRuns, auditLogs] = await Promise.all([
+    const [detail, allRuns, auditLogs, evidenceGraph] = await Promise.all([
       loadRunDetail(id || ""),
       loadRuns(),
       loadAudit(),
+      loadRunEvidenceGraph(id || ""),
     ]);
-    return { detail, allRuns, auditLogs };
+    return { detail, allRuns, auditLogs, evidenceGraph };
   }, [id]);
 
   if (loading) {
@@ -37,6 +38,12 @@ export function RunDetail() {
   const pendingApprovals = runApprovals.filter(approval => approval.decision === "pending");
   const failedTools = runTools.filter(tool => ["failed", "error", "blocked"].includes(tool.status));
   const failedEvals = runEvaluations.filter(ev => ev.pass_fail === "fail" || ev.pass_fail === "failed");
+  const evidenceGraph = data.evidenceGraph;
+  const graphCounts = evidenceGraph.evidence_counts || {};
+  const graphNodeCount = evidenceGraph.nodes?.length || 0;
+  const graphEdgeCount = evidenceGraph.edges?.length || 0;
+  const graphAvailable = evidenceGraph.status !== "unavailable" && evidenceGraph.operation === "work_delivery_graph_readback";
+  const graphSafety = evidenceGraph.safety || {};
   const liveRuntime = run.runtime_type === "hermes" || run.runtime_type === "openclaw";
   const evidenceChainStatus = run.status === "failed" || run.status === "blocked" || failedTools.length > 0 || failedEvals.length > 0
     ? "fail"
@@ -141,6 +148,62 @@ export function RunDetail() {
               Review approvals: {pendingApprovals.length}
             </Link>
           )}
+        </div>
+      </div>
+
+      <div
+        data-testid="run-detail-work-delivery-graph"
+        className="rounded-xl p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold flex items-center gap-1.5" style={{ color: "var(--mis-text)" }}>
+              <Network size={13} style={{ color: graphAvailable ? "var(--mis-cyan)" : "var(--mis-muted)" }} />
+              Work Delivery Evidence Graph
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed" style={{ color: "var(--mis-muted)" }}>
+              {graphAvailable
+                ? "Backend readback over MIS ledgers: task, plan, run, tools, runtime events, evaluations, approvals, artifacts, memories and audit evidence."
+                : "Evidence graph readback is unavailable on the connected server; detail-derived evidence is still shown below."}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <StatusBadge status={graphAvailable ? "pass" : "planned"} size="md" label={graphAvailable ? "Graph: ready" : "Graph: unavailable"} />
+            <StatusBadge status={graphSafety.token_omitted !== false ? "pass" : "fail"} size="md" label="Token omitted" />
+            <StatusBadge status={graphSafety.read_only === false ? "fail" : "pass"} size="md" label="Read-only" />
+          </div>
+        </div>
+        <div className="mt-3 grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2">
+          {[
+            { label: "Plan manifests", value: graphCounts.plan_evidence_manifests || 0 },
+            { label: "Tool calls", value: graphCounts.tool_calls || 0 },
+            { label: "Runtime events", value: graphCounts.runtime_events || 0 },
+            { label: "Evaluations", value: graphCounts.evaluations || 0 },
+            { label: "Approvals", value: graphCounts.approvals || 0 },
+            { label: "Artifacts", value: graphCounts.artifacts || 0 },
+            { label: "Memories", value: graphCounts.memories || 0 },
+            { label: "Audit logs", value: graphCounts.audit_logs || 0 },
+          ].map(item => (
+            <div key={item.label} className="rounded px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid rgba(148,163,184,0.14)" }}>
+              <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{item.label}</span>
+              <div className="mt-1 text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2 text-[10px]">
+          <div className="rounded px-3 py-2 font-mono truncate" style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)" }}>
+            graph_hash: {evidenceGraph.graph_hash || "unavailable"}
+          </div>
+          <div className="rounded px-3 py-2 font-mono truncate" style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)" }}>
+            plan: {evidenceGraph.agent_plan_id || "unbound"}
+          </div>
+          <div className="rounded px-3 py-2 font-mono truncate" style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)" }}>
+            graph: {graphNodeCount} nodes / {graphEdgeCount} edges
+          </div>
+        </div>
+        <div className="mt-2 text-[10px]" style={{ color: "var(--mis-muted)" }}>
+          Authority: {evidenceGraph.authority || "read_model_over_mis_ledgers"}
         </div>
       </div>
 
