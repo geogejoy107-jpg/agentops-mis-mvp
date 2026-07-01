@@ -59,6 +59,7 @@ POST /api/mock-runs/:id/complete
 GET /api/runs
 GET /api/runs/:id
 GET /api/runs/:id/graph
+GET /api/runs/:id/evidence-graph
 GET /api/runs/export
 ```
 
@@ -89,6 +90,7 @@ GET /api/agent-gateway/tasks/:id
 GET /api/agent-gateway/runs
 GET /api/agent-gateway/runs/:id
 GET /api/agent-gateway/runs/:id/graph
+GET /api/agent-gateway/runs/:id/evidence-graph
 GET /api/agent-gateway/artifacts
 GET /api/agent-gateway/approvals
 GET /api/agent-gateway/memories
