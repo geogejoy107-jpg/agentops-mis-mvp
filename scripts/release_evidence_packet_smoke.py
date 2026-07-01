@@ -483,6 +483,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "run_start_work_packet_decision_gate",
+        "command": "python3 scripts/run_start_work_packet_decision_gate_smoke.py",
+        "summary": "Agent Gateway run_start consumes agent_work_packet_decision_v1 before Hermes/OpenClaw run creation, blocks unsafe decision packets, and attaches decision hashes when allowed.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "operator_evidence_report",
         "command": "python3 scripts/operator_evidence_report_smoke.py",
         "summary": "Run-level evidence report checks Agent Plan binding, quality rubric, approval, verified plan evidence, tool/eval/artifact/audit rows, memory review closure, worker knowledge retrieval, worker runtime summary events, raw memory/runtime omission and read-only DB stability.",

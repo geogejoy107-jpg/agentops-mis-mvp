@@ -1682,6 +1682,12 @@ evidence, and reports `live_execution_performed:false`. If the gate allows
 run-start, the response includes `loop_supervision_gate` and
 `agent_plan.loop_supervision_hash`; these are safe hashes/statuses, not raw
 runtime transcripts or credentials.
+For `hermes` and `openclaw`, `runs/start` also consumes
+`agent_work_packet_decision_v1` before run creation. `stop`, `blocked`,
+`missing`, server-shell, server-may-execute or live-execution decision evidence
+returns `428 run_start_work_packet_decision_blocked` before any run row exists.
+Allowed decisions are still recorded as governance evidence through
+`work_packet_decision_gate` and `agent_plan.work_packet_decision_hash`.
 If `run_id` already exists, `runs/start` is idempotent only for the same
 `workspace_id`, `task_id`, `agent_id`, `agent_plan_id`, and `plan_hash`.
 Attempts to rebind an existing run to another Agent Plan or hash fail with

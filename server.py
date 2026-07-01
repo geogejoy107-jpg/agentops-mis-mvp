@@ -7773,6 +7773,119 @@ def agent_gateway_run_start_loop_supervision_readback(
     return core
 
 
+def agent_gateway_run_start_work_packet_decision_readback(
+    conn: sqlite3.Connection,
+    *,
+    runtime_type: str,
+    workspace_id: str,
+    task_id: str,
+    agent_id: str,
+) -> dict | None:
+    if runtime_type not in {"hermes", "openclaw"}:
+        return None
+    qs: dict[str, list[str]] = {
+        "adapter": [runtime_type],
+        "limit": ["8"],
+        "task_id": [str(task_id)],
+        "agent_id": [str(agent_id)],
+        "include_codex": ["false"],
+    }
+    try:
+        supervision = operator_loop_supervision(
+            conn,
+            {},
+            qs,
+            {"workspace_id": workspace_id, "agent_id": agent_id},
+        )
+        bundle = compact_loop_supervision_work_packet_bundle(supervision)
+        decision_payload = loop_work_packet_decision_from_bundle(bundle)
+    except Exception as exc:
+        return {
+            "operation": "agent_gateway_run_start_work_packet_decision_gate",
+            "source_operation": "operator_loop_work_packet_decision",
+            "runtime_type": runtime_type,
+            "adapter": runtime_type,
+            "workspace_id": workspace_id,
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "status": "unavailable",
+            "ok": False,
+            "reason": "work_packet_decision_unavailable",
+            "error": redact_text(str(exc), 220),
+            "contract": "Agent Gateway run_start could not read the compact work-packet decision; Hermes/OpenClaw run_start remains blocked before run creation.",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "raw_content_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+            "live_execution_performed": False,
+        }
+    decisions = decision_payload.get("decisions") if isinstance(decision_payload.get("decisions"), list) else []
+    selected = next((item for item in decisions if isinstance(item, dict) and item.get("adapter") == runtime_type), {})
+    selected_safety = selected.get("safety") if isinstance(selected.get("safety"), dict) else {}
+    selected_policy = selected.get("policy") if isinstance(selected.get("policy"), dict) else {}
+    decision = str(selected.get("decision") or "missing")
+    hard_blocked = (
+        decision in {"stop", "blocked", "missing"}
+        or selected_safety.get("server_executes_shell") is True
+        or selected_safety.get("live_execution_performed") is True
+        or selected_policy.get("server_may_execute") is True
+    )
+    core = {
+        "operation": "agent_gateway_run_start_work_packet_decision_gate",
+        "source_operation": decision_payload.get("operation"),
+        "source_schema_version": decision_payload.get("schema_version"),
+        "source": "/api/operator/loop-supervision?decision=1",
+        "runtime_type": runtime_type,
+        "adapter": runtime_type,
+        "workspace_id": workspace_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "status": "blocked" if hard_blocked else "ready",
+        "ok": not hard_blocked,
+        "decision": selected,
+        "decision_kind": decision,
+        "summary": decision_payload.get("summary") if isinstance(decision_payload.get("summary"), dict) else {},
+        "hard_blocked_decisions": ["stop", "blocked", "missing"],
+        "consumed_before_run_start": True,
+        "contract": "Agent Gateway run_start must consume agent_work_packet_decision_v1 before Hermes/OpenClaw run creation; stop/blocked/missing or unsafe decision evidence fails closed.",
+        "live_execution_performed": False,
+        "server_executes_shell": False,
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+    core["decision_hash"] = stable_hash({
+        "operation": core["operation"],
+        "runtime_type": runtime_type,
+        "adapter": runtime_type,
+        "workspace_id": workspace_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "status": core["status"],
+        "ok": core["ok"],
+        "decision_kind": decision,
+        "packet_hash": selected.get("packet_hash"),
+        "reason": selected.get("reason"),
+        "command": selected.get("command"),
+    })
+    return core
+
+
 def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["20"])[0]), 1), 100)
@@ -7918,6 +8031,13 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
     agent = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
     runtime_type = coerce_choice(body.get("runtime_type") or agent["runtime_type"], VALID_RUNTIME_TYPES, "mock")
+    work_packet_decision_gate = agent_gateway_run_start_work_packet_decision_readback(
+        conn,
+        runtime_type=runtime_type,
+        workspace_id=ident["workspace_id"],
+        task_id=task_id,
+        agent_id=agent_id,
+    )
     loop_supervision_gate = agent_gateway_run_start_loop_supervision_readback(
         conn,
         runtime_type=runtime_type,
@@ -7946,6 +8066,8 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
             "runtime_type": runtime_type,
             "agent_plan_id": plan_binding["plan_id"],
             "plan_hash": plan_binding["plan_hash"],
+            "work_packet_decision": work_packet_decision_gate,
+            "work_packet_decision_hash": (work_packet_decision_gate or {}).get("decision_hash"),
             "loop_supervision": loop_supervision_gate,
             "loop_supervision_hash": loop_supervision_gate.get("supervision_hash"),
             "live_execution_performed": False,
@@ -7965,6 +8087,57 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
                 "verification_result_hash": plan_binding.get("verification_result_hash"),
                 "token_omitted": True,
             },
+            "work_packet_decision_gate": work_packet_decision_gate,
+            "loop_supervision_gate": loop_supervision_gate,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        }, 428
+    if work_packet_decision_gate and work_packet_decision_gate.get("ok") is not True:
+        decision = work_packet_decision_gate.get("decision") if isinstance(work_packet_decision_gate.get("decision"), dict) else {}
+        reason = redact_text(
+            decision.get("command")
+            or decision.get("reason")
+            or work_packet_decision_gate.get("reason")
+            or f"{runtime_type} work-packet decision is not ready for Agent Gateway run_start.",
+            260,
+        )
+        runtime_event(
+            conn,
+            "rtc_agent_gateway_local",
+            "run.start.work_packet_decision_blocked",
+            "blocked",
+            task_id=task_id,
+            agent_id=agent_id,
+            input_summary=f"{runtime_type} run_start blocked by work-packet decision.",
+            output_summary=reason,
+        )
+        audit(conn, "agent", agent_id, "agent_gateway.run_start_work_packet_decision_blocked", "tasks", task_id, None, dict(task), {
+            "runtime_type": runtime_type,
+            "agent_plan_id": plan_binding["plan_id"],
+            "plan_hash": plan_binding["plan_hash"],
+            "work_packet_decision": work_packet_decision_gate,
+            "work_packet_decision_hash": work_packet_decision_gate.get("decision_hash"),
+            "loop_supervision": loop_supervision_gate,
+            "loop_supervision_hash": (loop_supervision_gate or {}).get("supervision_hash"),
+            "live_execution_performed": False,
+            "token_omitted": True,
+        })
+        conn.commit()
+        return {
+            "error": "run_start_work_packet_decision_blocked",
+            "message": "Agent Gateway run_start for Hermes/OpenClaw requires agent_work_packet_decision_v1 to pass before a run is created.",
+            "runtime_type": runtime_type,
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "agent_plan": {
+                "plan_id": plan_binding["plan_id"],
+                "plan_hash": plan_binding["plan_hash"],
+                "verification_pass": (plan_binding.get("verification") or {}).get("pass") is True,
+                "verification_result_hash": plan_binding.get("verification_result_hash"),
+                "token_omitted": True,
+            },
+            "work_packet_decision_gate": work_packet_decision_gate,
             "loop_supervision_gate": loop_supervision_gate,
             "live_execution_performed": False,
             "server_executes_shell": False,
@@ -8032,6 +8205,8 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
         "agent_plan_id": plan_binding["plan_id"],
         "plan_hash": plan_binding["plan_hash"],
         "verification_result_hash": plan_binding.get("verification_result_hash"),
+        "work_packet_decision": work_packet_decision_gate,
+        "work_packet_decision_hash": (work_packet_decision_gate or {}).get("decision_hash"),
         "loop_supervision": loop_supervision_gate,
         "loop_supervision_hash": (loop_supervision_gate or {}).get("supervision_hash"),
         "live_execution_performed": False,
@@ -8040,6 +8215,9 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
     conn.execute("UPDATE agents SET status='running', updated_at=? WHERE agent_id=?", (now_iso(), agent_id))
     runtime_event(conn, "rtc_agent_gateway_local", "run.start", "running", task_id=task_id, run_id=run_id, agent_id=agent_id, input_summary=row["input_summary"], output_summary=f"Run bound to agent_plan {plan_binding['plan_id']}.")
     payload = build_run_start_success_response(run=row, outcome=outcome, plan_binding=plan_binding)
+    if work_packet_decision_gate:
+        payload["work_packet_decision_gate"] = work_packet_decision_gate
+        payload["agent_plan"]["work_packet_decision_hash"] = work_packet_decision_gate.get("decision_hash")
     if loop_supervision_gate:
         payload["loop_supervision_gate"] = loop_supervision_gate
         payload["agent_plan"]["loop_supervision_hash"] = loop_supervision_gate.get("supervision_hash")
