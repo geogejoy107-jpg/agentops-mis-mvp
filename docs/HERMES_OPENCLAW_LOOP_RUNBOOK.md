@@ -230,12 +230,16 @@ gate derived from
 `agentops worker readiness`, including the exact `agentops worker preflight
 --adapter ...` command, adapter trust/readiness state, checks, and
 live-dispatch blockers. With `--confirm-loop`, it re-reads the start-check
-acceptance gate before execution and before each step, then only calls
-`advance-loop --fast-control --confirm-advance` when `can_confirm_bounded_loop`
-is true and `server_executes_shell` is false. It records the control readback
-and action receipt evidence, refreshes the review snapshot, returns initial and
-final `agent_loop_packet` readbacks, and stops at the bounded `--max-steps`
-cap. Acceptance/readiness/packet/review gates do not grant live runtime
+acceptance gate plus the compact work-packet decision before execution and
+before each step, then only calls `advance-loop --fast-control
+--confirm-advance` when `can_confirm_bounded_loop` is true, the decision is not
+`stop`/`blocked`/missing, and `server_executes_shell` is false.
+Governance-first decisions such as `plan_first`, `service_closure_first`, and
+`record_research_consumption_first` may continue through the allowlisted local
+advance path. It records the control readback and action receipt evidence,
+refreshes the review snapshot, returns initial and final `agent_loop_packet`
+readbacks, and stops at the bounded `--max-steps` cap.
+Acceptance/readiness/packet/review gates do not grant live runtime
 execution, workflow dispatch, approvals, or server shell execution; Hermes/
 OpenClaw still copy and run explicit local commands, and live worker dispatch
 still requires `--confirm-run` plus any prepared-action approval required by the
