@@ -2116,7 +2116,9 @@ agentops operator loop-control --limit 8
 agentops operator loop-bootstrap --adapter hermes --limit 8
 agentops operator loop-bootstrap --adapter openclaw --limit 8 --run-service-check
 agentops operator loop-supervision --adapter hermes --adapter openclaw --limit 8 --work-packet
+agentops operator loop-supervision --adapter hermes --adapter openclaw --limit 8 --decision
 curl 'http://127.0.0.1:8787/api/operator/loop-supervision?adapter=hermes&adapter=openclaw&limit=8&work_packet=1'
+curl 'http://127.0.0.1:8787/api/operator/loop-supervision?adapter=hermes&adapter=openclaw&limit=8&decision=1'
 agentops operator loop-driver --adapter hermes --max-steps 3
 agentops operator loop-driver --adapter openclaw --max-steps 3 --confirm-loop --auto-service-closure
 ```
@@ -2182,11 +2184,25 @@ commands without reading heavy start-check or loop-supervision endpoints.
 `operator loop-supervision --work-packet` and
 `GET /api/operator/loop-supervision?work_packet=1` expose the compact
 `agent_work_packet_bundle_v1` for HTTP-only Hermes/OpenClaw/Codex agents. That
-bundle contains adapter-scoped `agent_work_packet_v1` entries, packet hashes,
-primary next actions, service-closure receipt/readback gates, and the same
-no-server-shell/no-live/no-token safety proofs as the full supervision read
-model. Machine callers should use this compact bundle instead of scraping the
-larger supervision payload.
+bundle contains adapter-scoped `agent_work_packet_v1` entries, phase commands,
+packet hashes, primary next actions, service-closure receipt/readback gates,
+and the same no-server-shell/no-live/no-token safety proofs as the full
+supervision read model. Machine callers should use this compact bundle instead
+of scraping the larger supervision payload.
+`operator loop-supervision --decision` and HTTP `decision=1` expose a still
+smaller `agent_work_packet_decision_v1` projection for local Hermes/OpenClaw
+callers that only need the next consumption decision. The decision layer
+classifies each adapter packet as `plan_first`, `service_closure_first`,
+`record_research_consumption_first`, `record_first`, `review_first`,
+`preview_first`, `confirm_ready`, `safe_read_or_preview`, `blocked`, or `stop`,
+then repeats the command, verify command, confirm/receipt requirements, and
+server-may-execute=false safety proof.
+`operator service-closure --fast --run-service-check --confirm-record` is the
+standalone local RECORD command for service-managed loop readback when the
+packet asks for it. Unlike `--decision`, it writes receipt/readback evidence to
+the local ledger after explicit `--confirm-record`; verify with `operator
+action-receipts` and then re-read the compact work packet before copying a
+bounded loop-driver command.
 `operator handoff` exposes the same `work_order.advance_loop` preview/confirm
 commands, and `/workspace/agents` renders copy buttons for those local CLI
 commands without letting the browser or server execute shell.

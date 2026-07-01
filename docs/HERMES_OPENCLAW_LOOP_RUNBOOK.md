@@ -161,7 +161,9 @@ Bounded local loop-driver for Hermes/OpenClaw:
 
 ```bash
 agentops operator loop-supervision --adapter hermes --adapter openclaw --limit 8 --work-packet
+agentops operator loop-supervision --adapter hermes --adapter openclaw --limit 8 --decision
 curl 'http://127.0.0.1:8787/api/operator/loop-supervision?adapter=hermes&adapter=openclaw&limit=8&work_packet=1'
+curl 'http://127.0.0.1:8787/api/operator/loop-supervision?adapter=hermes&adapter=openclaw&limit=8&decision=1'
 
 agentops operator loop-bootstrap --adapter hermes --limit 8
 agentops operator loop-bootstrap --adapter hermes --limit 8 --run-service-check
@@ -181,6 +183,15 @@ Hermes/OpenClaw, packet hashes, phase commands, primary next actions, service
 closure/readback receipts, and no raw prompt/response/token content. HTTP
 callers should use that compact bundle instead of scraping the larger
 supervision payload.
+
+For autonomous local loop callers, prefer `--decision` or HTTP `decision=1`
+immediately after reading the packet. The decision projection returns
+`agent_work_packet_decision_v1` with one item per adapter and classifies the
+next move as `plan_first`, `service_closure_first`,
+`record_research_consumption_first`, `record_first`, `review_first`,
+`preview_first`, `confirm_ready`, `safe_read_or_preview`, `blocked`, or `stop`.
+It is still read-only: the server never runs shell, never mutates ledgers, never
+starts Hermes/OpenClaw, and never treats a copyable command as approval.
 
 `loop-bootstrap` is the first local deployment packet to hand to Hermes or
 OpenClaw. It is read-only by default and returns the ordered current-code,

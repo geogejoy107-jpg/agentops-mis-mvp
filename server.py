@@ -26003,6 +26003,133 @@ def compact_loop_supervision_work_packet_bundle(payload: dict) -> dict:
     }
 
 
+def loop_work_packet_decision_from_bundle(bundle: dict) -> dict:
+    work_packets = [
+        item
+        for item in (bundle.get("work_packets") if isinstance(bundle.get("work_packets"), list) else [])
+        if isinstance(item, dict)
+    ]
+    decisions = []
+    for packet in work_packets:
+        action = packet.get("primary_next_action") if isinstance(packet.get("primary_next_action"), dict) else {}
+        safety = packet.get("safety") if isinstance(packet.get("safety"), dict) else {}
+        contract = packet.get("evidence_contract") if isinstance(packet.get("evidence_contract"), dict) else {}
+        service_contract = contract.get("service_managed_loop") if isinstance(contract.get("service_managed_loop"), dict) else {}
+        research_consumption = contract.get("research_lab_consumption") if isinstance(contract.get("research_lab_consumption"), dict) else {}
+        command = str(action.get("command") or packet.get("recommended_next") or "")
+        phase = str(action.get("phase") or "READ").upper()
+        blockers = [str(item) for item in (action.get("blockers") or packet.get("blockers") or []) if item]
+        attention = [str(item) for item in (packet.get("attention") or []) if item]
+        confirm_required = bool(action.get("confirm_required") or "--confirm-" in command)
+        safety_blocked = safety.get("server_executes_shell") is True or safety.get("live_execution_performed") is True
+        if safety_blocked:
+            decision = "stop"
+            reason = "safety_boundary_failed"
+        elif blockers:
+            decision = "blocked"
+            reason = "packet_blockers_present"
+        elif contract.get("task_intake_auto_plan_required") is True:
+            decision = "plan_first"
+            reason = "task_intake_agent_plan_required"
+        elif service_contract.get("required") is True or service_contract.get("status") == "attention":
+            decision = "service_closure_first"
+            reason = "service_receipt_or_readback_required"
+        elif research_consumption and (
+            contract.get("research_lab_consumption_required") is True
+            or research_consumption.get("required") is True
+        ) and research_consumption.get("consumed") is not True:
+            decision = "record_research_consumption_first"
+            reason = "research_lab_packet_consumption_missing"
+        elif phase == "RECORD" or packet.get("status") == "record_first":
+            decision = "record_first"
+            reason = "record_before_execute"
+        elif phase == "VERIFY":
+            decision = "review_first"
+            reason = "verification_or_quality_attention"
+        elif confirm_required:
+            decision = "confirm_ready"
+            reason = "explicit_local_confirmation_required"
+        elif action.get("safe_to_auto_continue") is True:
+            decision = "safe_read_or_preview"
+            reason = "read_only_or_preview_action"
+        elif command:
+            decision = "preview_first"
+            reason = "copy_command_for_local_preview"
+        else:
+            decision = "stop"
+            reason = "no_recommended_command"
+        decisions.append({
+            "adapter": packet.get("adapter"),
+            "packet_hash": packet.get("packet_hash"),
+            "packet_status": packet.get("status"),
+            "decision": decision,
+            "reason": reason,
+            "phase": phase,
+            "command": command,
+            "verify_command": action.get("verify_command"),
+            "confirm_required": confirm_required,
+            "receipt_required": bool(action.get("receipt_required")),
+            "safe_to_auto_continue": action.get("safe_to_auto_continue") is True and decision == "safe_read_or_preview",
+            "requires_human_before_effect": bool(action.get("requires_human_before_effect") or confirm_required or decision not in {"safe_read_or_preview", "preview_first"}),
+            "blockers": blockers,
+            "attention": attention,
+            "safety": {
+                "read_only": safety.get("read_only") is True,
+                "ledger_mutated": safety.get("ledger_mutated") is True,
+                "live_execution_performed": safety.get("live_execution_performed") is True,
+                "server_executes_shell": safety.get("server_executes_shell") is True,
+                "copy_only": safety.get("copy_only") is True,
+                "token_omitted": True,
+            },
+            "policy": {
+                "server_may_execute": False,
+                "agent_may_copy_command": bool(command) and not safety_blocked,
+                "agent_may_execute_without_local_confirmation": action.get("safe_to_auto_continue") is True and not confirm_required and decision == "safe_read_or_preview",
+                "must_record_receipt_after_confirm": bool(action.get("receipt_required")),
+                "raw_prompt_response_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        })
+    decision_counts = {}
+    for item in decisions:
+        key = str(item.get("decision") or "unknown")
+        decision_counts[key] = decision_counts.get(key, 0) + 1
+    return {
+        "provider": bundle.get("provider", "agentops-operator"),
+        "operation": "operator_loop_work_packet_decision",
+        "schema_version": "agent_work_packet_decision_v1",
+        "source_operation": bundle.get("operation") or "operator_loop_work_packet_bundle",
+        "source_schema_version": bundle.get("schema_version"),
+        "status": bundle.get("status"),
+        "workspace_id": bundle.get("workspace_id"),
+        "adapters": bundle.get("adapters") or [item.get("adapter") for item in decisions],
+        "summary": {
+            **(bundle.get("summary") if isinstance(bundle.get("summary"), dict) else {}),
+            "decisions": len(decisions),
+            "decision_counts": decision_counts,
+            "ready_to_confirm": decision_counts.get("confirm_ready", 0),
+            "requires_human_before_effect": sum(1 for item in decisions if item.get("requires_human_before_effect") is True),
+            "safe_to_auto_continue": sum(1 for item in decisions if item.get("safe_to_auto_continue") is True),
+            "server_may_execute": False,
+        },
+        "decisions": decisions,
+        "contract": "read-only work-packet consumption decision for Hermes/OpenClaw/Codex local loop callers; it classifies the next copyable command but never executes shell, mutates ledgers, starts live adapters, approves work, or stores raw prompt/response content",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def operator_loop_bootstrap_append_option(command: str, name: str, value: str | None) -> str:
     command = str(command or "").strip()
     if not command or not value or name in command:
@@ -28820,8 +28947,12 @@ class Handler(BaseHTTPRequestHandler):
                     lambda: operator_loop_supervision(conn, self.headers, qs, auth_ctx),
                     auth_ctx,
                 )
-                if str((qs.get("work_packet") or qs.get("work-packet") or [""])[0]).strip().lower() in {"1", "true", "yes", "on"}:
+                wants_work_packet = str((qs.get("work_packet") or qs.get("work-packet") or [""])[0]).strip().lower() in {"1", "true", "yes", "on"}
+                wants_decision = str((qs.get("decision") or qs.get("work_packet_decision") or qs.get("work-packet-decision") or [""])[0]).strip().lower() in {"1", "true", "yes", "on"}
+                if wants_work_packet or wants_decision:
                     payload = compact_loop_supervision_work_packet_bundle(payload)
+                if wants_decision:
+                    payload = loop_work_packet_decision_from_bundle(payload)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/loop-bootstrap":
