@@ -147,6 +147,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "open_source_mainline_governance",
+        "command": "python3 scripts/open_source_mainline_governance_smoke.py",
+        "summary": "Open-source/experiment branch merge governance plus Harness engineering research boundary.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "spatial_research_semantic_contract",
         "command": "python3 scripts/spatial_research_semantic_contract_smoke.py",
         "summary": "Spatial Research District semantic objects cover every Pixel Office zone and route back to formal AgentOps MIS authority pages without third-party assets or second-ledger state.",
