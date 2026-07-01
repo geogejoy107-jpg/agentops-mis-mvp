@@ -31,6 +31,13 @@ python3 scripts/commercial_promotion_packet_smoke.py --require-ready
   no safety failures are present.
 - `--require-ready` fails until the same strict conditions are true.
 
+## Evidence Shape
+
+The packet includes `included_packets` for current evidence status, release
+evidence, commercial handoff status, and promotion preflight. It also emits
+`evidence_refs` that point reviewers to the source commands and docs instead of
+copying rendered packet snapshots.
+
 ## Safety Boundaries
 
 - No server start.
