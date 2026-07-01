@@ -92,6 +92,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/module_boundary_smoke.py`
 - `python3 scripts/read_model_cache_smoke.py`
 - `python3 scripts/open_source_adoption_boundary_smoke.py`
+- `python3 scripts/open_source_mainline_governance_smoke.py`
 - `python3 scripts/spatial_research_semantic_contract_smoke.py`
 - `python3 scripts/spatial_zone_authority_readback_smoke.py`
 - `python3 scripts/commercial_config_boundary_smoke.py`
