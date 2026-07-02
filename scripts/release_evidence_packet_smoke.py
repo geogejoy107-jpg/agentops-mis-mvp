@@ -165,6 +165,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "harness_style_agentops_operating_spec",
+        "command": "python3 scripts/harness_style_agentops_operating_spec_smoke.py",
+        "summary": "Harness-style AgentOps operating spec: solo/local company mode, dogfood engineering mode, remote worker mode, async lane fields, real-runtime proof limits, UI-vs-agent boundaries and product-slice scorecard.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "spatial_research_semantic_contract",
         "command": "python3 scripts/spatial_research_semantic_contract_smoke.py",
         "summary": "Spatial Research District semantic objects cover every Pixel Office zone and route back to formal AgentOps MIS authority pages without third-party assets or second-ledger state.",
