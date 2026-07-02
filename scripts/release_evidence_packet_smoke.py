@@ -159,6 +159,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "harness_engineering_execution_constraints",
+        "command": "python3 scripts/harness_engineering_execution_constraints_smoke.py",
+        "summary": "Harness engineering execution constraints: work packet fields, READ/PLAN/RETRIEVE/COMPARE/EXECUTE/VERIFY/RECORD gates, real-runtime proof limits, and async lane contract.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "spatial_research_semantic_contract",
         "command": "python3 scripts/spatial_research_semantic_contract_smoke.py",
         "summary": "Spatial Research District semantic objects cover every Pixel Office zone and route back to formal AgentOps MIS authority pages without third-party assets or second-ledger state.",

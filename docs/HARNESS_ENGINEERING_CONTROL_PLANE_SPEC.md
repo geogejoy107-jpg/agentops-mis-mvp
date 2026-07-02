@@ -14,6 +14,7 @@ typed packets, and every important action becomes verifiable MIS evidence.
 This spec is grounded in the existing research brief:
 
 - `docs/research/HARNESS_ENGINEERING_RESEARCH_BRIEF.md`
+- `docs/HARNESS_ENGINEERING_EXECUTION_CONSTRAINTS.md`
 
 Primary source references used by that brief:
 
@@ -181,6 +182,25 @@ prepared action
 
 Generic approval buttons must not be marketed as exact tool-action governance.
 
+## Execution Constraints Layer
+
+The companion execution constraint layer is
+`docs/HARNESS_ENGINEERING_EXECUTION_CONSTRAINTS.md`. It converts this
+control-plane doctrine into the machine-consumable contract for agent work:
+
+- required work packet fields;
+- READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD gate
+  evidence;
+- policy decision shape;
+- Approval Wall exact-action proof;
+- real-runtime proof standards;
+- async lane management;
+- UI versus CLI/API/MCP responsibility split;
+- public product-claim limits.
+
+Use that file when building or reviewing a concrete worker, adapter, CLI/API
+packet, or MCP-facing agent surface.
+
 ## Runtime Adapter Requirements
 
 Hermes, OpenClaw, Dify, Harness-like systems and future external workers are
@@ -232,7 +252,10 @@ reauthorized.
 This spec is accepted when:
 
 - it is present at `docs/HARNESS_ENGINEERING_CONTROL_PLANE_SPEC.md`;
+- the execution layer is present at
+  `docs/HARNESS_ENGINEERING_EXECUTION_CONSTRAINTS.md`;
 - `scripts/harness_engineering_control_plane_smoke.py` passes;
+- `scripts/harness_engineering_execution_constraints_smoke.py` passes;
 - the smoke is included in CI offline safety smokes;
 - the smoke is included in `scripts/release_evidence_packet_smoke.py`;
 - the release evidence docs list the smoke command;
