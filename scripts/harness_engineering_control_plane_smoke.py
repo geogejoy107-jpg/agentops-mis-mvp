@@ -76,6 +76,11 @@ SOURCE_MARKERS = [
     "https://github.com/harness/harness",
     "https://www.harness.io/open-source",
     "https://developer.harness.io/docs/platform/governance/policy-as-code/harness-governance-overview/",
+    "https://developer.harness.io/docs/continuous-delivery/x-platform-cd-features/services/services-overview/",
+    "https://developer.harness.io/docs/internal-developer-portal/overview",
+    "https://developer.harness.io/docs/internal-developer-portal/catalog/data-model/system-entity",
+    "https://developer.harness.io/docs/internal-developer-portal/environment-management/environments",
+    "https://developer.harness.io/docs/open-source/overview",
     "https://openai.com/index/harness-engineering/",
 ]
 

@@ -95,6 +95,25 @@ def task_evidence(db_path: Path, task_id: str) -> dict:
         conn.close()
 
 
+def audit_metadata(db_path: Path, task_id: str, action: str) -> dict:
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            """SELECT metadata_json FROM audit_logs
+            WHERE entity_id=? AND action=?
+            ORDER BY created_at DESC LIMIT 1""",
+            (task_id, action),
+        ).fetchone()
+        if not row:
+            return {}
+        try:
+            return json.loads(row[0] or "{}")
+        except json.JSONDecodeError:
+            return {}
+    finally:
+        conn.close()
+
+
 def delete_localization_artifact(db_path: Path, task_id: str) -> None:
     conn = sqlite3.connect(db_path)
     try:
@@ -146,6 +165,12 @@ def main() -> int:
         require(api_dispatch.get("run_id"), f"API dispatch missing run: {api_dispatch}")
         require(api_dispatch.get("safety", {}).get("run_created") is True, f"API dispatch safety missing run: {api_dispatch}")
         require(api_dispatch.get("live_execution_performed") is False, "mock dispatch marked live execution")
+        api_lane_packet = api_dispatch.get("commander_lane_packet") or {}
+        require(api_lane_packet.get("packet_kind") == "commander_lane_packet", f"API dispatch missing lane packet: {api_dispatch}")
+        require(str(api_lane_packet.get("packet_hash") or "").startswith("sha256:"), f"API dispatch missing lane packet hash: {api_lane_packet}")
+        require(api_lane_packet.get("task_id") == task_ids[0], f"API dispatch lane packet task mismatch: {api_lane_packet}")
+        require((api_lane_packet.get("safety") or {}).get("read_only") is True, f"API dispatch lane packet read-only proof missing: {api_lane_packet}")
+        require(api_lane_packet.get("token_omitted") is True, f"API dispatch lane packet token proof missing: {api_lane_packet}")
         evidence_api = api_dispatch.get("evidence") or {}
         require(evidence_api.get("tool_calls", 0) >= 1, f"API evidence missing tool call: {evidence_api}")
         require(evidence_api.get("evaluations", 0) >= 1, f"API evidence missing eval: {evidence_api}")
@@ -165,6 +190,10 @@ def main() -> int:
         require(cli_dispatch.returncode == 0, f"CLI dispatch failed: {cli_dispatch.stderr or cli_dispatch.stdout}")
         require(cli_dispatch_payload.get("ok") is True, f"CLI dispatch not ok: {cli_dispatch_payload}")
         require(cli_dispatch_payload.get("run_id"), f"CLI dispatch missing run: {cli_dispatch_payload}")
+        cli_lane_packet = cli_dispatch_payload.get("commander_lane_packet") or {}
+        require(cli_lane_packet.get("packet_kind") == "commander_lane_packet", f"CLI dispatch missing lane packet: {cli_dispatch_payload}")
+        require(str(cli_lane_packet.get("packet_hash") or "").startswith("sha256:"), f"CLI dispatch missing lane packet hash: {cli_lane_packet}")
+        require(cli_lane_packet.get("task_id") == task_ids[1], f"CLI dispatch lane packet task mismatch: {cli_lane_packet}")
 
         hermes_gate = run_cli([
             "commander",
@@ -181,6 +210,10 @@ def main() -> int:
         require(hermes_gate_payload.get("reason") == "confirm_run_required_for_live_adapter", f"Hermes gate reason wrong: {hermes_gate_payload}")
         require(hermes_gate_payload.get("safety", {}).get("run_created") is False, f"Hermes gate created run: {hermes_gate_payload}")
         require(hermes_gate_payload.get("live_execution_performed") is False, f"Hermes gate marked live: {hermes_gate_payload}")
+        gate_lane_packet = hermes_gate_payload.get("commander_lane_packet") or {}
+        require(gate_lane_packet.get("packet_kind") == "commander_lane_packet", f"Hermes gate missing lane packet: {hermes_gate_payload}")
+        require(str(gate_lane_packet.get("packet_hash") or "").startswith("sha256:"), f"Hermes gate missing lane packet hash: {gate_lane_packet}")
+        require(gate_lane_packet.get("task_id") == task_ids[2], f"Hermes gate lane packet task mismatch: {gate_lane_packet}")
 
         readback_status, readback = http_json("GET", f"/api/commander/work-packages?project_id={project_id}&limit=10")
         transcripts.append(json.dumps(readback, ensure_ascii=False))
@@ -201,9 +234,20 @@ def main() -> int:
                 require(counts["evaluations"] >= 1, f"{task_id} missing eval evidence: {counts}")
                 require(counts["runtime_events"] >= 1, f"{task_id} missing runtime evidence: {counts}")
                 require(counts["audit_logs"] >= 1, f"{task_id} missing audit evidence: {counts}")
+                meta = audit_metadata(DEFAULT_DB, task_id, "commander.work_package_dispatch")
+                lane_packet = meta.get("commander_lane_packet") or {}
+                require(str(meta.get("commander_lane_packet_hash") or "").startswith("sha256:"), f"{task_id} dispatch audit missing lane packet hash: {meta}")
+                require(lane_packet.get("packet_hash") == meta.get("commander_lane_packet_hash"), f"{task_id} dispatch audit packet/hash mismatch: {meta}")
+                require(lane_packet.get("task_id") == task_id, f"{task_id} dispatch audit packet task mismatch: {meta}")
+                require((lane_packet.get("safety") or {}).get("read_only") is True, f"{task_id} dispatch audit packet safety missing: {meta}")
             gated_counts = task_evidence(DEFAULT_DB, task_ids[2])
             require(gated_counts["runs"] == 0, f"gated Hermes task unexpectedly ran: {gated_counts}")
             require(gated_counts["runtime_events"] >= 1, f"gated Hermes task missing gate runtime event: {gated_counts}")
+            gate_meta = audit_metadata(DEFAULT_DB, task_ids[2], "commander.work_package_dispatch_confirm_required")
+            gate_packet = gate_meta.get("commander_lane_packet") or {}
+            require(str(gate_meta.get("commander_lane_packet_hash") or "").startswith("sha256:"), f"gated Hermes audit missing lane packet hash: {gate_meta}")
+            require(gate_packet.get("packet_hash") == gate_meta.get("commander_lane_packet_hash"), f"gated Hermes audit packet/hash mismatch: {gate_meta}")
+            require(gate_packet.get("task_id") == task_ids[2], f"gated Hermes audit packet task mismatch: {gate_meta}")
 
         require(not leaked_secret("\n".join(transcripts)), "dispatch output leaked token-like material")
     except Exception as exc:

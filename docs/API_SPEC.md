@@ -275,6 +275,13 @@ workers. It projects each Commander work package into a bounded lane packet with
 does not create tasks/runs, does not call Hermes/OpenClaw, and omits raw
 prompts, raw responses, raw source bodies and tokens.
 
+`POST /api/commander/work-packages/:task_id/dispatch` records the lane packet it
+consumed before worker execution. The response and audit metadata include a
+bounded `commander_lane_packet` summary plus `commander_lane_packet_hash`, so
+later run/tool/evaluation/audit evidence can be traced back to the exact
+machine-readable Commander packet without storing raw prompts, responses,
+source bodies or tokens.
+
 `POST .../:task_id/coding-workspace` previews by default and returns branch,
 worktree path hash, repo-root omission proof and current git status without
 creating a worktree. With `confirm_create:true`, it creates an explicit local

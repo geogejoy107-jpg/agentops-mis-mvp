@@ -100,6 +100,7 @@ from agentops_mis_core.evaluation_cases import (
 )
 from agentops_mis_core.commander_work_packages import (
     build_commander_team_board,
+    build_commander_lane_packet,
     build_commander_lane_packets_readback,
     build_commander_work_packages_readback,
     build_commander_project_board_gates,
@@ -16228,6 +16229,25 @@ def commander_lane_packets_readback(conn: sqlite3.Connection, qs=None, headers=N
     )
 
 
+def commander_lane_packet_dispatch_evidence(packet: dict) -> dict:
+    return {
+        "packet_kind": packet.get("packet_kind"),
+        "packet_version": packet.get("packet_version"),
+        "packet_hash": packet.get("packet_hash"),
+        "lane_id": packet.get("lane_id"),
+        "phase": packet.get("phase"),
+        "task_id": packet.get("task_id"),
+        "run_id": packet.get("run_id"),
+        "next_command": packet.get("next_command"),
+        "verification_command": packet.get("verification_command"),
+        "evidence_refs": packet.get("evidence_refs") or [],
+        "claim_limit": packet.get("claim_limit"),
+        "safety": packet.get("safety") or {},
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body: dict, headers=None) -> tuple[dict, int]:
     headers = headers or {}
     workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
@@ -16248,6 +16268,8 @@ def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body
     adapter = coerce_choice(body.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
     confirm_run = bool(body.get("confirm_run"))
     if adapter in {"hermes", "openclaw"} and not confirm_run:
+        lane_packet = build_commander_lane_packet(before_package)
+        lane_packet_evidence = commander_lane_packet_dispatch_evidence(lane_packet)
         runtime_event(
             conn,
             "rtc_agent_gateway_local",
@@ -16257,6 +16279,7 @@ def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body
             agent_id=body.get("worker_agent_id") or task["owner_agent_id"],
             input_summary=f"Commander work package {task_id} requested {adapter} dispatch without confirm_run.",
             output_summary=f"{adapter} dispatch requires confirm_run=true before live execution.",
+            raw_payload_hash=stable_hash({"task_id": task_id, "adapter": adapter, "confirm_run": False, "commander_lane_packet_hash": lane_packet.get("packet_hash")}),
         )
         audit(
             conn,
@@ -16267,7 +16290,15 @@ def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body
             task_id,
             dict(task),
             dict(task),
-            {"adapter": adapter, "confirm_run": False, "raw_prompt_omitted": True},
+            {
+                "adapter": adapter,
+                "confirm_run": False,
+                "commander_lane_packet": lane_packet_evidence,
+                "commander_lane_packet_hash": lane_packet.get("packet_hash"),
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
         )
         conn.commit()
         return {
@@ -16278,6 +16309,7 @@ def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body
             "adapter": adapter,
             "task_id": task_id,
             "work_package": before_package,
+            "commander_lane_packet": lane_packet_evidence,
             "requires": {"confirm_run": True},
             "reason": "confirm_run_required_for_live_adapter",
             "safety": {
@@ -16313,6 +16345,10 @@ def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body
             },
             title=task["title"],
         )
+    dispatch_task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone() or task
+    dispatch_package = commander_work_package_from_task(conn, dispatch_task)
+    lane_packet = build_commander_lane_packet(dispatch_package)
+    lane_packet_evidence = commander_lane_packet_dispatch_evidence(lane_packet)
     dispatch = dispatch_local_worker_once(conn, {
         "adapter": adapter,
         "confirm_run": confirm_run,
@@ -16344,7 +16380,7 @@ def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body
         agent_id=worker_agent_id,
         input_summary=f"Commander dispatched work package {task_id} through {adapter}.",
         output_summary=redact_text(processed.get("output_summary") or dispatch.get("error") or "Commander dispatch completed.", 500),
-        raw_payload_hash=stable_hash({"task_id": task_id, "run_id": run_id, "adapter": adapter, "ok": dispatch.get("ok")}),
+        raw_payload_hash=stable_hash({"task_id": task_id, "run_id": run_id, "adapter": adapter, "ok": dispatch.get("ok"), "commander_lane_packet_hash": lane_packet.get("packet_hash")}),
     )
     audit(
         conn,
@@ -16355,7 +16391,16 @@ def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body
         task_id,
         before_package,
         after_package,
-        {"adapter": adapter, "worker_agent_id": worker_agent_id, "run_id": run_id, "raw_prompt_omitted": True},
+        {
+            "adapter": adapter,
+            "worker_agent_id": worker_agent_id,
+            "run_id": run_id,
+            "commander_lane_packet": lane_packet_evidence,
+            "commander_lane_packet_hash": lane_packet.get("packet_hash"),
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
     )
     conn.commit()
     return {
@@ -16368,6 +16413,7 @@ def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body
         "agent_id": worker_agent_id,
         "run_id": run_id,
         "work_package": after_package,
+        "commander_lane_packet": lane_packet_evidence,
         "evidence": after_package.get("evidence_counts") or {},
         "duration_ms": dispatch.get("duration_ms"),
         "worker_result": dispatch.get("worker_result"),
