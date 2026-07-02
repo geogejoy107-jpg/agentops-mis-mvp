@@ -245,6 +245,7 @@ commands, or expose the absolute repo root.
 GET  /api/commander/coding-project-template?q=local+coding+goal
 POST /api/commander/work-packages/plan
 GET  /api/commander/work-packages?project_id=proj_x&limit=25
+GET  /api/commander/lane-packets?project_id=proj_x&limit=25
 POST /api/commander/work-packages/:task_id/dispatch
 POST /api/commander/work-packages/:task_id/coding-workspace
 POST /api/commander/work-packages/:task_id/coding-workspace/cleanup
@@ -265,6 +266,14 @@ from normal MIS tasks, latest runs, evidence counts and the latest
 the intended file scope before dispatch. `POST .../:task_id/dispatch` remains
 the explicit execution boundary; Hermes/OpenClaw dispatch still requires
 `confirm_run:true`.
+
+`GET /api/commander/lane-packets` is the machine-facing readback for agents and
+workers. It projects each Commander work package into a bounded lane packet with
+`lane_id`, `objective`, `owner`, `runtime`, `phase`, `task_id`, optional
+`run_id`, `packet_hash`, `blocked_reason`, `next_command`,
+`verification_command`, evidence references and safety gates. It is read-only,
+does not create tasks/runs, does not call Hermes/OpenClaw, and omits raw
+prompts, raw responses, raw source bodies and tokens.
 
 `POST .../:task_id/coding-workspace` previews by default and returns branch,
 worktree path hash, repo-root omission proof and current git status without

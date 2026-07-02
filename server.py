@@ -100,6 +100,7 @@ from agentops_mis_core.evaluation_cases import (
 )
 from agentops_mis_core.commander_work_packages import (
     build_commander_team_board,
+    build_commander_lane_packets_readback,
     build_commander_work_packages_readback,
     build_commander_project_board_gates,
     commander_project_board_next_actions,
@@ -16203,6 +16204,30 @@ def commander_work_packages_readback(conn: sqlite3.Connection, qs=None, headers=
     )
 
 
+def commander_lane_packets_readback(conn: sqlite3.Connection, qs=None, headers=None) -> dict:
+    qs = qs or {}
+    workspace_id = normalize_workspace_id((qs.get("workspace_id") or [headers.get("X-AgentOps-Workspace-Id") if headers else "local-demo"])[0] or "local-demo")
+    project_id = commander_safe_text((qs.get("project_id") or [""])[0], 120)
+    plan_id = commander_safe_text((qs.get("plan_id") or [""])[0], 120)
+    status_filter = commander_safe_text((qs.get("status") or ["all"])[0], 80)
+    limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 100)
+    packages_payload = commander_work_packages_readback(conn, {
+        "workspace_id": [workspace_id],
+        "project_id": [project_id],
+        "plan_id": [plan_id],
+        "status": [status_filter],
+        "limit": [str(limit)],
+    }, headers)
+    return build_commander_lane_packets_readback(
+        packages=packages_payload.get("work_packages") or [],
+        workspace_id=workspace_id,
+        project_id=project_id,
+        plan_id=plan_id,
+        status_filter=status_filter,
+        limit=limit,
+    )
+
+
 def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body: dict, headers=None) -> tuple[dict, int]:
     headers = headers or {}
     workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
@@ -29485,6 +29510,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/commander/work-packages":
                 payload = commander_work_packages_readback(conn, qs, self.headers)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/commander/lane-packets":
+                payload = commander_lane_packets_readback(conn, qs, self.headers)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/commander/integration-inbox":

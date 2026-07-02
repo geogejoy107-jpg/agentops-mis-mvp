@@ -3905,6 +3905,16 @@ def cmd_commander_packages(args, client: AgentOpsClient) -> dict:
     return client.get("/api/commander/work-packages", query=query)
 
 
+def cmd_commander_lane_packets(args, client: AgentOpsClient) -> dict:
+    query = {
+        "project_id": args.project_id,
+        "plan_id": args.plan_id,
+        "status": args.status,
+        "limit": args.limit,
+    }
+    return client.get("/api/commander/lane-packets", query=query)
+
+
 def cmd_commander_dispatch_package(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -5632,6 +5642,12 @@ def build_parser() -> argparse.ArgumentParser:
     commander_packages.add_argument("--status", default="all")
     commander_packages.add_argument("--limit", type=int, default=25)
     commander_packages.set_defaults(handler="commander_packages")
+    commander_lane_packets = commander_sub.add_parser("lane-packets", help="Read machine-facing Commander lane packets for agents/workers.")
+    commander_lane_packets.add_argument("--project-id", default=None)
+    commander_lane_packets.add_argument("--plan-id", default=None)
+    commander_lane_packets.add_argument("--status", default="all")
+    commander_lane_packets.add_argument("--limit", type=int, default=25)
+    commander_lane_packets.set_defaults(handler="commander_lane_packets")
     commander_dispatch = commander_sub.add_parser("dispatch-package", help="Dispatch one persisted commander work package through a worker adapter.")
     commander_dispatch.add_argument("--task-id", required=True)
     commander_dispatch.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
@@ -6494,6 +6510,7 @@ HANDLERS = {
     "commander_inbox": cmd_commander_inbox,
     "commander_plan": cmd_commander_plan,
     "commander_packages": cmd_commander_packages,
+    "commander_lane_packets": cmd_commander_lane_packets,
     "commander_dispatch_package": cmd_commander_dispatch_package,
     "commander_coding_workspace": cmd_commander_coding_workspace,
     "commander_coding_workspace_cleanup": cmd_commander_coding_workspace_cleanup,

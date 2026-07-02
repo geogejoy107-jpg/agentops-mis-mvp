@@ -393,6 +393,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commander_lane_packet",
+        "command": "python3 scripts/commander_lane_packet_smoke.py",
+        "summary": "Commander lane packets expose machine-readable objective, owner, runtime, phase, evidence refs, next command and safety gates through API/CLI without mutating the ledger.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "operator_command_center",
         "command": "python3 scripts/operator_command_center_smoke.py",
         "summary": "Unified operator command-center BFF covers projects, blockers, approvals, deliveries, stale workers, Commander coding gates, and prioritized next actions.",
