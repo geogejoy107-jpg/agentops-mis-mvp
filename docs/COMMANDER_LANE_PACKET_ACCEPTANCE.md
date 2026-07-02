@@ -13,6 +13,8 @@ source bodies, credentials or private transcripts.
 - `agentops commander lane-packets`
 - Core read-model helpers in `agentops_mis_core/commander_work_packages.py`
 - CI/release-evidence wiring through `scripts/commander_lane_packet_smoke.py`
+- Commander dispatch now records the consumed lane packet hash in API/CLI
+  responses and audit metadata.
 
 Each lane packet includes:
 
@@ -47,6 +49,10 @@ The smoke starts an isolated server and temporary SQLite database, creates two
 Commander work packages, dispatches one mock package, reads lane packets through
 API and CLI, verifies stable packet hashes, and confirms the lane packet
 readback does not mutate ledger tables.
+
+The dispatch smoke also verifies that `commander.work_package_dispatch` and
+`commander.work_package_dispatch_confirm_required` audit rows include a bounded
+`commander_lane_packet` object and a matching `commander_lane_packet_hash`.
 
 ## Known Limits
 

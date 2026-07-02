@@ -282,6 +282,7 @@ EXTRACTED_COMMANDER_WORK_PACKAGE_HELPERS = {
     "commander_work_package_status",
 }
 SERVER_COMMANDER_WORK_PACKAGE_IMPORTS = {
+    "build_commander_lane_packet",
     "build_commander_lane_packets_readback",
     "build_commander_work_packages_readback",
     "build_commander_project_board_gates",
