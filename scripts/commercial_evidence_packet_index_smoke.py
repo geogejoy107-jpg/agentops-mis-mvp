@@ -34,6 +34,7 @@ PACKETS = [
     "Rerun Bundle Preview",
     "Confirmed Receipt Recording",
     "Prepared Action Receipt Binding",
+    "Prepared Action Execution Receipt",
 ]
 
 FUTURE_SMOKES = [
@@ -47,6 +48,7 @@ FUTURE_SMOKES = [
     "commercial_rerun_bundle_preview_smoke.py",
     "commercial_confirmed_receipt_recording_smoke.py",
     "commercial_receipt_prepared_action_binding_smoke.py",
+    "commercial_prepared_action_execution_receipt_smoke.py",
 ]
 
 
