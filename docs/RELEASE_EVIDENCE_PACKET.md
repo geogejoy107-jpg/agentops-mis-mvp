@@ -111,6 +111,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/commercial_rerun_bundle_preview_smoke.py`
 - `python3 scripts/commercial_confirmed_receipt_recording_smoke.py`
 - `python3 scripts/commercial_receipt_prepared_action_binding_smoke.py`
+- `python3 scripts/commercial_prepared_action_execution_receipt_smoke.py`
 - `python3 scripts/commercial_migration_breakdown_smoke.py`
 - `python3 scripts/external_connector_runtime_inventory_smoke.py`
 - `python3 scripts/sqlite_concurrency_smoke.py`

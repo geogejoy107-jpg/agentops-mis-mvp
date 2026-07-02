@@ -47,6 +47,7 @@ Evidence packet generators must not read, store, or commit:
 | Rerun Bundle Preview | List deterministic commands needed to reproduce packet evidence on another machine. | release command manifest, CI workflow, acceptance docs. | generator smoke added | `commercial_rerun_bundle_preview_smoke.py` |
 | Confirmed Receipt Recording | Explicitly record commercial review receipts into an isolated local ledger. | existing operator receipt CLI/API, temp SQLite DB, acceptance docs. | generator smoke added | `commercial_confirmed_receipt_recording_smoke.py` |
 | Prepared Action Receipt Binding | Bind a recorded commercial review receipt to an exact Approval Wall prepared-action hash. | prepared_actions, operator receipt CLI/API, temp SQLite DB, acceptance docs. | generator smoke added | `commercial_receipt_prepared_action_binding_smoke.py` |
+| Prepared Action Execution Receipt | Require a consumed prepared action before recording a post-action commercial receipt. | prepared_actions exact resume, operator receipt CLI/API, temp SQLite DB, acceptance docs. | generator smoke added | `commercial_prepared_action_execution_receipt_smoke.py` |
 
 ## Generator Rules
 
@@ -114,3 +115,10 @@ prepared-action receipt binding packet. It starts an isolated local MIS server,
 creates one high-risk prepared action, proves receipt preview is dry-run, proves
 missing prepared actions fail closed, and then records one receipt bound to the
 exact prepared action hash without executing the action.
+
+Use `python3 scripts/commercial_prepared_action_execution_receipt_smoke.py` as
+the prepared-action execution receipt packet. It starts an isolated local MIS
+server, proves pre-consumption receipts fail closed, approves and resumes one
+prepared action through the existing exact-resume path, and records a receipt
+requiring `consumed` status with provider side-effect readback while keeping
+commercial/live execution false.

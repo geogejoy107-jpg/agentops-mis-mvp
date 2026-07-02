@@ -261,6 +261,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commercial_prepared_action_execution_receipt",
+        "command": "python3 scripts/commercial_prepared_action_execution_receipt_smoke.py",
+        "summary": "Isolated commercial execution receipt proves a post-action receipt can require a consumed Approval Wall prepared action and read back its provider side-effect id without executing billing, cleanup, hosted, Postgres, Hermes/OpenClaw or live runtime actions.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commercial_migration_breakdown",
         "command": "python3 scripts/commercial_migration_breakdown_smoke.py",
         "summary": "Clean-room breakdown plan for decomposing the large conflicting commercial migration branch into reviewable product slices.",
