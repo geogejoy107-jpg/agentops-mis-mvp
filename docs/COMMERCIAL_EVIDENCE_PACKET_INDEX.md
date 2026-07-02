@@ -46,6 +46,7 @@ Evidence packet generators must not read, store, or commit:
 | Receipt Recording | Record review receipts without executing billing, cleanup, hosted, or live runtime actions. | AgentOps MIS receipt/audit objects and redacted metadata only. | generator smoke added | `commercial_receipt_recording_smoke.py` |
 | Rerun Bundle Preview | List deterministic commands needed to reproduce packet evidence on another machine. | release command manifest, CI workflow, acceptance docs. | generator smoke added | `commercial_rerun_bundle_preview_smoke.py` |
 | Confirmed Receipt Recording | Explicitly record commercial review receipts into an isolated local ledger. | existing operator receipt CLI/API, temp SQLite DB, acceptance docs. | generator smoke added | `commercial_confirmed_receipt_recording_smoke.py` |
+| Prepared Action Receipt Binding | Bind a recorded commercial review receipt to an exact Approval Wall prepared-action hash. | prepared_actions, operator receipt CLI/API, temp SQLite DB, acceptance docs. | generator smoke added | `commercial_receipt_prepared_action_binding_smoke.py` |
 
 ## Generator Rules
 
@@ -107,3 +108,9 @@ confirmed receipt recording packet. It starts an isolated local MIS server with
 a temporary SQLite database, previews a receipt without writing, then records
 the five commercial review receipts through the existing operator receipt
 CLI/API while keeping action execution and live commercial side effects false.
+
+Use `python3 scripts/commercial_receipt_prepared_action_binding_smoke.py` as the
+prepared-action receipt binding packet. It starts an isolated local MIS server,
+creates one high-risk prepared action, proves receipt preview is dry-run, proves
+missing prepared actions fail closed, and then records one receipt bound to the
+exact prepared action hash without executing the action.

@@ -561,6 +561,8 @@ def cmd_operator_record_action_receipt(args, client: AgentOpsClient) -> dict:
         "source": args.source,
         "status": args.status,
         "result_summary": args.result_summary,
+        "prepared_action_id": args.prepared_action_id,
+        "prepared_action_hash": args.prepared_action_hash,
     }
     if not args.confirm_record:
         return {
@@ -581,7 +583,7 @@ def cmd_operator_record_action_receipt(args, client: AgentOpsClient) -> dict:
                 "agentops operator action-receipts --limit 12",
                 "agentops operator loop-audit --limit 20",
             ],
-            "contract": "preview-only; does not POST, does not execute action_command or verify_command, and does not mutate the ledger",
+            "contract": "preview-only; does not POST, does not execute action_command or verify_command, and does not mutate the ledger; prepared_action_id/hash binding is verified only on --confirm-record",
             "safety": {
                 "read_only": True,
                 "ledger_mutated": False,
@@ -597,7 +599,7 @@ def cmd_operator_record_action_receipt(args, client: AgentOpsClient) -> dict:
         **result,
         "cli_operation": "operator_record_action_receipt",
         "confirm_record": True,
-        "contract": "confirmed append-only receipt record; CLI never executes action_command or verify_command",
+        "contract": "confirmed append-only receipt record; CLI never executes action_command or verify_command; prepared_action_id/hash binding is server-verified when supplied",
         "token_omitted": True,
     }
 
@@ -5365,6 +5367,8 @@ def build_parser() -> argparse.ArgumentParser:
     operator_record_receipt.add_argument("--result-summary", default="")
     operator_record_receipt.add_argument("--action-id", default="")
     operator_record_receipt.add_argument("--action-signature", default="")
+    operator_record_receipt.add_argument("--prepared-action-id", default="", help="Optional prepared_actions.action_id that this receipt must bind to.")
+    operator_record_receipt.add_argument("--prepared-action-hash", default="", help="Optional expected prepared action hash; server rejects mismatches.")
     operator_record_receipt.add_argument("--source", default="agentops_cli.operator_record_action_receipt")
     operator_record_receipt.add_argument("--actor-id", default="usr_founder")
     operator_record_receipt.add_argument("--confirm-record", action="store_true", help="Actually append runtime/audit receipt evidence. Default is preview only.")

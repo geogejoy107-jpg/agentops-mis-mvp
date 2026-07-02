@@ -51,6 +51,7 @@ from agentops_mis_core.approval_wall import (
     prepared_action_checkpoint,
     prepared_action_gate,
     prepared_action_hash,
+    prepared_action_hash_verification,
     prepared_action_id_from_request,
     prepared_action_public,
     prepared_action_resume_gate_error,
@@ -6996,6 +6997,58 @@ def record_operator_action_receipt(conn: sqlite3.Connection, body: dict, headers
     action_hash = stable_hash(raw_action)
     verify_hash = stable_hash(raw_verify) if raw_verify else None
     result_summary = redact_text(body.get("result_summary") or "", 240) or None
+    prepared_action_binding = None
+    prepared_action_id = redact_text(body.get("prepared_action_id") or "", 180) or None
+    expected_prepared_action_hash = redact_text(body.get("prepared_action_hash") or "", 180) or None
+    if prepared_action_id:
+        prepared_action_row = conn.execute(
+            "SELECT * FROM prepared_actions WHERE action_id=?",
+            (prepared_action_id,),
+        ).fetchone()
+        if not prepared_action_row:
+            return {
+                "error": "prepared_action_not_found",
+                "message": "prepared_action_id does not exist in this MIS ledger.",
+                "prepared_action_id": prepared_action_id,
+                "token_omitted": True,
+            }, 404
+        if row_workspace(prepared_action_row) != workspace_id:
+            return {
+                "error": "prepared_action_workspace_mismatch",
+                "message": "prepared_action_id belongs to a different workspace.",
+                "prepared_action_id": prepared_action_id,
+                "workspace_id": workspace_id,
+                "token_omitted": True,
+            }, 403
+        prepared_hash_check = prepared_action_hash_verification(dict(prepared_action_row))
+        if not prepared_hash_check.get("match"):
+            return {
+                "error": "prepared_action_hash_mismatch",
+                "message": "prepared action row hash no longer matches its immutable action payload.",
+                "prepared_action_id": prepared_action_id,
+                "stored_action_hash": prepared_hash_check.get("stored_action_hash"),
+                "current_action_hash": prepared_hash_check.get("current_action_hash"),
+                "token_omitted": True,
+            }, 409
+        if expected_prepared_action_hash and expected_prepared_action_hash != prepared_hash_check.get("stored_action_hash"):
+            return {
+                "error": "prepared_action_hash_mismatch",
+                "message": "provided prepared_action_hash does not match the ledger action hash.",
+                "prepared_action_id": prepared_action_id,
+                "stored_action_hash": prepared_hash_check.get("stored_action_hash"),
+                "provided_action_hash": expected_prepared_action_hash,
+                "token_omitted": True,
+            }, 409
+        prepared_action_binding = {
+            "prepared_action_id": prepared_action_id,
+            "prepared_action_hash": prepared_hash_check.get("stored_action_hash"),
+            "prepared_action_current_hash": prepared_hash_check.get("current_action_hash"),
+            "prepared_action_hash_match": True,
+            "prepared_action_status": prepared_action_row["status"],
+            "prepared_action_approval_id": prepared_action_row["approval_id"],
+            "prepared_action_run_id": prepared_action_row["run_id"],
+            "prepared_action_type": prepared_action_row["action_type"],
+        }
     after = {
         "receipt_id": receipt_id,
         "workspace_id": workspace_id,
@@ -7013,6 +7066,8 @@ def record_operator_action_receipt(conn: sqlite3.Connection, body: dict, headers
         "raw_response_omitted": True,
         "token_omitted": True,
     }
+    if prepared_action_binding:
+        after.update(prepared_action_binding)
     runtime_event(
         conn,
         "rtc_agent_gateway_local",
@@ -7037,6 +7092,8 @@ def record_operator_action_receipt(conn: sqlite3.Connection, body: dict, headers
             "action_command_present": bool(raw_action),
             "verify_command_present": bool(raw_verify),
             "operator_marked_verified": passed,
+            "prepared_action_bound": bool(prepared_action_binding),
+            "prepared_action_hash_match": prepared_action_binding.get("prepared_action_hash_match") if prepared_action_binding else None,
             "live_execution_performed": False,
             "raw_secret_omitted": True,
             "token_omitted": True,

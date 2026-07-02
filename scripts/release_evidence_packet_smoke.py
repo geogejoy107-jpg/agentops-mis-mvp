@@ -255,6 +255,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commercial_receipt_prepared_action_binding",
+        "command": "python3 scripts/commercial_receipt_prepared_action_binding_smoke.py",
+        "summary": "Isolated commercial receipt binding proves a confirmed operator receipt can be attached to an exact Approval Wall prepared-action hash without executing billing, cleanup, hosted, Postgres, Hermes/OpenClaw or live runtime actions.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commercial_migration_breakdown",
         "command": "python3 scripts/commercial_migration_breakdown_smoke.py",
         "summary": "Clean-room breakdown plan for decomposing the large conflicting commercial migration branch into reviewable product slices.",
