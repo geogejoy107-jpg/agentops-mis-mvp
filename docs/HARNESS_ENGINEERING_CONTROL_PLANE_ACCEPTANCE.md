@@ -10,7 +10,9 @@ Harness engineering research brief into executable AgentOps MIS constraints.
 Added:
 
 - `docs/HARNESS_ENGINEERING_CONTROL_PLANE_SPEC.md`
+- `docs/HARNESS_ENGINEERING_EXECUTION_CONSTRAINTS.md`
 - `scripts/harness_engineering_control_plane_smoke.py`
+- `scripts/harness_engineering_execution_constraints_smoke.py`
 - CI and release-evidence wiring for the new smoke
 
 Not added:
@@ -28,6 +30,7 @@ Run:
 
 ```bash
 python3 scripts/harness_engineering_control_plane_smoke.py
+python3 scripts/harness_engineering_execution_constraints_smoke.py
 python3 scripts/open_source_mainline_governance_smoke.py
 python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py
 python3 scripts/secret_scan_smoke.py
@@ -38,6 +41,7 @@ git diff --check
 Local result on 2026-07-01:
 
 - `python3 scripts/harness_engineering_control_plane_smoke.py`: passed
+- `python3 scripts/harness_engineering_execution_constraints_smoke.py`: passed
 - `python3 scripts/open_source_mainline_governance_smoke.py`: passed
 - `python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py`: passed
 - `python3 scripts/secret_scan_smoke.py`: passed
@@ -47,11 +51,14 @@ Local result on 2026-07-01:
 ## Expected Evidence
 
 - `operation=harness_engineering_control_plane_smoke`
+- `operation=harness_engineering_execution_constraints_smoke`
 - `ok=true`
 - smoke confirms the spec, research brief, open-source boundary doc, CI wiring,
   release evidence wiring and secret-boundary checks
 - release packet includes
   `python3 scripts/harness_engineering_control_plane_smoke.py`
+- release packet includes
+  `python3 scripts/harness_engineering_execution_constraints_smoke.py`
 
 ## Product Boundary
 

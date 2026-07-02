@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / "docs" / "HARNESS_ENGINEERING_CONTROL_PLANE_SPEC.md"
+EXECUTION_SPEC = ROOT / "docs" / "HARNESS_ENGINEERING_EXECUTION_CONSTRAINTS.md"
 RESEARCH = ROOT / "docs" / "research" / "HARNESS_ENGINEERING_RESEARCH_BRIEF.md"
 BOUNDARY = ROOT / "docs" / "OPEN_SOURCE_ADOPTION_BOUNDARY_SPEC.md"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
@@ -16,6 +17,7 @@ RELEASE_SMOKE = ROOT / "scripts" / "release_evidence_packet_smoke.py"
 RELEASE_DOC = ROOT / "docs" / "RELEASE_EVIDENCE_PACKET.md"
 
 COMMAND = "python3 scripts/harness_engineering_control_plane_smoke.py"
+EXECUTION_COMMAND = "python3 scripts/harness_engineering_execution_constraints_smoke.py"
 
 SECRET_PATTERNS = [
     re.compile(r"Authorization:\s*(Bearer|Basic|Token)\s+", re.IGNORECASE),
@@ -45,6 +47,9 @@ REQUIRED_MARKERS = [
     "RECORD",
     "Approval Wall Requirements",
     "Runtime Adapter Requirements",
+    "Execution Constraints Layer",
+    "docs/HARNESS_ENGINEERING_EXECUTION_CONSTRAINTS.md",
+    "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD",
     "Bind `agent_work_packet_decision_v1` into `runs/start`",
     "Do not vendor Harness Open Source into AgentOps MIS",
     "Do not claim universal per-action governance",
@@ -95,15 +100,17 @@ def require(condition: bool, message: str, failures: list[str]) -> None:
 def main() -> int:
     failures: list[str] = []
     spec = read(SPEC)
+    execution_spec = read(EXECUTION_SPEC)
     research = read(RESEARCH)
     boundary = read(BOUNDARY)
     ci = read(CI)
     release_smoke = read(RELEASE_SMOKE)
     release_doc = read(RELEASE_DOC)
-    joined = "\n".join([spec, research, boundary, ci, release_doc])
+    joined = "\n".join([spec, execution_spec, research, boundary, ci, release_doc])
 
     for path, label in [
         (SPEC, "control-plane spec"),
+        (EXECUTION_SPEC, "execution constraints spec"),
         (RESEARCH, "Harness research brief"),
         (BOUNDARY, "open-source boundary spec"),
     ]:
@@ -127,6 +134,9 @@ def main() -> int:
     require(COMMAND in ci, "CI workflow missing Harness control-plane smoke", failures)
     require(COMMAND in release_smoke, "release evidence packet missing Harness control-plane smoke", failures)
     require(COMMAND in release_doc, "release evidence doc missing Harness control-plane smoke", failures)
+    require(EXECUTION_COMMAND in ci, "CI workflow missing Harness execution constraints smoke", failures)
+    require(EXECUTION_COMMAND in release_smoke, "release evidence packet missing Harness execution constraints smoke", failures)
+    require(EXECUTION_COMMAND in release_doc, "release evidence doc missing Harness execution constraints smoke", failures)
 
     for pattern in FORBIDDEN_CLAIMS:
         match = pattern.search(joined)
@@ -142,6 +152,7 @@ def main() -> int:
         "failures": failures,
         "docs": [
             str(SPEC.relative_to(ROOT)),
+            str(EXECUTION_SPEC.relative_to(ROOT)),
             str(RESEARCH.relative_to(ROOT)),
             str(BOUNDARY.relative_to(ROOT)),
         ],
