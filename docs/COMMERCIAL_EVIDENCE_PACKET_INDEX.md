@@ -45,6 +45,7 @@ Evidence packet generators must not read, store, or commit:
 | Receipt Plan | Define the human review receipt expected before risky commercial changes. | approval/receipt docs, prepared-action inventory, release freeze protocol. | generator smoke added | `commercial_receipt_plan_smoke.py` |
 | Receipt Recording | Record review receipts without executing billing, cleanup, hosted, or live runtime actions. | AgentOps MIS receipt/audit objects and redacted metadata only. | generator smoke added | `commercial_receipt_recording_smoke.py` |
 | Rerun Bundle Preview | List deterministic commands needed to reproduce packet evidence on another machine. | release command manifest, CI workflow, acceptance docs. | generator smoke added | `commercial_rerun_bundle_preview_smoke.py` |
+| Confirmed Receipt Recording | Explicitly record commercial review receipts into an isolated local ledger. | existing operator receipt CLI/API, temp SQLite DB, acceptance docs. | generator smoke added | `commercial_confirmed_receipt_recording_smoke.py` |
 
 ## Generator Rules
 
@@ -100,3 +101,9 @@ Use `python3 scripts/commercial_rerun_bundle_preview_smoke.py` as the rerun
 bundle preview. It lists deterministic reproduction commands for the commercial
 evidence packet chain without executing the bundle, mutating receipts or
 running live systems.
+
+Use `python3 scripts/commercial_confirmed_receipt_recording_smoke.py` as the
+confirmed receipt recording packet. It starts an isolated local MIS server with
+a temporary SQLite database, previews a receipt without writing, then records
+the five commercial review receipts through the existing operator receipt
+CLI/API while keeping action execution and live commercial side effects false.
