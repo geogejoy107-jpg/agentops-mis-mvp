@@ -531,6 +531,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "run_ledger_evidence_ui",
+        "command": "python3 scripts/run_ledger_evidence_ui_smoke.py",
+        "summary": "Run Ledger exposes evidence review posture and links each run to the work-delivery graph without row-by-row graph fetching.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "run_detail_evidence_ui",
         "command": "python3 scripts/run_detail_evidence_ui_smoke.py",
         "summary": "Run detail page exposes run evidence-chain state and work-delivery graph readback across tools, runtime events, evaluations, artifacts, approvals, audit refs, benchmarks and live/mock runtime posture.",

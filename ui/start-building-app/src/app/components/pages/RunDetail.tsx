@@ -152,6 +152,7 @@ export function RunDetail() {
       </div>
 
       <div
+        id="work-delivery-graph"
         data-testid="run-detail-work-delivery-graph"
         className="rounded-xl p-4"
         style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}

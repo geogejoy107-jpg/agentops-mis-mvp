@@ -155,6 +155,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/local_runtime_identity_smoke.py`
 - `python3 scripts/agentops_cli_connection_hint_smoke.py`
 - `python3 scripts/task_detail_evidence_ui_smoke.py`
+- `python3 scripts/run_ledger_evidence_ui_smoke.py`
 - `python3 scripts/run_detail_evidence_ui_smoke.py`
 - `python3 scripts/security_production_readiness_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/agentops_doctor_smoke.py`
