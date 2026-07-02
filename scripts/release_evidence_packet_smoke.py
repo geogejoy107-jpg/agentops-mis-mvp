@@ -243,6 +243,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commercial_rerun_bundle_preview",
+        "command": "python3 scripts/commercial_rerun_bundle_preview_smoke.py",
+        "summary": "Read-only commercial rerun bundle preview lists deterministic reproduction commands without executing the bundle, reading DBs, mutating ledgers, running live runtimes, billing, cleanup, hosted, Postgres or PR #22 contents.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commercial_migration_breakdown",
         "command": "python3 scripts/commercial_migration_breakdown_smoke.py",
         "summary": "Clean-room breakdown plan for decomposing the large conflicting commercial migration branch into reviewable product slices.",

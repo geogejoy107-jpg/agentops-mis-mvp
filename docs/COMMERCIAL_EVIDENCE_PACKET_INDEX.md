@@ -44,7 +44,7 @@ Evidence packet generators must not read, store, or commit:
 | Promotion Packet | Bundle exact-head evidence after CI and preflight pass. | current source, current-head CI, release evidence, acceptance docs. | generator smoke added | `commercial_promotion_packet_smoke.py` |
 | Receipt Plan | Define the human review receipt expected before risky commercial changes. | approval/receipt docs, prepared-action inventory, release freeze protocol. | generator smoke added | `commercial_receipt_plan_smoke.py` |
 | Receipt Recording | Record review receipts without executing billing, cleanup, hosted, or live runtime actions. | AgentOps MIS receipt/audit objects and redacted metadata only. | generator smoke added | `commercial_receipt_recording_smoke.py` |
-| Rerun Bundle Preview | List deterministic commands needed to reproduce packet evidence on another machine. | release command manifest, CI workflow, acceptance docs. | indexed only | `commercial_rerun_bundle_preview_smoke.py` |
+| Rerun Bundle Preview | List deterministic commands needed to reproduce packet evidence on another machine. | release command manifest, CI workflow, acceptance docs. | generator smoke added | `commercial_rerun_bundle_preview_smoke.py` |
 
 ## Generator Rules
 
@@ -95,3 +95,8 @@ Use `python3 scripts/commercial_receipt_recording_smoke.py` as the receipt
 recording packet. It materializes preview-only receipt requests, normalized
 action arguments and hashes without mutating ledgers or executing commercial
 actions. The next generator should be `commercial_rerun_bundle_preview_smoke.py`.
+
+Use `python3 scripts/commercial_rerun_bundle_preview_smoke.py` as the rerun
+bundle preview. It lists deterministic reproduction commands for the commercial
+evidence packet chain without executing the bundle, mutating receipts or
+running live systems.

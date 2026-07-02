@@ -49,7 +49,7 @@ PACKET_STATUS = {
     "Promotion Packet": "generator_smoke_added",
     "Receipt Plan": "generator_smoke_added",
     "Receipt Recording": "generator_smoke_added",
-    "Rerun Bundle Preview": "queued",
+    "Rerun Bundle Preview": "generator_smoke_added",
 }
 
 SECRET_PATTERNS = [
@@ -248,7 +248,7 @@ def main() -> int:
         "source_docs": [str(path.relative_to(ROOT)) for path in SOURCE_DOCS],
         "clean_room_lanes": lane_status(),
         "packet_status": packets,
-        "next_recommended_generator": "commercial_rerun_bundle_preview_smoke.py",
+        "next_recommended_generator": "operator_confirmed_receipt_recording",
         "commercial_limits": {
             "hosted_ready": False,
             "billing_ready": False,
