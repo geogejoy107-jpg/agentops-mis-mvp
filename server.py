@@ -7000,6 +7000,10 @@ def record_operator_action_receipt(conn: sqlite3.Connection, body: dict, headers
     prepared_action_binding = None
     prepared_action_id = redact_text(body.get("prepared_action_id") or "", 180) or None
     expected_prepared_action_hash = redact_text(body.get("prepared_action_hash") or "", 180) or None
+    required_prepared_action_status = redact_text(
+        body.get("required_prepared_action_status") or body.get("require_prepared_action_status") or "",
+        80,
+    ) or None
     if prepared_action_id:
         prepared_action_row = conn.execute(
             "SELECT * FROM prepared_actions WHERE action_id=?",
@@ -7039,15 +7043,31 @@ def record_operator_action_receipt(conn: sqlite3.Connection, body: dict, headers
                 "provided_action_hash": expected_prepared_action_hash,
                 "token_omitted": True,
             }, 409
+        if required_prepared_action_status and required_prepared_action_status != prepared_action_row["status"]:
+            return {
+                "error": "prepared_action_status_required",
+                "message": "prepared action does not have the required status for this receipt.",
+                "prepared_action_id": prepared_action_id,
+                "required_prepared_action_status": required_prepared_action_status,
+                "prepared_action_status": prepared_action_row["status"],
+                "token_omitted": True,
+            }, 409
         prepared_action_binding = {
             "prepared_action_id": prepared_action_id,
             "prepared_action_hash": prepared_hash_check.get("stored_action_hash"),
             "prepared_action_current_hash": prepared_hash_check.get("current_action_hash"),
             "prepared_action_hash_match": True,
             "prepared_action_status": prepared_action_row["status"],
+            "required_prepared_action_status": required_prepared_action_status,
             "prepared_action_approval_id": prepared_action_row["approval_id"],
             "prepared_action_run_id": prepared_action_row["run_id"],
             "prepared_action_type": prepared_action_row["action_type"],
+            "prepared_action_approved_at": prepared_action_row["approved_at"],
+            "prepared_action_consumed_at": prepared_action_row["consumed_at"],
+            "prepared_action_provider_side_effect_id": prepared_action_row["provider_side_effect_id"],
+            "prepared_action_result_summary": redact_text(prepared_action_row["result_summary"] or "", 260) or None,
+            "prepared_action_consumed": prepared_action_row["status"] == "consumed" and bool(prepared_action_row["consumed_at"]),
+            "prepared_action_approved": bool(prepared_action_row["approved_at"]),
         }
     after = {
         "receipt_id": receipt_id,
