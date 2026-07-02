@@ -22,6 +22,15 @@ constraints.
   `https://www.harness.io/open-source`
 - Harness Policy As Code docs:
   `https://developer.harness.io/docs/platform/governance/policy-as-code/harness-governance-overview/`
+- Harness Services docs:
+  `https://developer.harness.io/docs/continuous-delivery/x-platform-cd-features/services/services-overview/`
+- Harness Internal Developer Portal docs:
+  `https://developer.harness.io/docs/internal-developer-portal/overview`
+- Harness IDP Systems and Environments docs:
+  `https://developer.harness.io/docs/internal-developer-portal/catalog/data-model/system-entity`
+  and `https://developer.harness.io/docs/internal-developer-portal/environment-management/environments`
+- Harness Open Source docs:
+  `https://developer.harness.io/docs/open-source/overview`
 - Harness blog/product posts about AI-native delivery, Cursor, VS Code, MCP,
   Software Delivery Knowledge Graph, and approvals:
   `https://www.harness.io/blog`
@@ -58,6 +67,30 @@ not a single dashboard. Our local MVP needs:
 
 These should be connected by MIS IDs and evidence hashes, not stitched by UI
 copy alone.
+
+### 1a. Harness Separates Services, Environments And Delivery Context
+
+Harness CD treats a service as the deployable thing, then deploys it into an
+environment. Harness IDP also exposes software catalog entities, systems,
+workflows, scorecards and environment management as developer-facing operating
+surfaces.
+
+Implication for MIS:
+
+AgentOps MIS should keep a similar separation for AI work:
+
+- `task` is the requested work;
+- `agent` is the worker identity;
+- `runtime_connector` is where execution happens;
+- `workspace/project` is the authority scope;
+- `environment` is a target context such as local demo, dogfood, hosted alpha,
+  customer machine or external server;
+- `run/evaluation/audit/artifact` is the evidence chain.
+
+This argues against merging experimental branches as monolithic product areas.
+Each open-source base or experiment should enter as a bounded adapter, read
+model, incubator, template, or evidence-producing tool until it proves it does
+not displace MIS authority.
 
 ### 2. Harness Uses Governance And Policy As Platform Primitives
 

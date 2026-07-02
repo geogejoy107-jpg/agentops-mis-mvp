@@ -22,8 +22,15 @@ Primary sources checked on 2026-07-03:
   `https://developer.harness.io/docs/platform/harness-ai/harness-mcp-server/`
 - Harness Policy As Code overview:
   `https://developer.harness.io/docs/platform/governance/policy-as-code/harness-governance-overview/`
+- Harness Services overview:
+  `https://developer.harness.io/docs/continuous-delivery/x-platform-cd-features/services/services-overview/`
 - Harness Internal Developer Portal overview:
   `https://developer.harness.io/docs/internal-developer-portal/overview`
+- Harness IDP Systems and Environments docs:
+  `https://developer.harness.io/docs/internal-developer-portal/catalog/data-model/system-entity`
+  and `https://developer.harness.io/docs/internal-developer-portal/environment-management/environments`
+- Harness Open Source overview:
+  `https://developer.harness.io/docs/open-source/overview`
 - Harness Scorecards overview:
   `https://developer.harness.io/docs/internal-developer-portal/scorecards/scorecard/`
 - Harness Autonomous Worker Agents launch post:
@@ -37,6 +44,8 @@ Observed product patterns:
 - MCP exposes a resource registry with scoped list/get/create/update/delete and
   execute actions rather than asking agents to scrape browser UI.
 - Policy and approvals are enforcement points, not presentation details.
+- Services, environments, systems and IDP catalog objects are kept distinct so
+  delivery context does not collapse into one dashboard object.
 - IDP combines catalog, workflows, scorecards, environment management, plugins,
   and TechDocs as a developer operating surface.
 - Scorecards convert quality standards into measurable readiness.
@@ -235,6 +244,33 @@ Not allowed:
   gates;
 - using third-party UI/assets as commercial product surface without license
   review and replacement plan.
+
+## Open-Source Base Adoption Rules
+
+Each GitHub/open-source base or experimental branch must enter through one of
+these lanes before it can touch mainline product authority:
+
+| Lane | Allowed use | Must not do |
+| --- | --- | --- |
+| Research packet | Summarize patterns, licenses, risks, commands and fit. | Claim product integration. |
+| Incubator | Run isolated code, demos, adapters or protocol probes. | Read/write production MIS DB or own MIS ledger state. |
+| Adapter | Translate external tool output into MIS summaries, hashes and provenance. | Store raw prompts, raw responses, credentials or full transcripts. |
+| Read model | Project MIS authority data into a UI/map/report. | Become a second task/run/approval source of truth. |
+| First-party migration | Reimplement authority behavior inside MIS with tests. | Vendor a framework that owns workspace/task/run/approval/memory/audit state. |
+
+Merge readiness requires:
+
+- a named MIS authority boundary;
+- a work packet or adoption packet;
+- exact files and modules touched;
+- verification command;
+- secret/generated-artifact check;
+- product claim limit;
+- rollback or isolation plan.
+
+Commercial or multi-user claims require separate RBAC, workspace isolation,
+approval, retention and deployment gates. A branch being runnable locally is not
+enough to call it customer-ready.
 
 ## Next Implementation Slices
 

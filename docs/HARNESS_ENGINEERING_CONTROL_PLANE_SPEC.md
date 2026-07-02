@@ -22,6 +22,16 @@ Primary source references used by that brief:
 - Harness Open Source product page: `https://www.harness.io/open-source`
 - Harness Policy As Code docs:
   `https://developer.harness.io/docs/platform/governance/policy-as-code/harness-governance-overview/`
+- Harness Services docs:
+  `https://developer.harness.io/docs/continuous-delivery/x-platform-cd-features/services/services-overview/`
+- Harness Internal Developer Portal docs:
+  `https://developer.harness.io/docs/internal-developer-portal/overview`
+- Harness IDP System entity docs:
+  `https://developer.harness.io/docs/internal-developer-portal/catalog/data-model/system-entity`
+- Harness IDP Environment management docs:
+  `https://developer.harness.io/docs/internal-developer-portal/environment-management/environments`
+- Harness Open Source docs:
+  `https://developer.harness.io/docs/open-source/overview`
 - OpenAI Harness Engineering field report:
   `https://openai.com/index/harness-engineering/`
 
@@ -121,6 +131,22 @@ workspace -> agent -> task -> agent_plan -> run -> tool_call
 
 For v1.x this graph is a read model over existing MIS ledgers and hashes, not a
 new source of truth.
+
+Harness service/environment/catalog separation maps to AgentOps MIS as a
+control-plane split:
+
+- `task`: requested customer or internal work;
+- `agent`: accountable worker identity;
+- `runtime_connector`: execution location such as Hermes, OpenClaw, Dify,
+  local CLI or future remote server;
+- `workspace/project`: authority scope;
+- `environment`: local demo, dogfood, hosted alpha, customer machine or
+  external server context;
+- `run/evaluation/audit/artifact`: evidence chain and product claim boundary.
+
+This split should guide open-source-base and experimental-branch intake:
+borrow tools and execution contexts, but reimplement or adapt authority
+transitions inside MIS.
 
 ### 5. Async Commander Mode Is Product Behavior
 

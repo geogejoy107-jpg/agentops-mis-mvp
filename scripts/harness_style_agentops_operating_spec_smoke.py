@@ -39,9 +39,24 @@ SOURCE_MARKERS = [
     "https://developer.harness.io/docs/platform/harness-ai/harness-agents/",
     "https://developer.harness.io/docs/platform/harness-ai/harness-mcp-server/",
     "https://developer.harness.io/docs/platform/governance/policy-as-code/harness-governance-overview/",
+    "https://developer.harness.io/docs/continuous-delivery/x-platform-cd-features/services/services-overview/",
     "https://developer.harness.io/docs/internal-developer-portal/overview",
+    "https://developer.harness.io/docs/internal-developer-portal/catalog/data-model/system-entity",
+    "https://developer.harness.io/docs/internal-developer-portal/environment-management/environments",
+    "https://developer.harness.io/docs/open-source/overview",
     "https://developer.harness.io/docs/internal-developer-portal/scorecards/scorecard/",
     "https://www.harness.io/blog/introducing-autonomous-worker-agents",
+]
+
+ADOPTION_MARKERS = [
+    "Open-Source Base Adoption Rules",
+    "Research packet",
+    "Incubator",
+    "Adapter",
+    "Read model",
+    "First-party migration",
+    "Merge readiness requires",
+    "product claim limit",
 ]
 
 LANE_FIELDS = [
@@ -125,6 +140,9 @@ def main() -> int:
 
     for marker in REQUIRED_MARKERS:
         require(marker in spec, f"operating spec missing marker: {marker}", failures)
+
+    for marker in ADOPTION_MARKERS:
+        require(marker in spec, f"operating spec missing adoption marker: {marker}", failures)
 
     for marker in SOURCE_MARKERS:
         require(marker in spec, f"operating spec missing source marker: {marker}", failures)

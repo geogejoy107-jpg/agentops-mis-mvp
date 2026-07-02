@@ -165,3 +165,34 @@ Do not add a framework dependency unless it improves a tool/protocol/search/CI
 layer and does not move authority out of MIS. If a dependency would own
 workspace, task, approval, run, memory, audit, delivery or identity state, reject
 it or wrap it as a runtime/connector adapter.
+
+## Harness-Informed Branch Intake
+
+Harness-style engineering gives AgentOps MIS a useful intake pattern for the
+existing GitHub/open-source-base branches:
+
+```text
+reference discovery
+-> adoption packet
+-> isolated incubator run
+-> adapter/read-model/first-party migration decision
+-> verification smoke
+-> evidence packet
+-> merge or reject
+```
+
+Before any experimental branch is merged, the adoption packet must answer:
+
+- Which MIS authority object does this branch want to influence?
+- Is it only a tool/protocol/search/CI layer, or does it touch task/run/approval
+  state?
+- Does it require live Hermes/OpenClaw/Dify/Harness execution, or can it be
+  validated offline?
+- What raw data is intentionally omitted?
+- What exact smoke proves the boundary?
+- What customer/product claim is allowed after merge?
+
+Branches that cannot answer those questions should remain in an incubator
+worktree. Branches that answer them but require external credentials, hosted
+infrastructure, or third-party commercial assets should become connector/spec
+work, not default local product behavior.
