@@ -34,8 +34,7 @@ claims, introduce Postgres requirements, or merge PR #22.
 ## Known Limitations
 
 - This is handoff status only. Promotion preflight, promotion packet, receipt
-  plan, receipt recording and rerun bundle preview remain separate queued
-  packet generators.
+  plan and receipt recording are separate generator-smoke guarded packets, while
+  rerun bundle preview remains the next queued packet generator.
 - Strict promotion remains false until a dedicated promotion preflight gate is
   implemented and current-head CI is green for that branch.
-
