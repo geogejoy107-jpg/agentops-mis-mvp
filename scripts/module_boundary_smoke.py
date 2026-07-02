@@ -270,14 +270,19 @@ SERVER_WORKFLOW_JOB_IMPORTS = {
     "workflow_job_stuck_projection",
 }
 EXTRACTED_COMMANDER_WORK_PACKAGE_HELPERS = {
+    "build_commander_lane_packet",
+    "build_commander_lane_packets_readback",
     "build_commander_work_packages_readback",
     "build_commander_project_board_gates",
+    "commander_work_package_blocked_reason",
+    "commander_work_package_phase",
     "commander_project_board_next_actions",
     "commander_project_board_status",
     "commander_work_package_next_action",
     "commander_work_package_status",
 }
 SERVER_COMMANDER_WORK_PACKAGE_IMPORTS = {
+    "build_commander_lane_packets_readback",
     "build_commander_work_packages_readback",
     "build_commander_project_board_gates",
     "commander_project_board_next_actions",

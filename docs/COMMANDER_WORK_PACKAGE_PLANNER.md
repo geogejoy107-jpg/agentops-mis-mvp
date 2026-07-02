@@ -443,6 +443,7 @@ The panel supports:
 - reading persisted work-package status after refresh
 - seeing each package's repo-map localization artifact and evidence count
 - dispatching a persisted package through mock, Hermes, or OpenClaw worker adapters
+- reading machine-facing lane packets through `agentops commander lane-packets`
 - previewing/creating an isolated coding worktree through CLI/API
 - recording worktree/patch/test/verifier/merge-gate evidence through CLI/API
 - cleaning isolated worktree/branch residue through CLI/API after evidence capture
@@ -455,6 +456,7 @@ The panel supports:
 ```bash
 python3 scripts/commander_coding_project_template_smoke.py
 python3 scripts/commander_coding_workspace_smoke.py
+python3 scripts/commander_lane_packet_smoke.py
 python3 scripts/commander_work_package_plan_smoke.py
 python3 scripts/commander_work_package_dispatch_smoke.py
 AGENTOPS_BASE_URL=http://127.0.0.1:8787 python3 scripts/local_coding_project_template_smoke.py

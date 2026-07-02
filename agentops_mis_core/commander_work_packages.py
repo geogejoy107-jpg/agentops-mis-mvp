@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from typing import Any
+import hashlib
+import json
 
 
 def commander_work_package_status(task: dict[str, Any], latest_run: dict[str, Any] | None, evidence: dict[str, Any]) -> str:
@@ -106,6 +108,168 @@ def commander_work_package_next_actions(packages: list[dict[str, Any]]) -> list[
     if not next_actions:
         next_actions = ["agentops commander plan --goal \"Describe the customer project\" --confirm-create"]
     return next_actions[:8]
+
+
+def _stable_packet_hash(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def commander_work_package_phase(item: dict[str, Any]) -> str:
+    package_status = item.get("package_status")
+    latest_job = item.get("latest_workflow_job") or {}
+    latest_job_status = latest_job.get("status")
+    if latest_job_status in {"queued", "running"} or package_status == "still_running":
+        return "EXECUTE"
+    if package_status == "ready_for_review":
+        return "VERIFY"
+    if package_status == "blocked":
+        return "RECORD"
+    if (item.get("localization_gate") or {}).get("status") != "recorded":
+        return "RETRIEVE"
+    if (item.get("coding_evidence_gate") or {}).get("status") in {"recorded", "partial"}:
+        return "RECORD"
+    return "PLAN"
+
+
+def commander_work_package_blocked_reason(item: dict[str, Any]) -> str | None:
+    package_status = item.get("package_status")
+    if package_status == "blocked":
+        latest_run = item.get("latest_run") or {}
+        latest_job = item.get("latest_workflow_job") or {}
+        if latest_job.get("status") == "failed":
+            return "latest_workflow_job_failed"
+        if latest_run.get("status") in {"failed", "blocked"}:
+            return "latest_run_failed_or_blocked"
+        return "task_status_blocked"
+    if (item.get("coding_evidence_gate") or {}).get("status") == "missing" and package_status == "ready_for_review":
+        return "coding_evidence_missing"
+    return None
+
+
+def build_commander_lane_packet(item: dict[str, Any]) -> dict[str, Any]:
+    latest_run = item.get("latest_run") or {}
+    latest_job = item.get("latest_workflow_job") or {}
+    verification_commands = item.get("verification_commands") or []
+    objective = item.get("goal") or item.get("title") or item.get("task_id") or "Commander work package"
+    phase = commander_work_package_phase(item)
+    evidence_counts = item.get("evidence_counts") or {}
+    evidence_refs = [
+        {"type": "task", "id": item.get("task_id")},
+        {"type": "agent", "id": item.get("owner_agent_id")},
+    ]
+    if latest_run.get("run_id"):
+        evidence_refs.append({"type": "run", "id": latest_run.get("run_id")})
+    if latest_job.get("job_id"):
+        evidence_refs.append({"type": "workflow_job", "id": latest_job.get("job_id")})
+    if (item.get("localization_artifact") or {}).get("artifact_id"):
+        evidence_refs.append({"type": "artifact", "id": (item.get("localization_artifact") or {}).get("artifact_id")})
+    packet_core = {
+        "packet_kind": "commander_lane_packet",
+        "packet_version": "commander_lane_packet_v1",
+        "workspace_id": item.get("workspace_id") or "local-demo",
+        "project_id": item.get("project_id") or None,
+        "plan_id": item.get("plan_id") or None,
+        "lane_id": item.get("lane_id") or "unknown",
+        "task_id": item.get("task_id"),
+        "objective": objective,
+        "owner": item.get("owner_agent_id") or "unassigned",
+        "runtime": (latest_job.get("adapter") or (latest_run.get("runtime_type") if latest_run else None) or "unassigned"),
+        "phase": phase,
+        "run_id": latest_run.get("run_id") or latest_job.get("result_run_id") or None,
+        "blocked_reason": commander_work_package_blocked_reason(item),
+        "next_command": item.get("recommended_action") or "agentops commander board",
+        "verification_command": verification_commands[0] if verification_commands else "agentops commander packages --limit 25",
+        "verification_commands": verification_commands,
+        "evidence_refs": [ref for ref in evidence_refs if ref.get("id")],
+        "evidence_counts": evidence_counts,
+        "claim_limit": "summary_hash_only; no raw prompts, raw responses, private transcripts, credentials, or raw source bodies",
+    }
+    packet_core["packet_hash"] = _stable_packet_hash(packet_core)
+    packet_core["allowed_commands"] = [
+        packet_core["next_command"],
+        packet_core["verification_command"],
+    ]
+    packet_core["forbidden_actions"] = [
+        "do_not_scrape_browser_ui",
+        "do_not_store_raw_prompt_or_response",
+        "do_not_commit_db_env_cache_node_modules_dist_or_generated_exports",
+        "do_not_run_live_adapter_without_confirm_run_or_approval",
+    ]
+    packet_core["required_gates"] = {
+        "localization_recorded": (item.get("localization_gate") or {}).get("status") == "recorded",
+        "coding_evidence_status": (item.get("coding_evidence_gate") or {}).get("status") or "unknown",
+        "live_runtime_requires_confirm_run": packet_core["runtime"] in {"hermes", "openclaw"},
+    }
+    packet_core["safety"] = {
+        "read_only": True,
+        "ledger_mutated": False,
+        "task_created": False,
+        "run_created": False,
+        "live_execution_performed": False,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "raw_source_omitted": True,
+        "token_omitted": True,
+    }
+    packet_core["token_omitted"] = True
+    packet_core["live_execution_performed"] = False
+    return packet_core
+
+
+def build_commander_lane_packets_readback(
+    *,
+    packages: list[dict[str, Any]],
+    workspace_id: str,
+    project_id: str | None,
+    plan_id: str | None,
+    status_filter: str,
+    limit: int,
+) -> dict[str, Any]:
+    filtered_packages = filter_commander_work_packages(packages, status_filter)
+    packets = [build_commander_lane_packet(item) for item in filtered_packages[:limit]]
+    phase_counts: dict[str, int] = {}
+    runtime_counts: dict[str, int] = {}
+    for packet in packets:
+        phase = str(packet.get("phase") or "unknown")
+        runtime = str(packet.get("runtime") or "unknown")
+        phase_counts[phase] = phase_counts.get(phase, 0) + 1
+        runtime_counts[runtime] = runtime_counts.get(runtime, 0) + 1
+    return {
+        "provider": "agentops-commander",
+        "operation": "commander_lane_packets",
+        "schema_version": "commander_lane_packet_bundle_v1",
+        "status": "ready" if packets else "empty",
+        "workspace_id": workspace_id,
+        "filter": {
+            "project_id": project_id or None,
+            "plan_id": plan_id or None,
+            "status": status_filter,
+            "limit": limit,
+        },
+        "summary": {
+            "packet_count": len(packets),
+            "phase_counts": phase_counts,
+            "runtime_counts": runtime_counts,
+            "all_read_only": all((packet.get("safety") or {}).get("read_only") is True for packet in packets),
+            "all_tokens_omitted": all(packet.get("token_omitted") is True for packet in packets),
+        },
+        "lane_packets": packets,
+        "next_actions": [packet.get("next_command") for packet in packets if packet.get("next_command")][:8],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "task_created": False,
+            "run_created": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_source_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
 
 
 def build_commander_team_board(

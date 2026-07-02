@@ -122,6 +122,7 @@ jobs:
           python3 scripts/commander_repo_map_smoke.py
           python3 scripts/commander_coding_project_template_smoke.py
           python3 scripts/commander_coding_workspace_smoke.py
+          python3 scripts/commander_lane_packet_smoke.py
           python3 scripts/operator_command_center_smoke.py
           python3 scripts/ai_employees_responsiveness_smoke.py
           python3 scripts/operator_action_queue_ui_smoke.py
