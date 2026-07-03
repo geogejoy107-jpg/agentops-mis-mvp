@@ -3986,7 +3986,34 @@ def cmd_commander_dispatch_batch(args, client: AgentOpsClient) -> dict:
         "confirm_run": bool(args.confirm_run),
         "hermes_timeout": args.hermes_timeout,
     }
-    return client.post("/api/commander/work-packages/dispatch-batch", payload)
+    result = client.post("/api/commander/work-packages/dispatch-batch", payload)
+    if not bool(args.wait):
+        return result
+    deadline = time.time() + max(int(args.wait_timeout_sec or 1), 1)
+    poll_interval = max(float(args.poll_interval or 0.5), 0.2)
+    job_ids = [item for item in (result.get("job_ids") or []) if item]
+    latest: dict[str, dict] = {}
+    while job_ids:
+        for job_id in job_ids:
+            latest[job_id] = client.get(f"/api/workflows/jobs/{job_id}")
+        jobs = [(latest.get(job_id) or {}).get("job") or {} for job_id in job_ids]
+        if all(job.get("status") in {"completed", "failed"} for job in jobs):
+            break
+        if time.time() >= deadline:
+            break
+        time.sleep(poll_interval)
+    jobs = [(latest.get(job_id) or {}).get("job") or {} for job_id in job_ids]
+    status_counts: dict[str, int] = {}
+    for job in jobs:
+        status = str(job.get("status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+    result["waited"] = True
+    result["done"] = bool(jobs) and all(job.get("status") in {"completed", "failed"} for job in jobs)
+    result["wait_timeout_sec"] = int(args.wait_timeout_sec or 1)
+    result["wait_status_counts"] = status_counts
+    result["wait_results"] = jobs
+    result["token_omitted"] = True
+    return result
 
 
 def cmd_commander_synthesize(args, client: AgentOpsClient) -> dict:
@@ -5700,6 +5727,9 @@ def build_parser() -> argparse.ArgumentParser:
     commander_dispatch_batch.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     commander_dispatch_batch.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw live execution.")
     commander_dispatch_batch.add_argument("--hermes-timeout", type=int, default=300)
+    commander_dispatch_batch.add_argument("--wait", action="store_true", help="Poll queued workflow jobs until completion or timeout.")
+    commander_dispatch_batch.add_argument("--wait-timeout-sec", type=int, default=60)
+    commander_dispatch_batch.add_argument("--poll-interval", type=float, default=0.5)
     commander_dispatch_batch.set_defaults(handler="commander_dispatch_batch")
     commander_synthesize = commander_sub.add_parser("synthesize", help="Preview or create a synthesis artifact from returned commander work packages.")
     commander_synthesize.add_argument("--project-id", default=None)

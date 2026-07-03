@@ -170,12 +170,20 @@ def main() -> int:
             "mock",
             "--limit",
             "2",
+            "--wait",
+            "--wait-timeout-sec",
+            "45",
+            "--poll-interval",
+            "0.5",
         ])
         transcripts.extend([batch.stdout, batch.stderr])
         payload = load_json(batch)
         require(batch.returncode == 0, f"CLI batch failed: {batch.stderr or batch.stdout}")
         require(payload.get("ok") is True, f"batch not ok: {payload}")
         require(payload.get("status") == "queued", f"batch not queued: {payload}")
+        require(payload.get("waited") is True, f"batch did not wait: {payload}")
+        require(payload.get("done") is True, f"batch wait did not finish: {payload}")
+        require((payload.get("wait_status_counts") or {}).get("completed") == 2, f"batch wait status counts wrong: {payload}")
         require(payload.get("safety", {}).get("jobs_created") == 2, f"wrong jobs_created: {payload}")
         require(payload.get("live_execution_performed") is False, "mock batch marked live")
         job_ids = payload.get("job_ids") or []
@@ -193,6 +201,13 @@ def main() -> int:
             require(str(packet.get("packet_hash") or "").startswith("sha256:"), f"queued job missing packet hash: {job}")
             require(packet.get("task_id") == job.get("result_task_id"), f"queued packet task mismatch: {job}")
             require(result.get("token_omitted") is True, f"queued job token omission missing: {job}")
+        wait_jobs = payload.get("wait_results") or []
+        require(len(wait_jobs) == 2, f"expected waited jobs: {payload}")
+        require(all(job.get("status") == "completed" for job in wait_jobs), f"waited jobs not completed: {wait_jobs}")
+        require(
+            all(((job.get("result") or {}).get("commander_lane_packet") or {}).get("packet_hash") for job in wait_jobs),
+            f"waited jobs missing packet hashes: {wait_jobs}",
+        )
         queued_board = payload.get("team_board_after_queue") or {}
         require(queued_board.get("status") == "attention", f"queued team board should require attention: {queued_board}")
         require((queued_board.get("summary") or {}).get("active_workflow_jobs") == 2, f"queued board active job count wrong: {queued_board}")
