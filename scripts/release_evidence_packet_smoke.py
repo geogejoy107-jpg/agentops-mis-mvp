@@ -417,6 +417,12 @@ TEST_COMMANDS = [
         "ci_step": "Server-backed smoke suite",
     },
     {
+        "id": "commander_work_package_batch_dispatch",
+        "command": "python3 scripts/commander_work_package_batch_dispatch_smoke.py",
+        "summary": "Commander batch dispatch queues planned work packages as async workflow jobs, records completed mock worker evidence, and fails closed before live Hermes/OpenClaw jobs without confirmation.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
         "id": "commander_integration_inbox",
         "command": "python3 scripts/commander_integration_inbox_smoke.py --base-url \"$AGENTOPS_BASE_URL\" --db-path \"$AGENTOPS_DB_PATH\"",
         "summary": "Commander Integration Inbox returns read-only async-lane review items with structured merge/recovery/memory decisions and no auto-apply behavior.",
