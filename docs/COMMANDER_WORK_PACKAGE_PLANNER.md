@@ -343,10 +343,13 @@ Queue planned packages in parallel:
   --project-id proj_x \
   --status planned \
   --limit 5 \
-  --adapter mock
+  --adapter mock \
+  --wait
 ```
 
-Then poll returned jobs:
+The command returns `wait_results`, `wait_status_counts` and `done:true` when
+all queued jobs reached `completed` or `failed`. You can still inspect an
+individual returned job:
 
 ```bash
 ./scripts/agentops workflow job-status --job-id wfjob_x --wait
