@@ -247,6 +247,7 @@ POST /api/commander/work-packages/plan
 GET  /api/commander/work-packages?project_id=proj_x&limit=25
 GET  /api/commander/lane-packets?project_id=proj_x&limit=25
 POST /api/commander/work-packages/:task_id/dispatch
+POST /api/commander/work-packages/dispatch-batch
 POST /api/commander/work-packages/:task_id/coding-workspace
 POST /api/commander/work-packages/:task_id/coding-workspace/cleanup
 POST /api/commander/work-packages/:task_id/coding-evidence
@@ -281,6 +282,13 @@ bounded `commander_lane_packet` summary plus `commander_lane_packet_hash`, so
 later run/tool/evaluation/audit evidence can be traced back to the exact
 machine-readable Commander packet without storing raw prompts, responses,
 source bodies or tokens.
+
+`POST /api/commander/work-packages/dispatch-batch` queues selected planned
+packages as async `workflow_jobs` through the same target-task dispatch path.
+Mock jobs are CI-safe and write normal run/tool/evaluation/job evidence.
+Hermes/OpenClaw batch dispatch fails closed before job creation unless
+`confirm_run:true` is present. The release gate is
+`python3 scripts/commander_work_package_batch_dispatch_smoke.py`.
 
 `POST .../:task_id/coding-workspace` previews by default and returns branch,
 worktree path hash, repo-root omission proof and current git status without

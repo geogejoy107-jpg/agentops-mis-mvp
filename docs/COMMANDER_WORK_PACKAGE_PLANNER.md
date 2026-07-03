@@ -162,7 +162,10 @@ curl -s -X POST http://127.0.0.1:8787/api/commander/work-packages/dispatch-batch
 The batch endpoint creates `workflow_jobs` rows and returns immediately. Each job
 then executes the exact target work-package `task_id` through the same Agent
 Gateway worker loop. Hermes/OpenClaw batch dispatch is rejected unless
-`confirm_run:true` is present.
+`confirm_run:true` is present. The release-gated acceptance command is
+`python3 scripts/commander_work_package_batch_dispatch_smoke.py`, which proves
+completed mock jobs write run/tool/evaluation/job evidence and live adapters
+fail closed before queueing without confirmation.
 
 Synthesize returned packages into a review report:
 
