@@ -21,6 +21,9 @@ exports.
   `commander_lane_packet` evidence plus `commander_lane_packet_hash`.
 - `workflow_jobs.result_json` stores a safe queued proof until the background
   worker overwrites it with completed dispatch results.
+- CLI `agentops commander dispatch-batch --wait` now polls returned workflow
+  jobs and returns `wait_results`, `wait_status_counts`, `done`, and
+  `wait_timeout_sec`.
 
 ## Verification
 
@@ -36,8 +39,9 @@ git diff --check
 The smoke creates three Commander work-package tasks, queues two mock adapter
 dispatches as `workflow_jobs`, waits for completion, verifies the resulting
 run/tool/evaluation/job evidence, verifies queued and completed packet hashes,
-checks workflow job submission audit metadata, and proves an OpenClaw batch
-dispatch without `confirm_run:true` fails closed before creating jobs.
+checks workflow job submission audit metadata, verifies `--wait` returns
+completed job readback, and proves an OpenClaw batch dispatch without
+`confirm_run:true` fails closed before creating jobs.
 
 ## Product Meaning
 
@@ -48,6 +52,7 @@ AI-team style workload asynchronously:
 plan packages
 -> queue selected lanes as workflow jobs
 -> bind queued jobs to lane packet hashes
+-> optionally wait for queued jobs in one CLI command
 -> worker loop writes normal MIS evidence
 -> team board/readback shows completed lanes
 -> live adapters remain confirmation-gated
