@@ -102,6 +102,28 @@ def task_evidence(db_path: Path, task_id: str) -> dict:
         conn.close()
 
 
+def job_audit_metadata(db_path: Path, job_id: str) -> dict:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            """SELECT metadata_json FROM audit_logs
+            WHERE action='commander.work_package_dispatch_job_submitted'
+            AND entity_type='workflow_jobs'
+            AND entity_id=?
+            ORDER BY created_at DESC LIMIT 1""",
+            (job_id,),
+        ).fetchone()
+        if not row:
+            return {}
+        try:
+            return json.loads(row["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            return {}
+    finally:
+        conn.close()
+
+
 def wait_job(job_id: str, timeout_sec: int = 45) -> dict:
     deadline = time.time() + timeout_sec
     last = {}
@@ -158,6 +180,19 @@ def main() -> int:
         require(payload.get("live_execution_performed") is False, "mock batch marked live")
         job_ids = payload.get("job_ids") or []
         require(len(job_ids) == 2, f"expected 2 job ids: {payload}")
+        queued_hashes = payload.get("commander_lane_packet_hashes") or []
+        require(len(queued_hashes) == 2, f"expected queued packet hashes: {payload}")
+        require(all(str(item).startswith("sha256:") for item in queued_hashes), f"queued packet hashes malformed: {queued_hashes}")
+        queued_jobs = payload.get("jobs") or []
+        require(len(queued_jobs) == 2, f"expected queued jobs: {payload}")
+        for job in queued_jobs:
+            result = job.get("result") or {}
+            packet = result.get("commander_lane_packet") or {}
+            require(result.get("queued") is True, f"queued job result missing queued proof: {job}")
+            require(result.get("commander_lane_packet_hash") == packet.get("packet_hash"), f"queued job packet hash mismatch: {job}")
+            require(str(packet.get("packet_hash") or "").startswith("sha256:"), f"queued job missing packet hash: {job}")
+            require(packet.get("task_id") == job.get("result_task_id"), f"queued packet task mismatch: {job}")
+            require(result.get("token_omitted") is True, f"queued job token omission missing: {job}")
         queued_board = payload.get("team_board_after_queue") or {}
         require(queued_board.get("status") == "attention", f"queued team board should require attention: {queued_board}")
         require((queued_board.get("summary") or {}).get("active_workflow_jobs") == 2, f"queued board active job count wrong: {queued_board}")
@@ -172,6 +207,11 @@ def main() -> int:
         require(all(job.get("status") == "completed" for job in jobs), f"jobs not completed: {jobs}")
         require({job.get("result_task_id") for job in jobs} == set(task_ids[:2]), f"job task mismatch: {jobs}")
         require(all(job.get("result_run_id") for job in jobs), f"jobs missing run ids: {jobs}")
+        for job in jobs:
+            result = job.get("result") or {}
+            packet = result.get("commander_lane_packet") or {}
+            require(str(packet.get("packet_hash") or "").startswith("sha256:"), f"completed job missing packet hash: {job}")
+            require(packet.get("task_id") == job.get("result_task_id"), f"completed job packet task mismatch: {job}")
 
         gate_status, gate_payload = http_json("POST", "/api/commander/work-packages/dispatch-batch", {
             "task_ids": [task_ids[2]],
@@ -202,6 +242,13 @@ def main() -> int:
         require(len(team_board.get("active_workflow_job_task_ids") or []) == 0, f"team board still reports active jobs: {team_board}")
 
         if DEFAULT_DB.exists():
+            for job_id in job_ids:
+                metadata = job_audit_metadata(DEFAULT_DB, job_id)
+                packet = metadata.get("commander_lane_packet") or {}
+                require(str(metadata.get("commander_lane_packet_hash") or "").startswith("sha256:"), f"{job_id} audit missing packet hash: {metadata}")
+                require(metadata.get("commander_lane_packet_hash") == packet.get("packet_hash"), f"{job_id} audit packet mismatch: {metadata}")
+                require(packet.get("task_id") in task_ids[:2], f"{job_id} audit packet task mismatch: {metadata}")
+                require(metadata.get("token_omitted") is True, f"{job_id} audit token omission missing: {metadata}")
             for task_id in task_ids[:2]:
                 counts = task_evidence(DEFAULT_DB, task_id)
                 require(counts["workflow_jobs"] >= 1, f"{task_id} missing workflow job: {counts}")

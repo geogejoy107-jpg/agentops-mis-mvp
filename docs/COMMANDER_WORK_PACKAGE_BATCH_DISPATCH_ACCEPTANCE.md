@@ -17,6 +17,10 @@ exports.
 - `scripts/release_evidence_packet_smoke.py` now lists
   `commander_work_package_batch_dispatch` as server-backed release evidence.
 - `docs/RELEASE_EVIDENCE_PACKET.md` now includes the same command.
+- Batch queue responses and workflow job audit metadata now include bounded
+  `commander_lane_packet` evidence plus `commander_lane_packet_hash`.
+- `workflow_jobs.result_json` stores a safe queued proof until the background
+  worker overwrites it with completed dispatch results.
 
 ## Verification
 
@@ -31,8 +35,9 @@ git diff --check
 
 The smoke creates three Commander work-package tasks, queues two mock adapter
 dispatches as `workflow_jobs`, waits for completion, verifies the resulting
-run/tool/evaluation/job evidence, and proves an OpenClaw batch dispatch without
-`confirm_run:true` fails closed before creating jobs.
+run/tool/evaluation/job evidence, verifies queued and completed packet hashes,
+checks workflow job submission audit metadata, and proves an OpenClaw batch
+dispatch without `confirm_run:true` fails closed before creating jobs.
 
 ## Product Meaning
 
@@ -42,6 +47,7 @@ AI-team style workload asynchronously:
 ```text
 plan packages
 -> queue selected lanes as workflow jobs
+-> bind queued jobs to lane packet hashes
 -> worker loop writes normal MIS evidence
 -> team board/readback shows completed lanes
 -> live adapters remain confirmation-gated
