@@ -287,7 +287,10 @@ source bodies or tokens.
 packages as async `workflow_jobs` through the same target-task dispatch path.
 Mock jobs are CI-safe and write normal run/tool/evaluation/job evidence.
 Hermes/OpenClaw batch dispatch fails closed before job creation unless
-`confirm_run:true` is present. The release gate is
+`confirm_run:true` is present. Queued jobs include a bounded
+`commander_lane_packet`, `commander_lane_packet_hash`, and request hash evidence
+before the background worker starts, so the queue entry can be traced to the
+same machine-readable packet as the completed run evidence. The release gate is
 `python3 scripts/commander_work_package_batch_dispatch_smoke.py`.
 
 `POST .../:task_id/coding-workspace` previews by default and returns branch,
