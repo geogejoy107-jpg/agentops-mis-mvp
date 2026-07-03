@@ -147,6 +147,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "open_source_adoption_packet_spec",
+        "command": "python3 scripts/open_source_adoption_packet_spec_smoke.py",
+        "summary": "Executable adoption packet contract for GitHub branches, local experiments, UI bases, runtime adapters and Harness-style references before merge or rejection.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "open_source_mainline_governance",
         "command": "python3 scripts/open_source_mainline_governance_smoke.py",
         "summary": "Open-source/experiment branch merge governance plus Harness engineering research boundary.",
