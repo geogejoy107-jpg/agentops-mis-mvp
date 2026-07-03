@@ -17064,6 +17064,10 @@ def submit_commander_work_package_dispatch_jobs(conn: sqlite3.Connection, body: 
     for row in rows:
         task = dict(row)
         task_id = task["task_id"]
+        work_package = commander_work_package_from_task(conn, row)
+        lane_packet = build_commander_lane_packet(work_package)
+        lane_packet_evidence = commander_lane_packet_dispatch_evidence(lane_packet)
+        lane_packet_hash = lane_packet.get("packet_hash")
         title = redact_text(task.get("title") or task_id, 180)
         input_summary = redact_text(task.get("description") or title, 300)
         job_id = new_id("wfjob")
@@ -17073,7 +17077,18 @@ def submit_commander_work_package_dispatch_jobs(conn: sqlite3.Connection, body: 
             "adapter": adapter,
             "confirm_run": confirm_run,
             "title": title,
+            "commander_lane_packet_hash": lane_packet_hash,
         })
+        queued_result = {
+            "queued": True,
+            "task_id": task_id,
+            "adapter": adapter,
+            "commander_lane_packet": lane_packet_evidence,
+            "commander_lane_packet_hash": lane_packet_hash,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        }
         job_row = {
             "job_id": job_id,
             "workspace_id": workspace_id,
@@ -17085,7 +17100,7 @@ def submit_commander_work_package_dispatch_jobs(conn: sqlite3.Connection, body: 
             "title": title,
             "input_summary": input_summary,
             "request_hash": request_hash,
-            "result_json": "{}",
+            "result_json": json.dumps(queued_result, ensure_ascii=False),
             "result_task_id": task_id,
             "result_run_id": None,
             "result_artifact_id": None,
@@ -17100,11 +17115,16 @@ def submit_commander_work_package_dispatch_jobs(conn: sqlite3.Connection, body: 
             VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
             job_row,
         )
-        runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.submitted", "queued", task_id=task_id, input_summary=f"Commander work package job {job_id} submitted.", raw_payload_hash=request_hash)
+        runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.submitted", "queued", task_id=task_id, input_summary=f"Commander work package job {job_id} submitted.", raw_payload_hash=stable_hash({"request_hash": request_hash, "commander_lane_packet_hash": lane_packet_hash}))
         audit(conn, "user", "usr_founder", "commander.work_package_dispatch_job_submitted", "workflow_jobs", job_id, None, job_row, {
             "task_id": task_id,
             "adapter": adapter,
+            "commander_lane_packet": lane_packet_evidence,
+            "commander_lane_packet_hash": lane_packet_hash,
             "raw_request_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
         })
         jobs.append(workflow_job_public(job_row))
     queued_packages = [commander_work_package_from_task(conn, row) for row in rows]
@@ -17142,6 +17162,10 @@ def submit_commander_work_package_dispatch_jobs(conn: sqlite3.Connection, body: 
         "jobs": jobs,
         "job_ids": [job.get("job_id") for job in jobs],
         "task_ids": [job.get("result_task_id") for job in jobs],
+        "commander_lane_packet_hashes": [
+            ((job.get("result") or {}).get("commander_lane_packet_hash"))
+            for job in jobs
+        ],
         "status_urls": [f"/api/workflows/jobs/{job.get('job_id')}" for job in jobs],
         "filter": {"project_id": project_id or None, "plan_id": plan_id or None, "status": status_filter, "limit": limit},
         "team_board_after_queue": team_board_after_queue,
