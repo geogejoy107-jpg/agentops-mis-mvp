@@ -223,11 +223,18 @@ Implemented surface:
 ```bash
 agentops operator local-harness-proof --freshness-hours 72 --limit 8
 GET /api/operator/local-harness-proof?freshness_hours=72&limit=8
+agentops local readiness
+GET /api/local/readiness
 ```
 
 The readback classifies `mock` as `mock_ci_fallback` and Hermes/OpenClaw as
 `real_runtime_ledger_readback` only for returned run ids that have completed
 run/tool/evaluation/runtime/audit/artifact/verified-plan-evidence rows.
+
+Local readiness now embeds this proof as `local_harness_proof_readiness`, adds
+summary counters to `evidence`, and exposes a non-blocking `local_harness_proof`
+gate. This makes harness proof visible in the normal operator readiness flow
+without turning it into the stricter customer-worker live acceptance gate.
 
 ## OpenClaw/Hermes Product Constraint
 
