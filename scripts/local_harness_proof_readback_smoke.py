@@ -27,6 +27,8 @@ LEDGER_TABLES = [
     "plan_evidence_manifests",
 ]
 
+ACCEPTANCE_DOC = ROOT / "docs" / "LOCAL_HARNESS_PROOF_READBACK_ACCEPTANCE.md"
+
 
 def iso(hours_delta: float = 0) -> str:
     return (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=hours_delta)).isoformat()
@@ -387,6 +389,17 @@ def main() -> int:
     failures: list[str] = []
     outputs: list[str] = []
     workspace_id = "harness-proof-smoke"
+    acceptance = ACCEPTANCE_DOC.read_text(encoding="utf-8") if ACCEPTANCE_DOC.exists() else ""
+    require(ACCEPTANCE_DOC.exists(), "missing local harness proof acceptance doc", failures)
+    for marker in [
+        "agentops operator local-harness-proof",
+        "GET /api/operator/local-harness-proof",
+        "mock_ci_fallback",
+        "real_runtime_ledger_readback",
+        "python3 scripts/local_harness_proof_readback_smoke.py",
+        "live_execution_performed: false",
+    ]:
+        require(marker in acceptance, f"acceptance doc missing marker: {marker}", failures)
     with tempfile.TemporaryDirectory(prefix="agentops-local-harness-proof-") as tmp:
         db_path = Path(tmp) / "agentops_mis.db"
         port = free_port()
