@@ -189,6 +189,18 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "agent_task_harness_engineering_spec",
+        "command": "python3 scripts/agent_task_harness_engineering_spec_smoke.py",
+        "summary": "Agent task harness engineering spec: work-packet fields, intake-to-report phases, real-runtime vs mock claim limits, trajectory redaction, scorecard fields, and local harness proof next slice.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "local_harness_proof_readback",
+        "command": "python3 scripts/local_harness_proof_readback_smoke.py",
+        "summary": "Server-backed local task harness proof readback for mock fallback and real-runtime adapter ledger evidence without executing live runtimes or mutating the ledger.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "spatial_research_semantic_contract",
         "command": "python3 scripts/spatial_research_semantic_contract_smoke.py",
         "summary": "Spatial Research District semantic objects cover every Pixel Office zone and route back to formal AgentOps MIS authority pages without third-party assets or second-ledger state.",

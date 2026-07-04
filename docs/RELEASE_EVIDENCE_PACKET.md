@@ -99,6 +99,8 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/harness_engineering_execution_constraints_smoke.py`
 - `python3 scripts/harness_style_agentops_operating_spec_smoke.py`
 - `python3 scripts/local_task_harness_smoke.py`
+- `python3 scripts/agent_task_harness_engineering_spec_smoke.py`
+- `python3 scripts/local_harness_proof_readback_smoke.py`
 - `python3 scripts/spatial_research_semantic_contract_smoke.py`
 - `python3 scripts/spatial_zone_authority_readback_smoke.py`
 - `python3 scripts/commercial_config_boundary_smoke.py`
