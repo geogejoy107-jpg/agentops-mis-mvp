@@ -1,0 +1,64 @@
+{
+  "packet_id": "ospkt_star_office_ui_read_model_v1",
+  "packet_version": "1",
+  "source_name": "Star Office UI visual base",
+  "source_url_or_branch": "local:Star-Office-UI",
+  "source_kind": "ui_reference",
+  "license_summary": "Demo-only local reference until license review and original replacement assets are complete.",
+  "owner_lane": "pixel_office_visual_read_model",
+  "mis_authority_objects_touched": [
+    "agent",
+    "task",
+    "run",
+    "runtime_event",
+    "evaluation",
+    "audit_log"
+  ],
+  "intake_lane": "read_model",
+  "allowed_operations": [
+    "Study layout and interaction patterns.",
+    "Render redacted AgentOps MIS state as an optional local demo read model.",
+    "Link zones and rooms back to formal AgentOps MIS authority pages.",
+    "Use screenshots or local observation as non-authoritative design evidence."
+  ],
+  "forbidden_operations": [
+    "Do not commit third-party Star Office UI art, sprite, image, audio, build output, node_modules, cache, or dist artifacts.",
+    "Do not make Star Office UI own AgentOps MIS workspace, task, run, approval, memory, artifact, evaluation, runtime event, or audit authority.",
+    "Do not use Star Office UI as the interface that agents scrape for work instructions.",
+    "Do not claim commercial-ready Pixel Office assets from this packet.",
+    "Do not ingest raw prompts, raw responses, private messages, full transcripts, credentials, local DBs, generated exports, or customer raw documents."
+  ],
+  "raw_data_omissions": [
+    "raw prompts",
+    "raw responses",
+    "credentials",
+    "tokens",
+    "private messages",
+    "full transcripts",
+    "local DBs",
+    "generated exports",
+    "customer raw documents",
+    "third-party asset dumps"
+  ],
+  "runtime_requirements": [
+    "Optional local Star-Office-UI checkout for visual inspection.",
+    "No runtime required for CI acceptance.",
+    "No live Hermes/OpenClaw execution required for this packet."
+  ],
+  "verification_commands": [
+    "python3 scripts/open_source_adoption_packet_catalog_smoke.py",
+    "python3 scripts/local_open_source_experiment_base_smoke.py",
+    "python3 scripts/open_source_adoption_boundary_smoke.py"
+  ],
+  "product_claim_limit": "Local demo read model reference only; AgentOps MIS remains the authority ledger and public/commercial assets must be original or separately licensed.",
+  "merge_decision": "incubate_as_read_model_reference",
+  "rollback_plan": "Remove the optional Pixel Office visual reference route/link or packet entry; formal AgentOps MIS workspace, task, run, approval, memory, artifact, evaluation, runtime event, and audit pages remain authoritative.",
+  "evidence_refs": [
+    "docs/OPEN_SOURCE_ADOPTION_PACKET_SPEC.md",
+    "docs/OPEN_SOURCE_ADOPTION_BOUNDARY_SPEC.md",
+    "docs/STAR_OFFICE_UI_DEMO_INTEGRATION.md",
+    "knowledge/bases/star-office-ui/BASE_SPEC.md",
+    "knowledge/bases/star-office-ui/license_boundary.md",
+    "knowledge/bases/star-office-ui/ui_mapping.md"
+  ]
+}

@@ -153,6 +153,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "open_source_adoption_packet_catalog",
+        "command": "python3 scripts/open_source_adoption_packet_catalog_smoke.py",
+        "summary": "Concrete adoption packet catalog validation, including the Star Office UI read-model packet and its no-authority/no-asset-import boundary.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "open_source_mainline_governance",
         "command": "python3 scripts/open_source_mainline_governance_smoke.py",
         "summary": "Open-source/experiment branch merge governance plus Harness engineering research boundary.",
