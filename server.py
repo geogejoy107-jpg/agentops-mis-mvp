@@ -18685,6 +18685,195 @@ def live_acceptance_readiness(conn: sqlite3.Connection, workspace_id: str = "loc
     }
 
 
+def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = "local-demo", freshness_hours: int = 72, limit: int = 8) -> dict:
+    workspace_id = normalize_workspace_id(workspace_id)
+    freshness_hours = min(max(int(freshness_hours or 72), 1), 24 * 30)
+    limit = min(max(int(limit or 8), 1), 25)
+    now_dt = dt.datetime.now(dt.timezone.utc)
+
+    def row_time(row: dict) -> dt.datetime | None:
+        return parse_iso_datetime(row.get("checked_at") or row.get("ended_at") or row.get("started_at") or row.get("created_at"))
+
+    def evidence_for_run(run_id: str, task_id: str | None, adapter: str) -> dict:
+        task_id = task_id or ""
+        return {
+            "tool_calls": scalar_count(conn, "SELECT COUNT(*) FROM tool_calls WHERE run_id=?", (run_id,)),
+            "completed_tool_calls": scalar_count(conn, "SELECT COUNT(*) FROM tool_calls WHERE run_id=? AND status='completed'", (run_id,)),
+            "completed_adapter_tool_calls": scalar_count(
+                conn,
+                "SELECT COUNT(*) FROM tool_calls WHERE run_id=? AND status='completed' AND tool_name=?",
+                (run_id, f"agent_worker.{adapter}"),
+            ),
+            "evaluations": scalar_count(conn, "SELECT COUNT(*) FROM evaluations WHERE run_id=?", (run_id,)),
+            "passing_evaluations": scalar_count(conn, "SELECT COUNT(*) FROM evaluations WHERE run_id=? AND pass_fail='pass'", (run_id,)),
+            "runtime_events": scalar_count(conn, "SELECT COUNT(*) FROM runtime_events WHERE run_id=? OR task_id=?", (run_id, task_id)),
+            "audit_logs": scalar_count(conn, "SELECT COUNT(*) FROM audit_logs WHERE entity_id IN (?,?) OR metadata_json LIKE ?", (run_id, task_id, f"%{run_id}%")),
+            "artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts WHERE run_id=? OR task_id=?", (run_id, task_id)),
+            "memories": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE source_ref=? OR task_id=?", (run_id, task_id)),
+            "approvals": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE run_id=? OR task_id=?", (run_id, task_id)),
+            "plan_evidence_manifests": scalar_count(conn, "SELECT COUNT(*) FROM plan_evidence_manifests WHERE run_id=?", (run_id,)),
+            "verified_plan_evidence_manifests": scalar_count(conn, "SELECT COUNT(*) FROM plan_evidence_manifests WHERE run_id=? AND status='verified'", (run_id,)),
+        }
+
+    def proof_checks(run: dict, evidence: dict) -> list[dict]:
+        return [
+            {"id": "run_completed", "ok": run.get("status") == "completed", "message": "Run completed before being counted as local harness proof."},
+            {"id": "adapter_tool_evidence", "ok": evidence["completed_adapter_tool_calls"] >= 1, "message": "The matching worker adapter tool-call completed."},
+            {"id": "evaluation_pass", "ok": evidence["passing_evaluations"] >= 1, "message": "At least one evaluation passed."},
+            {"id": "runtime_event", "ok": evidence["runtime_events"] >= 1, "message": "Runtime event evidence was recorded."},
+            {"id": "audit_log", "ok": evidence["audit_logs"] >= 1, "message": "Audit evidence was recorded."},
+            {"id": "artifact", "ok": evidence["artifacts"] >= 1, "message": "A harness artifact/report exists."},
+            {"id": "plan_evidence", "ok": evidence["verified_plan_evidence_manifests"] >= 1, "message": "A verified plan-evidence manifest exists."},
+        ]
+
+    adapters: dict[str, dict] = {}
+    for adapter in ["mock", "hermes", "openclaw"]:
+        rows = rows_to_dicts(conn.execute(
+            """SELECT r.run_id,r.task_id,r.agent_id,r.runtime_type,r.status,r.started_at,r.ended_at,r.created_at,
+                      r.error_type,r.error_message,t.title AS task_title,t.status AS task_status,
+                      (SELECT a.artifact_id
+                         FROM artifacts a
+                        WHERE a.run_id=r.run_id OR a.task_id=r.task_id
+                        ORDER BY a.created_at DESC
+                        LIMIT 1) AS artifact_id,
+                      (SELECT a.created_at
+                         FROM artifacts a
+                        WHERE a.run_id=r.run_id OR a.task_id=r.task_id
+                        ORDER BY a.created_at DESC
+                        LIMIT 1) AS artifact_created_at,
+                      (SELECT pem.manifest_id
+                         FROM plan_evidence_manifests pem
+                        WHERE pem.run_id=r.run_id AND pem.status='verified'
+                        ORDER BY pem.created_at DESC
+                        LIMIT 1) AS plan_evidence_manifest_id,
+                      COALESCE(
+                        (SELECT a.created_at
+                           FROM artifacts a
+                          WHERE a.run_id=r.run_id OR a.task_id=r.task_id
+                          ORDER BY a.created_at DESC
+                          LIMIT 1),
+                        r.ended_at,
+                        r.started_at,
+                        r.created_at
+                      ) AS checked_at,
+                      COALESCE(r.started_at, r.created_at) AS attempt_at
+               FROM runs r
+               LEFT JOIN tasks t ON t.task_id=r.task_id
+               WHERE COALESCE(r.workspace_id,t.workspace_id,'local-demo')=?
+                 AND r.runtime_type=?
+                 AND (
+                    r.agent_id LIKE 'agt_local_task_harness_%'
+                    OR t.title LIKE '%local task harness%'
+                    OR t.acceptance_criteria LIKE '%local task harness%'
+                 )
+               ORDER BY attempt_at DESC
+               LIMIT ?""",
+            (workspace_id, adapter, limit),
+        ).fetchall())
+        attempts = []
+        passing = None
+        for row in rows:
+            evidence = evidence_for_run(row["run_id"], row.get("task_id"), adapter)
+            checks = proof_checks(row, evidence)
+            checked_at = row_time(row)
+            age_hours = round((now_dt - checked_at).total_seconds() / 3600, 2) if checked_at else None
+            evidence_class = "mock_ci_fallback" if adapter == "mock" else "real_runtime_ledger_readback"
+            item = {
+                "run_id": row.get("run_id"),
+                "task_id": row.get("task_id"),
+                "artifact_id": row.get("artifact_id"),
+                "plan_evidence_manifest_id": row.get("plan_evidence_manifest_id"),
+                "agent_id": row.get("agent_id"),
+                "runtime_type": row.get("runtime_type"),
+                "run_status": row.get("status"),
+                "task_status": row.get("task_status"),
+                "task_title": redact_text(row.get("task_title"), 180),
+                "started_at": row.get("started_at"),
+                "ended_at": row.get("ended_at"),
+                "checked_at": row.get("checked_at"),
+                "attempt_at": row.get("attempt_at"),
+                "age_hours": age_hours,
+                "active": row.get("status") == "running",
+                "error_type": row.get("error_type"),
+                "error_summary": redact_text(row.get("error_message"), 220) if row.get("error_message") else None,
+                "evidence_class": evidence_class,
+                "real_runtime_proof": adapter in {"hermes", "openclaw"},
+                "mock_or_ci_fallback": adapter == "mock",
+                "evidence": evidence,
+                "checks": checks,
+                "warnings": [
+                    {"id": "memory_candidate_optional", "ok": evidence["memories"] >= 1, "message": "Memory candidate exists for review; optional for harness proof."},
+                    {"id": "approval_optional", "ok": evidence["approvals"] >= 1, "message": "Approval evidence is optional here; customer delivery acceptance has a stricter gate."},
+                ],
+                "pass": all(check["ok"] for check in checks),
+                "token_omitted": True,
+            }
+            attempts.append(item)
+            if passing is None and item["pass"]:
+                passing = item
+        latest = attempts[0] if attempts else None
+        if not passing:
+            status = "missing"
+        elif passing.get("age_hours") is not None and passing["age_hours"] <= freshness_hours:
+            status = "fresh"
+        else:
+            status = "stale"
+        if latest and not latest.get("pass") and latest.get("run_status") in {"failed", "blocked"}:
+            status = "latest_failed"
+        elif latest and not latest.get("pass") and latest.get("run_status") in {"running", "waiting_approval"} and not passing:
+            status = "latest_incomplete"
+        adapters[adapter] = {
+            "adapter": adapter,
+            "status": status,
+            "ok": status == "fresh",
+            "evidence_class": "mock_ci_fallback" if adapter == "mock" else "real_runtime_ledger_readback",
+            "real_runtime_adapter": adapter in {"hermes", "openclaw"},
+            "freshness_hours": freshness_hours,
+            "latest_attempt": latest,
+            "latest_passing": passing,
+            "active_attempt": next((item for item in attempts if item.get("active")), None),
+            "recent_attempts": attempts[:3],
+            "next_action": (
+                "python3 scripts/local_task_harness.py --adapter mock --execute"
+                if adapter == "mock"
+                else f"python3 scripts/local_task_harness.py --adapter {adapter} --execute --confirm-run --request-timeout 720"
+            ),
+            "token_omitted": True,
+        }
+    real_runtime_fresh = sum(1 for adapter, item in adapters.items() if adapter in {"hermes", "openclaw"} and item["status"] == "fresh")
+    mock_fresh = adapters.get("mock", {}).get("status") == "fresh"
+    return {
+        "provider": "agentops-operator",
+        "operation": "local_harness_proof_readiness",
+        "status": "ready" if real_runtime_fresh > 0 else ("fallback_ready" if mock_fresh else "attention"),
+        "ok": real_runtime_fresh > 0 or mock_fresh,
+        "workspace_id": workspace_id,
+        "freshness_hours": freshness_hours,
+        "adapters": adapters,
+        "summary": {
+            "fresh": sum(1 for item in adapters.values() if item["status"] == "fresh"),
+            "fresh_real_runtime_adapters": real_runtime_fresh,
+            "fresh_mock_fallback": 1 if mock_fresh else 0,
+            "stale": sum(1 for item in adapters.values() if item["status"] == "stale"),
+            "missing": sum(1 for item in adapters.values() if item["status"] == "missing"),
+            "latest_failed": sum(1 for item in adapters.values() if item["status"] == "latest_failed"),
+            "latest_incomplete": sum(1 for item in adapters.values() if item["status"] == "latest_incomplete"),
+        },
+        "commands": {adapter: item["next_action"] for adapter, item in adapters.items()},
+        "contract": "read-only local task harness proof; mock is CI/offline fallback, while Hermes/OpenClaw fresh rows are real-runtime proof for returned run ids only",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = True) -> dict:
     gateway, gateway_status_code = agent_gateway_status(conn, headers)
     running_instance = running_instance_identity()
@@ -29450,6 +29639,28 @@ class Handler(BaseHTTPRequestHandler):
                     qs,
                     self.headers,
                     lambda: live_acceptance_readiness(conn, workspace_id, freshness_hours=freshness_hours, limit=limit),
+                    auth_ctx,
+                )
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/local-harness-proof":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                workspace_id = normalize_workspace_id((auth_ctx or {}).get("workspace_id") or self.headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+                freshness_hours = bounded_int((qs.get("freshness_hours") or ["72"])[0], 72, 1, 720)
+                limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 25)
+                payload = cached_read_model(
+                    "operator_local_harness_proof",
+                    qs,
+                    self.headers,
+                    lambda: local_harness_proof_readiness(conn, workspace_id, freshness_hours=freshness_hours, limit=limit),
                     auth_ctx,
                 )
                 conn.rollback()

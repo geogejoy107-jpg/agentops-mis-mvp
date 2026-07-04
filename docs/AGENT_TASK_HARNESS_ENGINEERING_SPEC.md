@@ -218,6 +218,17 @@ that answers:
 
 This readback must not call live runtimes. It only reads MIS ledger evidence.
 
+Implemented surface:
+
+```bash
+agentops operator local-harness-proof --freshness-hours 72 --limit 8
+GET /api/operator/local-harness-proof?freshness_hours=72&limit=8
+```
+
+The readback classifies `mock` as `mock_ci_fallback` and Hermes/OpenClaw as
+`real_runtime_ledger_readback` only for returned run ids that have completed
+run/tool/evaluation/runtime/audit/artifact/verified-plan-evidence rows.
+
 ## OpenClaw/Hermes Product Constraint
 
 OpenClaw and Hermes should run customer or dogfood work through Agent Gateway

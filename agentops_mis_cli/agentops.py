@@ -738,6 +738,16 @@ def cmd_operator_live_acceptance(args, client: AgentOpsClient) -> dict:
     )
 
 
+def cmd_operator_local_harness_proof(args, client: AgentOpsClient) -> dict:
+    return client.get(
+        "/api/operator/local-harness-proof",
+        query={
+            "freshness_hours": args.freshness_hours,
+            "limit": args.limit,
+        },
+    )
+
+
 LIVE_PRODUCT_REQUIRED_EVIDENCE = [
     "completed_adapter_tool_calls",
     "passing_evaluations",
@@ -5499,6 +5509,10 @@ def build_parser() -> argparse.ArgumentParser:
     operator_live_acceptance.add_argument("--freshness-hours", type=int, default=72)
     operator_live_acceptance.add_argument("--limit", type=int, default=8)
     operator_live_acceptance.set_defaults(handler="operator_live_acceptance")
+    operator_local_harness_proof = operator_sub.add_parser("local-harness-proof", help="Read local task harness proof for mock/Hermes/OpenClaw without running adapters.")
+    operator_local_harness_proof.add_argument("--freshness-hours", type=int, default=72)
+    operator_local_harness_proof.add_argument("--limit", type=int, default=8)
+    operator_local_harness_proof.set_defaults(handler="operator_local_harness_proof")
     operator_live_product = operator_sub.add_parser("live-product-readiness", help="Return product-readiness proof from fresh Hermes/OpenClaw live ledger evidence without running adapters.")
     operator_live_product.add_argument("--freshness-hours", type=int, default=72)
     operator_live_product.add_argument("--limit", type=int, default=8)
@@ -6521,6 +6535,7 @@ HANDLERS = {
     "operator_health": cmd_operator_health,
     "operator_runtime_doctor": cmd_operator_runtime_doctor,
     "operator_live_acceptance": cmd_operator_live_acceptance,
+    "operator_local_harness_proof": cmd_operator_local_harness_proof,
     "operator_live_product_readiness": cmd_operator_live_product_readiness,
     "operator_execution_mode": cmd_operator_execution_mode,
     "operator_command_center": cmd_operator_command_center,
