@@ -183,6 +183,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "local_task_harness",
+        "command": "python3 scripts/local_task_harness_smoke.py",
+        "summary": "Plan-only local task harness packet for mock/Hermes/OpenClaw that wraps `agentops workflow run-task`, preserves live confirm gates, and emits no ledger/live/runtime side effects in CI.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "spatial_research_semantic_contract",
         "command": "python3 scripts/spatial_research_semantic_contract_smoke.py",
         "summary": "Spatial Research District semantic objects cover every Pixel Office zone and route back to formal AgentOps MIS authority pages without third-party assets or second-ledger state.",
