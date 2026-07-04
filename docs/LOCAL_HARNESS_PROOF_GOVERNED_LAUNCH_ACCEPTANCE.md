@@ -19,6 +19,9 @@ change schema, or make the browser a direct agent executor.
 - `confirmed_command` with `--confirm-run` for Hermes/OpenClaw only;
 - `evidence_readback_command` pointing back to
   `agentops operator local-harness-proof --limit 8`;
+- `receipt_preview_command` and `receipt_record_command` using
+  `agentops operator record-action-receipt`;
+- per-adapter `action_signature` for launch-packet receipt correlation;
 - read-only/no-live-execution/raw-prompt-omitted/raw-response-omitted/token
   omission flags.
 
@@ -32,6 +35,8 @@ customer-worker workflow.
 - Hermes/OpenClaw launch requires explicit `--confirm-run`.
 - The readback endpoint only returns copyable commands; it does not run shell,
   call live adapters, write the ledger, or store raw prompts/responses.
+- `receipt_record_command` records that an operator used or inspected the launch
+  packet; it still does not execute the launch command.
 - A run only counts as proof after the readback sees completed
   run/tool/runtime/evaluation/audit/artifact/verified-plan-evidence rows for the
   returned run id.
