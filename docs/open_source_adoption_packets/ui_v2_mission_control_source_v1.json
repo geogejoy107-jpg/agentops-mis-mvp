@@ -1,0 +1,71 @@
+{
+  "packet_id": "ospkt_ui_v2_mission_control_source_v1",
+  "packet_version": "1",
+  "source_name": "UI v2 Mission Control source branch",
+  "source_url_or_branch": "github-pr:11 design/gemini-ui-v2-implementation",
+  "source_kind": "ui_reference_branch",
+  "license_summary": "Internal design/source branch; patterns can inform first-party AgentOps MIS UI slices, but the branch is not accepted as a direct product merge.",
+  "owner_lane": "mission_control_first_party_migration",
+  "mis_authority_objects_touched": [
+    "workspace",
+    "agent",
+    "task",
+    "run",
+    "approval",
+    "runtime_event",
+    "evaluation",
+    "audit_log",
+    "artifact"
+  ],
+  "intake_lane": "first_party_migration",
+  "allowed_operations": [
+    "Study Mission Control information architecture, attention-first panels, semantic tokens, status/risk pills, and responsive evidence capture.",
+    "Reimplement one bounded component or read model at a time on current main.",
+    "Reuse product language only after matching current AgentOps MIS routes, APIs, and evidence boundaries.",
+    "Use screenshots or PR inventory as non-authoritative design evidence."
+  ],
+  "forbidden_operations": [
+    "Do not merge PR #11 directly while it is draft, dirty, and based on an older branch.",
+    "Do not replace current AppShell, routing, Pixel Office, Run Ledger, Approval Gate, or Agent Gateway UI without a separate first-party migration slice and UI smoke.",
+    "Do not let Mission Control view models become a second source of truth for AgentOps MIS workspace, agent, task, run, approval, memory, artifact, evaluation, runtime event, or audit authority.",
+    "Do not import screenshot artifacts, node_modules, dist, cache, generated UI evidence, local DBs, or env files.",
+    "Do not ingest raw prompts, raw responses, credentials, tokens, private messages, full transcripts, generated exports, or customer raw documents."
+  ],
+  "raw_data_omissions": [
+    "raw prompts",
+    "raw responses",
+    "credentials",
+    "tokens",
+    "private messages",
+    "full transcripts",
+    "local DBs",
+    "generated exports",
+    "customer raw documents",
+    "screenshot artifacts",
+    "dist",
+    "node_modules"
+  ],
+  "runtime_requirements": [
+    "No runtime required for CI acceptance.",
+    "Optional Vite build only after selecting a current-main first-party UI slice.",
+    "No live Hermes/OpenClaw execution required for this packet."
+  ],
+  "verification_commands": [
+    "python3 scripts/open_source_adoption_packet_catalog_smoke.py",
+    "python3 scripts/ui_research_spec_smoke.py",
+    "python3 scripts/open_source_adoption_boundary_smoke.py"
+  ],
+  "product_claim_limit": "AgentOps MIS has a governed UI v2 reference packet; no PR #11 shell, Mission Control route, generated screenshot workflow, or read-model replacement is product-merged by this packet.",
+  "merge_decision": "rebuild_as_first_party_slices",
+  "rollback_plan": "Remove this packet or keep it as rejected/incubator evidence; current AgentOps MIS workspace, run ledger, approval, memory, evaluation, audit and Pixel Office routes remain authoritative.",
+  "evidence_refs": [
+    "docs/OPEN_SOURCE_ADOPTION_PACKET_SPEC.md",
+    "docs/OPEN_SOURCE_ADOPTION_BOUNDARY_SPEC.md",
+    "docs/OPEN_SOURCE_UI_REFERENCE_ATLAS.md",
+    "docs/MODULE_UI_PATTERN_MATRIX.md",
+    "docs/design/AGENTOPS_MIS_UI_UX_SPEC_V2.md",
+    "docs/design/GEMINI_UI_IMPLEMENTATION_HANDOFF.md",
+    "docs/design/UI_BENCHMARK_RESEARCH_2026.md",
+    "scripts/ui_research_spec_smoke.py"
+  ]
+}
