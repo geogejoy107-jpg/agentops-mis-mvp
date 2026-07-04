@@ -804,6 +804,69 @@ export interface LocalReadinessEvidence {
   has_approval_flow: boolean;
 }
 
+export interface LocalHarnessProofAttempt {
+  run_id?: string | null;
+  task_id?: string | null;
+  artifact_id?: string | null;
+  plan_evidence_manifest_id?: string | null;
+  agent_id?: string | null;
+  runtime_type?: string | null;
+  run_status?: string | null;
+  task_status?: string | null;
+  task_title?: string | null;
+  checked_at?: string | null;
+  age_hours?: number | null;
+  evidence_class?: string;
+  real_runtime_proof: boolean;
+  mock_or_ci_fallback: boolean;
+  pass: boolean;
+  token_omitted: boolean;
+}
+
+export interface LocalHarnessProofAdapter {
+  adapter: WorkerAdapterName;
+  status: string;
+  ok: boolean;
+  evidence_class: string;
+  real_runtime_adapter: boolean;
+  freshness_hours: number;
+  latest_attempt?: LocalHarnessProofAttempt | null;
+  latest_passing?: LocalHarnessProofAttempt | null;
+  next_action: string;
+  token_omitted: boolean;
+}
+
+export interface LocalHarnessProofReadiness {
+  provider: string;
+  operation: string;
+  status: string;
+  ok: boolean;
+  workspace_id?: string;
+  freshness_hours: number;
+  adapters: Record<WorkerAdapterName, LocalHarnessProofAdapter>;
+  summary: {
+    fresh: number;
+    fresh_real_runtime_adapters: number;
+    fresh_mock_fallback: number;
+    stale: number;
+    missing: number;
+    latest_failed: number;
+    latest_incomplete: number;
+  };
+  commands: Record<string, string>;
+  contract?: string;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+}
+
 export interface LocalRunPathStep {
   step_id: string;
   label: string;
@@ -866,6 +929,7 @@ export interface LocalReadinessPayload {
   local_run_path?: LocalRunPathStep[];
   contract?: string;
   adapter_readiness: WorkerAdapterReadinessSummary;
+  local_harness_proof_readiness?: LocalHarnessProofReadiness;
   commander_synthesis_lifecycle?: CommanderSynthesisLifecyclePayload;
   token_omitted: boolean;
   live_execution_performed: boolean;
@@ -4836,6 +4900,48 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
   const lifecycleSummaryRaw = typeof lifecycleRaw.summary === "object" && lifecycleRaw.summary !== null ? lifecycleRaw.summary as Record<string, unknown> : {};
   const lifecycleSafetyRaw = typeof lifecycleRaw.safety === "object" && lifecycleRaw.safety !== null ? lifecycleRaw.safety as Record<string, unknown> : {};
   const adapterReadiness = typeof raw.adapter_readiness === "object" && raw.adapter_readiness !== null ? raw.adapter_readiness as WorkerAdapterReadinessSummary : {};
+  const harnessRaw = typeof raw.local_harness_proof_readiness === "object" && raw.local_harness_proof_readiness !== null ? raw.local_harness_proof_readiness as Record<string, unknown> : {};
+  const harnessSummaryRaw = typeof harnessRaw.summary === "object" && harnessRaw.summary !== null ? harnessRaw.summary as Record<string, unknown> : {};
+  const harnessSafetyRaw = typeof harnessRaw.safety === "object" && harnessRaw.safety !== null ? harnessRaw.safety as Record<string, unknown> : {};
+  const harnessAdaptersRaw = typeof harnessRaw.adapters === "object" && harnessRaw.adapters !== null ? harnessRaw.adapters as Record<string, unknown> : {};
+  const harnessCommandsRaw = typeof harnessRaw.commands === "object" && harnessRaw.commands !== null ? harnessRaw.commands as Record<string, unknown> : {};
+  const normalizeHarnessAttempt = (value: unknown): LocalHarnessProofAttempt | null => {
+    if (typeof value !== "object" || value === null) return null;
+    const item = value as Record<string, unknown>;
+    return {
+      run_id: item.run_id ? String(item.run_id) : null,
+      task_id: item.task_id ? String(item.task_id) : null,
+      artifact_id: item.artifact_id ? String(item.artifact_id) : null,
+      plan_evidence_manifest_id: item.plan_evidence_manifest_id ? String(item.plan_evidence_manifest_id) : null,
+      agent_id: item.agent_id ? String(item.agent_id) : null,
+      runtime_type: item.runtime_type ? String(item.runtime_type) : null,
+      run_status: item.run_status ? String(item.run_status) : null,
+      task_status: item.task_status ? String(item.task_status) : null,
+      task_title: item.task_title ? String(item.task_title) : null,
+      checked_at: item.checked_at ? String(item.checked_at) : null,
+      age_hours: item.age_hours === undefined || item.age_hours === null ? null : numberValue(item.age_hours, 0),
+      evidence_class: item.evidence_class ? String(item.evidence_class) : undefined,
+      real_runtime_proof: boolValue(item.real_runtime_proof),
+      mock_or_ci_fallback: boolValue(item.mock_or_ci_fallback),
+      pass: boolValue(item.pass),
+      token_omitted: item.token_omitted === undefined ? true : boolValue(item.token_omitted),
+    };
+  };
+  const normalizeHarnessAdapter = (adapter: WorkerAdapterName): LocalHarnessProofAdapter => {
+    const item = typeof harnessAdaptersRaw[adapter] === "object" && harnessAdaptersRaw[adapter] !== null ? harnessAdaptersRaw[adapter] as Record<string, unknown> : {};
+    return {
+      adapter,
+      status: String(item.status || "missing"),
+      ok: boolValue(item.ok),
+      evidence_class: String(item.evidence_class || (adapter === "mock" ? "mock_ci_fallback" : "real_runtime_ledger_readback")),
+      real_runtime_adapter: item.real_runtime_adapter === undefined ? adapter !== "mock" : boolValue(item.real_runtime_adapter),
+      freshness_hours: numberValue(item.freshness_hours, numberValue(harnessRaw.freshness_hours, 72)),
+      latest_attempt: normalizeHarnessAttempt(item.latest_attempt),
+      latest_passing: normalizeHarnessAttempt(item.latest_passing),
+      next_action: String(item.next_action || harnessCommandsRaw[adapter] || (adapter === "mock" ? "python3 scripts/local_task_harness.py --adapter mock --execute" : `python3 scripts/local_task_harness.py --adapter ${adapter} --execute --confirm-run --request-timeout 720`)),
+      token_omitted: item.token_omitted === undefined ? true : boolValue(item.token_omitted),
+    };
+  };
   const localRunPath = asArray<Record<string, unknown>>(raw.local_run_path).map((step) => ({
     step_id: String(step.step_id || ""),
     label: String(step.label || step.step_id || ""),
@@ -4905,6 +5011,40 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
       has_approval_flow: boolValue(evidenceRaw.has_approval_flow),
     },
     adapter_readiness: adapterReadiness,
+    local_harness_proof_readiness: raw.local_harness_proof_readiness ? {
+      provider: String(harnessRaw.provider || "agentops-operator"),
+      operation: String(harnessRaw.operation || "local_harness_proof_readiness"),
+      status: String(harnessRaw.status || "unknown"),
+      ok: boolValue(harnessRaw.ok),
+      workspace_id: harnessRaw.workspace_id ? String(harnessRaw.workspace_id) : undefined,
+      freshness_hours: numberValue(harnessRaw.freshness_hours, 72),
+      adapters: {
+        mock: normalizeHarnessAdapter("mock"),
+        hermes: normalizeHarnessAdapter("hermes"),
+        openclaw: normalizeHarnessAdapter("openclaw"),
+      },
+      summary: {
+        fresh: numberValue(harnessSummaryRaw.fresh, 0),
+        fresh_real_runtime_adapters: numberValue(harnessSummaryRaw.fresh_real_runtime_adapters, 0),
+        fresh_mock_fallback: numberValue(harnessSummaryRaw.fresh_mock_fallback, 0),
+        stale: numberValue(harnessSummaryRaw.stale, 0),
+        missing: numberValue(harnessSummaryRaw.missing, 0),
+        latest_failed: numberValue(harnessSummaryRaw.latest_failed, 0),
+        latest_incomplete: numberValue(harnessSummaryRaw.latest_incomplete, 0),
+      },
+      commands: Object.fromEntries(Object.entries(harnessCommandsRaw).map(([key, value]) => [key, String(value || "")])),
+      contract: harnessRaw.contract ? String(harnessRaw.contract) : undefined,
+      safety: {
+        read_only: boolValue(harnessSafetyRaw.read_only),
+        ledger_mutated: boolValue(harnessSafetyRaw.ledger_mutated),
+        live_execution_performed: boolValue(harnessSafetyRaw.live_execution_performed),
+        raw_prompt_omitted: boolValue(harnessSafetyRaw.raw_prompt_omitted),
+        raw_response_omitted: boolValue(harnessSafetyRaw.raw_response_omitted),
+        token_omitted: boolValue(harnessSafetyRaw.token_omitted),
+      },
+      token_omitted: harnessRaw.token_omitted === undefined ? true : boolValue(harnessRaw.token_omitted),
+      live_execution_performed: boolValue(harnessRaw.live_execution_performed),
+    } : undefined,
     commander_synthesis_lifecycle: raw.commander_synthesis_lifecycle ? {
       status: String(lifecycleRaw.status || "unknown"),
       summary: {
