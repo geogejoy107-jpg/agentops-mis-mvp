@@ -139,6 +139,10 @@ def build_packet(args: argparse.Namespace, worker_agent_id: str) -> dict:
     }
 
 
+def execution_ok(returncode: int, payload: dict, secret_leaked: bool) -> bool:
+    return returncode == 0 and payload.get("ok") is not False and not secret_leaked
+
+
 def execute(args: argparse.Namespace, worker_agent_id: str) -> dict:
     cli_args = build_run_task_args(args, worker_agent_id)
     env = os.environ.copy()
@@ -170,7 +174,7 @@ def execute(args: argparse.Namespace, worker_agent_id: str) -> dict:
     return {
         "executed": True,
         "returncode": proc.returncode,
-        "ok": proc.returncode == 0 and not secret_leaked,
+        "ok": execution_ok(proc.returncode, payload, secret_leaked),
         "payload": payload,
         "secret_leaked": secret_leaked,
     }

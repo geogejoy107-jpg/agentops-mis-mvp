@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import re
 import subprocess
 from pathlib import Path
@@ -40,6 +41,16 @@ def require(condition: bool, message: str) -> None:
 
 
 def main() -> int:
+    spec = importlib.util.spec_from_file_location("local_task_harness", SCRIPT)
+    if spec is None or spec.loader is None:
+        raise AssertionError("failed to import local task harness")
+    harness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(harness)
+    require(harness.execution_ok(0, {"ok": True}, False) is True, "successful payload should be ok")
+    require(harness.execution_ok(0, {"ok": False}, False) is False, "payload ok=false must fail wrapper")
+    require(harness.execution_ok(1, {"ok": True}, False) is False, "nonzero return code must fail wrapper")
+    require(harness.execution_ok(0, {"ok": True}, True) is False, "secret leak must fail wrapper")
+
     mock = run(["--adapter", "mock", "--title", "Local task harness smoke"])
     hermes = run(["--adapter", "hermes", "--title", "Hermes local task harness smoke"])
     openclaw = run(["--adapter", "openclaw", "--confirm-run", "--title", "OpenClaw local task harness smoke"])
