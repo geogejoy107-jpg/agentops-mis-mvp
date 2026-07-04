@@ -1,0 +1,67 @@
+{
+  "packet_id": "ospkt_spatial_research_art_source_v1",
+  "packet_version": "1",
+  "source_name": "Spatial Research District art source branch",
+  "source_url_or_branch": "github-pr:23 design/spatial-research-district-art-v1",
+  "source_kind": "ui_art_source_branch",
+  "license_summary": "Candidate first-party art and spatial interaction source; not accepted as product assets until provenance, generator reproducibility, route fit, and commercial ownership are reviewed.",
+  "owner_lane": "pixel_office_spatial_research_incubator",
+  "mis_authority_objects_touched": [
+    "agent",
+    "task",
+    "run",
+    "runtime_event",
+    "evaluation",
+    "audit_log",
+    "artifact"
+  ],
+  "intake_lane": "incubator",
+  "allowed_operations": [
+    "Study role-to-art mapping, semantic object mapping, and deterministic generation ideas.",
+    "Cherry-pick or reimplement source-only semantic contracts after review.",
+    "Use isolated local builds or screenshots as non-authoritative design evidence.",
+    "Promote only original, provenance-reviewed assets through a separate asset replacement gate."
+  ],
+  "forbidden_operations": [
+    "Do not merge PR #23 directly into main while it is draft, unstable, and behind current Pixel Office architecture.",
+    "Do not commit PNG asset outputs, generated asset dumps, node_modules, dist, cache, or local DB files from the source branch.",
+    "Do not let AdvancedSpatialOffice, pathfinding, art manifests, or spatial snapshots own AgentOps MIS workspace, task, run, approval, memory, artifact, evaluation, runtime event, or audit authority.",
+    "Do not replace the current Pixel Operating Map route contract without a separate first-party migration plan and UI smoke.",
+    "Do not ingest raw prompts, raw responses, credentials, tokens, private messages, full transcripts, generated exports, or customer raw documents."
+  ],
+  "raw_data_omissions": [
+    "raw prompts",
+    "raw responses",
+    "credentials",
+    "tokens",
+    "private messages",
+    "full transcripts",
+    "local DBs",
+    "generated exports",
+    "customer raw documents",
+    "PNG asset outputs",
+    "third-party asset dumps"
+  ],
+  "runtime_requirements": [
+    "No runtime required for CI acceptance.",
+    "Optional isolated UI build only after selecting a reimplementation slice.",
+    "No live Hermes/OpenClaw execution required for this packet."
+  ],
+  "verification_commands": [
+    "python3 scripts/open_source_adoption_packet_catalog_smoke.py",
+    "python3 scripts/spatial_research_semantic_contract_smoke.py",
+    "python3 scripts/open_source_adoption_boundary_smoke.py"
+  ],
+  "product_claim_limit": "AgentOps MIS has an incubator packet for the Spatial Research District art source; current main remains the authority ledger and no PR #23 art outputs or Advanced Spatial route are product-merged by this packet.",
+  "merge_decision": "incubate_then_reimplement_first_party",
+  "rollback_plan": "Remove this packet or keep it as rejected/incubator evidence; existing Pixel Office, spatial semantic contract, run ledger, approvals, memory, evaluation, runtime event, artifact, and audit pages remain authoritative.",
+  "evidence_refs": [
+    "docs/OPEN_SOURCE_ADOPTION_PACKET_SPEC.md",
+    "docs/OPEN_SOURCE_ADOPTION_BOUNDARY_SPEC.md",
+    "docs/PIXEL_OFFICE_ASSET_REPLACEMENT_PLAN.md",
+    "docs/PIXEL_OFFICE_REFERENCE_AUDIT.md",
+    "docs/PIXEL_OPERATING_MAP_SPEC.md",
+    "docs/PIXEL_OPERATING_MAP_ACCEPTANCE.md",
+    "scripts/spatial_research_semantic_contract_smoke.py"
+  ]
+}

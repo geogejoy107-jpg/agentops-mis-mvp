@@ -75,6 +75,12 @@ STAR_OFFICE_REQUIRED = {
     "intake_lane": "read_model",
 }
 
+SPATIAL_RESEARCH_REQUIRED = {
+    "packet_id": "ospkt_spatial_research_art_source_v1",
+    "source_name": "Spatial Research District art source branch",
+    "intake_lane": "incubator",
+}
+
 SECRET_PATTERNS = [
     re.compile(r"Authorization:\s*(Bearer|Basic|Token)\s+", re.IGNORECASE),
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+"),
@@ -174,6 +180,17 @@ def main() -> int:
         require(
             "commercial assets must be original or separately licensed" in str(star.get("product_claim_limit") or ""),
             "Star Office packet claim limit must preserve asset license boundary",
+            failures,
+        )
+
+    spatial = next((packet for packet in packets if packet.get("packet_id") == SPATIAL_RESEARCH_REQUIRED["packet_id"]), None)
+    require(spatial is not None, "missing Spatial Research art adoption packet", failures)
+    if spatial:
+        for key, expected in SPATIAL_RESEARCH_REQUIRED.items():
+            require(spatial.get(key) == expected, f"Spatial Research packet {key} mismatch: {spatial.get(key)}", failures)
+        require(
+            "no PR #23 art outputs or Advanced Spatial route are product-merged" in str(spatial.get("product_claim_limit") or ""),
+            "Spatial Research packet claim limit must block direct PR #23 asset/route merge",
             failures,
         )
 
