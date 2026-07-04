@@ -34,10 +34,43 @@ Checked on 2026-07-04:
   `https://arize.com/blog/improve-ai-agents-traces-evals-harness/`
 - OpenAI Evals API guide and deprecation note:
   `https://developers.openai.com/api/docs/guides/evals`
+- LangChain harness engineering case study:
+  `https://www.langchain.com/blog/improving-deep-agents-with-harness-engineering`
+- Code as Agent Harness survey:
+  `https://arxiv.org/html/2605.18747v1`
 
 Key lesson: agent performance is a property of the whole execution harness, not
 only the model. The harness controls workspace access, tool permissions,
 intermediate trajectory, approvals, verification, cost/latency and evidence.
+
+## Investigation Summary
+
+The current harness engineering literature and tool ecosystem converges on five
+practical points that matter for AgentOps MIS:
+
+1. Evaluate the model-harness pair, not the model alone. Harness-Bench argues
+   that task environment, budget, timeout, evaluator and native harness behavior
+   must be reported together because execution-layer variation changes success,
+   cost, robustness and traceability.
+2. Treat agent evaluation as system evaluation. Promptfoo's coding-agent guide
+   separates plain LLM baselines from SDK/app-server agents because file access,
+   shell access, approval behavior, session state and tool traces change the
+   capability being tested.
+3. Use traces as improvement data, not decoration. LangChain's harness case
+   study and observability guidance point to tracing, self-verification and
+   feedback loops as the way to debug agent failure modes at scale.
+4. Keep the harness executable, inspectable and stateful. The Code as Agent
+   Harness survey frames planning, memory, tool use, verification and
+   multi-agent coordination as harness mechanisms that need code-level
+   interfaces and state, not only prompts.
+5. Separate diagnostic proof from deployment claims. Offline sandboxes and mock
+   adapters are valuable regression tools, but product claims need live or
+   ledger-backed evidence with clear limits.
+
+For AgentOps MIS, this means the harness is the product boundary where a
+customer task becomes governed work: packetized input, scoped execution,
+approved side effects, traceable runtime behavior, evaluation, report artifact,
+memory candidate and audit receipt.
 
 ## Positioning
 
@@ -61,6 +94,23 @@ Every product-grade task harness run must make these objects explicit:
 | `scorecard` | Pass/warn/fail rules for completion, quality, cost, latency and safety. |
 | `replay_receipt` | Enough IDs, hashes and commands to inspect or rerun safely. |
 | `claim_limit` | What this proof can and cannot claim. |
+
+## Product Constraint Register
+
+These constraints are hard product rules for AgentOps MIS harness work:
+
+| Constraint | Rule | Why |
+| --- | --- | --- |
+| MIS authority | Tasks, runs, approvals, artifacts, memory candidates and audit logs remain MIS authority objects. External harnesses may produce evidence, not replace the ledger. | Prevents a useful runtime/tool from becoming an ungoverned source of truth. |
+| Agent interface | Agents use CLI/API/MCP work packets, not browser UI scraping. | Browser pages are for humans; agents need stable machine contracts. |
+| Runtime proof | Real Hermes/OpenClaw proof requires confirmed or approved execution plus run/tool/runtime/eval/audit/artifact readback. | Avoids calling a terminal success product evidence when it never entered MIS. |
+| Mock boundary | Mock and fixture harnesses are CI/offline fallback only and must be labeled. | Keeps classroom/demo confidence without overstating product readiness. |
+| Approval wall | External writes, high-risk tools, privileged scopes and irreversible actions require prepared action hash, checkpoint, approval and exact once resume. | Makes human governance auditable instead of merely ceremonial. |
+| Redaction | Store summaries, hashes, ids and safe metadata; never store raw prompts, raw responses, credentials, private messages or full transcripts. | Keeps local-first usefulness without turning MIS into a sensitive transcript sink. |
+| Reproducibility | Every product-grade claim needs verification commands, evidence ids and a replay/no-replay rationale. | Lets the operator and customer inspect what actually happened. |
+| Async lanes | Slow adapters must not block independent docs, verification, readback or another implementation lane. | Matches real team operation and prevents one stuck worker from stopping delivery. |
+| External tools | Promptfoo, Inspect, SWE-bench, Harness, Phoenix, LangSmith, Dify or OpenClaw can be references/connectors, but not vendored or trusted by default. | Allows borrowing proven patterns while preserving local safety and licensing boundaries. |
+| Customer clarity | Reports must say whether evidence is real runtime, ledger readback, dry-run, mock fallback or pending approval. | Customers need to know whether work really ran. |
 
 ## Work Packet Minimum
 
