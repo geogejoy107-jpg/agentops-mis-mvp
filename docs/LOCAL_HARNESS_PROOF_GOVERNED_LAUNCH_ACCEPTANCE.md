@@ -21,6 +21,8 @@ change schema, or make the browser a direct agent executor.
   `agentops operator local-harness-proof --limit 8`;
 - `receipt_preview_command` and `receipt_record_command` using
   `agentops operator record-action-receipt`;
+- `receipt_readback_command` pointing to
+  `agentops operator action-receipts --limit 20`;
 - per-adapter `action_signature` for launch-packet receipt correlation;
 - read-only/no-live-execution/raw-prompt-omitted/raw-response-omitted/token
   omission flags.
@@ -56,6 +58,7 @@ git diff --check
 
 ## Next Slice
 
-Add an audited operator action receipt for copied/confirmed harness launch
-commands so remote/local workers can prove which launch packet was used before
-the resulting run is evaluated.
+Read back launch-packet receipts as a first-class local harness proof status:
+show whether the latest copied/confirmed launch command has a matching operator
+receipt before the resulting run is evaluated, without executing shell commands
+or treating receipt presence as live runtime success.

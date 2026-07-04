@@ -29,6 +29,7 @@ LEDGER_TABLES = [
 
 ACCEPTANCE_DOC = ROOT / "docs" / "LOCAL_HARNESS_PROOF_READBACK_ACCEPTANCE.md"
 GOVERNED_LAUNCH_ACCEPTANCE_DOC = ROOT / "docs" / "LOCAL_HARNESS_PROOF_GOVERNED_LAUNCH_ACCEPTANCE.md"
+RECEIPT_STATUS_ACCEPTANCE_DOC = ROOT / "docs" / "LOCAL_HARNESS_PROOF_RECEIPT_READBACK_STATUS_ACCEPTANCE.md"
 
 
 def iso(hours_delta: float = 0) -> str:
@@ -391,6 +392,7 @@ def validate_payload(payload: dict, failures: list[str]) -> None:
         require(governed.get("token_omitted") is True, f"{adapter} governed launch token omission missing: {governed}", failures)
         require("agentops operator record-action-receipt" in (governed.get("receipt_preview_command") or ""), f"{adapter} receipt preview command missing: {governed}", failures)
         require("--confirm-record" in (governed.get("receipt_record_command") or ""), f"{adapter} receipt record command missing confirm: {governed}", failures)
+        require("agentops operator action-receipts --limit 20" in (governed.get("receipt_readback_command") or ""), f"{adapter} receipt readback command missing: {governed}", failures)
         require(governed.get("action_signature"), f"{adapter} governed launch action signature missing: {governed}", failures)
     require((mock.get("governed_launch") or {}).get("confirm_required") is False, f"mock should not require confirm: {mock}", failures)
     for adapter, item in [("openclaw", openclaw), ("hermes", hermes)]:
@@ -413,15 +415,30 @@ def main() -> int:
     workspace_id = "harness-proof-smoke"
     acceptance = ACCEPTANCE_DOC.read_text(encoding="utf-8") if ACCEPTANCE_DOC.exists() else ""
     governed_acceptance = GOVERNED_LAUNCH_ACCEPTANCE_DOC.read_text(encoding="utf-8") if GOVERNED_LAUNCH_ACCEPTANCE_DOC.exists() else ""
+    receipt_status_acceptance = RECEIPT_STATUS_ACCEPTANCE_DOC.read_text(encoding="utf-8") if RECEIPT_STATUS_ACCEPTANCE_DOC.exists() else ""
     require(ACCEPTANCE_DOC.exists(), "missing local harness proof acceptance doc", failures)
     require(GOVERNED_LAUNCH_ACCEPTANCE_DOC.exists(), "missing governed launch acceptance doc", failures)
+    require(RECEIPT_STATUS_ACCEPTANCE_DOC.exists(), "missing receipt readback status acceptance doc", failures)
     for marker in [
         "governed_launch_packet",
         "agentops workflow customer-worker-task",
         "--confirm-run",
+        "receipt_readback_command",
+        "agentops operator action-receipts --limit 20",
         "read-only/no-live-execution",
     ]:
         require(marker in governed_acceptance, f"governed launch acceptance doc missing marker: {marker}", failures)
+    require(
+        "Add an audited operator action receipt for copied/confirmed harness launch" not in governed_acceptance,
+        "governed launch acceptance doc still points to the completed receipt slice as next work",
+        failures,
+    )
+    for marker in [
+        "receipt readback/status aggregation",
+        "agentops operator action-receipts --limit 20",
+        "receipt presence separate from live runtime",
+    ]:
+        require(marker in receipt_status_acceptance, f"receipt status acceptance doc missing marker: {marker}", failures)
     for marker in [
         "agentops operator local-harness-proof",
         "GET /api/operator/local-harness-proof",
