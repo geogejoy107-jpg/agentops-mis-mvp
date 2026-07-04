@@ -18894,6 +18894,8 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
     workspace_id = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo")
     live_acceptance = live_acceptance_readiness(conn, workspace_id)
     live_summary = live_acceptance.get("summary") or {}
+    local_harness_proof = local_harness_proof_readiness(conn, workspace_id)
+    local_harness_summary = local_harness_proof.get("summary") or {}
     knowledge_evidence, _knowledge_evidence_status = knowledge_retrieval_evidence_packet(
         conn,
         {"q": ["AgentOps MIS local worker knowledge retrieval evidence"], "limit": ["5"], "baseline_limit": ["5"]},
@@ -18948,6 +18950,11 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "live_acceptance_fresh_adapters": int(live_summary.get("fresh") or 0),
         "live_acceptance_latest_failed_adapters": int(live_summary.get("latest_failed") or 0),
         "live_acceptance_missing_adapters": int(live_summary.get("missing") or 0),
+        "local_harness_proof_fresh_adapters": int(local_harness_summary.get("fresh") or 0),
+        "local_harness_proof_fresh_real_runtime_adapters": int(local_harness_summary.get("fresh_real_runtime_adapters") or 0),
+        "local_harness_proof_fresh_mock_fallback": int(local_harness_summary.get("fresh_mock_fallback") or 0),
+        "local_harness_proof_latest_failed_adapters": int(local_harness_summary.get("latest_failed") or 0),
+        "local_harness_proof_missing_adapters": int(local_harness_summary.get("missing") or 0),
         "knowledge_retrieval_recall_at_5": knowledge_evidence_metrics.get("recall_at_5"),
         "knowledge_retrieval_mrr": knowledge_evidence_metrics.get("mrr"),
         "knowledge_retrieval_p95_ms": knowledge_evidence_metrics.get("p95_ms"),
@@ -19064,6 +19071,18 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
                 f"{live_summary.get('missing', 0)} missing"
             ),
             "next_action": "python3 scripts/customer_worker_real_runtime_acceptance.py --base-url http://127.0.0.1:8787 --confirm-live --adapter hermes --adapter openclaw --hermes-max-tokens 512",
+        },
+        {
+            "id": "local_harness_proof",
+            "label": "Local task harness proof",
+            "ok": local_harness_proof.get("ok") is True,
+            "status": local_harness_proof.get("status") or "unknown",
+            "detail": (
+                f"{local_harness_summary.get('fresh_real_runtime_adapters', 0)} real-runtime fresh, "
+                f"{local_harness_summary.get('fresh_mock_fallback', 0)} mock fallback fresh, "
+                f"{local_harness_summary.get('latest_failed', 0)} latest failed"
+            ),
+            "next_action": "agentops operator local-harness-proof --limit 8",
         },
         {
             "id": "runbook",
@@ -19563,6 +19582,7 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "security_production_readiness": security,
         "commander_synthesis_lifecycle": synthesis_lifecycle,
         "live_acceptance_readiness": live_acceptance,
+        "local_harness_proof_readiness": local_harness_proof,
         "knowledge_retrieval_evidence": knowledge_evidence,
         "running_instance": running_instance,
         "gateway": gateway,

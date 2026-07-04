@@ -137,7 +137,7 @@ def validate(payload: dict) -> None:
     require(payload.get("local_security_boundary_ok") is True, f"loopback local security boundary should be accepted: {payload.get('security_production_readiness')}")
     gates = payload.get("gates") or []
     gate_ids = {gate.get("id") for gate in gates}
-    for gate_id in {"agent_gateway", "worker_fleet", "production_security", "adapter_route", "knowledge_memory", "evidence_chain", "commander_synthesis_loop", "runbook"}:
+    for gate_id in {"agent_gateway", "worker_fleet", "production_security", "adapter_route", "knowledge_memory", "evidence_chain", "commander_synthesis_loop", "local_harness_proof", "runbook"}:
         require(gate_id in gate_ids, f"missing gate {gate_id}: {payload}")
     require("live_acceptance_freshness" in gate_ids, f"missing live acceptance gate: {payload}")
     instance_gate = next((gate for gate in gates if gate.get("id") == "running_instance_freshness"), {})
@@ -173,6 +173,14 @@ def validate(payload: dict) -> None:
         require(isinstance(evidence.get(key), int), f"missing synthesis evidence count {key}: {evidence}")
     for key in ["live_acceptance_fresh_adapters", "live_acceptance_latest_failed_adapters", "live_acceptance_missing_adapters"]:
         require(isinstance(evidence.get(key), int), f"missing live acceptance evidence count {key}: {evidence}")
+    for key in [
+        "local_harness_proof_fresh_adapters",
+        "local_harness_proof_fresh_real_runtime_adapters",
+        "local_harness_proof_fresh_mock_fallback",
+        "local_harness_proof_latest_failed_adapters",
+        "local_harness_proof_missing_adapters",
+    ]:
+        require(isinstance(evidence.get(key), int), f"missing local harness proof evidence count {key}: {evidence}")
     live = payload.get("live_acceptance_readiness") or {}
     require(live.get("operation") == "live_acceptance_readiness", f"live acceptance readiness missing: {live}")
     require(live.get("live_execution_performed") is False, f"live acceptance readback must be read-only: {live}")
@@ -181,6 +189,16 @@ def validate(payload: dict) -> None:
     for adapter in ["hermes", "openclaw"]:
         require(adapter in adapters, f"live acceptance missing adapter {adapter}: {live}")
         require(adapters[adapter].get("token_omitted") is True, f"live acceptance adapter token omission missing: {adapters[adapter]}")
+    harness = payload.get("local_harness_proof_readiness") or {}
+    require(harness.get("operation") == "local_harness_proof_readiness", f"local harness proof missing: {harness}")
+    require(harness.get("live_execution_performed") is False, f"local harness proof must be read-only: {harness}")
+    require((harness.get("safety") or {}).get("read_only") is True, f"local harness proof safety missing: {harness}")
+    harness_gate = next((gate for gate in gates if gate.get("id") == "local_harness_proof"), {})
+    require("local-harness-proof" in (harness_gate.get("next_action") or ""), f"local harness gate should route to CLI proof: {harness_gate}")
+    harness_adapters = harness.get("adapters") or {}
+    for adapter in ["mock", "hermes", "openclaw"]:
+        require(adapter in harness_adapters, f"local harness proof missing adapter {adapter}: {harness}")
+        require(harness_adapters[adapter].get("token_omitted") is True, f"local harness adapter token omission missing: {harness_adapters[adapter]}")
     lifecycle = payload.get("commander_synthesis_lifecycle") or {}
     require(lifecycle.get("status") in {"empty", "created", "review_pending", "promotion_available", "promoted"}, f"bad synthesis lifecycle: {lifecycle}")
     require((lifecycle.get("safety") or {}).get("read_only") is True, f"synthesis lifecycle must be read-only: {lifecycle}")
