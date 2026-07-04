@@ -391,6 +391,7 @@ def validate_payload(payload: dict, failures: list[str]) -> None:
         require(governed.get("token_omitted") is True, f"{adapter} governed launch token omission missing: {governed}", failures)
         require("agentops operator record-action-receipt" in (governed.get("receipt_preview_command") or ""), f"{adapter} receipt preview command missing: {governed}", failures)
         require("--confirm-record" in (governed.get("receipt_record_command") or ""), f"{adapter} receipt record command missing confirm: {governed}", failures)
+        require("agentops operator action-receipts --limit 20" in (governed.get("receipt_readback_command") or ""), f"{adapter} receipt readback command missing: {governed}", failures)
         require(governed.get("action_signature"), f"{adapter} governed launch action signature missing: {governed}", failures)
     require((mock.get("governed_launch") or {}).get("confirm_required") is False, f"mock should not require confirm: {mock}", failures)
     for adapter, item in [("openclaw", openclaw), ("hermes", hermes)]:
@@ -419,9 +420,16 @@ def main() -> int:
         "governed_launch_packet",
         "agentops workflow customer-worker-task",
         "--confirm-run",
+        "receipt_readback_command",
+        "agentops operator action-receipts --limit 20",
         "read-only/no-live-execution",
     ]:
         require(marker in governed_acceptance, f"governed launch acceptance doc missing marker: {marker}", failures)
+    require(
+        "Add an audited operator action receipt for copied/confirmed harness launch" not in governed_acceptance,
+        "governed launch acceptance doc still points to the completed receipt slice as next work",
+        failures,
+    )
     for marker in [
         "agentops operator local-harness-proof",
         "GET /api/operator/local-harness-proof",
