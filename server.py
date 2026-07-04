@@ -18746,6 +18746,23 @@ def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = 
             f"--worker-agent-id {shlex.quote(f'agt_local_task_harness_{adapter}')}"
         )
         confirmed_command = base_command if adapter == "mock" else f"{base_command} --confirm-run --hermes-timeout 600 --hermes-max-tokens 512"
+        readback_command = "agentops operator local-harness-proof --limit 8"
+        action_signature = stable_hash({
+            "operation": "local_harness_proof_governed_launch",
+            "adapter": adapter,
+            "confirmed_command": confirmed_command,
+            "readback_command": readback_command,
+        })[:24]
+        receipt_preview_command = " ".join([
+            "agentops", "operator", "record-action-receipt",
+            "--action-command", shlex.quote(confirmed_command),
+            "--verify-command", shlex.quote(readback_command),
+            "--status", "recorded",
+            "--source", "local_harness_proof.governed_launch",
+            "--action-id", shlex.quote(f"local_harness_proof:{adapter}"),
+            "--action-signature", shlex.quote(action_signature),
+            "--result-summary", shlex.quote(f"Recorded governed local harness proof launch packet for {adapter}."),
+        ])
         return {
             "operation": "customer_worker_task",
             "adapter": adapter,
@@ -18755,7 +18772,11 @@ def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = 
             "writes_ledger": True,
             "live_execution": adapter in {"hermes", "openclaw"},
             "entrypoint": "agentops workflow customer-worker-task",
-            "evidence_readback_command": "agentops operator local-harness-proof --limit 8",
+            "evidence_readback_command": readback_command,
+            "receipt_preview_command": receipt_preview_command,
+            "receipt_record_command": f"{receipt_preview_command} --confirm-record",
+            "receipt_readback_command": "agentops operator action-receipts --limit 20",
+            "action_signature": action_signature,
             "approval_boundary": "Hermes/OpenClaw live execution still requires explicit --confirm-run and runtime readiness/trust gates before adapter invocation.",
             "raw_prompt_omitted": True,
             "raw_response_omitted": True,

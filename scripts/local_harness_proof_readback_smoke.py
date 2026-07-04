@@ -389,6 +389,9 @@ def validate_payload(payload: dict, failures: list[str]) -> None:
         require("scripts/local_task_harness.py" not in (governed.get("preview_command") or ""), f"{adapter} preview command must not use direct script: {governed}", failures)
         require(governed.get("writes_ledger") is True, f"{adapter} governed launch should write ledger when executed: {governed}", failures)
         require(governed.get("token_omitted") is True, f"{adapter} governed launch token omission missing: {governed}", failures)
+        require("agentops operator record-action-receipt" in (governed.get("receipt_preview_command") or ""), f"{adapter} receipt preview command missing: {governed}", failures)
+        require("--confirm-record" in (governed.get("receipt_record_command") or ""), f"{adapter} receipt record command missing confirm: {governed}", failures)
+        require(governed.get("action_signature"), f"{adapter} governed launch action signature missing: {governed}", failures)
     require((mock.get("governed_launch") or {}).get("confirm_required") is False, f"mock should not require confirm: {mock}", failures)
     for adapter, item in [("openclaw", openclaw), ("hermes", hermes)]:
         governed = item.get("governed_launch") or {}
