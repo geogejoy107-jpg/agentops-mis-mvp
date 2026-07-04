@@ -84,6 +84,14 @@ SOURCE_MARKERS = [
     "https://openai.com/index/harness-engineering/",
 ]
 
+RESEARCH_ONLY_SOURCE_MARKERS = [
+    "https://github.com/ai-boost/awesome-harness-engineering",
+    "https://www.promptfoo.dev/docs/guides/evaluate-coding-agents/",
+    "https://github.com/swe-bench/SWE-bench",
+    "https://github.com/princeton-pli/hal-harness",
+    "https://arxiv.org/html/2605.18747v1",
+]
+
 FORBIDDEN_CLAIMS = [
     re.compile(r"Harness\s+(replaces|owns|becomes)\s+MIS", re.IGNORECASE),
     re.compile(r"OPA\s+(replaces|owns|becomes)\s+.*Approval", re.IGNORECASE),
@@ -135,6 +143,9 @@ def main() -> int:
     for marker in SOURCE_MARKERS:
         require(marker in spec, f"control-plane spec missing source: {marker}", failures)
         require(marker in research, f"research brief missing source: {marker}", failures)
+
+    for marker in RESEARCH_ONLY_SOURCE_MARKERS:
+        require(marker in research, f"research brief missing research-only source: {marker}", failures)
 
     require(COMMAND in ci, "CI workflow missing Harness control-plane smoke", failures)
     require(COMMAND in release_smoke, "release evidence packet missing Harness control-plane smoke", failures)

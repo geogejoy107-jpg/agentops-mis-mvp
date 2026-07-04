@@ -38,6 +38,16 @@ constraints.
   `https://www.harness.io/press-and-news/harness-launches-autonomous-worker-agents-for-software-delivery`
 - OpenAI February 11, 2026 article on harness engineering with Codex:
   `https://openai.com/index/harness-engineering/`
+- Awesome Harness Engineering reference list:
+  `https://github.com/ai-boost/awesome-harness-engineering`
+- Promptfoo coding-agent evaluation guide:
+  `https://www.promptfoo.dev/docs/guides/evaluate-coding-agents/`
+- SWE-bench repository and evaluation harness:
+  `https://github.com/swe-bench/SWE-bench`
+- HAL Harness repository:
+  `https://github.com/princeton-pli/hal-harness`
+- Code as Agent Harness survey:
+  `https://arxiv.org/html/2605.18747v1`
 - Hacker News launch discussion for Harness Open Source:
   `https://news.ycombinator.com/item?id=41647665`
 - DevOps.com June 30, 2026 coverage of Harness autonomous AI agents:
@@ -226,6 +236,60 @@ acceptance docs, release evidence packets and operator work packets as product
 surface area. Agents should receive small, typed, verifiable packets instead of
 long chat history or broad raw API access.
 
+### 9. Evaluation Harnesses Turn Agent Work Into Reproducible Evidence
+
+Promptfoo's coding-agent evaluation guide, SWE-bench, HAL Harness and related
+agent-evaluation tooling all point in the same direction: a useful agent
+system needs a repeatable harness for inputs, tool traces, side-effect
+controls, scoring, and regression comparison. SWE-bench's containerized
+evaluation harness is especially relevant because it makes agent performance
+depend on a controlled runtime, not on an unrecorded chat session.
+
+Implication for MIS:
+
+AgentOps MIS should treat "agent completed a task" as insufficient unless the
+run is connected to:
+
+- a stable task/work packet;
+- adapter/runtime identity;
+- allowed and forbidden side effects;
+- verification command or evaluation case;
+- pass/warn/fail score;
+- run/tool/evaluation/audit evidence;
+- claim limit for mock, opaque, or summary-only runtimes.
+
+This supports a product path where Hermes/OpenClaw/Dify workers can be compared
+against the same customer task without claiming equivalence from raw output
+quality alone.
+
+### 10. Harness Engineering Is Broader Than Harness The Company
+
+The awesome-harness-engineering list and Code as Agent Harness survey frame the
+harness as the software surrounding the model: context delivery, tool
+interfaces, planning artifacts, verification loops, permissions, memory,
+sandboxes, observability and orchestration. This matches AgentOps MIS more
+closely than a single CI/CD product reference.
+
+Implication for MIS:
+
+The next product-grade slice should be a local task harness, not another
+dashboard page:
+
+```text
+customer task
+  -> work packet
+  -> Agent Plan + plan hash
+  -> scoped knowledge/evidence packet
+  -> real or explicitly labeled mock runtime
+  -> verification/evaluation
+  -> artifact/report
+  -> memory candidate
+  -> audit
+```
+
+The browser can explain this chain to humans, but agents should consume it
+through CLI/API/MCP packets.
+
 ## Candidate Ideas To Borrow
 
 | Harness pattern | AgentOps MIS adaptation | v1.x priority |
@@ -240,6 +304,9 @@ long chat history or broad raw API access.
 | Artifact registry | MIS artifact table with URI/hash/provenance, not raw blobs | Medium |
 | Migration from existing tools | Connector import/export adapters, never authority replacement | Medium |
 | Self-hostable developer platform | Local-first deployment profile and installer later | Medium |
+| Coding-agent eval harness | Reusable task/eval cases with adapter comparison and side-effect limits | High |
+| Containerized benchmark harness | Future isolated worker sandbox for reproducible OpenClaw/Hermes runs | Medium |
+| Unified agent leaderboard harness | Internal adapter scorecards before public/commercial claims | Medium |
 
 ## Anti-Patterns To Avoid
 
@@ -247,6 +314,7 @@ long chat history or broad raw API access.
 - Letting a CI/CD platform own MIS task/run/approval truth.
 - Treating a hosted delivery platform as the local MVP architecture.
 - Equating "green CI" with product-useful real-agent operation.
+- Treating a one-off successful local command as reproducible product proof.
 - Exposing raw logs, prompts, responses, credentials, or customer documents as
   agent context.
 - Replacing first-party Approval Wall semantics with generic approval buttons.
@@ -273,3 +341,6 @@ The next AgentOps MIS slices should prioritize the OSBI loop/work-packet line:
 - Some 2026 Harness AI-agent material is product/blog coverage rather than
   source-code evidence, so it should be treated as product-direction evidence,
   not proof of implementation detail.
+- I did not run Promptfoo, SWE-bench, HAL Harness or a containerized benchmark
+  locally in this slice; they are reference patterns for MIS harness design,
+  not imported dependencies.
