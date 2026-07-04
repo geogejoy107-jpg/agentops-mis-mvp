@@ -19,6 +19,7 @@ import {
   dispatchLocalWorkerOnce,
   loadOperatorExecutionMode,
   loadOperatorStartCheck,
+  loadLocalReadiness,
   loadWorkerAdapterReadiness,
   loadWorkerFleet,
   loadWorkerFleetHygiene,
@@ -32,6 +33,7 @@ import {
   useLiveData,
   type OperatorExecutionModePayload,
   type OperatorStartCheckPayload,
+  type LocalReadinessPayload,
   type LocalRunPathStep,
   type WorkerAdapterName,
   type WorkerAdapterReadinessPayload,
@@ -52,6 +54,7 @@ interface WorkerConsoleData {
   adapterReadiness: WorkerAdapterReadinessPayload;
   executionMode: OperatorExecutionModePayload;
   startCheck: OperatorStartCheckPayload;
+  localReadiness: LocalReadinessPayload;
 }
 
 function adapterColor(adapter: string) {
@@ -91,6 +94,16 @@ export function WorkerConsole() {
       confirmHint: "Hermes/OpenClaw stay disabled until this is explicit.",
       executionMode: "Execution Mode",
       adapterReadiness: "Adapter readiness",
+      harnessProof: "Local harness proof",
+      harnessProofSummary: "Read-only ledger proof for local task harness runs. Mock is CI/offline fallback; Hermes/OpenClaw proof applies only to returned run IDs.",
+      realRuntimeProof: "Real runtime proof",
+      mockFallback: "Mock fallback",
+      latestPassing: "Latest passing",
+      latestAttempt: "Latest attempt",
+      proofClass: "Proof class",
+      proofCommand: "Proof command",
+      freshnessHours: "Freshness",
+      rawPromptOmitted: "raw prompt omitted",
       workerFleet: "Worker fleet",
       fleetHygiene: "Fleet hygiene",
       hygieneSummary: "Plan and apply cleanup for stuck worker tasks plus never-seen or stale remote enrollments. Apply requires explicit confirmation and never executes live runtimes.",
@@ -193,6 +206,16 @@ export function WorkerConsole() {
       confirmHint: "Hermes/OpenClaw 必须显式确认后才可执行。",
       executionMode: "执行模式",
       adapterReadiness: "Adapter 就绪",
+      harnessProof: "本地 Harness 证明",
+      harnessProofSummary: "只读账本证明本地 task harness 运行。Mock 只是 CI/离线兜底；Hermes/OpenClaw 证明只针对返回的 run id。",
+      realRuntimeProof: "真实运行证明",
+      mockFallback: "Mock 兜底",
+      latestPassing: "最近通过",
+      latestAttempt: "最近尝试",
+      proofClass: "证明类型",
+      proofCommand: "证明命令",
+      freshnessHours: "新鲜度",
+      rawPromptOmitted: "raw prompt 已省略",
       workerFleet: "Worker Fleet",
       fleetHygiene: "Fleet 清理",
       hygieneSummary: "规划并执行卡住 worker 任务、从未 heartbeat 或 heartbeat 过期远程 enrollment 的清理。应用清理必须显式确认，且不会执行真实 runtime。",
@@ -286,15 +309,16 @@ export function WorkerConsole() {
   });
 
   const { data, loading, error, refresh } = useLiveData<WorkerConsoleData>(async () => {
-    const [workerStatus, workerFleet, fleetHygiene, adapterReadiness, executionMode, startCheck] = await Promise.all([
+    const [workerStatus, workerFleet, fleetHygiene, adapterReadiness, executionMode, startCheck, localReadiness] = await Promise.all([
       loadWorkerStatus(),
       loadWorkerFleet(),
       loadWorkerFleetHygiene({ limit: 8 }),
       loadWorkerAdapterReadiness(),
       loadOperatorExecutionMode(selectedAdapter, confirmRun, 8),
       loadOperatorStartCheck(selectedAdapter, 8),
+      loadLocalReadiness(),
     ]);
-    return { workerStatus, workerFleet, fleetHygiene, adapterReadiness, executionMode, startCheck };
+    return { workerStatus, workerFleet, fleetHygiene, adapterReadiness, executionMode, startCheck, localReadiness };
   }, [selectedAdapter, confirmRun]);
 
   const workerStatus = data?.workerStatus;
@@ -303,6 +327,8 @@ export function WorkerConsole() {
   const adapterReadiness = data?.adapterReadiness;
   const executionMode = data?.executionMode;
   const startCheck = data?.startCheck;
+  const localReadiness = data?.localReadiness;
+  const localHarnessProof = localReadiness?.local_harness_proof_readiness;
   const selectedRoute = executionMode?.selected_route;
   const selectedReadiness = adapterReadiness?.adapters?.[selectedAdapter];
   const liveBlocked = selectedAdapter !== "mock" && !confirmRun;
@@ -929,6 +955,67 @@ export function WorkerConsole() {
                 </div>
               );
             })}
+          </div>
+          <div
+            data-testid="worker-local-harness-proof"
+            className="rounded p-3 mt-4"
+            style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+          >
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <ShieldCheck size={13} style={{ color: "var(--mis-cyan)" }} />
+                  <h3 className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.harnessProof}</h3>
+                  <StatusBadge status={localHarnessProof?.status || "unknown"} />
+                  <StatusBadge status={(localHarnessProof?.summary.fresh_real_runtime_adapters || 0) > 0 ? "pass" : "attention"} label={`${copy.realRuntimeProof}: ${localHarnessProof?.summary.fresh_real_runtime_adapters || 0}`} />
+                  <StatusBadge status={(localHarnessProof?.summary.fresh_mock_fallback || 0) > 0 ? "pass" : "unknown"} label={`${copy.mockFallback}: ${localHarnessProof?.summary.fresh_mock_fallback || 0}`} />
+                </div>
+                <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>{copy.harnessProofSummary}</p>
+              </div>
+              <button
+                onClick={() => void copyCommand("agentops operator local-harness-proof --limit 8")}
+                className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px]"
+                style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: "var(--mis-cyan)" }}
+              >
+                <Copy size={10} />
+                {copiedCommand === "agentops operator local-harness-proof --limit 8" ? copy.copied : "agentops operator local-harness-proof --limit 8"}
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-3">
+              {WORKER_ADAPTERS.map((adapter) => {
+                const proof = localHarnessProof?.adapters?.[adapter];
+                const latest = proof?.latest_passing || proof?.latest_attempt;
+                return (
+                  <div key={`harness-proof:${adapter}`} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-[11px] font-semibold" style={{ color: adapterColor(adapter) }}>{adapter}</div>
+                      <StatusBadge status={proof?.status || "missing"} />
+                    </div>
+                    <div className="grid grid-cols-1 gap-1 mt-2">
+                      <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.proofClass}: <span style={{ color: "var(--mis-text)" }}>{proof?.evidence_class || "—"}</span></div>
+                      <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.latestPassing}: <span style={{ color: latest?.pass ? "var(--mis-success)" : "var(--mis-dim)" }}>{latest?.run_id || "—"}</span></div>
+                      <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.latestAttempt}: <span style={{ color: "var(--mis-text)" }}>{latest?.run_status || "—"}</span></div>
+                      <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.freshnessHours}: <span style={{ color: "var(--mis-text)" }}>{proof?.freshness_hours || localHarnessProof?.freshness_hours || 72}h</span></div>
+                    </div>
+                    <button
+                      onClick={() => void copyCommand(proof?.next_action)}
+                      disabled={!proof?.next_action}
+                      className="mt-2 inline-flex max-w-full items-center gap-1 rounded px-1.5 py-0.5 text-[9px] disabled:opacity-40"
+                      style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)", color: proof?.real_runtime_adapter ? "var(--mis-warning)" : "var(--mis-cyan)" }}
+                    >
+                      <Copy size={8} />
+                      <span className="truncate">{copiedCommand === proof?.next_action ? copy.copied : copy.proofCommand}</span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+              <StatusBadge status={localHarnessProof?.safety.read_only ? "pass" : "attention"} label={copy.readOnlyProof} />
+              <StatusBadge status={localHarnessProof?.safety.live_execution_performed ? "attention" : "pass"} label={copy.noLiveExecution} />
+              <StatusBadge status={localHarnessProof?.safety.raw_prompt_omitted ? "pass" : "attention"} label={copy.rawPromptOmitted} />
+              <StatusBadge status={localHarnessProof?.safety.token_omitted ? "pass" : "attention"} label={copy.tokenOmitted} />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-2 mt-4">
             <StatusBadge status={executionMode?.safety.read_only ? "pass" : "attention"} label={copy.readOnlyProof} />
