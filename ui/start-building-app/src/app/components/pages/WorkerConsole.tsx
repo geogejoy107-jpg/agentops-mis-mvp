@@ -102,6 +102,9 @@ export function WorkerConsole() {
       latestAttempt: "Latest attempt",
       proofClass: "Proof class",
       proofCommand: "Proof command",
+      governedLaunch: "Governed launch",
+      governedLaunchSummary: "Starts through Agent Gateway customer-worker dispatch when copied and run; this panel itself stays read-only.",
+      readbackCommand: "Readback command",
       freshnessHours: "Freshness",
       rawPromptOmitted: "raw prompt omitted",
       workerFleet: "Worker fleet",
@@ -214,6 +217,9 @@ export function WorkerConsole() {
       latestAttempt: "最近尝试",
       proofClass: "证明类型",
       proofCommand: "证明命令",
+      governedLaunch: "治理启动",
+      governedLaunchSummary: "复制执行后会走 Agent Gateway customer-worker 派发；这个面板本身仍是只读。",
+      readbackCommand: "回读命令",
       freshnessHours: "新鲜度",
       rawPromptOmitted: "raw prompt 已省略",
       workerFleet: "Worker Fleet",
@@ -969,22 +975,25 @@ export function WorkerConsole() {
                   <StatusBadge status={localHarnessProof?.status || "unknown"} />
                   <StatusBadge status={(localHarnessProof?.summary.fresh_real_runtime_adapters || 0) > 0 ? "pass" : "attention"} label={`${copy.realRuntimeProof}: ${localHarnessProof?.summary.fresh_real_runtime_adapters || 0}`} />
                   <StatusBadge status={(localHarnessProof?.summary.fresh_mock_fallback || 0) > 0 ? "pass" : "unknown"} label={`${copy.mockFallback}: ${localHarnessProof?.summary.fresh_mock_fallback || 0}`} />
+                  <StatusBadge status={localHarnessProof?.governed_launch_packet?.status || "unknown"} label={copy.governedLaunch} />
                 </div>
                 <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>{copy.harnessProofSummary}</p>
+                <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.governedLaunchSummary}</p>
               </div>
               <button
-                onClick={() => void copyCommand("agentops operator local-harness-proof --limit 8")}
+                onClick={() => void copyCommand(localHarnessProof?.governed_launch_packet?.readback_command || "agentops operator local-harness-proof --limit 8")}
                 className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px]"
                 style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: "var(--mis-cyan)" }}
               >
                 <Copy size={10} />
-                {copiedCommand === "agentops operator local-harness-proof --limit 8" ? copy.copied : "agentops operator local-harness-proof --limit 8"}
+                {copiedCommand === (localHarnessProof?.governed_launch_packet?.readback_command || "agentops operator local-harness-proof --limit 8") ? copy.copied : copy.readbackCommand}
               </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-3">
               {WORKER_ADAPTERS.map((adapter) => {
                 const proof = localHarnessProof?.adapters?.[adapter];
                 const latest = proof?.latest_passing || proof?.latest_attempt;
+                const governedCommand = proof?.governed_launch?.confirm_required ? proof?.governed_launch?.confirmed_command : proof?.governed_launch?.preview_command;
                 return (
                   <div key={`harness-proof:${adapter}`} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                     <div className="flex items-center justify-between gap-2">
@@ -998,13 +1007,13 @@ export function WorkerConsole() {
                       <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.freshnessHours}: <span style={{ color: "var(--mis-text)" }}>{proof?.freshness_hours || localHarnessProof?.freshness_hours || 72}h</span></div>
                     </div>
                     <button
-                      onClick={() => void copyCommand(proof?.next_action)}
-                      disabled={!proof?.next_action}
+                      onClick={() => void copyCommand(governedCommand || proof?.next_action)}
+                      disabled={!governedCommand && !proof?.next_action}
                       className="mt-2 inline-flex max-w-full items-center gap-1 rounded px-1.5 py-0.5 text-[9px] disabled:opacity-40"
-                      style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)", color: proof?.real_runtime_adapter ? "var(--mis-warning)" : "var(--mis-cyan)" }}
+                      style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)", color: proof?.governed_launch?.confirm_required ? "var(--mis-warning)" : "var(--mis-cyan)" }}
                     >
                       <Copy size={8} />
-                      <span className="truncate">{copiedCommand === proof?.next_action ? copy.copied : copy.proofCommand}</span>
+                      <span className="truncate">{copiedCommand === (governedCommand || proof?.next_action) ? copy.copied : copy.governedLaunch}</span>
                     </button>
                   </div>
                 );

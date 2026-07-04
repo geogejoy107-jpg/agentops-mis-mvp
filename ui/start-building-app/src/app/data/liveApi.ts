@@ -833,6 +833,21 @@ export interface LocalHarnessProofAdapter {
   latest_attempt?: LocalHarnessProofAttempt | null;
   latest_passing?: LocalHarnessProofAttempt | null;
   next_action: string;
+  governed_launch?: {
+    operation: string;
+    adapter: WorkerAdapterName;
+    preview_command: string;
+    confirmed_command: string;
+    confirm_required: boolean;
+    writes_ledger: boolean;
+    live_execution: boolean;
+    entrypoint: string;
+    evidence_readback_command: string;
+    approval_boundary?: string;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
   token_omitted: boolean;
 }
 
@@ -854,6 +869,21 @@ export interface LocalHarnessProofReadiness {
     latest_incomplete: number;
   };
   commands: Record<string, string>;
+  governed_launch_packet?: {
+    operation: string;
+    status: string;
+    preferred_entrypoint: string;
+    readback_command: string;
+    contract?: string;
+    safety: {
+      read_only: boolean;
+      ledger_mutated: boolean;
+      live_execution_performed: boolean;
+      raw_prompt_omitted: boolean;
+      raw_response_omitted: boolean;
+      token_omitted: boolean;
+    };
+  };
   contract?: string;
   safety: {
     read_only: boolean;
@@ -4929,6 +4959,7 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
   };
   const normalizeHarnessAdapter = (adapter: WorkerAdapterName): LocalHarnessProofAdapter => {
     const item = typeof harnessAdaptersRaw[adapter] === "object" && harnessAdaptersRaw[adapter] !== null ? harnessAdaptersRaw[adapter] as Record<string, unknown> : {};
+    const governedRaw = typeof item.governed_launch === "object" && item.governed_launch !== null ? item.governed_launch as Record<string, unknown> : {};
     return {
       adapter,
       status: String(item.status || "missing"),
@@ -4939,6 +4970,21 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
       latest_attempt: normalizeHarnessAttempt(item.latest_attempt),
       latest_passing: normalizeHarnessAttempt(item.latest_passing),
       next_action: String(item.next_action || harnessCommandsRaw[adapter] || (adapter === "mock" ? "python3 scripts/local_task_harness.py --adapter mock --execute" : `python3 scripts/local_task_harness.py --adapter ${adapter} --execute --confirm-run --request-timeout 720`)),
+      governed_launch: item.governed_launch ? {
+        operation: String(governedRaw.operation || "customer_worker_task"),
+        adapter,
+        preview_command: String(governedRaw.preview_command || ""),
+        confirmed_command: String(governedRaw.confirmed_command || governedRaw.preview_command || ""),
+        confirm_required: boolValue(governedRaw.confirm_required),
+        writes_ledger: boolValue(governedRaw.writes_ledger),
+        live_execution: boolValue(governedRaw.live_execution),
+        entrypoint: String(governedRaw.entrypoint || "agentops workflow customer-worker-task"),
+        evidence_readback_command: String(governedRaw.evidence_readback_command || "agentops operator local-harness-proof --limit 8"),
+        approval_boundary: governedRaw.approval_boundary ? String(governedRaw.approval_boundary) : undefined,
+        raw_prompt_omitted: boolValue(governedRaw.raw_prompt_omitted),
+        raw_response_omitted: boolValue(governedRaw.raw_response_omitted),
+        token_omitted: governedRaw.token_omitted === undefined ? true : boolValue(governedRaw.token_omitted),
+      } : undefined,
       token_omitted: item.token_omitted === undefined ? true : boolValue(item.token_omitted),
     };
   };
@@ -5033,6 +5079,25 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
         latest_incomplete: numberValue(harnessSummaryRaw.latest_incomplete, 0),
       },
       commands: Object.fromEntries(Object.entries(harnessCommandsRaw).map(([key, value]) => [key, String(value || "")])),
+      governed_launch_packet: typeof harnessRaw.governed_launch_packet === "object" && harnessRaw.governed_launch_packet !== null ? (() => {
+        const packetRaw = harnessRaw.governed_launch_packet as Record<string, unknown>;
+        const packetSafetyRaw = typeof packetRaw.safety === "object" && packetRaw.safety !== null ? packetRaw.safety as Record<string, unknown> : {};
+        return {
+          operation: String(packetRaw.operation || "local_harness_proof_governed_launch_packet"),
+          status: String(packetRaw.status || "unknown"),
+          preferred_entrypoint: String(packetRaw.preferred_entrypoint || "agentops workflow customer-worker-task"),
+          readback_command: String(packetRaw.readback_command || "agentops operator local-harness-proof --limit 8"),
+          contract: packetRaw.contract ? String(packetRaw.contract) : undefined,
+          safety: {
+            read_only: boolValue(packetSafetyRaw.read_only),
+            ledger_mutated: boolValue(packetSafetyRaw.ledger_mutated),
+            live_execution_performed: boolValue(packetSafetyRaw.live_execution_performed),
+            raw_prompt_omitted: boolValue(packetSafetyRaw.raw_prompt_omitted),
+            raw_response_omitted: boolValue(packetSafetyRaw.raw_response_omitted),
+            token_omitted: boolValue(packetSafetyRaw.token_omitted),
+          },
+        };
+      })() : undefined,
       contract: harnessRaw.contract ? String(harnessRaw.contract) : undefined,
       safety: {
         read_only: boolValue(harnessSafetyRaw.read_only),
