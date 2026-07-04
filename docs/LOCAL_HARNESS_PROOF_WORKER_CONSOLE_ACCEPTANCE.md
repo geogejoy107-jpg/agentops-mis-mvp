@@ -44,8 +44,8 @@ cd ui/start-building-app && npm run build
 git diff --check
 ```
 
-## Next Slice
+## Follow-On Slice
 
-After this readback is visible, the next product-level slice is to let the
-operator launch the local harness proof command through an already governed
-worker/task path, not a browser-only shortcut.
+The follow-on governed launch slice adds copyable Agent Gateway
+`customer-worker-task` commands to the same readback so operators can launch new
+proof runs through the worker/task path instead of a browser-only shortcut.
