@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / "docs" / "AGENT_TASK_HARNESS_ENGINEERING_SPEC.md"
+RESEARCH_ACCEPTANCE = ROOT / "docs" / "AGENT_TASK_HARNESS_RESEARCH_CONSTRAINTS_ACCEPTANCE.md"
 LOCAL_ACCEPTANCE = ROOT / "docs" / "LOCAL_TASK_HARNESS_ACCEPTANCE.md"
 OPENCLAW_DOGFOOD = ROOT / "docs" / "OPENCLAW_LOCAL_HARNESS_DOGFOOD_2026_07_04.md"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
@@ -20,7 +21,9 @@ COMMAND = "python3 scripts/agent_task_harness_engineering_spec_smoke.py"
 REQUIRED_MARKERS = [
     "Agent Task Harness Engineering Spec",
     "Fresh Research Inputs",
+    "Investigation Summary",
     "Harness Objects",
+    "Product Constraint Register",
     "Work Packet Minimum",
     "Execution Phases",
     "Real Runtime And Mock Boundary",
@@ -44,6 +47,8 @@ SOURCE_MARKERS = [
     "https://arxiv.org/html/2605.27922v1",
     "https://arize.com/blog/improve-ai-agents-traces-evals-harness/",
     "https://developers.openai.com/api/docs/guides/evals",
+    "https://www.langchain.com/blog/improving-deep-agents-with-harness-engineering",
+    "https://arxiv.org/html/2605.18747v1",
 ]
 
 PACKET_FIELDS = [
@@ -89,6 +94,19 @@ SCORECARD_FIELDS = [
     "secret_leak_absent",
     "memory_reviewable",
     "claim_limit_clear",
+]
+
+CONSTRAINT_MARKERS = [
+    "MIS authority",
+    "Agent interface",
+    "Runtime proof",
+    "Mock boundary",
+    "Approval wall",
+    "Redaction",
+    "Reproducibility",
+    "Async lanes",
+    "External tools",
+    "Customer clarity",
 ]
 
 SECRET_PATTERNS = [
@@ -137,10 +155,13 @@ def main() -> int:
 
     for path, label in [
         (SPEC, "Agent task harness engineering spec"),
+        (RESEARCH_ACCEPTANCE, "Agent task harness research constraints acceptance"),
         (LOCAL_ACCEPTANCE, "local task harness acceptance"),
         (OPENCLAW_DOGFOOD, "OpenClaw local harness dogfood"),
     ]:
         require(path.exists(), f"missing {label}: {path.relative_to(ROOT)}", failures)
+
+    research_acceptance = read(RESEARCH_ACCEPTANCE)
 
     for marker in REQUIRED_MARKERS:
         require(marker in spec, f"spec missing marker: {marker}", failures)
@@ -157,10 +178,23 @@ def main() -> int:
     for field in SCORECARD_FIELDS:
         require(f"`{field}`" in spec, f"spec missing scorecard field: {field}", failures)
 
+    for marker in CONSTRAINT_MARKERS:
+        require(marker in spec, f"spec missing product constraint: {marker}", failures)
+
+    require("model-harness pair" in spec, "spec missing model-harness pair investigation lesson", failures)
+    require("Store summaries, hashes, ids and safe metadata" in spec, "spec missing redaction storage constraint", failures)
+    require("prepared action hash, checkpoint, approval and exact once resume" in spec, "spec missing exact approval-wall constraint", failures)
     require("/api/operator/local-harness-proof" in spec, "spec missing local harness proof API next slice", failures)
     require("python3 scripts/local_task_harness.py --adapter openclaw --confirm-run" in spec, "spec missing confirmed OpenClaw harness command", failures)
     require("live_execution_performed: true" in dogfood, "OpenClaw dogfood doc missing real live evidence marker", failures)
     require("Product-readiness claims" in local_acceptance, "local task harness acceptance missing product-readiness boundary", failures)
+    require("Product Translation" in research_acceptance, "research constraints acceptance missing product translation", failures)
+    require("Real Hermes/OpenClaw proof needs ledger readback" in research_acceptance, "research constraints acceptance missing real-runtime proof boundary", failures)
+    require(
+        all(marker in research_acceptance for marker in ["raw prompts", "responses", "credentials", "private messages", "full transcripts", "forbidden"]),
+        "research constraints acceptance missing raw-data prohibition",
+        failures,
+    )
 
     require(COMMAND in ci, "CI workflow missing Agent task harness spec smoke", failures)
     require(COMMAND in release_smoke, "release evidence smoke missing Agent task harness spec smoke", failures)
@@ -182,6 +216,7 @@ def main() -> int:
         "packet_fields": PACKET_FIELDS,
         "phases": PHASES,
         "scorecard_fields": SCORECARD_FIELDS,
+        "constraint_markers": CONSTRAINT_MARKERS,
         "required_command": COMMAND,
         "safety": {
             "read_only": True,
