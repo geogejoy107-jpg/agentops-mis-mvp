@@ -52,114 +52,114 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 scripts/redaction_policy_smoke.py
-          python3 scripts/sqlite_pragmas_smoke.py
-          python3 scripts/sqlite_reliability_smoke.py
-          python3 scripts/sqlite_concurrency_smoke.py
-          python3 scripts/migration_rollback_smoke.py
-          python3 scripts/release_branch_control_smoke.py
-          python3 scripts/release_freeze_protocol_smoke.py
-          python3 scripts/github_ci_evidence_smoke.py
-          python3 scripts/clean_machine_rc_smoke.py
-          python3 scripts/release_evidence_packet_smoke.py
-          python3 scripts/merge_readiness_status_smoke.py
-          python3 scripts/v1_5_product_closure_evidence_smoke.py
-          python3 scripts/enrollment_hosted_policy_ui_smoke.py
-          python3 scripts/agent_gateway_scope_effects_ui_smoke.py
-          python3 scripts/runtime_connector_trust_ui_smoke.py
-          python3 scripts/customer_worker_hermes_retry_gateway_smoke.py
-          python3 scripts/module_boundary_smoke.py
-          python3 scripts/read_model_cache_smoke.py
-          python3 scripts/open_source_adoption_boundary_smoke.py
-          python3 scripts/open_source_adoption_packet_spec_smoke.py
-          python3 scripts/open_source_adoption_packet_catalog_smoke.py
-          python3 scripts/open_source_mainline_governance_smoke.py
-          python3 scripts/harness_engineering_control_plane_smoke.py
-          python3 scripts/harness_engineering_execution_constraints_smoke.py
-          python3 scripts/harness_style_agentops_operating_spec_smoke.py
-          python3 scripts/local_task_harness_smoke.py
-          python3 scripts/agent_task_harness_engineering_spec_smoke.py
-          python3 scripts/local_harness_proof_readback_smoke.py
-          python3 scripts/commercial_config_boundary_smoke.py
-          python3 scripts/commercial_config_status_smoke.py
-          python3 scripts/commercial_config_status_ui_smoke.py
-          python3 scripts/commercial_config_operator_action_ui_smoke.py
-          python3 scripts/commercial_evidence_packet_index_smoke.py
-          python3 scripts/commercial_current_evidence_status_smoke.py
-          python3 scripts/commercial_handoff_status_smoke.py
-          python3 scripts/commercial_promotion_preflight_smoke.py
-          python3 scripts/commercial_promotion_packet_smoke.py
-          python3 scripts/commercial_receipt_plan_smoke.py
-          python3 scripts/commercial_receipt_recording_smoke.py
-          python3 scripts/commercial_rerun_bundle_preview_smoke.py
-          python3 scripts/commercial_confirmed_receipt_recording_smoke.py
-          python3 scripts/commercial_receipt_prepared_action_binding_smoke.py
-          python3 scripts/commercial_prepared_action_execution_receipt_smoke.py
-          python3 scripts/commercial_migration_breakdown_smoke.py
-          python3 scripts/p0_open_source_plan_smoke.py
-          python3 scripts/notion_open_source_loop_convergence_smoke.py
-          python3 scripts/notion_project_memory_connector_layer_smoke.py
-          python3 scripts/external_base_manifest_smoke.py
-          python3 scripts/local_open_source_experiment_base_smoke.py
-          python3 scripts/spatial_os_manifest_smoke.py
-          python3 scripts/spatial_research_semantic_contract_smoke.py
-          python3 scripts/spatial_zone_authority_readback_smoke.py
-          python3 scripts/live_worker_loop_demo_slice_smoke.py
-          python3 scripts/pixel_office_template_foundation_smoke.py
-          python3 scripts/external_connector_runtime_inventory_smoke.py
-          python3 scripts/secret_scan_smoke.py
-          python3 scripts/license_provenance_smoke.py
-          python3 scripts/public_claims_release_gate_smoke.py
-          python3 scripts/redaction_fuzz_smoke.py
-          python3 scripts/shared_mode_local_write_guard_smoke.py
-          python3 scripts/approval_semantics_boundary_smoke.py
-          python3 scripts/agent_plan_quality_smoke.py
-          python3 scripts/automatic_plan_evidence_workflow_smoke.py
-          python3 scripts/knowledge_retrieval_quality_smoke.py
-          python3 scripts/worker_knowledge_evidence_consumption_smoke.py
-          python3 scripts/worker_intake_auto_plan_smoke.py
-          python3 scripts/worker_prompt_profile_smoke.py
-          python3 scripts/work_delivery_graph_readback_smoke.py
-          python3 scripts/osbi_v1_1_registry_smoke.py
-          python3 scripts/mis_context_engineer_smoke.py
-          python3 scripts/evaluation_scorecard_smoke.py
-          python3 scripts/ui_research_spec_smoke.py
-          python3 scripts/commander_repo_map_smoke.py
-          python3 scripts/commander_coding_project_template_smoke.py
-          python3 scripts/commander_coding_workspace_smoke.py
-          python3 scripts/commander_lane_packet_smoke.py
-          python3 scripts/operator_command_center_smoke.py
-          python3 scripts/ai_employees_responsiveness_smoke.py
-          python3 scripts/operator_action_queue_ui_smoke.py
-          python3 scripts/worker_console_ui_smoke.py
-          python3 scripts/customer_dispatch_desk_ui_smoke.py
-          python3 scripts/commander_team_board_ui_smoke.py
-          python3 scripts/task_detail_evidence_ui_smoke.py
-          python3 scripts/run_ledger_evidence_ui_smoke.py
-          python3 scripts/run_detail_evidence_ui_smoke.py
-          python3 scripts/startup_security_guard_smoke.py
-          python3 scripts/operator_loop_audit_closed_loop_smoke.py
-          python3 scripts/operator_advance_loop_smoke.py
-          python3 scripts/operator_loop_control_smoke.py
-          python3 scripts/operator_loop_bootstrap_smoke.py
-          python3 scripts/operator_loop_bootstrap_api_ui_smoke.py
-          python3 scripts/operator_loop_driver_smoke.py
-          python3 scripts/operator_loop_driver_dogfood_smoke.py
-          python3 scripts/operator_loop_launch_packet_smoke.py
-          python3 scripts/operator_agent_loop_handoff_smoke.py
-          python3 scripts/operator_loop_supervision_smoke.py
-          python3 scripts/operator_loop_supervision_consumption_smoke.py
-          python3 scripts/operator_service_closure_cli_smoke.py
-          python3 scripts/operator_service_closure_fast_smoke.py
-          python3 scripts/run_start_loop_supervision_gate_smoke.py
-          python3 scripts/run_start_work_packet_decision_gate_smoke.py
-          python3 scripts/operator_live_product_readiness_smoke.py
-          python3 scripts/live_worker_loop_demo_slice_smoke.py
-          python3 scripts/agentops_worker_service_check_smoke.py
-          python3 scripts/agentops_worker_service_control_smoke.py
-          python3 scripts/local_runtime_identity_smoke.py
-          python3 scripts/agentops_cli_connection_hint_smoke.py
-          python3 scripts/worker_log_rotation_smoke.py
+          timeout 120s python3 scripts/redaction_policy_smoke.py
+          timeout 120s python3 scripts/sqlite_pragmas_smoke.py
+          timeout 120s python3 scripts/sqlite_reliability_smoke.py
+          timeout 120s python3 scripts/sqlite_concurrency_smoke.py
+          timeout 120s python3 scripts/migration_rollback_smoke.py
+          timeout 120s python3 scripts/release_branch_control_smoke.py
+          timeout 120s python3 scripts/release_freeze_protocol_smoke.py
+          timeout 120s python3 scripts/github_ci_evidence_smoke.py
+          timeout 120s python3 scripts/clean_machine_rc_smoke.py
+          timeout 120s python3 scripts/release_evidence_packet_smoke.py
+          timeout 120s python3 scripts/merge_readiness_status_smoke.py
+          timeout 120s python3 scripts/v1_5_product_closure_evidence_smoke.py
+          timeout 120s python3 scripts/enrollment_hosted_policy_ui_smoke.py
+          timeout 120s python3 scripts/agent_gateway_scope_effects_ui_smoke.py
+          timeout 120s python3 scripts/runtime_connector_trust_ui_smoke.py
+          timeout 120s python3 scripts/customer_worker_hermes_retry_gateway_smoke.py
+          timeout 120s python3 scripts/module_boundary_smoke.py
+          timeout 120s python3 scripts/read_model_cache_smoke.py
+          timeout 120s python3 scripts/open_source_adoption_boundary_smoke.py
+          timeout 120s python3 scripts/open_source_adoption_packet_spec_smoke.py
+          timeout 120s python3 scripts/open_source_adoption_packet_catalog_smoke.py
+          timeout 120s python3 scripts/open_source_mainline_governance_smoke.py
+          timeout 120s python3 scripts/harness_engineering_control_plane_smoke.py
+          timeout 120s python3 scripts/harness_engineering_execution_constraints_smoke.py
+          timeout 120s python3 scripts/harness_style_agentops_operating_spec_smoke.py
+          timeout 120s python3 scripts/local_task_harness_smoke.py
+          timeout 120s python3 scripts/agent_task_harness_engineering_spec_smoke.py
+          timeout 120s python3 scripts/local_harness_proof_readback_smoke.py
+          timeout 120s python3 scripts/commercial_config_boundary_smoke.py
+          timeout 120s python3 scripts/commercial_config_status_smoke.py
+          timeout 120s python3 scripts/commercial_config_status_ui_smoke.py
+          timeout 120s python3 scripts/commercial_config_operator_action_ui_smoke.py
+          timeout 120s python3 scripts/commercial_evidence_packet_index_smoke.py
+          timeout 120s python3 scripts/commercial_current_evidence_status_smoke.py
+          timeout 120s python3 scripts/commercial_handoff_status_smoke.py
+          timeout 120s python3 scripts/commercial_promotion_preflight_smoke.py
+          timeout 120s python3 scripts/commercial_promotion_packet_smoke.py
+          timeout 120s python3 scripts/commercial_receipt_plan_smoke.py
+          timeout 120s python3 scripts/commercial_receipt_recording_smoke.py
+          timeout 120s python3 scripts/commercial_rerun_bundle_preview_smoke.py
+          timeout 120s python3 scripts/commercial_confirmed_receipt_recording_smoke.py
+          timeout 120s python3 scripts/commercial_receipt_prepared_action_binding_smoke.py
+          timeout 120s python3 scripts/commercial_prepared_action_execution_receipt_smoke.py
+          timeout 120s python3 scripts/commercial_migration_breakdown_smoke.py
+          timeout 120s python3 scripts/p0_open_source_plan_smoke.py
+          timeout 120s python3 scripts/notion_open_source_loop_convergence_smoke.py
+          timeout 120s python3 scripts/notion_project_memory_connector_layer_smoke.py
+          timeout 120s python3 scripts/external_base_manifest_smoke.py
+          timeout 120s python3 scripts/local_open_source_experiment_base_smoke.py
+          timeout 120s python3 scripts/spatial_os_manifest_smoke.py
+          timeout 120s python3 scripts/spatial_research_semantic_contract_smoke.py
+          timeout 120s python3 scripts/spatial_zone_authority_readback_smoke.py
+          timeout 120s python3 scripts/live_worker_loop_demo_slice_smoke.py
+          timeout 120s python3 scripts/pixel_office_template_foundation_smoke.py
+          timeout 120s python3 scripts/external_connector_runtime_inventory_smoke.py
+          timeout 120s python3 scripts/secret_scan_smoke.py
+          timeout 120s python3 scripts/license_provenance_smoke.py
+          timeout 120s python3 scripts/public_claims_release_gate_smoke.py
+          timeout 120s python3 scripts/redaction_fuzz_smoke.py
+          timeout 120s python3 scripts/shared_mode_local_write_guard_smoke.py
+          timeout 120s python3 scripts/approval_semantics_boundary_smoke.py
+          timeout 120s python3 scripts/agent_plan_quality_smoke.py
+          timeout 120s python3 scripts/automatic_plan_evidence_workflow_smoke.py
+          timeout 120s python3 scripts/knowledge_retrieval_quality_smoke.py
+          timeout 120s python3 scripts/worker_knowledge_evidence_consumption_smoke.py
+          timeout 120s python3 scripts/worker_intake_auto_plan_smoke.py
+          timeout 120s python3 scripts/worker_prompt_profile_smoke.py
+          timeout 120s python3 scripts/work_delivery_graph_readback_smoke.py
+          timeout 120s python3 scripts/osbi_v1_1_registry_smoke.py
+          timeout 120s python3 scripts/mis_context_engineer_smoke.py
+          timeout 120s python3 scripts/evaluation_scorecard_smoke.py
+          timeout 120s python3 scripts/ui_research_spec_smoke.py
+          timeout 120s python3 scripts/commander_repo_map_smoke.py
+          timeout 120s python3 scripts/commander_coding_project_template_smoke.py
+          timeout 120s python3 scripts/commander_coding_workspace_smoke.py
+          timeout 120s python3 scripts/commander_lane_packet_smoke.py
+          timeout 120s python3 scripts/operator_command_center_smoke.py
+          timeout 120s python3 scripts/ai_employees_responsiveness_smoke.py
+          timeout 120s python3 scripts/operator_action_queue_ui_smoke.py
+          timeout 120s python3 scripts/worker_console_ui_smoke.py
+          timeout 120s python3 scripts/customer_dispatch_desk_ui_smoke.py
+          timeout 120s python3 scripts/commander_team_board_ui_smoke.py
+          timeout 120s python3 scripts/task_detail_evidence_ui_smoke.py
+          timeout 120s python3 scripts/run_ledger_evidence_ui_smoke.py
+          timeout 120s python3 scripts/run_detail_evidence_ui_smoke.py
+          timeout 120s python3 scripts/startup_security_guard_smoke.py
+          timeout 120s python3 scripts/operator_loop_audit_closed_loop_smoke.py
+          timeout 120s python3 scripts/operator_advance_loop_smoke.py
+          timeout 120s python3 scripts/operator_loop_control_smoke.py
+          timeout 120s python3 scripts/operator_loop_bootstrap_smoke.py
+          timeout 120s python3 scripts/operator_loop_bootstrap_api_ui_smoke.py
+          timeout 120s python3 scripts/operator_loop_driver_smoke.py
+          timeout 120s python3 scripts/operator_loop_driver_dogfood_smoke.py
+          timeout 120s python3 scripts/operator_loop_launch_packet_smoke.py
+          timeout 120s python3 scripts/operator_agent_loop_handoff_smoke.py
+          timeout 120s python3 scripts/operator_loop_supervision_smoke.py
+          timeout 120s python3 scripts/operator_loop_supervision_consumption_smoke.py
+          timeout 120s python3 scripts/operator_service_closure_cli_smoke.py
+          timeout 120s python3 scripts/operator_service_closure_fast_smoke.py
+          timeout 120s python3 scripts/run_start_loop_supervision_gate_smoke.py
+          timeout 120s python3 scripts/run_start_work_packet_decision_gate_smoke.py
+          timeout 120s python3 scripts/operator_live_product_readiness_smoke.py
+          timeout 120s python3 scripts/live_worker_loop_demo_slice_smoke.py
+          timeout 120s python3 scripts/agentops_worker_service_check_smoke.py
+          timeout 120s python3 scripts/agentops_worker_service_control_smoke.py
+          timeout 120s python3 scripts/local_runtime_identity_smoke.py
+          timeout 120s python3 scripts/agentops_cli_connection_hint_smoke.py
+          timeout 120s python3 scripts/worker_log_rotation_smoke.py
 
       - name: Start isolated local server
         run: |
