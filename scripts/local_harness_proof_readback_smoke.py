@@ -28,6 +28,7 @@ LEDGER_TABLES = [
 ]
 
 ACCEPTANCE_DOC = ROOT / "docs" / "LOCAL_HARNESS_PROOF_READBACK_ACCEPTANCE.md"
+GOVERNED_LAUNCH_ACCEPTANCE_DOC = ROOT / "docs" / "LOCAL_HARNESS_PROOF_GOVERNED_LAUNCH_ACCEPTANCE.md"
 
 
 def iso(hours_delta: float = 0) -> str:
@@ -364,6 +365,11 @@ def validate_payload(payload: dict, failures: list[str]) -> None:
     require(safety.get("read_only") is True, f"safety read_only missing: {payload}", failures)
     require(safety.get("ledger_mutated") is False, f"safety ledger_mutated mismatch: {payload}", failures)
     require(safety.get("token_omitted") is True, f"safety token omission missing: {payload}", failures)
+    launch_packet = payload.get("governed_launch_packet") or {}
+    require(launch_packet.get("operation") == "local_harness_proof_governed_launch_packet", f"governed launch packet missing: {payload}", failures)
+    require((launch_packet.get("safety") or {}).get("read_only") is True, f"governed launch packet must be read-only: {launch_packet}", failures)
+    require((launch_packet.get("safety") or {}).get("live_execution_performed") is False, f"governed launch packet must not execute runtime: {launch_packet}", failures)
+    require("agentops workflow customer-worker-task" in (launch_packet.get("preferred_entrypoint") or ""), f"governed launch entrypoint mismatch: {launch_packet}", failures)
     summary = payload.get("summary") or {}
     require(int(summary.get("fresh_real_runtime_adapters") or 0) == 1, f"real runtime summary mismatch: {summary}", failures)
     require(int(summary.get("fresh_mock_fallback") or 0) == 1, f"mock fallback summary mismatch: {summary}", failures)
@@ -376,6 +382,19 @@ def validate_payload(payload: dict, failures: list[str]) -> None:
     require(openclaw.get("status") == "fresh", f"OpenClaw should be fresh: {openclaw}", failures)
     require(openclaw.get("evidence_class") == "real_runtime_ledger_readback", f"OpenClaw evidence class mismatch: {openclaw}", failures)
     require(hermes.get("status") == "latest_failed", f"Hermes should expose latest failed: {hermes}", failures)
+    for adapter, item in [("mock", mock), ("openclaw", openclaw), ("hermes", hermes)]:
+        governed = item.get("governed_launch") or {}
+        require(governed.get("operation") == "customer_worker_task", f"{adapter} governed launch missing: {item}", failures)
+        require("agentops workflow customer-worker-task" in (governed.get("preview_command") or ""), f"{adapter} preview command must use worker path: {governed}", failures)
+        require("scripts/local_task_harness.py" not in (governed.get("preview_command") or ""), f"{adapter} preview command must not use direct script: {governed}", failures)
+        require(governed.get("writes_ledger") is True, f"{adapter} governed launch should write ledger when executed: {governed}", failures)
+        require(governed.get("token_omitted") is True, f"{adapter} governed launch token omission missing: {governed}", failures)
+    require((mock.get("governed_launch") or {}).get("confirm_required") is False, f"mock should not require confirm: {mock}", failures)
+    for adapter, item in [("openclaw", openclaw), ("hermes", hermes)]:
+        governed = item.get("governed_launch") or {}
+        require(governed.get("confirm_required") is True, f"{adapter} should require confirm: {governed}", failures)
+        require("--confirm-run" in (governed.get("confirmed_command") or ""), f"{adapter} confirmed command missing confirm: {governed}", failures)
+        require(governed.get("live_execution") is True, f"{adapter} governed launch live flag missing: {governed}", failures)
     latest = openclaw.get("latest_passing") or {}
     evidence = latest.get("evidence") or {}
     for key in ["completed_adapter_tool_calls", "passing_evaluations", "runtime_events", "audit_logs", "artifacts", "verified_plan_evidence_manifests"]:
@@ -390,7 +409,16 @@ def main() -> int:
     outputs: list[str] = []
     workspace_id = "harness-proof-smoke"
     acceptance = ACCEPTANCE_DOC.read_text(encoding="utf-8") if ACCEPTANCE_DOC.exists() else ""
+    governed_acceptance = GOVERNED_LAUNCH_ACCEPTANCE_DOC.read_text(encoding="utf-8") if GOVERNED_LAUNCH_ACCEPTANCE_DOC.exists() else ""
     require(ACCEPTANCE_DOC.exists(), "missing local harness proof acceptance doc", failures)
+    require(GOVERNED_LAUNCH_ACCEPTANCE_DOC.exists(), "missing governed launch acceptance doc", failures)
+    for marker in [
+        "governed_launch_packet",
+        "agentops workflow customer-worker-task",
+        "--confirm-run",
+        "read-only/no-live-execution",
+    ]:
+        require(marker in governed_acceptance, f"governed launch acceptance doc missing marker: {marker}", failures)
     for marker in [
         "agentops operator local-harness-proof",
         "GET /api/operator/local-harness-proof",

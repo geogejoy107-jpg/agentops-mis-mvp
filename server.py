@@ -18726,6 +18726,42 @@ def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = 
             {"id": "plan_evidence", "ok": evidence["verified_plan_evidence_manifests"] >= 1, "message": "A verified plan-evidence manifest exists."},
         ]
 
+    def governed_launch_packet(adapter: str) -> dict:
+        title = f"Local task harness proof: {adapter}"
+        description = (
+            "Run a local task harness proof through the AgentOps customer-worker path. "
+            "The worker must write run, tool, runtime event, evaluation, audit, artifact "
+            "and plan-evidence ledger rows while omitting raw prompts, raw responses and tokens."
+        )
+        acceptance = (
+            "Proof is valid only when MIS reads back completed run/tool/runtime/evaluation/audit/"
+            "artifact/verified-plan-evidence rows for the returned run id."
+        )
+        base_command = (
+            f"agentops workflow customer-worker-task --adapter {adapter} "
+            f"--title {shlex.quote(title)} "
+            f"--description {shlex.quote(description)} "
+            f"--acceptance {shlex.quote(acceptance)} "
+            "--priority high --risk medium "
+            f"--worker-agent-id {shlex.quote(f'agt_local_task_harness_{adapter}')}"
+        )
+        confirmed_command = base_command if adapter == "mock" else f"{base_command} --confirm-run --hermes-timeout 600 --hermes-max-tokens 512"
+        return {
+            "operation": "customer_worker_task",
+            "adapter": adapter,
+            "preview_command": base_command,
+            "confirmed_command": confirmed_command,
+            "confirm_required": adapter in {"hermes", "openclaw"},
+            "writes_ledger": True,
+            "live_execution": adapter in {"hermes", "openclaw"},
+            "entrypoint": "agentops workflow customer-worker-task",
+            "evidence_readback_command": "agentops operator local-harness-proof --limit 8",
+            "approval_boundary": "Hermes/OpenClaw live execution still requires explicit --confirm-run and runtime readiness/trust gates before adapter invocation.",
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        }
+
     adapters: dict[str, dict] = {}
     for adapter in ["mock", "hermes", "openclaw"]:
         rows = rows_to_dicts(conn.execute(
@@ -18838,6 +18874,7 @@ def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = 
                 if adapter == "mock"
                 else f"python3 scripts/local_task_harness.py --adapter {adapter} --execute --confirm-run --request-timeout 720"
             ),
+            "governed_launch": governed_launch_packet(adapter),
             "token_omitted": True,
         }
     real_runtime_fresh = sum(1 for adapter, item in adapters.items() if adapter in {"hermes", "openclaw"} and item["status"] == "fresh")
@@ -18860,6 +18897,22 @@ def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = 
             "latest_incomplete": sum(1 for item in adapters.values() if item["status"] == "latest_incomplete"),
         },
         "commands": {adapter: item["next_action"] for adapter, item in adapters.items()},
+        "governed_launch_packet": {
+            "operation": "local_harness_proof_governed_launch_packet",
+            "status": "ready",
+            "adapters": {adapter: item["governed_launch"] for adapter, item in adapters.items()},
+            "preferred_entrypoint": "agentops workflow customer-worker-task",
+            "readback_command": "agentops operator local-harness-proof --limit 8",
+            "contract": "Use Agent Gateway customer-worker dispatch for new proof runs; direct scripts/local_task_harness.py remains a developer fallback.",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
+        },
         "contract": "read-only local task harness proof; mock is CI/offline fallback, while Hermes/OpenClaw fresh rows are real-runtime proof for returned run ids only",
         "safety": {
             "read_only": True,

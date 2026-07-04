@@ -281,6 +281,11 @@ The readback classifies `mock` as `mock_ci_fallback` and Hermes/OpenClaw as
 `real_runtime_ledger_readback` only for returned run ids that have completed
 run/tool/evaluation/runtime/audit/artifact/verified-plan-evidence rows.
 
+The readback also exposes a governed launch packet: new proof runs should start
+through `agentops workflow customer-worker-task`, while
+`scripts/local_task_harness.py` remains a developer fallback. Hermes/OpenClaw
+launch commands still require explicit `--confirm-run`.
+
 Local readiness now embeds this proof as `local_harness_proof_readiness`, adds
 summary counters to `evidence`, and exposes a non-blocking `local_harness_proof`
 gate. This makes harness proof visible in the normal operator readiness flow

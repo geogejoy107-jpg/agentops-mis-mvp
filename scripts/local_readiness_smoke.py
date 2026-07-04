@@ -193,12 +193,21 @@ def validate(payload: dict) -> None:
     require(harness.get("operation") == "local_harness_proof_readiness", f"local harness proof missing: {harness}")
     require(harness.get("live_execution_performed") is False, f"local harness proof must be read-only: {harness}")
     require((harness.get("safety") or {}).get("read_only") is True, f"local harness proof safety missing: {harness}")
+    governed_launch = harness.get("governed_launch_packet") or {}
+    require(governed_launch.get("operation") == "local_harness_proof_governed_launch_packet", f"local harness governed launch packet missing: {harness}")
+    require((governed_launch.get("safety") or {}).get("read_only") is True, f"local harness governed launch must be read-only: {governed_launch}")
+    require("agentops workflow customer-worker-task" in (governed_launch.get("preferred_entrypoint") or ""), f"local harness governed launch should use worker workflow: {governed_launch}")
     harness_gate = next((gate for gate in gates if gate.get("id") == "local_harness_proof"), {})
     require("local-harness-proof" in (harness_gate.get("next_action") or ""), f"local harness gate should route to CLI proof: {harness_gate}")
     harness_adapters = harness.get("adapters") or {}
     for adapter in ["mock", "hermes", "openclaw"]:
         require(adapter in harness_adapters, f"local harness proof missing adapter {adapter}: {harness}")
         require(harness_adapters[adapter].get("token_omitted") is True, f"local harness adapter token omission missing: {harness_adapters[adapter]}")
+        adapter_launch = harness_adapters[adapter].get("governed_launch") or {}
+        require("agentops workflow customer-worker-task" in (adapter_launch.get("preview_command") or ""), f"{adapter} governed launch preview must use worker workflow: {adapter_launch}")
+        if adapter in {"hermes", "openclaw"}:
+            require(adapter_launch.get("confirm_required") is True, f"{adapter} governed launch should require confirm: {adapter_launch}")
+            require("--confirm-run" in (adapter_launch.get("confirmed_command") or ""), f"{adapter} governed launch confirmed command missing confirm: {adapter_launch}")
     lifecycle = payload.get("commander_synthesis_lifecycle") or {}
     require(lifecycle.get("status") in {"empty", "created", "review_pending", "promotion_available", "promoted"}, f"bad synthesis lifecycle: {lifecycle}")
     require((lifecycle.get("safety") or {}).get("read_only") is True, f"synthesis lifecycle must be read-only: {lifecycle}")
