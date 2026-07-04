@@ -843,6 +843,10 @@ export interface LocalHarnessProofAdapter {
     live_execution: boolean;
     entrypoint: string;
     evidence_readback_command: string;
+    receipt_preview_command?: string;
+    receipt_record_command?: string;
+    receipt_readback_command?: string;
+    action_signature?: string;
     approval_boundary?: string;
     raw_prompt_omitted: boolean;
     raw_response_omitted: boolean;
@@ -4980,6 +4984,10 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
         live_execution: boolValue(governedRaw.live_execution),
         entrypoint: String(governedRaw.entrypoint || "agentops workflow customer-worker-task"),
         evidence_readback_command: String(governedRaw.evidence_readback_command || "agentops operator local-harness-proof --limit 8"),
+        receipt_preview_command: governedRaw.receipt_preview_command ? String(governedRaw.receipt_preview_command) : undefined,
+        receipt_record_command: governedRaw.receipt_record_command ? String(governedRaw.receipt_record_command) : undefined,
+        receipt_readback_command: governedRaw.receipt_readback_command ? String(governedRaw.receipt_readback_command) : undefined,
+        action_signature: governedRaw.action_signature ? String(governedRaw.action_signature) : undefined,
         approval_boundary: governedRaw.approval_boundary ? String(governedRaw.approval_boundary) : undefined,
         raw_prompt_omitted: boolValue(governedRaw.raw_prompt_omitted),
         raw_response_omitted: boolValue(governedRaw.raw_response_omitted),
