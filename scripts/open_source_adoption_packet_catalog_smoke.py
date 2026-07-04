@@ -81,6 +81,12 @@ SPATIAL_RESEARCH_REQUIRED = {
     "intake_lane": "incubator",
 }
 
+UI_V2_REQUIRED = {
+    "packet_id": "ospkt_ui_v2_mission_control_source_v1",
+    "source_name": "UI v2 Mission Control source branch",
+    "intake_lane": "first_party_migration",
+}
+
 SECRET_PATTERNS = [
     re.compile(r"Authorization:\s*(Bearer|Basic|Token)\s+", re.IGNORECASE),
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+"),
@@ -191,6 +197,17 @@ def main() -> int:
         require(
             "no PR #23 art outputs or Advanced Spatial route are product-merged" in str(spatial.get("product_claim_limit") or ""),
             "Spatial Research packet claim limit must block direct PR #23 asset/route merge",
+            failures,
+        )
+
+    ui_v2 = next((packet for packet in packets if packet.get("packet_id") == UI_V2_REQUIRED["packet_id"]), None)
+    require(ui_v2 is not None, "missing UI v2 adoption packet", failures)
+    if ui_v2:
+        for key, expected in UI_V2_REQUIRED.items():
+            require(ui_v2.get(key) == expected, f"UI v2 packet {key} mismatch: {ui_v2.get(key)}", failures)
+        require(
+            "no PR #11 shell, Mission Control route, generated screenshot workflow, or read-model replacement is product-merged" in str(ui_v2.get("product_claim_limit") or ""),
+            "UI v2 packet claim limit must block direct PR #11 UI shell/read-model merge",
             failures,
         )
 
