@@ -26,6 +26,12 @@ The rules here are grounded in:
   `https://openai.com/index/harness-engineering/`
 - OpenAI Codex App Server harness article:
   `https://openai.com/index/unlocking-the-codex-harness/`
+- Addy Osmani agent harness engineering overview:
+  `https://addyosmani.com/blog/agent-harness-engineering/`
+- Code-as-agent-harness survey:
+  `https://arxiv.org/html/2605.18747v1`
+- LangChain observability/evals overview:
+  `https://www.langchain.com/resources/llm-observability-tools`
 
 ## Non-Negotiable Authority Boundary
 
@@ -99,6 +105,27 @@ Minimum evidence:
 
 Skipping a gate is allowed only when the packet records a reason and the
 acceptance smoke can verify the omission was intentional.
+
+## Receipt Readback Constraint
+
+Operator receipts and readbacks are RECORD-stage feedback sensors. They answer:
+
+- Was the exact copied or confirmed action packet recorded?
+- Does the receipt match the current action signature?
+- Is the matching receipt stale, missing, recorded, verified or failed?
+- Is a control readback attached when the action type requires it?
+
+They do not answer:
+
+- Did Hermes/OpenClaw finish the run?
+- Did the task meet customer acceptance?
+- Did an external provider perform an irreversible side effect?
+
+For local harness proof specifically, a `receipt_status` may support operator
+coordination, but product proof still requires completed run, tool-call,
+runtime event, evaluation, audit, artifact and plan-evidence readbacks. The
+packet must say `receipt_presence_is_runtime_success=false` whenever receipt
+state is shown beside runtime proof.
 
 ## Policy Decision Shape
 

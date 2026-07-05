@@ -24,6 +24,8 @@ change schema, or make the browser a direct agent executor.
 - `receipt_readback_command` pointing to
   `agentops operator action-receipts --limit 20`;
 - per-adapter `action_signature` for launch-packet receipt correlation;
+- per-adapter `receipt_status` with current/stale/missing match state;
+- top-level `receipt_summary` for governed launch packet readback;
 - read-only/no-live-execution/raw-prompt-omitted/raw-response-omitted/token
   omission flags.
 
@@ -39,6 +41,8 @@ customer-worker workflow.
   call live adapters, write the ledger, or store raw prompts/responses.
 - `receipt_record_command` records that an operator used or inspected the launch
   packet; it still does not execute the launch command.
+- `receipt_status` proves receipt readback only. It must not be presented as
+  Hermes/OpenClaw run success.
 - A run only counts as proof after the readback sees completed
   run/tool/runtime/evaluation/audit/artifact/verified-plan-evidence rows for the
   returned run id.
@@ -58,7 +62,5 @@ git diff --check
 
 ## Next Slice
 
-Read back launch-packet receipts as a first-class local harness proof status:
-show whether the latest copied/confirmed launch command has a matching operator
-receipt before the resulting run is evaluated, without executing shell commands
-or treating receipt presence as live runtime success.
+Expose launch-packet receipt status in the Worker Console as a compact operator
+hint while keeping the machine-readable API/CLI packet as the authority.
