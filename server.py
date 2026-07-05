@@ -18726,6 +18726,66 @@ def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = 
             {"id": "plan_evidence", "ok": evidence["verified_plan_evidence_manifests"] >= 1, "message": "A verified plan-evidence manifest exists."},
         ]
 
+    receipt_lookup_rows = operator_action_receipt_rows(conn, workspace_id, 200)
+
+    def governed_launch_receipt_status(adapter: str, action_signature: str) -> dict:
+        expected_source = "local_harness_proof.governed_launch"
+        expected_action_id = f"local_harness_proof:{adapter}"
+        matched: dict | None = None
+        stale_candidate: dict | None = None
+        for receipt in receipt_lookup_rows:
+            source = str(receipt.get("source") or "")
+            action_id = str(receipt.get("action_id") or "")
+            signature = str(receipt.get("action_signature") or "")
+            if source == expected_source and signature == action_signature:
+                matched = receipt
+                break
+            if source == expected_source and action_id == expected_action_id:
+                stale_candidate = stale_candidate or receipt
+        match = "current" if matched else ("stale" if stale_candidate else "missing")
+        receipt = matched or stale_candidate or {}
+        control_readback = receipt.get("control_readback") if isinstance(receipt.get("control_readback"), dict) else None
+        status = str(receipt.get("status") or "missing")
+        return {
+            "operation": "local_harness_proof_launch_receipt_status",
+            "adapter": adapter,
+            "required": True,
+            "status": "stale" if match == "stale" else status,
+            "underlying_status": status,
+            "match": match,
+            "current": match == "current",
+            "recorded": match == "current" and status in VALID_OPERATOR_ACTION_RECEIPT_STATUSES,
+            "verified": match == "current" and status == "verified",
+            "receipt_id": receipt.get("receipt_id"),
+            "audit_id": receipt.get("audit_id"),
+            "action_id": receipt.get("action_id") or expected_action_id,
+            "action_signature": action_signature,
+            "receipt_action_signature": receipt.get("action_signature"),
+            "source": receipt.get("source") or expected_source,
+            "receipt_hash": (
+                receipt.get("tamper_chain_hash")
+                or receipt.get("verify_hash")
+                or receipt.get("action_hash")
+                or receipt.get("audit_id")
+            ),
+            "created_at": receipt.get("created_at"),
+            "evaluation_id": receipt.get("evaluation_id"),
+            "evaluation_pass_fail": receipt.get("evaluation_pass_fail") or ((receipt.get("evaluation") or {}).get("pass_fail") if isinstance(receipt.get("evaluation"), dict) else None),
+            "control_readback_attached": bool(control_readback),
+            "control_readback_id": receipt.get("control_readback_id"),
+            "control_readback_hash": receipt.get("control_readback_hash"),
+            "readback_command": "agentops operator action-receipts --limit 20",
+            "receipt_presence_is_runtime_success": False,
+            "live_runtime_success_proven": False,
+            "proof_boundary": "Receipt status proves the governed launch packet was recorded/read back; completed local harness proof still requires run/tool/evaluation/audit/artifact/plan-evidence rows.",
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        }
+
     def governed_launch_packet(adapter: str) -> dict:
         title = f"Local task harness proof: {adapter}"
         description = (
@@ -18777,6 +18837,7 @@ def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = 
             "receipt_record_command": f"{receipt_preview_command} --confirm-record",
             "receipt_readback_command": "agentops operator action-receipts --limit 20",
             "action_signature": action_signature,
+            "receipt_status": governed_launch_receipt_status(adapter, action_signature),
             "approval_boundary": "Hermes/OpenClaw live execution still requires explicit --confirm-run and runtime readiness/trust gates before adapter invocation.",
             "raw_prompt_omitted": True,
             "raw_response_omitted": True,
@@ -18898,6 +18959,24 @@ def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = 
             "governed_launch": governed_launch_packet(adapter),
             "token_omitted": True,
         }
+    launch_receipt_statuses = [
+        (item.get("governed_launch") or {}).get("receipt_status") or {}
+        for item in adapters.values()
+    ]
+    launch_receipt_summary = {
+        "operation": "local_harness_proof_launch_receipt_summary",
+        "readback_command": "agentops operator action-receipts --limit 20",
+        "recorded_current": sum(1 for item in launch_receipt_statuses if item.get("recorded") is True),
+        "verified_current": sum(1 for item in launch_receipt_statuses if item.get("verified") is True),
+        "missing": sum(1 for item in launch_receipt_statuses if item.get("match") == "missing"),
+        "stale": sum(1 for item in launch_receipt_statuses if item.get("match") == "stale"),
+        "current": sum(1 for item in launch_receipt_statuses if item.get("match") == "current"),
+        "receipt_presence_is_runtime_success": False,
+        "read_only": True,
+        "ledger_mutated": False,
+        "live_execution_performed": False,
+        "token_omitted": True,
+    }
     real_runtime_fresh = sum(1 for adapter, item in adapters.items() if adapter in {"hermes", "openclaw"} and item["status"] == "fresh")
     mock_fresh = adapters.get("mock", {}).get("status") == "fresh"
     return {
@@ -18916,12 +18995,16 @@ def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = 
             "missing": sum(1 for item in adapters.values() if item["status"] == "missing"),
             "latest_failed": sum(1 for item in adapters.values() if item["status"] == "latest_failed"),
             "latest_incomplete": sum(1 for item in adapters.values() if item["status"] == "latest_incomplete"),
+            "launch_receipts_recorded_current": launch_receipt_summary["recorded_current"],
+            "launch_receipts_missing": launch_receipt_summary["missing"],
+            "launch_receipts_stale": launch_receipt_summary["stale"],
         },
         "commands": {adapter: item["next_action"] for adapter, item in adapters.items()},
         "governed_launch_packet": {
             "operation": "local_harness_proof_governed_launch_packet",
             "status": "ready",
             "adapters": {adapter: item["governed_launch"] for adapter, item in adapters.items()},
+            "receipt_summary": launch_receipt_summary,
             "preferred_entrypoint": "agentops workflow customer-worker-task",
             "readback_command": "agentops operator local-harness-proof --limit 8",
             "contract": "Use Agent Gateway customer-worker dispatch for new proof runs; direct scripts/local_task_harness.py remains a developer fallback.",

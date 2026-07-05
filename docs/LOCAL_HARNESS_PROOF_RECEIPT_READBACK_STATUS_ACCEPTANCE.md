@@ -8,27 +8,42 @@ the ledger, or make the browser run shell commands.
 
 ## Change
 
-- `LOCAL_HARNESS_PROOF_GOVERNED_LAUNCH_ACCEPTANCE.md` now documents
-  `receipt_readback_command`.
-- The next slice now points to receipt readback/status aggregation instead of
-  the already-completed receipt-command work.
-- `local_harness_proof_readback_smoke.py` checks every adapter exposes
-  `agentops operator action-receipts --limit 20`.
-- The same smoke fails if the governed launch acceptance doc regresses to the
-  completed "add receipt command" next-step text.
+- `GET /api/operator/local-harness-proof` and
+  `agentops operator local-harness-proof` now expose per-adapter
+  `governed_launch.receipt_status`.
+- The top-level `governed_launch_packet` now exposes `receipt_summary`.
+- `receipt readback/status aggregation` distinguishes:
+  - current receipt matching the latest launch `action_signature`;
+  - stale receipt for the same launch `action_id` but older/different
+    signature;
+  - missing receipt.
+- `receipt presence separate from live runtime`: the receipt proves that the
+  launch packet was recorded/read back, not that Hermes/OpenClaw completed the
+  run.
+- Each adapter still exposes
+  `agentops operator action-receipts --limit 20` as the receipt readback
+  command.
+- `local_harness_proof_readback_smoke.py` now seeds fixture coverage for all
+  three receipt states: OpenClaw current, Hermes stale and mock missing.
 
 ## Verification
 
 ```bash
+python3 -m py_compile server.py scripts/local_harness_proof_readback_smoke.py
 python3 scripts/local_harness_proof_readback_smoke.py
-python3 -m py_compile scripts/local_harness_proof_readback_smoke.py
 git diff --check
 python3 scripts/secret_scan_smoke.py
 ```
 
+Current local verification:
+
+```text
+local_harness_proof_readback_smoke: ok
+workspace_id: harness-proof-smoke
+safety: read_only=true, ledger_mutated=false, live_execution_performed=false
+```
+
 ## Next Slice
 
-Add read-only receipt status aggregation to the local harness proof payload so
-operators can see whether a copied launch packet has a matching recorded
-operator receipt, while keeping receipt presence separate from live runtime
-success.
+Surface the same receipt status in the Worker Console so operators can see
+current/stale/missing launch receipts before copying the next governed command.

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import os
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -36,12 +38,107 @@ def iso(hours_delta: float = 0) -> str:
     return (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=hours_delta)).isoformat()
 
 
+def stable_hash(value) -> str:
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def ledger_counts(db_path: Path) -> dict[str, int]:
     conn = sqlite3.connect(db_path, timeout=30)
     try:
         return {table: int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]) for table in LEDGER_TABLES}
     finally:
         conn.close()
+
+
+def governed_launch_contract(adapter: str) -> dict:
+    title = f"Local task harness proof: {adapter}"
+    description = (
+        "Run a local task harness proof through the AgentOps customer-worker path. "
+        "The worker must write run, tool, runtime event, evaluation, audit, artifact "
+        "and plan-evidence ledger rows while omitting raw prompts, raw responses and tokens."
+    )
+    acceptance = (
+        "Proof is valid only when MIS reads back completed run/tool/runtime/evaluation/audit/"
+        "artifact/verified-plan-evidence rows for the returned run id."
+    )
+    base_command = (
+        f"agentops workflow customer-worker-task --adapter {adapter} "
+        f"--title {shlex.quote(title)} "
+        f"--description {shlex.quote(description)} "
+        f"--acceptance {shlex.quote(acceptance)} "
+        "--priority high --risk medium "
+        f"--worker-agent-id {shlex.quote(f'agt_local_task_harness_{adapter}')}"
+    )
+    confirmed_command = base_command if adapter == "mock" else f"{base_command} --confirm-run --hermes-timeout 600 --hermes-max-tokens 512"
+    readback_command = "agentops operator local-harness-proof --limit 8"
+    action_signature = stable_hash({
+        "operation": "local_harness_proof_governed_launch",
+        "adapter": adapter,
+        "confirmed_command": confirmed_command,
+        "readback_command": readback_command,
+    })[:24]
+    return {
+        "adapter": adapter,
+        "confirmed_command": confirmed_command,
+        "readback_command": readback_command,
+        "action_signature": action_signature,
+        "action_id": f"local_harness_proof:{adapter}",
+    }
+
+
+def seed_governed_launch_receipt(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    adapter: str,
+    suffix: str,
+    stale_signature: bool = False,
+    status: str = "recorded",
+) -> dict:
+    contract = governed_launch_contract(adapter)
+    created_at = iso(-0.02)
+    receipt_id = f"oar_harness_launch_{adapter}_{suffix}"
+    action_command = contract["confirmed_command"]
+    verify_command = contract["readback_command"]
+    action_hash = stable_hash(action_command)
+    verify_hash = stable_hash(verify_command)
+    action_signature = f"stale_{contract['action_signature']}" if stale_signature else contract["action_signature"]
+    metadata = {
+        "receipt_id": receipt_id,
+        "workspace_id": workspace_id,
+        "status": status,
+        "source": "local_harness_proof.governed_launch",
+        "action_id": contract["action_id"],
+        "action_signature": action_signature,
+        "action_command": action_command,
+        "action_hash": action_hash,
+        "verify_command": verify_command,
+        "verify_hash": verify_hash,
+        "result_summary": f"Fixture governed local harness proof launch receipt for {adapter}.",
+        "raw_secret_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+    conn.execute(
+        """INSERT INTO audit_logs(audit_id,actor_type,actor_id,action,entity_type,entity_id,before_hash,after_hash,metadata_json,tamper_chain_hash,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            f"aud_harness_launch_receipt_{adapter}_{suffix}",
+            "user",
+            "usr_harness_proof",
+            "operator.action_queue_receipt",
+            "operator_action_receipts",
+            receipt_id,
+            None,
+            stable_hash(metadata),
+            json.dumps(metadata, ensure_ascii=False),
+            f"chain_{receipt_id}",
+            created_at,
+        ),
+    )
+    return metadata
 
 
 def seed_harness_attempt(
@@ -339,6 +436,19 @@ def seed_fixture(db_path: Path, workspace_id: str) -> dict:
                 manifest_status="blocked",
             ),
         }
+        seeded["openclaw_receipt"] = seed_governed_launch_receipt(
+            conn,
+            workspace_id=workspace_id,
+            adapter="openclaw",
+            suffix="current",
+        )
+        seeded["hermes_receipt"] = seed_governed_launch_receipt(
+            conn,
+            workspace_id=workspace_id,
+            adapter="hermes",
+            suffix="stale",
+            stale_signature=True,
+        )
         conn.commit()
         return seeded
     finally:
@@ -374,6 +484,9 @@ def validate_payload(payload: dict, failures: list[str]) -> None:
     summary = payload.get("summary") or {}
     require(int(summary.get("fresh_real_runtime_adapters") or 0) == 1, f"real runtime summary mismatch: {summary}", failures)
     require(int(summary.get("fresh_mock_fallback") or 0) == 1, f"mock fallback summary mismatch: {summary}", failures)
+    require(int(summary.get("launch_receipts_recorded_current") or 0) == 1, f"launch receipt recorded summary mismatch: {summary}", failures)
+    require(int(summary.get("launch_receipts_missing") or 0) == 1, f"launch receipt missing summary mismatch: {summary}", failures)
+    require(int(summary.get("launch_receipts_stale") or 0) == 1, f"launch receipt stale summary mismatch: {summary}", failures)
     adapters = payload.get("adapters") or {}
     mock = adapters.get("mock") or {}
     openclaw = adapters.get("openclaw") or {}
@@ -394,6 +507,21 @@ def validate_payload(payload: dict, failures: list[str]) -> None:
         require("--confirm-record" in (governed.get("receipt_record_command") or ""), f"{adapter} receipt record command missing confirm: {governed}", failures)
         require("agentops operator action-receipts --limit 20" in (governed.get("receipt_readback_command") or ""), f"{adapter} receipt readback command missing: {governed}", failures)
         require(governed.get("action_signature"), f"{adapter} governed launch action signature missing: {governed}", failures)
+        receipt_status = governed.get("receipt_status") or {}
+        require(receipt_status.get("operation") == "local_harness_proof_launch_receipt_status", f"{adapter} receipt status missing: {governed}", failures)
+        require(receipt_status.get("receipt_presence_is_runtime_success") is False, f"{adapter} receipt status must not claim runtime success: {receipt_status}", failures)
+        require(receipt_status.get("live_execution_performed") is False, f"{adapter} receipt status must be read-only: {receipt_status}", failures)
+        require(receipt_status.get("token_omitted") is True, f"{adapter} receipt status token omission missing: {receipt_status}", failures)
+    require(((mock.get("governed_launch") or {}).get("receipt_status") or {}).get("match") == "missing", f"mock receipt should be missing: {mock}", failures)
+    require(((openclaw.get("governed_launch") or {}).get("receipt_status") or {}).get("match") == "current", f"OpenClaw receipt should match current signature: {openclaw}", failures)
+    require(((openclaw.get("governed_launch") or {}).get("receipt_status") or {}).get("recorded") is True, f"OpenClaw receipt should be recorded: {openclaw}", failures)
+    require(((hermes.get("governed_launch") or {}).get("receipt_status") or {}).get("match") == "stale", f"Hermes receipt should be stale: {hermes}", failures)
+    receipt_summary = launch_packet.get("receipt_summary") or {}
+    require(receipt_summary.get("operation") == "local_harness_proof_launch_receipt_summary", f"receipt summary missing: {launch_packet}", failures)
+    require(receipt_summary.get("receipt_presence_is_runtime_success") is False, f"receipt summary must not claim runtime success: {receipt_summary}", failures)
+    require(int(receipt_summary.get("recorded_current") or 0) == 1, f"receipt summary recorded mismatch: {receipt_summary}", failures)
+    require(int(receipt_summary.get("missing") or 0) == 1, f"receipt summary missing mismatch: {receipt_summary}", failures)
+    require(int(receipt_summary.get("stale") or 0) == 1, f"receipt summary stale mismatch: {receipt_summary}", failures)
     require((mock.get("governed_launch") or {}).get("confirm_required") is False, f"mock should not require confirm: {mock}", failures)
     for adapter, item in [("openclaw", openclaw), ("hermes", hermes)]:
         governed = item.get("governed_launch") or {}
