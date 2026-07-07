@@ -1691,6 +1691,15 @@ def _with_requested_manager(command: str, manager: str) -> str:
 
 
 def _operator_loop_bootstrap_stale_endpoint(args, client: AgentOpsClient, *, endpoint: str, error: Exception, error_type: str = "stale_server_or_missing_endpoint") -> dict:
+    error_text = str(error or "")
+    if error_type == "local_mis_endpoint_timeout" or "timed out" in error_text.lower():
+        return _operator_loop_bootstrap_fast_packet(
+            args,
+            client,
+            reason="start_check_timeout" if "start-check" in endpoint else "loop_supervision_timeout",
+            error=error,
+            error_type="local_mis_endpoint_timeout",
+        )
     local_probe = local_demo_default_probe(client.base_url)
     current_code_command = f"AGENTOPS_BASE_URL={client.base_url} agentops local readiness --require-current-code"
     retry_timeout = max(int(getattr(args, "request_timeout", 30) or 30), 120)
