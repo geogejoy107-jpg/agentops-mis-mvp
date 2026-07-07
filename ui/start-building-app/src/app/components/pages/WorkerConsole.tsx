@@ -106,6 +106,10 @@ export function WorkerConsole() {
       governedLaunchSummary: "Starts through Agent Gateway customer-worker dispatch when copied and run; this panel itself stays read-only.",
       readbackCommand: "Readback command",
       receiptCommand: "Receipt command",
+      receiptStatus: "Receipt status",
+      receiptCurrent: "Current receipts",
+      receiptMissing: "Missing receipts",
+      receiptStale: "Stale receipts",
       freshnessHours: "Freshness",
       rawPromptOmitted: "raw prompt omitted",
       workerFleet: "Worker fleet",
@@ -222,6 +226,10 @@ export function WorkerConsole() {
       governedLaunchSummary: "复制执行后会走 Agent Gateway customer-worker 派发；这个面板本身仍是只读。",
       readbackCommand: "回读命令",
       receiptCommand: "回执命令",
+      receiptStatus: "回执状态",
+      receiptCurrent: "当前回执",
+      receiptMissing: "缺失回执",
+      receiptStale: "陈旧回执",
       freshnessHours: "新鲜度",
       rawPromptOmitted: "raw prompt 已省略",
       workerFleet: "Worker Fleet",
@@ -978,6 +986,9 @@ export function WorkerConsole() {
                   <StatusBadge status={(localHarnessProof?.summary.fresh_real_runtime_adapters || 0) > 0 ? "pass" : "attention"} label={`${copy.realRuntimeProof}: ${localHarnessProof?.summary.fresh_real_runtime_adapters || 0}`} />
                   <StatusBadge status={(localHarnessProof?.summary.fresh_mock_fallback || 0) > 0 ? "pass" : "unknown"} label={`${copy.mockFallback}: ${localHarnessProof?.summary.fresh_mock_fallback || 0}`} />
                   <StatusBadge status={localHarnessProof?.governed_launch_packet?.status || "unknown"} label={copy.governedLaunch} />
+                  <StatusBadge status={(localHarnessProof?.governed_launch_packet?.receipt_summary?.recorded_current || 0) > 0 ? "pass" : "attention"} label={`${copy.receiptCurrent}: ${localHarnessProof?.governed_launch_packet?.receipt_summary?.recorded_current || 0}`} />
+                  <StatusBadge status={(localHarnessProof?.governed_launch_packet?.receipt_summary?.missing || 0) > 0 ? "attention" : "pass"} label={`${copy.receiptMissing}: ${localHarnessProof?.governed_launch_packet?.receipt_summary?.missing || 0}`} />
+                  <StatusBadge status={(localHarnessProof?.governed_launch_packet?.receipt_summary?.stale || 0) > 0 ? "stale" : "pass"} label={`${copy.receiptStale}: ${localHarnessProof?.governed_launch_packet?.receipt_summary?.stale || 0}`} />
                 </div>
                 <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>{copy.harnessProofSummary}</p>
                 <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.governedLaunchSummary}</p>
@@ -996,17 +1007,23 @@ export function WorkerConsole() {
                 const proof = localHarnessProof?.adapters?.[adapter];
                 const latest = proof?.latest_passing || proof?.latest_attempt;
                 const governedCommand = proof?.governed_launch?.confirm_required ? proof?.governed_launch?.confirmed_command : proof?.governed_launch?.preview_command;
+                const launchReceipt = proof?.governed_launch?.receipt_status;
+                const launchReceiptLabel = `${copy.receiptStatus}: ${launchReceipt?.status || "missing"}${launchReceipt?.receipt_id ? ` · ${launchReceipt.receipt_id}` : ""}`;
                 return (
                   <div key={`harness-proof:${adapter}`} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-[11px] font-semibold" style={{ color: adapterColor(adapter) }}>{adapter}</div>
-                      <StatusBadge status={proof?.status || "missing"} />
+                      <div className="flex flex-wrap justify-end gap-1">
+                        <StatusBadge status={proof?.status || "missing"} />
+                        <StatusBadge status={launchReceipt?.verified ? "verified" : launchReceipt?.status || "missing"} label={launchReceiptLabel} />
+                      </div>
                     </div>
                     <div className="grid grid-cols-1 gap-1 mt-2">
                       <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.proofClass}: <span style={{ color: "var(--mis-text)" }}>{proof?.evidence_class || "—"}</span></div>
                       <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.latestPassing}: <span style={{ color: latest?.pass ? "var(--mis-success)" : "var(--mis-dim)" }}>{latest?.run_id || "—"}</span></div>
                       <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.latestAttempt}: <span style={{ color: "var(--mis-text)" }}>{latest?.run_status || "—"}</span></div>
                       <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.freshnessHours}: <span style={{ color: "var(--mis-text)" }}>{proof?.freshness_hours || localHarnessProof?.freshness_hours || 72}h</span></div>
+                      <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.receiptStatus}: <span style={{ color: launchReceipt?.verified ? "var(--mis-success)" : "var(--mis-text)" }}>{launchReceipt?.match || "missing"} / {launchReceipt?.underlying_status || launchReceipt?.status || "missing"}</span></div>
                     </div>
                     <div className="flex flex-wrap gap-1.5 mt-2">
                       <button
@@ -1026,6 +1043,15 @@ export function WorkerConsole() {
                       >
                         <Copy size={8} />
                         <span className="truncate">{copiedCommand === proof?.governed_launch?.receipt_record_command ? copy.copied : copy.receiptCommand}</span>
+                      </button>
+                      <button
+                        onClick={() => void copyCommand(proof?.governed_launch?.receipt_readback_command || launchReceipt?.readback_command)}
+                        disabled={!proof?.governed_launch?.receipt_readback_command && !launchReceipt?.readback_command}
+                        className="inline-flex max-w-full items-center gap-1 rounded px-1.5 py-0.5 text-[9px] disabled:opacity-40"
+                        style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)", color: "var(--mis-cyan)" }}
+                      >
+                        <Copy size={8} />
+                        <span className="truncate">{copiedCommand === (proof?.governed_launch?.receipt_readback_command || launchReceipt?.readback_command) ? copy.copied : copy.readbackCommand}</span>
                       </button>
                     </div>
                   </div>
