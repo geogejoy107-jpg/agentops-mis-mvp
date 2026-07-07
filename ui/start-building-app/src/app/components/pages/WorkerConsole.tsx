@@ -106,6 +106,11 @@ export function WorkerConsole() {
       governedLaunchSummary: "Starts through Agent Gateway customer-worker dispatch when copied and run; this panel itself stays read-only.",
       readbackCommand: "Readback command",
       receiptCommand: "Receipt command",
+      receiptStatus: "Receipt status",
+      receiptCurrent: "Current receipts",
+      receiptMissing: "Missing receipts",
+      receiptStale: "Stale receipts",
+      receiptNotRuntime: "receipt is not runtime success",
       freshnessHours: "Freshness",
       rawPromptOmitted: "raw prompt omitted",
       workerFleet: "Worker fleet",
@@ -222,6 +227,11 @@ export function WorkerConsole() {
       governedLaunchSummary: "复制执行后会走 Agent Gateway customer-worker 派发；这个面板本身仍是只读。",
       readbackCommand: "回读命令",
       receiptCommand: "回执命令",
+      receiptStatus: "回执状态",
+      receiptCurrent: "当前回执",
+      receiptMissing: "缺失回执",
+      receiptStale: "陈旧回执",
+      receiptNotRuntime: "回执不等于运行成功",
       freshnessHours: "新鲜度",
       rawPromptOmitted: "raw prompt 已省略",
       workerFleet: "Worker Fleet",
@@ -978,9 +988,16 @@ export function WorkerConsole() {
                   <StatusBadge status={(localHarnessProof?.summary.fresh_real_runtime_adapters || 0) > 0 ? "pass" : "attention"} label={`${copy.realRuntimeProof}: ${localHarnessProof?.summary.fresh_real_runtime_adapters || 0}`} />
                   <StatusBadge status={(localHarnessProof?.summary.fresh_mock_fallback || 0) > 0 ? "pass" : "unknown"} label={`${copy.mockFallback}: ${localHarnessProof?.summary.fresh_mock_fallback || 0}`} />
                   <StatusBadge status={localHarnessProof?.governed_launch_packet?.status || "unknown"} label={copy.governedLaunch} />
+                  <StatusBadge status={(localHarnessProof?.governed_launch_packet?.receipt_summary?.recorded_current || 0) > 0 ? "pass" : "attention"} label={`${copy.receiptCurrent}: ${localHarnessProof?.governed_launch_packet?.receipt_summary?.recorded_current || localHarnessProof?.summary.launch_receipts_recorded_current || 0}`} />
                 </div>
                 <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>{copy.harnessProofSummary}</p>
                 <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.governedLaunchSummary}</p>
+                <div className="flex flex-wrap gap-1.5 mt-2" data-testid="worker-local-harness-receipt-summary">
+                  <StatusBadge status="pass" label={`${copy.receiptCurrent}: ${localHarnessProof?.governed_launch_packet?.receipt_summary?.recorded_current || localHarnessProof?.summary.launch_receipts_recorded_current || 0}`} />
+                  <StatusBadge status={(localHarnessProof?.governed_launch_packet?.receipt_summary?.missing || localHarnessProof?.summary.launch_receipts_missing || 0) > 0 ? "attention" : "pass"} label={`${copy.receiptMissing}: ${localHarnessProof?.governed_launch_packet?.receipt_summary?.missing || localHarnessProof?.summary.launch_receipts_missing || 0}`} />
+                  <StatusBadge status={(localHarnessProof?.governed_launch_packet?.receipt_summary?.stale || localHarnessProof?.summary.launch_receipts_stale || 0) > 0 ? "stale" : "pass"} label={`${copy.receiptStale}: ${localHarnessProof?.governed_launch_packet?.receipt_summary?.stale || localHarnessProof?.summary.launch_receipts_stale || 0}`} />
+                  <StatusBadge status={localHarnessProof?.governed_launch_packet?.receipt_summary?.receipt_presence_is_runtime_success ? "fail" : "pass"} label={copy.receiptNotRuntime} />
+                </div>
               </div>
               <button
                 onClick={() => void copyCommand(localHarnessProof?.governed_launch_packet?.readback_command || "agentops operator local-harness-proof --limit 8")}
@@ -996,6 +1013,7 @@ export function WorkerConsole() {
                 const proof = localHarnessProof?.adapters?.[adapter];
                 const latest = proof?.latest_passing || proof?.latest_attempt;
                 const governedCommand = proof?.governed_launch?.confirm_required ? proof?.governed_launch?.confirmed_command : proof?.governed_launch?.preview_command;
+                const receiptStatus = proof?.governed_launch?.receipt_status;
                 return (
                   <div key={`harness-proof:${adapter}`} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                     <div className="flex items-center justify-between gap-2">
@@ -1007,6 +1025,11 @@ export function WorkerConsole() {
                       <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.latestPassing}: <span style={{ color: latest?.pass ? "var(--mis-success)" : "var(--mis-dim)" }}>{latest?.run_id || "—"}</span></div>
                       <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.latestAttempt}: <span style={{ color: "var(--mis-text)" }}>{latest?.run_status || "—"}</span></div>
                       <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.freshnessHours}: <span style={{ color: "var(--mis-text)" }}>{proof?.freshness_hours || localHarnessProof?.freshness_hours || 72}h</span></div>
+                      <div className="flex min-w-0 items-center gap-1.5 text-[10px]" data-testid="worker-local-harness-receipt-status" style={{ color: "var(--mis-muted)" }}>
+                        <span className="shrink-0">{copy.receiptStatus}:</span>
+                        <StatusBadge status={receiptStatus?.match === "current" ? (receiptStatus?.underlying_status || "recorded") : (receiptStatus?.match || "missing")} label={`${receiptStatus?.match || "missing"} / ${receiptStatus?.underlying_status || "missing"}`} />
+                      </div>
+                      <div className="text-[10px] truncate" style={{ color: receiptStatus?.receipt_presence_is_runtime_success ? "var(--mis-warning)" : "var(--mis-dim)" }}>{copy.receiptNotRuntime}</div>
                     </div>
                     <div className="flex flex-wrap gap-1.5 mt-2">
                       <button

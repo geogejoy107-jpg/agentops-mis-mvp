@@ -823,6 +823,56 @@ export interface LocalHarnessProofAttempt {
   token_omitted: boolean;
 }
 
+export interface LocalHarnessReceiptStatus {
+  operation: string;
+  adapter: WorkerAdapterName;
+  required: boolean;
+  status: string;
+  underlying_status: string;
+  match: string;
+  current: boolean;
+  recorded: boolean;
+  verified: boolean;
+  receipt_id?: string | null;
+  audit_id?: string | null;
+  action_id?: string | null;
+  action_signature?: string | null;
+  receipt_action_signature?: string | null;
+  source?: string | null;
+  receipt_hash?: string | null;
+  created_at?: string | null;
+  evaluation_id?: string | null;
+  evaluation_pass_fail?: string | null;
+  control_readback_attached: boolean;
+  control_readback_id?: string | null;
+  control_readback_hash?: string | null;
+  readback_command: string;
+  receipt_presence_is_runtime_success: boolean;
+  live_runtime_success_proven: boolean;
+  proof_boundary?: string;
+  read_only: boolean;
+  ledger_mutated: boolean;
+  live_execution_performed: boolean;
+  raw_prompt_omitted: boolean;
+  raw_response_omitted: boolean;
+  token_omitted: boolean;
+}
+
+export interface LocalHarnessReceiptSummary {
+  operation: string;
+  readback_command: string;
+  recorded_current: number;
+  verified_current: number;
+  missing: number;
+  stale: number;
+  current: number;
+  receipt_presence_is_runtime_success: boolean;
+  read_only: boolean;
+  ledger_mutated: boolean;
+  live_execution_performed: boolean;
+  token_omitted: boolean;
+}
+
 export interface LocalHarnessProofAdapter {
   adapter: WorkerAdapterName;
   status: string;
@@ -847,6 +897,7 @@ export interface LocalHarnessProofAdapter {
     receipt_record_command?: string;
     receipt_readback_command?: string;
     action_signature?: string;
+    receipt_status?: LocalHarnessReceiptStatus;
     approval_boundary?: string;
     raw_prompt_omitted: boolean;
     raw_response_omitted: boolean;
@@ -871,6 +922,9 @@ export interface LocalHarnessProofReadiness {
     missing: number;
     latest_failed: number;
     latest_incomplete: number;
+    launch_receipts_recorded_current?: number;
+    launch_receipts_missing?: number;
+    launch_receipts_stale?: number;
   };
   commands: Record<string, string>;
   governed_launch_packet?: {
@@ -878,6 +932,7 @@ export interface LocalHarnessProofReadiness {
     status: string;
     preferred_entrypoint: string;
     readback_command: string;
+    receipt_summary?: LocalHarnessReceiptSummary;
     contract?: string;
     safety: {
       read_only: boolean;
@@ -4964,6 +5019,7 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
   const normalizeHarnessAdapter = (adapter: WorkerAdapterName): LocalHarnessProofAdapter => {
     const item = typeof harnessAdaptersRaw[adapter] === "object" && harnessAdaptersRaw[adapter] !== null ? harnessAdaptersRaw[adapter] as Record<string, unknown> : {};
     const governedRaw = typeof item.governed_launch === "object" && item.governed_launch !== null ? item.governed_launch as Record<string, unknown> : {};
+    const receiptRaw = typeof governedRaw.receipt_status === "object" && governedRaw.receipt_status !== null ? governedRaw.receipt_status as Record<string, unknown> : {};
     return {
       adapter,
       status: String(item.status || "missing"),
@@ -4988,6 +5044,40 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
         receipt_record_command: governedRaw.receipt_record_command ? String(governedRaw.receipt_record_command) : undefined,
         receipt_readback_command: governedRaw.receipt_readback_command ? String(governedRaw.receipt_readback_command) : undefined,
         action_signature: governedRaw.action_signature ? String(governedRaw.action_signature) : undefined,
+        receipt_status: governedRaw.receipt_status ? {
+          operation: String(receiptRaw.operation || "local_harness_proof_launch_receipt_status"),
+          adapter,
+          required: receiptRaw.required === undefined ? true : boolValue(receiptRaw.required),
+          status: String(receiptRaw.status || "missing"),
+          underlying_status: String(receiptRaw.underlying_status || receiptRaw.status || "missing"),
+          match: String(receiptRaw.match || "missing"),
+          current: boolValue(receiptRaw.current),
+          recorded: boolValue(receiptRaw.recorded),
+          verified: boolValue(receiptRaw.verified),
+          receipt_id: receiptRaw.receipt_id ? String(receiptRaw.receipt_id) : null,
+          audit_id: receiptRaw.audit_id ? String(receiptRaw.audit_id) : null,
+          action_id: receiptRaw.action_id ? String(receiptRaw.action_id) : null,
+          action_signature: receiptRaw.action_signature ? String(receiptRaw.action_signature) : null,
+          receipt_action_signature: receiptRaw.receipt_action_signature ? String(receiptRaw.receipt_action_signature) : null,
+          source: receiptRaw.source ? String(receiptRaw.source) : null,
+          receipt_hash: receiptRaw.receipt_hash ? String(receiptRaw.receipt_hash) : null,
+          created_at: receiptRaw.created_at ? String(receiptRaw.created_at) : null,
+          evaluation_id: receiptRaw.evaluation_id ? String(receiptRaw.evaluation_id) : null,
+          evaluation_pass_fail: receiptRaw.evaluation_pass_fail ? String(receiptRaw.evaluation_pass_fail) : null,
+          control_readback_attached: boolValue(receiptRaw.control_readback_attached),
+          control_readback_id: receiptRaw.control_readback_id ? String(receiptRaw.control_readback_id) : null,
+          control_readback_hash: receiptRaw.control_readback_hash ? String(receiptRaw.control_readback_hash) : null,
+          readback_command: String(receiptRaw.readback_command || governedRaw.receipt_readback_command || "agentops operator action-receipts --limit 20"),
+          receipt_presence_is_runtime_success: boolValue(receiptRaw.receipt_presence_is_runtime_success),
+          live_runtime_success_proven: boolValue(receiptRaw.live_runtime_success_proven),
+          proof_boundary: receiptRaw.proof_boundary ? String(receiptRaw.proof_boundary) : undefined,
+          read_only: receiptRaw.read_only === undefined ? true : boolValue(receiptRaw.read_only),
+          ledger_mutated: boolValue(receiptRaw.ledger_mutated),
+          live_execution_performed: boolValue(receiptRaw.live_execution_performed),
+          raw_prompt_omitted: receiptRaw.raw_prompt_omitted === undefined ? true : boolValue(receiptRaw.raw_prompt_omitted),
+          raw_response_omitted: receiptRaw.raw_response_omitted === undefined ? true : boolValue(receiptRaw.raw_response_omitted),
+          token_omitted: receiptRaw.token_omitted === undefined ? true : boolValue(receiptRaw.token_omitted),
+        } : undefined,
         approval_boundary: governedRaw.approval_boundary ? String(governedRaw.approval_boundary) : undefined,
         raw_prompt_omitted: boolValue(governedRaw.raw_prompt_omitted),
         raw_response_omitted: boolValue(governedRaw.raw_response_omitted),
@@ -5085,16 +5175,34 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
         missing: numberValue(harnessSummaryRaw.missing, 0),
         latest_failed: numberValue(harnessSummaryRaw.latest_failed, 0),
         latest_incomplete: numberValue(harnessSummaryRaw.latest_incomplete, 0),
+        launch_receipts_recorded_current: numberValue(harnessSummaryRaw.launch_receipts_recorded_current, 0),
+        launch_receipts_missing: numberValue(harnessSummaryRaw.launch_receipts_missing, 0),
+        launch_receipts_stale: numberValue(harnessSummaryRaw.launch_receipts_stale, 0),
       },
       commands: Object.fromEntries(Object.entries(harnessCommandsRaw).map(([key, value]) => [key, String(value || "")])),
       governed_launch_packet: typeof harnessRaw.governed_launch_packet === "object" && harnessRaw.governed_launch_packet !== null ? (() => {
         const packetRaw = harnessRaw.governed_launch_packet as Record<string, unknown>;
         const packetSafetyRaw = typeof packetRaw.safety === "object" && packetRaw.safety !== null ? packetRaw.safety as Record<string, unknown> : {};
+        const receiptSummaryRaw = typeof packetRaw.receipt_summary === "object" && packetRaw.receipt_summary !== null ? packetRaw.receipt_summary as Record<string, unknown> : {};
         return {
           operation: String(packetRaw.operation || "local_harness_proof_governed_launch_packet"),
           status: String(packetRaw.status || "unknown"),
           preferred_entrypoint: String(packetRaw.preferred_entrypoint || "agentops workflow customer-worker-task"),
           readback_command: String(packetRaw.readback_command || "agentops operator local-harness-proof --limit 8"),
+          receipt_summary: packetRaw.receipt_summary ? {
+            operation: String(receiptSummaryRaw.operation || "local_harness_proof_launch_receipt_summary"),
+            readback_command: String(receiptSummaryRaw.readback_command || "agentops operator action-receipts --limit 20"),
+            recorded_current: numberValue(receiptSummaryRaw.recorded_current, 0),
+            verified_current: numberValue(receiptSummaryRaw.verified_current, 0),
+            missing: numberValue(receiptSummaryRaw.missing, 0),
+            stale: numberValue(receiptSummaryRaw.stale, 0),
+            current: numberValue(receiptSummaryRaw.current, 0),
+            receipt_presence_is_runtime_success: boolValue(receiptSummaryRaw.receipt_presence_is_runtime_success),
+            read_only: receiptSummaryRaw.read_only === undefined ? true : boolValue(receiptSummaryRaw.read_only),
+            ledger_mutated: boolValue(receiptSummaryRaw.ledger_mutated),
+            live_execution_performed: boolValue(receiptSummaryRaw.live_execution_performed),
+            token_omitted: receiptSummaryRaw.token_omitted === undefined ? true : boolValue(receiptSummaryRaw.token_omitted),
+          } : undefined,
           contract: packetRaw.contract ? String(packetRaw.contract) : undefined,
           safety: {
             read_only: boolValue(packetSafetyRaw.read_only),
