@@ -505,10 +505,17 @@ def validate_payload(payload: dict, failures: list[str]) -> None:
         require(governed.get("token_omitted") is True, f"{adapter} governed launch token omission missing: {governed}", failures)
         require("agentops operator record-action-receipt" in (governed.get("receipt_preview_command") or ""), f"{adapter} receipt preview command missing: {governed}", failures)
         require("--confirm-record" in (governed.get("receipt_record_command") or ""), f"{adapter} receipt record command missing confirm: {governed}", failures)
-        require("agentops operator action-receipts --limit 20" in (governed.get("receipt_readback_command") or ""), f"{adapter} receipt readback command missing: {governed}", failures)
+        receipt_readback_command = governed.get("receipt_readback_command") or ""
+        require("agentops operator action-receipts --limit 20" in receipt_readback_command, f"{adapter} receipt readback command missing: {governed}", failures)
+        require("--source local_harness_proof.governed_launch" in receipt_readback_command, f"{adapter} receipt readback source filter missing: {governed}", failures)
+        require(f"--action-id local_harness_proof:{adapter}" in receipt_readback_command, f"{adapter} receipt readback action-id filter missing: {governed}", failures)
+        require("--action-signature" in receipt_readback_command, f"{adapter} receipt readback signature filter missing: {governed}", failures)
         require(governed.get("action_signature"), f"{adapter} governed launch action signature missing: {governed}", failures)
         receipt_status = governed.get("receipt_status") or {}
         require(receipt_status.get("operation") == "local_harness_proof_launch_receipt_status", f"{adapter} receipt status missing: {governed}", failures)
+        require("--source local_harness_proof.governed_launch" in str(receipt_status.get("readback_command") or ""), f"{adapter} receipt status readback source filter missing: {receipt_status}", failures)
+        require(f"--action-id local_harness_proof:{adapter}" in str(receipt_status.get("readback_command") or ""), f"{adapter} receipt status readback action-id filter missing: {receipt_status}", failures)
+        require("--action-signature" in str(receipt_status.get("readback_command") or ""), f"{adapter} receipt status readback signature filter missing: {receipt_status}", failures)
         require(receipt_status.get("receipt_presence_is_runtime_success") is False, f"{adapter} receipt status must not claim runtime success: {receipt_status}", failures)
         require(receipt_status.get("live_execution_performed") is False, f"{adapter} receipt status must be read-only: {receipt_status}", failures)
         require(receipt_status.get("token_omitted") is True, f"{adapter} receipt status token omission missing: {receipt_status}", failures)
@@ -552,7 +559,9 @@ def main() -> int:
         "agentops workflow customer-worker-task",
         "--confirm-run",
         "receipt_readback_command",
-        "agentops operator action-receipts --limit 20",
+        "agentops operator action-receipts --limit 20 --source local_harness_proof.governed_launch",
+        "--action-id local_harness_proof:openclaw",
+        "--action-signature",
         "read-only/no-live-execution",
     ]:
         require(marker in governed_acceptance, f"governed launch acceptance doc missing marker: {marker}", failures)
@@ -563,7 +572,9 @@ def main() -> int:
     )
     for marker in [
         "receipt readback/status aggregation",
-        "agentops operator action-receipts --limit 20",
+        "agentops operator action-receipts --limit 20 --source local_harness_proof.governed_launch",
+        "--action-id local_harness_proof:openclaw",
+        "--action-signature",
         "receipt presence separate from live runtime",
     ]:
         require(marker in receipt_status_acceptance, f"receipt status acceptance doc missing marker: {marker}", failures)

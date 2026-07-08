@@ -144,6 +144,15 @@ def main() -> int:
             require(status == 201, f"receipt POST status mismatch: {status} {receipt}", failures)
             receipt_id = ((receipt.get("receipt") or {}).get("receipt_id"))
             require(bool(receipt_id), f"receipt_id missing: {receipt}", failures)
+            noise_payload = {
+                **receipt_payload,
+                "action_id": "smoke:cli-action-noise",
+                "action_signature": "smoke_cli_signature_noise",
+                "result_summary": "Smoke noise receipt used to prove filters are exact.",
+            }
+            status, noise_receipt = http_json(base_url, "/api/operator/action-receipts", "POST", noise_payload)
+            outputs.append(json.dumps(noise_receipt, ensure_ascii=False))
+            require(status == 201, f"noise receipt POST status mismatch: {status} {noise_receipt}", failures)
             before_cli = db_counts(db_path)
             cli_proc = subprocess.run(
                 [str(CLI), "operator", "action-receipts", "--limit", "5", "--plan-limit", "8"],
@@ -169,6 +178,38 @@ def main() -> int:
             require(coverage.get("status") in {"ready", "attention"}, f"coverage status wrong: {coverage}", failures)
             require(payload.get("action_plan_status") in {"ready", "attention", "blocked"}, f"action plan status missing: {payload}", failures)
             require("read-only" in (payload.get("contract") or ""), f"CLI contract missing: {payload}", failures)
+            filtered_proc = subprocess.run(
+                [
+                    str(CLI), "operator", "action-receipts",
+                    "--limit", "5",
+                    "--plan-limit", "8",
+                    "--source", receipt_payload["source"],
+                    "--action-id", receipt_payload["action_id"],
+                    "--action-signature", receipt_payload["action_signature"],
+                ],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=45,
+                check=False,
+            )
+            outputs.extend([filtered_proc.stdout, filtered_proc.stderr])
+            filtered_payload = load_json(filtered_proc.stdout)
+            after_filtered_cli = db_counts(db_path)
+            require(filtered_proc.returncode == 0, f"filtered CLI failed: {filtered_proc.returncode} {filtered_proc.stderr}", failures)
+            require(before_cli == after_filtered_cli, f"filtered CLI mutated receipt ledger: {before_cli} -> {after_filtered_cli}", failures)
+            require(filtered_payload.get("operation") == "operator_action_receipts_cli", f"wrong filtered CLI operation: {filtered_payload}", failures)
+            require((filtered_payload.get("filters") or {}) == {
+                "source": receipt_payload["source"],
+                "action_id": receipt_payload["action_id"],
+                "action_signature": receipt_payload["action_signature"],
+            }, f"filtered CLI did not echo exact filters: {filtered_payload}", failures)
+            filtered_receipts = filtered_payload.get("receipts") or []
+            require(len(filtered_receipts) == 1, f"filtered CLI should return one exact receipt: {filtered_payload}", failures)
+            require(filtered_receipts[0].get("receipt_id") == receipt_id, f"filtered CLI returned wrong receipt: {filtered_payload}", failures)
+            require((filtered_payload.get("filtering") or {}).get("active") is True, f"filtered CLI did not mark filtering active: {filtered_payload}", failures)
+            require((filtered_payload.get("safety") or {}).get("read_only") is True, f"filtered CLI safety missing: {filtered_payload}", failures)
             require(not leaked_secret("\n".join(outputs)), "CLI output leaked token-like material", failures)
         finally:
             proc.terminate()
