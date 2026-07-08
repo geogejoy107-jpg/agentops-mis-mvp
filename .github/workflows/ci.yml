@@ -76,10 +76,12 @@ jobs:
           timeout 120s python3 scripts/open_source_mainline_governance_smoke.py
           timeout 120s python3 scripts/harness_engineering_control_plane_smoke.py
           timeout 120s python3 scripts/harness_engineering_execution_constraints_smoke.py
+          timeout 120s python3 scripts/harness_engineering_product_constraints_smoke.py
           timeout 120s python3 scripts/harness_style_agentops_operating_spec_smoke.py
           timeout 120s python3 scripts/local_task_harness_smoke.py
           timeout 120s python3 scripts/agent_task_harness_engineering_spec_smoke.py
           timeout 120s python3 scripts/local_harness_proof_readback_smoke.py
+          timeout 120s python3 scripts/local_harness_governed_live_acceptance_smoke.py
           timeout 120s python3 scripts/commercial_config_boundary_smoke.py
           timeout 120s python3 scripts/commercial_config_status_smoke.py
           timeout 120s python3 scripts/commercial_config_status_ui_smoke.py
