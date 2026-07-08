@@ -20,11 +20,13 @@ the ledger, or make the browser run shell commands.
 - `receipt presence separate from live runtime`: the receipt proves that the
   launch packet was recorded/read back, not that Hermes/OpenClaw completed the
   run.
-- Each adapter still exposes
-  `agentops operator action-receipts --limit 20` as the receipt readback
-  command.
+- Each adapter now exposes a scoped receipt readback command:
+  `agentops operator action-receipts --limit 20 --source local_harness_proof.governed_launch --action-id local_harness_proof:openclaw --action-signature <signature>`.
+  The adapter changes the `action-id`; the filter trio is the contract.
 - `local_harness_proof_readback_smoke.py` now seeds fixture coverage for all
   three receipt states: OpenClaw current, Hermes stale and mock missing.
+- The filtered readback is read-only and must not be used as runtime-success
+  proof by itself.
 
 ## Verification
 

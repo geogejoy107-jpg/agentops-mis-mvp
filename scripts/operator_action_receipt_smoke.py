@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -245,6 +246,26 @@ def main() -> int:
             require(int(summary.get("evaluated") or 0) == 0, f"recorded-only recent receipts should not be evaluated: {summary}", failures)
             receipt_ids = {row.get("receipt_id") for row in readback.get("receipts") or []}
             require(item.get("receipt_id") not in receipt_ids, f"target receipt should be older than recent display rows: {readback}", failures)
+            filter_query = urlencode({
+                "limit": 5,
+                "source": payload["source"],
+                "action_id": payload["action_id"],
+                "action_signature": payload["action_signature"],
+            })
+            status, filtered_readback = http_json(base_url, f"/api/operator/action-receipts?{filter_query}")
+            outputs.append(json.dumps(filtered_readback, ensure_ascii=False))
+            require(status == 200, f"filtered GET status mismatch: {status} {filtered_readback}", failures)
+            require(filtered_readback.get("operation") == "operator_action_receipts", f"wrong filtered readback operation: {filtered_readback}", failures)
+            require((filtered_readback.get("filters") or {}) == {
+                "source": payload["source"],
+                "action_id": payload["action_id"],
+                "action_signature": payload["action_signature"],
+            }, f"filtered readback did not echo exact filters: {filtered_readback}", failures)
+            filtered_receipts = filtered_readback.get("receipts") or []
+            require(len(filtered_receipts) == 1, f"filtered readback should find exactly the target receipt despite noise: {filtered_readback}", failures)
+            require(filtered_receipts[0].get("receipt_id") == item.get("receipt_id"), f"filtered readback returned wrong receipt: {filtered_readback}", failures)
+            require((filtered_readback.get("filtering") or {}).get("active") is True, f"filtered readback should mark filtering active: {filtered_readback}", failures)
+            require((filtered_readback.get("safety") or {}).get("read_only") is True, f"filtered readback should remain read-only: {filtered_readback}", failures)
 
             status, action_plan = http_json(base_url, "/api/operator/action-plan?limit=30")
             outputs.append(json.dumps(action_plan, ensure_ascii=False))

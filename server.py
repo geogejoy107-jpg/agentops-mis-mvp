@@ -6873,15 +6873,32 @@ def operator_close_execution_evidence_gap(conn: sqlite3.Connection, body: dict, 
 VALID_OPERATOR_ACTION_RECEIPT_STATUSES = {"recorded", "verified", "failed", "skipped"}
 
 
-def operator_action_receipt_rows(conn: sqlite3.Connection, workspace_id: str, limit: int) -> list[dict]:
+def operator_action_receipt_rows(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    limit: int,
+    filters: dict | None = None,
+) -> list[dict]:
     limit = min(max(int(limit), 1), 1000)
+    filters = filters or {}
+    where = [
+        "action='operator.action_queue_receipt'",
+        "entity_type='operator_action_receipts'",
+        "(json_extract(metadata_json, '$.workspace_id') = ? OR (? = 'local-demo' AND json_extract(metadata_json, '$.workspace_id') IS NULL))",
+    ]
+    params: list = [workspace_id, workspace_id]
+    for key in ["source", "action_id", "action_signature"]:
+        value = str(filters.get(key) or "").strip()
+        if value:
+            where.append(f"json_extract(metadata_json, '$.{key}') = ?")
+            params.append(value)
     rows = conn.execute(
         """SELECT audit_id, actor_id, entity_id, metadata_json, tamper_chain_hash, created_at
         FROM audit_logs
-        WHERE action='operator.action_queue_receipt' AND entity_type='operator_action_receipts'
+        WHERE """ + " AND ".join(where) + """
         ORDER BY created_at DESC
         LIMIT ?""",
-        (max(limit * 3, limit),),
+        [*params, max(limit * 3, limit)],
     ).fetchall()
     receipts = [
         receipt for receipt in (operator_action_receipt_public(row) for row in rows)
@@ -6937,7 +6954,13 @@ def list_operator_action_receipts(conn: sqlite3.Connection, qs, headers=None) ->
     headers = headers or {}
     workspace_id = normalize_workspace_id((qs.get("workspace_id") or [headers.get("X-AgentOps-Workspace-Id") or "local-demo"])[0])
     limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 50)
-    receipts = operator_action_receipt_rows(conn, workspace_id, limit)
+    filters = {
+        "source": str((qs.get("source") or [""])[0] or "").strip(),
+        "action_id": str((qs.get("action_id") or [""])[0] or "").strip(),
+        "action_signature": str((qs.get("action_signature") or [""])[0] or "").strip(),
+    }
+    active_filters = {key: value for key, value in filters.items() if value}
+    receipts = operator_action_receipt_rows(conn, workspace_id, limit, active_filters)
     control_readback_required = [item for item in receipts if operator_receipt_requires_control_readback(item)]
     control_readback_attached = [
         item for item in control_readback_required
@@ -6966,6 +6989,14 @@ def list_operator_action_receipts(conn: sqlite3.Connection, qs, headers=None) ->
         "status": "ready",
         "workspace_id": workspace_id,
         "summary": summary,
+        "filters": active_filters,
+        "filtering": {
+            "active": bool(active_filters),
+            "lookup_limit": limit,
+            "filtered_from": len(receipts),
+            "returned": len(receipts),
+            "read_only": True,
+        },
         "receipts": receipts,
         "safety": {
             "read_only": True,
@@ -18728,6 +18759,15 @@ def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = 
 
     receipt_lookup_rows = operator_action_receipt_rows(conn, workspace_id, 200)
 
+    def governed_launch_receipt_readback_command(adapter: str, action_signature: str) -> str:
+        return " ".join([
+            "agentops", "operator", "action-receipts",
+            "--limit", "20",
+            "--source", "local_harness_proof.governed_launch",
+            "--action-id", shlex.quote(f"local_harness_proof:{adapter}"),
+            "--action-signature", shlex.quote(action_signature),
+        ])
+
     def governed_launch_receipt_status(adapter: str, action_signature: str) -> dict:
         expected_source = "local_harness_proof.governed_launch"
         expected_action_id = f"local_harness_proof:{adapter}"
@@ -18774,7 +18814,7 @@ def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = 
             "control_readback_attached": bool(control_readback),
             "control_readback_id": receipt.get("control_readback_id"),
             "control_readback_hash": receipt.get("control_readback_hash"),
-            "readback_command": "agentops operator action-receipts --limit 20",
+            "readback_command": governed_launch_receipt_readback_command(adapter, action_signature),
             "receipt_presence_is_runtime_success": False,
             "live_runtime_success_proven": False,
             "proof_boundary": "Receipt status proves the governed launch packet was recorded/read back; completed local harness proof still requires run/tool/evaluation/audit/artifact/plan-evidence rows.",
@@ -18835,7 +18875,7 @@ def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = 
             "evidence_readback_command": readback_command,
             "receipt_preview_command": receipt_preview_command,
             "receipt_record_command": f"{receipt_preview_command} --confirm-record",
-            "receipt_readback_command": "agentops operator action-receipts --limit 20",
+            "receipt_readback_command": governed_launch_receipt_readback_command(adapter, action_signature),
             "action_signature": action_signature,
             "receipt_status": governed_launch_receipt_status(adapter, action_signature),
             "approval_boundary": "Hermes/OpenClaw live execution still requires explicit --confirm-run and runtime readiness/trust gates before adapter invocation.",
@@ -18965,7 +19005,7 @@ def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = 
     ]
     launch_receipt_summary = {
         "operation": "local_harness_proof_launch_receipt_summary",
-        "readback_command": "agentops operator action-receipts --limit 20",
+        "readback_command": "agentops operator action-receipts --limit 20 --source local_harness_proof.governed_launch",
         "recorded_current": sum(1 for item in launch_receipt_statuses if item.get("recorded") is True),
         "verified_current": sum(1 for item in launch_receipt_statuses if item.get("verified") is True),
         "missing": sum(1 for item in launch_receipt_statuses if item.get("match") == "missing"),

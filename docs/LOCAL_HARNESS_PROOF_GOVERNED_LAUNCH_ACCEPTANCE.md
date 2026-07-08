@@ -22,7 +22,7 @@ change schema, or make the browser a direct agent executor.
 - `receipt_preview_command` and `receipt_record_command` using
   `agentops operator record-action-receipt`;
 - `receipt_readback_command` pointing to
-  `agentops operator action-receipts --limit 20`;
+  `agentops operator action-receipts --limit 20 --source local_harness_proof.governed_launch --action-id local_harness_proof:openclaw --action-signature <signature>`;
 - per-adapter `action_signature` for launch-packet receipt correlation;
 - per-adapter `receipt_status` with current/stale/missing match state;
 - top-level `receipt_summary` for governed launch packet readback;

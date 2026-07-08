@@ -527,7 +527,12 @@ def cmd_operator_action_plan(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_operator_action_receipts(args, client: AgentOpsClient) -> dict:
-    receipts = client.get("/api/operator/action-receipts", query={"limit": args.limit})
+    receipts = client.get("/api/operator/action-receipts", query={
+        "limit": args.limit,
+        "source": args.source or None,
+        "action_id": args.action_id or None,
+        "action_signature": args.action_signature or None,
+    })
     action_plan = client.get("/api/operator/action-plan", query={"limit": args.plan_limit})
     coverage = action_plan.get("receipt_coverage") or {}
     return {
@@ -5416,6 +5421,9 @@ def build_parser() -> argparse.ArgumentParser:
     operator_receipts = operator_sub.add_parser("action-receipts", help="Read Action Queue receipt ledger rows plus action-plan coverage.")
     operator_receipts.add_argument("--limit", type=int, default=12)
     operator_receipts.add_argument("--plan-limit", type=int, default=12)
+    operator_receipts.add_argument("--source", default="", help="Optional exact receipt source filter.")
+    operator_receipts.add_argument("--action-id", default="", help="Optional exact receipt action id filter.")
+    operator_receipts.add_argument("--action-signature", default="", help="Optional exact receipt action signature filter.")
     operator_receipts.set_defaults(handler="operator_action_receipts")
     operator_record_receipt = operator_sub.add_parser("record-action-receipt", help="Preview or append an audited Action Queue receipt without executing commands.")
     operator_record_receipt.add_argument("--action-command", required=True, help="The exact recovery/action command that was run or inspected.")

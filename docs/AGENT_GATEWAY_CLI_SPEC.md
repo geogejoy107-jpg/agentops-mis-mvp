@@ -1955,6 +1955,11 @@ It does not merge, push, or execute a live runtime.
 ```bash
 agentops operator action-receipts --limit 12
 agentops operator action-receipts --limit 8 --plan-limit 20
+agentops operator action-receipts \
+  --source local_harness_proof.governed_launch \
+  --action-id local_harness_proof:openclaw \
+  --action-signature <signature> \
+  --limit 20
 ```
 
 Maps to `GET /api/operator/action-receipts` plus read-only action-plan receipt
@@ -1963,7 +1968,10 @@ rows. It returns recent receipt rows, `receipt_coverage` with
 required/verified/stale/missing counts, `action_plan_status`, top commands, and
 safety flags. Use it when a CLI operator needs the same Action Queue receipt
 health that `/workspace/agents` shows before deciding which explicit recovery
-command to run.
+command to run. The optional `--source`, `--action-id`, and
+`--action-signature` filters are for machine readback of an exact governed
+action packet; they remain read-only and are echoed in the response `filters`
+and `filtering` blocks.
 
 ```bash
 agentops operator record-action-receipt \
