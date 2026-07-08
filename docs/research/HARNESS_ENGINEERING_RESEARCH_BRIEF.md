@@ -55,6 +55,40 @@ constraints.
 
 ## Findings
 
+### 2026-07-08 Refresh
+
+Additional current sources checked:
+
+- Harness Open Source page:
+  `https://www.harness.io/open-source`
+- Harness Open Source GitHub repository:
+  `https://github.com/harness/harness`
+- Harness Policy As Code docs:
+  `https://developer.harness.io/docs/platform/governance/policy-as-code/harness-governance-overview`
+- Harness Autonomous Worker Agents press release:
+  `https://www.harness.io/press-and-news/harness-launches-autonomous-worker-agents-for-software-delivery`
+- OpenAI Harness Engineering field report:
+  `https://openai.com/index/harness-engineering/`
+- Promptfoo coding-agent evaluation guide:
+  `https://www.promptfoo.dev/docs/guides/evaluate-coding-agents/`
+- Inspect AI framework:
+  `https://inspect.aisi.org.uk/`
+- OpenTelemetry AI agent observability article:
+  `https://opentelemetry.io/blog/2025/ai-agent-observability/`
+
+The refreshed reading reinforces the same product direction: AgentOps MIS
+should not copy a CI/CD platform or observability dashboard. It should own the
+human-AI work harness: task packet, scoped worker identity, runtime readiness,
+approval wall, evidence readback, evaluation, memory review, artifact/report and
+audit chain. Harness-style worker agents and policy-as-code are useful market
+signals, but in MIS they must enter as adapters, policy decision shapes, or
+read models. They must not displace MIS authority objects.
+
+Immediate v1.5 implication: precise action receipt readback is a harness
+primitive. An operator or agent must be able to verify the exact receipt for a
+copied/confirmed action by source, action id and action signature, not by
+visually scanning recent ledger rows.
+
 ### 1. Harness Open Source Is A Developer Platform, Not Just CI
 
 Harness describes its open-source project as an end-to-end developer platform

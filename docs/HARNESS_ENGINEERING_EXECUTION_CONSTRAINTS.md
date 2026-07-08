@@ -115,6 +115,23 @@ Operator receipts and readbacks are RECORD-stage feedback sensors. They answer:
 - Is the matching receipt stale, missing, recorded, verified or failed?
 - Is a control readback attached when the action type requires it?
 
+The readback must be machine-addressable. When an action packet includes
+`source`, `action_id` and `action_signature`, the companion receipt query should
+support those exact filters and must remain read-only:
+
+```bash
+agentops operator action-receipts \
+  --source local_harness_proof.governed_launch \
+  --action-id local_harness_proof:openclaw \
+  --action-signature <signature> \
+  --limit 20
+```
+
+Scanning the latest receipt rows by eye is acceptable for human orientation, but
+it is not sufficient evidence for a governed harness packet. Agents, workers and
+future MCP clients need deterministic receipt lookup so they can compare the
+current action signature against stale or missing receipts.
+
 They do not answer:
 
 - Did Hermes/OpenClaw finish the run?

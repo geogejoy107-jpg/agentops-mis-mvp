@@ -617,6 +617,11 @@ includes `receipt_record_command` for preview-only CLI recording,
 `receipt_record_confirm_command` for confirmed append-only recording, and
 `receipt_verify_record_command` for recording a verified action/VERIFY pair;
 these command strings never execute the recovery or VERIFY commands themselves.
+`GET /api/operator/action-receipts` accepts exact read-only filters
+`source`, `action_id`, and `action_signature`; the response echoes active
+`filters` plus a `filtering` block so agents can prove that a governed action
+packet has a current, stale, failed, verified, or missing receipt without
+visually scanning recent rows.
 
 `GET /api/agent-gateway/tasks/pull?enforce_intake=true` applies the same gate
 at worker pull time: blocked planned/backlog tasks are omitted from `tasks[]`
