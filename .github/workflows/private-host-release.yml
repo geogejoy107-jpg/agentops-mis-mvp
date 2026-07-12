@@ -55,6 +55,7 @@ jobs:
           python3 scripts/license_provenance_smoke.py
           python3 scripts/public_claims_release_gate_smoke.py
           python3 scripts/private_host_backup_restore_smoke.py
+          python3 scripts/private_host_acceptance_receipt_smoke.py
           python3 scripts/private_host_bundle_smoke.py
 
       - name: Build versioned release assets

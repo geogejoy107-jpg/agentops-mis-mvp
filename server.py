@@ -144,6 +144,14 @@ from agentops_mis_core.operator_start_check import (
 )
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core import human_auth
+from agentops_mis_core.private_host_acceptance import (
+    artifact_metadata_sha256 as compute_artifact_metadata_sha256,
+    build_acceptance_receipt,
+    receipt_download_filename,
+    receipt_json_bytes,
+    stable_receipt_id,
+    verify_acceptance_receipt,
+)
 from agentops_mis_core.worker_fleet import (
     build_worker_remote_fleet_summary,
     build_worker_fleet_hygiene_plan,
@@ -523,6 +531,272 @@ def private_host_artifact_download(
         "content_type": content_type,
         "filename": filename,
         "artifact_id": artifact_id,
+    }, 200
+
+
+PRIVATE_HOST_ACCEPTANCE_RECEIPT_TYPE = "private_host_acceptance_receipt"
+
+
+def private_host_owner_error(human_context: dict | None) -> tuple[dict, int] | None:
+    if not human_context or human_context.get("mode") != "human_session":
+        return {"error": "human_auth_required", "message": "A human browser session is required."}, 401
+    if str(os.environ.get("AGENTOPS_DEPLOYMENT_MODE") or "").strip().lower() != "private_host":
+        return {"error": "private_host_required", "message": "Host acceptance receipts are available only in private_host mode."}, 403
+    if human_context.get("role") != "owner":
+        return {"error": "human_role_forbidden", "message": "This action requires the owner role.", "required_role": "owner"}, 403
+    return None
+
+
+def private_host_release_identity() -> dict:
+    return {
+        "host_version": str(os.environ.get("AGENTOPS_HOST_VERSION") or "development"),
+        "git_commit": str(os.environ.get("AGENTOPS_GIT_COMMIT") or local_git_value(["rev-parse", "HEAD"]) or "unknown"),
+    }
+
+
+def private_host_acceptance_receipt_row(conn: sqlite3.Connection, receipt_id: str):
+    return conn.execute(
+        """SELECT phr.*,
+                  a.artifact_id AS metadata_artifact_id,
+                  a.task_id AS artifact_task_id,
+                  a.run_id AS artifact_run_id,
+                  a.artifact_type AS metadata_artifact_type,
+                  t.workspace_id AS task_workspace_id,
+                  r.workspace_id AS run_workspace_id,
+                  r.task_id AS run_task_id
+           FROM private_host_acceptance_receipts phr
+           JOIN artifacts a ON a.artifact_id=phr.receipt_id
+           JOIN tasks t ON t.task_id=phr.task_id
+           JOIN runs r ON r.run_id=phr.run_id
+           WHERE phr.receipt_id=? AND a.artifact_type=?""",
+        (receipt_id, PRIVATE_HOST_ACCEPTANCE_RECEIPT_TYPE),
+    ).fetchone()
+
+
+def load_private_host_acceptance_receipt(
+    conn: sqlite3.Connection,
+    receipt_id: str,
+    human_context: dict | None,
+) -> tuple[dict, int]:
+    owner_error = private_host_owner_error(human_context)
+    if owner_error:
+        return owner_error
+    normalized_id = private_host_artifact_download_id(receipt_id)
+    if not normalized_id:
+        return {"error": "acceptance_receipt_not_found"}, 404
+    row = private_host_acceptance_receipt_row(conn, normalized_id)
+    if not row or normalize_workspace_id(row["workspace_id"]) != normalize_workspace_id(human_context.get("workspace_id")):
+        return {"error": "acceptance_receipt_not_found"}, 404
+    try:
+        receipt = json.loads(row["payload_json"] or "{}")
+    except (TypeError, ValueError):
+        receipt = {}
+    if (
+        not isinstance(receipt, dict)
+        or not verify_acceptance_receipt(receipt)
+        or receipt.get("receipt_id") != normalized_id
+        or receipt.get("workspace_id") != row["workspace_id"]
+        or receipt.get("task_id") != row["task_id"]
+        or receipt.get("run_id") != row["run_id"]
+        or receipt.get("payload_sha256") != row["payload_sha256"]
+        or receipt.get("generated_by_user_id") != row["generated_by"]
+        or row["metadata_artifact_id"] != normalized_id
+        or row["artifact_task_id"] != row["task_id"]
+        or row["artifact_run_id"] != row["run_id"]
+        or row["run_task_id"] != row["task_id"]
+        or normalize_workspace_id(row["task_workspace_id"]) != normalize_workspace_id(row["workspace_id"])
+        or normalize_workspace_id(row["run_workspace_id"]) != normalize_workspace_id(row["workspace_id"])
+    ):
+        return {
+            "error": "acceptance_receipt_integrity_failed",
+            "receipt_id": normalized_id,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        }, 409
+    return receipt, 200
+
+
+def private_host_receipt_evidence_counts(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    run_id: str,
+    approval_id: str,
+    artifact_id: str,
+    manifest_id: str,
+) -> dict[str, int]:
+    entity_ids = [task_id, run_id, approval_id, artifact_id, manifest_id]
+    placeholders = ",".join("?" for _ in entity_ids)
+    return {
+        "tool_calls": scalar_count(conn, "SELECT COUNT(*) FROM tool_calls WHERE run_id=?", (run_id,)),
+        "runtime_events": scalar_count(conn, "SELECT COUNT(*) FROM runtime_events WHERE run_id=?", (run_id,)),
+        "evaluations": scalar_count(conn, "SELECT COUNT(*) FROM evaluations WHERE run_id=?", (run_id,)),
+        "approvals": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE run_id=? OR task_id=?", (run_id, task_id)),
+        "artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts WHERE (run_id=? OR task_id=?) AND artifact_type<>?", (run_id, task_id, PRIVATE_HOST_ACCEPTANCE_RECEIPT_TYPE)),
+        "audit_logs": scalar_count(conn, f"SELECT COUNT(*) FROM audit_logs WHERE entity_id IN ({placeholders})", entity_ids),
+        "plan_evidence_manifests": scalar_count(conn, "SELECT COUNT(*) FROM plan_evidence_manifests WHERE run_id=?", (run_id,)),
+    }
+
+
+def create_private_host_acceptance_receipt(
+    conn: sqlite3.Connection,
+    body: dict,
+    human_context: dict | None,
+) -> tuple[dict, int]:
+    owner_error = private_host_owner_error(human_context)
+    if owner_error:
+        return owner_error
+    if set(body) != {"run_id"}:
+        return {"error": "invalid_request_fields", "allowed_fields": ["run_id"]}, 400
+    run_id = str(body.get("run_id") or "").strip()
+    if not private_host_artifact_download_id(run_id):
+        return {"error": "run_id_required"}, 400
+    workspace_id = normalize_workspace_id(human_context.get("workspace_id"))
+    run = conn.execute("SELECT * FROM runs WHERE run_id=? AND workspace_id=?", (run_id, workspace_id)).fetchone()
+    if not run:
+        return {"error": "run_not_found"}, 404
+    task_id = str(run["task_id"] or "")
+    receipt_id = stable_receipt_id(workspace_id, run_id)
+    existing = private_host_acceptance_receipt_row(conn, receipt_id)
+    if existing:
+        return load_private_host_acceptance_receipt(conn, receipt_id, human_context)
+
+    evaluation = conn.execute(
+        "SELECT evaluation_id,evaluator_type,score,pass_fail FROM evaluations WHERE run_id=? AND pass_fail='pass' ORDER BY created_at DESC,evaluation_id DESC LIMIT 1",
+        (run_id,),
+    ).fetchone()
+    approval = conn.execute(
+        """SELECT approval_id FROM approvals
+           WHERE decision='approved' AND (run_id=? OR task_id=?)
+           ORDER BY decided_at DESC,created_at DESC,approval_id DESC LIMIT 1""",
+        (run_id, task_id),
+    ).fetchone()
+    artifact = conn.execute(
+        """SELECT artifact_id,artifact_type,title,summary,created_at FROM artifacts
+           WHERE (run_id=? OR task_id=?) AND artifact_type<>?
+           ORDER BY created_at DESC,artifact_id DESC LIMIT 1""",
+        (run_id, task_id, PRIVATE_HOST_ACCEPTANCE_RECEIPT_TYPE),
+    ).fetchone()
+    manifest = conn.execute(
+        """SELECT * FROM plan_evidence_manifests
+           WHERE run_id=? AND workspace_id=? AND status='verified'
+           ORDER BY updated_at DESC,created_at DESC,manifest_id DESC LIMIT 1""",
+        (run_id, workspace_id),
+    ).fetchone()
+    manifest_verification = verify_plan_evidence_manifest_row(conn, manifest) if manifest else None
+    gates = {
+        "run_completed": run["status"] == "completed",
+        "pass_evaluation": bool(evaluation),
+        "approved_artifact": bool(artifact and approval),
+        "associated_approval": bool(approval),
+        "verified_plan_evidence": bool(manifest and manifest_verification and manifest_verification.get("pass")),
+    }
+    failed_gates = [gate for gate, passed in gates.items() if not passed]
+    if failed_gates:
+        return {
+            "error": "acceptance_receipt_not_ready",
+            "run_id": run_id,
+            "failed_gates": failed_gates,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        }, 409
+
+    artifact_row = dict(artifact)
+    counts = private_host_receipt_evidence_counts(
+        conn,
+        task_id=task_id,
+        run_id=run_id,
+        approval_id=approval["approval_id"],
+        artifact_id=artifact["artifact_id"],
+        manifest_id=manifest["manifest_id"],
+    )
+    identity = private_host_release_identity()
+    generated_at = now_iso()
+    receipt = build_acceptance_receipt(
+        **identity,
+        workspace_id=workspace_id,
+        task_id=task_id,
+        run_id=run_id,
+        adapter=run["runtime_type"],
+        status=run["status"],
+        evaluation=dict(evaluation),
+        approval_id=approval["approval_id"],
+        artifact_id=artifact["artifact_id"],
+        plan_manifest_id=manifest["manifest_id"],
+        evidence_counts=counts,
+        artifact_metadata_sha256=compute_artifact_metadata_sha256(artifact_row),
+        generated_at=generated_at,
+        generated_by_user_id=human_context["account_id"],
+    )
+    payload_json = json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    conn.execute(
+        """INSERT INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,created_at)
+           VALUES(?,?,?,?,?,?,?,?)""",
+        (
+            receipt_id,
+            task_id,
+            run_id,
+            PRIVATE_HOST_ACCEPTANCE_RECEIPT_TYPE,
+            f"Private Host acceptance receipt {run_id}",
+            f"mis://private-host-acceptance-receipts/{receipt_id}",
+            "Owner-only acceptance receipt recorded; bounded metadata integrity hint "
+            f"{receipt['artifact_metadata_sha256'][:12]}.",
+            generated_at,
+        ),
+    )
+    conn.execute(
+        """INSERT INTO private_host_acceptance_receipts(
+               receipt_id,workspace_id,task_id,run_id,payload_json,payload_sha256,generated_by,created_at
+           ) VALUES(?,?,?,?,?,?,?,?)""",
+        (
+            receipt_id,
+            workspace_id,
+            task_id,
+            run_id,
+            payload_json,
+            receipt["payload_sha256"],
+            human_context["account_id"],
+            generated_at,
+        ),
+    )
+    audit(conn, "user", human_context["account_id"], "host.acceptance_receipt.generate", "private_host_acceptance_receipts", receipt_id, None, None, {
+        "workspace_id": workspace_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "payload_sha256": receipt["payload_sha256"],
+        "artifact_id": artifact["artifact_id"],
+        "approval_id": approval["approval_id"],
+        "plan_manifest_id": manifest["manifest_id"],
+        "row_contents_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    })
+    return receipt, 201
+
+
+def download_private_host_acceptance_receipt(
+    conn: sqlite3.Connection,
+    receipt_id: str,
+    human_context: dict | None,
+) -> tuple[dict, int]:
+    receipt, status = load_private_host_acceptance_receipt(conn, receipt_id, human_context)
+    if status != 200:
+        return receipt, status
+    payload = receipt_json_bytes(receipt)
+    audit(conn, "user", human_context["account_id"], "host.acceptance_receipt.download", "private_host_acceptance_receipts", receipt["receipt_id"], None, None, {
+        "workspace_id": receipt["workspace_id"],
+        "run_id": receipt["run_id"],
+        "payload_sha256": receipt["payload_sha256"],
+        "size_bytes": len(payload),
+        "url_query_omitted": True,
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    })
+    return {
+        "payload": payload,
+        "content_type": "application/json; charset=utf-8",
+        "filename": receipt_download_filename(receipt["receipt_id"]),
     }, 200
 
 
@@ -957,6 +1231,23 @@ CREATE TABLE IF NOT EXISTS artifacts (
     FOREIGN KEY(task_id) REFERENCES tasks(task_id),
     FOREIGN KEY(run_id) REFERENCES runs(run_id)
 );
+
+CREATE TABLE IF NOT EXISTS private_host_acceptance_receipts (
+    receipt_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    run_id TEXT NOT NULL UNIQUE,
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    generated_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+    FOREIGN KEY(run_id) REFERENCES runs(run_id),
+    FOREIGN KEY(receipt_id) REFERENCES artifacts(artifact_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_private_host_acceptance_receipts_workspace
+ON private_host_acceptance_receipts(workspace_id, created_at);
 
 CREATE TABLE IF NOT EXISTS audit_logs (
     audit_id TEXT PRIMARY KEY,
@@ -1517,6 +1808,7 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "knowledge_documents", "project_id", "project_id TEXT")
     ensure_column(conn, "knowledge_documents", "access_level", "access_level TEXT NOT NULL DEFAULT 'internal'")
     ensure_knowledge_chunks_table(conn)
+    ensure_private_host_acceptance_receipts_table(conn)
     conn.execute(
         """CREATE TABLE IF NOT EXISTS prepared_actions (
             action_id TEXT PRIMARY KEY,
@@ -1565,6 +1857,28 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_workspace ON knowledge_chunks(workspace_id, access_level)")
     ensure_knowledge_fts(conn)
     ensure_knowledge_chunk_fts(conn)
+
+
+def ensure_private_host_acceptance_receipts_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS private_host_acceptance_receipts (
+            receipt_id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            run_id TEXT NOT NULL UNIQUE,
+            payload_json TEXT NOT NULL,
+            payload_sha256 TEXT NOT NULL,
+            generated_by TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+            FOREIGN KEY(run_id) REFERENCES runs(run_id),
+            FOREIGN KEY(receipt_id) REFERENCES artifacts(artifact_id)
+        )"""
+    )
+    conn.execute(
+        """CREATE INDEX IF NOT EXISTS idx_private_host_acceptance_receipts_workspace
+           ON private_host_acceptance_receipts(workspace_id, created_at)"""
+    )
 
 
 def ensure_knowledge_fts(conn: sqlite3.Connection) -> bool:
@@ -30640,6 +30954,26 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/evaluation-case-runs":
                 payload, status = list_evaluation_case_runs(conn, dict(qs), self.headers)
                 return self.send_json(payload, status)
+            receipt_download_match = re.fullmatch(r"/api/host/acceptance-receipts/([^/]+)/download", path)
+            if receipt_download_match:
+                payload, status = download_private_host_acceptance_receipt(
+                    conn,
+                    path_segment(path, -2),
+                    self._human_auth_context,
+                )
+                if status != 200:
+                    conn.rollback()
+                    return self.send_json(payload, status)
+                conn.commit()
+                return self.send_download(payload["payload"], payload["content_type"], payload["filename"])
+            receipt_match = re.fullmatch(r"/api/host/acceptance-receipts/([^/]+)", path)
+            if receipt_match:
+                payload, status = load_private_host_acceptance_receipt(
+                    conn,
+                    path_segment(path),
+                    self._human_auth_context,
+                )
+                return self.send_json(payload, status)
             artifact_download_match = re.fullmatch(r"/api/artifacts/([^/]+)/download", path)
             if artifact_download_match:
                 payload, status = private_host_artifact_download(
@@ -30986,8 +31320,9 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 clear_read_model_cache()
                 return self.send_json(payload, status)
+            human_context = None
             if human_auth.required():
-                _context, auth_error = human_auth.request_auth(conn, self.headers, path, "POST")
+                human_context, auth_error = human_auth.request_auth(conn, self.headers, path, "POST")
                 if auth_error:
                     payload, status = auth_error
                     conn.rollback()
@@ -30998,6 +31333,13 @@ class Handler(BaseHTTPRequestHandler):
                     payload, status = local_write_auth_error
                     conn.rollback()
                     return self.send_json(payload, status)
+            if path == "/api/host/acceptance-receipts":
+                payload, status = create_private_host_acceptance_receipt(conn, body, human_context)
+                if status in {200, 201}:
+                    conn.commit()
+                else:
+                    conn.rollback()
+                return self.send_json(payload, status)
             if path.startswith("/api/agent-plans/") and path.endswith("/approve"):
                 plan_id = path.split("/")[-2]
                 payload, status = transition_agent_plan(conn, plan_id, "approved", self.headers, body)
