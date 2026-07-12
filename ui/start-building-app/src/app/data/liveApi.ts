@@ -16,7 +16,9 @@ const HUMAN_AUTH_CSRF_KEY = "agentops-human-auth-csrf";
 export const HUMAN_AUTH_UNAUTHORIZED_EVENT = "agentops:human-auth-unauthorized";
 
 export interface HumanAuthUser {
+  account_id?: string;
   user_id?: string;
+  workspace_id?: string;
   username: string;
   display_name?: string;
   role?: string;
@@ -33,6 +35,43 @@ export interface HumanAuthStatus {
 export interface HumanAuthSession {
   user: HumanAuthUser;
   csrf_token: string;
+}
+
+export type PrivateHostAcceptanceCheckId =
+  | "human_session"
+  | "local_readiness"
+  | "tasks_readable"
+  | "evaluations_readable"
+  | "approvals_readable"
+  | "memories_readable"
+  | "audit_readable"
+  | "artifacts_readable"
+  | "marker_task_readable";
+
+export interface PrivateHostAcceptanceCheck {
+  id: PrivateHostAcceptanceCheckId;
+  ok: boolean;
+  count?: number;
+  status?: string;
+  error?: string;
+}
+
+export interface PrivateHostAcceptanceSnapshot {
+  checked_at: string;
+  checks: PrivateHostAcceptanceCheck[];
+  counts: Record<string, number>;
+  related_ids: { marker_task_id?: string };
+  actor: {
+    workspace_id?: string;
+    user_id?: string;
+    role?: string;
+  };
+}
+
+export interface PrivateHostAcceptanceMarker {
+  receipt_id: string;
+  task_id: string;
+  title: string;
 }
 
 function readHumanAuthCsrf(): string {
@@ -5346,6 +5385,138 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
     contract: raw.contract ? String(raw.contract) : undefined,
     token_omitted: boolValue(raw.token_omitted),
     live_execution_performed: boolValue(raw.live_execution_performed),
+  };
+}
+
+function acceptanceRows(raw: unknown, preferredKey: string): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw !== "object" || raw === null) throw new Error("response is not a readable list");
+  const record = raw as Record<string, unknown>;
+  if (Array.isArray(record[preferredKey])) return record[preferredKey] as unknown[];
+  if (Array.isArray(record.items)) return record.items as unknown[];
+  throw new Error("response does not contain a readable list");
+}
+
+function acceptanceError(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").slice(0, 160);
+}
+
+export async function loadPrivateHostAcceptanceSnapshot(marker?: {
+  receipt_id: string;
+  task_id?: string;
+}): Promise<PrivateHostAcceptanceSnapshot> {
+  const authPromise = getHumanAuthStatus()
+    .then((status) => ({
+      check: {
+        id: "human_session",
+        ok: Boolean(status.required && status.authenticated),
+        status: status.authenticated ? "authenticated" : "unauthenticated",
+      } as PrivateHostAcceptanceCheck,
+      user: status.user,
+    }))
+    .catch((error) => ({
+      check: { id: "human_session", ok: false, error: acceptanceError(error) } as PrivateHostAcceptanceCheck,
+      user: undefined,
+    }));
+
+  const readinessPromise = apiJson<Record<string, unknown>>("/local/readiness")
+    .then((readiness): PrivateHostAcceptanceCheck => ({
+      id: "local_readiness",
+      ok: true,
+      status: String(readiness.status || (readiness.ok ? "ready" : "attention")),
+    }))
+    .catch((error): PrivateHostAcceptanceCheck => ({ id: "local_readiness", ok: false, error: acceptanceError(error) }));
+
+  const listCheck = async (
+    id: PrivateHostAcceptanceCheckId,
+    path: string,
+    key: string,
+  ): Promise<{ check: PrivateHostAcceptanceCheck; rows: unknown[] }> => {
+    try {
+      const rows = acceptanceRows(await apiJson<unknown>(path), key);
+      return { check: { id, ok: true, count: rows.length, status: "readable" }, rows };
+    } catch (error) {
+      return { check: { id, ok: false, error: acceptanceError(error) }, rows: [] };
+    }
+  };
+
+  const [auth, readiness, tasks, evaluations, approvals, memories, audit, artifacts] = await Promise.all([
+    authPromise,
+    readinessPromise,
+    listCheck("tasks_readable", "/tasks", "tasks"),
+    listCheck("evaluations_readable", "/evaluations", "evaluations"),
+    listCheck("approvals_readable", "/approvals", "approvals"),
+    listCheck("memories_readable", "/memories", "memories"),
+    listCheck("audit_readable", "/audit?limit=150", "audit_logs"),
+    listCheck("artifacts_readable", "/artifacts", "artifacts"),
+  ]);
+
+  const markerRow = marker?.task_id
+    ? tasks.rows.find((row) => {
+        if (typeof row !== "object" || row === null) return false;
+        const task = row as Record<string, unknown>;
+        return String(task.task_id || "") === marker.task_id
+          && String(task.title || "").includes(marker.receipt_id);
+      }) as Record<string, unknown> | undefined
+    : undefined;
+  const markerCheck: PrivateHostAcceptanceCheck = {
+    id: "marker_task_readable",
+    ok: Boolean(markerRow),
+    status: marker?.task_id ? (markerRow ? "readable" : "not_found") : "not_created",
+  };
+
+  const user = auth.user;
+  const checks = [
+    auth.check,
+    readiness,
+    tasks.check,
+    evaluations.check,
+    approvals.check,
+    memories.check,
+    audit.check,
+    artifacts.check,
+    markerCheck,
+  ];
+  return {
+    checked_at: new Date().toISOString(),
+    checks,
+    counts: {
+      tasks: tasks.rows.length,
+      evaluations: evaluations.rows.length,
+      approvals: approvals.rows.length,
+      memories: memories.rows.length,
+      audit: audit.rows.length,
+      artifacts: artifacts.rows.length,
+    },
+    related_ids: markerRow ? { marker_task_id: String(markerRow.task_id || marker?.task_id || "") } : {},
+    actor: {
+      workspace_id: user?.workspace_id,
+      user_id: user?.account_id || user?.user_id,
+      role: user?.role,
+    },
+  };
+}
+
+export async function createPrivateHostAcceptanceMarker(receiptId: string): Promise<PrivateHostAcceptanceMarker> {
+  const title = `Private Host acceptance marker ${receiptId}`;
+  const raw = await apiJson<Record<string, unknown>>("/tasks", {
+    method: "POST",
+    body: JSON.stringify({
+      title,
+      description: "Low-risk browser acceptance marker. No Runtime or external connector is invoked.",
+      acceptance_criteria: "The marker task is readable through the same authenticated human Session.",
+      owner_agent_id: "",
+      collaborator_agent_ids: [],
+      status: "planned",
+      priority: "low",
+      risk_level: "low",
+      budget_limit_usd: 0,
+    }),
+  });
+  return {
+    receipt_id: receiptId,
+    task_id: String(raw.task_id || ""),
+    title: String(raw.title || title),
   };
 }
 

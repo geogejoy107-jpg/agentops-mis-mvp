@@ -21,6 +21,7 @@ import { NotionBase } from "./components/pages/NotionBase";
 import { TemplateSwitching } from "./components/pages/TemplateSwitching";
 import { AuditCenter } from "./components/pages/AuditCenter";
 import { CustomerProjectReport } from "./components/pages/CustomerProjectReport";
+import { PrivateHostAcceptance } from "./components/pages/PrivateHostAcceptance";
 import { PreferencesProvider } from "./context/PreferencesContext";
 import { AuthGate } from "./components/auth/AuthGate";
 
@@ -53,6 +54,7 @@ export default function App() {
               <Route path="/admin/bases/notion" element={<NotionBase />} />
               <Route path="/admin/templates" element={<TemplateSwitching />} />
               <Route path="/admin/audit" element={<AuditCenter />} />
+              <Route path="/admin/private-host-acceptance" element={<PrivateHostAcceptance />} />
             </Routes>
           </AppShell>
         </AuthGate>

@@ -4,7 +4,7 @@ import { NavLink, useLocation } from "react-router";
 import {
   Home, CheckSquare, Bot, ShieldCheck, Brain, BarChart2, Package,
   Activity, List, Wrench, Plug, Database, ClipboardList, Map,
-  ChevronDown, ChevronRight, Zap, TerminalSquare, ClipboardCheck,
+  ChevronDown, ChevronRight, Zap, TerminalSquare, ClipboardCheck, MonitorCheck,
 } from "lucide-react";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 
@@ -46,6 +46,7 @@ const navGroups: NavGroup[] = [
       { labelKey: "connectors",    path: "/admin/connectors",         icon: <Plug size={15} /> },
       { labelKey: "externalBases", path: "/admin/bases/notion",       icon: <Database size={15} /> },
       { labelKey: "audit",         path: "/admin/audit",              icon: <ClipboardList size={15} /> },
+      { labelKey: "privateHostAcceptance", path: "/admin/private-host-acceptance", icon: <MonitorCheck size={15} /> },
     ],
   },
 ];
@@ -76,6 +77,7 @@ export function Sidebar() {
       connectors: "Connectors",
       externalBases: "External Bases",
       audit: "Audit",
+      privateHostAcceptance: "Private Host Acceptance",
       workspace: "Workspace",
     },
     zh: {
@@ -99,6 +101,7 @@ export function Sidebar() {
       connectors: "连接器",
       externalBases: "外部知识库",
       audit: "审计",
+      privateHostAcceptance: "私有主机验收",
       workspace: "工作区",
     },
   });
