@@ -31,6 +31,9 @@ customer release.
 - Host startup uses the production same-origin UI and does not run Vite.
 - A prepackaged `--ui-dist` can run without `node_modules`.
 - Background start owns one process group; stop targets only that group.
+- Real-Worker stop receives a 20-second graceful window; restart never starts a
+  duplicate Host after stop failure. Background restart returns one JSON result
+  while foreground restart preserves the live stream.
 - Default Worker is mock; Hermes/OpenClaw still require
   `--confirm-live-workers`.
 - Network publication remains `disabled` after init/start.
@@ -42,6 +45,8 @@ customer release.
 - Existing Serve backends on the selected HTTPS port are summarized without
   returning raw configuration. A target owned by another local service blocks
   apply; selecting another explicit HTTPS port permits safe coexistence.
+- Funnel, Services-wrapped config, mixed handlers, DNS drift, stopped Host state,
+  and unknown/non-exclusive ownership all fail closed.
 - `tailscale-apply` and `tailscale-revoke` remain side-effect free without
   `--confirm`; confirmed apply/reset update the private trusted-Origin config
   and require a Host restart. Apply enables `Secure` cookies for tailnet HTTPS;
@@ -51,7 +56,10 @@ customer release.
   resets unrelated Serve handlers.
 - Host status, doctor, logs and console URL responses omit credential values.
 - `console-url` reports the private HTTPS URL ready only when Tailscale is
-  running and its verified Serve target matches this Host without conflict.
+  running, Host health is ready, trusted Origin matches current Tailscale DNS,
+  and the verified Serve target is exclusively owned by MIS without Funnel.
+- A managed production UI follows the packaged `current` release across update
+  and rollback. Explicit custom UI paths remain unchanged.
 
 ## Verification
 
@@ -86,6 +94,10 @@ temporary SQLite database and a free loopback port. It verified:
 - Secure cookie policy enabled on confirmed Tailscale apply and disabled after
   confirmed revoke;
 - process-group stop and temporary-state cleanup.
+- stopped-Host, DNS-drift, Funnel, Services and mixed-handler fail-closed cases;
+- single-result background restart and foreground-stream restart contracts;
+- actual version-marker HTTP readback after bundle upgrade and rollback;
+- custom production UI path preservation.
 
 No real Runtime, external connector, Tailscale configuration, user database,
 prompt, response, private message or transcript was used.
@@ -105,6 +117,6 @@ prompt, response, private message or transcript was used.
 
 ## Next Slice
 
-Add trusted Origin/forwarded-proto handling, a confirmation-gated Tailscale
-Serve apply/revoke command, then run the browser console from a second tailnet
-device with no repository dependencies.
+Complete Owner bootstrap, then run the full browser workflow from the already
+reachable second tailnet device with no repository dependencies. Repeat clean
+installation on another physical Mac before declaring the final RC.

@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.4 published and host-local gates passed; physical second-device acceptance remains open
+Status: preview.6 published and Host-side private-network gates passed; physical second-device acceptance remains open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -11,12 +11,12 @@ physical evidence and cannot be closed by mock output.
 
 | # | Requirement | Current evidence | Status |
 |---|---|---|---|
-| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.4` passed GitHub download, checksum, isolated install, lifecycle, route and exact-package Worker checks. A clean install receipt from another physical Mac remains missing. | Passed locally; external evidence required |
-| 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md` plus bundle smoke cover installed CLI, production UI, init, doctor, start/status/stop and fail-closed Runtime readiness. | Passed locally |
-| 3 | Dependency-free second computer opens private HTTPS console and authenticates | Human Session, CSRF, trusted Origin and Tailscale lifecycle are deterministic-smoke covered. Real second-device HTTPS login is missing. | External evidence required |
+| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.6` passed GitHub download, checksum, isolated install, lifecycle, route and same-Mac upgrade checks. A clean install receipt from another physical Mac remains missing. | Passed locally; external evidence required |
+| 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md` plus bundle smoke cover installed CLI, production UI, init, doctor, start/status/stop, fail-closed Runtime readiness, and actual served-UI switching across upgrade/rollback. | Passed locally |
+| 3 | Dependency-free second computer opens private HTTPS console and authenticates | preview.6 is live through private Tailscale HTTPS on port 8443, Funnel is disabled, an unrelated port 443 target is preserved, and an online second peer is reachable. Owner bootstrap and physical second-device browser login remain missing. | Host side passed; external evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, role/session separation and CSRF/Origin checks. | Passed locally |
 | 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | Customer dispatch and ledger views exist; Audit and Memory use live APIs; memory decisions write through the approver route; approved artifact download is Session/workspace/approval checked and audited. A second-device end-to-end receipt remains open. | Partial |
-| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | `PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md` records fresh completed Hermes and OpenClaw async runs from the installed preview.4 package through an Owner Session, followed by human approval and verified Host authority receipts. | Passed on Host |
+| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | `PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md` records fresh completed Hermes and OpenClaw async runs from preview.4. preview.6 is running both real Workers, but an exact-preview.6 customer run awaits Owner bootstrap. | Passed previously; exact-current rerun pending |
 | 7 | Console disconnect does not stop Host Worker or lose task | `PRIVATE_HOST_CONSOLE_DISCONNECT_ACCEPTANCE.md` proves real Hermes/OpenClaw jobs completed after their first Host-local Session clients were discarded, then were read through fresh Owner Sessions. Physical browser/tailnet loss remains missing. | Passed on Host; external evidence required |
 | 8 | Host restart preserves ledger and knowledge state | `PRIVATE_HOST_RESTART_PERSISTENCE_ACCEPTANCE.md` covers Session, task and a 194-document local Markdown/FTS index remaining searchable after managed restart. | Passed locally |
 | 9 | Backup and restore pass on isolated database | `PRIVATE_HOST_BACKUP_RESTORE_ACCEPTANCE.md` covers strict manifest/hash/schema/integrity/foreign-key checks, atomic replacement and access revocation. | Passed locally |
@@ -77,7 +77,7 @@ an isolated directory. Physical tailnet, second-computer and another-Mac gates
 remain open. preview.4 supersedes it with durable async disconnect and
 idempotent launch acceptance.
 
-## Current Preview 4
+## Superseded Preview 4
 
 - Tag: `v1.6.0-private-host-preview.4`
 - Exact commit: `1b8f2b9469105ce826e551b5e83fd9d5f0656bff`
@@ -96,7 +96,42 @@ Host-local Session clients were discarded; fresh Owner Sessions then approved
 the deliveries and verified Host authority receipts. GitHub
 download/checksum/install/start/route/stop also passed in an isolated directory.
 Physical tailnet, second-computer, physical disconnect and another-Mac gates
-remain open, so this prerelease is not yet the final Release Candidate.
+remained open. preview.5 and preview.6 supersede this package.
+
+## Superseded Preview 5
+
+- Tag: `v1.6.0-private-host-preview.5`
+- Exact commit: `d281adae3ef97229c1861b27f2e559bb7edd1fe3`
+- Push CI: passed at the exact commit (`29194637789`)
+- Pull-request CI: passed at the exact commit (`29194639170`)
+- Release: `https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.5`
+
+preview.5 hardened Tailscale URL readiness, Serve ownership, Funnel blocking,
+DNS drift and graceful restart behavior. A real upgrade then found that the
+persistent production UI path remained pinned to preview.4, so preview.6
+supersedes it.
+
+## Current Preview 6
+
+- Tag: `v1.6.0-private-host-preview.6`
+- Exact commit: `961740e6609d61fdd1ba2f7c551e34df714fdf32`
+- Push CI: passed at the exact commit (`29195231194`)
+- Pull-request CI: passed at the exact commit (`29195232345`)
+- Release: `https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.6`
+- SHA-256 manifest: `1542921dd18bfeeb8b07aef3fcc81157cd3cefcc9c1ccbdf03de165044f60f1d`
+- Tar archive: `efa4596284160f961b3d5846a311236e23314a5e073131b509392e561b78da80`
+- Zip archive: `e520ba624671f996bba9b2fe57d1f32427dd7223b4f6bc2e9c945a4fefdda770`
+
+The Host downloaded and verified the GitHub assets, created a pre-update
+ledger backup, upgraded from preview.5 with user data preserved, and started
+real Hermes/OpenClaw Workers. Host status proves the managed UI now resolves to
+preview.6, private HTTPS port 8443 is exclusively owned by MIS, Funnel is off,
+and the existing port 443 target remains untouched. The private HTTPS Workspace
+returned HTTP 200 and one physical Console peer was reachable over the tailnet.
+No DNS name, IP, account, credential, setup code, Session or raw Runtime content
+is retained here. Owner bootstrap, the physical browser workflow, physical
+disconnect/reconnect, and another-Mac clean install remain open, so this is not
+the final Release Candidate.
 
 ## Release Gates
 

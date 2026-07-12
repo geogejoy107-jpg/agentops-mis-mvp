@@ -120,6 +120,22 @@ text, project files, database path, or unrestricted Host paths.
 
 ## Current Result
 
-No physical second-device receipt is attached yet. Deterministic local smokes,
-the non-authoritative browser checklist, and same-Mac clean-HOME installation
-are supporting evidence only and must remain labeled as such.
+Host-side staging was completed on 2026-07-12 with
+`v1.6.0-private-host-preview.6` at exact commit
+`961740e6609d61fdd1ba2f7c551e34df714fdf32`:
+
+- GitHub download and published checksum verification passed;
+- upgrade created a pre-update ledger backup and preserved user data;
+- Host health, managed preview.6 production UI and real Hermes/OpenClaw Workers
+  are ready;
+- private Tailscale HTTPS uses port 8443 with one exclusive MIS handler;
+- Funnel is disabled and the unrelated port 443 target remains unchanged;
+- the private HTTPS Workspace returned HTTP 200;
+- one physical Console peer was online and reachable over the tailnet.
+
+Owner bootstrap is still required. No physical second-device browser login,
+task dispatch, approval, evaluation/audit/memory review, artifact download,
+disconnect/reconnect or logout-denial receipt is attached yet. Automated
+browser runtimes outside the Host tailnet are not accepted as a substitute.
+No tailnet DNS name, IP address, account identifier, credential or setup code is
+recorded in this document.
