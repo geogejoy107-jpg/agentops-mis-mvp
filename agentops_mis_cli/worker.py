@@ -1065,7 +1065,7 @@ def compact_worker_loop_supervision_gate(payload: dict, *, adapter: str, task_id
     service_closure = item.get("service_closure") if isinstance(item.get("service_closure"), dict) else {}
     service_closure_gate = next((gate for gate in raw_gates if isinstance(gate, dict) and gate.get("id") == "service_managed_loop"), {})
     service_closure_status = str(service_closure.get("status") or service_closure_gate.get("status") or "not_applicable")
-    service_closure_required = bool(
+    service_closure_requested = bool(
         service_closure.get("required") is True
         or service_closure_status in {"attention", "blocked", "record_first"}
         or (
@@ -1073,6 +1073,10 @@ def compact_worker_loop_supervision_gate(payload: dict, *, adapter: str, task_id
             and service_closure_gate.get("ok") is not True
             and service_closure_status not in {"pass", "not_applicable"}
         )
+    )
+    service_closure_hard_gate = bool(
+        service_closure.get("hard_run_start_gate") is True
+        or service_closure_gate.get("hard_run_start_gate") is True
     )
     service_closure_command = service_closure.get("command") or service_closure_gate.get("command")
     gates = [
@@ -1096,7 +1100,7 @@ def compact_worker_loop_supervision_gate(payload: dict, *, adapter: str, task_id
         and not server_shell
         and not blockers
         and plan_quality_issue_count == 0
-        and not service_closure_required
+        and not service_closure_hard_gate
         and status not in {"blocked", "attention", "preview_only", "unavailable"}
     )
     core = {
@@ -1153,14 +1157,14 @@ def compact_worker_loop_supervision_gate(payload: dict, *, adapter: str, task_id
             "token_omitted": True,
         },
         "service_closure": {
-            "required": service_closure_required,
+            "required": service_closure_requested,
             "status": service_closure_status,
             "step": service_closure.get("step") or service_closure_gate.get("step"),
             "phase": service_closure.get("phase") or service_closure_gate.get("phase"),
             "command": service_closure_command,
             "gate_status": service_closure_gate.get("status"),
             "gate_ok": service_closure_gate.get("ok") is True,
-            "hard_run_start_gate": service_closure.get("hard_run_start_gate") is True or service_closure_gate.get("hard_run_start_gate") is True,
+            "hard_run_start_gate": service_closure_hard_gate,
             "server_executes_shell": service_closure.get("server_executes_shell") is True or service_closure_gate.get("server_executes_shell") is True,
             "token_omitted": True,
         },

@@ -39,3 +39,15 @@ The deterministic smoke proves a structurally safe empty-ledger state becomes
 `attention`, while malformed Local Readiness remains `blocked`. Product-level
 acceptance still requires a new isolated Private Host and fresh successful
 Hermes/OpenClaw evidence after this fix.
+
+Subsequent real dogfood also found and closed two downstream cold-start issues:
+
+- a Worker machine Session may read only `GET /api/operator/loop-supervision`
+  through its existing `tasks:read` scope; anonymous reads still fail and other
+  operator browser routes remain human-session protected;
+- missing service-manager receipt/readback is advisory for a confirmed one-shot
+  customer Worker when `hard_run_start_gate=false`, while an explicit hard gate
+  remains blocking.
+
+These paths are covered by `human_browser_auth_smoke.py` and
+`worker_loop_supervision_soft_gate_smoke.py` without calling a Runtime.
