@@ -34,6 +34,8 @@ Generated archives and UI `dist` remain untracked.
 - The production UI is copied from the explicit built `dist` directory.
 - Runtime packages include CLI, core and runtime adapters plus the Python
   server, knowledge/static/config data and bounded scripts needed by Host mode.
+- Each installed version includes the minimal SBOM, third-party notices,
+  release provenance and Private Host operator runbook.
 - `manifest.json` records product version, exact Git commit, build timestamp,
   platform, Python requirement, file sizes and SHA-256 for every payload and
   installer file.
@@ -78,6 +80,7 @@ The smoke uses temporary build/output/HOME/install/data directories and proves:
 - upgrade creates a verified ledger backup before switching binaries;
 - Host ledger and user data survive the binary switch;
 - production UI presence in the installed current version;
+- installed SBOM, third-party notices, provenance and operator runbook;
 - uninstall removes product files;
 - uninstall preserves a pre-existing user-data sentinel.
 

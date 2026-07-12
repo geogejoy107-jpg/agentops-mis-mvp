@@ -21,6 +21,10 @@ DEFAULT_UI_DIST = ROOT / "ui" / "start-building-app" / "dist"
 RUNTIME_FILES = {
     "LICENSE",
     "README.md",
+    "docs/PRIVATE_HOST_OPERATOR_RUNBOOK.md",
+    "docs/RELEASE_PROVENANCE.md",
+    "docs/SBOM_MINIMAL.md",
+    "docs/THIRD_PARTY_NOTICES.md",
     "pyproject.toml",
     "server.py",
     "scripts/agent_worker.py",

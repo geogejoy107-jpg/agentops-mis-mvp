@@ -101,6 +101,21 @@ def main() -> int:
             )
             if status != 200 or payload.get("provider") != "agent_gateway":
                 failures.append("machine API key did not authenticate Agent Gateway")
+            status, _headers, payload = request_json(anonymous, base_url + "/api/operator/loop-supervision")
+            if status != 401 or payload.get("error") != "human_auth_required":
+                failures.append("anonymous operator supervision read did not require human auth")
+            status, _headers, payload = request_json(
+                anonymous,
+                base_url + "/api/operator/loop-supervision?adapter=hermes&limit=2",
+                headers={"Authorization": "Bearer fixture-machine-key"},
+            )
+            evidence["machine_scoped_supervision"] = {
+                "status": status,
+                "operation": payload.get("operation"),
+                "token_omitted": payload.get("token_omitted"),
+            }
+            if status != 200 or payload.get("operation") != "operator_loop_supervision":
+                failures.append("scoped machine credential could not read loop supervision")
 
             status, _headers, payload = request_json(browser, base_url + "/api/human-auth/status")
             evidence["bootstrap_status"] = payload

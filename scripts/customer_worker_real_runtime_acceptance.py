@@ -161,7 +161,11 @@ def run_adapter(args: argparse.Namespace, adapter: str, opener=None, csrf_token:
     require(worker_state.get("base_url") == args.base_url.rstrip("/"), f"{adapter}: worker used wrong base_url: {worker_state}", failures)
     for key in ["tool_calls", "evaluations", "runtime_events", "audit_logs", "artifacts", "memories", "approvals", "plan_evidence_manifests"]:
         require(evidence.get(key, 0) >= 1, f"{adapter}: missing {key} evidence: {evidence}", failures)
-    require(result.get("plan_evidence_pass") is True, f"{adapter}: plan evidence did not pass: {result}", failures)
+    require(
+        result.get("plan_evidence_pass") is True,
+        f"{adapter}: plan evidence did not pass: status={result.get('plan_evidence_status')} manifest={result.get('plan_evidence_manifest_id')}",
+        failures,
+    )
     serialized = json.dumps(result, ensure_ascii=False)
     require(not token_leaked(serialized), f"{adapter}: output leaked token-like material", failures)
     return {

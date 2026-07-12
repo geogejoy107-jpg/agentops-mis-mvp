@@ -142,6 +142,14 @@ def main() -> int:
                 fail(f"installed agentops host {command} --help failed", command_help)
         if not (install_root / "current" / "ui" / "start-building-app" / "dist" / "index.html").is_file():
             fail("installed production UI missing")
+        for release_doc in (
+            "docs/PRIVATE_HOST_OPERATOR_RUNBOOK.md",
+            "docs/RELEASE_PROVENANCE.md",
+            "docs/SBOM_MINIMAL.md",
+            "docs/THIRD_PARTY_NOTICES.md",
+        ):
+            if not (install_root / "current" / release_doc).is_file():
+                fail(f"installed release evidence missing: {release_doc}")
         initialized = run([str(bin_dir / "agentops"), "host", "init", "--port", str(free_port())], env=env)
         if initialized.returncode != 0:
             fail("installed agentops host init failed", initialized)
@@ -218,6 +226,7 @@ def main() -> int:
             "operation": "private_host_bundle_smoke",
             "archive_forbidden_scan": "tar_and_zip_passed",
             "manifest_checksums": "passed",
+            "installed_sbom_notices_and_runbook": "passed",
             "tampered_payload_rejected": True,
             "installed_host_help": "passed",
             "installed_backup_restore_commands": "passed",

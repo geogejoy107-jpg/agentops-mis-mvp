@@ -29726,7 +29726,11 @@ class Handler(BaseHTTPRequestHandler):
             self._human_auth_context = None
             if path == "/api/human-auth/status":
                 return self.send_json(human_auth.status(conn, self.headers))
-            if human_auth.required() and not path.startswith("/api/agent-gateway/"):
+            machine_scoped_read = (
+                path == "/api/operator/loop-supervision"
+                and str(self.headers.get("Authorization") or "").startswith("Bearer ")
+            )
+            if human_auth.required() and not path.startswith("/api/agent-gateway/") and not machine_scoped_read:
                 context, auth_error = human_auth.request_auth(conn, self.headers, path, "GET")
                 if auth_error:
                     payload, status = auth_error
