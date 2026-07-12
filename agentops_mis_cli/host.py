@@ -456,7 +456,8 @@ def cmd_restore(args) -> int:
             Path(str(value)).chmod(0o600)
     payload["operation"] = "host_restore"
     payload["secret_store_restored"] = False
-    payload["hashed_auth_state_restored"] = True
+    payload["hashed_auth_records_restored"] = True
+    payload["restored_auth_state_revoked"] = True
     payload["restart_required"] = status == 0
     payload["next_action"] = "agentops host start" if status == 0 else "Verify the backup and retry."
     emit(payload)

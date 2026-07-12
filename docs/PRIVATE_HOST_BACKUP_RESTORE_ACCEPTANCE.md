@@ -31,11 +31,14 @@ Result:
 
 - backup SQLite integrity: `ok`;
 - backup manifest hash: verified;
+- missing manifest and tampered SQLite file: rejected;
 - backup and manifest permissions: private;
 - unconfirmed restore: no write;
 - restore while managed Host PID is alive: rejected;
 - confirmed restore: ledger marker recovered;
 - pre-restore safety copy: created;
+- staged database integrity and foreign keys: verified before atomic replacement;
+- restored human/Agent sessions and enrollment tokens: revoked by default;
 - independent Host secrets file: unchanged by hash;
 - hash-only Session/Token ledger state: explicitly included and treated as
   sensitive backup data;

@@ -46,11 +46,15 @@ def seed_database(path: Path) -> None:
         conn.execute("CREATE TABLE agents(agent_id TEXT PRIMARY KEY, name TEXT)")
         conn.execute("CREATE TABLE tasks(task_id TEXT PRIMARY KEY, title TEXT)")
         conn.execute("CREATE TABLE runs(run_id TEXT PRIMARY KEY, task_id TEXT)")
-        conn.execute("CREATE TABLE agent_gateway_tokens(token_id TEXT PRIMARY KEY, token_hash TEXT)")
+        conn.execute("CREATE TABLE human_sessions(session_id TEXT PRIMARY KEY, status TEXT, revoked_at TEXT)")
+        conn.execute("CREATE TABLE agent_gateway_sessions(session_id TEXT PRIMARY KEY, status TEXT, revoked_at TEXT)")
+        conn.execute("CREATE TABLE agent_gateway_tokens(token_id TEXT PRIMARY KEY, token_hash TEXT, status TEXT, revoked_at TEXT)")
         conn.execute("INSERT INTO agents VALUES('agt_host_backup_smoke', 'Host Backup Smoke')")
         conn.execute("INSERT INTO tasks VALUES('tsk_host_backup_smoke', 'Host backup smoke task')")
         conn.execute("INSERT INTO runs VALUES('run_host_backup_smoke', 'tsk_host_backup_smoke')")
-        conn.execute("INSERT INTO agent_gateway_tokens VALUES('tok_host_backup_smoke', 'hash-only')")
+        conn.execute("INSERT INTO human_sessions VALUES('hs_host_backup_smoke', 'active', NULL)")
+        conn.execute("INSERT INTO agent_gateway_sessions VALUES('ags_host_backup_smoke', 'active', NULL)")
+        conn.execute("INSERT INTO agent_gateway_tokens VALUES('tok_host_backup_smoke', 'hash-only', 'active', NULL)")
 
 
 def main() -> int:
@@ -88,6 +92,26 @@ def main() -> int:
                 failures.append("Host backup did not create the verified backup and manifest")
             if created.get("secret_store_included") is not False or created.get("hashed_auth_state_included") is not True or not evidence["backup"]["private_files"]:
                 failures.append("Host backup credential boundary or private permissions failed")
+
+            manifest_backup = manifest_path.with_suffix(".missing-test")
+            manifest_path.rename(manifest_backup)
+            missing_manifest, missing_output = run_host(
+                env, "backup-verify", "--backup", str(backup_path), expected=(1,)
+            )
+            manifest_backup.rename(manifest_path)
+            if missing_manifest.get("error") != "backup_manifest_missing":
+                failures.append("Host backup verification accepted a missing manifest")
+
+            original_backup = backup_path.read_bytes()
+            with backup_path.open("ab") as handle:
+                handle.write(b"tamper")
+            tampered, tampered_output = run_host(
+                env, "backup-verify", "--backup", str(backup_path), expected=(1,)
+            )
+            backup_path.write_bytes(original_backup)
+            backup_path.chmod(0o600)
+            if tampered.get("hash_ok") is not False:
+                failures.append("Host backup verification accepted a tampered SQLite file")
 
             verified, verify_output = run_host(env, "backup-verify")
             evidence["verify"] = {
@@ -129,6 +153,10 @@ def main() -> int:
             )
             with sqlite3.connect(db_path) as conn:
                 restored_agents = int(conn.execute("SELECT COUNT(*) FROM agents").fetchone()[0])
+                revoked_auth = {
+                    table: int(conn.execute(f"SELECT COUNT(*) FROM {table} WHERE status='revoked'").fetchone()[0])
+                    for table in ("human_sessions", "agent_gateway_sessions", "agent_gateway_tokens")
+                }
             pre_restore_copy = Path(str(restored.get("pre_restore_copy") or ""))
             evidence["restore"] = {
                 "ok": restored.get("ok"),
@@ -136,15 +164,32 @@ def main() -> int:
                 "pre_restore_copy": pre_restore_copy.is_file(),
                 "restart_required": restored.get("restart_required"),
                 "secret_store_restored": restored.get("secret_store_restored"),
-                "hashed_auth_state_restored": restored.get("hashed_auth_state_restored"),
+                "hashed_auth_records_restored": restored.get("hashed_auth_records_restored"),
+                "restored_auth_state_revoked": restored.get("restored_auth_state_revoked"),
                 "secrets_preserved": digest(secrets_path) == secrets_hash_before,
+                "restored_integrity": restored.get("restored_integrity_check"),
+                "restored_foreign_keys": restored.get("restored_foreign_key_check"),
+                "atomic_replace": restored.get("atomic_replace"),
+                "revoked_auth_state": revoked_auth,
             }
             if not restored.get("ok") or restored_agents != 1 or not pre_restore_copy.is_file():
                 failures.append("Confirmed Host restore did not restore ledger state with a safety copy")
-            if restored.get("secret_store_restored") is not False or restored.get("hashed_auth_state_restored") is not True or digest(secrets_path) != secrets_hash_before:
+            if (
+                restored.get("secret_store_restored") is not False
+                or restored.get("hashed_auth_records_restored") is not True
+                or restored.get("restored_auth_state_revoked") is not True
+                or digest(secrets_path) != secrets_hash_before
+            ):
                 failures.append("Host restore changed the separate credential store")
+            if (
+                restored.get("restored_integrity_check") != "ok"
+                or restored.get("restored_foreign_key_check") != "ok"
+                or restored.get("atomic_replace") is not True
+                or any(count != 1 for count in revoked_auth.values())
+            ):
+                failures.append("Host restore did not verify the staged DB or revoke restored auth state")
 
-            combined_output = backup_output + verify_output + dry_output + running_output + restore_output
+            combined_output = backup_output + missing_output + tampered_output + verify_output + dry_output + running_output + restore_output
             if any(str(secret) and str(secret) in combined_output for secret in secret_values):
                 failures.append("Host backup/restore output exposed credential material")
         except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:

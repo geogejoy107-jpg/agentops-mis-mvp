@@ -196,7 +196,9 @@ agentops host restore \
 agentops host start
 ```
 
-没有 `--confirm-restore` 时恢复保持 dry-run；Host 进程仍运行时恢复会失败关闭。覆盖现有账本前会自动创建同目录的 `.pre-restore-<timestamp>` 安全副本。恢复不会替换当前 Host 的独立密钥文件。
+没有 `--confirm-restore` 时恢复保持 dry-run；Host 进程仍运行时恢复会失败关闭。缺少 manifest、文件 hash/size/schema 不匹配、SQLite integrity 或 foreign-key 检查失败时也会拒绝恢复。覆盖现有账本前会创建并验证同目录的 `.pre-restore-<timestamp>` SQLite 安全快照，随后通过同目录临时文件原子替换。
+
+恢复不会替换当前 Host 的独立密钥文件。为避免旧备份复活已经撤销的访问权限，恢复后的 `human_sessions`、`agent_gateway_sessions` 和长期 `agent_gateway_tokens` 会默认统一撤销；Owner 需要重新登录，Agent 需要重新 enrollment。
 
 这一版只证明 SQLite 权威账本的产品命令闭环。Host 外部项目目录或未来可变 Markdown 知识源仍需要单独的目录级备份策略，不能把本命令宣传成整机灾备。
 
