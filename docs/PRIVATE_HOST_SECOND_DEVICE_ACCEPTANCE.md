@@ -121,12 +121,12 @@ text, project files, database path, or unrestricted Host paths.
 ## Current Result
 
 Host-side staging was completed on 2026-07-12 with
-`v1.6.0-private-host-preview.9` at exact commit
-`3d04595d4247f12a1980ec32b2d0dafa6369f4e4`:
+`v1.6.0-private-host-preview.10` at exact commit
+`d7c2ec3a49347ed6899aff3c3406f922a7690279`:
 
 - GitHub download and published checksum verification passed;
 - upgrade created a pre-update ledger backup and preserved user data;
-- Host health, managed preview.9 production UI and real Hermes/OpenClaw Workers
+- Host health, managed preview.10 production UI and real Hermes/OpenClaw Workers
   are ready;
 - the published no-repository bootstrap passed Draft round-trip and public
   GitHub clean-HOME install/init/start/status/stop gates;
@@ -138,6 +138,11 @@ Host-side staging was completed on 2026-07-12 with
 - Funnel is disabled and the unrelated port 443 target remains unchanged;
 - the private HTTPS Workspace returned HTTP 200;
 - one physical Console peer was online and reachable over the tailnet.
+
+Fresh Hermes run `run_gw_242eac97293e` and OpenClaw run
+`run_gw_23bb6ba9f13e` are `waiting_approval`. This is expected: machine
+credentials staged the work but could not approve their own Agent Plans. No
+Runtime execution is claimed for these runs until a human Owner approves them.
 
 Owner bootstrap is still required. No physical second-device browser login,
 task dispatch, approval, evaluation/audit/memory review, artifact download,

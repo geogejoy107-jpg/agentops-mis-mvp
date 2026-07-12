@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.9 published and Host-side private-network gates passed; physical second-device acceptance remains open
+Status: preview.10 published and installed; Owner, completed current-package Runtime, and physical second-device gates remain open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -11,12 +11,12 @@ physical evidence and cannot be closed by mock output.
 
 | # | Requirement | Current evidence | Status |
 |---|---|---|---|
-| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.9` publishes a no-repository bootstrap plus archive/checksum assets. Draft round-trip, public GitHub download, checksum, clean-HOME install/init/start/status/stop, lifecycle, route and same-Mac upgrade passed. A receipt from another physical Mac remains missing. | Passed locally; external evidence required |
+| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.10` publishes a no-repository bootstrap plus archive/checksum assets. A clean detached-tag build, Draft round-trip, public GitHub download, checksum, two clean-HOME install/init/start/status/stop passes, lifecycle gates and same-Mac preview.9-to-preview.10 upgrade passed. A receipt from another physical Mac remains missing. | Passed locally; external evidence required |
 | 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md` plus bundle smoke cover installed CLI, production UI, init, doctor, start/status/stop, fail-closed Runtime readiness, and actual served-UI switching across upgrade/rollback. | Passed locally |
-| 3 | Dependency-free second computer opens private HTTPS console and authenticates | preview.9 is live through private Tailscale HTTPS on port 8443, Funnel is disabled, and an unrelated port 443 target remains preserved. Host status now reports `human_access=bootstrap_required` with the safe local command; operator bootstrap and physical second-device browser login remain missing. | Host side passed; external evidence required |
+| 3 | Dependency-free second computer opens private HTTPS console and authenticates | preview.10 is live through private Tailscale HTTPS on port 8443, Funnel is disabled, and the Workspace returns HTTP 200. Host status reports `human_access=bootstrap_required`; operator bootstrap and physical second-device browser login remain missing. | Host side passed; external evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, role/session separation and CSRF/Origin checks. | Passed locally |
 | 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | Customer dispatch and ledger views exist; Audit and Memory use live APIs; memory decisions write through the approver route; approved artifact download is Session/workspace/approval checked and audited. A second-device end-to-end receipt remains open. | Partial |
-| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | `PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md` records fresh completed Hermes and OpenClaw async runs from preview.4. preview.9 is running both real Workers and installed CLI preflight passed for both adapters, but an exact-preview.9 customer run awaits Owner bootstrap. | Passed previously; exact-current rerun pending |
+| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | `PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md` records completed Hermes and OpenClaw async runs from preview.4. preview.10 is running both confirmed Workers and installed preflight passes. Fresh runs `run_gw_242eac97293e` and `run_gw_23bb6ba9f13e` are correctly `waiting_approval`; neither invoked a Runtime because no human Owner exists yet. | Passed previously; exact-current completion pending |
 | 7 | Console disconnect does not stop Host Worker or lose task | `PRIVATE_HOST_CONSOLE_DISCONNECT_ACCEPTANCE.md` proves real Hermes/OpenClaw jobs completed after their first Host-local Session clients were discarded, then were read through fresh Owner Sessions. Physical browser/tailnet loss remains missing. | Passed on Host; external evidence required |
 | 8 | Host restart preserves ledger and knowledge state | `PRIVATE_HOST_RESTART_PERSISTENCE_ACCEPTANCE.md` covers Session, task and a 194-document local Markdown/FTS index remaining searchable after managed restart. | Passed locally |
 | 9 | Backup and restore pass on isolated database | `PRIVATE_HOST_BACKUP_RESTORE_ACCEPTANCE.md` covers strict manifest/hash/schema/integrity/foreign-key checks, atomic replacement and access revocation. | Passed locally |
@@ -180,7 +180,7 @@ Operator Owner creation, an exact-preview.8 confirmed customer run, the
 physical second-device workflow/disconnect receipt, and another-Mac clean
 install remain open, so this is not the final Release Candidate.
 
-## Current Preview 9
+## Superseded Preview 9
 
 - Tag: `v1.6.0-private-host-preview.9`
 - Exact commit: `3d04595d4247f12a1980ec32b2d0dafa6369f4e4`
@@ -207,6 +207,34 @@ started explicitly confirmed Hermes/OpenClaw Workers. Installed Gateway and
 both adapter preflights passed without live execution; private HTTPS Workspace
 returned HTTP 200 with Funnel disabled. Owner creation, an exact-preview.9
 confirmed customer task, physical browser/disconnect acceptance and another-Mac
+install remain open, so this is not the final Release Candidate.
+
+## Current Preview 10
+
+- Tag: `v1.6.0-private-host-preview.10`
+- Exact commit: `d7c2ec3a49347ed6899aff3c3406f922a7690279`
+- Push CI: passed at the exact commit (`29202421567`)
+- Pull-request CI: passed at the exact commit (`29202423466`)
+- Release: `https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.10`
+- SHA-256 manifest: `47b98df3b23c50605e0d710b05ba0a36f965edd6cb231a775e46fd32d8af8caa`
+- Tar archive: `2ea5bb666d5e1bc72b5ae643ea523498c845e522b012b0fc26c3f0962b799b24`
+- Zip archive: `f19b5eb32c107c060c2bb0846249164d8c5564fb75684213a4d05be908875973`
+- Release-consumer bootstrap: `940fd3394d40ccf44f14cbb4a78f3dcbbfb7b632093d85e1b922073d41922a8c`
+
+preview.10 adds product/data ownership markers, strict legacy migration and
+rollback, a shared no-symlink lifecycle lock, exact shim/path/PID guards, and
+PID+PGID+stable process-identity binding before stop can signal a process. A
+clean detached-tag build passed the full release gates. Draft-download and
+public-GitHub clean-HOME installs both initialized, started, reported ready,
+and stopped successfully.
+
+The real Host upgraded from preview.9 after verified operator and automatic
+pre-update backups. Ledger counts and user data were preserved; the production
+UI follows preview.10, private HTTPS returns HTTP 200, Funnel is disabled, and
+installed Hermes/OpenClaw preflight passes without executing a task. Two fresh
+customer-style tasks reached `waiting_approval`, proving machine credentials
+did not bypass the Human Approval Wall. Owner creation, approved completed
+Runtime receipts, physical browser/disconnect acceptance, and another-Mac
 install remain open, so this is not the final Release Candidate.
 
 ## Release Gates

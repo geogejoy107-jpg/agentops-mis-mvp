@@ -95,6 +95,29 @@ This proves host-local authenticated dispatch and ledger closure. It does not
 yet prove access from a second physical computer, private-network HTTPS, or
 browser disconnect/reconnect behavior.
 
+## Exact-Package Preview 10 Approval-Wall Staging
+
+On exact commit `d7c2ec3a49347ed6899aff3c3406f922a7690279`, the installed
+`v1.6.0-private-host-preview.10` Host passed Hermes and OpenClaw Gateway/adapter
+preflight and explicitly started both live Worker lanes. Two fresh
+customer-style tasks were then dispatched through the installed Agent Gateway
+CLI:
+
+| Adapter | Task | Run | Current state |
+|---|---|---|---|
+| Hermes | `tsk_preview10_hermes_readiness_20260713` | `run_gw_242eac97293e` | `waiting_approval` |
+| OpenClaw | `tsk_preview10_openclaw_readiness_20260713` | `run_gw_23bb6ba9f13e` | `waiting_approval` |
+
+Each run has a verified Agent Plan plus one approval request and one bounded
+tool record, but no evaluation, artifact, or verified plan-evidence manifest
+yet. The Worker processed zero Runtime tasks: the machine credential could not
+approve its own plan, so neither Hermes nor OpenClaw was invoked. This is a
+successful approval-boundary check, not completed live-Runtime evidence.
+
+The current-package live gate remains open until a locally created human Owner
+approves the plans and the resumed exact actions complete with bounded
+run/runtime-event/evaluation/artifact/memory/audit evidence.
+
 ## Exact-Package Preview 3 Result
 
 On exact commit `642471f571d9943f9c4c217b3912e32f6728dfce`, the installed
