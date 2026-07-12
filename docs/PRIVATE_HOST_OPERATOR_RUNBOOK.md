@@ -38,8 +38,8 @@ Console 电脑只需要：
 下一修正版候选：
 
 ```text
-v1.6.0-private-host-preview.3
-https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.3
+v1.6.0-private-host-preview.4
+https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.4
 ```
 
 下载前确认该 Release 已实际发布，并同时下载 `.zip` 或 `.tar.gz` 与
@@ -50,8 +50,9 @@ preview.2 已发布但随后被真实 Runtime dogfood 替代：安装版 Worker 
 claim 任务，但 Agent Plan 在 `run_start` 前发现 archive 缺少
 `PROJECT_SPEC.md`、`AGENT_WORKFLOW.md`、`BASE_INDEX.md` 与
 `docs/AGENT_WORK_METHOD_BLOCK.md`，因此按设计 fail closed，未调用模型。
-preview.3 必须同时通过安装后 mock Agent Plan 回归门与真实
-Hermes/OpenClaw 闭环，才可作为当前候选。
+preview.4 在 preview.3 的 Agent Plan 与真实 Runtime 闭环基础上，增加
+异步断线后完成、幂等提交、SQLite CAS 启动租约和 workspace 隔离验收。
+它仍是预览版本；物理第二设备和另一台 Mac 验收通过前不得称为正式 RC。
 
 已发布但被替代的预览版本：
 

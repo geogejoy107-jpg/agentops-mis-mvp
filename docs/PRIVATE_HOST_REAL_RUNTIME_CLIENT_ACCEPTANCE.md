@@ -117,3 +117,27 @@ database file was captured in this acceptance record.
 
 This closes the host-local exact-package Runtime and authority-receipt gate. It
 does not close the physical second-device HTTPS or disconnect/reconnect gates.
+
+## Exact-Package Preview 4 Async Disconnect Result
+
+On exact commit `1b8f2b9469105ce826e551b5e83fd9d5f0656bff`, the installed
+`v1.6.0-private-host-preview.4` package completed fresh explicitly confirmed
+Hermes and OpenClaw customer jobs after each first human Session client was
+discarded:
+
+| Adapter | Job | Run | Approval | Authority receipt |
+|---|---|---|---|---|
+| Hermes | `wfjob_ab33425f1f5b3ec6ae4de5ff` | `run_gw_7c88b0db4d2a` | `ap_customer_worker_delivery_run_gw_7c88b0db4d2a` | `phr_d6441f356098629861e67931` |
+| OpenClaw | `wfjob_c8a51117c3db4c3adaddf98d` | `run_gw_b66254b6e070` | `ap_customer_worker_delivery_run_gw_b66254b6e070` | `phr_5f09a657d97a469ccb46b922` |
+
+Each same-key replay returned `202`, anonymous job read returned `401`, a fresh
+Owner Session observed completion after the disconnect timestamp, and ledger
+readback found exactly one matching workflow job and one task run. Both
+deliveries passed plan-evidence verification, evaluation and human approval;
+their downloaded canonical receipt hashes matched Host authority. No Session
+secret, setup code, credential, raw prompt, raw response, transcript or database
+content was retained.
+
+This closes the exact-package Host-local async Session-disconnect gate. Physical
+second-device private HTTPS, physical tailnet disconnect/reconnect, and a clean
+install on another Mac remain external gates.

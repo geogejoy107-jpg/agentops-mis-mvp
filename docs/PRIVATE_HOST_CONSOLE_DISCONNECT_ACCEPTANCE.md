@@ -85,7 +85,7 @@ Expected result:
 - a fresh Session reads the completed task/run evidence;
 - no fixture credential value appears in Host or Worker output.
 
-## Observed Result
+## Deterministic Observed Result
 
 Verified on 2026-07-12 against branch `codex/local-host-remote-console`:
 
@@ -103,6 +103,29 @@ All state was created below a temporary directory and removed when the smoke
 finished. The temporary task/run identifiers are intentionally not retained as
 release evidence.
 
+## Exact-Package Real Runtime Result
+
+Verified on 2026-07-12 against installed prerelease
+`v1.6.0-private-host-preview.4`, exact commit
+`1b8f2b9469105ce826e551b5e83fd9d5f0656bff`:
+
+| Adapter | Workflow job | Run | Host authority receipt |
+|---|---|---|---|
+| Hermes | `wfjob_ab33425f1f5b3ec6ae4de5ff` | `run_gw_7c88b0db4d2a` | `phr_d6441f356098629861e67931` |
+| OpenClaw | `wfjob_c8a51117c3db4c3adaddf98d` | `run_gw_b66254b6e070` | `phr_5f09a657d97a469ccb46b922` |
+
+For both adapters the idempotent replay returned `202`, anonymous read after
+discarding the first client returned `401`, a fresh distinct Owner Session
+reconnected, and `completed_at` was later than the recorded disconnect time.
+Each request produced exactly one matching workflow job and one task run, then
+passed evaluation, plan-evidence, human approval, artifact and bounded audit
+checks. Session cookies, CSRF values, credentials, raw prompts and raw responses
+were omitted from the acceptance output.
+
+This is real Host-local Session disconnect evidence. It is not evidence of a
+physical second computer losing its tailnet or browser connection. That gate
+requires a separate device and remains open.
+
 ## Product Meaning
 
 The browser is an authenticated operator surface, not the execution owner.
@@ -118,5 +141,6 @@ human Session and resumes observation of the same ledger state.
   systemd daemon.
 - Browser network loss is represented by explicit logout plus disposal of the
   cookie jar; abrupt TCP loss is not separately instrumented.
-- Real Hermes/OpenClaw disconnect evidence remains part of the later private
-  Host real-runtime acceptance.
+- Real Hermes/OpenClaw completion after Host-local Session disposal is proven
+  on preview.4; physical browser/tailnet disconnect on a second device remains
+  open.
