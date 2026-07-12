@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.1 superseded; corrected preview.2 build/release and physical second-device acceptance remain open
+Status: corrected preview.2 published and locally verified; physical second-device acceptance remains open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -11,7 +11,7 @@ physical evidence and cannot be closed by mock output.
 
 | # | Requirement | Current evidence | Status |
 |---|---|---|---|
-| 1 | Clean Host installs from a versioned asset without cloning | `PRIVATE_HOST_BUNDLE_ACCEPTANCE.md` proves an integrity-checked offline archive install in a temporary HOME. GitHub prerelease `v1.6.0-private-host-preview.1` published `.zip`, `.tar.gz`, and `.sha256.json`, but release-download verification found its installed shim could be shadowed by a source checkout or inherited `PYTHONPATH`; the Release is marked superseded. The fix and regression gate are implemented, but corrected preview.2 and a second-Mac receipt are still missing. | Partial |
+| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.2` was downloaded into a clean temporary HOME, independently checksum-verified, installed, invoked from a conflicting source/PYTHONPATH directory, initialized, started, served the production acceptance route, reported exact packaged provenance, and stopped successfully. This same-Mac clean-HOME proof does not replace the required second-Mac receipt. | Partial |
 | 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md` plus bundle smoke cover installed CLI, production UI, init, doctor, start/status/stop and fail-closed Runtime readiness. | Passed locally |
 | 3 | Dependency-free second computer opens private HTTPS console and authenticates | Human Session, CSRF, trusted Origin and Tailscale lifecycle are deterministic-smoke covered. Real second-device HTTPS login is missing. | External evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, role/session separation and CSRF/Origin checks. | Passed locally |
@@ -34,8 +34,23 @@ physical evidence and cannot be closed by mock output.
 
 This preview is not the final Release Candidate until the physical-device gates
 below pass. It is also not the current install candidate after the source
-shadowing defect was found; corrected preview.2 must repeat the exact-head
-build, checksum, Release download, and clean-install gates.
+shadowing defect was found. Corrected preview.2 repeats the exact-head build,
+checksum, Release download, and clean-install gates below.
+
+## Corrected Preview
+
+- Tag: `v1.6.0-private-host-preview.2`
+- Exact commit: `39cf68f3ea8799a6f1c154c64c4e0aaaa8ad0e49`
+- Push CI: passed at the exact commit (`29191253174`)
+- Pull-request CI: passed at the exact commit (`29191254687`)
+- Release: `https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.2`
+- SHA-256 manifest: `56e70c7f38d447ee5a60bed92a29ad7ebb7a7ba423b9239636ffed37f034a14a`
+- Tar archive: `64840ffb75dab96ff24a0d8d5c565592d94eac26605286e2c6597eac1661795a`
+- Zip archive: `380731159b45ea454d04a92933d5ebbcd608f668cc5fd3328bdab855873df714`
+
+The corrected preview passes the local Release-download/install gate and adds
+the browser device checklist plus Owner-only Host authority acceptance receipt.
+It remains a prerelease until the physical second-device gates below pass.
 
 ## Release Gates
 
