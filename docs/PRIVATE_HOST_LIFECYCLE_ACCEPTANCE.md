@@ -39,10 +39,16 @@ customer release.
 - Tailscale inspection is read-only and `tailscale-preview` only prints a Serve
   command plus `tailscale serve reset`; it never executes either command and
   never enables Funnel.
+- Existing Serve backends are summarized without returning raw configuration.
+  A target owned by another local service blocks apply, and requires the
+  separate `--replace-existing-serve` acknowledgement after review.
 - `tailscale-apply` and `tailscale-revoke` remain side-effect free without
   `--confirm`; confirmed apply/reset update the private trusted-Origin config
   and require a Host restart. Apply enables `Secure` cookies for tailnet HTTPS;
   revoke returns to the loopback cookie policy.
+- Revoke refuses `serve reset` when MIS cannot prove exclusive ownership or
+  another backend is present; resetting all Serve handlers requires the
+  separate `--reset-all-serve` acknowledgement.
 - Host status, doctor, logs and console URL responses omit credential values.
 
 ## Verification
@@ -71,6 +77,8 @@ temporary SQLite database and a free loopback port. It verified:
 - real Owner bootstrap and authenticated task read through a loopback CookieJar;
 - `HttpOnly`/`SameSite` local cookie behavior without a false HTTPS-only flag;
 - Tailscale preview-only/Funnel-disabled behavior;
+- an existing non-MIS Serve target blocks apply and revoke without their
+  distinct destructive acknowledgements;
 - Secure cookie policy enabled on confirmed Tailscale apply and disabled after
   confirmed revoke;
 - process-group stop and temporary-state cleanup.

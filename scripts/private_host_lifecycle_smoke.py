@@ -78,6 +78,14 @@ def main() -> int:
             "  printf '%s\\n' '{\"BackendState\":\"Running\",\"Self\":{\"DNSName\":\"agentops-host.example.ts.net.\"}}'\n"
             "  exit 0\n"
             "fi\n"
+            "if [ \"$1\" = serve ] && [ \"$2\" = status ]; then\n"
+            "  if [ \"${AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT:-}\" = 1 ]; then\n"
+            "    printf '%s\\n' '{\"TCP\":{\"443\":{\"HTTPS\":true}},\"Web\":{\"agentops-host.example.ts.net:443\":{\"Handlers\":{\"/\":{\"Proxy\":\"http://127.0.0.1:18789\"}}}}}'\n"
+            "  else\n"
+            "    printf '%s\\n' '{\"TCP\":{},\"Web\":{}}'\n"
+            "  fi\n"
+            "  exit 0\n"
+            "fi\n"
             f"printf '%s\\n' \"$*\" >> {tailscale_log}\n"
             "exit 0\n",
             encoding="utf-8",
@@ -188,6 +196,11 @@ def main() -> int:
             _code, unconfirmed_apply, _output = run_host(env, "tailscale-apply", expected=(2,))
             if unconfirmed_apply.get("error") != "confirmation_required" or tailscale_log.exists():
                 failures.append("unconfirmed Tailscale apply did not remain side-effect free")
+            env["AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT"] = "1"
+            _code, conflict_apply, _output = run_host(env, "tailscale-apply", "--confirm", expected=(2,))
+            if conflict_apply.get("error") != "tailscale_serve_conflict" or tailscale_log.exists():
+                failures.append("existing Tailscale Serve target was not protected from replacement")
+            env.pop("AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT", None)
             _code, applied, apply_output = run_host(env, "tailscale-apply", "--confirm")
             config_after_apply = json.loads(config_path.read_text(encoding="utf-8"))
             evidence["tailscale_apply"] = {
@@ -206,6 +219,11 @@ def main() -> int:
             _code, unconfirmed_revoke, _output = run_host(env, "tailscale-revoke", expected=(2,))
             if unconfirmed_revoke.get("error") != "confirmation_required":
                 failures.append("unconfirmed Tailscale revoke did not fail closed")
+            env["AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT"] = "1"
+            _code, conflict_revoke, _output = run_host(env, "tailscale-revoke", "--confirm", expected=(2,))
+            if conflict_revoke.get("error") != "tailscale_serve_not_exclusively_owned":
+                failures.append("Tailscale revoke did not protect another Serve target")
+            env.pop("AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT", None)
             _code, revoked, revoke_output = run_host(env, "tailscale-revoke", "--confirm")
             config_after_revoke = json.loads(config_path.read_text(encoding="utf-8"))
             evidence["tailscale_revoke"] = {

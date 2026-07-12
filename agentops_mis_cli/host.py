@@ -116,6 +116,55 @@ def tailscale_state() -> dict:
     return result
 
 
+def tailscale_serve_state(binary: str | None, target: str) -> dict:
+    result = {
+        "status_available": False,
+        "configured": False,
+        "target_matches": False,
+        "conflict": False,
+        "backend_count": 0,
+        "raw_config_omitted": True,
+        "token_omitted": True,
+    }
+    if not binary:
+        return result
+    try:
+        process = subprocess.run(
+            [binary, "serve", "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if process.returncode != 0:
+            return result
+        payload = json.loads(process.stdout or "{}")
+
+        def proxy_targets(value) -> list[str]:
+            if isinstance(value, dict):
+                targets = [str(value["Proxy"])] if value.get("Proxy") else []
+                for child in value.values():
+                    targets.extend(proxy_targets(child))
+                return targets
+            if isinstance(value, list):
+                return [item for child in value for item in proxy_targets(child)]
+            return []
+
+        targets = sorted(set(proxy_targets(payload)))
+        configured = bool((payload.get("TCP") or {}) or (payload.get("Web") or {}) or targets)
+        target_matches = target in targets
+        result.update({
+            "status_available": True,
+            "configured": configured,
+            "target_matches": target_matches,
+            "conflict": configured and (not target_matches or any(item != target for item in targets)),
+            "backend_count": len(targets),
+        })
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    return result
+
+
 def require_initialized() -> tuple[dict, dict]:
     p = paths()
     config = read_json(p["config"])
@@ -674,6 +723,8 @@ def cmd_tailscale_preview(_args) -> int:
     config, _secret_values = require_initialized()
     target = f"http://{config['host']}:{config['port']}"
     ts = tailscale_state()
+    binary, _source = tailscale_binary()
+    serve = tailscale_serve_state(binary, target)
     emit({
         "ok": True,
         "operation": "host_tailscale_preview",
@@ -681,6 +732,8 @@ def cmd_tailscale_preview(_args) -> int:
         "command": f"tailscale serve --bg {target}",
         "revoke_command": "tailscale serve reset",
         "tailscale": ts,
+        "serve": serve,
+        "apply_blocked_by_conflict": serve["conflict"],
         "public_funnel_enabled": False,
         "automatic_execution": False,
         "token_omitted": True,
@@ -692,12 +745,15 @@ def cmd_tailscale_apply(args) -> int:
     config, _secret_values = require_initialized()
     target = f"http://{config['host']}:{config['port']}"
     ts = tailscale_state()
+    binary, _source = tailscale_binary()
+    serve = tailscale_serve_state(binary, target)
     preview = {
         "ok": False,
         "operation": "host_tailscale_apply",
         "preview_only": not args.confirm,
         "command": f"tailscale serve --bg {target}",
         "tailscale": ts,
+        "serve": serve,
         "public_funnel_enabled": False,
         "token_omitted": True,
     }
@@ -705,9 +761,20 @@ def cmd_tailscale_apply(args) -> int:
         preview.update({"error": "confirmation_required", "message": "Re-run with --confirm after reviewing the Serve command."})
         emit(preview)
         return 2
-    binary, _source = tailscale_binary()
     if not binary or ts["backend_state"] != "Running" or not ts["dns_name"]:
         preview.update({"error": "tailscale_not_ready", "message": "Tailscale must be installed, Running, and have a DNS name."})
+        emit(preview)
+        return 2
+    if not serve["status_available"]:
+        preview.update({"error": "tailscale_serve_status_unavailable", "message": "Existing Tailscale Serve state could not be verified; no changes were made."})
+        emit(preview)
+        return 2
+    if serve["conflict"] and not args.replace_existing_serve:
+        preview.update({
+            "error": "tailscale_serve_conflict",
+            "message": "An existing Tailscale Serve configuration targets another local service. Re-run only after review with --replace-existing-serve.",
+            "replacement_confirmation_required": True,
+        })
         emit(preview)
         return 2
     process = subprocess.run([binary, "serve", "--bg", target], capture_output=True, text=True, timeout=30, check=False)
@@ -753,6 +820,23 @@ def cmd_tailscale_revoke(args) -> int:
     binary, _source = tailscale_binary()
     if not binary:
         emit({"ok": False, "operation": "host_tailscale_revoke", "error": "tailscale_not_installed", "token_omitted": True})
+        return 2
+    target = f"http://{config['host']}:{config['port']}"
+    serve = tailscale_serve_state(binary, target)
+    owns_publication = config.get("network_publication") == "tailscale_serve"
+    if not serve["status_available"]:
+        emit({"ok": False, "operation": "host_tailscale_revoke", "error": "tailscale_serve_status_unavailable", "message": "Existing Tailscale Serve state could not be verified; no changes were made.", "token_omitted": True})
+        return 2
+    if (not owns_publication or serve["conflict"] or (serve["configured"] and not serve["target_matches"])) and not args.reset_all_serve:
+        emit({
+            "ok": False,
+            "operation": "host_tailscale_revoke",
+            "error": "tailscale_serve_not_exclusively_owned",
+            "message": "Serve reset could affect another local service. Re-run only after review with --reset-all-serve.",
+            "serve": serve,
+            "reset_all_confirmation_required": True,
+            "token_omitted": True,
+        })
         return 2
     process = subprocess.run([binary, "serve", "reset"], capture_output=True, text=True, timeout=30, check=False)
     if process.returncode != 0:
@@ -839,9 +923,11 @@ def build_parser() -> argparse.ArgumentParser:
     preview.set_defaults(handler=cmd_tailscale_preview)
     apply = sub.add_parser("tailscale-apply", help="Apply Tailscale Serve only after explicit confirmation.")
     apply.add_argument("--confirm", action="store_true")
+    apply.add_argument("--replace-existing-serve", action="store_true")
     apply.set_defaults(handler=cmd_tailscale_apply)
     revoke = sub.add_parser("tailscale-revoke", help="Reset Tailscale Serve only after explicit confirmation.")
     revoke.add_argument("--confirm", action="store_true")
+    revoke.add_argument("--reset-all-serve", action="store_true")
     revoke.set_defaults(handler=cmd_tailscale_revoke)
     return parser
 
