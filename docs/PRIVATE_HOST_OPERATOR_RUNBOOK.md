@@ -153,6 +153,8 @@ agentops host console-url
 
 真实 Hermes/OpenClaw 验收必须使用新鲜任务和明确确认。Mock 仅用于离线/CI 回退，并应在界面和录屏中标记为 Mock。
 
+仓库或开发预览内置的真实验收客户端可以通过人类 Session 派发同一条客户闭环，而不是绕过 Private Host 认证。临时密码和一次性 setup code 只能放在当前 shell 的 `AGENTOPS_ACCEPTANCE_PASSWORD`、`AGENTOPS_OWNER_SETUP_CODE` 环境变量中，然后使用 `customer_worker_real_runtime_acceptance.py --human-auth --confirm-live`；不得把值写进命令行参数、文档、日志或 Git。
+
 ## 6. 日常生命周期
 
 ```bash

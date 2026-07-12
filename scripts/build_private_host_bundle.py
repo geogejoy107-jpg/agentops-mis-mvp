@@ -26,6 +26,7 @@ RUNTIME_FILES = {
     "scripts/agent_worker.py",
     "scripts/agentops_local_backup.py",
     "scripts/agentops",
+    "scripts/customer_worker_real_runtime_acceptance.py",
     "scripts/hermes_openclaw_loop.py",
     "scripts/local_runtime_acceptance.py",
     "scripts/run_kb_bot_demo.py",

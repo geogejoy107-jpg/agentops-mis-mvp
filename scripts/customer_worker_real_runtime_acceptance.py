@@ -8,12 +8,13 @@ Mock is not supported here; use mock-only smokes only as offline fallback.
 from __future__ import annotations
 
 import argparse
+import http.cookiejar
 import json
 import os
 import re
 import time
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 
 
 TOKEN_PATTERNS = [
@@ -30,16 +31,25 @@ def token_leaked(text: str) -> bool:
     return any(pattern.search(text or "") for pattern in TOKEN_PATTERNS)
 
 
-def http_json(method: str, base_url: str, path: str, payload: dict, timeout: int) -> tuple[int, dict]:
-    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+def http_json(
+    method: str,
+    base_url: str,
+    path: str,
+    payload: dict | None,
+    timeout: int,
+    *,
+    opener=None,
+    headers: dict | None = None,
+) -> tuple[int, dict]:
+    data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = Request(
         base_url.rstrip("/") + path,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **(headers or {})},
         method=method,
     )
     try:
-        with urlopen(req, timeout=timeout) as res:
+        with (opener.open(req, timeout=timeout) if opener else urlopen(req, timeout=timeout)) as res:
             raw = res.read().decode("utf-8")
             return res.status, json.loads(raw) if raw else {}
     except HTTPError as exc:
@@ -57,7 +67,47 @@ def require(condition: bool, message: str, failures: list[str]) -> None:
         failures.append(message)
 
 
-def run_adapter(args: argparse.Namespace, adapter: str) -> dict:
+def authenticate_human_session(args: argparse.Namespace):
+    password = os.environ.get(args.password_env, "")
+    if not password:
+        raise RuntimeError(f"Private Host human auth requires password env: {args.password_env}")
+    opener = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    status, auth_status = http_json("GET", args.base_url, "/api/human-auth/status", None, args.request_timeout, opener=opener)
+    if status != 200 or auth_status.get("required") is not True:
+        raise RuntimeError("Private Host did not report required human authentication")
+    origin = args.origin or args.base_url.rstrip("/")
+    if auth_status.get("bootstrap_required"):
+        setup_code = os.environ.get(args.setup_code_env, "")
+        if not setup_code:
+            raise RuntimeError(f"Owner bootstrap requires setup-code env: {args.setup_code_env}")
+        path = "/api/human-auth/bootstrap"
+        body = {
+            "setup_code": setup_code,
+            "username": args.username,
+            "display_name": "Private Host Acceptance Owner",
+            "password": password,
+        }
+        expected = 201
+    else:
+        path = "/api/human-auth/login"
+        body = {"username": args.username, "password": password}
+        expected = 200
+    status, authenticated = http_json(
+        "POST",
+        args.base_url,
+        path,
+        body,
+        args.request_timeout,
+        opener=opener,
+        headers={"Origin": origin},
+    )
+    csrf_token = str(authenticated.get("csrf_token") or "")
+    if status != expected or not csrf_token or (authenticated.get("user") or {}).get("role") != "owner":
+        raise RuntimeError("Private Host Owner authentication failed")
+    return opener, csrf_token, origin
+
+
+def run_adapter(args: argparse.Namespace, adapter: str, opener=None, csrf_token: str = "", origin: str = "") -> dict:
     stamp = time.strftime("%Y%m%d%H%M%S")
     title = f"真实 {adapter} Worker 产品级闭环验收 {stamp}"
     payload = {
@@ -77,7 +127,16 @@ def run_adapter(args: argparse.Namespace, adapter: str) -> dict:
         "hermes_timeout": args.hermes_timeout,
         "hermes_max_tokens": args.hermes_max_tokens,
     }
-    status, result = http_json("POST", args.base_url, "/api/workflows/customer-worker-task", payload, args.request_timeout)
+    headers = {"Origin": origin, "X-AgentOps-CSRF": csrf_token} if opener else None
+    status, result = http_json(
+        "POST",
+        args.base_url,
+        "/api/workflows/customer-worker-task",
+        payload,
+        args.request_timeout,
+        opener=opener,
+        headers=headers,
+    )
     evidence = result.get("evidence") or {}
     worker_state = ((result.get("worker_result") or {}).get("state") or {})
     failures: list[str] = []
@@ -120,6 +179,11 @@ def main() -> int:
     parser.add_argument("--hermes-timeout", type=int, default=420)
     parser.add_argument("--hermes-max-tokens", type=int, default=int(os.environ.get("HERMES_MAX_TOKENS", "512")))
     parser.add_argument("--confirm-live", action="store_true", help="Required: this calls real local Hermes/OpenClaw runtimes.")
+    parser.add_argument("--human-auth", action="store_true", help="Authenticate through the Private Host human Session/CSRF boundary.")
+    parser.add_argument("--origin", default=os.environ.get("AGENTOPS_ACCEPTANCE_ORIGIN", ""))
+    parser.add_argument("--username", default=os.environ.get("AGENTOPS_ACCEPTANCE_USERNAME", "owner"))
+    parser.add_argument("--password-env", default="AGENTOPS_ACCEPTANCE_PASSWORD")
+    parser.add_argument("--setup-code-env", default="AGENTOPS_OWNER_SETUP_CODE")
     args = parser.parse_args()
     adapters = args.adapter or ["hermes", "openclaw"]
     if not args.confirm_live:
@@ -131,7 +195,23 @@ def main() -> int:
             "token_omitted": True,
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 2
-    results = [run_adapter(args, adapter) for adapter in adapters]
+    opener = None
+    csrf_token = ""
+    origin = ""
+    if args.human_auth:
+        try:
+            opener, csrf_token, origin = authenticate_human_session(args)
+        except RuntimeError as exc:
+            print(json.dumps({
+                "ok": False,
+                "operation": "customer_worker_real_runtime_acceptance",
+                "error": "human_authentication_failed",
+                "message": str(exc),
+                "credential_values_omitted": True,
+                "token_omitted": True,
+            }, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+    results = [run_adapter(args, adapter, opener=opener, csrf_token=csrf_token, origin=origin) for adapter in adapters]
     failures = [failure for result in results for failure in result.get("failures", [])]
     output = {
         "ok": not failures,
@@ -141,6 +221,8 @@ def main() -> int:
         "results": results,
         "failures": failures,
         "mock_supported": False,
+        "human_session_used": bool(args.human_auth),
+        "credential_values_omitted": True,
         "token_omitted": True,
     }
     print(json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True))
