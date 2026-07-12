@@ -88,6 +88,8 @@ def worker_command(adapter: str, poll_interval: float, confirm_live_workers: boo
 def main() -> int:
     parser = argparse.ArgumentParser(description="Start the local AgentOps MIS backend, UI, and worker loop.")
     parser.add_argument("--install-ui", action="store_true", help="Run npm ci --prefer-offline if UI dependencies are missing.")
+    parser.add_argument("--production-ui", action="store_true", help="Serve the built React UI from the backend instead of starting Vite.")
+    parser.add_argument("--build-ui", action="store_true", help="Build the React UI before starting; implies --production-ui.")
     parser.add_argument("--backend-host", default="127.0.0.1")
     parser.add_argument("--backend-port", type=int, default=8787)
     parser.add_argument("--ui-host", default="127.0.0.1")
@@ -99,6 +101,10 @@ def main() -> int:
     parser.add_argument("--worker-poll-interval", type=float, default=5.0)
     parser.add_argument("--configure-cli", action="store_true", help="Explicitly update the saved CLI base URL/workspace for this local stack.")
     args = parser.parse_args()
+    if args.build_ui:
+        args.production_ui = True
+    if args.no_ui and args.production_ui:
+        parser.error("--no-ui cannot be combined with --production-ui or --build-ui")
     signal.signal(signal.SIGTERM, request_shutdown)
 
     backend_url = f"http://{args.backend_host}:{args.backend_port}"
@@ -120,13 +126,32 @@ def main() -> int:
     processes: list[tuple[str, subprocess.Popen]] = []
 
     try:
+        if args.production_ui:
+            if not UI_DIR.exists():
+                raise RuntimeError(f"missing UI directory: {UI_DIR}")
+            if not (UI_DIR / "node_modules").exists():
+                if args.install_ui:
+                    subprocess.run(["npm", "ci", "--prefer-offline"], cwd=UI_DIR, env=env, check=True)
+                else:
+                    raise RuntimeError("UI dependencies missing. Add --install-ui before building the production UI")
+            if args.build_ui:
+                subprocess.run(["npm", "run", "build"], cwd=UI_DIR, env=env, check=True)
+            if not (UI_DIR / "dist" / "index.html").is_file():
+                raise RuntimeError("production UI missing. Run with --build-ui")
         if port_open(args.backend_port, args.backend_host):
+            if args.production_ui:
+                raise RuntimeError(
+                    f"port {args.backend_port} is already in use; stop the existing backend before starting production UI mode"
+                )
             if not gateway_ready(backend_url):
                 raise RuntimeError(f"port {args.backend_port} is occupied by a non-AgentOps service")
             print(f"backend already running at {backend_url}/dashboard")
         else:
+            backend_command = [sys.executable, "server.py", "--host", args.backend_host, "--port", str(args.backend_port)]
+            if args.production_ui:
+                backend_command.extend(["--ui-dist", str(UI_DIR / "dist")])
             backend = subprocess.Popen(
-                [sys.executable, "server.py", "--host", args.backend_host, "--port", str(args.backend_port)],
+                backend_command,
                 cwd=ROOT,
                 env=env,
             )
@@ -146,7 +171,7 @@ def main() -> int:
             if configured.returncode != 0:
                 raise RuntimeError("failed to update local CLI connection; no token output was retained")
 
-        if not args.no_ui:
+        if not args.no_ui and not args.production_ui:
             if not UI_DIR.exists():
                 raise RuntimeError(f"missing UI directory: {UI_DIR}")
             if not (UI_DIR / "node_modules").exists():
@@ -177,9 +202,14 @@ def main() -> int:
         print("")
         print("AgentOps MIS local stack is running:")
         print(f"  backend: http://{args.backend_host}:{args.backend_port}/dashboard")
-        if not args.no_ui:
+        if args.production_ui:
+            print(f"  workspace: {backend_url}/workspace")
+            print(f"  workers:   {backend_url}/workspace/workers")
+            print("  UI mode:   production same-origin")
+        elif not args.no_ui:
             print(f"  workspace: http://{args.ui_host}:{args.ui_port}/workspace")
             print(f"  workers:   http://{args.ui_host}:{args.ui_port}/workspace/workers")
+            print("  UI mode:   Vite development")
         print(f"  adapters:  {', '.join(workers) if workers else 'none'}")
         print(f"  live mode: {'confirmed' if live_workers else 'off'}")
         if not args.configure_cli:

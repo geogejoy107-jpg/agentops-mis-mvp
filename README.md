@@ -80,6 +80,25 @@ python3 scripts/run_local_stack.py \
 真实 worker 只有在同时传入 `--confirm-live-workers` 时才会启动。脚本默认不改写
 `~/.agentops/config.json`；只有显式 `--configure-cli` 才保存本地 `8787` 连接。
 
+生产 UI 同源预览不需要运行 Vite 开发服务器。首次构建并启动：
+
+```bash
+python3 scripts/run_local_stack.py --build-ui
+```
+
+构建已经存在时：
+
+```bash
+python3 scripts/run_local_stack.py --production-ui
+```
+
+打开 `http://127.0.0.1:8787/workspace`。该模式由 Python Host 在同一个源上
+提供 React UI 和 `/mis-api` API，并保留安全 mock worker。它目前仍是 loopback
+Host 基础，不是已认证的远程访问模式；不要通过修改绑定地址把它直接暴露到局域网
+或公网。远程零安装操控台的产品边界和后续验收见
+`docs/LOCAL_HOST_REMOTE_CONSOLE_SPEC.md` 与
+`docs/LOCAL_HOST_REMOTE_CONSOLE_DELIVERY_PLAN.md`。
+
 也可以手动启动 UI：
 
 ```bash

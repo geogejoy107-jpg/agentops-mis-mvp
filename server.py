@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import mimetypes
 import os
 import random
 import re
@@ -29603,15 +29604,27 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_text(self, text, content_type="text/plain; charset=utf-8", status=200):
         payload = text.encode("utf-8")
+        return self.send_bytes(payload, content_type=content_type, status=status)
+
+    def send_bytes(self, payload, content_type="application/octet-stream", status=200, cache_control="no-store"):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", cache_control)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
 
+    @staticmethod
+    def api_path(path):
+        if path == "/mis-api":
+            return "/api"
+        if path.startswith("/mis-api/"):
+            return "/api/" + path[len("/mis-api/"):]
+        return path
+
     def do_GET(self):
         parsed = urlparse(self.path)
-        path = parsed.path
+        path = self.api_path(parsed.path)
         qs = parse_qs(parsed.query)
         try:
             if path.startswith("/api/"):
@@ -29624,7 +29637,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         body = parse_json_body(self)
         try:
-            return self.handle_post_api(parsed.path, body)
+            return self.handle_post_api(self.api_path(parsed.path), body)
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
 
@@ -29632,11 +29645,14 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         body = parse_json_body(self)
         try:
-            return self.handle_patch_api(parsed.path, body)
+            return self.handle_patch_api(self.api_path(parsed.path), body)
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
 
     def serve_static(self, path):
+        ui_dist = getattr(self.server, "ui_dist", None)
+        if ui_dist:
+            return self.serve_production_ui(path, Path(ui_dist))
         if path in ("/", ""):
             path = "/dashboard"
         if path.startswith("/static/"):
@@ -29653,6 +29669,24 @@ class Handler(BaseHTTPRequestHandler):
         elif file_path.suffix == ".json":
             content_type = "application/json; charset=utf-8"
         self.send_text(file_path.read_text(encoding="utf-8"), content_type=content_type)
+
+    def serve_production_ui(self, path, ui_dist):
+        root = ui_dist.resolve()
+        relative = unquote(path).lstrip("/")
+        candidate = (root / relative).resolve() if relative else root / "index.html"
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return self.send_text("Not found", status=404)
+        if not candidate.is_file():
+            candidate = root / "index.html"
+        if not candidate.is_file():
+            return self.send_text("Production UI not built", status=503)
+        content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+        if content_type.startswith("text/") or content_type in {"application/javascript", "application/json", "image/svg+xml"}:
+            content_type += "; charset=utf-8"
+        cache_control = "public, max-age=31536000, immutable" if candidate.name != "index.html" else "no-cache"
+        return self.send_bytes(candidate.read_bytes(), content_type=content_type, cache_control=cache_control)
 
     def handle_get_api(self, path, qs):
         with db() as conn:
@@ -31520,6 +31554,7 @@ def main():
     parser = argparse.ArgumentParser(description="AgentOps MIS MVP server")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", default=8787, type=int)
+    parser.add_argument("--ui-dist", type=Path, help="Serve a production React build from this directory on the same origin as /api.")
     parser.add_argument("--reset", action="store_true", help="Reset SQLite database and seed data, then exit unless --serve is also set")
     parser.add_argument("--serve", action="store_true", help="Serve after reset")
     args = parser.parse_args()
@@ -31539,7 +31574,19 @@ def main():
             return
     else:
         seed(reset=False)
+    if args.ui_dist:
+        ui_dist = args.ui_dist.expanduser().resolve()
+        if not (ui_dist / "index.html").is_file():
+            print(json.dumps({
+                "error": "production_ui_missing",
+                "message": "--ui-dist must contain index.html. Build the UI before starting host mode.",
+                "ui_dist": str(ui_dist),
+            }, ensure_ascii=False, indent=2), file=sys.stderr)
+            raise SystemExit(2)
+    else:
+        ui_dist = None
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
+    httpd.ui_dist = ui_dist
     print(f"AgentOps MIS MVP running at http://{args.host}:{args.port}/dashboard")
     try:
         httpd.serve_forever()
