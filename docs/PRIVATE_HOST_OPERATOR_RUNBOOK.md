@@ -174,6 +174,15 @@ agentops host console-url
 ```
 
 预期至少能区分：Host 进程、生产 UI、API、账本、知识索引、Worker 和 Runtime adapter 的 `ready`、`degraded` 或 `unavailable` 状态。
+`human_access.status` 还会明确显示：
+
+- `bootstrap_required`：Host 已运行，但必须先在本机创建首个 Owner；
+- `ready`：人类登录入口已就绪；
+- `host_stopped` 或 `unavailable`：先启动或修复 Host，再检查登录状态。
+
+Owner 未创建时，`status` 和 `doctor` 的 `next_actions` 会给出本机
+`bootstrap-owner` 命令；这属于人类控制面就绪状态，不会复用或显示 Agent
+Gateway 机器 token。
 
 首次使用时，在 Host 本机终端安全创建 Owner：
 

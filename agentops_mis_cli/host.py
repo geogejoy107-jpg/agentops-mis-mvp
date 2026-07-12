@@ -153,6 +153,30 @@ def local_json_request(
         return 0, {"error": "host_unavailable"}
 
 
+def human_access_state(base_url: str, *, running: bool, reachable: bool) -> dict:
+    result = {
+        "status": "host_stopped" if not running else "unavailable",
+        "bootstrap_required": None,
+        "login_ready": False,
+        "token_omitted": True,
+    }
+    if not running or not reachable or not base_url:
+        return result
+    status, payload = local_json_request(base_url, "/api/human-auth/status")
+    if status != 200 or payload.get("required") is not True:
+        return result
+    bootstrap_value = payload.get("bootstrap_required")
+    if not isinstance(bootstrap_value, bool):
+        return result
+    bootstrap_required = bootstrap_value
+    result.update({
+        "status": "bootstrap_required" if bootstrap_required else "ready",
+        "bootstrap_required": bootstrap_required,
+        "login_ready": not bootstrap_required,
+    })
+    return result
+
+
 def tailscale_binary() -> tuple[str | None, str]:
     override = os.environ.get("AGENTOPS_TAILSCALE_BIN", "").strip()
     if override:
@@ -841,6 +865,16 @@ def cmd_status(_args) -> int:
         and not serve["conflict"]
     )
     ui_dist, ui_dist_managed = effective_ui_dist(config)
+    human_access = human_access_state(
+        loopback_base_url(config.get("host"), int(config["port"])) or "",
+        running=running,
+        reachable=bool(readiness["reachable"]),
+    )
+    next_actions = []
+    if human_access["status"] == "bootstrap_required":
+        next_actions.append("Run agentops host bootstrap-owner --confirm in an interactive Host terminal.")
+    elif human_access["status"] in {"host_stopped", "unavailable"}:
+        next_actions.append("Run agentops host start, then check Owner readiness again.")
     emit({
         "ok": running and readiness["reachable"],
         "operation": "host_status",
@@ -857,6 +891,8 @@ def cmd_status(_args) -> int:
         "database_path": config["database_path"],
         "ui_dist": str(ui_dist),
         "ui_dist_managed": ui_dist_managed,
+        "human_access": human_access,
+        "next_actions": next_actions,
         "token_omitted": True,
     })
     return 0 if running and readiness["reachable"] else 1
@@ -932,6 +968,23 @@ def cmd_doctor(_args) -> int:
         {"id": "stack_entrypoint", "ok": STACK.is_file()},
     ]
     ts = tailscale_state()
+    pid = int(read_json(p["pid"]).get("pid") or 0)
+    running = process_alive(pid)
+    base_url = f"http://{config['host']}:{config['port']}"
+    readiness = health(base_url) if running else {"reachable": False, "status": "stopped"}
+    human_access = human_access_state(
+        loopback_base_url(config.get("host"), int(config["port"])) or "",
+        running=running,
+        reachable=bool(readiness["reachable"]),
+    )
+    next_actions = [
+        "Run agentops host start --build-ui if the production UI gate is false.",
+        "Install and sign in to Tailscale on both devices before private publication.",
+    ]
+    if human_access["status"] == "bootstrap_required":
+        next_actions.insert(0, "Run agentops host bootstrap-owner --confirm in an interactive Host terminal.")
+    elif human_access["status"] == "host_stopped":
+        next_actions.insert(0, "Run agentops host start to verify human login readiness.")
     emit({
         "ok": all(gate["ok"] for gate in gates),
         "operation": "host_doctor",
@@ -939,10 +992,9 @@ def cmd_doctor(_args) -> int:
         "ui_dist": str(ui_dist),
         "ui_dist_managed": ui_dist_managed,
         "tailscale": ts,
-        "next_actions": [
-            "Run agentops host start --build-ui if the production UI gate is false.",
-            "Install and sign in to Tailscale on both devices before private publication.",
-        ],
+        "host_health": readiness,
+        "human_access": human_access,
+        "next_actions": next_actions,
         "token_omitted": True,
     })
     return 0 if all(gate["ok"] for gate in gates) else 1

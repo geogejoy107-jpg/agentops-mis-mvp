@@ -66,6 +66,9 @@ customer release.
 - Revoke refuses changes when MIS cannot prove ownership of the selected port
   and disables only that port with the exact Tailscale `off` form. It never
   resets unrelated Serve handlers.
+- Host status and doctor expose a bounded `human_access` state and required
+  Owner-bootstrap action without account or credential values. The state moves
+  from `bootstrap_required` to `ready` only after first-Owner creation.
 - Host status, doctor, logs and console URL responses omit credential values.
 - `console-url` reports the private HTTPS URL ready only when Tailscale is
   running, Host health is ready, trusted Origin matches current Tailscale DNS,
@@ -116,6 +119,8 @@ temporary SQLite database and a free loopback port. It verified:
 - zero Worker mode for deterministic CI;
 - publication disabled by default;
 - running status readback;
+- explicit Owner-bootstrap-required status before creation and login-ready
+  status after creation;
 - real Owner bootstrap and authenticated task read through a loopback CookieJar;
 - installed `agentops host bootstrap-owner` creation followed by browser login;
 - confirmation, non-TTY, empty-password, password-mismatch and non-loopback

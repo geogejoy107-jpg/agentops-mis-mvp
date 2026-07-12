@@ -207,6 +207,7 @@ def main() -> int:
                 "private_url_ready": status.get("private_url_ready"),
                 "ui_dist": status.get("ui_dist"),
                 "ui_dist_managed": status.get("ui_dist_managed"),
+                "human_access": status.get("human_access"),
             }
             if not status.get("running") or not status.get("ok"):
                 failures.append("host status did not report the managed process ready")
@@ -214,6 +215,13 @@ def main() -> int:
                 failures.append("host status advertised a private Console URL before publication")
             if status.get("ui_dist") != str(ui_dist.resolve()) or status.get("ui_dist_managed") is not False:
                 failures.append("host status replaced an explicitly configured custom UI path")
+            if (
+                (status.get("human_access") or {}).get("status") != "bootstrap_required"
+                or (status.get("human_access") or {}).get("bootstrap_required") is not True
+                or (status.get("human_access") or {}).get("login_ready") is not False
+                or not any("bootstrap-owner" in action for action in (status.get("next_actions") or []))
+            ):
+                failures.append("host status did not expose the required Owner bootstrap action")
             if any(value and value in status_output for value in secret_values):
                 failures.append("host status output exposed stored secret material")
 
@@ -248,6 +256,16 @@ def main() -> int:
                 or not isinstance(task_payload, list)
             ):
                 failures.append("loopback Host Owner session did not persist over local HTTP")
+
+            _code, owner_ready_status, _output = run_host(env, "status")
+            evidence["owner_ready"] = owner_ready_status.get("human_access")
+            if (
+                (owner_ready_status.get("human_access") or {}).get("status") != "ready"
+                or (owner_ready_status.get("human_access") or {}).get("bootstrap_required") is not False
+                or (owner_ready_status.get("human_access") or {}).get("login_ready") is not True
+                or any("bootstrap-owner" in action for action in (owner_ready_status.get("next_actions") or []))
+            ):
+                failures.append("host status did not become login-ready after Owner bootstrap")
 
             _code, preview, preview_output = run_host(env, "tailscale-preview")
             evidence["tailscale_preview"] = {
