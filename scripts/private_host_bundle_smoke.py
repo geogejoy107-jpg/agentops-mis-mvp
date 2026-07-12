@@ -296,9 +296,35 @@ def main() -> int:
             conn.execute("CREATE TABLE product_upgrade_smoke(marker TEXT PRIMARY KEY)")
             conn.execute("INSERT INTO product_upgrade_smoke VALUES('preserved-across-binary-switch')")
 
+        custom_ui = install_root / "versions" / "custom-ui-fixture" / "dist"
+        custom_ui.mkdir(parents=True)
+        (custom_ui / "index.html").write_text("CUSTOM_UI_FIXTURE\n", encoding="utf-8")
+        config["ui_dist"] = str(custom_ui)
+        (host_data / "config.json").write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        custom_status = run([str(bin_dir / "agentops"), "host", "status"], env=env)
+        custom_status_payload = json.loads(custom_status.stdout)
+        if custom_status_payload.get("ui_dist") != str(custom_ui.resolve()) or custom_status_payload.get("ui_dist_managed") is not False:
+            fail("custom UI below the versions directory was incorrectly replaced", custom_status)
+        config["ui_dist"] = str((install_root / "versions" / version / "ui" / "start-building-app" / "dist").resolve())
+        (host_data / "config.json").write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
         version_two = "0.0.1-smoke"
         output_two = temp / "out-two"
-        built_two = run([sys.executable, str(BUILDER), "--output-dir", str(output_two), "--version", version_two])
+        ui_two = temp / "ui-two"
+        shutil.copytree(ROOT / "ui" / "start-building-app" / "dist", ui_two)
+        ui_marker = "AGENTOPS_BUNDLE_SMOKE_UI_V2"
+        with (ui_two / "index.html").open("a", encoding="utf-8") as handle:
+            handle.write(f"\n<!-- {ui_marker} -->\n")
+        built_two = run([
+            sys.executable,
+            str(BUILDER),
+            "--output-dir",
+            str(output_two),
+            "--ui-dist",
+            str(ui_two),
+            "--version",
+            version_two,
+        ])
         if built_two.returncode != 0:
             fail("second bundle build failed", built_two)
         build_two_result = json.loads(built_two.stdout)
@@ -324,6 +350,19 @@ def main() -> int:
         version_payload = json.loads(version_status.stdout)
         if version_status.returncode != 0 or version_payload.get("version") != version_two or version_payload.get("previous_version") != version:
             fail("installed version provenance is incorrect after upgrade", version_status)
+        upgraded_status = run([str(bin_dir / "agentops"), "host", "status"], env=env)
+        upgraded_status_payload = json.loads(upgraded_status.stdout)
+        expected_upgraded_ui = str((install_root / "versions" / version_two / "ui" / "start-building-app" / "dist").resolve())
+        if upgraded_status_payload.get("ui_dist") != expected_upgraded_ui or upgraded_status_payload.get("ui_dist_managed") is not True:
+            fail("upgrade continued serving the previous release UI", upgraded_status)
+        upgraded_started = run([str(bin_dir / "agentops"), "host", "start", "--no-workers"], env=env)
+        try:
+            with urlopen(base_url + "/", timeout=10) as response:
+                upgraded_html = response.read().decode("utf-8")
+        finally:
+            upgraded_stopped = run([str(bin_dir / "agentops"), "host", "stop"], env=env)
+        if upgraded_started.returncode != 0 or upgraded_stopped.returncode != 0 or ui_marker not in upgraded_html:
+            fail("upgraded Host did not serve the current release UI", upgraded_started)
         update_check = run([str(bin_dir / "agentops"), "host", "update", "--check"], env=env)
         if update_check.returncode != 0 or json.loads(update_check.stdout).get("check_only") is not True:
             fail("side-effect-free update check failed", update_check)
@@ -341,6 +380,19 @@ def main() -> int:
         rolled_back_payload = json.loads(rolled_back_status.stdout)
         if rolled_back_payload.get("version") != version or rolled_back_payload.get("previous_version") != version_two:
             fail("rollback did not atomically swap current and previous versions", rolled_back_status)
+        rolled_back_host_status = run([str(bin_dir / "agentops"), "host", "status"], env=env)
+        rolled_back_host_payload = json.loads(rolled_back_host_status.stdout)
+        expected_rolled_back_ui = str((install_root / "versions" / version / "ui" / "start-building-app" / "dist").resolve())
+        if rolled_back_host_payload.get("ui_dist") != expected_rolled_back_ui or rolled_back_host_payload.get("ui_dist_managed") is not True:
+            fail("rollback did not restore the matching release UI", rolled_back_host_status)
+        rolled_back_started = run([str(bin_dir / "agentops"), "host", "start", "--no-workers"], env=env)
+        try:
+            with urlopen(base_url + "/", timeout=10) as response:
+                rolled_back_html = response.read().decode("utf-8")
+        finally:
+            rolled_back_stopped = run([str(bin_dir / "agentops"), "host", "stop"], env=env)
+        if rolled_back_started.returncode != 0 or rolled_back_stopped.returncode != 0 or ui_marker in rolled_back_html:
+            fail("rolled-back Host did not serve the restored release UI", rolled_back_started)
         with sqlite3.connect(database) as conn:
             marker = conn.execute("SELECT marker FROM product_upgrade_smoke").fetchone()
         if not marker or marker[0] != "preserved-across-binary-switch" or not sentinel.is_file():
@@ -374,6 +426,10 @@ def main() -> int:
             "pre_rollback_backup": "passed",
             "pre_update_backup": "passed",
             "upgrade_data_preserved": True,
+            "upgrade_ui_followed_current_release": True,
+            "rollback_ui_followed_current_release": True,
+            "custom_ui_preserved": True,
+            "served_ui_followed_upgrade_and_rollback": True,
             "uninstall_preserved_user_data": True,
             "network_used": False,
         }, indent=2, sort_keys=True))

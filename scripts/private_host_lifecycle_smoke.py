@@ -205,11 +205,15 @@ def main() -> int:
                 "health": (status.get("health") or {}).get("status"),
                 "private_console_url": status.get("private_console_url"),
                 "private_url_ready": status.get("private_url_ready"),
+                "ui_dist": status.get("ui_dist"),
+                "ui_dist_managed": status.get("ui_dist_managed"),
             }
             if not status.get("running") or not status.get("ok"):
                 failures.append("host status did not report the managed process ready")
             if status.get("private_console_url") or status.get("private_url_ready") is not False:
                 failures.append("host status advertised a private Console URL before publication")
+            if status.get("ui_dist") != str(ui_dist.resolve()) or status.get("ui_dist_managed") is not False:
+                failures.append("host status replaced an explicitly configured custom UI path")
             if any(value and value in status_output for value in secret_values):
                 failures.append("host status output exposed stored secret material")
 

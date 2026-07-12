@@ -334,7 +334,24 @@ def host_env(config: dict, secret_values: dict) -> dict:
     return env
 
 
+def effective_ui_dist(config: dict) -> tuple[Path, bool]:
+    configured = Path(str(config["ui_dist"])).expanduser().resolve()
+    state = install_state()
+    current = state.get("current") or {}
+    current_target = Path(str(current.get("target") or "")).resolve() if current.get("target") else None
+    versions = (Path(state["install_root"]) / "versions").resolve()
+    try:
+        relative = configured.relative_to(versions)
+    except ValueError:
+        relative = None
+    managed = bool(relative and len(relative.parts) == 4 and relative.parts[1:] == ("ui", "start-building-app", "dist"))
+    if managed and current_target:
+        return current_target / "ui" / "start-building-app" / "dist", True
+    return configured, False
+
+
 def stack_command(config: dict, args) -> list[str]:
+    ui_dist, _managed = effective_ui_dist(config)
     command = [
         sys.executable,
         str(STACK),
@@ -344,7 +361,7 @@ def stack_command(config: dict, args) -> list[str]:
         str(config["port"]),
         "--production-ui",
         "--ui-dist",
-        config["ui_dist"],
+        str(ui_dist),
     ]
     if args.build_ui:
         command.append("--build-ui")
@@ -451,6 +468,7 @@ def cmd_status(_args) -> int:
         and serve["target_matches"]
         and not serve["conflict"]
     )
+    ui_dist, ui_dist_managed = effective_ui_dist(config)
     emit({
         "ok": running and readiness["reachable"],
         "operation": "host_status",
@@ -465,7 +483,8 @@ def cmd_status(_args) -> int:
         "serve": serve,
         "tailscale": ts,
         "database_path": config["database_path"],
-        "ui_dist": config["ui_dist"],
+        "ui_dist": str(ui_dist),
+        "ui_dist_managed": ui_dist_managed,
         "token_omitted": True,
     })
     return 0 if running and readiness["reachable"] else 1
@@ -532,11 +551,12 @@ def cmd_restart(args) -> int:
 def cmd_doctor(_args) -> int:
     config, _secret_values = require_initialized()
     p = paths()
+    ui_dist, ui_dist_managed = effective_ui_dist(config)
     gates = [
         {"id": "config_private", "ok": (p["config"].stat().st_mode & 0o077) == 0},
         {"id": "secrets_private", "ok": (p["secrets"].stat().st_mode & 0o077) == 0},
         {"id": "database_parent_private", "ok": (p["data"].stat().st_mode & 0o077) == 0},
-        {"id": "production_ui", "ok": (Path(config["ui_dist"]) / "index.html").is_file()},
+        {"id": "production_ui", "ok": (ui_dist / "index.html").is_file()},
         {"id": "stack_entrypoint", "ok": STACK.is_file()},
     ]
     ts = tailscale_state()
@@ -544,6 +564,8 @@ def cmd_doctor(_args) -> int:
         "ok": all(gate["ok"] for gate in gates),
         "operation": "host_doctor",
         "gates": gates,
+        "ui_dist": str(ui_dist),
+        "ui_dist_managed": ui_dist_managed,
         "tailscale": ts,
         "next_actions": [
             "Run agentops host start --build-ui if the production UI gate is false.",
