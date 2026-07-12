@@ -706,6 +706,9 @@ def cmd_rollback(args) -> int:
 def cmd_console_url(_args) -> int:
     config, _secret_values = require_initialized()
     ts = tailscale_state()
+    target = f"http://{config['host']}:{config['port']}"
+    binary, _source = tailscale_binary()
+    serve = tailscale_serve_state(binary, target)
     local_url = f"http://{config['host']}:{config['port']}/workspace"
     private_url = f"https://{ts['dns_name']}/workspace" if ts["dns_name"] else ""
     emit({
@@ -713,7 +716,14 @@ def cmd_console_url(_args) -> int:
         "operation": "host_console_url",
         "local_console_url": local_url,
         "private_console_url": private_url,
-        "private_url_ready": bool(private_url and ts["backend_state"] == "Running"),
+        "private_url_ready": bool(
+            private_url
+            and ts["backend_state"] == "Running"
+            and serve["status_available"]
+            and serve["target_matches"]
+            and not serve["conflict"]
+        ),
+        "serve": serve,
         "token_omitted": True,
     })
     return 0

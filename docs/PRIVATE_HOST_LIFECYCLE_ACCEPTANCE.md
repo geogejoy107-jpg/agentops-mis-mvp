@@ -50,6 +50,8 @@ customer release.
   another backend is present; resetting all Serve handlers requires the
   separate `--reset-all-serve` acknowledgement.
 - Host status, doctor, logs and console URL responses omit credential values.
+- `console-url` reports the private HTTPS URL ready only when Tailscale is
+  running and its verified Serve target matches this Host without conflict.
 
 ## Verification
 
@@ -79,6 +81,8 @@ temporary SQLite database and a free loopback port. It verified:
 - Tailscale preview-only/Funnel-disabled behavior;
 - an existing non-MIS Serve target blocks apply and revoke without their
   distinct destructive acknowledgements;
+- private console readiness changes to true only after the verified Serve
+  target points at MIS and returns to false after revoke;
 - Secure cookie policy enabled on confirmed Tailscale apply and disabled after
   confirmed revoke;
 - process-group stop and temporary-state cleanup.
