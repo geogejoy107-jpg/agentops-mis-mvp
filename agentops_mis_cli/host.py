@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import fcntl
 import getpass
+import hashlib
 import io
 import ipaddress
 import json
@@ -11,6 +13,7 @@ import os
 import secrets
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -25,6 +28,11 @@ BACKUP_UTILITY = ROOT / "scripts" / "agentops_local_backup.py"
 DEFAULT_UI_DIST = ROOT / "ui" / "start-building-app" / "dist"
 MACOS_TAILSCALE_BIN = Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
 HOST_STOP_GRACE_SECONDS = 20
+HOST_DATA_MARKER = {
+    "schema_version": 1,
+    "product": "AgentOps MIS Private Host Data",
+    "managed": True,
+}
 
 
 class HostArgumentError(ValueError):
@@ -66,6 +74,8 @@ def paths() -> dict[str, Path]:
         "log": home / "logs" / "host.log",
         "run": home / "run",
         "pid": home / "run" / "host.pid.json",
+        "ownership": home / ".agentops-host-data.json",
+        "lifecycle_lock": home.parent / ".agentops-mis-host-lifecycle.lock",
     }
 
 
@@ -97,9 +107,160 @@ def process_alive(pid: int) -> bool:
         return False
 
 
+def managed_process_identity(pid: int) -> dict | None:
+    if not process_alive(pid):
+        return None
+    try:
+        process = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "lstart=", "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        rendered = process.stdout.strip()
+        process_group_id = os.getpgid(pid)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if process.returncode != 0 or not rendered or str(STACK) not in rendered:
+        return None
+    return {
+        "process_group_id": process_group_id,
+        "process_identity_hash": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
+    }
+
+
+def write_managed_pid_record(path: Path, process: subprocess.Popen, *, foreground: bool = False) -> None:
+    identity = None
+    previous_identity = None
+    for _attempt in range(40):
+        candidate = managed_process_identity(process.pid)
+        if candidate and candidate == previous_identity:
+            identity = candidate
+            break
+        previous_identity = candidate
+        if process.poll() is not None:
+            break
+        time.sleep(0.025)
+    if not identity:
+        try:
+            if foreground:
+                process.terminate()
+            else:
+                os.killpg(process.pid, signal.SIGTERM)
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                if foreground:
+                    process.kill()
+                else:
+                    os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        raise RuntimeError("Host process identity could not be established.")
+    write_private_json(path, {
+        "schema_version": 1,
+        "pid": process.pid,
+        "process_group_id": identity["process_group_id"],
+        "process_identity_hash": identity["process_identity_hash"],
+        "started_at_epoch": time.time(),
+        **({"foreground": True} if foreground else {}),
+    })
+
+
+def managed_process_record_matches(record: dict, pid: int) -> bool:
+    identity = managed_process_identity(pid)
+    if not identity:
+        return False
+    try:
+        recorded_group = int(record.get("process_group_id"))
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        record.get("schema_version") == 1
+        and recorded_group == identity["process_group_id"]
+        and secrets.compare_digest(
+            str(record.get("process_identity_hash") or ""),
+            identity["process_identity_hash"],
+        )
+    )
+
+
 def managed_host_running() -> bool:
     record = read_json(paths()["pid"])
     return process_alive(int(record.get("pid") or 0))
+
+
+@contextlib.contextmanager
+def lifecycle_lock():
+    lock_path = paths()["lifecycle_lock"]
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(
+        lock_path,
+        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    metadata = os.fstat(descriptor)
+    if not stat.S_ISREG(metadata.st_mode):
+        os.close(descriptor)
+        raise RuntimeError("Host lifecycle lock is not a regular file.")
+    os.fchmod(descriptor, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def ensure_host_data_marker(*, allow_legacy: bool = False) -> bool:
+    marker_path = paths()["ownership"]
+    if marker_path.exists():
+        if marker_path.is_symlink() or read_json(marker_path) != HOST_DATA_MARKER:
+            raise RuntimeError("Host data ownership marker is invalid.")
+        marker_path.chmod(0o600)
+        return False
+    home = paths()["home"]
+    existing_entries = list(home.iterdir()) if home.is_dir() else []
+    if existing_entries:
+        config = read_json(paths()["config"])
+        secret_values = read_json(paths()["secrets"])
+        try:
+            database_path = Path(str(config.get("database_path") or "")).expanduser().resolve()
+            database_is_managed = database_path == paths()["database"]
+        except (OSError, RuntimeError, ValueError):
+            database_is_managed = False
+        api_key = secret_values.get("api_key")
+        admin_key = secret_values.get("admin_key")
+        owner_setup_code = secret_values.get("owner_setup_code")
+        secret_shape_valid = bool(
+            isinstance(api_key, str)
+            and api_key.startswith("agthost_")
+            and isinstance(admin_key, str)
+            and admin_key.startswith("agtadmin_")
+            and isinstance(owner_setup_code, str)
+            and len(owner_setup_code) >= 16
+        )
+        legacy_owned = bool(
+            allow_legacy
+            and config.get("version") == 1
+            and config.get("deployment_mode") == "private_host"
+            and config.get("host") == "127.0.0.1"
+            and database_is_managed
+            and isinstance(config.get("port"), int)
+            and config.get("workspace_id")
+            and secret_shape_valid
+            and paths()["data"].is_dir()
+            and paths()["run"].is_dir()
+            and (ROOT / "docs" / "LOCAL_HOST_REMOTE_CONSOLE_SPEC.md").is_file()
+        )
+        if not legacy_owned:
+            raise RuntimeError("Host data root is non-empty without a valid ownership marker.")
+    write_private_json(marker_path, HOST_DATA_MARKER)
+    return True
 
 
 def health(base_url: str) -> dict:
@@ -354,7 +515,7 @@ def require_initialized() -> tuple[dict, dict]:
     return config, secret_values
 
 
-def cmd_init(args) -> int:
+def _cmd_init_unlocked(args) -> int:
     p = paths()
     if p["config"].exists() or p["secrets"].exists():
         emit({
@@ -366,6 +527,7 @@ def cmd_init(args) -> int:
             "token_omitted": True,
         })
         return 2
+    ensure_host_data_marker()
     for key in ("home", "data", "logs", "run"):
         p[key].mkdir(parents=True, exist_ok=True, mode=0o700)
         p[key].chmod(0o700)
@@ -412,6 +574,31 @@ def cmd_init(args) -> int:
         "token_omitted": True,
     })
     return 0
+
+
+def cmd_init(args) -> int:
+    with lifecycle_lock():
+        p = paths()
+        home_preexisted = p["home"].exists()
+        marker_preexisted = p["ownership"].exists()
+        try:
+            return _cmd_init_unlocked(args)
+        except Exception:
+            for key in ("secrets", "config"):
+                p[key].unlink(missing_ok=True)
+            for key in ("run", "logs", "data"):
+                try:
+                    p[key].rmdir()
+                except OSError:
+                    pass
+            if not marker_preexisted:
+                p["ownership"].unlink(missing_ok=True)
+            if not home_preexisted:
+                try:
+                    p["home"].rmdir()
+                except OSError:
+                    pass
+            raise
 
 
 def cmd_bootstrap_owner(args) -> int:
@@ -768,7 +955,7 @@ def stack_command(config: dict, args) -> list[str]:
     return command
 
 
-def cmd_start(args) -> int:
+def _cmd_start_unlocked(args) -> int:
     config, secret_values = require_initialized()
     p = paths()
     pid_record = read_json(p["pid"])
@@ -780,11 +967,7 @@ def cmd_start(args) -> int:
     env = host_env(config, secret_values)
     if args.foreground:
         process = subprocess.Popen(command, cwd=ROOT, env=env)
-        write_private_json(p["pid"], {
-            "pid": process.pid,
-            "started_at_epoch": time.time(),
-            "foreground": True,
-        })
+        write_managed_pid_record(p["pid"], process, foreground=True)
         try:
             return process.wait()
         finally:
@@ -803,7 +986,7 @@ def cmd_start(args) -> int:
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-    write_private_json(p["pid"], {"pid": process.pid, "started_at_epoch": time.time()})
+    write_managed_pid_record(p["pid"], process)
     base_url = f"http://{config['host']}:{config['port']}"
     deadline = time.time() + 25
     readiness = {"reachable": False, "status": "unavailable"}
@@ -839,6 +1022,59 @@ def cmd_start(args) -> int:
         "token_omitted": True,
     })
     return 0
+
+
+def _launch_foreground_locked(args):
+    config, secret_values = require_initialized()
+    p = paths()
+    pid_record = read_json(p["pid"])
+    pid = int(pid_record.get("pid") or 0)
+    if process_alive(pid):
+        emit({"ok": False, "operation": "host_start", "error": "already_running", "pid": pid, "token_omitted": True})
+        return None, p, 2
+    process = subprocess.Popen(stack_command(config, args), cwd=ROOT, env=host_env(config, secret_values))
+    write_managed_pid_record(p["pid"], process, foreground=True)
+    return process, p, 0
+
+
+def _wait_foreground(process, p: dict[str, Path], *, marker_created: bool = False) -> int:
+    status = None
+    try:
+        status = process.wait()
+        return status
+    finally:
+        with lifecycle_lock():
+            current_record = read_json(p["pid"])
+            if int(current_record.get("pid") or 0) == process.pid:
+                p["pid"].unlink(missing_ok=True)
+            if marker_created and status not in (None, 0):
+                p["ownership"].unlink(missing_ok=True)
+
+
+def cmd_start(args) -> int:
+    if not args.foreground:
+        with lifecycle_lock():
+            marker_created = ensure_host_data_marker(allow_legacy=True)
+            try:
+                status = _cmd_start_unlocked(args)
+            except Exception:
+                if marker_created:
+                    paths()["ownership"].unlink(missing_ok=True)
+                raise
+            if marker_created and status != 0:
+                paths()["ownership"].unlink(missing_ok=True)
+            return status
+    with lifecycle_lock():
+        marker_created = ensure_host_data_marker(allow_legacy=True)
+        try:
+            process, p, status = _launch_foreground_locked(args)
+        except Exception:
+            if marker_created:
+                paths()["ownership"].unlink(missing_ok=True)
+            raise
+        if process is None and marker_created:
+            p["ownership"].unlink(missing_ok=True)
+    return status if process is None else _wait_foreground(process, p, marker_created=marker_created)
 
 
 def cmd_status(_args) -> int:
@@ -904,18 +1140,35 @@ def cmd_status(_args) -> int:
     return 0 if running and readiness["reachable"] else 1
 
 
-def cmd_stop(_args) -> int:
+def _cmd_stop_unlocked(_args) -> int:
     p = paths()
     record = read_json(p["pid"])
-    pid = int(record.get("pid") or 0)
+    try:
+        pid = int(record.get("pid") or 0)
+    except (TypeError, ValueError):
+        emit({"ok": False, "operation": "host_stop", "status": "invalid_pid_record", "token_omitted": True})
+        return 2
     if not process_alive(pid):
         p["pid"].unlink(missing_ok=True)
         emit({"ok": True, "operation": "host_stop", "status": "already_stopped", "token_omitted": True})
         return 0
+    if not managed_process_record_matches(record, pid):
+        emit({
+            "ok": False,
+            "operation": "host_stop",
+            "status": "process_identity_unverified",
+            "pid": pid,
+            "token_omitted": True,
+        })
+        return 2
     try:
-        os.killpg(pid, signal.SIGTERM)
+        if int(record["process_group_id"]) == pid:
+            os.killpg(pid, signal.SIGTERM)
+        else:
+            os.kill(pid, signal.SIGTERM)
     except OSError:
-        os.kill(pid, signal.SIGTERM)
+        emit({"ok": False, "operation": "host_stop", "status": "termination_failed", "pid": pid, "token_omitted": True})
+        return 1
     deadline = time.time() + HOST_STOP_GRACE_SECONDS
     while time.time() < deadline and process_alive(pid):
         time.sleep(0.2)
@@ -927,32 +1180,56 @@ def cmd_stop(_args) -> int:
     return 0
 
 
+def cmd_stop(args) -> int:
+    with lifecycle_lock():
+        return _cmd_stop_unlocked(args)
+
+
 def cmd_restart(args) -> int:
-    stop_output = io.StringIO()
-    with contextlib.redirect_stdout(stop_output):
-        stop_code = cmd_stop(args)
-    try:
-        stop_result = json.loads(stop_output.getvalue())
-    except ValueError:
-        stop_result = {}
-    if stop_code != 0:
-        emit({
-            "ok": False,
-            "operation": "host_restart",
-            "error": "stop_failed",
-            "stop_status": stop_result.get("status", "unknown"),
-            "token_omitted": True,
-        })
-        return stop_code
-    if getattr(args, "foreground", False):
-        return cmd_start(args)
-    start_output = io.StringIO()
-    with contextlib.redirect_stdout(start_output):
-        start_code = cmd_start(args)
-    try:
-        start_result = json.loads(start_output.getvalue())
-    except ValueError:
-        start_result = {}
+    foreground_process = None
+    foreground_paths = None
+    marker_created = False
+    with lifecycle_lock():
+        stop_output = io.StringIO()
+        with contextlib.redirect_stdout(stop_output):
+            stop_code = _cmd_stop_unlocked(args)
+        try:
+            stop_result = json.loads(stop_output.getvalue())
+        except ValueError:
+            stop_result = {}
+        if stop_code != 0:
+            emit({
+                "ok": False,
+                "operation": "host_restart",
+                "error": "stop_failed",
+                "stop_status": stop_result.get("status", "unknown"),
+                "token_omitted": True,
+            })
+            return stop_code
+        marker_created = ensure_host_data_marker(allow_legacy=True)
+        try:
+            if getattr(args, "foreground", False):
+                foreground_process, foreground_paths, start_code = _launch_foreground_locked(args)
+                if foreground_process is None:
+                    if marker_created:
+                        paths()["ownership"].unlink(missing_ok=True)
+                    return start_code
+            else:
+                start_output = io.StringIO()
+                with contextlib.redirect_stdout(start_output):
+                    start_code = _cmd_start_unlocked(args)
+                try:
+                    start_result = json.loads(start_output.getvalue())
+                except ValueError:
+                    start_result = {}
+                if marker_created and start_code != 0:
+                    paths()["ownership"].unlink(missing_ok=True)
+        except Exception:
+            if marker_created:
+                paths()["ownership"].unlink(missing_ok=True)
+            raise
+    if foreground_process is not None:
+        return _wait_foreground(foreground_process, foreground_paths, marker_created=marker_created)
     start_result.update({
         "operation": "host_restart",
         "stop_status": stop_result.get("status", "stopped"),
@@ -1079,7 +1356,7 @@ def cmd_backup_verify(args) -> int:
     return status
 
 
-def cmd_restore(args) -> int:
+def _cmd_restore_unlocked(args) -> int:
     config, _secret_values = require_initialized()
     p = paths()
     pid = int(read_json(p["pid"]).get("pid") or 0)
@@ -1126,6 +1403,11 @@ def cmd_restore(args) -> int:
     payload["next_action"] = "agentops host start" if status == 0 else "Verify the backup and retry."
     emit(payload)
     return status
+
+
+def cmd_restore(args) -> int:
+    with lifecycle_lock():
+        return _cmd_restore_unlocked(args)
 
 
 def install_state() -> dict:
@@ -1203,7 +1485,7 @@ def cmd_update(args) -> int:
     return 0 if current else 1
 
 
-def cmd_rollback(args) -> int:
+def _cmd_rollback_unlocked(args) -> int:
     config, _secret_values = require_initialized()
     p = paths()
     pid = int(read_json(p["pid"]).get("pid") or 0)
@@ -1296,6 +1578,11 @@ def cmd_rollback(args) -> int:
         "token_omitted": True,
     })
     return 0
+
+
+def cmd_rollback(args) -> int:
+    with lifecycle_lock():
+        return _cmd_rollback_unlocked(args)
 
 
 def cmd_console_url(_args) -> int:

@@ -18,6 +18,7 @@ PY
 
 python3 - "$BUNDLE_DIR" "$INSTALL_ROOT" "$BIN_DIR" "$DATA_ROOT" <<'PY'
 import json
+import fcntl
 import hashlib
 import os
 import shlex
@@ -39,19 +40,41 @@ if not version or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRS
     raise SystemExit("invalid bundle version")
 target = install_root / "versions" / version
 
+lock_path = data_root.parent / ".agentops-mis-host-lifecycle.lock"
+lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+lock_descriptor = os.open(
+    lock_path,
+    os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+    0o600,
+)
+lock_metadata = os.fstat(lock_descriptor)
+if not stat.S_ISREG(lock_metadata.st_mode):
+    os.close(lock_descriptor)
+    raise SystemExit("Host lifecycle lock is not a regular file; install refused")
+os.fchmod(lock_descriptor, 0o600)
+try:
+    fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    os.close(lock_descriptor)
+    raise SystemExit("Host lifecycle operation is active; install refused")
+
 pid_path = data_root / "run" / "host.pid.json"
 if pid_path.is_file():
     try:
-        pid = int(json.loads(pid_path.read_text(encoding="utf-8")).get("pid") or 0)
-        if pid > 0:
-            os.kill(pid, 0)
-            raise SystemExit("AgentOps MIS Host is running; stop it before installing an update")
+        pid_payload = json.loads(pid_path.read_text(encoding="utf-8"))
+        pid = int(pid_payload.get("pid") or 0) if isinstance(pid_payload, dict) else 0
+    except (OSError, ValueError, json.JSONDecodeError):
+        raise SystemExit("cannot verify Host process state; update refused")
+    if pid <= 0:
+        raise SystemExit("invalid managed Host PID record; update refused")
+    try:
+        os.kill(pid, 0)
     except ProcessLookupError:
         pass
     except PermissionError:
         raise SystemExit("cannot verify Host process state; update refused")
-    except (OSError, ValueError, json.JSONDecodeError):
-        pass
+    else:
+        raise SystemExit("AgentOps MIS Host is running; stop it before installing an update")
 
 def digest(path):
     value = hashlib.sha256()
@@ -85,6 +108,49 @@ previous = install_root / "previous"
 old_current = current.resolve() if current.is_symlink() else None
 if current.exists() and not current.is_symlink():
     raise SystemExit("unsafe non-symlink current install path")
+
+install_marker = install_root / ".agentops-mis-install.json"
+expected_install_marker = {
+    "schema_version": 1,
+    "product": "AgentOps MIS Private Host",
+    "managed": True,
+}
+if install_marker.exists():
+    try:
+        existing_marker = json.loads(install_marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raise SystemExit("installed product ownership marker is invalid")
+    if install_marker.is_symlink() or existing_marker != expected_install_marker:
+        raise SystemExit("installed product ownership marker is invalid")
+elif install_root.is_dir() and any(install_root.iterdir()):
+    allowed_legacy_entries = {"current", "previous", "versions"}
+    actual_entries = {entry.name for entry in install_root.iterdir()}
+    legacy_manifest = old_current / "release-manifest.json" if old_current else None
+    try:
+        legacy_payload = json.loads(legacy_manifest.read_text(encoding="utf-8")) if legacy_manifest else {}
+        old_current.relative_to((install_root / "versions").resolve()) if old_current else None
+    except (OSError, ValueError, json.JSONDecodeError):
+        legacy_payload = {}
+    if actual_entries - allowed_legacy_entries or legacy_payload.get("product") != "AgentOps MIS Private Host":
+        raise SystemExit("non-empty install root lacks a valid product ownership marker")
+
+shim = bin_dir / "agentops"
+if shim.exists() or shim.is_symlink():
+    if shim.is_symlink() or not old_current:
+        raise SystemExit("existing CLI shim ownership cannot be verified")
+    try:
+        existing_shim = shim.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        raise SystemExit("existing CLI shim ownership cannot be verified")
+    quoted_old_current = shlex.quote(str(current))
+    expected_shim = (
+        "#!/bin/sh\n"
+        "set -eu\n"
+        f"cd {quoted_old_current}\n"
+        f"PYTHONPATH={quoted_old_current} exec python3 -m agentops_mis_cli \"$@\"\n"
+    )
+    if existing_shim != expected_shim:
+        raise SystemExit("existing CLI shim ownership cannot be verified")
 if target.exists():
     raise SystemExit(f"version is already installed: {version}")
 pre_update_backup = None
@@ -133,12 +199,18 @@ def atomic_symlink(link, destination):
     temporary.symlink_to(destination)
     os.replace(temporary, link)
 
+if not install_marker.exists():
+    marker_stage = install_root / ".agentops-mis-install.json.next"
+    marker_stage.write_text(json.dumps(expected_install_marker, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    marker_stage.chmod(0o600)
+    os.replace(marker_stage, install_marker)
+install_marker.chmod(0o600)
+
 if old_current and old_current != target:
     atomic_symlink(previous, old_current)
 atomic_symlink(current, target)
 
 bin_dir.mkdir(parents=True, exist_ok=True)
-shim = bin_dir / "agentops"
 quoted_current = shlex.quote(str(current))
 shim.write_text(
     "#!/bin/sh\n"
@@ -148,6 +220,8 @@ shim.write_text(
     encoding="utf-8",
 )
 shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+os.close(lock_descriptor)
 
 print(json.dumps({
     "ok": True,

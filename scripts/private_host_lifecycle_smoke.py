@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import io
 import json
 import http.cookiejar
@@ -11,6 +12,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -71,7 +73,7 @@ def main() -> int:
         return 1
 
     restart_failure_output = io.StringIO()
-    with mock.patch.object(host_module, "cmd_stop", side_effect=failing_stop), mock.patch.object(host_module, "cmd_start") as start, contextlib.redirect_stdout(restart_failure_output):
+    with mock.patch.object(host_module, "_cmd_stop_unlocked", side_effect=failing_stop), mock.patch.object(host_module, "_cmd_start_unlocked") as start, contextlib.redirect_stdout(restart_failure_output):
         restart_code = host_module.cmd_restart(SimpleNamespace(foreground=False))
     try:
         restart_failure_payload = json.loads(restart_failure_output.getvalue())
@@ -82,12 +84,21 @@ def main() -> int:
         host_module.emit({"ok": True, "operation": "host_stop", "status": "stopped", "token_omitted": True})
         return 0
 
-    def foreground_start(_args) -> int:
+    def foreground_start(_process, _paths, **_kwargs) -> int:
         print("FOREGROUND_CHILD_OUTPUT")
         return 0
 
     foreground_output = io.StringIO()
-    with mock.patch.object(host_module, "cmd_stop", side_effect=successful_stop), mock.patch.object(host_module, "cmd_start", side_effect=foreground_start), contextlib.redirect_stdout(foreground_output):
+    foreground_process = object()
+    with mock.patch.object(host_module, "_cmd_stop_unlocked", side_effect=successful_stop), mock.patch.object(
+        host_module,
+        "_launch_foreground_locked",
+        return_value=(foreground_process, {}, 0),
+    ), mock.patch.object(
+        host_module,
+        "_wait_foreground",
+        side_effect=foreground_start,
+    ), contextlib.redirect_stdout(foreground_output):
         foreground_code = host_module.cmd_restart(SimpleNamespace(foreground=True))
     evidence["restart_contract"] = {
         "grace_seconds": host_module.HOST_STOP_GRACE_SECONDS,
@@ -156,6 +167,209 @@ def main() -> int:
         port = free_port()
         secret_values: list[str] = []
         try:
+            failed_init_home = tmp_path / "failed-init-host"
+            original_write_private_json = host_module.write_private_json
+            init_write_count = 0
+
+            def fail_after_marker(path, payload):
+                nonlocal init_write_count
+                init_write_count += 1
+                if init_write_count == 3:
+                    raise OSError("fixture init write failure")
+                return original_write_private_json(path, payload)
+
+            with mock.patch.dict(os.environ, {"AGENTOPS_HOST_HOME": str(failed_init_home)}), mock.patch.object(
+                host_module,
+                "write_private_json",
+                side_effect=fail_after_marker,
+            ):
+                try:
+                    host_module.cmd_init(
+                        SimpleNamespace(port=free_port(), workspace_id="failed-init-smoke", ui_dist=str(ui_dist))
+                    )
+                except OSError:
+                    pass
+            failed_init_rolled_back = not failed_init_home.exists()
+            failed_init_retry_output = io.StringIO()
+            with mock.patch.dict(os.environ, {"AGENTOPS_HOST_HOME": str(failed_init_home)}), contextlib.redirect_stdout(
+                failed_init_retry_output
+            ):
+                failed_init_retry_code = host_module.cmd_init(
+                    SimpleNamespace(port=free_port(), workspace_id="failed-init-smoke", ui_dist=str(ui_dist))
+                )
+            evidence["failed_init"] = {
+                "partial_state_removed_before_retry": failed_init_rolled_back,
+                "partial_state_recovered": failed_init_retry_code == 0,
+                "retry_initialized": (failed_init_home / "config.json").is_file()
+                and (failed_init_home / "secrets.json").is_file(),
+            }
+            if not failed_init_rolled_back or failed_init_retry_code != 0 or not evidence["failed_init"]["retry_initialized"]:
+                failures.append("failed Host init did not roll back to an immediately retryable state")
+
+            locked_init_home = tmp_path / "locked-init-host"
+            locked_init_env = {**env, "AGENTOPS_HOST_HOME": str(locked_init_home)}
+            init_lock_path = locked_init_home.parent / ".agentops-mis-host-lifecycle.lock"
+            lock_symlink_target = tmp_path / "unrelated-lock-target"
+            lock_symlink_target.write_text("preserve", encoding="utf-8")
+            init_lock_path.unlink(missing_ok=True)
+            init_lock_path.symlink_to(lock_symlink_target)
+            symlink_lock_init = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agentops_mis_cli.cli",
+                    "host",
+                    "init",
+                    "--port",
+                    str(free_port()),
+                    "--ui-dist",
+                    str(ui_dist),
+                ],
+                cwd=ROOT,
+                env=locked_init_env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            init_lock_path.unlink()
+            symlink_lock_rejected = (
+                symlink_lock_init.returncode != 0
+                and not (locked_init_home / "config.json").exists()
+                and lock_symlink_target.read_text(encoding="utf-8") == "preserve"
+            )
+            evidence["symlinked_lifecycle_lock"] = {
+                "init_rejected": symlink_lock_rejected,
+                "target_preserved": lock_symlink_target.read_text(encoding="utf-8") == "preserve",
+            }
+            if not symlink_lock_rejected:
+                failures.append("host init followed a symlinked lifecycle lock")
+
+            init_lock_descriptor = os.open(init_lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            fcntl.flock(init_lock_descriptor, fcntl.LOCK_EX)
+            blocked_init = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "agentops_mis_cli.cli",
+                    "host",
+                    "init",
+                    "--port",
+                    str(free_port()),
+                    "--ui-dist",
+                    str(ui_dist),
+                ],
+                cwd=ROOT,
+                env=locked_init_env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            time.sleep(0.3)
+            init_waited_for_lock = (
+                blocked_init.poll() is None
+                and not (locked_init_home / ".agentops-host-data.json").exists()
+                and not (locked_init_home / "config.json").exists()
+            )
+            fcntl.flock(init_lock_descriptor, fcntl.LOCK_UN)
+            os.close(init_lock_descriptor)
+            init_stdout, init_stderr = blocked_init.communicate(timeout=30)
+            try:
+                locked_init_payload = json.loads(init_stdout)
+            except ValueError:
+                locked_init_payload = {}
+            evidence["locked_init"] = {
+                "waited_for_lifecycle_lock": init_waited_for_lock,
+                "initialized_after_release": blocked_init.returncode == 0 and locked_init_payload.get("ok") is True,
+                "credential_values_omitted": bool(init_stderr == ""),
+            }
+            if not init_waited_for_lock or blocked_init.returncode != 0 or locked_init_payload.get("ok") is not True:
+                failures.append("host init did not serialize through the lifecycle lock")
+
+            unrelated_home = tmp_path / "unrelated-host"
+            unrelated_home.mkdir()
+            unrelated_sentinel = unrelated_home / "user-file"
+            unrelated_sentinel.write_text("preserve", encoding="utf-8")
+            unrelated_env = {**env, "AGENTOPS_HOST_HOME": str(unrelated_home)}
+            unrelated_init = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agentops_mis_cli.cli",
+                    "host",
+                    "init",
+                    "--port",
+                    str(free_port()),
+                    "--ui-dist",
+                    str(ui_dist),
+                ],
+                cwd=ROOT,
+                env=unrelated_env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            unrelated_root_rejected = (
+                unrelated_init.returncode != 0
+                and unrelated_sentinel.read_text(encoding="utf-8") == "preserve"
+                and not (unrelated_home / ".agentops-host-data.json").exists()
+                and not (unrelated_home / "config.json").exists()
+            )
+            evidence["unrelated_data_root"] = {
+                "init_rejected": unrelated_root_rejected,
+                "sentinel_preserved": unrelated_sentinel.is_file(),
+                "ownership_not_claimed": not (unrelated_home / ".agentops-host-data.json").exists(),
+            }
+            if not unrelated_root_rejected:
+                failures.append("host init claimed a non-empty unrelated data root")
+
+            legacy_home = tmp_path / "legacy-host"
+            (legacy_home / "data").mkdir(parents=True)
+            (legacy_home / "run").mkdir()
+            legacy_config = {
+                "version": 1,
+                "host": "127.0.0.1",
+                "port": free_port(),
+                "workspace_id": "legacy-smoke",
+                "database_path": str((legacy_home / "data" / "agentops_mis.db").resolve()),
+                "ui_dist": str((tmp_path / "missing-ui").resolve()),
+                "deployment_mode": "private_host",
+                "cookie_secure": False,
+                "allowed_origins": [],
+                "network_publication": "disabled",
+                "tailscale_https_port": 443,
+            }
+            (legacy_home / "config.json").write_text(json.dumps(legacy_config), encoding="utf-8")
+            (legacy_home / "secrets.json").write_text(
+                json.dumps({
+                    "api_key": "agthost_fixture_value",
+                    "admin_key": "agtadmin_fixture_value",
+                    "owner_setup_code": "fixture-setup-code-value",
+                }),
+                encoding="utf-8",
+            )
+            legacy_env = {**env, "AGENTOPS_HOST_HOME": str(legacy_home)}
+            failed_legacy_start = subprocess.run(
+                [sys.executable, "-m", "agentops_mis_cli.cli", "host", "start", "--no-workers"],
+                cwd=ROOT,
+                env=legacy_env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            legacy_marker_rolled_back = (
+                failed_legacy_start.returncode != 0
+                and not (legacy_home / ".agentops-host-data.json").exists()
+            )
+            evidence["legacy_marker_migration"] = {
+                "failed_start_rejected": failed_legacy_start.returncode != 0,
+                "new_marker_rolled_back": legacy_marker_rolled_back,
+            }
+            if not legacy_marker_rolled_back:
+                failures.append("failed legacy Host startup retained a newly created ownership marker")
+
             _code, initialized, init_output = run_host(
                 env,
                 "init",
@@ -192,14 +406,35 @@ def main() -> int:
             if repeated.get("error") != "already_initialized" or any(value and value in repeated_output for value in secret_values):
                 failures.append("repeated init did not fail closed without reprinting secrets")
 
-            _code, started, start_output = run_host(env, "start", "--no-workers")
+            lifecycle_lock_path = host_home.parent / ".agentops-mis-host-lifecycle.lock"
+            lock_descriptor = os.open(lifecycle_lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+            blocked_start = subprocess.Popen(
+                [sys.executable, "-m", "agentops_mis_cli.cli", "host", "start", "--no-workers"],
+                cwd=ROOT,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            time.sleep(0.3)
+            start_waited_for_lock = blocked_start.poll() is None and not (host_home / "run" / "host.pid.json").exists()
+            fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+            os.close(lock_descriptor)
+            start_stdout, start_stderr = blocked_start.communicate(timeout=70)
+            start_output = start_stdout + start_stderr
+            started = json.loads(start_stdout or "{}")
+            _code = blocked_start.returncode
+            if _code != 0:
+                failures.append(f"host start after lifecycle lock exited {_code}")
             evidence["start"] = {
                 "ok": started.get("ok"),
                 "health": (started.get("health") or {}).get("status"),
                 "network_publication": started.get("network_publication"),
                 "workers": started.get("workers"),
+                "waited_for_lifecycle_lock": start_waited_for_lock,
             }
-            if not started.get("ok") or started.get("network_publication") != "disabled":
+            if not start_waited_for_lock or not started.get("ok") or started.get("network_publication") != "disabled":
                 failures.append("host did not start privately with network publication disabled")
             if any(value and value in start_output for value in secret_values):
                 failures.append("host start output exposed stored secret material")
@@ -417,6 +652,34 @@ def main() -> int:
                 failures.append("confirmed Tailscale revoke did not disable the Host Serve port and trusted-Origin state")
             if any(value and value in revoke_output for value in secret_values):
                 failures.append("Tailscale revoke output exposed stored secret material")
+
+            _code, _stopped_for_identity, _output = run_host(env, "stop")
+            unrelated_process = subprocess.Popen(["/bin/sleep", "30"], start_new_session=True)
+            try:
+                unrelated_identity_record = {
+                    "schema_version": 1,
+                    "pid": unrelated_process.pid,
+                    "process_group_id": unrelated_process.pid,
+                    "process_identity_hash": "0" * 64,
+                    "started_at_epoch": time.time(),
+                }
+                (host_home / "run" / "host.pid.json").write_text(
+                    json.dumps(unrelated_identity_record) + "\n",
+                    encoding="utf-8",
+                )
+                _code, identity_rejected, _output = run_host(env, "stop", expected=(2,))
+                unrelated_process_untouched = unrelated_process.poll() is None
+                evidence["stale_pid_safety"] = {
+                    "stop_status": identity_rejected.get("status"),
+                    "unrelated_process_untouched": unrelated_process_untouched,
+                    "pid_record_preserved": (host_home / "run" / "host.pid.json").is_file(),
+                }
+                if identity_rejected.get("status") != "process_identity_unverified" or not unrelated_process_untouched:
+                    failures.append("host stop did not reject a stale or reused PID identity")
+            finally:
+                unrelated_process.terminate()
+                unrelated_process.wait(timeout=5)
+                (host_home / "run" / "host.pid.json").unlink(missing_ok=True)
         except (OSError, ValueError, RuntimeError) as exc:
             failures.append(f"lifecycle exception: {type(exc).__name__}: {str(exc)[:180]}")
         finally:

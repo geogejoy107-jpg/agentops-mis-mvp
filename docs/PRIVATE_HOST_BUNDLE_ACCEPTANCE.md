@@ -58,8 +58,22 @@ Generated archives and UI `dist` remain untracked.
   active version.
 - A verified update stages the new version, preserves the prior version through
   `previous`, and refuses to run while the managed Host PID is alive.
+- Install/update and uninstall share the Host lifecycle lock with start/stop;
+  lock contention fails closed before backup, version staging, or removal.
+  The lock file is opened without following a final symlink and must be a
+  regular file.
 - Uninstall removes product files and shim but preserves `~/.agentops/host`
   user data unless `AGENTOPS_PURGE_DATA=true` is explicitly set.
+- Install and Host initialization create bounded, non-secret ownership markers.
+  A non-empty install root without a valid marker is accepted only through the
+  legacy migration shape (`current` inside `versions` plus an exact product
+  release manifest); arbitrary existing directories are never claimed.
+  Uninstall refuses while the managed Host PID is alive, its PID record is
+  invalid/unverifiable, or the shared lifecycle lock is held. It requires valid
+  product/data ownership markers and rejects dangerous, overlapping, external,
+  or symlinked removal roots.
+- Existing CLI shims must match the installer-generated content exactly before
+  update or uninstall; modified and symlinked shims fail closed.
 - Installer does not use the network or install Hermes, OpenClaw, Tailscale,
   Python or Node.
 
@@ -92,6 +106,14 @@ The smoke uses temporary build/output/HOME/install/data directories and proves:
 - installed SBOM, third-party notices, provenance and operator runbook;
 - uninstall removes product files;
 - uninstall preserves a pre-existing user-data sentinel.
+- running-Host and invalid-PID uninstall attempts fail closed without removing
+  the installed version or CLI shim;
+- invalid-PID update, unrelated-root install, and modified-shim uninstall
+  attempts fail closed while preserving their sentinels;
+- lifecycle-lock contention, missing ownership marker, and HOME-root purge
+  attempts fail closed without removing product or user data;
+- symlinked lifecycle-lock substitution is rejected by both installer and
+  uninstaller without modifying the symlink target;
 - a clean isolated HOME consumes release-shaped assets without a repository,
   verifies checksum/provenance, initializes and starts the Host, exposes the
   Owner bootstrap action, and stops cleanly.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import fcntl
 import hashlib
 import http.cookiejar
 import json
@@ -177,9 +178,7 @@ def main() -> int:
         install_root = home / ".local" / "share" / "agentops-mis"
         bin_dir = home / ".local" / "bin"
         host_data = home / ".agentops" / "host"
-        host_data.mkdir(parents=True)
         sentinel = host_data / "preserve-me"
-        sentinel.write_text("user data", encoding="utf-8")
         env = {
             **{
                 key: value
@@ -192,6 +191,20 @@ def main() -> int:
             "AGENTOPS_HOST_HOME": str(host_data),
             "AGENTOPS_BUNDLE_INSTALLER_TEST_MODE": "1",
         }
+        host_data.parent.mkdir(parents=True)
+        lifecycle_lock = host_data.parent / ".agentops-mis-host-lifecycle.lock"
+        lock_symlink_target = home / "unrelated-lock-target"
+        lock_symlink_target.write_text("preserve", encoding="utf-8")
+        lifecycle_lock.symlink_to(lock_symlink_target)
+        symlink_lock_install = run(["sh", str(bundle / "install.sh")], env=env)
+        lifecycle_lock.unlink()
+        if (
+            symlink_lock_install.returncode == 0
+            or install_root.exists()
+            or lock_symlink_target.read_text(encoding="utf-8") != "preserve"
+        ):
+            fail("installer followed a symlinked lifecycle lock", symlink_lock_install)
+
         tampered = temp / "tampered"
         shutil.copytree(bundle, tampered)
         with (tampered / "payload" / "LICENSE").open("a", encoding="utf-8") as handle:
@@ -270,6 +283,7 @@ def main() -> int:
         if initialized.returncode != 0:
             fail("installed agentops host init failed", initialized)
         init_payload = json.loads(initialized.stdout)
+        sentinel.write_text("user data", encoding="utf-8")
         if (
             "Run: agentops host start" not in (init_payload.get("next_actions") or [])
             or any("--build-ui" in action for action in (init_payload.get("next_actions") or []))
@@ -334,6 +348,9 @@ def main() -> int:
             },
             {"Origin": base_url, "X-AgentOps-CSRF": csrf},
         )
+        running_uninstall = run(["sh", str(bundle / "uninstall.sh")], env=env)
+        if running_uninstall.returncode == 0 or not install_root.is_dir() or not (bin_dir / "agentops").is_file():
+            fail("uninstaller removed product files while the managed Host was running", running_uninstall)
         stopped = run([str(bin_dir / "agentops"), "host", "stop"], env=env)
         if stopped.returncode == 0:
             unregister_host(bin_dir / "agentops")
@@ -421,16 +438,60 @@ def main() -> int:
         tar_two = next(Path(path) for path in build_two_result["artifacts"] if path.endswith(".tar.gz"))
         bundle_two = extract_bundle(tar_two, temp / "extract-two")
 
+        claim_home = temp / "claim-home"
+        claim_install_root = claim_home / ".local" / "share" / "agentops-mis"
+        claim_install_root.mkdir(parents=True)
+        claim_sentinel = claim_install_root / "unrelated-user-file"
+        claim_sentinel.write_text("preserve", encoding="utf-8")
+        claim_env = {
+            **env,
+            "HOME": str(claim_home),
+            "AGENTOPS_INSTALL_ROOT": str(claim_install_root),
+            "AGENTOPS_BIN_DIR": str(claim_home / ".local" / "bin"),
+            "AGENTOPS_HOST_HOME": str(claim_home / ".agentops" / "host"),
+        }
+        claimed_install = run(["sh", str(bundle_two / "install.sh")], env=claim_env)
+        if claimed_install.returncode == 0 or not claim_sentinel.is_file() or (claim_install_root / "versions").exists():
+            fail("installer claimed a non-empty unrelated install root", claimed_install)
+
         pid_path = host_data / "run" / "host.pid.json"
+        lock_descriptor = os.open(lifecycle_lock, os.O_RDWR)
+        try:
+            fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+            locked_install = run(["sh", str(bundle_two / "install.sh")], env=env)
+        finally:
+            fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+            os.close(lock_descriptor)
+        if locked_install.returncode == 0 or (install_root / "versions" / version_two).exists():
+            fail("installer ignored the active Host lifecycle lock", locked_install)
+
+        pid_path.write_text('{"pid":"invalid"}\n', encoding="utf-8")
+        invalid_pid_install = run(["sh", str(bundle_two / "install.sh")], env=env)
+        pid_path.unlink()
+        if invalid_pid_install.returncode == 0 or (install_root / "versions" / version_two).exists():
+            fail("installer accepted an invalid managed Host PID record", invalid_pid_install)
+
         pid_path.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
         running_rejected = run(["sh", str(bundle_two / "install.sh")], env=env)
         pid_path.unlink()
         if running_rejected.returncode == 0 or (install_root / "versions" / version_two).exists():
             fail("installer did not reject an update while the managed Host PID was alive", running_rejected)
 
+        install_marker = install_root / ".agentops-mis-install.json"
+        install_marker.unlink()
         upgraded = run(["sh", str(bundle_two / "install.sh")], env=env)
         if upgraded.returncode != 0:
             fail("second bundle install failed", upgraded)
+        try:
+            migrated_install_marker = json.loads(install_marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            migrated_install_marker = {}
+        if migrated_install_marker != {
+            "schema_version": 1,
+            "product": "AgentOps MIS Private Host",
+            "managed": True,
+        }:
+            fail("legacy product install did not migrate to the ownership marker", upgraded)
         upgraded_payload = json.loads(upgraded.stdout)
         if upgraded_payload.get("previous_version") != version:
             fail("upgrade did not retain the previous version pointer", upgraded)
@@ -494,6 +555,74 @@ def main() -> int:
         if not marker or marker[0] != "preserved-across-binary-switch" or not sentinel.is_file():
             fail("upgrade or rollback changed Host product data")
 
+        data_marker = host_data / ".agentops-host-data.json"
+        if not install_marker.is_file() or not data_marker.is_file() or not lifecycle_lock.is_file():
+            fail("installed Host ownership or lifecycle marker is missing")
+
+        lifecycle_lock.unlink()
+        lifecycle_lock.symlink_to(lock_symlink_target)
+        symlink_lock_uninstall = run(["sh", str(bundle_two / "uninstall.sh")], env=env)
+        lifecycle_lock.unlink()
+        lifecycle_lock.touch(mode=0o600)
+        if (
+            symlink_lock_uninstall.returncode == 0
+            or not install_root.is_dir()
+            or not (bin_dir / "agentops").is_file()
+            or lock_symlink_target.read_text(encoding="utf-8") != "preserve"
+        ):
+            fail("uninstaller followed a symlinked lifecycle lock", symlink_lock_uninstall)
+
+        lock_descriptor = os.open(lifecycle_lock, os.O_RDWR)
+        try:
+            fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+            locked_uninstall = run(["sh", str(bundle_two / "uninstall.sh")], env=env)
+        finally:
+            fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+            os.close(lock_descriptor)
+        if locked_uninstall.returncode == 0 or not install_root.is_dir() or not (bin_dir / "agentops").is_file():
+            fail("uninstaller ignored the active Host lifecycle lock", locked_uninstall)
+
+        install_marker_bytes = install_marker.read_bytes()
+        install_marker.unlink()
+        missing_marker_uninstall = run(["sh", str(bundle_two / "uninstall.sh")], env=env)
+        install_marker.write_bytes(install_marker_bytes)
+        install_marker.chmod(0o600)
+        if missing_marker_uninstall.returncode == 0 or not install_root.is_dir() or not (bin_dir / "agentops").is_file():
+            fail("uninstaller accepted a missing product ownership marker", missing_marker_uninstall)
+
+        shim_path = bin_dir / "agentops"
+        shim_bytes = shim_path.read_bytes()
+        with shim_path.open("ab") as handle:
+            handle.write(b"# unexpected content\n")
+        modified_shim_uninstall = run(["sh", str(bundle_two / "uninstall.sh")], env=env)
+        shim_path.write_bytes(shim_bytes)
+        shim_path.chmod(0o755)
+        if modified_shim_uninstall.returncode == 0 or not install_root.is_dir() or not shim_path.is_file():
+            fail("uninstaller accepted a modified CLI shim", modified_shim_uninstall)
+
+        dangerous_purge_env = {
+            **env,
+            "AGENTOPS_HOST_HOME": str(home),
+            "AGENTOPS_PURGE_DATA": "true",
+        }
+        dangerous_purge = run(["sh", str(bundle_two / "uninstall.sh")], env=dangerous_purge_env)
+        if dangerous_purge.returncode == 0 or not home.is_dir() or not install_root.is_dir() or not sentinel.is_file():
+            fail("uninstaller accepted a dangerous HOME-root data purge", dangerous_purge)
+
+        overlapping_purge_env = {
+            **env,
+            "AGENTOPS_HOST_HOME": str(bin_dir),
+            "AGENTOPS_PURGE_DATA": "true",
+        }
+        overlapping_purge = run(["sh", str(bundle_two / "uninstall.sh")], env=overlapping_purge_env)
+        if overlapping_purge.returncode == 0 or not bin_dir.is_dir() or not shim_path.is_file():
+            fail("uninstaller accepted overlapping Host data and binary roots", overlapping_purge)
+
+        pid_path.write_text('{"pid":"invalid"}\n', encoding="utf-8")
+        invalid_pid_uninstall = run(["sh", str(bundle_two / "uninstall.sh")], env=env)
+        if invalid_pid_uninstall.returncode == 0 or not install_root.is_dir() or not (bin_dir / "agentops").is_file():
+            fail("uninstaller accepted an invalid managed Host PID record", invalid_pid_uninstall)
+        pid_path.unlink()
         uninstalled = run(["sh", str(bundle_two / "uninstall.sh")], env=env)
         if uninstalled.returncode != 0:
             fail("bundle uninstall failed", uninstalled)
@@ -521,6 +650,19 @@ def main() -> int:
             "installed_host_cli_configuration": "passed",
             "installed_live_readback_client": "passed",
             "running_host_update_rejected": True,
+            "lifecycle_locked_install_rejected": True,
+            "symlinked_lifecycle_lock_install_rejected": True,
+            "invalid_pid_install_rejected": True,
+            "unrelated_root_claim_rejected": True,
+            "legacy_install_marker_migrated": True,
+            "running_host_uninstall_rejected": True,
+            "invalid_pid_uninstall_rejected": True,
+            "lifecycle_locked_uninstall_rejected": True,
+            "symlinked_lifecycle_lock_uninstall_rejected": True,
+            "missing_marker_uninstall_rejected": True,
+            "modified_shim_uninstall_rejected": True,
+            "dangerous_root_purge_rejected": True,
+            "overlapping_root_purge_rejected": True,
             "two_version_upgrade_and_rollback": "passed",
             "pre_rollback_backup": "passed",
             "pre_update_backup": "passed",

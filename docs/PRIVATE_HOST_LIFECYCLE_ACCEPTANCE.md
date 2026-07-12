@@ -25,6 +25,21 @@ customer release.
 ## Implemented Contract
 
 - Host state lives outside the repository under `~/.agentops/host` by default.
+- Initialization/start maintains a private, non-secret Host-data ownership
+  marker. Init, start, stop, restart, restore, and rollback serialize through
+  the same lifecycle file lock used by install/uninstall, closing data and
+  PID-record races.
+- Initialization refuses to claim a non-empty, unmarked data root. Existing
+  preview data is migrated only when the private-host config schema, exact
+  managed database path, required secret fields, data/run layout, and product
+  source identity are present. A marker created for migration is removed when
+  that first startup fails.
+- PID records bind the process ID to its process-group ID and a hash of the OS
+  process start/command identity. Stop refuses to signal a live PID when that
+  identity cannot be reproduced, preventing stale PID reuse from terminating
+  an unrelated process or process group.
+- The shared lock is opened without following the final symlink and is checked
+  as a regular file before use.
 - `AGENTOPS_HOST_HOME` supports isolated tests and controlled installations.
 - Config, secret, log and PID files are created with private permissions.
 - Initial API/Admin keys and Owner setup code use cryptographic randomness.
@@ -115,7 +130,18 @@ temporary SQLite database and a free loopback port. It verified:
 - private config and secret permissions;
 - one-time setup-code output;
 - repeat-init fail-closed behavior without secret output;
+- unrelated non-empty Host-data root rejection with its sentinel preserved;
+- blocked init writes no marker or config, then initializes normally after the
+  lifecycle lock is released;
+- a failed legacy migration startup rolls back its newly created data marker;
+- an interrupted/failed first initialization also rolls back its newly created
+  marker, config, secrets, and empty managed directories; the same Host home
+  can then be initialized successfully without manual cleanup;
 - background start and ready health;
+- blocked start waits for the lifecycle lock without writing a PID, then starts
+  normally after the lock is released;
+- a stale/reused PID record is rejected and its unrelated process remains
+  running;
 - zero Worker mode for deterministic CI;
 - publication disabled by default;
 - running status readback;
