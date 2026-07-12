@@ -48,6 +48,24 @@ python3 scripts/release_evidence_packet_smoke.py
 git diff --check
 ```
 
+Local verification on implementation commit `45ac87d`:
+
+- `run_local_stack_smoke.py`: passed; backend started, mock worker registered,
+  user config unchanged, live confirmation wall enforced, real runtime not called.
+- `clean_machine_rc_smoke.py`: passed on an exact detached clone of `45ac87d`;
+  all ten clean-clone commands passed and no forbidden tracked files were found.
+- `agentops_local_backup_smoke.py` and `migration_rollback_smoke.py`: passed;
+  backup integrity, explicit restore confirmation, restored migration rows, and
+  restored audit rows were verified with isolated SQLite files.
+- launchd/systemd service install, check, control, and server-backed restart
+  smokes: passed; live adapters remained confirmation-gated.
+- full Python compile, secret scan, release evidence packet, Vite production
+  build, and `git diff --check`: passed.
+
+The implementation commit was clean before this acceptance note was added. The
+GitHub PR must still pass Backend deterministic smokes and UI build on the final
+acceptance-note HEAD before merge.
+
 `run_local_stack_smoke.py` uses a temporary SQLite database, temporary CLI
 config path, free loopback port, no UI dependency installation, and a mock
 worker. It verifies backend readiness, worker registration, no user-config
