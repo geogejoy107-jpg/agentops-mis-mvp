@@ -782,7 +782,15 @@ before background execution and is never stored or returned. Repeating the
 same key and request returns the existing queued/running/completed job without
 starting a second Worker. Reusing the key with a different request fails with
 `409 idempotency_conflict`. Clients that lose the submit response must retry
-with the same key rather than issuing an unkeyed request.
+with the same key rather than issuing an unkeyed request. The request hash
+excludes transport-only `base_url` fields. A same-key replay can launch a
+durable `queued` reservation that was persisted before its background thread
+started; an in-process launch registry prevents concurrent requests from
+starting two threads for the same job.
+
+This is not a provider-side exactly-once guarantee. A Host crash after a job is
+already `running` may leave it for explicit stuck-job review/recovery; MIS does
+not silently replay an opaque live Runtime call after restart.
 
 `GET /api/workflows/jobs` is a read-only queue view with optional `status` and
 `workflow_type` filters. It returns the current job rows, status/type summaries,
@@ -791,6 +799,8 @@ Authenticated human submit requests are bound to the Session workspace;
 attempting to select another workspace returns `403`. Human reads of the job
 list, stuck list and `GET /api/workflows/jobs/:job_id` are scoped to the Session
 workspace and return no cross-workspace job metadata.
+Human `mark-failed` and recovery preview/apply operations use the same Session
+workspace boundary and return `404` for another workspace's job id.
 
 `tpl_local_coding_project` is the local coding project template exposed through
 `GET /api/workflows/customer-task-templates` and executable through

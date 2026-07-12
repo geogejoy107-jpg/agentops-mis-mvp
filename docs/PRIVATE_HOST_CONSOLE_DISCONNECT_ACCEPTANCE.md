@@ -48,13 +48,18 @@ same job, discards the first browser client without logging out, confirms an
 anonymous read returns `401`, waits with no browser attached, then signs in
 through a distinct Owner Session and polls the original job. It fails unless
 the job completes with one matching request hash, the same task/run linkage,
-passing evaluation and verified plan evidence. The key, Session cookies, CSRF,
+passing evaluation and verified plan evidence. The replay must still return
+`202`, and the recorded `completed_at` must be later than the moment the first
+client was discarded; a job that completed before disconnect does not pass.
+The key, Session cookies, CSRF,
 credentials, raw prompts and raw responses are omitted from output and ledger
 metadata.
 
 The deterministic Private Host client smoke covers the state machine without
 calling a Runtime. It also proves same-key/different-request conflict handling,
-single-job replay behavior and human Session workspace scoping. Product-level
+concurrent same-key single-job/single-run behavior, recovery of a persisted
+queued reservation, transport-alias-stable request hashing, and human Session
+workspace scoping for reads and mutations. Product-level
 real Runtime evidence still requires the command above against an exact
 installed release package.
 

@@ -8,6 +8,7 @@ Mock is not supported here; use mock-only smokes only as offline fallback.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import http.cookiejar
 import json
 import os
@@ -238,12 +239,13 @@ def run_adapter_async_disconnect(args: argparse.Namespace, adapter: str) -> dict
         opener=first_opener,
         headers={"Origin": origin, "X-AgentOps-CSRF": csrf_token},
     )
-    require(replay_status in {200, 202}, f"{adapter}: idempotent replay returned HTTP {replay_status}", failures)
+    require(replay_status == 202, f"{adapter}: job reached a terminal state before the browser client was discarded", failures)
     require(replayed.get("idempotent_replay") is True, f"{adapter}: repeated submit was not identified as a replay", failures)
     require(replayed.get("job_id") == job_id, f"{adapter}: repeated submit returned a different job", failures)
 
     # Dropping the opener and CookieJar models closing the browser without
     # logging out. The server-side job must remain independent of that client.
+    disconnected_at = dt.datetime.now(dt.timezone.utc)
     del first_opener
     anonymous_status, anonymous_payload = http_json(
         "GET",
@@ -260,7 +262,7 @@ def run_adapter_async_disconnect(args: argparse.Namespace, adapter: str) -> dict
     time.sleep(max(args.disconnect_delay_sec, 0.0))
 
     try:
-        second_opener, _second_csrf, _second_origin, second_session = authenticate_human_session(
+        second_opener, second_csrf, _second_origin, second_session = authenticate_human_session(
             args,
             include_session_cookie=True,
         )
@@ -301,6 +303,14 @@ def run_adapter_async_disconnect(args: argparse.Namespace, adapter: str) -> dict
     require(bool(task_id) and bool(run_id), f"{adapter}: completed job lacks task/run linkage", failures)
     require(job.get("result_task_id") == result.get("task_id"), f"{adapter}: job/task linkage mismatch", failures)
     require(job.get("result_run_id") == result.get("run_id"), f"{adapter}: job/run linkage mismatch", failures)
+    try:
+        completed_at = dt.datetime.fromisoformat(str(job.get("completed_at") or ""))
+        if completed_at.tzinfo is None:
+            completed_at = completed_at.replace(tzinfo=dt.timezone.utc)
+    except ValueError:
+        completed_at = None
+    completion_after_disconnect = bool(completed_at and completed_at > disconnected_at)
+    require(completion_after_disconnect, f"{adapter}: job did not complete after the browser client was discarded", failures)
     for key in ["tool_calls", "evaluations", "runtime_events", "audit_logs", "artifacts", "memories", "approvals", "plan_evidence_manifests"]:
         require(evidence.get(key, 0) >= 1, f"{adapter}: reconnect readback missing {key} evidence", failures)
     require(result.get("plan_evidence_pass") is True, f"{adapter}: reconnect plan evidence did not pass", failures)
@@ -320,13 +330,29 @@ def run_adapter_async_disconnect(args: argparse.Namespace, adapter: str) -> dict
     require(list_status == 200, f"{adapter}: reconnect job list returned HTTP {list_status}", failures)
     require(len(matching_jobs) == 1, f"{adapter}: disconnect caused duplicate workflow jobs", failures)
     require(not token_leaked(json.dumps(job, ensure_ascii=False)), f"{adapter}: workflow job readback leaked token-like material", failures)
+    sensitive_values = [
+        first_session,
+        second_session,
+        csrf_token,
+        second_csrf,
+        os.environ.get(args.password_env, ""),
+        os.environ.get(args.setup_code_env, ""),
+    ]
+    job_serialized = json.dumps(job, ensure_ascii=False)
+    require(
+        not any(value and value in job_serialized for value in sensitive_values),
+        f"{adapter}: workflow readback exposed Session, CSRF, or acceptance credential material",
+        failures,
+    )
 
-    return {
+    public_result = {
         "adapter": adapter,
-        "ok": not failures,
+        "ok": False,
         "submit_status": status,
         "replay_status": replay_status,
         "idempotent_replay_verified": replayed.get("idempotent_replay") is True,
+        "job_non_terminal_at_disconnect": replay_status == 202,
+        "completion_after_disconnect": completion_after_disconnect,
         "job_id": job_id,
         "job_status": job.get("status"),
         "task_id": task_id,
@@ -342,6 +368,14 @@ def run_adapter_async_disconnect(args: argparse.Namespace, adapter: str) -> dict
         "evidence": evidence,
         "failures": failures,
     }
+    public_serialized = json.dumps(public_result, ensure_ascii=False)
+    require(
+        not any(value and value in public_serialized for value in sensitive_values),
+        f"{adapter}: acceptance output exposed Session, CSRF, or credential material",
+        failures,
+    )
+    public_result["ok"] = not failures
+    return public_result
 
 
 def main() -> int:

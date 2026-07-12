@@ -12118,23 +12118,49 @@ def workflow_stuck_jobs(
     return stuck
 
 
-def mark_workflow_job_failed(conn, job_id: str, body: dict) -> tuple[dict, int]:
+def mark_workflow_job_failed(
+    conn,
+    job_id: str,
+    body: dict,
+    workspace_id: str | None = None,
+) -> tuple[dict, int]:
     job_id = redact_text(job_id, 120)
-    before = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+    if workspace_id:
+        workspace_id = normalize_workspace_id(workspace_id)
+        before = conn.execute(
+            "SELECT * FROM workflow_jobs WHERE job_id=? AND COALESCE(workspace_id,'local-demo')=?",
+            (job_id, workspace_id),
+        ).fetchone()
+    else:
+        before = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
     if not before:
         return {"error": "not found", "job_id": job_id}, 404
     if before["status"] not in {"queued", "running"}:
         return workflow_job_not_active_response(before), 409
     reason = redact_text(body.get("reason") or "Operator marked stale workflow job as failed.", 300)
     now = now_iso()
-    conn.execute(
-        """UPDATE workflow_jobs
-        SET status='failed', error_message=?, completed_at=?, updated_at=?
-        WHERE job_id=?""",
-        (reason, now, now, job_id),
-    )
+    if workspace_id:
+        conn.execute(
+            """UPDATE workflow_jobs
+            SET status='failed', error_message=?, completed_at=?, updated_at=?
+            WHERE job_id=? AND COALESCE(workspace_id,'local-demo')=?""",
+            (reason, now, now, job_id, workspace_id),
+        )
+    else:
+        conn.execute(
+            """UPDATE workflow_jobs
+            SET status='failed', error_message=?, completed_at=?, updated_at=?
+            WHERE job_id=?""",
+            (reason, now, now, job_id),
+        )
     runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.operator_failed", "failed", output_summary=f"Workflow job {job_id} marked failed.", error_message=reason)
-    after = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+    if workspace_id:
+        after = conn.execute(
+            "SELECT * FROM workflow_jobs WHERE job_id=? AND COALESCE(workspace_id,'local-demo')=?",
+            (job_id, workspace_id),
+        ).fetchone()
+    else:
+        after = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
     audit(conn, "user", body.get("actor_id") or "usr_operator", "workflow.job.mark_failed", "workflow_jobs", job_id, dict(before), dict(after) if after else {"status": "failed"}, {"raw_request_omitted": True, "reason": reason})
     conn.commit()
     return workflow_job_mark_failed_response(after, job_id), 200
@@ -12144,7 +12170,10 @@ def recover_workflow_job(conn, job_id: str, body: dict, headers=None) -> tuple[d
     headers = headers or {}
     workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
     job_id = redact_text(job_id, 120)
-    row = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+    row = conn.execute(
+        "SELECT * FROM workflow_jobs WHERE job_id=? AND COALESCE(workspace_id,'local-demo')=?",
+        (job_id, workspace_id),
+    ).fetchone()
     if not row:
         return {"error": "not found", "job_id": job_id, "token_omitted": True}, 404
     job = workflow_job_public(row) or {}
@@ -12171,7 +12200,12 @@ def recover_workflow_job(conn, job_id: str, body: dict, headers=None) -> tuple[d
         recovery_request = {"reason": reason, "actor_id": actor_id, "workspace_id": workspace_id}
         receipt_result_summary = f"Workflow job {job_id} marked failed after recover-job review."
         if confirm_recover:
-            recovery_payload, recovery_status = mark_workflow_job_failed(conn, job_id, recovery_request)
+            recovery_payload, recovery_status = mark_workflow_job_failed(
+                conn,
+                job_id,
+                recovery_request,
+                workspace_id=workspace_id,
+            )
     else:
         task_id = redact_text(body.get("task_id") or job.get("result_task_id") or "", 120)
         if not task_id:
@@ -12378,6 +12412,37 @@ def run_workflow_job_background(job_id: str, body: dict) -> None:
             conn.commit()
 
 
+WORKFLOW_JOB_LAUNCH_LOCK = threading.Lock()
+WORKFLOW_JOB_ACTIVE_THREADS: set[str] = set()
+
+
+def workflow_job_thread_entry(job_id: str, body: dict) -> None:
+    try:
+        run_workflow_job_background(job_id, body)
+    finally:
+        with WORKFLOW_JOB_LAUNCH_LOCK:
+            WORKFLOW_JOB_ACTIVE_THREADS.discard(job_id)
+
+
+def launch_workflow_job_background(job_id: str, body: dict) -> bool:
+    with WORKFLOW_JOB_LAUNCH_LOCK:
+        if job_id in WORKFLOW_JOB_ACTIVE_THREADS:
+            return False
+        WORKFLOW_JOB_ACTIVE_THREADS.add(job_id)
+    try:
+        threading.Thread(
+            target=workflow_job_thread_entry,
+            args=(job_id, dict(body)),
+            daemon=True,
+            name=f"agentops-workflow-{job_id[-12:]}",
+        ).start()
+    except Exception:
+        with WORKFLOW_JOB_LAUNCH_LOCK:
+            WORKFLOW_JOB_ACTIVE_THREADS.discard(job_id)
+        raise
+    return True
+
+
 def submit_customer_task_template_job(conn, body: dict) -> tuple[dict, int]:
     templates = {template["template_id"]: template for template in customer_task_templates()}
     template_id = body.get("template_id") or "tpl_customer_kb_qa_bot"
@@ -12494,7 +12559,7 @@ def submit_customer_task_template_job(conn, body: dict) -> tuple[dict, int]:
     runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.submitted", "queued", input_summary=f"Template job {template_id} submitted.", raw_payload_hash=row["request_hash"])
     audit(conn, "user", "usr_customer_demo", "workflow.job.submitted", "workflow_jobs", job_id, None, row, {"template_id": template_id, "adapter": adapter, "raw_request_omitted": True})
     conn.commit()
-    threading.Thread(target=run_workflow_job_background, args=(job_id, dict(body)), daemon=True).start()
+    launch_workflow_job_background(job_id, body)
     return {
         "ok": True,
         "provider": "agentops-workflow-job",
@@ -12523,7 +12588,12 @@ def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
             "token_omitted": True,
         }, 400
     job_body = {key: value for key, value in body.items() if key != "idempotency_key"}
-    request_hash = stable_hash(job_body)
+    canonical_request = {
+        key: value
+        for key, value in job_body.items()
+        if key not in {"base_url", "_base_url"}
+    }
+    request_hash = stable_hash(canonical_request)
     job_id = (
         "wfjob_" + stable_hash({
             "workspace_id": workspace_id,
@@ -12573,6 +12643,9 @@ def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
                     "token_omitted": True,
                 }, 409
             existing_job = workflow_job_public(existing)
+            launch_ensured = False
+            if existing["status"] == "queued":
+                launch_ensured = launch_workflow_job_background(job_id, job_body)
             return {
                 "ok": existing["status"] != "failed",
                 "provider": "agentops-workflow-job",
@@ -12581,6 +12654,7 @@ def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
                 "job_id": job_id,
                 "status_url": f"/api/workflows/jobs/{job_id}",
                 "idempotent_replay": True,
+                "queued_launch_ensured": launch_ensured,
                 "idempotency_key_omitted": True,
                 "raw_request_omitted": True,
                 "token_omitted": True,
@@ -12657,7 +12731,7 @@ def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
     runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.submitted", "queued", input_summary=f"Customer worker job {job_id} submitted.", raw_payload_hash=row["request_hash"])
     audit(conn, "user", "usr_customer_demo", "workflow.job.submitted", "workflow_jobs", job_id, None, row, {"workflow_type": "customer_worker_task", "adapter": adapter, "raw_request_omitted": True})
     conn.commit()
-    threading.Thread(target=run_workflow_job_background, args=(job_id, job_body), daemon=True).start()
+    launch_workflow_job_background(job_id, job_body)
     return {
         "ok": True,
         "provider": "agentops-workflow-job",
@@ -31663,10 +31737,28 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path.startswith("/api/workflows/jobs/") and path.endswith("/mark-failed"):
                 job_id = path.split("/")[-2]
-                payload, status = mark_workflow_job_failed(conn, job_id, body)
+                session_workspace = None
+                if human_context:
+                    session_workspace = normalize_workspace_id(human_context.get("workspace_id"))
+                    requested_workspace = normalize_workspace_id(body.get("workspace_id") or session_workspace)
+                    if requested_workspace != session_workspace:
+                        return self.send_json({"error": "forbidden"}, 403)
+                    body["workspace_id"] = session_workspace
+                payload, status = mark_workflow_job_failed(
+                    conn,
+                    job_id,
+                    body,
+                    workspace_id=session_workspace,
+                )
                 return self.send_json(payload, status)
             if path.startswith("/api/workflows/jobs/") and path.endswith("/recover"):
                 job_id = path.split("/")[-2]
+                if human_context:
+                    session_workspace = normalize_workspace_id(human_context.get("workspace_id"))
+                    requested_workspace = normalize_workspace_id(body.get("workspace_id") or session_workspace)
+                    if requested_workspace != session_workspace:
+                        return self.send_json({"error": "forbidden"}, 403)
+                    body["workspace_id"] = session_workspace
                 body.setdefault("_base_url", request_base_url(self.headers) or "http://127.0.0.1:8787")
                 payload, status = recover_workflow_job(conn, job_id, body, self.headers)
                 conn.commit()
