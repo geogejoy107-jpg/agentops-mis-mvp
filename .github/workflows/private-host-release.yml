@@ -84,7 +84,7 @@ jobs:
           draft_home="$RUNNER_TEMP/draft-consumer-home"
           public_home="$RUNNER_TEMP/public-consumer-home"
           cleanup() {
-            original_status=$?
+            original_exit_code=$?
             cleanup_status=0
             for home in "$draft_home" "$public_home"; do
               cli="$home/.local/bin/agentops"
@@ -105,7 +105,7 @@ jobs:
             if [ "$cleanup_status" -ne 0 ]; then
               exit "$cleanup_status"
             fi
-            exit "$original_status"
+            exit "$original_exit_code"
           }
           trap cleanup EXIT HUP INT TERM
 

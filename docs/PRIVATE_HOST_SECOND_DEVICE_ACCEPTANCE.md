@@ -121,13 +121,15 @@ text, project files, database path, or unrestricted Host paths.
 ## Current Result
 
 Host-side staging was completed on 2026-07-12 with
-`v1.6.0-private-host-preview.8` at exact commit
-`350b4d1966c74d80db8f58f0873562e018a714da`:
+`v1.6.0-private-host-preview.9` at exact commit
+`3d04595d4247f12a1980ec32b2d0dafa6369f4e4`:
 
 - GitHub download and published checksum verification passed;
 - upgrade created a pre-update ledger backup and preserved user data;
-- Host health, managed preview.8 production UI and real Hermes/OpenClaw Workers
+- Host health, managed preview.9 production UI and real Hermes/OpenClaw Workers
   are ready;
+- the published no-repository bootstrap passed Draft round-trip and public
+  GitHub clean-HOME install/init/start/status/stop gates;
 - installed Agent Gateway CLI configuration is machine-only, confirmation
   gated, origin bound and separate from the browser Session;
 - installed Gateway, Hermes and OpenClaw preflight checks passed without live
