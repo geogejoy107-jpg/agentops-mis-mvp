@@ -64,6 +64,7 @@ jobs:
           timeout 120s python3 scripts/private_host_lifecycle_smoke.py
           timeout 120s python3 scripts/private_host_backup_restore_smoke.py
           timeout 120s python3 scripts/private_host_restart_persistence_smoke.py
+          timeout 120s python3 scripts/private_host_console_disconnect_smoke.py
           timeout 120s python3 scripts/release_branch_control_smoke.py
           timeout 120s python3 scripts/release_freeze_protocol_smoke.py
           timeout 120s python3 scripts/github_ci_evidence_smoke.py
