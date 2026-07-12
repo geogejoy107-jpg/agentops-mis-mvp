@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: in progress; not yet a Release Candidate
+Status: preview prerelease published; physical second-device acceptance remains open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -11,7 +11,7 @@ physical evidence and cannot be closed by mock output.
 
 | # | Requirement | Current evidence | Status |
 |---|---|---|---|
-| 1 | Clean Host installs from a versioned asset without cloning | `PRIVATE_HOST_BUNDLE_ACCEPTANCE.md` proves an integrity-checked offline archive install in a temporary HOME. No GitHub Private Host prerelease or second-Mac download/install receipt exists yet. | Partial |
+| 1 | Clean Host installs from a versioned asset without cloning | `PRIVATE_HOST_BUNDLE_ACCEPTANCE.md` proves an integrity-checked offline archive install in a temporary HOME. GitHub prerelease `v1.6.0-private-host-preview.1` publishes `.zip`, `.tar.gz`, and `.sha256.json` assets from exact commit `5fdd5b59508bca567b7a7df4678de9114f25aca2`; a second-Mac download/install receipt is still missing. | Partial |
 | 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md` plus bundle smoke cover installed CLI, production UI, init, doctor, start/status/stop and fail-closed Runtime readiness. | Passed locally |
 | 3 | Dependency-free second computer opens private HTTPS console and authenticates | Human Session, CSRF, trusted Origin and Tailscale lifecycle are deterministic-smoke covered. Real second-device HTTPS login is missing. | External evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, role/session separation and CSRF/Origin checks. | Passed locally |
@@ -21,6 +21,19 @@ physical evidence and cannot be closed by mock output.
 | 8 | Host restart preserves ledger and knowledge state | `PRIVATE_HOST_RESTART_PERSISTENCE_ACCEPTANCE.md` covers Session, task and a 194-document local Markdown/FTS index remaining searchable after managed restart. | Passed locally |
 | 9 | Backup and restore pass on isolated database | `PRIVATE_HOST_BACKUP_RESTORE_ACCEPTANCE.md` covers strict manifest/hash/schema/integrity/foreign-key checks, atomic replacement and access revocation. | Passed locally |
 | 10 | Release/Git contain no credentials, DB, raw prompt/response or generated dependencies | Bundle forbidden-member scan, secret scan and tracked-file selection pass. The two local sample-export drifts remain explicitly excluded from commits. | Passed locally; repeat at RC |
+
+## Published Preview
+
+- Tag: `v1.6.0-private-host-preview.1`
+- Exact commit: `5fdd5b59508bca567b7a7df4678de9114f25aca2`
+- Push and pull-request CI: passed at the exact commit
+- Release: `https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.1`
+- SHA-256 manifest: `a7889a858801b4ef0fc4579d0f9e796b4b597395536417c2a9ac32497cd344ad`
+- Tar archive: `e68bfae7e29a4f7356db4b162a965d29579ccaf2c9fc2a5ba3584c7440966e0a`
+- Zip archive: `624e4ec9cb954bcf208ebf5840d535b07142a1557ba61be649de25f22e97b43f`
+
+This preview is not the final Release Candidate until the physical-device gates
+below pass.
 
 ## Release Gates
 
