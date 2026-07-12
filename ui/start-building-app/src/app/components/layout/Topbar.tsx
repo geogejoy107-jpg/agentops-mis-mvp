@@ -1,11 +1,13 @@
-import { Search, Bell, ChevronDown, Radio, Moon, Sun, Languages, Palette } from "lucide-react";
+import { Search, Bell, ChevronDown, Radio, Moon, Sun, Languages, Palette, LogOut } from "lucide-react";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 import type { ThemeMode } from "../../context/PreferencesContext";
+import { useHumanAuth } from "../../context/HumanAuthContext";
 
 const themeOrder: ThemeMode[] = ["enterprise", "ops", "workforce"];
 
 export function Topbar() {
   const { theme, locale, setTheme, setLocale } = usePreferences();
+  const { required: humanAuthRequired, user, logout } = useHumanAuth();
   const copy = pick(locale, {
     en: {
       workspace: "Workspace",
@@ -16,6 +18,7 @@ export function Topbar() {
       languageLabel: "EN",
       switchTheme: "Switch visual style",
       switchLanguage: "Switch language",
+      logout: "Sign out",
     },
     zh: {
       workspace: "工作区",
@@ -26,6 +29,7 @@ export function Topbar() {
       languageLabel: "中",
       switchTheme: "切换视觉风格",
       switchLanguage: "切换语言",
+      logout: "退出登录",
     },
   });
 
@@ -33,6 +37,13 @@ export function Topbar() {
     const nextIndex = (themeOrder.indexOf(theme) + 1) % themeOrder.length;
     setTheme(themeOrder[nextIndex]);
   };
+  const displayName = user?.display_name || user?.username || "Jiwu Wang";
+  const initials = displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "JW";
 
   return (
     <header
@@ -108,10 +119,22 @@ export function Topbar() {
         <div
           className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold cursor-pointer"
           style={{ background: "var(--mis-purple)", color: "#fff" }}
-          title="Jiwu Wang"
+          title={displayName}
         >
-          JW
+          {initials}
         </div>
+        {humanAuthRequired && (
+          <button
+            type="button"
+            className="h-7 w-7 rounded flex items-center justify-center hover:opacity-80"
+            style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }}
+            onClick={() => void logout()}
+            title={copy.logout}
+            aria-label={copy.logout}
+          >
+            <LogOut size={13} />
+          </button>
+        )}
       </div>
     </header>
   );

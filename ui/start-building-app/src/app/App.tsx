@@ -22,37 +22,40 @@ import { TemplateSwitching } from "./components/pages/TemplateSwitching";
 import { AuditCenter } from "./components/pages/AuditCenter";
 import { CustomerProjectReport } from "./components/pages/CustomerProjectReport";
 import { PreferencesProvider } from "./context/PreferencesContext";
+import { AuthGate } from "./components/auth/AuthGate";
 
 export default function App() {
   return (
     <PreferencesProvider>
       <BrowserRouter>
-        <AppShell>
-          <Routes>
-            <Route path="/" element={<Navigate to="/workspace" replace />} />
-            <Route path="/workspace" element={<WorkspaceHome />} />
-            <Route path="/workspace/pixel-office" element={<PixelOffice />} />
-            <Route path="/workspace/tasks" element={<MyTasks />} />
-            <Route path="/workspace/agents" element={<AIEmployees />} />
-            <Route path="/workspace/dispatch" element={<CustomerDispatchDesk />} />
-            <Route path="/workspace/workers" element={<WorkerConsole />} />
-            <Route path="/workspace/approvals" element={<ApprovalsInbox />} />
-            <Route path="/workspace/memory" element={<MemoryLibrary />} />
-            <Route path="/workspace/reports" element={<Reports />} />
-            <Route path="/workspace/customer-projects/:projectId/report" element={<CustomerProjectReport />} />
-            <Route path="/admin" element={<ControlTower />} />
-            <Route path="/admin/evaluations" element={<EvaluationRoom />} />
-            <Route path="/admin/agents/:id" element={<AgentDetail />} />
-            <Route path="/admin/tasks/:id" element={<TaskDetail />} />
-            <Route path="/admin/runs" element={<RunLedger />} />
-            <Route path="/admin/runs/:id" element={<RunDetail />} />
-            <Route path="/admin/toolcalls" element={<ToolCallLedger />} />
-            <Route path="/admin/connectors" element={<RuntimeConnectors />} />
-            <Route path="/admin/bases/notion" element={<NotionBase />} />
-            <Route path="/admin/templates" element={<TemplateSwitching />} />
-            <Route path="/admin/audit" element={<AuditCenter />} />
-          </Routes>
-        </AppShell>
+        <AuthGate>
+          <AppShell>
+            <Routes>
+              <Route path="/" element={<Navigate to="/workspace" replace />} />
+              <Route path="/workspace" element={<WorkspaceHome />} />
+              <Route path="/workspace/pixel-office" element={<PixelOffice />} />
+              <Route path="/workspace/tasks" element={<MyTasks />} />
+              <Route path="/workspace/agents" element={<AIEmployees />} />
+              <Route path="/workspace/dispatch" element={<CustomerDispatchDesk />} />
+              <Route path="/workspace/workers" element={<WorkerConsole />} />
+              <Route path="/workspace/approvals" element={<ApprovalsInbox />} />
+              <Route path="/workspace/memory" element={<MemoryLibrary />} />
+              <Route path="/workspace/reports" element={<Reports />} />
+              <Route path="/workspace/customer-projects/:projectId/report" element={<CustomerProjectReport />} />
+              <Route path="/admin" element={<ControlTower />} />
+              <Route path="/admin/evaluations" element={<EvaluationRoom />} />
+              <Route path="/admin/agents/:id" element={<AgentDetail />} />
+              <Route path="/admin/tasks/:id" element={<TaskDetail />} />
+              <Route path="/admin/runs" element={<RunLedger />} />
+              <Route path="/admin/runs/:id" element={<RunDetail />} />
+              <Route path="/admin/toolcalls" element={<ToolCallLedger />} />
+              <Route path="/admin/connectors" element={<RuntimeConnectors />} />
+              <Route path="/admin/bases/notion" element={<NotionBase />} />
+              <Route path="/admin/templates" element={<TemplateSwitching />} />
+              <Route path="/admin/audit" element={<AuditCenter />} />
+            </Routes>
+          </AppShell>
+        </AuthGate>
       </BrowserRouter>
     </PreferencesProvider>
   );

@@ -142,6 +142,7 @@ from agentops_mis_core.operator_start_check import (
     operator_start_check_gate,
 )
 from agentops_mis_core.read_model_cache import ReadModelCache
+from agentops_mis_core import human_auth
 from agentops_mis_core.worker_fleet import (
     build_worker_remote_fleet_summary,
     build_worker_fleet_hygiene_plan,
@@ -1276,6 +1277,7 @@ def audit(conn: sqlite3.Connection, actor_type: str, actor_id: str | None, actio
 def init_schema():
     with db() as conn:
         conn.executescript(SCHEMA_SQL)
+        human_auth.init_schema(conn)
         ensure_schema_migrations(conn)
         ensure_v121_reference_data(conn)
         conn.commit()
@@ -3648,7 +3650,7 @@ def deployment_mode(env=None) -> str:
 def production_security_requested(env=None) -> bool:
     env = env or os.environ
     mode = deployment_mode(env)
-    return mode in {"production", "prod", "shared", "hosted"} or str(env.get("AGENTOPS_REQUIRE_PRODUCTION_SECURITY", "")).strip().lower() in {"1", "true", "yes", "on"}
+    return mode in {"production", "prod", "shared", "hosted", "private_host"} or str(env.get("AGENTOPS_REQUIRE_PRODUCTION_SECURITY", "")).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def non_loopback_opt_in(env=None) -> bool:
@@ -29593,11 +29595,13 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
 
-    def send_json(self, data, status=200):
+    def send_json(self, data, status=200, headers=None):
         payload = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
@@ -29622,11 +29626,34 @@ class Handler(BaseHTTPRequestHandler):
             return "/api/" + path[len("/mis-api/"):]
         return path
 
+    def route_auth_context(self, conn, required_scope):
+        path = getattr(self, "_request_api_path", "")
+        context = getattr(self, "_human_auth_context", None)
+        if context and not path.startswith("/api/agent-gateway/"):
+            return {
+                "mode": "human_session",
+                "account_id": context["account_id"],
+                "agent_id": None,
+                "workspace_id": context["workspace_id"],
+                "role": context["role"],
+                "scopes": [required_scope],
+            }, None
+        return agent_gateway_auth_context(conn, self.headers, required_scope)
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = self.api_path(parsed.path)
         qs = parse_qs(parsed.query)
         try:
+            if path == "/health":
+                return self.send_json({
+                    "provider": "agentops-mis",
+                    "status": "ready",
+                    "version": "0.1.0",
+                    "human_auth_required": human_auth.required(),
+                    "workspace_data_omitted": True,
+                    "token_omitted": True,
+                })
             if path.startswith("/api/"):
                 return self.handle_get_api(path, qs)
             return self.serve_static(path)
@@ -29690,6 +29717,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_get_api(self, path, qs):
         with db() as conn:
+            self._request_api_path = path
+            self._human_auth_context = None
+            if path == "/api/human-auth/status":
+                return self.send_json(human_auth.status(conn, self.headers))
+            if human_auth.required() and not path.startswith("/api/agent-gateway/"):
+                context, auth_error = human_auth.request_auth(conn, self.headers, path, "GET")
+                if auth_error:
+                    payload, status = auth_error
+                    return self.send_json(payload, status)
+                self._human_auth_context = context
             if path == "/api/agent-gateway/status":
                 payload, status = agent_gateway_status(conn, self.headers)
                 conn.commit()
@@ -29699,7 +29736,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload)
             if path == "/api/command-center/overview":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     conn.rollback()
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
@@ -29731,7 +29768,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/loop-control":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     conn.rollback()
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
@@ -29753,7 +29790,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/health":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     conn.rollback()
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
@@ -29772,7 +29809,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/runtime-doctor":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     conn.rollback()
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
@@ -29791,7 +29828,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/start-check":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     conn.rollback()
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
@@ -29810,7 +29847,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/agent-loop-handoff":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     conn.rollback()
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
@@ -29829,7 +29866,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/loop-supervision":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     conn.rollback()
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
@@ -29854,7 +29891,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/loop-bootstrap":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     conn.rollback()
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
@@ -29873,7 +29910,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/live-acceptance":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     conn.rollback()
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
@@ -29895,7 +29932,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/local-harness-proof":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     conn.rollback()
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
@@ -29917,7 +29954,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/execution-mode":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     conn.rollback()
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
@@ -29936,7 +29973,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/command-center":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     conn.rollback()
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
@@ -29955,7 +29992,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/handoff":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     conn.rollback()
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
@@ -29974,7 +30011,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/loop-self-check":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     conn.rollback()
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
@@ -30074,7 +30111,7 @@ class Handler(BaseHTTPRequestHandler):
                     "parent_token_id_omitted": True,
                 })
             if path == "/api/agent-gateway/tasks/pull":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 query = dict(qs)
@@ -30099,7 +30136,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agent-gateway/tasks":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 query = dict(qs)
@@ -30115,7 +30152,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/agent-gateway/tasks/") and "/" not in path[len("/api/agent-gateway/tasks/"):].strip("/"):
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 if agent_gateway_is_bound_auth(auth_ctx):
@@ -30127,7 +30164,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agent-gateway/runs":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 query = dict(qs)
@@ -30143,7 +30180,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/agent-gateway/runs/") and path.endswith("/evidence-graph"):
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 if agent_gateway_is_bound_auth(auth_ctx):
@@ -30155,7 +30192,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/agent-gateway/runs/") and path.endswith("/graph"):
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 if agent_gateway_is_bound_auth(auth_ctx):
@@ -30167,7 +30204,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/agent-gateway/runs/") and "/" not in path[len("/api/agent-gateway/runs/"):].strip("/"):
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 if agent_gateway_is_bound_auth(auth_ctx):
@@ -30179,7 +30216,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agent-gateway/artifacts":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 query = dict(qs)
@@ -30195,7 +30232,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agent-gateway/knowledge/search":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "knowledge:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "knowledge:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 query = dict(qs)
@@ -30211,7 +30248,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path in {"/api/agent-gateway/knowledge/evidence-packet", "/api/agent-gateway/knowledge/retrieval-evidence-packet"}:
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "knowledge:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "knowledge:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 query = dict(qs)
@@ -30227,7 +30264,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload, status)
             if path == "/api/agent-gateway/agent-plans":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "agent_plans:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "agent_plans:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 query = dict(qs)
@@ -30243,7 +30280,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/agent-gateway/agent-plans/"):
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "agent_plans:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "agent_plans:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 if path.endswith("/verify"):
@@ -30255,7 +30292,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agent-gateway/plan-evidence-manifests":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "plan_evidence:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "plan_evidence:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 query = dict(qs)
@@ -30271,7 +30308,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/agent-gateway/plan-evidence-manifests/"):
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "plan_evidence:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "plan_evidence:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 if path.endswith("/verify"):
@@ -30283,7 +30320,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agent-gateway/approvals":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 query = dict(qs)
@@ -30299,7 +30336,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/agent-gateway/approvals/"):
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 approval_id = path_segment(path)
@@ -30307,7 +30344,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload, status)
             if path.startswith("/api/agent-gateway/prepared-actions/"):
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 action_id = path_segment(path)
@@ -30315,7 +30352,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload, status)
             if path == "/api/agent-gateway/memories":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 query = dict(qs)
@@ -30331,7 +30368,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agent-gateway/review/queue":
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 query = dict(qs)
@@ -30627,6 +30664,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_post_api(self, path, body):
         with db() as conn:
+            if path == "/api/human-auth/bootstrap":
+                payload, status, token, event = human_auth.bootstrap_owner(conn, body)
+                audit(conn, "user", event.get("account_id"), f"human_auth.{event['event']}", "human_accounts", event.get("account_id") or "bootstrap", None, {"status": status}, {"credentials_omitted": True})
+                conn.commit()
+                response_headers = {"Set-Cookie": human_auth.session_cookie(token)} if token else None
+                return self.send_json(payload, status, headers=response_headers)
+            if path == "/api/human-auth/login":
+                payload, status, token, event = human_auth.login(conn, body)
+                audit(conn, "user", event.get("account_id"), f"human_auth.{event['event']}", "human_sessions", event.get("session_id") or "login", None, {"status": status}, {"credentials_omitted": True, "username_hash": event.get("username_hash")})
+                conn.commit()
+                response_headers = {"Set-Cookie": human_auth.session_cookie(token)} if token else None
+                return self.send_json(payload, status, headers=response_headers)
+            if path == "/api/human-auth/logout":
+                payload, status, event = human_auth.logout(conn, self.headers)
+                audit(conn, "user", event.get("account_id"), f"human_auth.{event['event']}", "human_sessions", event.get("session_id") or "logout", None, {"status": status}, {"credentials_omitted": True})
+                conn.commit()
+                response_headers = {"Set-Cookie": human_auth.session_cookie("", clear=True)} if status == 200 else None
+                return self.send_json(payload, status, headers=response_headers)
             if path.startswith("/api/agent-gateway/"):
                 if path == "/api/agent-gateway/enrollment/policy-preview":
                     payload, status = agent_gateway_enrollment_policy_preview(body)
@@ -30698,7 +30753,7 @@ class Handler(BaseHTTPRequestHandler):
                     required_scope = "runs:write"
                 elif path.startswith("/api/agent-gateway/prepared-actions/") and path.endswith("/resume"):
                     required_scope = "toolcalls:write"
-                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, required_scope)
+                auth_ctx, auth_error = self.route_auth_context(conn, required_scope)
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 if agent_gateway_is_bound_auth(auth_ctx):
@@ -30769,11 +30824,18 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 clear_read_model_cache()
                 return self.send_json(payload, status)
-            local_write_auth_error = local_ui_write_auth_error(self.headers)
-            if local_write_auth_error:
-                payload, status = local_write_auth_error
-                conn.rollback()
-                return self.send_json(payload, status)
+            if human_auth.required():
+                _context, auth_error = human_auth.request_auth(conn, self.headers, path, "POST")
+                if auth_error:
+                    payload, status = auth_error
+                    conn.rollback()
+                    return self.send_json(payload, status)
+            else:
+                local_write_auth_error = local_ui_write_auth_error(self.headers)
+                if local_write_auth_error:
+                    payload, status = local_write_auth_error
+                    conn.rollback()
+                    return self.send_json(payload, status)
             if path.startswith("/api/agent-plans/") and path.endswith("/approve"):
                 plan_id = path.split("/")[-2]
                 payload, status = transition_agent_plan(conn, plan_id, "approved", self.headers, body)
@@ -31079,11 +31141,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_patch_api(self, path, body):
         with db() as conn:
-            local_write_auth_error = local_ui_write_auth_error(self.headers)
-            if local_write_auth_error:
-                payload, status = local_write_auth_error
-                conn.rollback()
-                return self.send_json(payload, status)
+            if human_auth.required():
+                _context, auth_error = human_auth.request_auth(conn, self.headers, path, "PATCH")
+                if auth_error:
+                    payload, status = auth_error
+                    conn.rollback()
+                    return self.send_json(payload, status)
+            else:
+                local_write_auth_error = local_ui_write_auth_error(self.headers)
+                if local_write_auth_error:
+                    payload, status = local_write_auth_error
+                    conn.rollback()
+                    return self.send_json(payload, status)
             if path.startswith("/api/tasks/") and path.endswith("/status"):
                 task_id = path.split("/")[-2]
                 before = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()

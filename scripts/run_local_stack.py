@@ -31,9 +31,12 @@ def port_open(port: int, host: str = "127.0.0.1") -> bool:
         return sock.connect_ex((host, port)) == 0
 
 
-def gateway_ready(base_url: str) -> bool:
+def gateway_ready(base_url: str, api_key: str = "") -> bool:
     try:
-        with urllib.request.urlopen(base_url.rstrip("/") + "/api/agent-gateway/status", timeout=1) as response:
+        request = urllib.request.Request(base_url.rstrip("/") + "/api/agent-gateway/status")
+        if api_key:
+            request.add_header("Authorization", f"Bearer {api_key}")
+        with urllib.request.urlopen(request, timeout=1) as response:
             payload = json.loads(response.read().decode("utf-8"))
         return response.status == 200 and payload.get("provider") == "agent_gateway"
     except (OSError, ValueError, urllib.error.URLError):
@@ -123,6 +126,7 @@ def main() -> int:
     env["AGENTOPS_LOCAL_DEMO_DEFAULT_URL"] = backend_url
     env["AGENTOPS_WORKSPACE_ID"] = env.get("AGENTOPS_WORKSPACE_ID", "local-demo")
     env["VITE_AGENTOPS_PROXY_TARGET"] = backend_url
+    gateway_api_key = env.get("AGENTOPS_API_KEY", "").strip()
     processes: list[tuple[str, subprocess.Popen]] = []
 
     try:
@@ -143,7 +147,7 @@ def main() -> int:
                 raise RuntimeError(
                     f"port {args.backend_port} is already in use; stop the existing backend before starting production UI mode"
                 )
-            if not gateway_ready(backend_url):
+            if not gateway_ready(backend_url, gateway_api_key):
                 raise RuntimeError(f"port {args.backend_port} is occupied by a non-AgentOps service")
             print(f"backend already running at {backend_url}/dashboard")
         else:
@@ -156,7 +160,7 @@ def main() -> int:
                 env=env,
             )
             processes.append(("backend", backend))
-            wait_ready(lambda: gateway_ready(backend_url), f"backend on {backend_url}")
+            wait_ready(lambda: gateway_ready(backend_url, gateway_api_key), f"backend on {backend_url}")
 
         if args.configure_cli:
             configured = subprocess.run(

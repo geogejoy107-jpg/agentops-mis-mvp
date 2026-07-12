@@ -12,6 +12,108 @@ import type {
 } from "./mockData";
 
 const API_BASE = import.meta.env.VITE_AGENTOPS_API_BASE || "/mis-api";
+const HUMAN_AUTH_CSRF_KEY = "agentops-human-auth-csrf";
+export const HUMAN_AUTH_UNAUTHORIZED_EVENT = "agentops:human-auth-unauthorized";
+
+export interface HumanAuthUser {
+  user_id?: string;
+  username: string;
+  display_name?: string;
+  role?: string;
+}
+
+export interface HumanAuthStatus {
+  required: boolean;
+  authenticated: boolean;
+  user?: HumanAuthUser;
+  bootstrap_required: boolean;
+  csrf_token?: string;
+}
+
+export interface HumanAuthSession {
+  user: HumanAuthUser;
+  csrf_token: string;
+}
+
+function readHumanAuthCsrf(): string {
+  if (typeof window === "undefined") return "";
+  return window.sessionStorage.getItem(HUMAN_AUTH_CSRF_KEY) || "";
+}
+
+export function setHumanAuthCsrf(token?: string | null) {
+  if (typeof window === "undefined") return;
+  if (token) {
+    window.sessionStorage.setItem(HUMAN_AUTH_CSRF_KEY, token);
+  } else {
+    window.sessionStorage.removeItem(HUMAN_AUTH_CSRF_KEY);
+  }
+}
+
+function isStateChangingRequest(method?: string): boolean {
+  const normalized = (method || "GET").toUpperCase();
+  return !["GET", "HEAD", "OPTIONS"].includes(normalized);
+}
+
+function humanAuthHeaders(init?: RequestInit): Headers {
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Content-Type") && init?.body !== undefined) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (isStateChangingRequest(init?.method) && !headers.has("X-AgentOps-CSRF")) {
+    const csrfToken = readHumanAuthCsrf();
+    if (csrfToken) headers.set("X-AgentOps-CSRF", csrfToken);
+  }
+  return headers;
+}
+
+async function humanAwareFetch(path: string, init?: RequestInit): Promise<Response> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    credentials: "include",
+    headers: humanAuthHeaders(init),
+  });
+  if (response.status === 401 && !path.startsWith("/human-auth/")) {
+    setHumanAuthCsrf(null);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(HUMAN_AUTH_UNAUTHORIZED_EVENT));
+    }
+  }
+  return response;
+}
+
+export async function getHumanAuthStatus(): Promise<HumanAuthStatus> {
+  const status = await apiJson<HumanAuthStatus>("/human-auth/status");
+  if (status.csrf_token) setHumanAuthCsrf(status.csrf_token);
+  return status;
+}
+
+export async function loginHuman(input: { username: string; password: string }): Promise<HumanAuthSession> {
+  const session = await apiJson<HumanAuthSession>("/human-auth/login", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  setHumanAuthCsrf(session.csrf_token);
+  return session;
+}
+
+export async function bootstrapHuman(input: {
+  setup_code: string;
+  username: string;
+  password: string;
+  display_name?: string;
+}): Promise<HumanAuthSession> {
+  const session = await apiJson<HumanAuthSession>("/human-auth/bootstrap", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  setHumanAuthCsrf(session.csrf_token);
+  return session;
+}
+
+export async function logoutHuman(): Promise<void> {
+  await apiJson<Record<string, unknown>>("/human-auth/logout", { method: "POST", body: "{}" });
+  setHumanAuthCsrf(null);
+}
 
 export interface DashboardMetrics {
   agents_total: number;
@@ -3837,10 +3939,7 @@ function boolValue(value: unknown): boolean {
 }
 
 export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-    ...init,
-  });
+  const res = await humanAwareFetch(path, init);
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
   }
@@ -3849,9 +3948,7 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 async function optionalApiJson<T>(path: string, fallback: T): Promise<T> {
   try {
-    const res = await fetch(`${API_BASE}${path}`, {
-      headers: { "Content-Type": "application/json" },
-    });
+    const res = await humanAwareFetch(path);
     if (!res.ok) {
       return fallback;
     }
@@ -3865,10 +3962,7 @@ async function optionalApiJson<T>(path: string, fallback: T): Promise<T> {
 }
 
 async function apiJsonWithStatuses<T>(path: string, init: RequestInit | undefined, acceptedStatuses: number[]): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-    ...init,
-  });
+  const res = await humanAwareFetch(path, init);
   if (!res.ok && !acceptedStatuses.includes(res.status)) {
     throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
   }
