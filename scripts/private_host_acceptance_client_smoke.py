@@ -14,6 +14,7 @@ import urllib.request
 from pathlib import Path
 
 import customer_worker_real_runtime_acceptance as acceptance
+import v1_5_live_product_readiness_smoke as readiness
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,10 +101,25 @@ def main() -> int:
                 "owner_session_created": bool(csrf_token),
                 "authenticated_read": read_status == 200 and isinstance(tasks, list),
                 "csrf_write": write_status in {200, 201} and bool(task.get("task_id")),
+                "authenticated_readiness": False,
                 "machine_token_used_for_browser": False,
                 "real_runtime_called": False,
             }
-            if not all((evidence["owner_session_created"], evidence["authenticated_read"], evidence["csrf_write"])):
+            readiness_args = argparse.Namespace(
+                base_url=base_url,
+                timeout=10,
+                origin=base_url,
+                username="acceptance-owner",
+                password_env="AGENTOPS_ACCEPTANCE_PASSWORD",
+            )
+            readiness_opener = readiness.authenticated_human_opener(readiness_args)
+            readiness_status, readiness_payload = readiness.http_get_json(
+                base_url, "/api/local/readiness", 10, opener=readiness_opener
+            )
+            evidence["authenticated_readiness"] = (
+                readiness_status == 200 and readiness_payload.get("operation") == "local_readiness"
+            )
+            if not all((evidence["owner_session_created"], evidence["authenticated_read"], evidence["csrf_write"], evidence["authenticated_readiness"])):
                 failures.append(f"Private Host acceptance client auth failed: {evidence}")
         except (OSError, RuntimeError, ValueError) as exc:
             failures.append(f"acceptance client exception: {type(exc).__name__}: {str(exc)[:180]}")

@@ -1,6 +1,6 @@
 # Private Host Cold Start Acceptance
 
-Status: deterministic gates passed; fresh live rerun required
+Status: deterministic gates and fresh live Hermes/OpenClaw cold start passed
 
 ## Problem Found by Real Dogfood
 
@@ -51,3 +51,8 @@ Subsequent real dogfood also found and closed two downstream cold-start issues:
 
 These paths are covered by `human_browser_auth_smoke.py` and
 `worker_loop_supervision_soft_gate_smoke.py` without calling a Runtime.
+
+The subsequent fresh isolated Host run on commit
+`b03235652165b804a8dffb83b3cda94a2680f6f9` completed both Hermes and
+OpenClaw customer tasks through an Owner Session. The bounded evidence IDs and
+counts are recorded in `docs/PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md`.

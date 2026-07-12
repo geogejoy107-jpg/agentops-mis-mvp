@@ -1,6 +1,6 @@
 # Private Host Real Runtime Client Acceptance
 
-Status: deterministic human-auth and cold-start gates passed; fresh live Runtime rerun pending
+Status: deterministic auth gates and fresh local Private Host live Runtime acceptance passed
 
 ## Purpose
 
@@ -59,3 +59,38 @@ run, tool, runtime event, evaluation, approval, artifact, memory, audit, and
 verified plan-evidence IDs in the isolated Host ledger. Raw prompts, raw
 responses, credential values, private messages, and full transcripts remain
 excluded from output and committed state.
+
+The authenticated readback uses the same temporary Owner password environment
+variable and a separate browser Session:
+
+```bash
+python3 scripts/v1_5_live_product_readiness_smoke.py \
+  --base-url http://127.0.0.1:<host-port> \
+  --human-auth \
+  --require-adapter hermes \
+  --require-adapter openclaw
+```
+
+It does not accept a machine token as a browser credential and refuses to
+bootstrap an Owner because this verification step is read-only.
+
+## Fresh Live Result
+
+On commit `b03235652165b804a8dffb83b3cda94a2680f6f9`, a new isolated Private
+Host accepted an Owner Session and completed one explicitly confirmed task per
+adapter:
+
+| Adapter | Task | Run | Evidence |
+|---|---|---|---|
+| Hermes | `tsk_customer_worker_task_hermes_hermes_worker_20260712183626_20260712103626589050` | `run_gw_4eadf2ba75bf` | 1 tool call, 1 evaluation, 15 runtime events, 12 audit events, 2 artifacts, 2 memory proposals, 1 approval, 1 verified plan-evidence manifest |
+| OpenClaw | `tsk_customer_worker_task_openclaw_openclaw_worker_20260712183736_20260712103736141541` | `run_gw_f7a007436e36` | 1 tool call, 1 evaluation, 15 runtime events, 12 audit events, 2 artifacts, 2 memory proposals, 1 approval, 1 verified plan-evidence manifest |
+
+Both runs finished with `status=completed`; the acceptance client returned
+`ok=true`, `human_session_used=true`, and no failures. The first standalone
+readback attempt returned `401` because the read-only client did not yet support
+Private Host login. That client gap is now covered by
+`private_host_acceptance_client_smoke.py` without making Runtime calls.
+
+This proves host-local authenticated dispatch and ledger closure. It does not
+yet prove access from a second physical computer, private-network HTTPS, or
+browser disconnect/reconnect behavior.
