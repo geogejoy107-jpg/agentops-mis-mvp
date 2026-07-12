@@ -86,6 +86,10 @@ The packet includes the canonical command manifest used for release review:
   `python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:<current-code-port> --db-path /tmp/<current-code-agentops>.db --confirm-live`
 - Manual product-readiness gate, intentionally not CI-backed:
   `python3 scripts/customer_worker_real_runtime_acceptance.py --confirm-live --adapter hermes --adapter openclaw`
+- Manual governed local harness live gate, intentionally not CI-backed:
+  `python3 scripts/local_harness_governed_live_acceptance.py --adapter openclaw --confirm-live --auto-service-closure`
+- CI-safe governed local harness preview:
+  `python3 scripts/local_harness_governed_live_acceptance_smoke.py`
 - `python3 scripts/customer_worker_hermes_retry_gateway_smoke.py`
 - `python3 scripts/redaction_policy_smoke.py`
 - `python3 scripts/sqlite_pragmas_smoke.py`
@@ -97,6 +101,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/open_source_mainline_governance_smoke.py`
 - `python3 scripts/harness_engineering_control_plane_smoke.py`
 - `python3 scripts/harness_engineering_execution_constraints_smoke.py`
+- `python3 scripts/harness_engineering_product_constraints_smoke.py`
 - `python3 scripts/harness_style_agentops_operating_spec_smoke.py`
 - `python3 scripts/local_task_harness_smoke.py`
 - `python3 scripts/agent_task_harness_engineering_spec_smoke.py`

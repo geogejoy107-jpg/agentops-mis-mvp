@@ -104,6 +104,19 @@ TEST_COMMANDS = [
         "manual_only": True,
     },
     {
+        "id": "local_harness_governed_live_acceptance",
+        "command": "python3 scripts/local_harness_governed_live_acceptance.py --adapter openclaw --confirm-live --auto-service-closure",
+        "summary": "Manual live governed local harness runner: consumes local-harness-proof launch packet, executes confirmed customer-worker task, records scoped action receipt, and reads it back with exact filters.",
+        "ci_step": "manual-live-local",
+        "manual_only": True,
+    },
+    {
+        "id": "local_harness_governed_live_acceptance_preview",
+        "command": "python3 scripts/local_harness_governed_live_acceptance_smoke.py",
+        "summary": "CI-safe preview smoke for governed live harness runner; proves default read-only mode and exact receipt readback filters without calling Hermes/OpenClaw.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "v1_5_live_product_readiness",
         "command": "python3 scripts/v1_5_live_product_readiness_smoke.py --require-adapter hermes --require-adapter openclaw",
         "summary": "Read-only manual live ledger proof that fresh Hermes/OpenClaw customer-worker runs have full run/tool/eval/runtime/audit/artifact/memory/approval/plan-evidence coverage.",
@@ -174,6 +187,12 @@ TEST_COMMANDS = [
         "id": "harness_engineering_execution_constraints",
         "command": "python3 scripts/harness_engineering_execution_constraints_smoke.py",
         "summary": "Harness engineering execution constraints: work packet fields, READ/PLAN/RETRIEVE/COMPARE/EXECUTE/VERIFY/RECORD gates, real-runtime proof limits, and async lane contract.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "harness_engineering_product_constraints",
+        "command": "python3 scripts/harness_engineering_product_constraints_smoke.py",
+        "summary": "Harness engineering product constraints: current Worker Agent, Policy as Code, Open Source and Adaptive Auto-Harness research translated into MIS authority, policy, approval, real-runtime, open-source-base and async-commander gates.",
         "ci_step": "Offline safety smokes",
     },
     {
