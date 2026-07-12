@@ -17,6 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 STACK = ROOT / "scripts" / "run_local_stack.py"
+BACKUP_UTILITY = ROOT / "scripts" / "agentops_local_backup.py"
 DEFAULT_UI_DIST = ROOT / "ui" / "start-building-app" / "dist"
 
 
@@ -32,6 +33,7 @@ def paths() -> dict[str, Path]:
         "secrets": home / "secrets.json",
         "data": home / "data",
         "database": home / "data" / "agentops_mis.db",
+        "backups": home / "backups",
         "logs": home / "logs",
         "log": home / "logs" / "host.log",
         "run": home / "run",
@@ -354,6 +356,113 @@ def cmd_logs(_args) -> int:
     return 0 if p["log"].exists() else 1
 
 
+def run_backup_utility(*arguments: str) -> tuple[dict, int]:
+    if not BACKUP_UTILITY.is_file():
+        return {"ok": False, "error": "backup_utility_missing"}, 1
+    process = subprocess.run(
+        [sys.executable, str(BACKUP_UTILITY), *arguments],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    try:
+        payload = json.loads(process.stdout)
+    except ValueError:
+        payload = {"ok": False, "error": "backup_utility_invalid_response"}
+    payload["utility_output_omitted"] = True
+    payload["token_omitted"] = True
+    return payload, process.returncode
+
+
+def cmd_backup(_args) -> int:
+    config, _secret_values = require_initialized()
+    p = paths()
+    p["backups"].mkdir(parents=True, exist_ok=True, mode=0o700)
+    p["backups"].chmod(0o700)
+    payload, status = run_backup_utility(
+        "create",
+        "--db-path",
+        config["database_path"],
+        "--backup-dir",
+        str(p["backups"]),
+    )
+    for key in ("backup_path", "manifest_path"):
+        value = payload.get(key)
+        if value and Path(str(value)).is_file():
+            Path(str(value)).chmod(0o600)
+    payload["operation"] = "host_backup"
+    payload["secret_store_included"] = False
+    payload["hashed_auth_state_included"] = True
+    payload["host_may_remain_running"] = True
+    emit(payload)
+    return status
+
+
+def cmd_backup_verify(args) -> int:
+    require_initialized()
+    p = paths()
+    arguments = ["verify"]
+    if args.backup:
+        arguments.extend(["--backup", str(Path(args.backup).expanduser().resolve())])
+    else:
+        arguments.extend(["--backup-dir", str(p["backups"])])
+    payload, status = run_backup_utility(*arguments)
+    payload["operation"] = "host_backup_verify"
+    payload["read_only"] = True
+    emit(payload)
+    return status
+
+
+def cmd_restore(args) -> int:
+    config, _secret_values = require_initialized()
+    p = paths()
+    pid = int(read_json(p["pid"]).get("pid") or 0)
+    if process_alive(pid):
+        emit({
+            "ok": False,
+            "operation": "host_restore",
+            "error": "host_running",
+            "message": "Stop the Host before restoring its authority ledger.",
+            "next_action": "agentops host stop",
+            "token_omitted": True,
+        })
+        return 2
+    if not args.confirm_restore:
+        emit({
+            "ok": False,
+            "operation": "host_restore",
+            "dry_run": True,
+            "error": "confirm_restore_required",
+            "message": "Re-run with --confirm-restore after verifying the selected backup.",
+            "token_omitted": True,
+        })
+        return 2
+    arguments = [
+        "restore",
+        "--backup",
+        str(Path(args.backup).expanduser().resolve()),
+        "--target",
+        config["database_path"],
+        "--confirm-restore",
+    ]
+    if Path(config["database_path"]).exists():
+        arguments.append("--overwrite")
+    payload, status = run_backup_utility(*arguments)
+    for key in ("target_path", "pre_restore_copy"):
+        value = payload.get(key)
+        if value and Path(str(value)).is_file():
+            Path(str(value)).chmod(0o600)
+    payload["operation"] = "host_restore"
+    payload["secret_store_restored"] = False
+    payload["hashed_auth_state_restored"] = True
+    payload["restart_required"] = status == 0
+    payload["next_action"] = "agentops host start" if status == 0 else "Verify the backup and retry."
+    emit(payload)
+    return status
+
+
 def cmd_console_url(_args) -> int:
     config, _secret_values = require_initialized()
     ts = tailscale_state()
@@ -506,6 +615,15 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.set_defaults(handler=cmd_doctor)
     logs = sub.add_parser("logs", help="Show log metadata without printing raw host output.")
     logs.set_defaults(handler=cmd_logs)
+    backup = sub.add_parser("backup", help="Create a verified SQLite authority-ledger backup while the Host may remain running.")
+    backup.set_defaults(handler=cmd_backup)
+    backup_verify = sub.add_parser("backup-verify", help="Verify the latest or selected Host backup without printing ledger rows.")
+    backup_verify.add_argument("--backup")
+    backup_verify.set_defaults(handler=cmd_backup_verify)
+    restore = sub.add_parser("restore", help="Restore a verified ledger backup while the Host is stopped.")
+    restore.add_argument("--backup", required=True)
+    restore.add_argument("--confirm-restore", action="store_true")
+    restore.set_defaults(handler=cmd_restore)
     console_url = sub.add_parser("console-url", help="Show local and private console URLs.")
     console_url.set_defaults(handler=cmd_console_url)
     preview = sub.add_parser("tailscale-preview", help="Preview Tailscale Serve and revoke commands without executing them.")

@@ -133,6 +133,10 @@ def main() -> int:
         help_result = run([str(bin_dir / "agentops"), "host", "--help"], env=env)
         if help_result.returncode != 0 or "Manage the private local AgentOps MIS host" not in help_result.stdout:
             fail("installed agentops host --help failed", help_result)
+        for command in ("backup", "backup-verify", "restore"):
+            command_help = run([str(bin_dir / "agentops"), "host", command, "--help"], env=env)
+            if command_help.returncode != 0:
+                fail(f"installed agentops host {command} --help failed", command_help)
         if not (install_root / "current" / "ui" / "start-building-app" / "dist" / "index.html").is_file():
             fail("installed production UI missing")
         initialized = run([str(bin_dir / "agentops"), "host", "init", "--port", str(free_port())], env=env)
@@ -157,6 +161,7 @@ def main() -> int:
             "manifest_checksums": "passed",
             "tampered_payload_rejected": True,
             "installed_host_help": "passed",
+            "installed_backup_restore_commands": "passed",
             "installed_host_init_and_doctor": "passed",
             "uninstall_preserved_user_data": True,
             "network_used": False,

@@ -160,6 +160,8 @@ agentops host doctor
 agentops host logs
 agentops host restart
 agentops host stop
+agentops host backup
+agentops host backup-verify
 ```
 
 - `status`：查看受管进程、版本、端口和组件状态，不输出 workspace 私密数据。
@@ -167,8 +169,36 @@ agentops host stop
 - `logs`：查看脱敏后的 Host 日志。
 - `restart`：只重启该 Host 拥有的进程，保留账本和知识状态。
 - `stop`：停止 Host 服务和受管 Worker，不删除 DB、知识库、配置或备份。
+- `backup`：通过 SQLite 在线备份 API 创建带 SHA-256 manifest 的本地账本备份；Host 可以继续运行。
+- `backup-verify`：只读校验最新或指定备份的 SHA-256 与 SQLite integrity，不打印账本行。
 
 命令的精确参数、服务管理方式和退出码均以当前实现验收为准。发布前必须证明重启不丢状态、停止不误杀其他进程。
+
+### 6.1 备份与恢复
+
+创建并校验备份：
+
+```bash
+agentops host backup
+agentops host backup-verify
+```
+
+默认备份目录为 `~/.agentops/host/backups`，目录权限为 `0700`，SQLite 备份和 manifest 权限为 `0600`。备份包含完整权威 SQLite 账本，包括 hash-only Session/Token 状态，因此仍须作为敏感文件保护；它不复制 `secrets.json`、Host 日志、PID、原始 Runtime 密钥或 raw prompt/response。
+
+恢复前必须停止 Host，并先校验选定备份：
+
+```bash
+agentops host stop
+agentops host backup-verify --backup /path/to/agentops-mis-YYYYMMDDTHHMMSSZ.sqlite
+agentops host restore \
+  --backup /path/to/agentops-mis-YYYYMMDDTHHMMSSZ.sqlite \
+  --confirm-restore
+agentops host start
+```
+
+没有 `--confirm-restore` 时恢复保持 dry-run；Host 进程仍运行时恢复会失败关闭。覆盖现有账本前会自动创建同目录的 `.pre-restore-<timestamp>` 安全副本。恢复不会替换当前 Host 的独立密钥文件。
+
+这一版只证明 SQLite 权威账本的产品命令闭环。Host 外部项目目录或未来可变 Markdown 知识源仍需要单独的目录级备份策略，不能把本命令宣传成整机灾备。
 
 ## 7. 录屏建议
 

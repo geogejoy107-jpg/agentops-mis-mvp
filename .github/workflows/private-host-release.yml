@@ -51,6 +51,7 @@ jobs:
       - name: Verify private Host bundle
         run: |
           set -euo pipefail
+          python3 scripts/private_host_backup_restore_smoke.py
           python3 scripts/private_host_bundle_smoke.py
 
       - name: Build versioned release assets

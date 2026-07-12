@@ -24,6 +24,7 @@ RUNTIME_FILES = {
     "pyproject.toml",
     "server.py",
     "scripts/agent_worker.py",
+    "scripts/agentops_local_backup.py",
     "scripts/agentops",
     "scripts/hermes_openclaw_loop.py",
     "scripts/local_runtime_acceptance.py",
