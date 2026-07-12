@@ -35,6 +35,36 @@ Console 电脑只需要：
 
 ## 3. 安装版本化 Host 预览
 
+已发布但被替代的预览版本：
+
+```text
+v1.6.0-private-host-preview.1
+https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.1
+```
+
+该版本发布了以下三个资产：
+
+```text
+agentops-mis-private-host-1.6.0-private-host-preview.1.zip
+agentops-mis-private-host-1.6.0-private-host-preview.1.tar.gz
+agentops-mis-private-host-1.6.0-private-host-preview.1.sha256.json
+```
+
+preview.1 发布页记录的历史 SHA-256：
+
+```text
+zip      624e4ec9cb954bcf208ebf5840d535b07142a1557ba61be649de25f22e97b43f
+tar.gz   e68bfae7e29a4f7356db4b162a965d29579ccaf2c9fc2a5ba3584c7440966e0a
+manifest a7889a858801b4ef0fc4579d0f9e796b4b597395536417c2a9ac32497cd344ad
+```
+
+Release 下载验证发现 preview.1 的安装 shim 在源码 checkout 或继承的
+`PYTHONPATH` 环境中可能被源码遮蔽，导致 packaged version provenance
+读错；该 Release 已标记 **Superseded preview**。不要再把它作为当前安装
+候选。修正版 preview.2 必须在 exact-head CI、资产 checksum、GitHub 下载
+和干净安装复验完成后，才会在这里列为当前候选。即使 preview.2 通过，
+在第二设备验收完成前也不能称为正式 RC。
+
 从 GitHub Private Host prerelease 下载同一版本的三个文件：
 
 ```text
@@ -177,6 +207,11 @@ agentops host console-url
 `console-url` 应只输出不含凭据的 HTTPS 地址。另一台电脑加入同一 tailnet 后，在浏览器中打开该地址，完成 Owner 初始化或登录。未认证用户不得读取 workspace 数据。
 
 ## 6. 另一台电脑的操作流程
+
+正式逐项协议与 bounded evidence 字段见
+`docs/PRIVATE_HOST_SECOND_DEVICE_ACCEPTANCE.md`。浏览器生成的 device
+checklist 只用于现场操作提醒，必须标记 `non_authoritative:true`；最终验收
+回执必须由 Host 根据权威账本生成并计算 payload hash。
 
 1. 手动安装并登录 Tailscale，确认与 Host 位于同一受信任 tailnet。
 2. 在浏览器打开 `agentops host console-url` 给出的 HTTPS 地址。
