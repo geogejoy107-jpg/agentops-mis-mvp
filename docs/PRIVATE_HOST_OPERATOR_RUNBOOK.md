@@ -35,24 +35,30 @@ Console 电脑只需要：
 
 ## 3. 安装版本化 Host 预览
 
-下一修正版候选：
+先查看当前安装版本：
 
-```text
-v1.6.0-private-host-preview.4
-https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.4
+```bash
+agentops host version
 ```
 
-下载前确认该 Release 已实际发布，并同时下载 `.zip` 或 `.tar.gz` 与
-`.sha256.json`。发布附件中的 checksum manifest 是当前候选的权威校验
-来源；本运行手册不把 archive checksum 写回同一 archive，避免自引用。
+从项目 Release 页面选择明确的版本化资产：
+
+```text
+https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases
+```
+
+下载前确认目标 Release 已实际发布，并同时下载同一版本的 `.zip` 或
+`.tar.gz` 与 `.sha256.json`。发布附件中的 checksum manifest 和安装后
+`agentops host version` 是版本与提交 provenance 的权威来源；运行手册不
+硬编码“当前版本”，避免安装包内说明随下一次发布立即过期。
 
 preview.2 已发布但随后被真实 Runtime dogfood 替代：安装版 Worker 能
 claim 任务，但 Agent Plan 在 `run_start` 前发现 archive 缺少
 `PROJECT_SPEC.md`、`AGENT_WORKFLOW.md`、`BASE_INDEX.md` 与
 `docs/AGENT_WORK_METHOD_BLOCK.md`，因此按设计 fail closed，未调用模型。
-preview.4 在 preview.3 的 Agent Plan 与真实 Runtime 闭环基础上，增加
-异步断线后完成、幂等提交、SQLite CAS 启动租约和 workspace 隔离验收。
-它仍是预览版本；物理第二设备和另一台 Mac 验收通过前不得称为正式 RC。
+任何 `private-host-preview.*` 都仍是预览版本；物理第二设备和另一台 Mac
+验收通过前不得称为正式 RC。具体已完成能力和未完成外部门以 Release
+说明及 `PRIVATE_HOST_RC_ACCEPTANCE.md` 为准。
 
 已发布但被替代的预览版本：
 
