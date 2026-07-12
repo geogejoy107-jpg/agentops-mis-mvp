@@ -1,5 +1,5 @@
 import { Link, useParams } from "react-router";
-import { Cpu, DollarSign, Clock, GitBranch, AlertTriangle, ShieldCheck, Network } from "lucide-react";
+import { Cpu, DollarSign, Clock, Download, GitBranch, AlertTriangle, ShieldCheck, Network } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import { RiskBadge } from "../shared/RiskBadge";
 import { AuditTimeline } from "../shared/AuditTimeline";
@@ -36,6 +36,7 @@ export function RunDetail() {
   const parentRun = run.parent_run_id ? data.allRuns.find(r => r.run_id === run.parent_run_id) : null;
   const score = runEval ? (runEval.score <= 1 ? Math.round(runEval.score * 100) : Math.round(runEval.score)) : 0;
   const pendingApprovals = runApprovals.filter(approval => approval.decision === "pending");
+  const hasApprovedDelivery = runApprovals.some(approval => approval.decision === "approved");
   const failedTools = runTools.filter(tool => ["failed", "error", "blocked"].includes(tool.status));
   const failedEvals = runEvaluations.filter(ev => ev.pass_fail === "fail" || ev.pass_fail === "failed");
   const evidenceGraph = data.evidenceGraph;
@@ -387,7 +388,22 @@ export function RunDetail() {
           <div className="space-y-2">
             {runArtifacts.map((artifact) => (
               <div key={artifact.artifact_id} className="p-3 rounded-lg" style={{ background: "var(--mis-surface2)" }}>
-                <div className="text-xs font-medium" style={{ color: "var(--mis-text)" }}>{artifact.title}</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-medium" style={{ color: "var(--mis-text)" }}>{artifact.title}</div>
+                  {hasApprovedDelivery && (
+                    <a
+                      data-testid="approved-artifact-download"
+                      href={`/mis-api/artifacts/${encodeURIComponent(artifact.artifact_id)}/download`}
+                      download
+                      title="Download approved artifact"
+                      aria-label="Download approved artifact"
+                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded"
+                      style={{ color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.24)", background: "rgba(34,211,238,0.08)" }}
+                    >
+                      <Download size={13} />
+                    </a>
+                  )}
+                </div>
                 <div className="text-[11px] mt-1" style={{ color: "var(--mis-dim)" }}>{artifact.summary}</div>
               </div>
             ))}

@@ -404,6 +404,128 @@ def path_segment(path: str, index: int = -1) -> str:
     return unquote(path.split("/")[index])
 
 
+PRIVATE_HOST_ARTIFACT_DOWNLOAD_ID_RE = re.compile(r"[A-Za-z0-9_.:-]{1,160}")
+PRIVATE_HOST_ARTIFACT_DOWNLOAD_SUMMARY_LIMIT = 4000
+
+
+def private_host_artifact_download_id(value: str) -> str:
+    artifact_id = unquote(str(value or ""))
+    if ".." in artifact_id or not PRIVATE_HOST_ARTIFACT_DOWNLOAD_ID_RE.fullmatch(artifact_id):
+        return ""
+    return artifact_id
+
+
+def private_host_artifact_download(
+    conn: sqlite3.Connection,
+    artifact_id: str,
+    human_context: dict | None,
+    requested_format: str,
+) -> tuple[dict, int]:
+    if not human_context or human_context.get("mode") != "human_session":
+        return {"error": "human_auth_required", "message": "A human browser session is required."}, 401
+    artifact_id = private_host_artifact_download_id(artifact_id)
+    if not artifact_id:
+        return {"error": "artifact_not_found"}, 404
+
+    artifact = conn.execute(
+        """SELECT a.*,COALESCE(a.task_id,r.task_id) AS effective_task_id,
+                  COALESCE(t.workspace_id,r.workspace_id,'local-demo') AS workspace_id
+           FROM artifacts a
+           LEFT JOIN runs r ON r.run_id=a.run_id
+           LEFT JOIN tasks t ON t.task_id=COALESCE(a.task_id,r.task_id)
+           WHERE a.artifact_id=?""",
+        (artifact_id,),
+    ).fetchone()
+    if not artifact or normalize_workspace_id(artifact["workspace_id"]) != normalize_workspace_id(human_context.get("workspace_id")):
+        return {"error": "artifact_not_found"}, 404
+
+    run_id = artifact["run_id"]
+    task_id = artifact["effective_task_id"]
+    approval = conn.execute(
+        """SELECT approval_id,approver_user_id,decided_at
+           FROM approvals
+           WHERE decision='approved'
+             AND ((? IS NOT NULL AND run_id=?) OR (? IS NOT NULL AND task_id=?))
+           ORDER BY decided_at DESC,created_at DESC LIMIT 1""",
+        (run_id, run_id, task_id, task_id),
+    ).fetchone()
+    if not approval:
+        return {
+            "error": "artifact_not_approved",
+            "message": "The artifact does not have an approved task or run approval.",
+            "artifact_id": artifact_id,
+        }, 403
+
+    format_name = str(requested_format or "markdown").strip().lower()
+    if format_name == "md":
+        format_name = "markdown"
+    if format_name not in {"markdown", "json"}:
+        return {"error": "unsupported_download_format", "supported_formats": ["markdown", "json"]}, 400
+
+    safe_title = redact_text(artifact["title"] or "Approved artifact", 180)
+    safe_summary = redact_text(artifact["summary"] or "No bounded summary was recorded.", PRIVATE_HOST_ARTIFACT_DOWNLOAD_SUMMARY_LIMIT)
+    document = {
+        "artifact_id": artifact_id,
+        "artifact_type": redact_text(artifact["artifact_type"] or "artifact", 80),
+        "title": safe_title,
+        "task_id": redact_text(task_id, 160) if task_id else None,
+        "run_id": redact_text(run_id, 160) if run_id else None,
+        "approval_id": redact_text(approval["approval_id"], 160),
+        "created_at": artifact["created_at"],
+        "summary": safe_summary,
+        "content_boundary": {
+            "source": "bounded_ledger_summary",
+            "artifact_uri_read": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "credentials_omitted": True,
+        },
+    }
+    if format_name == "json":
+        payload = (json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        content_type = "application/json; charset=utf-8"
+        extension = "json"
+    else:
+        payload = ("\n".join([
+            f"# {safe_title}",
+            "",
+            f"- Artifact ID: `{artifact_id}`",
+            f"- Type: `{document['artifact_type']}`",
+            f"- Task ID: `{document['task_id'] or 'not-recorded'}`",
+            f"- Run ID: `{document['run_id'] or 'not-recorded'}`",
+            f"- Approval ID: `{document['approval_id']}`",
+            f"- Created: `{document['created_at']}`",
+            "",
+            "## Approved summary",
+            "",
+            safe_summary,
+            "",
+            "_This download is generated from bounded MIS ledger fields. Artifact URI, raw prompts, raw responses, and credentials are omitted._",
+            "",
+        ])).encode("utf-8")
+        content_type = "text/markdown; charset=utf-8"
+        extension = "md"
+
+    filename_id = re.sub(r"[^A-Za-z0-9._-]+", "_", artifact_id).strip("._")[:96] or "approved-artifact"
+    filename = f"artifact-{filename_id}.{extension}"
+    audit(conn, "user", human_context.get("account_id"), "artifact.download", "artifacts", artifact_id, None, None, {
+        "workspace_id": normalize_workspace_id(human_context.get("workspace_id")),
+        "approval_id": approval["approval_id"],
+        "format": format_name,
+        "size_bytes": len(payload),
+        "content_sha256": hashlib.sha256(payload).hexdigest(),
+        "artifact_uri_read": False,
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    })
+    return {
+        "payload": payload,
+        "content_type": content_type,
+        "filename": filename,
+        "artifact_id": artifact_id,
+    }, 200
+
+
 def qs_int(qs: dict, name: str, default: int, minimum: int, maximum: int) -> int:
     try:
         value = int((qs.get(name) or [str(default)])[0])
@@ -29623,6 +29745,16 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def send_download(self, payload, content_type, filename):
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
     @staticmethod
     def api_path(path):
         if path == "/mis-api":
@@ -30508,6 +30640,19 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/evaluation-case-runs":
                 payload, status = list_evaluation_case_runs(conn, dict(qs), self.headers)
                 return self.send_json(payload, status)
+            artifact_download_match = re.fullmatch(r"/api/artifacts/([^/]+)/download", path)
+            if artifact_download_match:
+                payload, status = private_host_artifact_download(
+                    conn,
+                    artifact_download_match.group(1),
+                    self._human_auth_context,
+                    (qs.get("format") or ["markdown"])[0],
+                )
+                if status != 200:
+                    conn.rollback()
+                    return self.send_json(payload, status)
+                conn.commit()
+                return self.send_download(payload["payload"], payload["content_type"], payload["filename"])
             if path == "/api/artifacts":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM artifacts ORDER BY created_at DESC").fetchall()))
             if path == "/api/audit":
