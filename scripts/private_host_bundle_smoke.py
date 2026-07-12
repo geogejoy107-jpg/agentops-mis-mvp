@@ -108,7 +108,7 @@ def main() -> int:
             if not path.is_file() or digest(path) != record["sha256"]:
                 fail(f"manifest file checksum mismatch: {record['path']}")
 
-        home = temp / "home"
+        home = temp / "home with $shell ' quote"
         install_root = home / ".local" / "share" / "agentops-mis"
         bin_dir = home / ".local" / "bin"
         host_data = home / ".agentops" / "host"

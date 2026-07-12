@@ -10,6 +10,7 @@ python3 - "$BUNDLE_DIR" "$INSTALL_ROOT" "$BIN_DIR" "$DATA_ROOT" <<'PY'
 import json
 import hashlib
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -128,11 +129,12 @@ atomic_symlink(current, target)
 
 bin_dir.mkdir(parents=True, exist_ok=True)
 shim = bin_dir / "agentops"
+quoted_current = shlex.quote(str(current))
 shim.write_text(
     "#!/bin/sh\n"
     "set -eu\n"
-    f'cd "{current}"\n'
-    f'PYTHONPATH="{current}" exec python3 -m agentops_mis_cli "$@"\n',
+    f"cd {quoted_current}\n"
+    f"PYTHONPATH={quoted_current} exec python3 -m agentops_mis_cli \"$@\"\n",
     encoding="utf-8",
 )
 shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
