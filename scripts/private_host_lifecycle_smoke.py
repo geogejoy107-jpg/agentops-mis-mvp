@@ -2,6 +2,8 @@
 """Verify the repo-local `agentops host` lifecycle with isolated state."""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import http.cookiejar
 import os
@@ -12,9 +14,13 @@ import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
-
+from types import SimpleNamespace
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from agentops_mis_cli import host as host_module
 
 
 def free_port() -> int:
@@ -30,7 +36,7 @@ def run_host(env: dict, *args: str, expected=(0,)) -> tuple[int, dict, str]:
         env=env,
         capture_output=True,
         text=True,
-        timeout=40,
+        timeout=70,
         check=False,
     )
     try:
@@ -60,6 +66,45 @@ def request_json(opener, url: str, *, method="GET", body=None, headers=None) -> 
 def main() -> int:
     failures: list[str] = []
     evidence: dict[str, object] = {}
+    def failing_stop(_args) -> int:
+        host_module.emit({"ok": False, "operation": "host_stop", "status": "timeout", "token_omitted": True})
+        return 1
+
+    restart_failure_output = io.StringIO()
+    with mock.patch.object(host_module, "cmd_stop", side_effect=failing_stop), mock.patch.object(host_module, "cmd_start") as start, contextlib.redirect_stdout(restart_failure_output):
+        restart_code = host_module.cmd_restart(SimpleNamespace(foreground=False))
+    try:
+        restart_failure_payload = json.loads(restart_failure_output.getvalue())
+    except ValueError:
+        restart_failure_payload = {}
+
+    def successful_stop(_args) -> int:
+        host_module.emit({"ok": True, "operation": "host_stop", "status": "stopped", "token_omitted": True})
+        return 0
+
+    def foreground_start(_args) -> int:
+        print("FOREGROUND_CHILD_OUTPUT")
+        return 0
+
+    foreground_output = io.StringIO()
+    with mock.patch.object(host_module, "cmd_stop", side_effect=successful_stop), mock.patch.object(host_module, "cmd_start", side_effect=foreground_start), contextlib.redirect_stdout(foreground_output):
+        foreground_code = host_module.cmd_restart(SimpleNamespace(foreground=True))
+    evidence["restart_contract"] = {
+        "grace_seconds": host_module.HOST_STOP_GRACE_SECONDS,
+        "stop_failure_code": restart_code,
+        "start_blocked_after_stop_failure": not start.called,
+        "single_failure_result": restart_failure_payload.get("operation") == "host_restart",
+        "foreground_stream_only": foreground_code == 0 and foreground_output.getvalue() == "FOREGROUND_CHILD_OUTPUT\n",
+    }
+    if (
+        host_module.HOST_STOP_GRACE_SECONDS < 20
+        or restart_code != 1
+        or start.called
+        or restart_failure_payload.get("operation") != "host_restart"
+        or foreground_code != 0
+        or foreground_output.getvalue() != "FOREGROUND_CHILD_OUTPUT\n"
+    ):
+        failures.append("host restart did not preserve the graceful-stop failure contract")
     with tempfile.TemporaryDirectory(prefix="agentops-host-lifecycle-") as tmp:
         tmp_path = Path(tmp)
         host_home = tmp_path / "host"
@@ -76,11 +121,18 @@ def main() -> int:
         fake_tailscale.write_text(
             "#!/bin/sh\n"
             "if [ \"$1\" = status ]; then\n"
-            "  printf '%s\\n' '{\"BackendState\":\"Running\",\"Self\":{\"DNSName\":\"agentops-host.example.ts.net.\"}}'\n"
+            "  name=${AGENTOPS_TEST_TAILSCALE_DNS_NAME:-agentops-host.example.ts.net}\n"
+            "  printf '{\"BackendState\":\"Running\",\"Self\":{\"DNSName\":\"%s.\"}}\\n' \"$name\"\n"
             "  exit 0\n"
             "fi\n"
             "if [ \"$1\" = serve ] && [ \"$2\" = status ]; then\n"
-            "  if [ -n \"${AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT_PORT:-}\" ]; then\n"
+            "  if [ \"${AGENTOPS_TEST_TAILSCALE_SERVE_MODE:-}\" = funnel ]; then\n"
+            "    printf '%s\\n' '{\"TCP\":{\"8443\":{\"HTTPS\":true}},\"Web\":{\"agentops-host.example.ts.net:8443\":{\"AllowFunnel\":true,\"Handlers\":{\"/\":{\"Proxy\":\"http://127.0.0.1:18878\"}}}}}'\n"
+            "  elif [ \"${AGENTOPS_TEST_TAILSCALE_SERVE_MODE:-}\" = services ]; then\n"
+            "    printf '%s\\n' '{\"Services\":{\"svc:fixture\":{\"TCP\":{\"8443\":{\"HTTPS\":true}},\"Web\":{\"service.example.ts.net:8443\":{\"Handlers\":{\"/\":{\"Proxy\":\"http://127.0.0.1:18878\"}}}}}}}'\n"
+            "  elif [ \"${AGENTOPS_TEST_TAILSCALE_SERVE_MODE:-}\" = mixed ]; then\n"
+            "    printf '%s\\n' '{\"TCP\":{\"8443\":{\"HTTPS\":true}},\"Web\":{\"agentops-host.example.ts.net:8443\":{\"Handlers\":{\"/\":{\"Proxy\":\"http://127.0.0.1:18878\"},\"/other\":{\"Text\":\"occupied\"}}}}}'\n"
+            "  elif [ -n \"${AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT_PORT:-}\" ]; then\n"
             "    p=$AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT_PORT\n"
             "    printf '{\"TCP\":{\"%s\":{\"HTTPS\":true}},\"Web\":{\"agentops-host.example.ts.net:%s\":{\"Handlers\":{\"/\":{\"Proxy\":\"http://127.0.0.1:18789\"}}}}}\\n' \"$p\" \"$p\"\n"
             f"  elif [ -f {tailscale_state_file} ]; then\n"
@@ -147,9 +199,17 @@ def main() -> int:
                 failures.append("host start output exposed stored secret material")
 
             _code, status, status_output = run_host(env, "status")
-            evidence["status"] = {"ok": status.get("ok"), "running": status.get("running"), "health": (status.get("health") or {}).get("status")}
+            evidence["status"] = {
+                "ok": status.get("ok"),
+                "running": status.get("running"),
+                "health": (status.get("health") or {}).get("status"),
+                "private_console_url": status.get("private_console_url"),
+                "private_url_ready": status.get("private_url_ready"),
+            }
             if not status.get("running") or not status.get("ok"):
                 failures.append("host status did not report the managed process ready")
+            if status.get("private_console_url") or status.get("private_url_ready") is not False:
+                failures.append("host status advertised a private Console URL before publication")
             if any(value and value in status_output for value in secret_values):
                 failures.append("host status output exposed stored secret material")
 
@@ -202,6 +262,43 @@ def main() -> int:
             if any(value and value in preview_output for value in secret_values):
                 failures.append("Tailscale preview output exposed stored secret material")
 
+            serve_safety = {}
+            for mode in ("funnel", "services", "mixed"):
+                env["AGENTOPS_TEST_TAILSCALE_SERVE_MODE"] = mode
+                _code, unsafe_preview, _output = run_host(env, "tailscale-preview", "--https-port", "8443")
+                unsafe_serve = unsafe_preview.get("serve") or {}
+                serve_safety[mode] = {
+                    "conflict": unsafe_serve.get("conflict"),
+                    "public_funnel_enabled": unsafe_serve.get("public_funnel_enabled"),
+                    "unsupported_config": unsafe_serve.get("unsupported_config"),
+                }
+            env["AGENTOPS_TEST_TAILSCALE_SERVE_MODE"] = "funnel"
+            _code, funnel_apply, _output = run_host(
+                env,
+                "tailscale-apply",
+                "--https-port",
+                "8443",
+                "--confirm",
+                "--replace-existing-serve",
+                expected=(2,),
+            )
+            env.pop("AGENTOPS_TEST_TAILSCALE_SERVE_MODE", None)
+            evidence["tailscale_serve_safety"] = {
+                **serve_safety,
+                "funnel_apply_error": funnel_apply.get("error"),
+            }
+            if (
+                serve_safety["funnel"].get("conflict") is not True
+                or serve_safety["funnel"].get("public_funnel_enabled") is not True
+                or serve_safety["services"].get("conflict") is not True
+                or serve_safety["services"].get("unsupported_config") is not True
+                or serve_safety["mixed"].get("conflict") is not True
+                or serve_safety["mixed"].get("unsupported_config") is not True
+                or funnel_apply.get("error") != "tailscale_funnel_conflict"
+                or tailscale_log.exists()
+            ):
+                failures.append("Tailscale Serve safety parser did not fail closed")
+
             _code, unconfirmed_apply, _output = run_host(env, "tailscale-apply", expected=(2,))
             if unconfirmed_apply.get("error") != "confirmation_required" or tailscale_log.exists():
                 failures.append("unconfirmed Tailscale apply did not remain side-effect free")
@@ -212,6 +309,7 @@ def main() -> int:
             env.pop("AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT_PORT", None)
             _code, applied, apply_output = run_host(env, "tailscale-apply", "--https-port", "8443", "--confirm")
             _code, applied_url, _output = run_host(env, "console-url")
+            _code, applied_status, _output = run_host(env, "status")
             config_after_apply = json.loads(config_path.read_text(encoding="utf-8"))
             evidence["tailscale_apply"] = {
                 "ok": applied.get("ok"),
@@ -221,12 +319,51 @@ def main() -> int:
                 "restart_required": applied.get("restart_required"),
                 "secure_cookie_enabled": config_after_apply.get("cookie_secure"),
                 "private_url_ready": applied_url.get("private_url_ready"),
+                "status_private_console_url": applied_status.get("private_console_url"),
+                "status_private_url_ready": applied_status.get("private_url_ready"),
             }
             command_log = tailscale_log.read_text(encoding="utf-8") if tailscale_log.exists() else ""
-            if "serve --https=8443 --bg" not in command_log or config_after_apply.get("network_publication") != "tailscale_serve" or config_after_apply.get("cookie_secure") is not True or applied_url.get("private_url_ready") is not True:
+            if (
+                "serve --https=8443 --bg" not in command_log
+                or config_after_apply.get("network_publication") != "tailscale_serve"
+                or config_after_apply.get("cookie_secure") is not True
+                or applied_url.get("private_url_ready") is not True
+                or applied_status.get("private_console_url") != "https://agentops-host.example.ts.net:8443/workspace"
+                or applied_status.get("private_url_ready") is not True
+            ):
                 failures.append("confirmed Tailscale apply did not persist Serve and trusted-Origin state")
             if any(value and value in apply_output for value in secret_values):
                 failures.append("Tailscale apply output exposed stored secret material")
+
+            env["AGENTOPS_TEST_TAILSCALE_DNS_NAME"] = "renamed-host.example.ts.net"
+            _code, drifted_status, _output = run_host(env, "status")
+            env.pop("AGENTOPS_TEST_TAILSCALE_DNS_NAME", None)
+            _code, stopped_after_apply, _output = run_host(env, "stop")
+            _code, stopped_status, _output = run_host(env, "status", expected=(1,))
+            _code, restarted_after_stop, _output = run_host(env, "start", "--no-workers")
+            _code, restarted, restart_output = run_host(env, "restart", "--no-workers")
+            evidence["published_lifecycle"] = {
+                "dns_drift_url": drifted_status.get("private_console_url"),
+                "dns_drift_ready": drifted_status.get("private_url_ready"),
+                "stopped": stopped_after_apply.get("ok"),
+                "stopped_ready": stopped_status.get("private_url_ready"),
+                "start_after_stop": restarted_after_stop.get("ok"),
+                "restart_ok": restarted.get("ok"),
+                "restart_operation": restarted.get("operation"),
+                "restart_stop_status": restarted.get("stop_status"),
+            }
+            if (
+                drifted_status.get("private_console_url") != "https://renamed-host.example.ts.net:8443/workspace"
+                or drifted_status.get("private_url_ready") is not False
+                or stopped_after_apply.get("ok") is not True
+                or stopped_status.get("private_url_ready") is not False
+                or restarted_after_stop.get("ok") is not True
+                or restarted.get("ok") is not True
+                or restarted.get("operation") != "host_restart"
+                or restarted.get("stop_status") != "stopped"
+                or any(value and value in restart_output for value in secret_values)
+            ):
+                failures.append("published Host status/restart lifecycle was inconsistent")
 
             _code, unconfirmed_revoke, _output = run_host(env, "tailscale-revoke", expected=(2,))
             if unconfirmed_revoke.get("error") != "confirmation_required":

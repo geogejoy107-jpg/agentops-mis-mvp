@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import secrets
@@ -20,6 +22,7 @@ STACK = ROOT / "scripts" / "run_local_stack.py"
 BACKUP_UTILITY = ROOT / "scripts" / "agentops_local_backup.py"
 DEFAULT_UI_DIST = ROOT / "ui" / "start-building-app" / "dist"
 MACOS_TAILSCALE_BIN = Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
+HOST_STOP_GRACE_SECONDS = 20
 
 
 def host_home() -> Path:
@@ -123,6 +126,10 @@ def tailscale_serve_state(binary: str | None, target: str, https_port: int = 443
         "target_matches": False,
         "conflict": False,
         "backend_count": 0,
+        "handler_count": 0,
+        "exclusive": False,
+        "public_funnel_enabled": False,
+        "unsupported_config": False,
         "https_port": https_port,
         "raw_config_omitted": True,
         "token_omitted": True,
@@ -151,24 +158,92 @@ def tailscale_serve_state(binary: str | None, target: str, https_port: int = 443
                 return [item for child in value for item in proxy_targets(child)]
             return []
 
-        web = payload.get("Web") or {}
-        selected_web = {
-            key: value
-            for key, value in web.items()
-            if str(key).rsplit(":", 1)[-1] == str(https_port)
-        }
-        tcp = payload.get("TCP") or {}
-        selected_tcp = {str(https_port): tcp[str(https_port)]} if str(https_port) in tcp else {}
-        selected = {"Web": selected_web, "TCP": selected_tcp}
-        targets = sorted(set(proxy_targets(selected)))
+        def port_matches(value) -> bool:
+            text = str(value)
+            return text == str(https_port) or text.rsplit(":", 1)[-1] == str(https_port)
+
+        selected_web: list[tuple[object, bool]] = []
+        selected_tcp: list[tuple[object, bool]] = []
+        funnel_selected = False
+
+        def collect_selected(value, *, service_wrapped: bool = False) -> None:
+            nonlocal funnel_selected
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if key == "Web" and isinstance(child, dict):
+                        selected_web.extend((item, service_wrapped) for origin, item in child.items() if port_matches(origin))
+                    elif key == "TCP" and isinstance(child, dict):
+                        selected_tcp.extend((item, service_wrapped) for port, item in child.items() if port_matches(port))
+                    elif key == "Services":
+                        collect_selected(child, service_wrapped=True)
+                    elif key == "AllowFunnel":
+                        if isinstance(child, dict):
+                            funnel_selected = funnel_selected or any(port_matches(port) and bool(flag) for port, flag in child.items())
+                        else:
+                            funnel_selected = funnel_selected or bool(child)
+                    elif service_wrapped:
+                        collect_selected(child, service_wrapped=True)
+            elif isinstance(value, list):
+                for child in value:
+                    collect_selected(child, service_wrapped=service_wrapped)
+
+        collect_selected(payload)
+
+        def funnel_enabled(value) -> bool:
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if key == "AllowFunnel":
+                        if isinstance(child, dict) and any(bool(flag) for flag in child.values()):
+                            return True
+                        if not isinstance(child, dict) and bool(child):
+                            return True
+                    if funnel_enabled(child):
+                        return True
+                return False
+            if isinstance(value, list):
+                return any(funnel_enabled(child) for child in value)
+            return False
+
+        selected_values = [value for value, _wrapped in selected_web + selected_tcp]
+        targets = sorted(set(proxy_targets(selected_values)))
         configured = bool(selected_web or selected_tcp or targets)
+        public_funnel_enabled = funnel_selected or any(funnel_enabled(value) for value in selected_values)
+        handler_count = sum(
+            len(value.get("Handlers") or {})
+            for value, _wrapped in selected_web
+            if isinstance(value, dict) and isinstance(value.get("Handlers"), dict)
+        )
+
+        def exclusive_web(value, wrapped: bool) -> bool:
+            if wrapped or not isinstance(value, dict) or set(value) - {"Handlers", "AllowFunnel"}:
+                return False
+            handlers = value.get("Handlers")
+            if not isinstance(handlers, dict) or set(handlers) != {"/"}:
+                return False
+            root_handler = handlers.get("/")
+            return isinstance(root_handler, dict) and set(root_handler) == {"Proxy"} and root_handler.get("Proxy") == target
+
+        def exclusive_tcp(value, wrapped: bool) -> bool:
+            return not wrapped and isinstance(value, dict) and set(value) == {"HTTPS"} and value.get("HTTPS") is True
+
+        exclusive = bool(
+            len(selected_web) == 1
+            and len(selected_tcp) == 1
+            and exclusive_web(*selected_web[0])
+            and exclusive_tcp(*selected_tcp[0])
+            and not public_funnel_enabled
+        )
         target_matches = target in targets
         result.update({
             "status_available": True,
             "configured": configured,
             "target_matches": target_matches,
-            "conflict": configured and (not target_matches or any(item != target for item in targets)),
+            "conflict": configured and not exclusive,
             "backend_count": len(targets),
+            "handler_count": handler_count,
+            "exclusive": exclusive,
+            "public_funnel_enabled": public_funnel_enabled,
+            "unsupported_config": configured and not exclusive and not public_funnel_enabled,
         })
     except (OSError, ValueError, subprocess.TimeoutExpired):
         pass
@@ -356,7 +431,26 @@ def cmd_status(_args) -> int:
     base_url = f"http://{config['host']}:{config['port']}"
     readiness = health(base_url) if running else {"reachable": False, "status": "stopped"}
     ts = tailscale_state()
-    private_url = f"https://{ts['dns_name']}/workspace" if ts["dns_name"] else ""
+    target = f"http://{config['host']}:{config['port']}"
+    https_port = int(config.get("tailscale_https_port") or 443)
+    binary, _source = tailscale_binary()
+    serve = tailscale_serve_state(binary, target, https_port)
+    publication_enabled = config.get("network_publication") == "tailscale_serve"
+    port_suffix = "" if https_port == 443 else f":{https_port}"
+    private_origin = f"https://{ts['dns_name']}{port_suffix}" if publication_enabled and ts["dns_name"] else ""
+    configured_origin = str(config.get("private_console_origin") or "").rstrip("/")
+    origin_matches_config = bool(private_origin and configured_origin == private_origin and private_origin in (config.get("allowed_origins") or []))
+    private_url = private_origin + "/workspace" if private_origin else ""
+    private_url_ready = bool(
+        private_url
+        and running
+        and readiness["reachable"]
+        and origin_matches_config
+        and ts["backend_state"] == "Running"
+        and serve["status_available"]
+        and serve["target_matches"]
+        and not serve["conflict"]
+    )
     emit({
         "ok": running and readiness["reachable"],
         "operation": "host_status",
@@ -365,6 +459,10 @@ def cmd_status(_args) -> int:
         "health": readiness,
         "local_console_url": base_url + "/workspace",
         "private_console_url": private_url,
+        "private_url_ready": private_url_ready,
+        "network_publication": config.get("network_publication", "disabled"),
+        "private_origin_matches_config": origin_matches_config,
+        "serve": serve,
         "tailscale": ts,
         "database_path": config["database_path"],
         "ui_dist": config["ui_dist"],
@@ -385,7 +483,7 @@ def cmd_stop(_args) -> int:
         os.killpg(pid, signal.SIGTERM)
     except OSError:
         os.kill(pid, signal.SIGTERM)
-    deadline = time.time() + 12
+    deadline = time.time() + HOST_STOP_GRACE_SECONDS
     while time.time() < deadline and process_alive(pid):
         time.sleep(0.2)
     if process_alive(pid):
@@ -397,8 +495,38 @@ def cmd_stop(_args) -> int:
 
 
 def cmd_restart(args) -> int:
-    cmd_stop(args)
-    return cmd_start(args)
+    stop_output = io.StringIO()
+    with contextlib.redirect_stdout(stop_output):
+        stop_code = cmd_stop(args)
+    try:
+        stop_result = json.loads(stop_output.getvalue())
+    except ValueError:
+        stop_result = {}
+    if stop_code != 0:
+        emit({
+            "ok": False,
+            "operation": "host_restart",
+            "error": "stop_failed",
+            "stop_status": stop_result.get("status", "unknown"),
+            "token_omitted": True,
+        })
+        return stop_code
+    if getattr(args, "foreground", False):
+        return cmd_start(args)
+    start_output = io.StringIO()
+    with contextlib.redirect_stdout(start_output):
+        start_code = cmd_start(args)
+    try:
+        start_result = json.loads(start_output.getvalue())
+    except ValueError:
+        start_result = {}
+    start_result.update({
+        "operation": "host_restart",
+        "stop_status": stop_result.get("status", "stopped"),
+        "token_omitted": True,
+    })
+    emit(start_result)
+    return start_code
 
 
 def cmd_doctor(_args) -> int:
@@ -726,7 +854,13 @@ def cmd_console_url(_args) -> int:
     binary, _source = tailscale_binary()
     serve = tailscale_serve_state(binary, target, https_port)
     local_url = f"http://{config['host']}:{config['port']}/workspace"
-    private_origin = f"https://{ts['dns_name']}{'' if https_port == 443 else f':{https_port}'}" if ts["dns_name"] else ""
+    publication_enabled = config.get("network_publication") == "tailscale_serve"
+    private_origin = f"https://{ts['dns_name']}{'' if https_port == 443 else f':{https_port}'}" if publication_enabled and ts["dns_name"] else ""
+    configured_origin = str(config.get("private_console_origin") or "").rstrip("/")
+    origin_matches_config = bool(private_origin and configured_origin == private_origin and private_origin in (config.get("allowed_origins") or []))
+    pid = int(read_json(paths()["pid"]).get("pid") or 0)
+    running = process_alive(pid)
+    readiness = health(target) if running else {"reachable": False, "status": "stopped"}
     private_url = private_origin + "/workspace" if private_origin else ""
     emit({
         "ok": True,
@@ -735,11 +869,16 @@ def cmd_console_url(_args) -> int:
         "private_console_url": private_url,
         "private_url_ready": bool(
             private_url
+            and running
+            and readiness["reachable"]
+            and origin_matches_config
             and ts["backend_state"] == "Running"
             and serve["status_available"]
             and serve["target_matches"]
             and not serve["conflict"]
         ),
+        "private_origin_matches_config": origin_matches_config,
+        "host_health": readiness,
         "serve": serve,
         "token_omitted": True,
     })
@@ -796,6 +935,13 @@ def cmd_tailscale_apply(args) -> int:
         return 2
     if not serve["status_available"]:
         preview.update({"error": "tailscale_serve_status_unavailable", "message": "Existing Tailscale Serve state could not be verified; no changes were made."})
+        emit(preview)
+        return 2
+    if serve["public_funnel_enabled"]:
+        preview.update({
+            "error": "tailscale_funnel_conflict",
+            "message": "The selected HTTPS port has Funnel enabled. Private Host will not replace or reuse a public route.",
+        })
         emit(preview)
         return 2
     if serve["conflict"] and not args.replace_existing_serve:
