@@ -71,7 +71,7 @@ def required(env=None) -> bool:
     if configured:
         return configured in {"1", "true", "yes", "on"}
     mode = str(env.get("AGENTOPS_DEPLOYMENT_MODE", "local")).strip().lower()
-    return mode in {"production", "prod", "shared", "hosted", "private_host"}
+    return mode == "private_host"
 
 
 def cookie_secure(env=None) -> bool:
