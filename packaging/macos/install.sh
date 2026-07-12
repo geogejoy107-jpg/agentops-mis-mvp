@@ -6,6 +6,16 @@ INSTALL_ROOT=${AGENTOPS_INSTALL_ROOT:-"$HOME/.local/share/agentops-mis"}
 BIN_DIR=${AGENTOPS_BIN_DIR:-"$HOME/.local/bin"}
 DATA_ROOT=${AGENTOPS_HOST_HOME:-"$HOME/.agentops/host"}
 
+if [ "$(uname -s)" != "Darwin" ] && [ "${AGENTOPS_BUNDLE_INSTALLER_TEST_MODE:-}" != "1" ]; then
+  echo "this unsigned Private Host bundle supports macOS only" >&2
+  exit 2
+fi
+python3 - <<'PY'
+import sys
+if sys.version_info < (3, 10):
+    raise SystemExit("Python 3.10+ is required")
+PY
+
 python3 - "$BUNDLE_DIR" "$INSTALL_ROOT" "$BIN_DIR" "$DATA_ROOT" <<'PY'
 import json
 import hashlib

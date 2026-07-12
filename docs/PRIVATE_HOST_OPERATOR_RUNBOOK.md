@@ -52,6 +52,23 @@ https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases
 `agentops host version` 是版本与提交 provenance 的权威来源；运行手册不
 硬编码“当前版本”，避免安装包内说明随下一次发布立即过期。
 
+推荐从同一 Release 下载 `install-agentops-mis-private-host.sh`，然后固定到
+明确 tag 执行。它会检查 macOS 与 Python 3.10+，通过 GitHub HTTPS 下载同
+版本 tar/checksum，程序化比较 SHA-256，拒绝不安全 archive member，调用
+bundle installer，并核对安装版本：
+
+```bash
+sh install-agentops-mis-private-host.sh \
+  --tag v1.6.0-private-host-preview.<N> \
+  --init \
+  --start
+```
+
+该入口不会创建 Owner、安装或启动 Hermes/OpenClaw、修改 Tailscale 或开放
+公网。`--init` 的 setup code 不会回显；下一步仍在 Host 本机交互执行
+`agentops host bootstrap-owner --confirm`。不加 `--init/--start` 时只完成
+校验安装。下面的手工下载和比较步骤保留为审计/故障排查回退路径。
+
 preview.2 已发布但随后被真实 Runtime dogfood 替代：安装版 Worker 能
 claim 任务，但 Agent Plan 在 `run_start` 前发现 archive 缺少
 `PROJECT_SPEC.md`、`AGENT_WORKFLOW.md`、`BASE_INDEX.md` 与
@@ -97,7 +114,7 @@ agentops-mis-private-host-<version>.tar.gz 或 .zip
 agentops-mis-private-host-<version>.sha256.json
 ```
 
-先在下载目录独立计算 archive 的 SHA-256，并与 JSON 中对应文件名的
+若不使用消费端安装器，先在下载目录独立计算 archive 的 SHA-256，并与 JSON 中对应文件名的
 值逐字比较。校验不一致时不得解压或执行安装器。以 macOS 自带命令为
 例：
 

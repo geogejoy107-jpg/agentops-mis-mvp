@@ -390,6 +390,16 @@ def cmd_init(args) -> int:
     }
     write_private_json(p["config"], config)
     write_private_json(p["secrets"], secret_values)
+    ui_ready = (Path(config["ui_dist"]) / "index.html").is_file()
+    next_actions = (
+        ["Run: agentops host start"]
+        if ui_ready
+        else [
+            "Build or provide the production UI bundle.",
+            "Run: agentops host start --build-ui",
+        ]
+    )
+    next_actions.append("After Host start, run: agentops host bootstrap-owner --confirm")
     emit({
         "ok": True,
         "operation": "host_init",
@@ -398,11 +408,7 @@ def cmd_init(args) -> int:
         "secrets_path": str(p["secrets"]),
         "owner_setup_code": owner_setup_code,
         "owner_setup_code_visible_once": True,
-        "next_actions": [
-            "Build or provide the production UI bundle.",
-            "Run: agentops host start --build-ui",
-            "Open the local console and create the first Owner.",
-        ],
+        "next_actions": next_actions,
         "token_omitted": True,
     })
     return 0

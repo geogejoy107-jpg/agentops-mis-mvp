@@ -177,11 +177,17 @@ def main() -> int:
                 "secrets_private": secrets_path.is_file() and (secrets_path.stat().st_mode & 0o077) == 0,
                 "setup_code_visible_once": initialized.get("owner_setup_code_visible_once"),
                 "loopback_cookie_secure": json.loads(config_path.read_text(encoding="utf-8")).get("cookie_secure"),
+                "next_actions": initialized.get("next_actions"),
             }
             if not evidence["init"]["config_private"] or not evidence["init"]["secrets_private"]:
                 failures.append("host config or secrets permissions were not private")
             if evidence["init"]["loopback_cookie_secure"] is not False:
                 failures.append("loopback Host incorrectly required a Secure-only browser cookie")
+            if (
+                "Run: agentops host start" not in (initialized.get("next_actions") or [])
+                or any("--build-ui" in action for action in (initialized.get("next_actions") or []))
+            ):
+                failures.append("prebuilt Host init did not give the dependency-free start action")
             _code, repeated, repeated_output = run_host(env, "init", expected=(2,))
             if repeated.get("error") != "already_initialized" or any(value and value in repeated_output for value in secret_values):
                 failures.append("repeated init did not fail closed without reprinting secrets")

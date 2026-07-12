@@ -100,10 +100,14 @@ def source_selection() -> list[str]:
     return sorted(selected)
 
 
-def copy_file(source: Path, target: Path, executable: bool = False) -> None:
+def copy_file(source: Path, target: Path, executable: bool = False, *, source_root: Path = ROOT) -> None:
+    resolved_source = source.resolve(strict=True)
+    resolved_root = source_root.resolve(strict=True)
+    if source.is_symlink() or resolved_root not in resolved_source.parents:
+        raise RuntimeError(f"release source escapes its declared root: {source}")
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, target)
-    mode = source.stat().st_mode
+    shutil.copyfile(resolved_source, target)
+    mode = resolved_source.stat().st_mode
     target.chmod((mode & 0o777) | (stat.S_IXUSR if executable else 0))
 
 
@@ -162,7 +166,7 @@ def build(output_dir: Path, ui_dist: Path, version: str) -> dict:
                 rel = safe_relative(source.relative_to(ui_dist).as_posix())
                 if is_forbidden(rel):
                     raise RuntimeError(f"forbidden file in UI dist: {rel}")
-                copy_file(source, payload / "ui" / "start-building-app" / "dist" / rel.as_posix())
+                copy_file(source, payload / "ui" / "start-building-app" / "dist" / rel.as_posix(), source_root=ui_dist)
         copy_file(ROOT / "packaging" / "macos" / "install.sh", root / "install.sh", executable=True)
         copy_file(ROOT / "packaging" / "macos" / "uninstall.sh", root / "uninstall.sh", executable=True)
 
@@ -192,14 +196,16 @@ def build(output_dir: Path, ui_dist: Path, version: str) -> dict:
         tar_tree(root, tar_path, bundle_name)
         zip_tree(root, zip_path, bundle_name)
 
-    checksums = {path.name: sha256(path) for path in (tar_path, zip_path)}
+    bootstrap_path = output_dir / "install-agentops-mis-private-host.sh"
+    copy_file(ROOT / "packaging" / "macos" / "install-private-host.sh", bootstrap_path, executable=True)
+    checksums = {path.name: sha256(path) for path in (tar_path, zip_path, bootstrap_path)}
     checksum_path = output_dir / f"{bundle_name}.sha256.json"
     checksum_path.write_text(json.dumps(checksums, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {
         "ok": True,
         "version": version,
         "git_commit": commit,
-        "artifacts": [str(tar_path), str(zip_path)],
+        "artifacts": [str(tar_path), str(zip_path), str(bootstrap_path)],
         "checksums": str(checksum_path),
         "file_count": manifest["file_count"],
     }

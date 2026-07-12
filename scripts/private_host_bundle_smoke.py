@@ -147,6 +147,7 @@ def main() -> int:
             "AGENTOPS_INSTALL_ROOT": str(install_root),
             "AGENTOPS_BIN_DIR": str(bin_dir),
             "AGENTOPS_HOST_HOME": str(host_data),
+            "AGENTOPS_BUNDLE_INSTALLER_TEST_MODE": "1",
         }
         tampered = temp / "tampered"
         shutil.copytree(bundle, tampered)
@@ -225,11 +226,16 @@ def main() -> int:
         initialized = run([str(bin_dir / "agentops"), "host", "init", "--port", str(free_port())], env=env)
         if initialized.returncode != 0:
             fail("installed agentops host init failed", initialized)
+        init_payload = json.loads(initialized.stdout)
+        if (
+            "Run: agentops host start" not in (init_payload.get("next_actions") or [])
+            or any("--build-ui" in action for action in (init_payload.get("next_actions") or []))
+        ):
+            fail("installed Host init advertised a repository UI build", initialized)
         doctor = run([str(bin_dir / "agentops"), "host", "doctor"], env=env)
         if doctor.returncode != 0 or not json.loads(doctor.stdout).get("ok"):
             fail("installed agentops host doctor failed", doctor)
 
-        init_payload = json.loads(initialized.stdout)
         config = json.loads((host_data / "config.json").read_text(encoding="utf-8"))
         base_url = f"http://127.0.0.1:{config['port']}"
         started = run([str(bin_dir / "agentops"), "host", "start", "--no-workers"], env=env)

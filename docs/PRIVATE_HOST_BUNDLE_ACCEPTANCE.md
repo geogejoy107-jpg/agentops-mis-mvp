@@ -24,6 +24,7 @@ Outputs:
 - `agentops-mis-private-host-<version>.tar.gz`;
 - `agentops-mis-private-host-<version>.zip`;
 - `agentops-mis-private-host-<version>.sha256.json`.
+- `install-agentops-mis-private-host.sh` release-consumer bootstrap.
 
 Generated archives and UI `dist` remain untracked.
 
@@ -40,6 +41,12 @@ Generated archives and UI `dist` remain untracked.
   platform, Python requirement, file sizes and SHA-256 for every payload and
   installer file.
 - Archive-level SHA-256 values are emitted separately.
+- The checksum manifest also covers the published release-consumer bootstrap.
+- The release-consumer bootstrap pins one explicit GitHub tag, verifies the
+  downloaded tar archive programmatically, rejects unsafe archive members,
+  installs the bundle, and verifies installed version provenance. Optional
+  `--init --start` remains loopback-only and does not create an Owner or enable
+  live Runtimes/Tailscale.
 - `.git`, `.env*`, DB/SQLite, token-named files, logs, caches, `node_modules`,
   `__pycache__`, `.agentops_runtime`, sample exports and local artifacts are
   excluded.
@@ -64,6 +71,7 @@ python3 -m py_compile \
   scripts/private_host_bundle_smoke.py
 bash -n packaging/macos/install.sh packaging/macos/uninstall.sh
 python3 scripts/private_host_bundle_smoke.py
+python3 scripts/private_host_release_consumer_smoke.py
 git diff --check
 ```
 
@@ -84,6 +92,9 @@ The smoke uses temporary build/output/HOME/install/data directories and proves:
 - installed SBOM, third-party notices, provenance and operator runbook;
 - uninstall removes product files;
 - uninstall preserves a pre-existing user-data sentinel.
+- a clean isolated HOME consumes release-shaped assets without a repository,
+  verifies checksum/provenance, initializes and starts the Host, exposes the
+  Owner bootstrap action, and stops cleanly.
 
 No generated archive, DB, credential, log, cache, dependency directory, real
 Runtime call or network publication is committed or retained by the smoke.
@@ -94,15 +105,15 @@ Runtime call or network publication is committed or retained by the smoke.
   `.dmg` UX are not complete.
 - Target Mac must already provide Python 3.10 or newer.
 - Tailscale and Hermes/OpenClaw remain explicit Host-side prerequisites.
-- `.github/workflows/private-host-release.yml` can manually publish an existing
-  exact-commit tag as a prerelease after rebuilding and re-running bundle smoke;
-  no private Host preview release has yet been published from this branch.
+- `.github/workflows/private-host-release.yml` manually publishes an existing
+  exact-commit tag as a prerelease after rebuilding and re-running bundle and
+  consumer smokes. It then downloads the published bootstrap and performs a
+  clean-HOME install/init/start/status/stop gate against the real Release.
 - Binary upgrade/rollback is covered for two bundles using the same schema;
   incompatible future schema changes still require a dedicated downgrade path.
 - A real second Mac download/install/private-console acceptance remains pending.
 
 ## Next Slice
 
-Add a tag/manual GitHub Release workflow that builds the UI and bundle, reruns
-the bundle smoke, uploads archives/checksums with exact-commit provenance, and
-keeps publication manual until signing/notarization policy is decided.
+Complete the same download/install receipt on another physical Mac, then add
+Apple signing/notarization only after the unsigned preview workflow is stable.
