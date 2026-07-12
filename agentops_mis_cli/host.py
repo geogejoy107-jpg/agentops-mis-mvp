@@ -464,6 +464,176 @@ def cmd_restore(args) -> int:
     return status
 
 
+def install_state() -> dict:
+    configured = os.environ.get("AGENTOPS_INSTALL_ROOT")
+    install_root = Path(configured).expanduser().resolve() if configured else (
+        ROOT.parent.parent if ROOT.parent.name == "versions" else ROOT
+    )
+    current = install_root / "current"
+    previous = install_root / "previous"
+
+    def release(link: Path) -> dict:
+        if not link.is_symlink():
+            return {}
+        target = link.resolve()
+        versions = (install_root / "versions").resolve()
+        if versions not in target.parents or not target.is_dir():
+            return {}
+        manifest = read_json(target / "release-manifest.json")
+        if not manifest:
+            return {}
+        return {
+            "version": manifest.get("version"),
+            "git_commit": manifest.get("git_commit"),
+            "target": str(target),
+        }
+
+    return {
+        "install_root": install_root,
+        "current_link": current,
+        "previous_link": previous,
+        "current": release(current),
+        "previous": release(previous),
+    }
+
+
+def cmd_version(_args) -> int:
+    state = install_state()
+    current = state["current"]
+    emit({
+        "ok": bool(current),
+        "operation": "host_version",
+        "packaged_install": bool(current),
+        "version": current.get("version") or "development",
+        "git_commit": current.get("git_commit"),
+        "previous_version": state["previous"].get("version"),
+        "token_omitted": True,
+    })
+    return 0
+
+
+def cmd_update(args) -> int:
+    state = install_state()
+    current = state["current"]
+    if not args.check:
+        emit({
+            "ok": False,
+            "operation": "host_update",
+            "error": "check_required",
+            "message": "Use --check for the side-effect-free update status command.",
+            "token_omitted": True,
+        })
+        return 2
+    emit({
+        "ok": bool(current),
+        "operation": "host_update_check",
+        "check_only": True,
+        "network_used": False,
+        "current_version": current.get("version") or "development",
+        "current_git_commit": current.get("git_commit"),
+        "previous_version": state["previous"].get("version"),
+        "update_available": "unknown",
+        "next_action": "Install a newer verified release bundle while the Host is stopped.",
+        "token_omitted": True,
+    })
+    return 0 if current else 1
+
+
+def cmd_rollback(args) -> int:
+    config, _secret_values = require_initialized()
+    p = paths()
+    pid = int(read_json(p["pid"]).get("pid") or 0)
+    if process_alive(pid):
+        emit({
+            "ok": False,
+            "operation": "host_rollback",
+            "error": "host_running",
+            "next_action": "agentops host stop",
+            "token_omitted": True,
+        })
+        return 2
+    state = install_state()
+    current = state["current"]
+    previous = state["previous"]
+    if not current or not previous:
+        emit({
+            "ok": False,
+            "operation": "host_rollback",
+            "error": "previous_version_unavailable",
+            "token_omitted": True,
+        })
+        return 2
+    if not args.confirm_rollback:
+        emit({
+            "ok": False,
+            "operation": "host_rollback",
+            "dry_run": True,
+            "error": "confirm_rollback_required",
+            "from_version": current.get("version"),
+            "to_version": previous.get("version"),
+            "token_omitted": True,
+        })
+        return 2
+    p["backups"].mkdir(parents=True, exist_ok=True, mode=0o700)
+    backup, backup_status = run_backup_utility(
+        "create",
+        "--db-path",
+        config["database_path"],
+        "--backup-dir",
+        str(p["backups"]),
+    )
+    if backup_status != 0 or not backup.get("ok"):
+        emit({
+            "ok": False,
+            "operation": "host_rollback",
+            "error": "pre_rollback_backup_failed",
+            "token_omitted": True,
+        })
+        return 1
+    for key in ("backup_path", "manifest_path"):
+        value = backup.get(key)
+        if value and Path(str(value)).is_file():
+            Path(str(value)).chmod(0o600)
+
+    current_link = state["current_link"]
+    previous_link = state["previous_link"]
+    next_current = current_link.with_name("current.next")
+    next_previous = previous_link.with_name("previous.next")
+    for temporary in (next_current, next_previous):
+        temporary.unlink(missing_ok=True)
+    next_current.symlink_to(previous["target"])
+    next_previous.symlink_to(current["target"])
+    os.replace(next_current, current_link)
+    try:
+        os.replace(next_previous, previous_link)
+    except OSError:
+        recovery = current_link.with_name("current.recovery")
+        recovery.unlink(missing_ok=True)
+        recovery.symlink_to(current["target"])
+        os.replace(recovery, current_link)
+        next_previous.unlink(missing_ok=True)
+        emit({
+            "ok": False,
+            "operation": "host_rollback",
+            "error": "binary_pointer_swap_failed",
+            "current_version_preserved": True,
+            "token_omitted": True,
+        })
+        return 1
+    emit({
+        "ok": True,
+        "operation": "host_rollback",
+        "from_version": current.get("version"),
+        "to_version": previous.get("version"),
+        "pre_rollback_backup_path": backup.get("backup_path"),
+        "data_path_unchanged": True,
+        "restart_required": True,
+        "next_action": "agentops host start",
+        "token_omitted": True,
+    })
+    return 0
+
+
 def cmd_console_url(_args) -> int:
     config, _secret_values = require_initialized()
     ts = tailscale_state()
@@ -625,6 +795,14 @@ def build_parser() -> argparse.ArgumentParser:
     restore.add_argument("--backup", required=True)
     restore.add_argument("--confirm-restore", action="store_true")
     restore.set_defaults(handler=cmd_restore)
+    version = sub.add_parser("version", help="Show packaged release provenance without contacting the network.")
+    version.set_defaults(handler=cmd_version)
+    update = sub.add_parser("update", help="Check local packaged update state without installing anything.")
+    update.add_argument("--check", action="store_true")
+    update.set_defaults(handler=cmd_update)
+    rollback = sub.add_parser("rollback", help="Switch to the previous verified binary after a local ledger backup.")
+    rollback.add_argument("--confirm-rollback", action="store_true")
+    rollback.set_defaults(handler=cmd_rollback)
     console_url = sub.add_parser("console-url", help="Show local and private console URLs.")
     console_url.set_defaults(handler=cmd_console_url)
     preview = sub.add_parser("tailscale-preview", help="Preview Tailscale Serve and revoke commands without executing them.")

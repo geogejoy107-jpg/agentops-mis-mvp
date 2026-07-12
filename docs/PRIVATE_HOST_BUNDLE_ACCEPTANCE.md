@@ -47,6 +47,8 @@ Generated archives and UI `dist` remain untracked.
   `~/.local/bin/agentops`.
 - Versioned payloads live below `versions/<version>` and `current` points to the
   active version.
+- A verified update stages the new version, preserves the prior version through
+  `previous`, and refuses to run while the managed Host PID is alive.
 - Uninstall removes product files and shim but preserves `~/.agentops/host`
   user data unless `AGENTOPS_PURGE_DATA=true` is explicitly set.
 - Installer does not use the network or install Hermes, OpenClaw, Tailscale,
@@ -71,6 +73,10 @@ The smoke uses temporary build/output/HOME/install/data directories and proves:
 - offline install and CLI shim creation;
 - installed `agentops host --help`;
 - installed `agentops host init` and `agentops host doctor`;
+- two versioned bundles upgrade and roll back through `current`/`previous`;
+- rollback requires confirmation and creates a verified ledger backup;
+- upgrade creates a verified ledger backup before switching binaries;
+- Host ledger and user data survive the binary switch;
 - production UI presence in the installed current version;
 - uninstall removes product files;
 - uninstall preserves a pre-existing user-data sentinel.
@@ -87,8 +93,8 @@ Runtime call or network publication is committed or retained by the smoke.
 - `.github/workflows/private-host-release.yml` can manually publish an existing
   exact-commit tag as a prerelease after rebuilding and re-running bundle smoke;
   no private Host preview release has yet been published from this branch.
-- Upgrade migration/rollback across multiple real versions still needs a
-  dedicated acceptance run.
+- Binary upgrade/rollback is covered for two bundles using the same schema;
+  incompatible future schema changes still require a dedicated downgrade path.
 - A real second Mac download/install/private-console acceptance remains pending.
 
 ## Next Slice

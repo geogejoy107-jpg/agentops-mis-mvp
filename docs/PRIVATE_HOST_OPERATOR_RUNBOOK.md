@@ -202,6 +202,28 @@ agentops host start
 
 这一版只证明 SQLite 权威账本的产品命令闭环。Host 外部项目目录或未来可变 Markdown 知识源仍需要单独的目录级备份策略，不能把本命令宣传成整机灾备。
 
+### 6.2 版本升级与二进制回滚
+
+先停止 Host 并检查当前版本：
+
+```bash
+agentops host stop
+agentops host version
+agentops host update --check
+```
+
+`update --check` 是离线只读检查，不会访问 GitHub 或自动下载。管理员下载并校验更高版本的 bundle 后，运行该 bundle 自带的 `install.sh`。安装器在 Host PID 存活时拒绝升级；如已有账本，会先用旧版本工具创建并校验 pre-update 备份，失败则拒绝升级。随后将新版本写入临时目录，原子切换 `current`，并保留 `previous` 指针；`~/.agentops/host` 数据目录不随程序版本移动。
+
+如新版本启动验收失败，保持 Host 停止并执行：
+
+```bash
+agentops host rollback
+agentops host rollback --confirm-rollback
+agentops host start
+```
+
+第一条只显示 dry-run。确认回滚前，CLI 会先创建并校验当前 SQLite 账本备份，再原子交换 `current`/`previous` 二进制指针。当前版本尚无自动 schema downgrade；如果未来版本引入不向后兼容的数据库迁移，必须在 Release 级迁移策略中增加对应 downgrade 或数据恢复步骤，不能只靠切换二进制。
+
 ## 7. 录屏建议
 
 建议录制 4 至 6 分钟的连续闭环，而不是逐页浏览 Dashboard：

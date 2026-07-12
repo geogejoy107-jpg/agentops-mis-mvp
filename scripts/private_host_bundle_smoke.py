@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import tarfile
@@ -54,6 +55,20 @@ def forbidden(path: str) -> bool:
     )
 
 
+def extract_bundle(tar_path: Path, destination: Path) -> Path:
+    destination.mkdir()
+    with tarfile.open(tar_path, "r:gz") as archive:
+        members = archive.getmembers()
+        for member in members:
+            if member.issym() or member.islnk() or forbidden(member.name):
+                fail(f"forbidden archive member: {member.name}")
+            target = (destination / member.name).resolve()
+            if destination.resolve() not in target.parents and target != destination.resolve():
+                fail(f"archive traversal path: {member.name}")
+        archive.extractall(destination, filter="data")
+    return next(destination.iterdir())
+
+
 def main() -> int:
     ui = ROOT / "ui" / "start-building-app" / "dist" / "index.html"
     if not ui.is_file():
@@ -84,19 +99,7 @@ def main() -> int:
                 if zip_root not in target.parents and target != zip_root:
                     fail(f"zip traversal path: {info.filename}")
 
-        extract = temp / "extract"
-        extract.mkdir()
-        with tarfile.open(tar_path, "r:gz") as archive:
-            members = archive.getmembers()
-            for member in members:
-                if member.issym() or member.islnk() or forbidden(member.name):
-                    fail(f"forbidden archive member: {member.name}")
-                target = (extract / member.name).resolve()
-                if extract.resolve() not in target.parents and target != extract.resolve():
-                    fail(f"archive traversal path: {member.name}")
-            archive.extractall(extract, filter="data")
-
-        bundle = next(extract.iterdir())
+        bundle = extract_bundle(tar_path, temp / "extract")
         manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
         if manifest["version"] != version or manifest["git_commit"] != subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip():
             fail("manifest version or commit mismatch")
@@ -146,7 +149,63 @@ def main() -> int:
         if doctor.returncode != 0 or not json.loads(doctor.stdout).get("ok"):
             fail("installed agentops host doctor failed", doctor)
 
-        uninstalled = run(["sh", str(bundle / "uninstall.sh")], env=env)
+        config = json.loads((host_data / "config.json").read_text(encoding="utf-8"))
+        database = Path(config["database_path"])
+        with sqlite3.connect(database) as conn:
+            conn.execute("CREATE TABLE product_upgrade_smoke(marker TEXT PRIMARY KEY)")
+            conn.execute("INSERT INTO product_upgrade_smoke VALUES('preserved-across-binary-switch')")
+
+        version_two = "0.0.1-smoke"
+        output_two = temp / "out-two"
+        built_two = run([sys.executable, str(BUILDER), "--output-dir", str(output_two), "--version", version_two])
+        if built_two.returncode != 0:
+            fail("second bundle build failed", built_two)
+        build_two_result = json.loads(built_two.stdout)
+        tar_two = next(Path(path) for path in build_two_result["artifacts"] if path.endswith(".tar.gz"))
+        bundle_two = extract_bundle(tar_two, temp / "extract-two")
+
+        pid_path = host_data / "run" / "host.pid.json"
+        pid_path.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+        running_rejected = run(["sh", str(bundle_two / "install.sh")], env=env)
+        pid_path.unlink()
+        if running_rejected.returncode == 0 or (install_root / "versions" / version_two).exists():
+            fail("installer did not reject an update while the managed Host PID was alive", running_rejected)
+
+        upgraded = run(["sh", str(bundle_two / "install.sh")], env=env)
+        if upgraded.returncode != 0:
+            fail("second bundle install failed", upgraded)
+        upgraded_payload = json.loads(upgraded.stdout)
+        if upgraded_payload.get("previous_version") != version:
+            fail("upgrade did not retain the previous version pointer", upgraded)
+        if not Path(str(upgraded_payload.get("pre_update_backup_path") or "")).is_file():
+            fail("upgrade did not create a verified pre-update ledger backup", upgraded)
+        version_status = run([str(bin_dir / "agentops"), "host", "version"], env=env)
+        version_payload = json.loads(version_status.stdout)
+        if version_status.returncode != 0 or version_payload.get("version") != version_two or version_payload.get("previous_version") != version:
+            fail("installed version provenance is incorrect after upgrade", version_status)
+        update_check = run([str(bin_dir / "agentops"), "host", "update", "--check"], env=env)
+        if update_check.returncode != 0 or json.loads(update_check.stdout).get("check_only") is not True:
+            fail("side-effect-free update check failed", update_check)
+
+        rollback_dry = run([str(bin_dir / "agentops"), "host", "rollback"], env=env)
+        if rollback_dry.returncode != 2 or json.loads(rollback_dry.stdout).get("dry_run") is not True:
+            fail("binary rollback did not require explicit confirmation", rollback_dry)
+        rolled_back = run([str(bin_dir / "agentops"), "host", "rollback", "--confirm-rollback"], env=env)
+        if rolled_back.returncode != 0:
+            fail("binary rollback failed", rolled_back)
+        rollback_payload = json.loads(rolled_back.stdout)
+        if rollback_payload.get("to_version") != version or not Path(str(rollback_payload.get("pre_rollback_backup_path") or "")).is_file():
+            fail("binary rollback lacked target version or verified pre-rollback backup", rolled_back)
+        rolled_back_status = run([str(bin_dir / "agentops"), "host", "version"], env=env)
+        rolled_back_payload = json.loads(rolled_back_status.stdout)
+        if rolled_back_payload.get("version") != version or rolled_back_payload.get("previous_version") != version_two:
+            fail("rollback did not atomically swap current and previous versions", rolled_back_status)
+        with sqlite3.connect(database) as conn:
+            marker = conn.execute("SELECT marker FROM product_upgrade_smoke").fetchone()
+        if not marker or marker[0] != "preserved-across-binary-switch" or not sentinel.is_file():
+            fail("upgrade or rollback changed Host product data")
+
+        uninstalled = run(["sh", str(bundle_two / "uninstall.sh")], env=env)
         if uninstalled.returncode != 0:
             fail("bundle uninstall failed", uninstalled)
         if install_root.exists() or (bin_dir / "agentops").exists():
@@ -163,6 +222,11 @@ def main() -> int:
             "installed_host_help": "passed",
             "installed_backup_restore_commands": "passed",
             "installed_host_init_and_doctor": "passed",
+            "running_host_update_rejected": True,
+            "two_version_upgrade_and_rollback": "passed",
+            "pre_rollback_backup": "passed",
+            "pre_update_backup": "passed",
+            "upgrade_data_preserved": True,
             "uninstall_preserved_user_data": True,
             "network_used": False,
         }, indent=2, sort_keys=True))
