@@ -57,6 +57,7 @@ jobs:
           timeout 120s python3 scripts/sqlite_reliability_smoke.py
           timeout 120s python3 scripts/sqlite_concurrency_smoke.py
           timeout 120s python3 scripts/migration_rollback_smoke.py
+          timeout 120s python3 scripts/run_local_stack_smoke.py
           timeout 120s python3 scripts/release_branch_control_smoke.py
           timeout 120s python3 scripts/release_freeze_protocol_smoke.py
           timeout 120s python3 scripts/github_ci_evidence_smoke.py
@@ -67,6 +68,7 @@ jobs:
           timeout 120s python3 scripts/enrollment_hosted_policy_ui_smoke.py
           timeout 120s python3 scripts/agent_gateway_scope_effects_ui_smoke.py
           timeout 120s python3 scripts/runtime_connector_trust_ui_smoke.py
+          timeout 120s python3 scripts/hermes_http_error_redaction_smoke.py
           timeout 120s python3 scripts/customer_worker_hermes_retry_gateway_smoke.py
           timeout 120s python3 scripts/module_boundary_smoke.py
           timeout 120s python3 scripts/read_model_cache_smoke.py

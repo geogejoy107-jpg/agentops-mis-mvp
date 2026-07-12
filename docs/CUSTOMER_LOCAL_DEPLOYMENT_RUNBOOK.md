@@ -26,6 +26,23 @@ python3 -m pip install .
 python3 scripts/run_local_stack.py --install-ui
 ```
 
+The default command starts the backend, the UI, and one safe mock worker. To
+start the two real local adapters in the same foreground-managed stack, use:
+
+```bash
+python3 scripts/run_local_stack.py \
+  --worker hermes \
+  --worker openclaw \
+  --confirm-live-workers \
+  --configure-cli
+```
+
+`--confirm-live-workers` is mandatory for Hermes/OpenClaw. Without it the
+command fails before starting any process. `--configure-cli` is separate and
+explicit so ordinary stack startup never overwrites the operator's saved CLI
+target. For reboot-persistent OS services, use the launchd/systemd install and
+control flow in `docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md`.
+
 Open:
 
 ```text
@@ -197,6 +214,7 @@ print table rows, prompts, raw responses, or token material.
 
 ```bash
 python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py
+python3 scripts/run_local_stack_smoke.py
 python3 scripts/agentops_local_backup_smoke.py
 python3 scripts/enrollment_policy_preview_smoke.py
 python3 scripts/agentops_worker_restart_smoke.py
@@ -208,6 +226,8 @@ cd ui/start-building-app && npm run build
 Expected state:
 
 - `demo_ready=true`.
+- One-command stack smoke starts an isolated backend plus mock worker, leaves
+  the user CLI config untouched, and fails closed before unconfirmed live workers.
 - Local product acceptance passes without live execution.
 - Backup smoke creates and restores an isolated temp DB only.
 - UI `/workspace/agents` shows readiness, customer dispatch, fleet hygiene,

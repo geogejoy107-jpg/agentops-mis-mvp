@@ -554,6 +554,21 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             target_resource=gateway_url.rstrip("/") + "/v1/chat/completions",
             retryable=not bool(visible),
         )
+    except HTTPError as exc:
+        error_body = exc.read()
+        status = int(exc.code or 0)
+        return AdapterResult(
+            ok=False,
+            output_summary=f"Hermes gateway returned HTTP {status}.",
+            prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
+            raw_payload_hash=hashlib.sha256(error_body).hexdigest(),
+            error_type=f"HermesHTTP{status}",
+            error_message=f"Hermes gateway returned HTTP {status}; response body omitted.",
+            duration_ms=int((time.time() - started) * 1000),
+            target_resource=gateway_url.rstrip("/") + "/v1/chat/completions",
+            retryable=status in {408, 409, 425, 429} or status >= 500,
+        )
     except Exception as exc:
         return AdapterResult(
             ok=False,

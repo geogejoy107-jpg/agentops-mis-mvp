@@ -60,6 +60,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "run_local_stack",
+        "command": "python3 scripts/run_local_stack_smoke.py",
+        "summary": "One-command local stack starts an isolated backend and safe worker, preserves user CLI config, and fails closed before unconfirmed Hermes/OpenClaw workers.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "release_evidence_packet",
         "command": "python3 scripts/release_evidence_packet_smoke.py",
         "summary": "Runtime RC SHA, CI link/status, canonical test list and release-packet boundaries.",
@@ -122,6 +128,12 @@ TEST_COMMANDS = [
         "summary": "Read-only manual live ledger proof that fresh Hermes/OpenClaw customer-worker runs have full run/tool/eval/runtime/audit/artifact/memory/approval/plan-evidence coverage.",
         "ci_step": "manual-live-local",
         "manual_only": True,
+    },
+    {
+        "id": "hermes_http_error_redaction",
+        "command": "python3 scripts/hermes_http_error_redaction_smoke.py",
+        "summary": "Loopback failure smoke proving Hermes HTTP status and body hash remain diagnosable while the upstream response body stays omitted.",
+        "ci_step": "Offline safety smokes",
     },
     {
         "id": "customer_worker_hermes_retry_gateway",
