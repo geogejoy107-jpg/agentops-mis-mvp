@@ -90,7 +90,8 @@ Verified behavior:
 
 - Only first-Owner bootstrap and login/logout are exposed; invitation, account
   creation, disable, role change and session/device revocation UI are pending.
-- CSRF is implemented; explicit allowed-Origin validation is still pending.
+- State-changing requests, bootstrap, login and logout enforce the configured
+  Origin allowlist; missing or untrusted origins fail closed when configured.
 - Host-sensitive routes currently require Owner but still need a stricter
   direct-host/proxy policy before broad remote use.
 - Login throttling and password reset/recovery are pending.

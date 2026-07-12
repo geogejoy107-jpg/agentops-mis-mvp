@@ -50,6 +50,22 @@ def main() -> int:
         (ui_dist / "index.html").write_text("<!doctype html><div id='root'>HOST_FIXTURE</div>\n", encoding="utf-8")
         env = os.environ.copy()
         env["AGENTOPS_HOST_HOME"] = str(host_home)
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        tailscale_log = tmp_path / "tailscale-commands.log"
+        fake_tailscale = fake_bin / "tailscale"
+        fake_tailscale.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = status ]; then\n"
+            "  printf '%s\\n' '{\"BackendState\":\"Running\",\"Self\":{\"DNSName\":\"agentops-host.example.ts.net.\"}}'\n"
+            "  exit 0\n"
+            "fi\n"
+            f"printf '%s\\n' \"$*\" >> {tailscale_log}\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        fake_tailscale.chmod(0o700)
+        env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
         port = free_port()
         secret_values: list[str] = []
         try:
@@ -109,6 +125,40 @@ def main() -> int:
                 failures.append("Tailscale path was not preview-only and Funnel-disabled")
             if any(value and value in preview_output for value in secret_values):
                 failures.append("Tailscale preview output exposed stored secret material")
+
+            _code, unconfirmed_apply, _output = run_host(env, "tailscale-apply", expected=(2,))
+            if unconfirmed_apply.get("error") != "confirmation_required" or tailscale_log.exists():
+                failures.append("unconfirmed Tailscale apply did not remain side-effect free")
+            _code, applied, apply_output = run_host(env, "tailscale-apply", "--confirm")
+            config_after_apply = json.loads(config_path.read_text(encoding="utf-8"))
+            evidence["tailscale_apply"] = {
+                "ok": applied.get("ok"),
+                "network_publication": config_after_apply.get("network_publication"),
+                "trusted_origin_added": "https://agentops-host.example.ts.net" in (config_after_apply.get("allowed_origins") or []),
+                "restart_required": applied.get("restart_required"),
+            }
+            command_log = tailscale_log.read_text(encoding="utf-8") if tailscale_log.exists() else ""
+            if "serve --bg" not in command_log or config_after_apply.get("network_publication") != "tailscale_serve":
+                failures.append("confirmed Tailscale apply did not persist Serve and trusted-Origin state")
+            if any(value and value in apply_output for value in secret_values):
+                failures.append("Tailscale apply output exposed stored secret material")
+
+            _code, unconfirmed_revoke, _output = run_host(env, "tailscale-revoke", expected=(2,))
+            if unconfirmed_revoke.get("error") != "confirmation_required":
+                failures.append("unconfirmed Tailscale revoke did not fail closed")
+            _code, revoked, revoke_output = run_host(env, "tailscale-revoke", "--confirm")
+            config_after_revoke = json.loads(config_path.read_text(encoding="utf-8"))
+            evidence["tailscale_revoke"] = {
+                "ok": revoked.get("ok"),
+                "network_publication": config_after_revoke.get("network_publication"),
+                "private_origin_removed": "https://agentops-host.example.ts.net" not in (config_after_revoke.get("allowed_origins") or []),
+                "restart_required": revoked.get("restart_required"),
+            }
+            command_log = tailscale_log.read_text(encoding="utf-8") if tailscale_log.exists() else ""
+            if "serve reset" not in command_log or config_after_revoke.get("network_publication") != "disabled":
+                failures.append("confirmed Tailscale revoke did not reset Serve and trusted-Origin state")
+            if any(value and value in revoke_output for value in secret_values):
+                failures.append("Tailscale revoke output exposed stored secret material")
         except (OSError, ValueError, RuntimeError) as exc:
             failures.append(f"lifecycle exception: {type(exc).__name__}: {str(exc)[:180]}")
         finally:

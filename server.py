@@ -30665,12 +30665,20 @@ class Handler(BaseHTTPRequestHandler):
     def handle_post_api(self, path, body):
         with db() as conn:
             if path == "/api/human-auth/bootstrap":
+                origin_error = human_auth.origin_error(self.headers)
+                if origin_error:
+                    payload, status = origin_error
+                    return self.send_json(payload, status)
                 payload, status, token, event = human_auth.bootstrap_owner(conn, body)
                 audit(conn, "user", event.get("account_id"), f"human_auth.{event['event']}", "human_accounts", event.get("account_id") or "bootstrap", None, {"status": status}, {"credentials_omitted": True})
                 conn.commit()
                 response_headers = {"Set-Cookie": human_auth.session_cookie(token)} if token else None
                 return self.send_json(payload, status, headers=response_headers)
             if path == "/api/human-auth/login":
+                origin_error = human_auth.origin_error(self.headers)
+                if origin_error:
+                    payload, status = origin_error
+                    return self.send_json(payload, status)
                 payload, status, token, event = human_auth.login(conn, body)
                 audit(conn, "user", event.get("account_id"), f"human_auth.{event['event']}", "human_sessions", event.get("session_id") or "login", None, {"status": status}, {"credentials_omitted": True, "username_hash": event.get("username_hash")})
                 conn.commit()

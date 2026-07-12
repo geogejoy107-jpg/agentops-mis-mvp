@@ -111,6 +111,7 @@ agentops host start --build-ui
 agentops host status
 agentops host doctor
 agentops host tailscale-preview
+agentops host tailscale-apply --confirm
 ```
 
 `host init` 只在首次运行时显示 Owner 设置码，并把配置、机器 API key 与
@@ -132,8 +133,10 @@ agentops host restart
 agentops host stop
 ```
 
-`tailscale-preview` 仅输出当前机器的 Serve/撤销命令，不会执行网络变更，
-不会启用 Funnel，也不会开放公网。第二台电脑的完整流程见
+`tailscale-preview` 仅输出当前机器的 Serve/撤销命令，不会执行网络变更。
+审查后必须显式运行 `tailscale-apply --confirm` 才会配置 tailnet 内 HTTPS
+Serve，并把对应 HTTPS Origin 写入私有 Host 配置；它不会启用 Funnel 或开放
+公网。撤销使用 `agentops host tailscale-revoke --confirm`。第二台电脑的完整流程见
 `docs/PRIVATE_HOST_OPERATOR_RUNBOOK.md`；正式远程可用声明仍需第二设备、
 trusted Origin、版本化安装资产和真实 Runtime 验收。
 

@@ -82,6 +82,29 @@ def cookie_secure(env=None) -> bool:
     return required(env)
 
 
+def allowed_origins(env=None) -> list[str]:
+    env = env or os.environ
+    return sorted({
+        item.strip().rstrip("/")
+        for item in str(env.get("AGENTOPS_ALLOWED_ORIGINS", "")).split(",")
+        if item.strip()
+    })
+
+
+def origin_error(headers) -> tuple[dict, int] | None:
+    allowed = allowed_origins()
+    if not allowed:
+        return None
+    supplied = (headers.get("Origin") or "").strip().rstrip("/")
+    if supplied in allowed:
+        return None
+    return {
+        "error": "origin_validation_failed",
+        "message": "The browser Origin is not allowed for this Host.",
+        "origin_omitted": True,
+    }, 403
+
+
 def account_public(row) -> dict:
     return {
         "account_id": row["account_id"],
@@ -195,6 +218,9 @@ def request_auth(conn, headers, path: str, method: str) -> tuple[dict | None, tu
             "current_role": context["role"],
         }, 403)
     if method in {"POST", "PATCH", "PUT", "DELETE"}:
+        invalid_origin = origin_error(headers)
+        if invalid_origin:
+            return None, invalid_origin
         supplied = (headers.get("X-AgentOps-CSRF") or "").strip()
         expected = csrf_token(context["session_token"])
         if not supplied or not hmac.compare_digest(supplied, expected):
@@ -299,6 +325,10 @@ def login(conn, body) -> tuple[dict, int, str | None, dict]:
 
 
 def logout(conn, headers) -> tuple[dict, int, dict]:
+    invalid_origin = origin_error(headers)
+    if invalid_origin:
+        payload, status = invalid_origin
+        return payload, status, {"event": "logout_failed"}
     context, error = auth_context(conn, headers, touch=False)
     if error:
         return error, 401, {"event": "logout_failed"}

@@ -54,6 +54,7 @@ def main() -> int:
                 "AGENTOPS_API_KEY": "fixture-machine-key",
                 "AGENTOPS_ADMIN_KEY": "fixture-admin-key",
                 "AGENTOPS_OWNER_SETUP_CODE": "fixture-owner-setup-code",
+                "AGENTOPS_ALLOWED_ORIGINS": base_url,
                 "HERMES_ALLOW_REAL_RUN": "false",
             }
         )
@@ -111,6 +112,7 @@ def main() -> int:
                 base_url + "/api/human-auth/bootstrap",
                 method="POST",
                 body={"setup_code": "wrong-fixture", "username": "owner", "password": "fixture-password-value"},
+                headers={"Origin": base_url},
             )
             if status != 401 or payload.get("error") != "invalid_setup_code":
                 failures.append("invalid owner setup code was not rejected")
@@ -125,6 +127,7 @@ def main() -> int:
                     "display_name": "Local Owner",
                     "password": "fixture-password-value",
                 },
+                headers={"Origin": base_url},
             )
             csrf_token = str(payload.get("csrf_token") or "")
             set_cookie = response_headers.get("Set-Cookie", "")
@@ -137,6 +140,17 @@ def main() -> int:
             }
             if status != 201 or not csrf_token or "HttpOnly" not in set_cookie or "SameSite=Strict" not in set_cookie:
                 failures.append("owner bootstrap did not create the expected secure browser session")
+
+            status, _headers, payload = request_json(
+                browser,
+                base_url + "/api/human-auth/login",
+                method="POST",
+                body={"username": "owner", "password": "fixture-password-value"},
+                headers={"Origin": "https://untrusted.invalid"},
+            )
+            evidence["wrong_origin"] = {"status": status, "error": payload.get("error")}
+            if status != 403 or payload.get("error") != "origin_validation_failed":
+                failures.append("untrusted browser Origin was not rejected")
 
             status, _headers, payload = request_json(browser, base_url + "/api/agent-gateway/status")
             evidence["human_cookie_gateway"] = {"status": status, "error": payload.get("error")}
@@ -152,7 +166,7 @@ def main() -> int:
                 failures.append("authenticated owner could not read operator workspace API")
 
             task_body = {"title": "Human session fixture task", "description": "Bounded smoke evidence."}
-            status, _headers, payload = request_json(browser, base_url + "/api/tasks", method="POST", body=task_body)
+            status, _headers, payload = request_json(browser, base_url + "/api/tasks", method="POST", body=task_body, headers={"Origin": base_url})
             if status != 403 or payload.get("error") != "csrf_validation_failed":
                 failures.append("state-changing human request did not require CSRF")
             status, _headers, payload = request_json(
@@ -160,7 +174,7 @@ def main() -> int:
                 base_url + "/api/tasks",
                 method="POST",
                 body=task_body,
-                headers={"X-AgentOps-CSRF": csrf_token},
+                headers={"X-AgentOps-CSRF": csrf_token, "Origin": base_url},
             )
             evidence["csrf_write"] = {"status": status, "task_id_present": bool(payload.get("task_id"))}
             if status not in {200, 201} or not payload.get("task_id"):
@@ -171,7 +185,7 @@ def main() -> int:
                 base_url + "/api/human-auth/logout",
                 method="POST",
                 body={},
-                headers={"X-AgentOps-CSRF": csrf_token},
+                headers={"X-AgentOps-CSRF": csrf_token, "Origin": base_url},
             )
             if status != 200 or payload.get("authenticated") is not False:
                 failures.append("human logout did not revoke the session")

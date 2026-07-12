@@ -127,6 +127,7 @@ def cmd_init(args) -> int:
         "ui_dist": str(Path(args.ui_dist).expanduser().resolve() if args.ui_dist else DEFAULT_UI_DIST),
         "deployment_mode": "private_host",
         "cookie_secure": True,
+        "allowed_origins": [f"http://127.0.0.1:{int(args.port)}"],
         "network_publication": "disabled",
     }
     owner_setup_code = secrets.token_urlsafe(18)
@@ -165,6 +166,7 @@ def host_env(config: dict, secret_values: dict) -> dict:
         "AGENTOPS_API_KEY": secret_values["api_key"],
         "AGENTOPS_ADMIN_KEY": secret_values["admin_key"],
         "AGENTOPS_OWNER_SETUP_CODE": secret_values["owner_setup_code"],
+        "AGENTOPS_ALLOWED_ORIGINS": ",".join(config.get("allowed_origins") or []),
         "AGENTOPS_WORKSPACE_ID": config.get("workspace_id", "local-demo"),
         "AGENTOPS_SKIP_SEED_EXPORTS": "1",
     })
@@ -386,6 +388,93 @@ def cmd_tailscale_preview(_args) -> int:
     return 0
 
 
+def cmd_tailscale_apply(args) -> int:
+    config, _secret_values = require_initialized()
+    target = f"http://{config['host']}:{config['port']}"
+    ts = tailscale_state()
+    preview = {
+        "ok": False,
+        "operation": "host_tailscale_apply",
+        "preview_only": not args.confirm,
+        "command": f"tailscale serve --bg {target}",
+        "tailscale": ts,
+        "public_funnel_enabled": False,
+        "token_omitted": True,
+    }
+    if not args.confirm:
+        preview.update({"error": "confirmation_required", "message": "Re-run with --confirm after reviewing the Serve command."})
+        emit(preview)
+        return 2
+    binary = shutil.which("tailscale")
+    if not binary or ts["backend_state"] != "Running" or not ts["dns_name"]:
+        preview.update({"error": "tailscale_not_ready", "message": "Tailscale must be installed, Running, and have a DNS name."})
+        emit(preview)
+        return 2
+    process = subprocess.run([binary, "serve", "--bg", target], capture_output=True, text=True, timeout=30, check=False)
+    if process.returncode != 0:
+        preview.update({"error": "tailscale_serve_failed", "message": "Tailscale Serve failed; command output was omitted.", "exit_code": process.returncode})
+        emit(preview)
+        return 1
+    origin = f"https://{ts['dns_name']}"
+    origins = sorted(set(config.get("allowed_origins") or []) | {origin})
+    config.update({"allowed_origins": origins, "network_publication": "tailscale_serve", "private_console_origin": origin})
+    write_private_json(paths()["config"], config)
+    emit({
+        "ok": True,
+        "operation": "host_tailscale_apply",
+        "private_console_url": origin + "/workspace",
+        "network_publication": "tailscale_serve",
+        "public_funnel_enabled": False,
+        "restart_required": True,
+        "next_action": "agentops host restart",
+        "command_output_omitted": True,
+        "token_omitted": True,
+    })
+    return 0
+
+
+def cmd_tailscale_revoke(args) -> int:
+    config, _secret_values = require_initialized()
+    if not args.confirm:
+        emit({
+            "ok": False,
+            "operation": "host_tailscale_revoke",
+            "preview_only": True,
+            "error": "confirmation_required",
+            "command": "tailscale serve reset",
+            "token_omitted": True,
+        })
+        return 2
+    binary = shutil.which("tailscale")
+    if not binary:
+        emit({"ok": False, "operation": "host_tailscale_revoke", "error": "tailscale_not_installed", "token_omitted": True})
+        return 2
+    process = subprocess.run([binary, "serve", "reset"], capture_output=True, text=True, timeout=30, check=False)
+    if process.returncode != 0:
+        emit({
+            "ok": False,
+            "operation": "host_tailscale_revoke",
+            "error": "tailscale_reset_failed",
+            "exit_code": process.returncode,
+            "command_output_omitted": True,
+            "token_omitted": True,
+        })
+        return 1
+    local_origin = f"http://{config['host']}:{config['port']}"
+    config.update({"allowed_origins": [local_origin], "network_publication": "disabled", "private_console_origin": ""})
+    write_private_json(paths()["config"], config)
+    emit({
+        "ok": True,
+        "operation": "host_tailscale_revoke",
+        "network_publication": "disabled",
+        "restart_required": True,
+        "next_action": "agentops host restart",
+        "command_output_omitted": True,
+        "token_omitted": True,
+    })
+    return 0
+
+
 def add_start_options(parser) -> None:
     parser.add_argument("--foreground", action="store_true")
     parser.add_argument("--build-ui", action="store_true")
@@ -421,6 +510,12 @@ def build_parser() -> argparse.ArgumentParser:
     console_url.set_defaults(handler=cmd_console_url)
     preview = sub.add_parser("tailscale-preview", help="Preview Tailscale Serve and revoke commands without executing them.")
     preview.set_defaults(handler=cmd_tailscale_preview)
+    apply = sub.add_parser("tailscale-apply", help="Apply Tailscale Serve only after explicit confirmation.")
+    apply.add_argument("--confirm", action="store_true")
+    apply.set_defaults(handler=cmd_tailscale_apply)
+    revoke = sub.add_parser("tailscale-revoke", help="Reset Tailscale Serve only after explicit confirmation.")
+    revoke.add_argument("--confirm", action="store_true")
+    revoke.set_defaults(handler=cmd_tailscale_revoke)
     return parser
 
 

@@ -117,7 +117,16 @@ agentops host tailscale-preview
 - 暴露公网；
 - 把 token、setup code 或 Session 放进 URL、终端历史或日志。
 
-管理员审查预览后，才可按终端显示的**当前机器专用命令**手动启用 Tailscale Serve。不要从本文复制猜测性的 Serve 参数，因为不同 Tailscale 版本的 CLI 可能不同。
+管理员审查预览后，显式确认应用：
+
+```bash
+agentops host tailscale-apply --confirm
+agentops host restart
+```
+
+命令调用当前 Tailscale CLI 的 `serve --bg`，只代理 Host loopback 地址，随后把
+tailnet HTTPS Origin 写入私有 Host 配置。没有 `--confirm` 时必须保持零副作用；
+该路径不得调用 `tailscale funnel`。
 
 启用后重新检查：
 
@@ -233,7 +242,14 @@ agentops host stop
 agentops host status
 ```
 
-然后根据 `agentops host tailscale-preview` 当前输出中的撤销命令，**手动**停止对应 Tailscale Serve 配置。确认：
+然后显式撤销 Tailscale Serve 并重启 Host：
+
+```bash
+agentops host tailscale-revoke --confirm
+agentops host restart
+```
+
+撤销内部使用 `tailscale serve reset` 并移除私网 HTTPS trusted Origin。确认：
 
 - `console-url` 不再可从另一台电脑访问；
 - Host 受管进程已停止；

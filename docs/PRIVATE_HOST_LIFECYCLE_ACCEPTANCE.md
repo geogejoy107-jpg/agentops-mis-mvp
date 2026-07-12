@@ -37,6 +37,9 @@ customer release.
 - Tailscale inspection is read-only and `tailscale-preview` only prints a Serve
   command plus `tailscale serve reset`; it never executes either command and
   never enables Funnel.
+- `tailscale-apply` and `tailscale-revoke` remain side-effect free without
+  `--confirm`; confirmed apply/reset update the private trusted-Origin config
+  and require a Host restart.
 - Host status, doctor, logs and console URL responses omit credential values.
 
 ## Verification
@@ -72,8 +75,10 @@ prompt, response, private message or transcript was used.
 
 - The command currently runs from the installed repository/Python package; a
   signed, versioned macOS Host bundle has not yet been produced.
-- Tailscale Serve remains an operator-reviewed manual command.
-- Allowed-Origin validation and trusted-proxy handling remain pending.
+- Tailscale Serve remains explicit and operator-confirmed; it is never enabled
+  by init/start.
+- Trusted Origin validation is implemented; richer trusted-proxy identity and
+  forwarded-header handling remain pending.
 - Account invitation, role management, password recovery and session/device
   revocation UI remain pending.
 - `host logs` returns safe metadata and the local path, not live redacted tail.
@@ -86,4 +91,3 @@ prompt, response, private message or transcript was used.
 Add trusted Origin/forwarded-proto handling, a confirmation-gated Tailscale
 Serve apply/revoke command, then run the browser console from a second tailnet
 device with no repository dependencies.
-
