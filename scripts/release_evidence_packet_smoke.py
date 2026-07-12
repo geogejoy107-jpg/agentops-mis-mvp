@@ -60,6 +60,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "run_local_stack",
+        "command": "python3 scripts/run_local_stack_smoke.py",
+        "summary": "One-command local stack starts an isolated backend and safe worker, preserves user CLI config, and fails closed before unconfirmed Hermes/OpenClaw workers.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "release_evidence_packet",
         "command": "python3 scripts/release_evidence_packet_smoke.py",
         "summary": "Runtime RC SHA, CI link/status, canonical test list and release-packet boundaries.",

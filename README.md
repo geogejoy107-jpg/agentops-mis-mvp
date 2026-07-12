@@ -51,11 +51,11 @@ python3 server.py
 http://127.0.0.1:8787/dashboard
 ```
 
-## Figma UI Preview
+## Local Product UI
 
-下载的 Figma/Vite UI 已保存在 `ui/start-building-app/`，用于演示更完整的 AgentOps MIS 产品界面。它是独立前端预览，不替代当前 Python/SQLite demo API。
+Vite UI 位于 `ui/start-building-app/`，与本地 Python/SQLite Agent Gateway 共用同一权威账本。
 
-一条命令启动本地后端和 beta UI：
+一条命令启动本地后端、`19001` UI 和安全 mock worker：
 
 ```bash
 python3 scripts/run_local_stack.py --install-ui
@@ -67,18 +67,31 @@ python3 scripts/run_local_stack.py --install-ui
 python3 scripts/run_local_stack.py
 ```
 
+显式启动真实 Hermes 和 OpenClaw worker：
+
+```bash
+python3 scripts/run_local_stack.py \
+  --worker hermes \
+  --worker openclaw \
+  --confirm-live-workers \
+  --configure-cli
+```
+
+真实 worker 只有在同时传入 `--confirm-live-workers` 时才会启动。脚本默认不改写
+`~/.agentops/config.json`；只有显式 `--configure-cli` 才保存本地 `8787` 连接。
+
 也可以手动启动 UI：
 
 ```bash
 cd ui/start-building-app
 npm install
-npm run dev -- --host 127.0.0.1 --port 5173
+npm run dev -- --host 127.0.0.1 --port 19001
 ```
 
 打开：
 
 ```text
-http://127.0.0.1:5173/
+http://127.0.0.1:19001/
 ```
 
 构建检查：

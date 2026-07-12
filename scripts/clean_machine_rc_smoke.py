@@ -29,6 +29,7 @@ PYTHON = sys.executable
 DEFAULT_COMMANDS = [
     [PYTHON, "-m", "py_compile", "server.py", "agentops_mis_cli/agentops.py", "agentops_mis_cli/worker.py"],
     [PYTHON, "scripts/agentops_pip_install_smoke.py"],
+    [PYTHON, "scripts/run_local_stack_smoke.py"],
     [PYTHON, "scripts/release_freeze_protocol_smoke.py"],
     [PYTHON, "scripts/release_evidence_packet_smoke.py"],
     [PYTHON, "scripts/license_provenance_smoke.py"],
