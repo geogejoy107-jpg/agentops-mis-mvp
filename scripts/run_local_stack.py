@@ -93,6 +93,7 @@ def main() -> int:
     parser.add_argument("--install-ui", action="store_true", help="Run npm ci --prefer-offline if UI dependencies are missing.")
     parser.add_argument("--production-ui", action="store_true", help="Serve the built React UI from the backend instead of starting Vite.")
     parser.add_argument("--build-ui", action="store_true", help="Build the React UI before starting; implies --production-ui.")
+    parser.add_argument("--ui-dist", type=Path, help="Use an existing packaged UI directory; implies --production-ui.")
     parser.add_argument("--backend-host", default="127.0.0.1")
     parser.add_argument("--backend-port", type=int, default=8787)
     parser.add_argument("--ui-host", default="127.0.0.1")
@@ -105,6 +106,8 @@ def main() -> int:
     parser.add_argument("--configure-cli", action="store_true", help="Explicitly update the saved CLI base URL/workspace for this local stack.")
     args = parser.parse_args()
     if args.build_ui:
+        args.production_ui = True
+    if args.ui_dist:
         args.production_ui = True
     if args.no_ui and args.production_ui:
         parser.error("--no-ui cannot be combined with --production-ui or --build-ui")
@@ -127,21 +130,22 @@ def main() -> int:
     env["AGENTOPS_WORKSPACE_ID"] = env.get("AGENTOPS_WORKSPACE_ID", "local-demo")
     env["VITE_AGENTOPS_PROXY_TARGET"] = backend_url
     gateway_api_key = env.get("AGENTOPS_API_KEY", "").strip()
+    production_ui_dist = (args.ui_dist or (UI_DIR / "dist")).expanduser().resolve()
     processes: list[tuple[str, subprocess.Popen]] = []
 
     try:
         if args.production_ui:
-            if not UI_DIR.exists():
-                raise RuntimeError(f"missing UI directory: {UI_DIR}")
-            if not (UI_DIR / "node_modules").exists():
-                if args.install_ui:
-                    subprocess.run(["npm", "ci", "--prefer-offline"], cwd=UI_DIR, env=env, check=True)
-                else:
-                    raise RuntimeError("UI dependencies missing. Add --install-ui before building the production UI")
             if args.build_ui:
+                if not UI_DIR.exists():
+                    raise RuntimeError(f"missing UI directory: {UI_DIR}")
+                if not (UI_DIR / "node_modules").exists():
+                    if args.install_ui:
+                        subprocess.run(["npm", "ci", "--prefer-offline"], cwd=UI_DIR, env=env, check=True)
+                    else:
+                        raise RuntimeError("UI dependencies missing. Add --install-ui before building the production UI")
                 subprocess.run(["npm", "run", "build"], cwd=UI_DIR, env=env, check=True)
-            if not (UI_DIR / "dist" / "index.html").is_file():
-                raise RuntimeError("production UI missing. Run with --build-ui")
+            if not (production_ui_dist / "index.html").is_file():
+                raise RuntimeError(f"production UI missing at {production_ui_dist}. Run with --build-ui or pass --ui-dist")
         if port_open(args.backend_port, args.backend_host):
             if args.production_ui:
                 raise RuntimeError(
@@ -153,7 +157,7 @@ def main() -> int:
         else:
             backend_command = [sys.executable, "server.py", "--host", args.backend_host, "--port", str(args.backend_port)]
             if args.production_ui:
-                backend_command.extend(["--ui-dist", str(UI_DIR / "dist")])
+                backend_command.extend(["--ui-dist", str(production_ui_dist)])
             backend = subprocess.Popen(
                 backend_command,
                 cwd=ROOT,

@@ -99,6 +99,44 @@ Host 基础，不是已认证的远程访问模式；不要通过修改绑定地
 `docs/LOCAL_HOST_REMOTE_CONSOLE_SPEC.md` 与
 `docs/LOCAL_HOST_REMOTE_CONSOLE_DELIVERY_PLAN.md`。
 
+## Private Host Preview
+
+`agentops host` 把同源生产 UI、SQLite 权威账本和 Worker 作为一个受管的
+loopback Host 运行。初始化不会安装 Runtime，也不会自动修改 Tailscale：
+
+```bash
+python3 -m pip install .
+agentops host init
+agentops host start --build-ui
+agentops host status
+agentops host doctor
+agentops host tailscale-preview
+```
+
+`host init` 只在首次运行时显示 Owner 设置码，并把配置、机器 API key 与
+Admin key 存到仓库外的 `~/.agentops/host/`，文件权限为 `0600`。`host start`
+默认后台启动安全 mock worker；真实 Hermes/OpenClaw 仍必须显式指定并确认：
+
+```bash
+agentops host start \
+  --worker hermes \
+  --worker openclaw \
+  --confirm-live-workers
+```
+
+停止和检查：
+
+```bash
+agentops host logs
+agentops host restart
+agentops host stop
+```
+
+`tailscale-preview` 仅输出当前机器的 Serve/撤销命令，不会执行网络变更，
+不会启用 Funnel，也不会开放公网。第二台电脑的完整流程见
+`docs/PRIVATE_HOST_OPERATOR_RUNBOOK.md`；正式远程可用声明仍需第二设备、
+trusted Origin、版本化安装资产和真实 Runtime 验收。
+
 也可以手动启动 UI：
 
 ```bash
