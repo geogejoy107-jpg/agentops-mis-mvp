@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.7 published and Host-side private-network gates passed; physical second-device acceptance remains open
+Status: preview.8 published and Host-side private-network gates passed; physical second-device acceptance remains open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -11,12 +11,12 @@ physical evidence and cannot be closed by mock output.
 
 | # | Requirement | Current evidence | Status |
 |---|---|---|---|
-| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.7` passed GitHub download, checksum, isolated install, lifecycle, route and same-Mac upgrade checks. A clean install receipt from another physical Mac remains missing. | Passed locally; external evidence required |
+| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.8` passed GitHub download, checksum, isolated install, lifecycle, route and same-Mac upgrade checks. A clean install receipt from another physical Mac remains missing. | Passed locally; external evidence required |
 | 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md` plus bundle smoke cover installed CLI, production UI, init, doctor, start/status/stop, fail-closed Runtime readiness, and actual served-UI switching across upgrade/rollback. | Passed locally |
-| 3 | Dependency-free second computer opens private HTTPS console and authenticates | preview.7 is live through private Tailscale HTTPS on port 8443, Funnel is disabled, an unrelated port 443 target is preserved, and an online second peer is reachable. The safe Host-local Owner bootstrap CLI is installed; operator bootstrap and physical second-device browser login remain missing. | Host side passed; external evidence required |
+| 3 | Dependency-free second computer opens private HTTPS console and authenticates | preview.8 is live through private Tailscale HTTPS on port 8443, Funnel is disabled, an unrelated port 443 target is preserved, and an online second peer is reachable. Safe Host-local Owner bootstrap and confirmation-gated CLI machine credential configuration are installed; operator bootstrap and physical second-device browser login remain missing. | Host side passed; external evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, role/session separation and CSRF/Origin checks. | Passed locally |
 | 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | Customer dispatch and ledger views exist; Audit and Memory use live APIs; memory decisions write through the approver route; approved artifact download is Session/workspace/approval checked and audited. A second-device end-to-end receipt remains open. | Partial |
-| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | `PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md` records fresh completed Hermes and OpenClaw async runs from preview.4. preview.7 is running both real Workers, but an exact-preview.7 customer run awaits Owner bootstrap. | Passed previously; exact-current rerun pending |
+| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | `PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md` records fresh completed Hermes and OpenClaw async runs from preview.4. preview.8 is running both real Workers and installed CLI preflight passed for both adapters, but an exact-preview.8 customer run awaits Owner bootstrap. | Passed previously; exact-current rerun pending |
 | 7 | Console disconnect does not stop Host Worker or lose task | `PRIVATE_HOST_CONSOLE_DISCONNECT_ACCEPTANCE.md` proves real Hermes/OpenClaw jobs completed after their first Host-local Session clients were discarded, then were read through fresh Owner Sessions. Physical browser/tailnet loss remains missing. | Passed on Host; external evidence required |
 | 8 | Host restart preserves ledger and knowledge state | `PRIVATE_HOST_RESTART_PERSISTENCE_ACCEPTANCE.md` covers Session, task and a 194-document local Markdown/FTS index remaining searchable after managed restart. | Passed locally |
 | 9 | Backup and restore pass on isolated database | `PRIVATE_HOST_BACKUP_RESTORE_ACCEPTANCE.md` covers strict manifest/hash/schema/integrity/foreign-key checks, atomic replacement and access revocation. | Passed locally |
@@ -133,7 +133,7 @@ is retained here. Owner bootstrap, the physical browser workflow, physical
 disconnect/reconnect, and another-Mac clean install remain open, so this is not
 the final Release Candidate.
 
-## Current Preview 7
+## Superseded Preview 7
 
 - Tag: `v1.6.0-private-host-preview.7`
 - Exact commit: `0d7634eabaa58196f433a61195d7b4c0d9ab761c`
@@ -154,6 +154,31 @@ Workers. The managed UI resolves to preview.7 and private HTTPS Workspace
 returned HTTP 200 with Funnel disabled. Operator Owner creation, physical
 second-device workflow/disconnect receipt and another-Mac clean install remain
 open, so this is not the final Release Candidate.
+
+## Current Preview 8
+
+- Tag: `v1.6.0-private-host-preview.8`
+- Exact commit: `350b4d1966c74d80db8f58f0873562e018a714da`
+- Push CI: passed at the exact commit (`29199084891`)
+- Pull-request CI: passed at the exact commit (`29199086731`)
+- Release: `https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.8`
+- SHA-256 manifest: `251bbf675061114bcfc4ae81c5f2cd23b3da467e468a188f771d7e668371971a`
+- Tar archive: `4d13fc2613ab03824957daa935164ff65d484ddcea2b8ba352480b12431fcc10`
+- Zip archive: `eb46b3d27c4d75dde66641aac48be7125b4fe1e06d6a2c51a2d9cbf5bd9a2727`
+
+preview.8 adds confirmation-gated `host configure-cli`, binds saved machine
+credentials to their configured origin, and keeps browser Sessions separate
+from Agent Gateway credentials. Shared CLI and Worker credential transport now
+requires literal-loopback HTTP or HTTPS, bypasses environment proxies, rejects
+redirects, and redacts known or Host-format keys from errors. Credentialed Host
+commands additionally require a live managed Host PID; foreground and
+background Host modes both maintain that record. Published checksums, same-Mac
+upgrade with user-data preservation, private HTTPS Workspace readback, and
+installed Hermes/OpenClaw adapter preflight passed. Both real Workers are
+running, Funnel remains disabled, and the managed UI resolves to preview.8.
+Operator Owner creation, an exact-preview.8 confirmed customer run, the
+physical second-device workflow/disconnect receipt, and another-Mac clean
+install remain open, so this is not the final Release Candidate.
 
 ## Release Gates
 
