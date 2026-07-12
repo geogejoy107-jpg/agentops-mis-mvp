@@ -252,6 +252,10 @@ def host_env(config: dict, secret_values: dict) -> dict:
         "AGENTOPS_WORKSPACE_ID": config.get("workspace_id", "local-demo"),
         "AGENTOPS_SKIP_SEED_EXPORTS": "1",
     })
+    release = install_state()["current"]
+    if release:
+        env["AGENTOPS_HOST_VERSION"] = str(release.get("version") or "development")
+        env["AGENTOPS_GIT_COMMIT"] = str(release.get("git_commit") or "unknown")
     return env
 
 

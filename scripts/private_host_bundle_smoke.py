@@ -146,6 +146,29 @@ def main() -> int:
             or version_payload.get("git_commit") != manifest["git_commit"]
         ):
             fail("installed shim was shadowed by source checkout or PYTHONPATH", version_status)
+        release_env_probe = run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import json; from agentops_mis_cli.host import host_env; "
+                    "value=host_env({'database_path':'/tmp/omitted.db','cookie_secure':False,"
+                    "'allowed_origins':[],'workspace_id':'local-demo'},"
+                    "{'api_key':'omitted','admin_key':'omitted','owner_setup_code':'omitted'}); "
+                    "print(json.dumps({'version':value.get('AGENTOPS_HOST_VERSION'),"
+                    "'git_commit':value.get('AGENTOPS_GIT_COMMIT')}))"
+                ),
+            ],
+            env={**env, "PYTHONPATH": str(install_root / "current")},
+            cwd=install_root / "current",
+        )
+        release_env = json.loads(release_env_probe.stdout)
+        if (
+            release_env_probe.returncode != 0
+            or release_env.get("version") != version
+            or release_env.get("git_commit") != manifest["git_commit"]
+        ):
+            fail("packaged Host environment omitted release provenance", release_env_probe)
         help_result = run([str(bin_dir / "agentops"), "host", "--help"], env=env)
         if help_result.returncode != 0 or "Manage the private local AgentOps MIS host" not in help_result.stdout:
             fail("installed agentops host --help failed", help_result)
@@ -245,6 +268,7 @@ def main() -> int:
             "tampered_payload_rejected": True,
             "installed_host_help": "passed",
             "installed_shim_source_shadowing": "rejected",
+            "installed_host_release_env": "passed",
             "installed_backup_restore_commands": "passed",
             "installed_host_init_and_doctor": "passed",
             "installed_live_readback_client": "passed",
