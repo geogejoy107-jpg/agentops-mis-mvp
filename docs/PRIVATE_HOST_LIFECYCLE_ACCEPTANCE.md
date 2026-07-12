@@ -34,12 +34,15 @@ customer release.
 - Default Worker is mock; Hermes/OpenClaw still require
   `--confirm-live-workers`.
 - Network publication remains `disabled` after init/start.
+- Loopback HTTP uses an `HttpOnly`, `SameSite=Strict` session cookie without the
+  HTTPS-only `Secure` attribute, so local Owner login is usable.
 - Tailscale inspection is read-only and `tailscale-preview` only prints a Serve
   command plus `tailscale serve reset`; it never executes either command and
   never enables Funnel.
 - `tailscale-apply` and `tailscale-revoke` remain side-effect free without
   `--confirm`; confirmed apply/reset update the private trusted-Origin config
-  and require a Host restart.
+  and require a Host restart. Apply enables `Secure` cookies for tailnet HTTPS;
+  revoke returns to the loopback cookie policy.
 - Host status, doctor, logs and console URL responses omit credential values.
 
 ## Verification
@@ -65,7 +68,11 @@ temporary SQLite database and a free loopback port. It verified:
 - zero Worker mode for deterministic CI;
 - publication disabled by default;
 - running status readback;
+- real Owner bootstrap and authenticated task read through a loopback CookieJar;
+- `HttpOnly`/`SameSite` local cookie behavior without a false HTTPS-only flag;
 - Tailscale preview-only/Funnel-disabled behavior;
+- Secure cookie policy enabled on confirmed Tailscale apply and disabled after
+  confirmed revoke;
 - process-group stop and temporary-state cleanup.
 
 No real Runtime, external connector, Tailscale configuration, user database,
@@ -73,8 +80,7 @@ prompt, response, private message or transcript was used.
 
 ## Known Limitations
 
-- The command currently runs from the installed repository/Python package; a
-  signed, versioned macOS Host bundle has not yet been produced.
+- The available macOS Host bundle remains unsigned and unnotarized.
 - Tailscale Serve remains explicit and operator-confirmed; it is never enabled
   by init/start.
 - Trusted Origin validation is implemented; richer trusted-proxy identity and
@@ -82,7 +88,6 @@ prompt, response, private message or transcript was used.
 - Account invitation, role management, password recovery and session/device
   revocation UI remain pending.
 - `host logs` returns safe metadata and the local path, not live redacted tail.
-- Host backup/update/uninstall commands remain Phase 4 work.
 - Second-computer acceptance and real Hermes/OpenClaw remote-control evidence
   remain mandatory before product completion.
 

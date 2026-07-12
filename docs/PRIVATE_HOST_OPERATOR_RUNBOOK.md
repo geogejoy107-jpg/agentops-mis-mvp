@@ -47,6 +47,7 @@ agentops host init
 - 检查生产 UI、Python 服务、SQLite、知识索引和端口条件；
 - 初始化本地 Host 配置和 Owner bootstrap 流程；
 - 默认保持 loopback，不启动 Tailscale Serve；
+- loopback HTTP Session 使用 `HttpOnly`、`SameSite=Strict` Cookie，但不错误添加仅限 HTTPS 的 `Secure` 属性；
 - 不安装、不启动 Hermes/OpenClaw，不读取现有 Runtime 密钥；
 - 不把 setup code、Session、DB 或运行日志写入仓库。
 
@@ -125,7 +126,7 @@ agentops host restart
 ```
 
 命令调用当前 Tailscale CLI 的 `serve --bg`，只代理 Host loopback 地址，随后把
-tailnet HTTPS Origin 写入私有 Host 配置。没有 `--confirm` 时必须保持零副作用；
+tailnet HTTPS Origin 写入私有 Host 配置并启用 `Secure` Session Cookie。没有 `--confirm` 时必须保持零副作用；
 该路径不得调用 `tailscale funnel`。
 
 启用后重新检查：

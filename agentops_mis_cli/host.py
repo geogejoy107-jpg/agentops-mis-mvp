@@ -128,7 +128,7 @@ def cmd_init(args) -> int:
         "database_path": str(p["database"]),
         "ui_dist": str(Path(args.ui_dist).expanduser().resolve() if args.ui_dist else DEFAULT_UI_DIST),
         "deployment_mode": "private_host",
-        "cookie_secure": True,
+        "cookie_secure": False,
         "allowed_origins": [f"http://127.0.0.1:{int(args.port)}"],
         "network_publication": "disabled",
     }
@@ -697,7 +697,12 @@ def cmd_tailscale_apply(args) -> int:
         return 1
     origin = f"https://{ts['dns_name']}"
     origins = sorted(set(config.get("allowed_origins") or []) | {origin})
-    config.update({"allowed_origins": origins, "network_publication": "tailscale_serve", "private_console_origin": origin})
+    config.update({
+        "allowed_origins": origins,
+        "network_publication": "tailscale_serve",
+        "private_console_origin": origin,
+        "cookie_secure": True,
+    })
     write_private_json(paths()["config"], config)
     emit({
         "ok": True,
@@ -741,7 +746,12 @@ def cmd_tailscale_revoke(args) -> int:
         })
         return 1
     local_origin = f"http://{config['host']}:{config['port']}"
-    config.update({"allowed_origins": [local_origin], "network_publication": "disabled", "private_console_origin": ""})
+    config.update({
+        "allowed_origins": [local_origin],
+        "network_publication": "disabled",
+        "private_console_origin": "",
+        "cookie_secure": False,
+    })
     write_private_json(paths()["config"], config)
     emit({
         "ok": True,

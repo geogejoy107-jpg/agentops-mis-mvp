@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import http.cookiejar
 import os
 import socket
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 
@@ -37,6 +40,21 @@ def run_host(env: dict, *args: str, expected=(0,)) -> tuple[int, dict, str]:
     if process.returncode not in expected:
         raise RuntimeError(f"host {' '.join(args)} exited {process.returncode}: {process.stderr[-300:]}")
     return process.returncode, payload, (process.stdout or "") + (process.stderr or "")
+
+
+def request_json(opener, url: str, *, method="GET", body=None, headers=None) -> tuple[int, dict, dict]:
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={"Content-Type": "application/json", **(headers or {})},
+    )
+    try:
+        with opener.open(request, timeout=5) as response:
+            return response.status, dict(response.headers), json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return exc.code, dict(exc.headers), json.loads(exc.read().decode("utf-8"))
 
 
 def main() -> int:
@@ -89,9 +107,12 @@ def main() -> int:
                 "config_private": config_path.is_file() and (config_path.stat().st_mode & 0o077) == 0,
                 "secrets_private": secrets_path.is_file() and (secrets_path.stat().st_mode & 0o077) == 0,
                 "setup_code_visible_once": initialized.get("owner_setup_code_visible_once"),
+                "loopback_cookie_secure": json.loads(config_path.read_text(encoding="utf-8")).get("cookie_secure"),
             }
             if not evidence["init"]["config_private"] or not evidence["init"]["secrets_private"]:
                 failures.append("host config or secrets permissions were not private")
+            if evidence["init"]["loopback_cookie_secure"] is not False:
+                failures.append("loopback Host incorrectly required a Secure-only browser cookie")
             _code, repeated, repeated_output = run_host(env, "init", expected=(2,))
             if repeated.get("error") != "already_initialized" or any(value and value in repeated_output for value in secret_values):
                 failures.append("repeated init did not fail closed without reprinting secrets")
@@ -115,6 +136,38 @@ def main() -> int:
             if any(value and value in status_output for value in secret_values):
                 failures.append("host status output exposed stored secret material")
 
+            base_url = f"http://127.0.0.1:{port}"
+            browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+            auth_status, auth_headers, auth_payload = request_json(
+                browser,
+                base_url + "/api/human-auth/bootstrap",
+                method="POST",
+                body={
+                    "setup_code": setup_code,
+                    "username": "host-owner",
+                    "display_name": "Host Owner",
+                    "password": "host-lifecycle-fixture-password",
+                },
+                headers={"Origin": base_url},
+            )
+            task_status, _task_headers, task_payload = request_json(browser, base_url + "/api/tasks")
+            set_cookie = auth_headers.get("Set-Cookie", "")
+            evidence["local_human_login"] = {
+                "bootstrap_status": auth_status,
+                "role": (auth_payload.get("user") or {}).get("role"),
+                "http_only": "HttpOnly" in set_cookie,
+                "secure_cookie": "Secure" in set_cookie,
+                "authenticated_task_read": task_status == 200 and isinstance(task_payload, list),
+            }
+            if (
+                auth_status != 201
+                or "HttpOnly" not in set_cookie
+                or "Secure" in set_cookie
+                or task_status != 200
+                or not isinstance(task_payload, list)
+            ):
+                failures.append("loopback Host Owner session did not persist over local HTTP")
+
             _code, preview, preview_output = run_host(env, "tailscale-preview")
             evidence["tailscale_preview"] = {
                 "preview_only": preview.get("preview_only"),
@@ -136,9 +189,10 @@ def main() -> int:
                 "network_publication": config_after_apply.get("network_publication"),
                 "trusted_origin_added": "https://agentops-host.example.ts.net" in (config_after_apply.get("allowed_origins") or []),
                 "restart_required": applied.get("restart_required"),
+                "secure_cookie_enabled": config_after_apply.get("cookie_secure"),
             }
             command_log = tailscale_log.read_text(encoding="utf-8") if tailscale_log.exists() else ""
-            if "serve --bg" not in command_log or config_after_apply.get("network_publication") != "tailscale_serve":
+            if "serve --bg" not in command_log or config_after_apply.get("network_publication") != "tailscale_serve" or config_after_apply.get("cookie_secure") is not True:
                 failures.append("confirmed Tailscale apply did not persist Serve and trusted-Origin state")
             if any(value and value in apply_output for value in secret_values):
                 failures.append("Tailscale apply output exposed stored secret material")
@@ -153,9 +207,10 @@ def main() -> int:
                 "network_publication": config_after_revoke.get("network_publication"),
                 "private_origin_removed": "https://agentops-host.example.ts.net" not in (config_after_revoke.get("allowed_origins") or []),
                 "restart_required": revoked.get("restart_required"),
+                "secure_cookie_disabled": config_after_revoke.get("cookie_secure") is False,
             }
             command_log = tailscale_log.read_text(encoding="utf-8") if tailscale_log.exists() else ""
-            if "serve reset" not in command_log or config_after_revoke.get("network_publication") != "disabled":
+            if "serve reset" not in command_log or config_after_revoke.get("network_publication") != "disabled" or config_after_revoke.get("cookie_secure") is not False:
                 failures.append("confirmed Tailscale revoke did not reset Serve and trusted-Origin state")
             if any(value and value in revoke_output for value in secret_values):
                 failures.append("Tailscale revoke output exposed stored secret material")
