@@ -35,16 +35,23 @@ Console 电脑只需要：
 
 ## 3. 安装版本化 Host 预览
 
-修正版候选：
+下一修正版候选：
 
 ```text
-v1.6.0-private-host-preview.2
-https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.2
+v1.6.0-private-host-preview.3
+https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.3
 ```
 
 下载前确认该 Release 已实际发布，并同时下载 `.zip` 或 `.tar.gz` 与
 `.sha256.json`。发布附件中的 checksum manifest 是当前候选的权威校验
 来源；本运行手册不把 archive checksum 写回同一 archive，避免自引用。
+
+preview.2 已发布但随后被真实 Runtime dogfood 替代：安装版 Worker 能
+claim 任务，但 Agent Plan 在 `run_start` 前发现 archive 缺少
+`PROJECT_SPEC.md`、`AGENT_WORKFLOW.md`、`BASE_INDEX.md` 与
+`docs/AGENT_WORK_METHOD_BLOCK.md`，因此按设计 fail closed，未调用模型。
+preview.3 必须同时通过安装后 mock Agent Plan 回归门与真实
+Hermes/OpenClaw 闭环，才可作为当前候选。
 
 已发布但被替代的预览版本：
 

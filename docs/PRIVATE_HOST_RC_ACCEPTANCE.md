@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: corrected preview.2 published and locally verified; physical second-device acceptance remains open
+Status: preview.2 superseded after exact-package Runtime dogfood; preview.3 and physical second-device acceptance remain open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -11,7 +11,7 @@ physical evidence and cannot be closed by mock output.
 
 | # | Requirement | Current evidence | Status |
 |---|---|---|---|
-| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.2` was downloaded into a clean temporary HOME, independently checksum-verified, installed, invoked from a conflicting source/PYTHONPATH directory, initialized, started, served the production acceptance route, reported exact packaged provenance, and stopped successfully. This same-Mac clean-HOME proof does not replace the required second-Mac receipt. | Partial |
+| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.2` passed clean-HOME download, checksum, install, lifecycle and provenance checks, but exact-package real Runtime dogfood exposed missing Agent Plan specs in the archive. preview.3 must repeat installation and Worker execution; a second-Mac receipt also remains missing. | Partial |
 | 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md` plus bundle smoke cover installed CLI, production UI, init, doctor, start/status/stop and fail-closed Runtime readiness. | Passed locally |
 | 3 | Dependency-free second computer opens private HTTPS console and authenticates | Human Session, CSRF, trusted Origin and Tailscale lifecycle are deterministic-smoke covered. Real second-device HTTPS login is missing. | External evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, role/session separation and CSRF/Origin checks. | Passed locally |
@@ -37,7 +37,7 @@ below pass. It is also not the current install candidate after the source
 shadowing defect was found. Corrected preview.2 repeats the exact-head build,
 checksum, Release download, and clean-install gates below.
 
-## Corrected Preview
+## Superseded Preview 2
 
 - Tag: `v1.6.0-private-host-preview.2`
 - Exact commit: `39cf68f3ea8799a6f1c154c64c4e0aaaa8ad0e49`
@@ -48,9 +48,13 @@ checksum, Release download, and clean-install gates below.
 - Tar archive: `64840ffb75dab96ff24a0d8d5c565592d94eac26605286e2c6597eac1661795a`
 - Zip archive: `380731159b45ea454d04a92933d5ebbcd608f668cc5fd3328bdab855873df714`
 
-The corrected preview passes the local Release-download/install gate and adds
-the browser device checklist plus Owner-only Host authority acceptance receipt.
-It remains a prerelease until the physical second-device gates below pass.
+preview.2 passes the Release-download/install gate and adds the browser device
+checklist plus Owner-only Host authority receipt. Exact-package Hermes/OpenClaw
+dogfood then proved the Worker could claim tasks but could not pass Agent Plan
+verification because four authority specs were absent from the archive. The
+gate failed closed before model invocation. preview.2 is therefore superseded;
+preview.3 must prove both packaged Agent Plan verification and fresh real
+Runtime execution before physical second-device acceptance proceeds.
 
 ## Release Gates
 
