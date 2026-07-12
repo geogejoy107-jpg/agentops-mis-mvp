@@ -133,6 +133,19 @@ def main() -> int:
         installed = run(["sh", str(bundle / "install.sh")], env=env)
         if installed.returncode != 0:
             fail("bundle install failed", installed)
+        version_status = run(
+            [str(bin_dir / "agentops"), "host", "version"],
+            env={**env, "PYTHONPATH": str(ROOT)},
+            cwd=ROOT,
+        )
+        version_payload = json.loads(version_status.stdout)
+        if (
+            version_status.returncode != 0
+            or version_payload.get("packaged_install") is not True
+            or version_payload.get("version") != version
+            or version_payload.get("git_commit") != manifest["git_commit"]
+        ):
+            fail("installed shim was shadowed by source checkout or PYTHONPATH", version_status)
         help_result = run([str(bin_dir / "agentops"), "host", "--help"], env=env)
         if help_result.returncode != 0 or "Manage the private local AgentOps MIS host" not in help_result.stdout:
             fail("installed agentops host --help failed", help_result)
@@ -231,6 +244,7 @@ def main() -> int:
             "installed_sbom_notices_and_runbook": "passed",
             "tampered_payload_rejected": True,
             "installed_host_help": "passed",
+            "installed_shim_source_shadowing": "rejected",
             "installed_backup_restore_commands": "passed",
             "installed_host_init_and_doctor": "passed",
             "installed_live_readback_client": "passed",

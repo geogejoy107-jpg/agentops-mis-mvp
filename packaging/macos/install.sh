@@ -131,8 +131,8 @@ shim = bin_dir / "agentops"
 shim.write_text(
     "#!/bin/sh\n"
     "set -eu\n"
-    f'PYTHONPATH="{current}${{PYTHONPATH:+:$PYTHONPATH}}" '
-    'exec python3 -m agentops_mis_cli "$@"\n',
+    f'cd "{current}"\n'
+    f'PYTHONPATH="{current}" exec python3 -m agentops_mis_cli "$@"\n',
     encoding="utf-8",
 )
 shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
