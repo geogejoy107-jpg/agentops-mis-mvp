@@ -12,10 +12,13 @@ git diff --check
 
 The smoke initializes a temporary Private Host, completes Owner bootstrap,
 creates a task through the authenticated browser API, stops and starts the
-managed Host process, and then verifies with the original browser cookie that:
+managed Host process, builds the local Markdown/FTS knowledge index, and then
+verifies with the original browser cookie that:
 
 - the server-side human Session remains valid;
 - the same task remains in the SQLite authority ledger;
+- the knowledge index remains searchable and returns bounded document/chunk
+  identifiers after restart without exporting source content;
 - no Runtime was called;
 - no real user database or credential value was printed or retained.
 

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -100,6 +101,16 @@ def main() -> int:
             task_id = str(task.get("task_id") or "")
             if status not in {200, 201} or not task_id:
                 failures.append("authenticated task creation failed before restart")
+            status, indexed = request_json(
+                browser,
+                base_url + "/api/knowledge/index",
+                method="POST",
+                body={"rebuild": True},
+                headers={"Origin": base_url, "X-AgentOps-CSRF": csrf},
+            )
+            indexed_count = int(indexed.get("indexed") or 0)
+            if status != 200 or indexed_count < 1:
+                failures.append("knowledge index was not populated before restart")
 
             _stopped, text = run_host(env, "stop")
             outputs.append(text)
@@ -109,17 +120,24 @@ def main() -> int:
             started = True
             status, tasks = request_json(browser, base_url + "/api/tasks")
             found = status == 200 and any(row.get("task_id") == task_id for row in tasks if isinstance(row, dict))
+            query = urllib.parse.urlencode({"q": "AgentOps", "limit": 3})
+            knowledge_status, knowledge = request_json(browser, base_url + f"/api/knowledge/search?{query}")
+            knowledge_results = knowledge.get("results") or []
+            knowledge_survived = knowledge_status == 200 and bool(knowledge_results)
             evidence = {
                 "owner_bootstrap": bool(csrf),
                 "task_created": bool(task_id),
                 "session_survived_restart": status == 200,
                 "task_survived_restart": found,
+                "knowledge_documents_indexed": indexed_count,
+                "knowledge_search_survived_restart": knowledge_survived,
+                "knowledge_result_ids": [str(row.get("doc_id") or row.get("chunk_id") or "") for row in knowledge_results[:3]],
                 "managed_restart": True,
                 "real_runtime_called": False,
                 "temporary_database": True,
             }
-            if not evidence["session_survived_restart"] or not found:
-                failures.append("human Session or task ledger did not survive managed restart")
+            if not evidence["session_survived_restart"] or not found or not knowledge_survived:
+                failures.append("human Session, task ledger, or knowledge index did not survive managed restart")
             if any(str(value) and str(value) in "\n".join(outputs[1:]) for value in secret_values):
                 failures.append("Host restart output exposed credential material")
         except (OSError, RuntimeError, ValueError) as exc:
