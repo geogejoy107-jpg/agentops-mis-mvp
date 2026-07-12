@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.1 superseded; corrected preview.2 and physical second-device acceptance remain open
+Status: preview.1 superseded; corrected preview.2 build/release and physical second-device acceptance remain open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
