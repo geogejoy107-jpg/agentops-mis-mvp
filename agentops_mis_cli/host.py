@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import getpass
 import io
+import ipaddress
 import json
 import os
 import secrets
@@ -23,6 +25,28 @@ BACKUP_UTILITY = ROOT / "scripts" / "agentops_local_backup.py"
 DEFAULT_UI_DIST = ROOT / "ui" / "start-building-app" / "dist"
 MACOS_TAILSCALE_BIN = Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
 HOST_STOP_GRACE_SECONDS = 20
+
+
+class HostArgumentError(ValueError):
+    pass
+
+
+class SafeArgumentParser(argparse.ArgumentParser):
+    def error(self, _message):
+        raise HostArgumentError("invalid_arguments")
+
+
+class NoLocalRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def local_urlopen(request, *, timeout: float):
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        NoLocalRedirects(),
+    )
+    return opener.open(request, timeout=timeout)
 
 
 def host_home() -> Path:
@@ -75,11 +99,46 @@ def process_alive(pid: int) -> bool:
 
 def health(base_url: str) -> dict:
     try:
-        with urllib.request.urlopen(base_url.rstrip("/") + "/health", timeout=1.5) as response:
+        with local_urlopen(base_url.rstrip("/") + "/health", timeout=1.5) as response:
             payload = json.loads(response.read().decode("utf-8"))
         return {"reachable": response.status == 200, "status": payload.get("status", "unknown")}
     except (OSError, ValueError, urllib.error.URLError):
         return {"reachable": False, "status": "unavailable"}
+
+
+def loopback_base_url(host: str, port: int) -> str | None:
+    value = str(host or "").strip()
+    if value.lower() == "localhost":
+        return f"http://localhost:{int(port)}"
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return None
+    if not address.is_loopback:
+        return None
+    rendered = f"[{address.compressed}]" if address.version == 6 else address.compressed
+    return f"http://{rendered}:{int(port)}"
+
+
+def local_json_request(base_url: str, path: str, *, method: str = "GET", body: dict | None = None) -> tuple[int, dict]:
+    request = urllib.request.Request(
+        base_url.rstrip("/") + path,
+        data=None if body is None else json.dumps(body).encode("utf-8"),
+        method=method,
+        headers={"Content-Type": "application/json", "Origin": base_url.rstrip("/")},
+    )
+    try:
+        with local_urlopen(request, timeout=10) as response:
+            raw = response.read().decode("utf-8")
+            return response.status, json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            return exc.code, json.loads(raw) if raw else {}
+        except ValueError:
+            return exc.code, {}
+    except (OSError, urllib.error.URLError, ValueError):
+        return 0, {"error": "host_unavailable"}
 
 
 def tailscale_binary() -> tuple[str | None, str]:
@@ -308,6 +367,167 @@ def cmd_init(args) -> int:
             "Run: agentops host start --build-ui",
             "Open the local console and create the first Owner.",
         ],
+        "token_omitted": True,
+    })
+    return 0
+
+
+def cmd_bootstrap_owner(args) -> int:
+    config, secret_values = require_initialized()
+    if not args.confirm:
+        emit({
+            "ok": False,
+            "operation": "host_bootstrap_owner",
+            "preview_only": True,
+            "error": "confirmation_required",
+            "message": "Re-run with --confirm. The password is read securely from the terminal or one stdin line, never from argv.",
+            "setup_code_omitted": True,
+            "password_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
+
+    base_url = loopback_base_url(config.get("host"), int(config["port"]))
+    if not base_url:
+        emit({
+            "ok": False,
+            "operation": "host_bootstrap_owner",
+            "error": "unsafe_bootstrap_target",
+            "message": "Owner bootstrap is restricted to a literal loopback Host target.",
+            "target_omitted": True,
+            "setup_code_omitted": True,
+            "password_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
+    if not health(base_url)["reachable"]:
+        emit({
+            "ok": False,
+            "operation": "host_bootstrap_owner",
+            "error": "host_unavailable",
+            "next_action": "agentops host start",
+            "setup_code_omitted": True,
+            "password_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
+    auth_status, auth_payload = local_json_request(base_url, "/api/human-auth/status")
+    if auth_status != 200 or auth_payload.get("required") is not True:
+        emit({
+            "ok": False,
+            "operation": "host_bootstrap_owner",
+            "error": "human_auth_disabled" if auth_status == 200 else "owner_bootstrap_status_unavailable",
+            "http_status": auth_status or None,
+            "setup_code_omitted": True,
+            "password_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
+    if auth_payload.get("bootstrap_required") is not True:
+        emit({
+            "ok": False,
+            "operation": "host_bootstrap_owner",
+            "error": "owner_already_initialized",
+            "http_status": 409,
+            "setup_code_omitted": True,
+            "password_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
+
+    username = str(args.username or "").strip()
+    if not username:
+        if not sys.stdin.isatty():
+            emit({
+                "ok": False,
+                "operation": "host_bootstrap_owner",
+                "error": "username_required",
+                "setup_code_omitted": True,
+                "password_omitted": True,
+                "token_omitted": True,
+            })
+            return 2
+        username = input("Owner username: ").strip()
+    display_name = str(args.display_name or username).strip() or username
+
+    if args.password_stdin:
+        password = sys.stdin.readline().removesuffix("\n").removesuffix("\r")
+    else:
+        if not sys.stdin.isatty():
+            emit({
+                "ok": False,
+                "operation": "host_bootstrap_owner",
+                "error": "interactive_terminal_required",
+                "message": "Use an interactive terminal or --password-stdin. Password argv/env options do not exist.",
+                "setup_code_omitted": True,
+                "password_omitted": True,
+                "token_omitted": True,
+            })
+            return 2
+        password = getpass.getpass("Owner password: ")
+        confirmation = getpass.getpass("Confirm password: ")
+        if password != confirmation:
+            emit({
+                "ok": False,
+                "operation": "host_bootstrap_owner",
+                "error": "password_confirmation_mismatch",
+                "setup_code_omitted": True,
+                "password_omitted": True,
+                "token_omitted": True,
+            })
+            return 2
+
+    if not username or not password:
+        emit({
+            "ok": False,
+            "operation": "host_bootstrap_owner",
+            "error": "username_and_password_required",
+            "setup_code_omitted": True,
+            "password_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
+
+    status, payload = local_json_request(
+        base_url,
+        "/api/human-auth/bootstrap",
+        method="POST",
+        body={
+            "setup_code": secret_values["owner_setup_code"],
+            "username": username,
+            "display_name": display_name,
+            "password": password,
+        },
+    )
+    if status != 201 or (payload.get("user") or {}).get("role") != "owner":
+        safe_errors = {
+            "owner_already_initialized",
+            "human_auth_disabled",
+            "invalid_setup_code",
+            "invalid_username",
+            "weak_password",
+            "host_unavailable",
+        }
+        error = str(payload.get("error") or "owner_bootstrap_failed")
+        emit({
+            "ok": False,
+            "operation": "host_bootstrap_owner",
+            "error": error if error in safe_errors else "owner_bootstrap_failed",
+            "http_status": status or None,
+            "setup_code_omitted": True,
+            "password_omitted": True,
+            "token_omitted": True,
+        })
+        return 2 if status in {0, 400, 401, 403, 409} else 1
+    emit({
+        "ok": True,
+        "operation": "host_bootstrap_owner",
+        "owner_created": True,
+        "role": "owner",
+        "next_action": "Sign in from the private Console with the Owner username and password you just chose.",
+        "setup_code_omitted": True,
+        "password_omitted": True,
+        "session_cookie_omitted": True,
         "token_omitted": True,
     })
     return 0
@@ -1077,13 +1297,19 @@ def add_start_options(parser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="agentops host", description="Manage the private local AgentOps MIS host.")
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser = SafeArgumentParser(prog="agentops host", description="Manage the private local AgentOps MIS host.", allow_abbrev=False)
+    sub = parser.add_subparsers(dest="command", required=True, parser_class=SafeArgumentParser)
     init = sub.add_parser("init", help="Create private host config and one-time Owner setup code.")
     init.add_argument("--port", type=int, default=8787)
     init.add_argument("--workspace-id", default="local-demo")
     init.add_argument("--ui-dist")
     init.set_defaults(handler=cmd_init)
+    bootstrap_owner = sub.add_parser("bootstrap-owner", help="Create the first Owner without exposing the setup code or password in argv.", allow_abbrev=False)
+    bootstrap_owner.add_argument("--username")
+    bootstrap_owner.add_argument("--display-name")
+    bootstrap_owner.add_argument("--password-stdin", action="store_true", help="Read exactly one password line from stdin; no password argv/env option exists.")
+    bootstrap_owner.add_argument("--confirm", action="store_true")
+    bootstrap_owner.set_defaults(handler=cmd_bootstrap_owner)
     start = sub.add_parser("start", help="Start the private host in the background by default.")
     add_start_options(start)
     start.set_defaults(handler=cmd_start)
@@ -1132,8 +1358,39 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    raw_args = list(argv) if argv is not None else sys.argv[1:]
+    bootstrap_args = raw_args
+    password_argv_forbidden = any(
+        value == "--password"
+        or value.startswith("--password=")
+        or value.startswith("--password-stdin=")
+        or (value.startswith("--p") and "--password-stdin".startswith(value) and value != "--password-stdin")
+        or (value == "--password-stdin" and index + 1 < len(bootstrap_args) and not bootstrap_args[index + 1].startswith("-"))
+        for index, value in enumerate(bootstrap_args)
+    )
+    if password_argv_forbidden:
+        emit({
+            "ok": False,
+            "operation": "host_bootstrap_owner",
+            "error": "password_argv_forbidden",
+            "message": "Password argv options do not exist. Use an interactive terminal or --password-stdin.",
+            "password_omitted": True,
+            "setup_code_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
     parser = build_parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(raw_args)
+    except HostArgumentError:
+        emit({
+            "ok": False,
+            "operation": "host_arguments",
+            "error": "invalid_arguments",
+            "argument_values_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
     try:
         return int(args.handler(args))
     except RuntimeError as exc:

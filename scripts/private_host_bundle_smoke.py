@@ -31,8 +31,8 @@ def digest(path: Path) -> str:
     return value.hexdigest()
 
 
-def run(command: list[str], *, env: dict | None = None, cwd: Path | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, timeout=120, check=False)
+def run(command: list[str], *, env: dict | None = None, cwd: Path | None = None, input_text: str | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(command, cwd=cwd, env=env, input=input_text, capture_output=True, text=True, timeout=120, check=False)
 
 
 def free_port() -> int:
@@ -194,7 +194,7 @@ def main() -> int:
         help_result = run([str(bin_dir / "agentops"), "host", "--help"], env=env)
         if help_result.returncode != 0 or "Manage the private local AgentOps MIS host" not in help_result.stdout:
             fail("installed agentops host --help failed", help_result)
-        for command in ("backup", "backup-verify", "restore"):
+        for command in ("bootstrap-owner", "backup", "backup-verify", "restore"):
             command_help = run([str(bin_dir / "agentops"), "host", command, "--help"], env=env)
             if command_help.returncode != 0:
                 fail(f"installed agentops host {command} --help failed", command_help)
@@ -231,16 +231,31 @@ def main() -> int:
         started = run([str(bin_dir / "agentops"), "host", "start", "--no-workers"], env=env)
         if started.returncode != 0 or not json.loads(started.stdout).get("ok"):
             fail("installed Host failed to start for Agent Plan verification", started)
+        bootstrap_password = "fixture-bundle-smoke-password"
+        bootstrap_cli = run(
+            [
+                str(bin_dir / "agentops"),
+                "host",
+                "bootstrap-owner",
+                "--username",
+                "bundle-smoke-owner",
+                "--display-name",
+                "Bundle Smoke Owner",
+                "--password-stdin",
+                "--confirm",
+            ],
+            env=env,
+            input_text=bootstrap_password + "\n",
+        )
+        bootstrap_payload = json.loads(bootstrap_cli.stdout or "{}")
         opener = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
         auth_status, authenticated = http_json(
             opener,
             "POST",
-            base_url + "/api/human-auth/bootstrap",
+            base_url + "/api/human-auth/login",
             {
-                "setup_code": init_payload["owner_setup_code"],
                 "username": "bundle-smoke-owner",
-                "display_name": "Bundle Smoke Owner",
-                "password": "fixture-bundle-smoke-password",
+                "password": bootstrap_password,
             },
             {"Origin": base_url},
         )
@@ -263,7 +278,10 @@ def main() -> int:
         stopped = run([str(bin_dir / "agentops"), "host", "stop"], env=env)
         evidence = workflow.get("evidence") or {}
         if (
-            auth_status != 201
+            bootstrap_cli.returncode != 0
+            or bootstrap_payload.get("owner_created") is not True
+            or bootstrap_password in ((bootstrap_cli.stdout or "") + (bootstrap_cli.stderr or ""))
+            or auth_status != 200
             or not csrf
             or workflow_status != 201
             or workflow.get("ok") is not True
@@ -280,6 +298,8 @@ def main() -> int:
                     returncode=1,
                     stdout=json.dumps({
                         "auth_status": auth_status,
+                        "bootstrap_cli_ok": bootstrap_cli.returncode == 0,
+                        "bootstrap_owner_created": bootstrap_payload.get("owner_created"),
                         "workflow_status": workflow_status,
                         "workflow_ok": workflow.get("ok"),
                         "run_id_present": bool(workflow.get("run_id")),
@@ -420,6 +440,7 @@ def main() -> int:
             "installed_host_init_and_doctor": "passed",
             "installed_agent_plan_specs": "passed",
             "installed_agent_plan_runtime_verification": "passed",
+            "installed_owner_bootstrap_cli": "passed",
             "installed_live_readback_client": "passed",
             "running_host_update_rejected": True,
             "two_version_upgrade_and_rollback": "passed",

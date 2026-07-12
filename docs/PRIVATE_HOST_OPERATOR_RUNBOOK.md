@@ -175,6 +175,20 @@ agentops host console-url
 
 预期至少能区分：Host 进程、生产 UI、API、账本、知识索引、Worker 和 Runtime adapter 的 `ready`、`degraded` 或 `unavailable` 状态。
 
+首次使用时，在 Host 本机终端安全创建 Owner：
+
+```bash
+agentops host bootstrap-owner \
+  --username <owner-name> \
+  --display-name "<display name>" \
+  --confirm
+```
+
+命令会在终端中无回显地要求输入并确认密码，内部读取一次性 setup code，
+然后只调用 loopback bootstrap API。不要把密码写进命令行、环境变量、URL
+或聊天。自动化验收只能用 `--password-stdin` 从标准输入读取一行密码；产品
+不提供 `--password` 参数。成功后，操控端使用刚设置的用户名和密码登录。
+
 ### 4.3 查看日志
 
 ```bash

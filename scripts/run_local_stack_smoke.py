@@ -13,6 +13,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import run_local_stack as stack_module
+
 
 ROOT = Path(__file__).resolve().parents[1]
 STACK = ROOT / "scripts" / "run_local_stack.py"
@@ -31,6 +33,45 @@ def get_json(url: str) -> dict:
 
 def main() -> int:
     failures: list[str] = []
+    boundary_env = {
+        "AGENTOPS_API_KEY": "fixture-worker-gateway-key",
+        "HERMES_GATEWAY_URL": "http://127.0.0.1:8642/v1",
+        "OPENCLAW_BIN": "/fixture/openclaw",
+        "NPM_CONFIG_REGISTRY": "https://registry.example.invalid",
+        "VITE_AGENTOPS_PROXY_TARGET": "http://127.0.0.1:8787",
+        "AGENTOPS_ADMIN_KEY": "fixture-human-admin-key",
+        "AGENTOPS_ACCEPTANCE_PASSWORD": "fixture-human-acceptance-password",
+        "AGENTOPS_OWNER_SETUP_CODE": "fixture-owner-setup-code",
+        "AGENTOPS_HUMAN_SESSION_TOKEN": "fixture-human-session-token",
+        "AGENTOPS_CSRF_TOKEN": "fixture-human-csrf-token",
+        "CUSTOM_OWNER_CREDENTIAL": "fixture-custom-human-password",
+        "HERMES_OWNER_PASSWORD": "fixture-prefixed-human-password",
+        "VITE_OWNER_PASSWORD": "fixture-vite-human-password",
+    }
+    projected_worker_env = stack_module.worker_environment(boundary_env, "mock")
+    projected_auxiliary_env = stack_module.without_human_control_secrets(boundary_env)
+    projected_cli_env = stack_module.cli_environment(boundary_env)
+    leaked_human_keys = sorted(set(stack_module.WORKER_DENIED_HUMAN_CONTROL_ENV) & set(projected_worker_env))
+    leaked_auxiliary_keys = sorted(set(stack_module.WORKER_DENIED_HUMAN_CONTROL_ENV) & set(projected_auxiliary_env))
+    if leaked_human_keys:
+        failures.append("worker environment retained human-control credential keys")
+    if (
+        projected_worker_env.get("AGENTOPS_API_KEY") != boundary_env["AGENTOPS_API_KEY"]
+        or projected_worker_env.get("HERMES_GATEWAY_URL") != boundary_env["HERMES_GATEWAY_URL"]
+        or projected_worker_env.get("OPENCLAW_BIN") != boundary_env["OPENCLAW_BIN"]
+    ):
+        failures.append("worker environment removed required Gateway or Runtime configuration")
+    if leaked_auxiliary_keys:
+        failures.append("UI or helper environment retained human-control credential keys")
+    custom_human_keys = {"CUSTOM_OWNER_CREDENTIAL", "HERMES_OWNER_PASSWORD", "VITE_OWNER_PASSWORD"}
+    if custom_human_keys & set(projected_worker_env) or custom_human_keys & set(projected_auxiliary_env):
+        failures.append("subprocess environment retained an unknown custom human credential")
+    if custom_human_keys & set(projected_cli_env):
+        failures.append("CLI helper environment retained an unknown custom human credential")
+    if "AGENTOPS_API_KEY" in projected_auxiliary_env or projected_cli_env.get("AGENTOPS_API_KEY") != boundary_env["AGENTOPS_API_KEY"]:
+        failures.append("Agent Gateway key crossed the npm/Vite boundary or was removed from the CLI helper")
+    if "NPM_CONFIG_REGISTRY" in projected_worker_env or projected_auxiliary_env.get("NPM_CONFIG_REGISTRY") != boundary_env["NPM_CONFIG_REGISTRY"]:
+        failures.append("npm configuration crossed the worker/auxiliary environment boundary")
     with tempfile.TemporaryDirectory(prefix="agentops-local-stack-") as tmp:
         tmp_path = Path(tmp)
         port = free_port()
@@ -123,6 +164,9 @@ def main() -> int:
                 "real_runtime_called": False,
                 "user_config_mutated": False,
                 "token_omitted": True,
+                "human_control_secrets_omitted_from_worker": not leaked_human_keys,
+                "human_control_secrets_omitted_from_ui_helpers": not leaked_auxiliary_keys,
+                "unknown_custom_credentials_omitted": not bool(custom_human_keys & (set(projected_worker_env) | set(projected_auxiliary_env))),
                 "failures": failures,
             },
             ensure_ascii=False,

@@ -287,6 +287,8 @@ def create_session(conn, account_row) -> tuple[dict, str, dict]:
 def bootstrap_owner(conn, body) -> tuple[dict, int, str | None, dict]:
     if not required():
         return {"error": "human_auth_disabled", "message": "Human authentication is not enabled."}, 409, None, {"event": "bootstrap_blocked"}
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     if conn.execute("SELECT 1 FROM human_accounts LIMIT 1").fetchone():
         return {"error": "owner_already_initialized", "message": "The owner account is already initialized."}, 409, None, {"event": "bootstrap_blocked"}
     expected = os.environ.get("AGENTOPS_OWNER_SETUP_CODE", "").strip()

@@ -19,6 +19,70 @@ ROOT = Path(__file__).resolve().parents[1]
 UI_DIR = ROOT / "ui" / "start-building-app"
 CLI = ROOT / "scripts" / "agentops"
 LIVE_ADAPTERS = {"hermes", "openclaw"}
+WORKER_DENIED_HUMAN_CONTROL_ENV = frozenset({
+    "AGENTOPS_ADMIN_KEY",
+    "AGENTOPS_ACCEPTANCE_PASSWORD",
+    "AGENTOPS_OWNER_SETUP_CODE",
+    "AGENTOPS_OWNER_PASSWORD",
+    "AGENTOPS_HUMAN_SESSION",
+    "AGENTOPS_HUMAN_SESSION_TOKEN",
+    "AGENTOPS_CSRF_TOKEN",
+})
+SUBPROCESS_BASE_ENV = frozenset({
+    "ALL_PROXY", "CURL_CA_BUNDLE", "HOME", "HTTP_PROXY", "HTTPS_PROXY",
+    "LANG", "LC_ALL", "LC_CTYPE", "LOGNAME", "NO_PROXY", "PATH",
+    "PYTHONPATH", "REQUESTS_CA_BUNDLE", "SHELL", "SSL_CERT_DIR",
+    "SSL_CERT_FILE", "TEMP", "TMP", "TMPDIR", "USER", "VIRTUAL_ENV",
+    "all_proxy", "http_proxy", "https_proxy", "no_proxy",
+})
+SUBPROCESS_AGENTOPS_ENV = frozenset({
+    "AGENTOPS_ADAPTER_MAX_ATTEMPTS", "AGENTOPS_ADAPTER_RETRY_DELAY_SEC",
+    "AGENTOPS_AGENT_ID", "AGENTOPS_API_KEY", "AGENTOPS_BASE_URL",
+    "AGENTOPS_CONFIG", "AGENTOPS_DEPLOYMENT_MODE",
+    "AGENTOPS_LOCAL_DEMO_DEFAULT_URL", "AGENTOPS_MOCK_FAILURES_BEFORE_SUCCESS",
+    "AGENTOPS_REQUEST_TIMEOUT", "AGENTOPS_SESSION_REFRESH_MARGIN_SEC",
+    "AGENTOPS_SESSION_SCOPES", "AGENTOPS_SESSION_TTL_SEC", "AGENTOPS_TASK_ID",
+    "AGENTOPS_WORKSPACE_ID", "AGENTOPS_WORKER_CWD",
+    "AGENTOPS_WORKER_RUNTIME_DIR", "AGENTOPS_WORKER_STATE_PATH",
+})
+WORKER_RUNTIME_ENV = frozenset({
+    "HERMES_GATEWAY_URL", "HERMES_MAX_TOKENS", "HERMES_MODEL",
+    "HERMES_TIMEOUT", "OPENCLAW_AGENT", "OPENCLAW_BIN", "OPENCLAW_TIMEOUT",
+})
+AUXILIARY_ENV = frozenset({"VITE_AGENTOPS_PROXY_TARGET"})
+AUXILIARY_PREFIXES = ("NPM_CONFIG_", "npm_config_")
+
+
+def projected_environment(
+    base_env: dict[str, str],
+    *,
+    include_agentops: bool = False,
+    extra_allowed: frozenset[str] = frozenset(),
+    allowed_prefixes: tuple[str, ...] = (),
+) -> dict[str, str]:
+    allowed = SUBPROCESS_BASE_ENV | extra_allowed
+    if include_agentops:
+        allowed |= SUBPROCESS_AGENTOPS_ENV
+    return {
+        key: value
+        for key, value in base_env.items()
+        if key not in WORKER_DENIED_HUMAN_CONTROL_ENV
+        and (key in allowed or key.startswith(allowed_prefixes))
+    }
+
+
+def without_human_control_secrets(base_env: dict[str, str]) -> dict[str, str]:
+    return projected_environment(base_env, extra_allowed=AUXILIARY_ENV, allowed_prefixes=AUXILIARY_PREFIXES)
+
+
+def cli_environment(base_env: dict[str, str]) -> dict[str, str]:
+    return projected_environment(base_env, include_agentops=True)
+
+
+def worker_environment(base_env: dict[str, str], adapter: str) -> dict[str, str]:
+    worker_env = projected_environment(base_env, include_agentops=True, extra_allowed=WORKER_RUNTIME_ENV)
+    worker_env["AGENTOPS_AGENT_ID"] = f"agt_worker_local_stack_{adapter}"
+    return worker_env
 
 
 def request_shutdown(_signum, _frame) -> None:
@@ -129,6 +193,8 @@ def main() -> int:
     env["AGENTOPS_LOCAL_DEMO_DEFAULT_URL"] = backend_url
     env["AGENTOPS_WORKSPACE_ID"] = env.get("AGENTOPS_WORKSPACE_ID", "local-demo")
     env["VITE_AGENTOPS_PROXY_TARGET"] = backend_url
+    auxiliary_env = without_human_control_secrets(env)
+    cli_env = cli_environment(env)
     gateway_api_key = env.get("AGENTOPS_API_KEY", "").strip()
     production_ui_dist = (args.ui_dist or (UI_DIR / "dist")).expanduser().resolve()
     processes: list[tuple[str, subprocess.Popen]] = []
@@ -140,10 +206,10 @@ def main() -> int:
                     raise RuntimeError(f"missing UI directory: {UI_DIR}")
                 if not (UI_DIR / "node_modules").exists():
                     if args.install_ui:
-                        subprocess.run(["npm", "ci", "--prefer-offline"], cwd=UI_DIR, env=env, check=True)
+                        subprocess.run(["npm", "ci", "--prefer-offline"], cwd=UI_DIR, env=auxiliary_env, check=True)
                     else:
                         raise RuntimeError("UI dependencies missing. Add --install-ui before building the production UI")
-                subprocess.run(["npm", "run", "build"], cwd=UI_DIR, env=env, check=True)
+                subprocess.run(["npm", "run", "build"], cwd=UI_DIR, env=auxiliary_env, check=True)
             if not (production_ui_dist / "index.html").is_file():
                 raise RuntimeError(f"production UI missing at {production_ui_dist}. Run with --build-ui or pass --ui-dist")
         if port_open(args.backend_port, args.backend_host):
@@ -170,7 +236,7 @@ def main() -> int:
             configured = subprocess.run(
                 [str(CLI), "login", "--base-url", backend_url, "--workspace-id", env["AGENTOPS_WORKSPACE_ID"]],
                 cwd=ROOT,
-                env=env,
+                env=cli_env,
                 capture_output=True,
                 text=True,
                 timeout=15,
@@ -184,7 +250,7 @@ def main() -> int:
                 raise RuntimeError(f"missing UI directory: {UI_DIR}")
             if not (UI_DIR / "node_modules").exists():
                 if args.install_ui:
-                    subprocess.run(["npm", "ci", "--prefer-offline"], cwd=UI_DIR, env=env, check=True)
+                    subprocess.run(["npm", "ci", "--prefer-offline"], cwd=UI_DIR, env=auxiliary_env, check=True)
                 else:
                     raise RuntimeError("UI dependencies missing. Run: python3 scripts/run_local_stack.py --install-ui")
             if port_open(args.ui_port, args.ui_host):
@@ -193,14 +259,13 @@ def main() -> int:
                 ui = subprocess.Popen(
                     ["npm", "run", "dev", "--", "--host", args.ui_host, "--port", str(args.ui_port)],
                     cwd=UI_DIR,
-                    env=env,
+                    env=auxiliary_env,
                 )
                 processes.append(("ui", ui))
                 wait_ready(lambda: port_open(args.ui_port, args.ui_host), f"UI on {args.ui_host}:{args.ui_port}")
 
         for adapter in workers:
-            worker_env = env.copy()
-            worker_env["AGENTOPS_AGENT_ID"] = f"agt_worker_local_stack_{adapter}"
+            worker_env = worker_environment(env, adapter)
             worker = subprocess.Popen(worker_command(adapter, args.worker_poll_interval, args.confirm_live_workers), cwd=ROOT, env=worker_env)
             processes.append((f"worker:{adapter}", worker))
             time.sleep(0.2)
