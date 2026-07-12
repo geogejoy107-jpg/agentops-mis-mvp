@@ -748,12 +748,17 @@ def cmd_bootstrap_owner(args) -> int:
             "weak_password",
             "host_unavailable",
         }
+        safe_messages = {
+            "weak_password": "Password must contain at least 12 characters.",
+        }
         error = str(payload.get("error") or "owner_bootstrap_failed")
+        safe_error = error if error in safe_errors else "owner_bootstrap_failed"
         emit({
             "ok": False,
             "operation": "host_bootstrap_owner",
-            "error": error if error in safe_errors else "owner_bootstrap_failed",
+            "error": safe_error,
             "http_status": status or None,
+            **({"message": safe_messages[safe_error]} if safe_error in safe_messages else {}),
             "setup_code_omitted": True,
             "password_omitted": True,
             "token_omitted": True,

@@ -213,7 +213,9 @@ agentops host bootstrap-owner \
 命令会在终端中无回显地要求输入并确认密码，内部读取一次性 setup code，
 然后只调用 loopback bootstrap API。不要把密码写进命令行、环境变量、URL
 或聊天。自动化验收只能用 `--password-stdin` 从标准输入读取一行密码；产品
-不提供 `--password` 参数。成功后，操控端使用刚设置的用户名和密码登录。
+不提供 `--password` 参数。Owner 密码至少需要 12 个字符；若不满足，CLI
+会返回固定的本地强度提示，同时继续省略密码和 setup code。成功后，操控端
+使用刚设置的用户名和密码登录。
 
 若 Host 本机的 `agentops worker preflight` 仍指向旧的开发或验收端口，可显式
 配置本机机器 CLI：

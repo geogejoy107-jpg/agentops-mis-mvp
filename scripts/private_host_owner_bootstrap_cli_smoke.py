@@ -226,6 +226,27 @@ def main() -> int:
     ):
         mismatch_code = host_module.cmd_bootstrap_owner(SimpleNamespace(confirm=True, username="owner.fixture", display_name="Fixture Owner", password_stdin=False))
     mismatch_payload = json.loads(mismatch_output.getvalue())
+    weak_server_message = "fixture-untrusted-server-message"
+
+    def weak_password_request(_base_url: str, path: str, *, method: str = "GET", body: dict | None = None):
+        if path == "/api/human-auth/status":
+            return 200, {"required": True, "bootstrap_required": True}
+        return 400, {"error": "weak_password", "message": weak_server_message}
+
+    weak_password_output = io.StringIO()
+    with (
+        mock.patch.object(host_module, "require_initialized", return_value=({"host": "127.0.0.1", "port": 8787}, {"owner_setup_code": "fixture-code"})),
+        mock.patch.object(host_module, "health", return_value={"reachable": True, "status": "ready"}),
+        mock.patch.object(host_module, "managed_host_running", return_value=True),
+        mock.patch.object(host_module, "local_json_request", side_effect=weak_password_request),
+        mock.patch.object(host_module.sys.stdin, "isatty", return_value=True),
+        mock.patch.object(host_module.getpass, "getpass", side_effect=["short-value", "short-value"]),
+        contextlib.redirect_stdout(weak_password_output),
+    ):
+        weak_password_code = host_module.cmd_bootstrap_owner(
+            SimpleNamespace(confirm=True, username="owner.fixture", display_name="Fixture Owner", password_stdin=False)
+        )
+    weak_password_payload = json.loads(weak_password_output.getvalue())
     evidence["local_contract"] = {
         "password_argv_option_present": password_argv_option_present,
         "password_argv_variants_rejected_safely": password_argv_rejected_safely,
@@ -234,6 +255,10 @@ def main() -> int:
         "mismatch_code": mismatch_code,
         "mismatch_error": mismatch_payload.get("error"),
         "bootstrap_post_called": any(path == "/api/human-auth/bootstrap" and method == "POST" for path, method in mismatch_calls),
+        "weak_password_code": weak_password_code,
+        "weak_password_error": weak_password_payload.get("error"),
+        "weak_password_guidance": weak_password_payload.get("message"),
+        "untrusted_server_message_omitted": weak_server_message not in weak_password_output.getvalue(),
     }
     if (
         password_argv_option_present
@@ -243,6 +268,10 @@ def main() -> int:
         or mismatch_code != 2
         or mismatch_payload.get("error") != "password_confirmation_mismatch"
         or evidence["local_contract"]["bootstrap_post_called"]
+        or weak_password_code != 2
+        or weak_password_payload.get("error") != "weak_password"
+        or weak_password_payload.get("message") != "Password must contain at least 12 characters."
+        or weak_server_message in weak_password_output.getvalue()
     ):
         failures.append("local Owner bootstrap password-input contract failed")
     with tempfile.TemporaryDirectory(prefix="agentops-owner-bootstrap-") as temporary:
