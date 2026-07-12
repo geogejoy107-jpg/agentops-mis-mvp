@@ -118,6 +118,10 @@ The current-package live gate remains open until a locally created human Owner
 approves the plans and the resumed exact actions complete with bounded
 run/runtime-event/evaluation/artifact/memory/audit evidence.
 
+The Host subsequently upgraded to exact-package preview.11 with verified
+pre-update backups. Both run IDs and their `waiting_approval` states persisted;
+no model execution is inferred from the upgrade.
+
 ## Exact-Package Preview 3 Result
 
 On exact commit `642471f571d9943f9c4c217b3912e32f6728dfce`, the installed

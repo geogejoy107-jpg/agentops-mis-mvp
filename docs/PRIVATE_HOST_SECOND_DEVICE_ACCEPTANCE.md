@@ -121,12 +121,12 @@ text, project files, database path, or unrestricted Host paths.
 ## Current Result
 
 Host-side staging was completed on 2026-07-12 with
-`v1.6.0-private-host-preview.10` at exact commit
-`d7c2ec3a49347ed6899aff3c3406f922a7690279`:
+`v1.6.0-private-host-preview.11` at exact commit
+`00ef8ea3babaec2ff141db19a48b0998496ececc`:
 
 - GitHub download and published checksum verification passed;
 - upgrade created a pre-update ledger backup and preserved user data;
-- Host health, managed preview.10 production UI and real Hermes/OpenClaw Workers
+- Host health, managed preview.11 production UI and real Hermes/OpenClaw Workers
   are ready;
 - the published no-repository bootstrap passed Draft round-trip and public
   GitHub clean-HOME install/init/start/status/stop gates;
