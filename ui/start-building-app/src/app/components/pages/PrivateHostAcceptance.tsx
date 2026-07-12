@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, CheckCircle2, ClipboardCheck, Download, FileCheck2,
-  LoaderCircle, MonitorCheck, Plus, RefreshCw, ShieldCheck, XCircle,
+  LoaderCircle, LockKeyhole, MonitorCheck, Plus, RefreshCw, Server, ShieldCheck, XCircle,
 } from "lucide-react";
 import {
+  createPrivateHostAuthorityReceipt,
   createPrivateHostAcceptanceMarker,
   loadPrivateHostAcceptanceSnapshot,
+  type PrivateHostAuthorityReceipt,
   type PrivateHostAcceptanceCheckId,
   type PrivateHostAcceptanceMarker,
   type PrivateHostAcceptanceSnapshot,
@@ -47,6 +49,10 @@ export function PrivateHostAcceptance() {
   const [snapshot, setSnapshot] = useState<PrivateHostAcceptanceSnapshot | null>(null);
   const [marker, setMarker] = useState<PrivateHostAcceptanceMarker | null>(null);
   const [manualChecks, setManualChecks] = useState<ManualChecks>(INITIAL_MANUAL_CHECKS);
+  const [authorityRunId, setAuthorityRunId] = useState("");
+  const [authorityReceipt, setAuthorityReceipt] = useState<PrivateHostAuthorityReceipt | null>(null);
+  const [authorityBusy, setAuthorityBusy] = useState(false);
+  const [authorityError, setAuthorityError] = useState("");
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
@@ -56,7 +62,7 @@ export function PrivateHostAcceptance() {
       title: "Private Host Device Acceptance",
       subtitle: "Same-origin browser checks for a second-device operator console",
       boundaryTitle: "Non-authoritative browser checklist",
-      boundary: "This page proves only what the current browser can observe. The downloaded client receipt is not written as a Host Artifact or authoritative Audit receipt, does not prove a physical second device, and is not the Host authority-ledger acceptance receipt. A Host receipt API will replace it later.",
+      boundary: "This page proves only what the current browser can observe. The downloaded device checklist is not written as a Host Artifact or authoritative Audit receipt and does not prove a physical second device. Use the Owner authority receipt below for Host-ledger evidence.",
       refresh: "Refresh checks", createMarker: "Create marker task", creating: "Creating marker",
       automated: "Automated live API checks",
       automatedHint: "Current human Session and same-origin API readability; no Runtime is called.",
@@ -69,6 +75,22 @@ export function PrivateHostAcceptance() {
       noRuntime: "No Runtime", liveApi: "Live API", manualLabel: "Manual", error: "Acceptance check failed",
       nonAuthoritative: "non-authoritative",
       humanAuthDisabled: "Human authentication is disabled; this is not a valid Private Host Session acceptance.",
+      authorityTitle: "Owner authority receipt",
+      authorityHint: "Generate Host-authoritative ledger evidence for a completed run. Owner Session and CSRF are enforced by the Host API.",
+      hostAuthoritative: "Host-authoritative",
+      completedRunId: "Completed run ID",
+      runPlaceholder: "run_gw_...",
+      generateAuthority: "Generate authority receipt",
+      generatingAuthority: "Generating",
+      ownerRequired: "Owner role required",
+      authorityError: "Authority receipt failed",
+      protectedDownload: "Protected JSON download",
+      authorityFields: {
+        receipt_id: "Receipt ID", host_version: "Host version", git_commit: "Git commit",
+        adapter: "Adapter", evaluation: "Evaluation", artifact_id: "Artifact ID",
+        plan_manifest_id: "Plan manifest ID", artifact_metadata_sha256: "Artifact metadata SHA-256",
+        payload_sha256: "Payload SHA-256",
+      },
       checkLabels: {
         human_session: "Human authentication and active Session",
         local_readiness: "Local readiness endpoint",
@@ -91,7 +113,7 @@ export function PrivateHostAcceptance() {
       title: "Private Host 第二设备验收",
       subtitle: "用于第二设备操控台的同源浏览器检查",
       boundaryTitle: "非权威浏览器检查清单",
-      boundary: "本页只能证明当前浏览器可观察到的状态。下载的客户端回执不会写成 Host Artifact 或权威 Audit 回执，不能证明真实物理第二设备，也不是 Host 权威账本验收回执；后续将由 Host receipt API 替代。",
+      boundary: "本页只能证明当前浏览器可观察到的状态。下载的设备检查清单不会写成 Host Artifact 或权威 Audit 回执，也不能证明真实物理第二设备。需要 Host 账本证据时，请使用下方 Owner 权威回执。",
       refresh: "刷新检查", createMarker: "创建标记任务", creating: "正在创建标记",
       automated: "自动化实时 API 检查",
       automatedHint: "检查当前人类会话和同源 API 可读性，不调用任何 Runtime。",
@@ -104,6 +126,22 @@ export function PrivateHostAcceptance() {
       noRuntime: "未调用 Runtime", liveApi: "实时 API", manualLabel: "人工确认", error: "验收检查失败",
       nonAuthoritative: "非权威",
       humanAuthDisabled: "当前未启用人类身份认证，不能作为有效的 Private Host 会话验收。",
+      authorityTitle: "Owner 权威回执",
+      authorityHint: "为已完成的 Run 生成 Host 权威账本证据。Owner 会话与 CSRF 由 Host API 强制校验。",
+      hostAuthoritative: "Host 权威",
+      completedRunId: "已完成的 Run ID",
+      runPlaceholder: "run_gw_...",
+      generateAuthority: "生成权威回执",
+      generatingAuthority: "正在生成",
+      ownerRequired: "需要 Owner 权限",
+      authorityError: "权威回执生成失败",
+      protectedDownload: "受保护 JSON 下载",
+      authorityFields: {
+        receipt_id: "回执 ID", host_version: "Host 版本", git_commit: "Git commit",
+        adapter: "执行适配器", evaluation: "评估结果", artifact_id: "产物 ID",
+        plan_manifest_id: "Plan manifest ID", artifact_metadata_sha256: "产物元数据 SHA-256",
+        payload_sha256: "回执载荷 SHA-256",
+      },
       checkLabels: {
         human_session: "人类身份认证与有效会话",
         local_readiness: "本地主机就绪接口",
@@ -152,6 +190,21 @@ export function PrivateHostAcceptance() {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
       setCreating(false);
+    }
+  };
+
+  const generateAuthorityReceipt = async () => {
+    const runId = authorityRunId.trim();
+    if (!runId) return;
+    setAuthorityBusy(true);
+    setAuthorityError("");
+    setAuthorityReceipt(null);
+    try {
+      setAuthorityReceipt(await createPrivateHostAuthorityReceipt(runId));
+    } catch (nextError) {
+      setAuthorityError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setAuthorityBusy(false);
     }
   };
 
@@ -247,6 +300,82 @@ export function PrivateHostAcceptance() {
             <span className="flex-1">{copy.manualLabels[id]}</span><span className="text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>{copy.manualLabel}</span>
           </label>)}
         </div>
+      </section>
+
+      <section className="border" style={{ borderColor: "rgba(42,157,143,0.42)", background: "var(--mis-surface)" }} data-testid="private-host-authority-receipt">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3" style={{ borderColor: "var(--mis-border)" }}>
+          <div>
+            <div className="flex items-center gap-2">
+              <Server size={15} style={{ color: "var(--mis-success)" }} />
+              <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.authorityTitle}</h2>
+              <span className="rounded px-1.5 py-0.5 text-[9px] uppercase" style={{ background: "rgba(42,157,143,0.12)", color: "var(--mis-success)" }}>{copy.hostAuthoritative}</span>
+            </div>
+            <p className="mt-1 max-w-4xl text-[11px] leading-5" style={{ color: "var(--mis-dim)" }}>{copy.authorityHint}</p>
+          </div>
+          <span className="flex items-center gap-1 text-[10px]" style={{ color: user?.role === "owner" ? "var(--mis-success)" : "var(--mis-warning)" }}>
+            <LockKeyhole size={11} /> {user?.role === "owner" ? "Owner" : copy.ownerRequired}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-2 border-b px-4 py-3" style={{ borderColor: "var(--mis-border)" }}>
+          <label className="min-w-[260px] flex-1">
+            <span className="mb-1 block text-[10px] font-medium" style={{ color: "var(--mis-muted)" }}>{copy.completedRunId}</span>
+            <input
+              value={authorityRunId}
+              onChange={(event) => setAuthorityRunId(event.target.value)}
+              placeholder={copy.runPlaceholder}
+              autoComplete="off"
+              spellCheck={false}
+              className="h-8 w-full rounded border bg-transparent px-2.5 font-mono text-xs outline-none"
+              style={{ borderColor: "var(--mis-border)", color: "var(--mis-text)" }}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => void generateAuthorityReceipt()}
+            disabled={authorityBusy || !authorityRunId.trim() || user?.role !== "owner"}
+            className="flex h-8 items-center gap-1.5 rounded px-3 text-[11px] font-medium disabled:opacity-50"
+            style={{ background: "var(--mis-success)", color: "#071a17" }}
+          >
+            {authorityBusy ? <LoaderCircle size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
+            {authorityBusy ? copy.generatingAuthority : copy.generateAuthority}
+          </button>
+        </div>
+
+        {authorityError && <div role="alert" className="flex items-center gap-2 border-b px-4 py-2.5 text-xs" style={{ borderColor: "var(--mis-border)", color: "#F87171" }}><XCircle size={13} />{copy.authorityError}: {authorityError}</div>}
+
+        {authorityReceipt && (
+          <div>
+            <dl className="grid md:grid-cols-2">
+              {([
+                ["receipt_id", authorityReceipt.receipt_id],
+                ["host_version", authorityReceipt.host_version],
+                ["git_commit", authorityReceipt.git_commit.slice(0, 12)],
+                ["adapter", authorityReceipt.adapter],
+                ["evaluation", `${authorityReceipt.evaluation.pass_fail} · ${authorityReceipt.evaluation.score}`],
+                ["artifact_id", authorityReceipt.artifact_id],
+                ["plan_manifest_id", authorityReceipt.plan_manifest_id],
+                ["artifact_metadata_sha256", authorityReceipt.artifact_metadata_sha256],
+                ["payload_sha256", authorityReceipt.payload_sha256],
+              ] as const).map(([key, value]) => (
+                <div key={key} className={`border-b px-4 py-2.5 ${key.includes("sha256") ? "md:col-span-2" : "md:odd:border-r"}`} style={{ borderColor: "var(--mis-border)" }}>
+                  <dt className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.authorityFields[key]}</dt>
+                  <dd className="mt-0.5 break-all font-mono text-[11px]" style={{ color: key === "evaluation" ? "var(--mis-success)" : "var(--mis-text)" }}>{value}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className="flex justify-end px-4 py-3">
+              <a
+                href={`/mis-api/host/acceptance-receipts/${encodeURIComponent(authorityReceipt.receipt_id)}/download`}
+                download
+                className="flex h-8 items-center gap-1.5 rounded px-3 text-[11px]"
+                style={{ border: "1px solid var(--mis-border)", background: "var(--mis-surface2)", color: "var(--mis-text)" }}
+              >
+                <Download size={12} /> {copy.protectedDownload}
+              </a>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="flex flex-wrap items-center justify-between gap-3 border px-4 py-3" style={{ borderColor: "var(--mis-border)", background: "var(--mis-surface2)" }}>

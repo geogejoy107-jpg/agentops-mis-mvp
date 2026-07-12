@@ -74,6 +74,23 @@ export interface PrivateHostAcceptanceMarker {
   title: string;
 }
 
+export interface PrivateHostAuthorityReceipt {
+  receipt_id: string;
+  host_version: string;
+  git_commit: string;
+  run_id: string;
+  adapter: string;
+  status: "completed";
+  evaluation: {
+    score: number;
+    pass_fail: "pass";
+  };
+  artifact_id: string;
+  plan_manifest_id: string;
+  artifact_metadata_sha256: string;
+  payload_sha256: string;
+}
+
 function readHumanAuthCsrf(): string {
   if (typeof window === "undefined") return "";
   return window.sessionStorage.getItem(HUMAN_AUTH_CSRF_KEY) || "";
@@ -5518,6 +5535,61 @@ export async function createPrivateHostAcceptanceMarker(receiptId: string): Prom
     task_id: String(raw.task_id || ""),
     title: String(raw.title || title),
   };
+}
+
+function privateHostAuthorityReceipt(raw: unknown): PrivateHostAuthorityReceipt {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error("Host authority receipt response is invalid");
+  }
+  const record = raw as Record<string, unknown>;
+  const evaluationRaw = record.evaluation;
+  if (typeof evaluationRaw !== "object" || evaluationRaw === null || Array.isArray(evaluationRaw)) {
+    throw new Error("Host authority receipt evaluation is invalid");
+  }
+  const evaluation = evaluationRaw as Record<string, unknown>;
+  const requiredStrings = [
+    "receipt_id", "host_version", "git_commit", "run_id", "adapter", "artifact_id",
+    "plan_manifest_id", "artifact_metadata_sha256", "payload_sha256",
+  ] as const;
+  for (const key of requiredStrings) {
+    if (typeof record[key] !== "string" || !String(record[key]).trim()) {
+      throw new Error(`Host authority receipt field is invalid: ${key}`);
+    }
+  }
+  if (record.status !== "completed" || evaluation.pass_fail !== "pass" || !Number.isFinite(Number(evaluation.score))) {
+    throw new Error("Host authority receipt completion or evaluation gate is invalid");
+  }
+  const artifactHash = String(record.artifact_metadata_sha256);
+  const payloadHash = String(record.payload_sha256);
+  if (!/^[a-f0-9]{64}$/.test(artifactHash) || !/^[a-f0-9]{64}$/.test(payloadHash)) {
+    throw new Error("Host authority receipt integrity hash is invalid");
+  }
+  return {
+    receipt_id: String(record.receipt_id),
+    host_version: String(record.host_version),
+    git_commit: String(record.git_commit),
+    run_id: String(record.run_id),
+    adapter: String(record.adapter),
+    status: "completed",
+    evaluation: { score: Number(evaluation.score), pass_fail: "pass" },
+    artifact_id: String(record.artifact_id),
+    plan_manifest_id: String(record.plan_manifest_id),
+    artifact_metadata_sha256: artifactHash,
+    payload_sha256: payloadHash,
+  };
+}
+
+export async function createPrivateHostAuthorityReceipt(runId: string): Promise<PrivateHostAuthorityReceipt> {
+  const created = privateHostAuthorityReceipt(await apiJson<unknown>("/host/acceptance-receipts", {
+    method: "POST",
+    body: JSON.stringify({ run_id: runId.trim() }),
+  }));
+  return loadPrivateHostAuthorityReceipt(created.receipt_id);
+}
+
+export async function loadPrivateHostAuthorityReceipt(receiptId: string): Promise<PrivateHostAuthorityReceipt> {
+  const raw = await apiJson<unknown>(`/host/acceptance-receipts/${encodeURIComponent(receiptId)}`);
+  return privateHostAuthorityReceipt(raw);
 }
 
 export async function loadIntegrationInbox(options: IntegrationInboxOptions = {}): Promise<IntegrationInboxPayload> {

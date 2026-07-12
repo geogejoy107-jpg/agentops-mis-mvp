@@ -47,6 +47,16 @@ EXPECTED = {
     "artifact_read": (LIVE_API, 'listCheck("artifacts_readable", "/artifacts", "artifacts")'),
     "marker_low_risk": (LIVE_API, 'risk_level: "low"'),
     "marker_zero_budget": (LIVE_API, "budget_limit_usd: 0"),
+    "authority_type": (LIVE_API, "export interface PrivateHostAuthorityReceipt"),
+    "authority_create": (LIVE_API, "createPrivateHostAuthorityReceipt"),
+    "authority_readback": (LIVE_API, "loadPrivateHostAuthorityReceipt(created.receipt_id)"),
+    "authority_post": (LIVE_API, 'apiJson<unknown>("/host/acceptance-receipts"'),
+    "authority_hash_validation": (LIVE_API, "/^[a-f0-9]{64}$/"),
+    "authority_section": (PAGE, 'data-testid="private-host-authority-receipt"'),
+    "authority_owner_gate": (PAGE, 'user?.role !== "owner"'),
+    "authority_download": (PAGE, '/mis-api/host/acceptance-receipts/${encodeURIComponent(authorityReceipt.receipt_id)}/download'),
+    "authority_en": (PAGE, 'authorityTitle: "Owner authority receipt"'),
+    "authority_zh": (PAGE, 'authorityTitle: "Owner 权威回执"'),
 }
 
 
@@ -71,14 +81,16 @@ def main() -> int:
     require("localStorage" not in combined, "checklist must not persist receipt data in localStorage", failures)
     require("runCustomer" not in page and "dispatchLocalWorker" not in page, "checklist page must not invoke a Runtime workflow", failures)
     require("No Runtime or external connector is invoked" in live_api, "marker must declare the no-Runtime boundary", failures)
-    require("Host Artifact" in page and "authoritative Audit" in page and "Host receipt API" in page, "page must distinguish the future Host authority receipt", failures)
+    require("Host Artifact" in page and "authoritative Audit" in page and "Owner authority receipt" in page, "page must distinguish the Host authority receipt", failures)
+    require("generated_by_user_id" not in page, "authority UI must not display the receipt generator account id", failures)
+    require("authorityReceipt.workspace_id" not in page, "authority UI must not display the receipt workspace id", failures)
     require(not any(pattern.search(combined) for pattern in SECRET_PATTERNS), "UI source contains token-like material", failures)
 
     output = {
         "operation": "private_host_second_device_ui_smoke",
         "ok": not failures,
         "route": "/admin/private-host-acceptance",
-        "checks": len(EXPECTED) + 7,
+        "checks": len(EXPECTED) + 9,
         "failures": failures,
         "safety": {
             "static_only": True,
