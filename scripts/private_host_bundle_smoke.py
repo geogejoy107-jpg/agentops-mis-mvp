@@ -194,7 +194,7 @@ def main() -> int:
         help_result = run([str(bin_dir / "agentops"), "host", "--help"], env=env)
         if help_result.returncode != 0 or "Manage the private local AgentOps MIS host" not in help_result.stdout:
             fail("installed agentops host --help failed", help_result)
-        for command in ("bootstrap-owner", "backup", "backup-verify", "restore"):
+        for command in ("bootstrap-owner", "configure-cli", "backup", "backup-verify", "restore"):
             command_help = run([str(bin_dir / "agentops"), "host", command, "--help"], env=env)
             if command_help.returncode != 0:
                 fail(f"installed agentops host {command} --help failed", command_help)
@@ -231,6 +231,11 @@ def main() -> int:
         started = run([str(bin_dir / "agentops"), "host", "start", "--no-workers"], env=env)
         if started.returncode != 0 or not json.loads(started.stdout).get("ok"):
             fail("installed Host failed to start for Agent Plan verification", started)
+        configure_cli = run([str(bin_dir / "agentops"), "host", "configure-cli", "--confirm"], env=env)
+        configure_cli_payload = json.loads(configure_cli.stdout or "{}")
+        configured_machine_key = str(json.loads((host_data / "secrets.json").read_text(encoding="utf-8")).get("api_key") or "")
+        worker_preflight = run([str(bin_dir / "agentops"), "worker", "preflight", "--adapter", "mock"], env=env)
+        worker_preflight_payload = json.loads(worker_preflight.stdout or "{}")
         bootstrap_password = "fixture-bundle-smoke-password"
         bootstrap_cli = run(
             [
@@ -278,7 +283,14 @@ def main() -> int:
         stopped = run([str(bin_dir / "agentops"), "host", "stop"], env=env)
         evidence = workflow.get("evidence") or {}
         if (
-            bootstrap_cli.returncode != 0
+            configure_cli.returncode != 0
+            or configure_cli_payload.get("machine_credential_configured") is not True
+            or configure_cli_payload.get("browser_session_reused") is not False
+            or not configured_machine_key
+            or configured_machine_key in ((configure_cli.stdout or "") + (configure_cli.stderr or "") + (worker_preflight.stdout or "") + (worker_preflight.stderr or ""))
+            or worker_preflight.returncode != 0
+            or worker_preflight_payload.get("ok") is not True
+            or bootstrap_cli.returncode != 0
             or bootstrap_payload.get("owner_created") is not True
             or bootstrap_password in ((bootstrap_cli.stdout or "") + (bootstrap_cli.stderr or ""))
             or auth_status != 200
@@ -298,6 +310,8 @@ def main() -> int:
                     returncode=1,
                     stdout=json.dumps({
                         "auth_status": auth_status,
+                        "configure_cli_ok": configure_cli.returncode == 0,
+                        "worker_preflight_ok": worker_preflight_payload.get("ok"),
                         "bootstrap_cli_ok": bootstrap_cli.returncode == 0,
                         "bootstrap_owner_created": bootstrap_payload.get("owner_created"),
                         "workflow_status": workflow_status,
@@ -441,6 +455,7 @@ def main() -> int:
             "installed_agent_plan_specs": "passed",
             "installed_agent_plan_runtime_verification": "passed",
             "installed_owner_bootstrap_cli": "passed",
+            "installed_host_cli_configuration": "passed",
             "installed_live_readback_client": "passed",
             "running_host_update_rejected": True,
             "two_version_upgrade_and_rollback": "passed",

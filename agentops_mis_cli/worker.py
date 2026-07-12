@@ -31,6 +31,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from agentops_mis_cli.http_transport import credential_opener, credential_transport_url_allowed, safe_credential_error
 from agentops_mis_cli.redaction import redact_text
 
 
@@ -192,6 +193,9 @@ class AgentOpsClient:
         self.agent_id = agent_id
         self.api_key = api_key
 
+    def safe_error_detail(self, value: object, limit: int) -> str:
+        return safe_credential_error(value, self.api_key, limit)
+
     def request(self, method: str, path: str, payload: dict | None = None, query: dict | None = None, timeout: int = 180):
         url = self.base_url + path
         if query:
@@ -202,19 +206,22 @@ class AgentOpsClient:
             "X-AgentOps-Agent-Id": self.agent_id,
         }
         if self.api_key:
+            if not credential_transport_url_allowed(url):
+                raise RuntimeError("Credentialed Agent Gateway requests require HTTPS or a literal loopback HTTP target")
             headers["X-AgentOps-Api-Key"] = self.api_key
             headers["Authorization"] = f"Bearer {self.api_key}"
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
         req = Request(url, data=data, headers=headers, method=method)
         try:
-            with urlopen(req, timeout=timeout) as res:
+            opener = credential_opener()
+            with opener.open(req, timeout=timeout) as res:
                 raw = res.read().decode("utf-8")
                 return json.loads(raw) if raw else {}
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"{method} {path} failed: {exc.code} {detail}") from exc
+            raise RuntimeError(f"{method} {path} failed: {exc.code} {self.safe_error_detail(detail, 1200)}") from exc
         except URLError as exc:
-            raise RuntimeError(f"Cannot reach {url}: {exc.reason}") from exc
+            raise RuntimeError(f"Cannot reach {self.safe_error_detail(url, 500)}: {self.safe_error_detail(exc.reason, 500)}") from exc
 
     def get(self, path: str, query: dict | None = None):
         return self.request("GET", path, query=query)

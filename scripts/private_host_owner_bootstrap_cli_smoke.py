@@ -10,6 +10,8 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
+import traceback
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -157,6 +159,7 @@ def main() -> int:
     with (
         mock.patch.object(host_module, "require_initialized", return_value=({"host": "127.0.0.1", "port": 8787}, {"owner_setup_code": "fixture-code"})),
         mock.patch.object(host_module, "health", return_value={"reachable": True, "status": "ready"}),
+        mock.patch.object(host_module, "managed_host_running", return_value=True),
         mock.patch.object(host_module, "local_json_request", side_effect=mismatch_request),
         mock.patch.object(host_module.sys.stdin, "isatty", return_value=True),
         mock.patch.object(host_module.getpass, "getpass", side_effect=["fixture-password-a", "fixture-password-b"]),
@@ -186,10 +189,17 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="agentops-owner-bootstrap-") as temporary:
         root = Path(temporary)
         host_home = root / "host"
+        fixture_home = root / "home"
+        cli_config_path = fixture_home / ".agentops" / "config.json"
         ui_dist = root / "ui"
         ui_dist.mkdir()
         (ui_dist / "index.html").write_text("<!doctype html><div id='root'>OWNER_BOOTSTRAP_FIXTURE</div>\n", encoding="utf-8")
-        env = {**os.environ, "AGENTOPS_HOST_HOME": str(host_home)}
+        env = {
+            **os.environ,
+            "HOME": str(fixture_home),
+            "AGENTOPS_HOST_HOME": str(host_home),
+            "AGENTOPS_CONFIG": str(cli_config_path),
+        }
         password = "fixture-owner-password-2026"
         setup_code = ""
         try:
@@ -205,9 +215,80 @@ def main() -> int:
             if not setup_code:
                 failures.append("Host init did not create the one-time setup code")
 
+            unmanaged_cli, unmanaged_cli_output = run_host(
+                env,
+                "configure-cli",
+                "--confirm",
+                expected=(2,),
+            )
+            unmanaged_password = "fixture-unmanaged-owner-password"
+            unmanaged_owner, unmanaged_owner_output = run_host(
+                env,
+                "bootstrap-owner",
+                "--username",
+                "unmanaged.owner",
+                "--password-stdin",
+                "--confirm",
+                input_text=unmanaged_password + "\n",
+                expected=(2,),
+            )
+            if (
+                unmanaged_cli.get("error") != "managed_host_not_running"
+                or unmanaged_owner.get("error") != "managed_host_not_running"
+                or cli_config_path.exists()
+                or unmanaged_password in (unmanaged_cli_output + unmanaged_owner_output)
+            ):
+                failures.append("credentialed Host commands did not fail closed before a managed Host was running")
+
             started, start_output = run_host(env, "start", "--no-workers")
             base_url = str(started.get("local_console_url") or "").removesuffix("/workspace")
             before_status, before = request_json(base_url, "/api/human-auth/status")
+
+            configure_preview, configure_preview_output = run_host(env, "configure-cli", expected=(2,))
+            if configure_preview.get("error") != "confirmation_required" or cli_config_path.exists():
+                failures.append("CLI configuration preview was not side-effect free")
+            stale_api_key = "fixture-stale-machine-key"
+            cli_config_path.parent.mkdir(parents=True, exist_ok=True)
+            cli_config_path.write_text(json.dumps({
+                "base_url": "http://127.0.0.1:9",
+                "workspace_id": "stale-workspace",
+                "agent_id": "agt_stale_fixture",
+                "api_key": stale_api_key,
+                "api_key_base_url": "http://127.0.0.1:9",
+                "request_timeout": 17,
+            }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            cli_config_path.chmod(0o600)
+            configured_cli, configured_cli_output = run_host(env, "configure-cli", "--confirm")
+            cli_config = json.loads(cli_config_path.read_text(encoding="utf-8"))
+            configured_api_key = str(cli_config.get("api_key") or "")
+            preflight_process = subprocess.run(
+                [sys.executable, "-m", "agentops_mis_cli.cli", "worker", "preflight", "--adapter", "mock"],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            preflight_payload = json.loads(preflight_process.stdout or "{}")
+            unsafe_config_path = root / "outside-cli-config.json"
+            unsafe_config_env = {**env, "AGENTOPS_CONFIG": str(unsafe_config_path)}
+            unsafe_config, unsafe_config_output = run_host(
+                unsafe_config_env,
+                "configure-cli",
+                "--confirm",
+                expected=(2,),
+            )
+            symlink_target = root / "symlink-target.json"
+            symlink_config_path = fixture_home / ".agentops" / "symlink-config.json"
+            symlink_config_path.symlink_to(symlink_target)
+            symlink_config_env = {**env, "AGENTOPS_CONFIG": str(symlink_config_path)}
+            unsafe_symlink, unsafe_symlink_output = run_host(
+                symlink_config_env,
+                "configure-cli",
+                "--confirm",
+                expected=(2,),
+            )
 
             preview, preview_output = run_host(
                 env,
@@ -223,6 +304,13 @@ def main() -> int:
             host_config = json.loads(config_path.read_text(encoding="utf-8"))
             host_config["host"] = "192.0.2.10"
             config_path.write_text(json.dumps(host_config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            cli_config_before_unsafe = cli_config_path.read_bytes()
+            unsafe_cli, unsafe_cli_output = run_host(
+                env,
+                "configure-cli",
+                "--confirm",
+                expected=(2,),
+            )
             unsafe_target, unsafe_output = run_host(
                 env,
                 "bootstrap-owner",
@@ -279,8 +367,14 @@ def main() -> int:
                 "--confirm",
                 expected=(2,),
             )
-            combined_output = "".join((init_output, start_output, preview_output, unsafe_output, non_tty_output, created_output, repeated_output, empty_output))
-            secret_leaked = bool((setup_code and setup_code in "".join((start_output, preview_output, unsafe_output, non_tty_output, created_output, repeated_output, empty_output))) or password in combined_output or password in env.values())
+            combined_output = "".join((init_output, unmanaged_cli_output, unmanaged_owner_output, start_output, configure_preview_output, configured_cli_output, preflight_process.stdout, preflight_process.stderr, unsafe_config_output, unsafe_symlink_output, preview_output, unsafe_cli_output, unsafe_output, non_tty_output, created_output, repeated_output, empty_output))
+            secret_leaked = bool(
+                (setup_code and setup_code in "".join((start_output, configure_preview_output, configured_cli_output, preflight_process.stdout, preflight_process.stderr, preview_output, unsafe_cli_output, unsafe_output, non_tty_output, created_output, repeated_output, empty_output)))
+                or (configured_api_key and configured_api_key in combined_output)
+                or stale_api_key in combined_output
+                or password in combined_output
+                or password in env.values()
+            )
             evidence.update({
                 "before": {
                     "status": before_status,
@@ -290,6 +384,26 @@ def main() -> int:
                     "confirmation_required": preview.get("error") == "confirmation_required",
                     "password_omitted": preview.get("password_omitted"),
                     "setup_code_omitted": preview.get("setup_code_omitted"),
+                },
+                "configure_cli": {
+                    "managed_host_required": unmanaged_cli.get("error") == "managed_host_not_running" and unmanaged_owner.get("error") == "managed_host_not_running",
+                    "preview_side_effect_free": configure_preview.get("error") == "confirmation_required",
+                    "configured": configured_cli.get("machine_credential_configured"),
+                    "browser_session_reused": configured_cli.get("browser_session_reused"),
+                    "config_private": (cli_config_path.stat().st_mode & 0o777) == 0o600,
+                    "loopback_target": cli_config.get("base_url") == base_url,
+                    "workspace_id": cli_config.get("workspace_id"),
+                    "stale_context_replaced": configured_api_key != stale_api_key and cli_config.get("agent_id") == "agt_host_local_cli",
+                    "unrelated_preference_preserved": cli_config.get("request_timeout") == 17,
+                    "machine_key_present": bool(configured_api_key),
+                    "preflight_ok": preflight_process.returncode == 0 and preflight_payload.get("ok") is True,
+                    "unsafe_target_error": unsafe_cli.get("error"),
+                    "unsafe_target_preserved_config": cli_config_path.read_bytes() == cli_config_before_unsafe,
+                    "unsafe_config_path_error": unsafe_config.get("error"),
+                    "unsafe_config_path_not_written": not unsafe_config_path.exists(),
+                    "symlink_config_error": unsafe_symlink.get("error"),
+                    "symlink_target_not_written": not symlink_target.exists(),
+                    "credential_omitted": configured_cli.get("credential_omitted"),
                 },
                 "created": {
                     "ok": created.get("ok"),
@@ -323,6 +437,30 @@ def main() -> int:
             })
             if before_status != 200 or before.get("bootstrap_required") is not True:
                 failures.append("Host did not begin in Owner bootstrap state")
+            if (
+                configured_cli.get("machine_credential_configured") is not True
+                or configured_cli.get("browser_session_reused") is not False
+                or configured_cli.get("credential_omitted") is not True
+                or not configured_api_key
+                or cli_config.get("base_url") != base_url
+                or cli_config.get("workspace_id") != "local-demo"
+                or configured_api_key == stale_api_key
+                or cli_config.get("agent_id") != "agt_host_local_cli"
+                or cli_config.get("request_timeout") != 17
+                or (cli_config_path.stat().st_mode & 0o777) != 0o600
+                or preflight_process.returncode != 0
+                or preflight_payload.get("ok") is not True
+            ):
+                failures.append("confirmed Host CLI configuration did not produce a working private machine CLI context")
+            if unsafe_cli.get("error") != "unsafe_cli_target" or cli_config_path.read_bytes() != cli_config_before_unsafe:
+                failures.append("non-loopback CLI configuration did not fail closed without mutating saved config")
+            if (
+                unsafe_config.get("error") != "unsafe_cli_config_path"
+                or unsafe_config_path.exists()
+                or unsafe_symlink.get("error") != "unsafe_cli_config_path"
+                or symlink_target.exists()
+            ):
+                failures.append("unsafe or symlink CLI config path did not fail closed without writing a credential")
             if (
                 created.get("ok") is not True
                 or created.get("owner_created") is not True
@@ -420,13 +558,104 @@ def main() -> int:
                 except Exception as exc:
                     failures.append(f"Concurrent Host cleanup failed: {type(exc).__name__}")
         except (OSError, RuntimeError, ValueError, urllib.error.URLError) as exc:
-            failures.append(f"bootstrap smoke exception: {type(exc).__name__}: {str(exc)[:180]}")
+            failure_line = traceback.extract_tb(exc.__traceback__)[-1]
+            failures.append(f"bootstrap smoke exception at line {failure_line.lineno}: {type(exc).__name__}: {str(exc)[:180]}")
         finally:
             try:
                 stopped, _output = run_host(env, "stop")
                 evidence["host_stopped"] = stopped.get("ok")
             except Exception as exc:
                 failures.append(f"Host cleanup failed: {type(exc).__name__}")
+
+    with tempfile.TemporaryDirectory(prefix="agentops-owner-foreground-") as temporary:
+        foreground_root = Path(temporary)
+        foreground_home = foreground_root / "home"
+        foreground_host_home = foreground_root / "host"
+        foreground_cli_config = foreground_home / ".agentops" / "config.json"
+        foreground_ui = foreground_root / "ui"
+        foreground_ui.mkdir()
+        (foreground_ui / "index.html").write_text("<!doctype html><div>FOREGROUND_HOST_FIXTURE</div>\n", encoding="utf-8")
+        foreground_port = free_port()
+        foreground_env = {
+            **os.environ,
+            "HOME": str(foreground_home),
+            "AGENTOPS_HOST_HOME": str(foreground_host_home),
+            "AGENTOPS_CONFIG": str(foreground_cli_config),
+        }
+        foreground_process = None
+        try:
+            run_host(
+                foreground_env,
+                "init",
+                "--port",
+                str(foreground_port),
+                "--ui-dist",
+                str(foreground_ui),
+            )
+            foreground_process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "agentops_mis_cli.cli",
+                    "host",
+                    "start",
+                    "--foreground",
+                    "--no-workers",
+                ],
+                cwd=ROOT,
+                env=foreground_env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            foreground_base_url = f"http://127.0.0.1:{foreground_port}"
+            deadline = time.time() + 20
+            foreground_ready = False
+            while time.time() < deadline:
+                try:
+                    status, payload = request_json(foreground_base_url, "/health")
+                    foreground_ready = status == 200 and payload.get("status") == "ready"
+                except (OSError, ValueError, urllib.error.URLError):
+                    foreground_ready = False
+                if foreground_ready and (foreground_host_home / "run" / "host.pid.json").is_file():
+                    break
+                time.sleep(0.1)
+            foreground_configured, foreground_config_output = run_host(
+                foreground_env,
+                "configure-cli",
+                "--confirm",
+            )
+            foreground_machine_key = str(json.loads((foreground_host_home / "secrets.json").read_text(encoding="utf-8")).get("api_key") or "")
+            foreground_stopped, _foreground_stop_output = run_host(foreground_env, "stop")
+            foreground_process.wait(timeout=20)
+            foreground_pid_removed = not (foreground_host_home / "run" / "host.pid.json").exists()
+            foreground_secret_omitted = bool(foreground_machine_key and foreground_machine_key not in foreground_config_output)
+            evidence["foreground_host"] = {
+                "health_ready": foreground_ready,
+                "configure_cli_ok": foreground_configured.get("machine_credential_configured"),
+                "credential_omitted": foreground_secret_omitted,
+                "stopped": foreground_stopped.get("ok"),
+                "pid_record_removed": foreground_pid_removed,
+            }
+            if (
+                not foreground_ready
+                or foreground_configured.get("machine_credential_configured") is not True
+                or not foreground_secret_omitted
+                or foreground_stopped.get("ok") is not True
+                or not foreground_pid_removed
+            ):
+                failures.append("foreground managed Host did not support safe CLI configuration and PID cleanup")
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired, urllib.error.URLError) as exc:
+            failures.append(f"foreground Host smoke exception: {type(exc).__name__}: {str(exc)[:180]}")
+        finally:
+            if foreground_process and foreground_process.poll() is None:
+                foreground_process.terminate()
+                try:
+                    foreground_process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    foreground_process.kill()
+                    foreground_process.wait(timeout=5)
 
     print(json.dumps({
         "ok": not failures,

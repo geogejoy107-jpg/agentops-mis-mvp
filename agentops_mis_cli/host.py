@@ -97,6 +97,11 @@ def process_alive(pid: int) -> bool:
         return False
 
 
+def managed_host_running() -> bool:
+    record = read_json(paths()["pid"])
+    return process_alive(int(record.get("pid") or 0))
+
+
 def health(base_url: str) -> dict:
     try:
         with local_urlopen(base_url.rstrip("/") + "/health", timeout=1.5) as response:
@@ -108,8 +113,6 @@ def health(base_url: str) -> dict:
 
 def loopback_base_url(host: str, port: int) -> str | None:
     value = str(host or "").strip()
-    if value.lower() == "localhost":
-        return f"http://localhost:{int(port)}"
     try:
         address = ipaddress.ip_address(value)
     except ValueError:
@@ -120,12 +123,21 @@ def loopback_base_url(host: str, port: int) -> str | None:
     return f"http://{rendered}:{int(port)}"
 
 
-def local_json_request(base_url: str, path: str, *, method: str = "GET", body: dict | None = None) -> tuple[int, dict]:
+def local_json_request(
+    base_url: str,
+    path: str,
+    *,
+    method: str = "GET",
+    body: dict | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, dict]:
+    request_headers = {"Content-Type": "application/json", "Origin": base_url.rstrip("/")}
+    request_headers.update(headers or {})
     request = urllib.request.Request(
         base_url.rstrip("/") + path,
         data=None if body is None else json.dumps(body).encode("utf-8"),
         method=method,
-        headers={"Content-Type": "application/json", "Origin": base_url.rstrip("/")},
+        headers=request_headers,
     )
     try:
         with local_urlopen(request, timeout=10) as response:
@@ -400,6 +412,17 @@ def cmd_bootstrap_owner(args) -> int:
             "token_omitted": True,
         })
         return 2
+    if not managed_host_running():
+        emit({
+            "ok": False,
+            "operation": "host_bootstrap_owner",
+            "error": "managed_host_not_running",
+            "next_action": "agentops host start",
+            "setup_code_omitted": True,
+            "password_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
     if not health(base_url)["reachable"]:
         emit({
             "ok": False,
@@ -533,6 +556,124 @@ def cmd_bootstrap_owner(args) -> int:
     return 0
 
 
+def cmd_configure_cli(args) -> int:
+    config, secret_values = require_initialized()
+    if not args.confirm:
+        emit({
+            "ok": False,
+            "operation": "host_configure_cli",
+            "preview_only": True,
+            "error": "confirmation_required",
+            "message": "Re-run with --confirm to configure this Host's local machine CLI credential.",
+            "browser_session_reused": False,
+            "credential_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
+
+    base_url = loopback_base_url(config.get("host"), int(config["port"]))
+    if not base_url:
+        emit({
+            "ok": False,
+            "operation": "host_configure_cli",
+            "error": "unsafe_cli_target",
+            "message": "Local CLI configuration is restricted to a literal loopback Host target.",
+            "target_omitted": True,
+            "credential_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
+    if not managed_host_running():
+        emit({
+            "ok": False,
+            "operation": "host_configure_cli",
+            "error": "managed_host_not_running",
+            "next_action": "agentops host start",
+            "credential_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
+    if not health(base_url)["reachable"]:
+        emit({
+            "ok": False,
+            "operation": "host_configure_cli",
+            "error": "host_unavailable",
+            "next_action": "agentops host start",
+            "credential_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
+
+    status, payload = local_json_request(
+        base_url,
+        "/api/agent-gateway/status",
+        headers={"Authorization": f"Bearer {secret_values['api_key']}"},
+    )
+    if status != 200 or payload.get("provider") != "agent_gateway":
+        emit({
+            "ok": False,
+            "operation": "host_configure_cli",
+            "error": "gateway_authentication_failed",
+            "http_status": status or None,
+            "credential_omitted": True,
+            "token_omitted": True,
+        })
+        return 2 if status in {0, 401, 403} else 1
+
+    from . import agentops as agentops_cli
+
+    cli_config_path = agentops_cli.CONFIG_PATH.expanduser()
+    safe_home = Path(os.environ.get("HOME") or Path.home()).expanduser().resolve()
+    safe_config_root = (safe_home / ".agentops").resolve()
+    try:
+        cli_config_path.resolve().relative_to(safe_config_root)
+    except ValueError:
+        emit({
+            "ok": False,
+            "operation": "host_configure_cli",
+            "error": "unsafe_cli_config_path",
+            "config_path_omitted": True,
+            "credential_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
+    if cli_config_path.is_symlink():
+        emit({
+            "ok": False,
+            "operation": "host_configure_cli",
+            "error": "unsafe_cli_config_path",
+            "config_path_omitted": True,
+            "credential_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
+    cli_config_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    cli_config_path.parent.chmod(0o700)
+
+    cli_config = agentops_cli.load_config()
+    cli_config.update({
+        "base_url": base_url,
+        "workspace_id": config.get("workspace_id", "local-demo"),
+        "agent_id": "agt_host_local_cli",
+        "api_key": secret_values["api_key"],
+        "api_key_base_url": base_url,
+    })
+    agentops_cli.save_config(cli_config)
+    emit({
+        "ok": True,
+        "operation": "host_configure_cli",
+        "base_url": base_url,
+        "workspace_id": cli_config["workspace_id"],
+        "agent_id": cli_config["agent_id"],
+        "machine_credential_configured": True,
+        "browser_session_reused": False,
+        "config_private": True,
+        "credential_omitted": True,
+        "token_omitted": True,
+    })
+    return 0
+
+
 def host_env(config: dict, secret_values: dict) -> dict:
     env = os.environ.copy()
     env.update({
@@ -608,7 +749,18 @@ def cmd_start(args) -> int:
     command = stack_command(config, args)
     env = host_env(config, secret_values)
     if args.foreground:
-        return subprocess.run(command, cwd=ROOT, env=env, check=False).returncode
+        process = subprocess.Popen(command, cwd=ROOT, env=env)
+        write_private_json(p["pid"], {
+            "pid": process.pid,
+            "started_at_epoch": time.time(),
+            "foreground": True,
+        })
+        try:
+            return process.wait()
+        finally:
+            current_record = read_json(p["pid"])
+            if int(current_record.get("pid") or 0) == process.pid:
+                p["pid"].unlink(missing_ok=True)
     p["log"].parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with p["log"].open("a", encoding="utf-8") as log_file:
         p["log"].chmod(0o600)
@@ -1310,6 +1462,9 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap_owner.add_argument("--password-stdin", action="store_true", help="Read exactly one password line from stdin; no password argv/env option exists.")
     bootstrap_owner.add_argument("--confirm", action="store_true")
     bootstrap_owner.set_defaults(handler=cmd_bootstrap_owner)
+    configure_cli = sub.add_parser("configure-cli", help="Configure the local machine CLI for this loopback Host without printing its token.", allow_abbrev=False)
+    configure_cli.add_argument("--confirm", action="store_true")
+    configure_cli.set_defaults(handler=cmd_configure_cli)
     start = sub.add_parser("start", help="Start the private host in the background by default.")
     add_start_options(start)
     start.set_defaults(handler=cmd_start)

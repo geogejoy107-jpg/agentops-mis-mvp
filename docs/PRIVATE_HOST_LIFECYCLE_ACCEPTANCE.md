@@ -9,6 +9,7 @@ repo-local product command:
 agentops host init
 agentops host start
 agentops host bootstrap-owner --username <name> --confirm
+agentops host configure-cli --confirm
 agentops host status
 agentops host doctor
 agentops host logs
@@ -76,6 +77,18 @@ customer release.
   CSRF and human-admin credentials are omitted; workers retain only the exact
   Agent Gateway and Hermes/OpenClaw fields they require, while npm/Vite build
   configuration does not cross into workers.
+- Local machine CLI configuration is explicit and confirmation-gated. The Host
+  first authenticates its machine key against the literal-loopback Gateway,
+  then atomically writes a `0600` config below `~/.agentops`; it never reuses a
+  browser Session or prints the key. Saved keys are bound to their configured
+  base URL, and credentialed Worker traffic rejects environment proxies,
+  redirects, non-HTTPS remote targets and reflected credential output.
+- Owner bootstrap and local machine CLI configuration require a live managed
+  Host PID before sending any credential to loopback; an unrelated process on
+  the configured port cannot satisfy the command with health JSON alone.
+- Foreground Host mode writes the same managed PID contract while running and
+  removes only its own matching record on exit, so credentialed setup commands
+  remain available without weakening process ownership checks.
 
 ## Verification
 
@@ -84,6 +97,7 @@ python3 -m py_compile agentops_mis_cli/host.py agentops_mis_cli/cli.py \
   scripts/run_local_stack.py scripts/private_host_lifecycle_smoke.py
 python3 scripts/private_host_lifecycle_smoke.py
 python3 scripts/private_host_owner_bootstrap_cli_smoke.py
+python3 scripts/host_cli_credential_binding_smoke.py
 python3 scripts/private_host_bundle_smoke.py
 python3 scripts/run_local_stack_smoke.py
 python3 scripts/human_browser_auth_smoke.py
@@ -111,6 +125,9 @@ temporary SQLite database and a free loopback port. It verified:
 - concurrent bootstrap yielding exactly one Owner and one `409` loser;
 - setup/password/session omission after init and human-control secret removal
   from Worker and UI-helper environments;
+- stale local CLI context replacement, safe config-path/symlink rejection,
+  base-URL credential binding, proxy/redirect blocking and reflected-key
+  redaction;
 - `HttpOnly`/`SameSite` local cookie behavior without a false HTTPS-only flag;
 - Tailscale preview-only/Funnel-disabled behavior;
 - an existing non-MIS Serve target blocks apply and revoke without their

@@ -189,6 +189,22 @@ agentops host bootstrap-owner \
 或聊天。自动化验收只能用 `--password-stdin` 从标准输入读取一行密码；产品
 不提供 `--password` 参数。成功后，操控端使用刚设置的用户名和密码登录。
 
+若 Host 本机的 `agentops worker preflight` 仍指向旧的开发或验收端口，可显式
+配置本机机器 CLI：
+
+```bash
+agentops host configure-cli --confirm
+agentops worker preflight --adapter hermes
+agentops worker preflight --adapter openclaw
+```
+
+该命令只连接配置中的 literal loopback Host，先验证 Agent Gateway 机器凭据，
+再把当前 Host URL、workspace 和机器 token 写入权限为 `0600` 的本机 CLI
+配置。它不会创建或复用浏览器 Session，不会打印 token，也不会配置远程
+操控端；浏览器用户仍必须通过独立的人类登录流程。Host 必须由
+`agentops host start` 作为受管进程启动，只有端口健康但没有有效 Host PID
+记录时命令会失败关闭。
+
 ### 4.3 查看日志
 
 ```bash

@@ -28,6 +28,7 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
+from agentops_mis_cli.http_transport import credential_opener, credential_transport_url_allowed, safe_credential_error
 from agentops_mis_cli.redaction import redact_text
 from agentops_mis_core.operator_start_check import compact_start_check_local_run_path, operator_agent_loop_packet
 
@@ -84,9 +85,18 @@ def load_config() -> dict:
 
 
 def save_config(config: dict):
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    CONFIG_PATH.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = CONFIG_PATH.with_name(f".{CONFIG_PATH.name}.{uuid.uuid4().hex}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(config, ensure_ascii=False, indent=2) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, CONFIG_PATH)
+        CONFIG_PATH.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def resolved_context(args) -> dict:
@@ -101,14 +111,24 @@ def resolved_context(args) -> dict:
         request_timeout = max(1, int(request_timeout_raw))
     except (TypeError, ValueError):
         request_timeout = DEFAULT_REQUEST_TIMEOUT
+    base_url = (getattr(args, "base_url", None) or os.environ.get("AGENTOPS_BASE_URL") or config.get("base_url") or DEFAULT_BASE_URL).rstrip("/")
+    explicit_api_key = getattr(args, "api_key", None)
+    if explicit_api_key is None and "AGENTOPS_API_KEY" in os.environ:
+        explicit_api_key = os.environ.get("AGENTOPS_API_KEY", "")
+    configured_api_key = str(config.get("api_key") or "")
+    configured_key_origin = str(config.get("api_key_base_url") or config.get("base_url") or "").rstrip("/")
+    config_key_origin_mismatch = bool(configured_api_key and (not configured_key_origin or configured_key_origin != base_url))
+    api_key = explicit_api_key if explicit_api_key is not None else ("" if config_key_origin_mismatch else configured_api_key)
     context = {
-        "base_url": (getattr(args, "base_url", None) or os.environ.get("AGENTOPS_BASE_URL") or config.get("base_url") or DEFAULT_BASE_URL).rstrip("/"),
-        "api_key": getattr(args, "api_key", None) if getattr(args, "api_key", None) is not None else os.environ.get("AGENTOPS_API_KEY", config.get("api_key", "")),
+        "base_url": base_url,
+        "api_key": api_key,
         "workspace_id": getattr(args, "workspace_id", None) or os.environ.get("AGENTOPS_WORKSPACE_ID") or config.get("workspace_id") or DEFAULT_WORKSPACE_ID,
         "agent_id": getattr(args, "agent_id", None) or os.environ.get("AGENTOPS_AGENT_ID") or config.get("agent_id") or "",
         "request_timeout": request_timeout,
     }
     context["sources"] = context_sources(args, config)
+    if config_key_origin_mismatch and explicit_api_key is None:
+        context["sources"]["api_key"] = "blocked_origin_mismatch"
     return context
 
 
@@ -259,7 +279,7 @@ def local_demo_default_probe(target_base_url: str = "", timeout: float = 2.0) ->
         return result
     try:
         req = Request(probe_url + "/api/agent-gateway/status", headers={"Accept": "application/json"})
-        with urlopen(req, timeout=timeout) as res:
+        with credential_opener().open(req, timeout=timeout) as res:
             raw = res.read().decode("utf-8")
             payload = json.loads(raw) if raw else {}
             result.update({
@@ -270,7 +290,7 @@ def local_demo_default_probe(target_base_url: str = "", timeout: float = 2.0) ->
             })
         try:
             req = Request(probe_url + "/api/local/readiness", headers={"Accept": "application/json"})
-            with urlopen(req, timeout=timeout) as readiness_res:
+            with credential_opener().open(req, timeout=timeout) as readiness_res:
                 raw = readiness_res.read().decode("utf-8")
                 readiness = json.loads(raw) if raw else {}
                 runtime = readiness.get("running_instance") if isinstance(readiness.get("running_instance"), dict) else {}
@@ -337,21 +357,23 @@ class AgentOpsClient:
         if self.agent_id:
             headers["X-AgentOps-Agent-Id"] = self.agent_id
         if self.api_key:
+            if not credential_transport_url_allowed(url):
+                raise RuntimeError("Credentialed Agent Gateway requests require HTTPS or a literal loopback HTTP target")
             headers["X-AgentOps-Api-Key"] = self.api_key
             headers["Authorization"] = f"Bearer {self.api_key}"
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
         req = Request(url, data=data, headers=headers, method=method)
         try:
-            with urlopen(req, timeout=self.request_timeout) as res:
+            with credential_opener().open(req, timeout=self.request_timeout) as res:
                 raw = res.read().decode("utf-8")
                 return json.loads(raw) if raw else {}
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"{method} {path} failed: {exc.code} {redact_text(detail, 1200)}") from exc
+            raise RuntimeError(f"{method} {path} failed: {exc.code} {safe_credential_error(detail, self.api_key, 1200)}") from exc
         except TimeoutError as exc:
             raise RuntimeError(f"{method} {path} timed out after {self.request_timeout}s; {self.connection_hint()}") from exc
         except URLError as exc:
-            raise RuntimeError(f"Cannot reach {redact_text(url, 500)}: {redact_text(str(exc.reason), 500)}; {self.connection_hint()}") from exc
+            raise RuntimeError(f"Cannot reach {safe_credential_error(url, self.api_key, 500)}: {safe_credential_error(exc.reason, self.api_key, 500)}; {self.connection_hint()}") from exc
 
     def get(self, path: str, query: dict | None = None):
         return self.request("GET", path, query=query)
@@ -362,15 +384,25 @@ class AgentOpsClient:
 
 def cmd_login(args) -> dict:
     config = load_config()
-    api_key = args.api_key if args.api_key is not None else os.environ.get("AGENTOPS_API_KEY", config.get("api_key", ""))
+    prior_base_url = str(config.get("base_url") or "").rstrip("/")
+    prior_key_origin = str(config.get("api_key_base_url") or prior_base_url).rstrip("/")
+    base_url = (args.base_url or os.environ.get("AGENTOPS_BASE_URL") or config.get("base_url") or DEFAULT_BASE_URL).rstrip("/")
+    explicit_api_key = args.api_key
+    if explicit_api_key is None and "AGENTOPS_API_KEY" in os.environ:
+        explicit_api_key = os.environ.get("AGENTOPS_API_KEY", "")
+    api_key = explicit_api_key if explicit_api_key is not None else (config.get("api_key", "") if prior_key_origin and prior_key_origin == base_url else "")
     config.update({
-        "base_url": args.base_url or os.environ.get("AGENTOPS_BASE_URL") or config.get("base_url") or DEFAULT_BASE_URL,
+        "base_url": base_url,
         "workspace_id": args.workspace_id or os.environ.get("AGENTOPS_WORKSPACE_ID") or config.get("workspace_id") or DEFAULT_WORKSPACE_ID,
     })
     if args.agent_id or os.environ.get("AGENTOPS_AGENT_ID") or config.get("agent_id"):
         config["agent_id"] = args.agent_id or os.environ.get("AGENTOPS_AGENT_ID") or config.get("agent_id")
     if api_key:
         config["api_key"] = api_key
+        config["api_key_base_url"] = base_url
+    elif config.get("api_key") and prior_key_origin != base_url:
+        config.pop("api_key", None)
+        config.pop("api_key_base_url", None)
     save_config(config)
     return {
         "ok": True,
