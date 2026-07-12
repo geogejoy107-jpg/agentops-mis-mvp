@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.2 superseded after exact-package Runtime dogfood; preview.3 and physical second-device acceptance remain open
+Status: preview.3 published and host-local gates passed; physical second-device acceptance remains open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -11,12 +11,12 @@ physical evidence and cannot be closed by mock output.
 
 | # | Requirement | Current evidence | Status |
 |---|---|---|---|
-| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.2` passed clean-HOME download, checksum, install, lifecycle and provenance checks, but exact-package real Runtime dogfood exposed missing Agent Plan specs in the archive. preview.3 must repeat installation and Worker execution; a second-Mac receipt also remains missing. | Partial |
+| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.3` passed GitHub download, checksum, isolated install, lifecycle, route and exact-package Worker checks. A clean install receipt from another physical Mac remains missing. | Passed locally; external evidence required |
 | 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md` plus bundle smoke cover installed CLI, production UI, init, doctor, start/status/stop and fail-closed Runtime readiness. | Passed locally |
 | 3 | Dependency-free second computer opens private HTTPS console and authenticates | Human Session, CSRF, trusted Origin and Tailscale lifecycle are deterministic-smoke covered. Real second-device HTTPS login is missing. | External evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, role/session separation and CSRF/Origin checks. | Passed locally |
 | 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | Customer dispatch and ledger views exist; Audit and Memory use live APIs; memory decisions write through the approver route; approved artifact download is Session/workspace/approval checked and audited. A second-device end-to-end receipt remains open. | Partial |
-| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | `PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md` records fresh completed Hermes and OpenClaw runs through an Owner Session. | Passed on Host |
+| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | `PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md` records fresh completed Hermes and OpenClaw runs from the installed preview.3 package through an Owner Session, followed by human approval and verified Host authority receipts. | Passed on Host |
 | 7 | Console disconnect does not stop Host Worker or lose task | `PRIVATE_HOST_CONSOLE_DISCONNECT_ACCEPTANCE.md` proves independent mock Worker completion and reconnect readback. Real tailnet/browser loss during a live Runtime task is missing. | Partial |
 | 8 | Host restart preserves ledger and knowledge state | `PRIVATE_HOST_RESTART_PERSISTENCE_ACCEPTANCE.md` covers Session, task and a 194-document local Markdown/FTS index remaining searchable after managed restart. | Passed locally |
 | 9 | Backup and restore pass on isolated database | `PRIVATE_HOST_BACKUP_RESTORE_ACCEPTANCE.md` covers strict manifest/hash/schema/integrity/foreign-key checks, atomic replacement and access revocation. | Passed locally |
@@ -53,8 +53,28 @@ checklist plus Owner-only Host authority receipt. Exact-package Hermes/OpenClaw
 dogfood then proved the Worker could claim tasks but could not pass Agent Plan
 verification because four authority specs were absent from the archive. The
 gate failed closed before model invocation. preview.2 is therefore superseded;
-preview.3 must prove both packaged Agent Plan verification and fresh real
+preview.3 provides both packaged Agent Plan verification and fresh real
 Runtime execution before physical second-device acceptance proceeds.
+
+## Current Preview 3
+
+- Tag: `v1.6.0-private-host-preview.3`
+- Exact commit: `642471f571d9943f9c4c217b3912e32f6728dfce`
+- Push CI: passed at the exact commit (`29191745565`)
+- Pull-request CI: passed at the exact commit (`29191747123`)
+- Release: `https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.3`
+- SHA-256 manifest: `2b0535427f14178a32c4bd66620da8c7dd9391cda32031134a15de5ce16909fc`
+- Tar archive: `01a08c8c6ebf4d796b40003eb2deddfcf4f17b5ab439b762868a2bdfe1f2906d`
+- Zip archive: `80b2898b665710771458cf33eead662d96c9a862f190ad4c9a3e24a8bbb50987`
+
+preview.3 packages the four Agent Plan authority specs omitted from preview.2.
+The installed-package smoke now starts an isolated Private Host and verifies
+plan creation, plan verification, run start, evaluation, artifact and verified
+plan-evidence manifest creation. A separate exact-package live pass completed
+fresh Hermes and OpenClaw customer tasks and generated Owner-approved Host
+authority receipts. GitHub download/checksum/install/start/route/stop passed in
+an isolated directory. Physical tailnet, second-computer and another-Mac gates
+remain open, so this prerelease is not yet the final Release Candidate.
 
 ## Release Gates
 

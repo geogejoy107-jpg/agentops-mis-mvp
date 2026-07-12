@@ -94,3 +94,26 @@ Private Host login. That client gap is now covered by
 This proves host-local authenticated dispatch and ledger closure. It does not
 yet prove access from a second physical computer, private-network HTTPS, or
 browser disconnect/reconnect behavior.
+
+## Exact-Package Preview 3 Result
+
+On exact commit `642471f571d9943f9c4c217b3912e32f6728dfce`, the installed
+`v1.6.0-private-host-preview.3` package ran with an isolated AgentOps install,
+Host data directory and SQLite ledger while preserving the authorized local
+Runtime environment. Both adapters completed a new explicitly confirmed
+customer task:
+
+| Adapter | Run | Approval | Authority receipt | Bounded evidence |
+|---|---|---|---|---|
+| Hermes | `run_gw_0c16ac907390` | `ap_customer_worker_delivery_run_gw_0c16ac907390` | `phr_429aeebd31ea54e9ed7817f2` | 1 tool call, 1 evaluation, 15 runtime events, 12 audit events, 2 artifacts, 2 memory proposals and 1 verified plan-evidence manifest |
+| OpenClaw | `run_gw_c0dabe5b3e3b` | `ap_customer_worker_delivery_run_gw_c0dabe5b3e3b` | `phr_ced9731c645f5becbec2f158` | 1 tool call, 1 evaluation, 15 runtime events, 12 audit events, 2 artifacts, 2 memory proposals and 1 verified plan-evidence manifest |
+
+The live client returned `ok=true` with no failures. Each delivery initially
+remained pending and receipt generation failed closed until a human Owner
+approved it. A second Owner Session then read and downloaded each receipt; the
+downloaded canonical payload hashes matched the stored authority hashes. No
+credential, Cookie, raw prompt, raw response, private message, transcript or
+database file was captured in this acceptance record.
+
+This closes the host-local exact-package Runtime and authority-receipt gate. It
+does not close the physical second-device HTTPS or disconnect/reconnect gates.
