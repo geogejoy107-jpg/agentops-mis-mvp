@@ -92,6 +92,7 @@ The packet includes the canonical command manifest used for release review:
 - CI-safe governed local harness preview:
   `python3 scripts/local_harness_governed_live_acceptance_smoke.py`
 - `python3 scripts/customer_worker_hermes_retry_gateway_smoke.py`
+- `python3 scripts/hermes_http_error_redaction_smoke.py`
 - `python3 scripts/redaction_policy_smoke.py`
 - `python3 scripts/sqlite_pragmas_smoke.py`
 - `python3 scripts/module_boundary_smoke.py`
@@ -213,6 +214,10 @@ is wired through the real customer-worker Hermes adapter path; it is still not
 live product-readiness proof. Manual-live commands are tracked in the packet but
 intentionally excluded from CI because they call real local Hermes/OpenClaw
 runtimes and require explicit operator confirmation.
+
+`hermes_http_error_redaction_smoke` proves an upstream Hermes HTTP failure keeps
+its status, retry policy, and response hash while omitting the response body
+from worker evidence.
 
 ### Manual Live Product Evidence
 

@@ -33,6 +33,10 @@ python3 scripts/run_local_stack.py \
   IDs without reading or printing raw tokens.
 - Hermes/OpenClaw are rejected before process startup unless
   `--confirm-live-workers` is present.
+- A non-blocking supervision `attention` state may proceed only after explicit
+  live confirmation, so the first real run can create freshness evidence;
+  `blocked`, unavailable, plan, approval, and prepared-action gates still fail
+  closed.
 - Ordinary startup does not mutate `~/.agentops/config.json`.
 - `--configure-cli` is an explicit, separate opt-in for saving the local base
   URL and workspace.
@@ -43,6 +47,7 @@ python3 scripts/run_local_stack.py \
 ```bash
 python3 -m py_compile scripts/run_local_stack.py scripts/run_local_stack_smoke.py
 python3 scripts/run_local_stack_smoke.py
+python3 scripts/hermes_http_error_redaction_smoke.py
 python3 scripts/clean_machine_rc_smoke.py
 python3 scripts/release_evidence_packet_smoke.py
 git diff --check
@@ -71,6 +76,10 @@ config path, free loopback port, no UI dependency installation, and a mock
 worker. It verifies backend readiness, worker registration, no user-config
 write, and the live-worker confirmation wall. It does not call Hermes,
 OpenClaw, Dify, Notion, or another external provider.
+
+Hermes HTTP failures retain the status code, retry classification, and a hash
+of the omitted response body. `hermes_http_error_redaction_smoke.py` verifies
+that upstream response text cannot enter worker summaries or error evidence.
 
 ## Persistent Service Boundary
 

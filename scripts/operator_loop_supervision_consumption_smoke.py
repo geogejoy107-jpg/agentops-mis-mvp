@@ -46,10 +46,11 @@ def blocked_supervision(
     agent_id: str | None = None,
     plan_quality_attention: bool = False,
     service_closure_attention: bool = False,
+    operational_attention: bool = False,
 ) -> dict:
     record_first = plan_quality_attention or service_closure_attention
-    status = "record_first" if record_first else "blocked"
-    can_confirm = True if record_first else False
+    status = "record_first" if record_first else "attention" if operational_attention else "blocked"
+    can_confirm = True if record_first or operational_attention else False
     recommended_next = (
         f"agentops operator evidence-report --task-id {task_id or '<task_id>'} --limit 8"
         if plan_quality_attention
@@ -59,14 +60,14 @@ def blocked_supervision(
             else f"agentops operator loop-supervision --adapter {adapter} --task-id {task_id or '<task_id>'}"
         )
     )
-    blockers = [] if record_first else ["smoke_blocked_supervision"]
+    blockers = [] if record_first or operational_attention else ["smoke_blocked_supervision"]
     attention = (
         ["agent_plan_quality_attention"]
         if plan_quality_attention
         else (
             ["service_managed_loop:record_service_control_receipt"]
             if service_closure_attention
-            else []
+            else ["live_product_evidence_not_fresh"] if operational_attention else []
         )
     )
     service_closure = {
@@ -207,6 +208,25 @@ def verify_server_customer_worker_consumption(failures: list[str]) -> dict:
     blocked_payload = None
     external_payload = None
     try:
+        def fake_operational_attention(conn, headers, qs=None, auth_ctx=None):
+            adapter = ((qs or {}).get("adapter") or ["hermes"])[0]
+            task_id = ((qs or {}).get("task_id") or [None])[0]
+            agent_id = ((qs or {}).get("agent_id") or [None])[0]
+            return blocked_supervision(adapter, task_id=task_id, agent_id=agent_id, operational_attention=True)
+
+        server.operator_loop_supervision = fake_operational_attention
+        with server.db() as conn:
+            attention_gate = server.customer_worker_loop_supervision_readback(
+                conn,
+                adapter="hermes",
+                task_id="tsk_operational_attention_smoke",
+                agent_id="agt_operational_attention_smoke",
+            )
+        require(attention_gate.get("status") == "attention", f"operational attention status drift: {attention_gate}", failures)
+        require(attention_gate.get("ok") is True, f"non-blocking operational attention should allow confirmed live execution: {attention_gate}", failures)
+        require(attention_gate.get("can_confirm_bounded_loop") is True, f"operational attention lost confirm readiness: {attention_gate}", failures)
+        require("live_product_evidence_not_fresh" in (attention_gate.get("attention") or []), f"operational attention evidence missing: {attention_gate}", failures)
+
         def fake_blocked(conn, headers, qs=None, auth_ctx=None):
             adapter = ((qs or {}).get("adapter") or ["hermes"])[0]
             task_id = ((qs or {}).get("task_id") or [None])[0]

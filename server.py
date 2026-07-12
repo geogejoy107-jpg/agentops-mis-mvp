@@ -28356,7 +28356,7 @@ def customer_worker_loop_supervision_readback(
         and not server_shell
         and not blockers
         and plan_quality_issue_count == 0
-        and status not in {"blocked", "attention", "preview_only", "unavailable"}
+        and status not in {"blocked", "preview_only", "unavailable"}
     )
     return {
         "operation": "customer_worker_loop_supervision_gate",

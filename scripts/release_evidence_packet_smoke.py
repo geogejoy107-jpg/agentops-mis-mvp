@@ -130,6 +130,12 @@ TEST_COMMANDS = [
         "manual_only": True,
     },
     {
+        "id": "hermes_http_error_redaction",
+        "command": "python3 scripts/hermes_http_error_redaction_smoke.py",
+        "summary": "Loopback failure smoke proving Hermes HTTP status and body hash remain diagnosable while the upstream response body stays omitted.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "customer_worker_hermes_retry_gateway",
         "command": "python3 scripts/customer_worker_hermes_retry_gateway_smoke.py",
         "summary": "Deterministic loopback Hermes-compatible gateway smoke proving customer-worker retry metadata is wired through the real adapter path after a local service receipt/readback fixture; not live product-readiness proof.",
