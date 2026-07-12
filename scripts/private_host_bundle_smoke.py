@@ -142,6 +142,8 @@ def main() -> int:
                 fail(f"installed agentops host {command} --help failed", command_help)
         if not (install_root / "current" / "ui" / "start-building-app" / "dist" / "index.html").is_file():
             fail("installed production UI missing")
+        if not (install_root / "current" / "scripts" / "v1_5_live_product_readiness_smoke.py").is_file():
+            fail("installed real-runtime ledger readback client missing")
         for release_doc in (
             "docs/PRIVATE_HOST_OPERATOR_RUNBOOK.md",
             "docs/RELEASE_PROVENANCE.md",
@@ -231,6 +233,7 @@ def main() -> int:
             "installed_host_help": "passed",
             "installed_backup_restore_commands": "passed",
             "installed_host_init_and_doctor": "passed",
+            "installed_live_readback_client": "passed",
             "running_host_update_rejected": True,
             "two_version_upgrade_and_rollback": "passed",
             "pre_rollback_backup": "passed",

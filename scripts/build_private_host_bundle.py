@@ -35,6 +35,7 @@ RUNTIME_FILES = {
     "scripts/local_runtime_acceptance.py",
     "scripts/run_kb_bot_demo.py",
     "scripts/run_local_stack.py",
+    "scripts/v1_5_live_product_readiness_smoke.py",
     "scripts/worker_adapter_readiness_smoke.py",
 }
 RUNTIME_PREFIXES = (

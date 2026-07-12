@@ -75,6 +75,7 @@ The smoke uses temporary build/output/HOME/install/data directories and proves:
 - offline install and CLI shim creation;
 - installed `agentops host --help`;
 - installed `agentops host init` and `agentops host doctor`;
+- installed human-auth capable live Runtime ledger readback client;
 - two versioned bundles upgrade and roll back through `current`/`previous`;
 - rollback requires confirmation and creates a verified ledger backup;
 - upgrade creates a verified ledger backup before switching binaries;
