@@ -895,6 +895,40 @@ AGNESFALLBACK_PROFILE=agnesfallback
 
 For local acceptance on machines where the Hermes gateway already exposes the Agnesfallback model through `127.0.0.1:8642`, `AGNESFALLBACK_GATEWAY_URL` may point at the same gateway URL. The connector still sends only the fixed probe prompt and stores hashes/summaries, not full prompts or raw responses.
 
+## Private Host Acceptance Receipts
+
+```http
+POST /api/host/acceptance-receipts
+GET  /api/host/acceptance-receipts/:id
+GET  /api/host/acceptance-receipts/:id/download
+```
+
+These endpoints are available only in `private_host` deployment mode and
+require an authenticated human Owner Session. The POST route additionally
+requires valid Origin and CSRF evidence. Agent Gateway machine tokens cannot
+substitute for the human Session.
+
+POST accepts exactly one field:
+
+```json
+{"run_id": "run_gw_example"}
+```
+
+Generation fails closed unless the run is completed and has a passing
+evaluation, an associated approved task/run artifact, and a verified plan
+evidence manifest. The Host builds an idempotent bounded receipt, computes its
+canonical payload SHA-256, writes the authority payload to the dedicated
+`private_host_acceptance_receipts` table, creates only a non-sensitive Artifact
+summary, and audits generation and download.
+
+The receipt contains IDs, counts, release identity, evaluation result,
+`artifact_metadata_sha256`, omission flags, and `payload_sha256`. The artifact
+hash covers bounded ledger metadata only; `artifact_file_content_omitted:true`
+prevents it from being represented as a source-file hash. Receipt payloads omit
+filesystem paths, URL queries, tokens, raw prompts, raw responses, and database
+row contents. Non-Owner users may see the generic Artifact metadata but cannot
+read or download the authority payload.
+
 ## Integrations / Notion
 
 ```http

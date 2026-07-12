@@ -107,7 +107,7 @@ adapter
 approval_id
 evaluation_id or evaluation status
 memory_id and decision
-artifact_id and artifact SHA-256
+artifact_id and bounded artifact metadata SHA-256
 Host acceptance receipt_id and payload SHA-256
 disconnect/reconnect passed: true/false
 logout denial passed: true/false
