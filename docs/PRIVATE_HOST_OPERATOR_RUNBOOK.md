@@ -33,9 +33,44 @@ Console 电脑只需要：
 - 现代浏览器；
 - Host 管理员提供的 HTTPS Console URL 和一次性设置/邀请信息。
 
-## 3. 目标初始化流程
+## 3. 安装版本化 Host 预览
 
-### 3.1 初始化 Host
+从 GitHub Private Host prerelease 下载同一版本的三个文件：
+
+```text
+agentops-mis-private-host-<version>.tar.gz 或 .zip
+agentops-mis-private-host-<version>.sha256.json
+```
+
+先在下载目录独立计算 archive 的 SHA-256，并与 JSON 中对应文件名的
+值逐字比较。校验不一致时不得解压或执行安装器。以 macOS 自带命令为
+例：
+
+```bash
+shasum -a 256 agentops-mis-private-host-<version>.tar.gz
+python3 -m json.tool agentops-mis-private-host-<version>.sha256.json
+```
+
+校验通过后解压并在 bundle 根目录执行：
+
+```bash
+tar -xzf agentops-mis-private-host-<version>.tar.gz
+cd agentops-mis-private-host-<version>
+sh install.sh
+export PATH="$HOME/.local/bin:$PATH"
+agentops host version
+```
+
+该 unsigned developer preview 需要主机已有 Python 3.10+；安装过程不联网，
+不安装 Node、Git、Hermes、OpenClaw 或 Tailscale。安装器会再次按
+`manifest.json` 校验每个文件，拒绝篡改、遗漏、未声明文件和路径穿越。
+默认程序位于 `~/.local/share/agentops-mis`，数据位于
+`~/.agentops/host`。操控端电脑不执行本节，它仍然只需要 Tailscale 和
+浏览器。
+
+## 4. 目标初始化流程
+
+### 4.1 初始化 Host
 
 ```bash
 agentops host init
@@ -60,7 +95,7 @@ agentops host status
 
 任一关键检查失败时，应先按 `doctor` 的本地修复建议处理，不要改成 `0.0.0.0` 或开放公网端口作为替代方案。
 
-### 3.2 启动 Host
+### 4.2 启动 Host
 
 ```bash
 agentops host start
@@ -85,7 +120,7 @@ agentops host console-url
 
 预期至少能区分：Host 进程、生产 UI、API、账本、知识索引、Worker 和 Runtime adapter 的 `ready`、`degraded` 或 `unavailable` 状态。
 
-### 3.3 查看日志
+### 4.3 查看日志
 
 ```bash
 agentops host logs
@@ -93,7 +128,7 @@ agentops host logs
 
 日志输出必须经过脱敏。不得显示 setup code、密码、Session、CSRF、Agent token、模型密钥、完整 prompt/response 或任意数据库内容。需要持续观察时，以实现支持的参数为准，不要假定 `--follow` 已发布。
 
-## 4. Tailscale Serve 预览
+## 5. Tailscale Serve 预览
 
 先只生成并审查预览：
 
@@ -141,7 +176,7 @@ agentops host console-url
 
 `console-url` 应只输出不含凭据的 HTTPS 地址。另一台电脑加入同一 tailnet 后，在浏览器中打开该地址，完成 Owner 初始化或登录。未认证用户不得读取 workspace 数据。
 
-## 5. 另一台电脑的操作流程
+## 6. 另一台电脑的操作流程
 
 1. 手动安装并登录 Tailscale，确认与 Host 位于同一受信任 tailnet。
 2. 在浏览器打开 `agentops host console-url` 给出的 HTTPS 地址。
@@ -157,7 +192,7 @@ agentops host console-url
 
 仓库或开发预览内置的真实验收客户端可以通过人类 Session 派发同一条客户闭环，而不是绕过 Private Host 认证。临时密码和一次性 setup code 只能放在当前 shell 的 `AGENTOPS_ACCEPTANCE_PASSWORD`、`AGENTOPS_OWNER_SETUP_CODE` 环境变量中，然后使用 `customer_worker_real_runtime_acceptance.py --human-auth --confirm-live`；不得把值写进命令行参数、文档、日志或 Git。
 
-## 6. 日常生命周期
+## 7. 日常生命周期
 
 ```bash
 agentops host status
@@ -179,7 +214,7 @@ agentops host backup-verify
 
 命令的精确参数、服务管理方式和退出码均以当前实现验收为准。发布前必须证明重启不丢状态、停止不误杀其他进程。
 
-### 6.1 备份与恢复
+### 7.1 备份与恢复
 
 创建并校验备份：
 
@@ -207,7 +242,7 @@ agentops host start
 
 这一版只证明 SQLite 权威账本的产品命令闭环。Host 外部项目目录或未来可变 Markdown 知识源仍需要单独的目录级备份策略，不能把本命令宣传成整机灾备。
 
-### 6.2 版本升级与二进制回滚
+### 7.2 版本升级与二进制回滚
 
 先停止 Host 并检查当前版本：
 
@@ -229,7 +264,7 @@ agentops host start
 
 第一条只显示 dry-run。确认回滚前，CLI 会先创建并校验当前 SQLite 账本备份，再原子交换 `current`/`previous` 二进制指针。当前版本尚无自动 schema downgrade；如果未来版本引入不向后兼容的数据库迁移，必须在 Release 级迁移策略中增加对应 downgrade 或数据恢复步骤，不能只靠切换二进制。
 
-## 7. 录屏建议
+## 8. 录屏建议
 
 建议录制 4 至 6 分钟的连续闭环，而不是逐页浏览 Dashboard：
 
@@ -250,7 +285,7 @@ agentops host start
 
 录制前关闭系统通知，使用 16:9 画面，并检查画面中没有 `.env`、token、DB 路径、private message、完整 transcript、raw prompt/response 或未经批准的产物。
 
-## 8. 故障排查
+## 9. 故障排查
 
 ### Host 命令不存在
 
@@ -292,7 +327,7 @@ agentops host logs
 
 这是验收失败，而不是正常行为。检查 Worker 是否由 Host 生命周期管理、是否错误绑定到浏览器请求，以及重连后是否能查询同一 task/run。保留脱敏日志和 ID 供排查，不保存 raw prompt/response。
 
-## 9. 停止、退出与撤销
+## 10. 停止、退出与撤销
 
 先让远程操作者退出登录，再在 Host 执行：
 
@@ -317,7 +352,7 @@ agentops host restart
 
 如需撤销浏览器访问，应从 Host 撤销对应人类 Session/设备授权；精确命令和 UI 以实现验收为准。删除 Tailscale 设备、修改 tailnet ACL 或清理 Host 数据属于独立高影响操作，不应由 `host stop` 自动执行。
 
-## 10. 发布验收口径
+## 11. 发布验收口径
 
 只有以下证据同时存在，才能把本手册描述为正式可用流程：
 
