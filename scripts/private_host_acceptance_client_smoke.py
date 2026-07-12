@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,99 @@ def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def offline_async_disconnect_state_machine() -> dict:
+    original_authenticate = acceptance.authenticate_human_session
+    original_http_json = acceptance.http_json
+    auth_count = 0
+    submit_count = 0
+    job_id = "wfjob_offline_disconnect"
+    request_hash = "offline_disconnect_request_hash"
+    task_id = "tsk_offline_disconnect"
+    run_id = "run_offline_disconnect"
+    evidence = {
+        "tool_calls": 1,
+        "evaluations": 1,
+        "runtime_events": 2,
+        "audit_logs": 2,
+        "artifacts": 1,
+        "memories": 1,
+        "approvals": 1,
+        "plan_evidence_manifests": 1,
+    }
+    completed_job = {
+        "job_id": job_id,
+        "status": "completed",
+        "adapter": "hermes",
+        "confirm_run": True,
+        "request_hash": request_hash,
+        "result_task_id": task_id,
+        "result_run_id": run_id,
+        "result_artifact_id": "art_offline_disconnect",
+        "result": {
+            "ok": True,
+            "dry_run": False,
+            "adapter": "hermes",
+            "task_id": task_id,
+            "run_id": run_id,
+            "artifact_id": "art_offline_disconnect",
+            "approval_id": "ap_offline_disconnect",
+            "plan_id": "plan_offline_disconnect",
+            "plan_evidence_manifest_id": "pem_offline_disconnect",
+            "plan_evidence_pass": True,
+            "evidence": evidence,
+        },
+    }
+
+    def fake_authenticate(_args, *, include_session_cookie=False):
+        nonlocal auth_count
+        auth_count += 1
+        values = (object(), f"csrf-{auth_count}", "http://127.0.0.1:8787")
+        return (*values, f"session-{auth_count}") if include_session_cookie else values
+
+    def fake_http_json(method, _base_url, path, _payload, _timeout, *, opener=None, headers=None):
+        nonlocal submit_count
+        if method == "POST" and path.endswith("/submit"):
+            submit_count += 1
+            return 202, {
+                "job_id": job_id,
+                "idempotent_replay": submit_count > 1,
+                "job": {
+                    "job_id": job_id,
+                    "status": "queued",
+                    "adapter": "hermes",
+                    "confirm_run": True,
+                    "request_hash": request_hash,
+                },
+            }
+        if method == "GET" and path == f"/api/workflows/jobs/{job_id}" and opener is None:
+            return 401, {"error": "human_auth_required"}
+        if method == "GET" and path == f"/api/workflows/jobs/{job_id}":
+            return 200, {"job": completed_job}
+        if method == "GET" and path.startswith("/api/workflows/jobs?"):
+            return 200, {"jobs": [completed_job]}
+        raise AssertionError(f"unexpected offline async request: {method} {path}")
+
+    args = argparse.Namespace(
+        base_url="http://127.0.0.1:8787",
+        request_timeout=5,
+        origin="http://127.0.0.1:8787",
+        username="offline-owner",
+        password_env="AGENTOPS_ACCEPTANCE_PASSWORD",
+        setup_code_env="AGENTOPS_OWNER_SETUP_CODE",
+        hermes_timeout=5,
+        hermes_max_tokens=64,
+        disconnect_delay_sec=0.0,
+    )
+    try:
+        acceptance.authenticate_human_session = fake_authenticate
+        acceptance.http_json = fake_http_json
+        result = acceptance.run_adapter_async_disconnect(args, "hermes")
+    finally:
+        acceptance.authenticate_human_session = original_authenticate
+        acceptance.http_json = original_http_json
+    return result
 
 
 def main() -> int:
@@ -104,7 +198,173 @@ def main() -> int:
                 "authenticated_readiness": False,
                 "machine_token_used_for_browser": False,
                 "real_runtime_called": False,
+                "async_disconnect_state_machine": False,
+                "async_idempotent_replay": False,
+                "async_idempotency_conflict": False,
+                "async_single_job": False,
+                "cross_workspace_job_hidden": False,
+                "cross_workspace_job_list_hidden": False,
+                "cross_workspace_stuck_hidden": False,
+                "cross_workspace_submit_denied": False,
             }
+            idempotency_body = {
+                "adapter": "mock",
+                "confirm_run": True,
+                "title": "Private Host idempotent async smoke",
+                "description": "Verify a repeated async submit does not duplicate Worker execution.",
+                "acceptance_criteria": "One job, task and run must be recorded.",
+                "priority": "high",
+                "risk_level": "low",
+                "idempotency_key": "fixture-async-idempotency-key",
+            }
+            first_status, first_submit = acceptance.http_json(
+                "POST",
+                base_url,
+                "/api/workflows/customer-worker-task/submit",
+                idempotency_body,
+                10,
+                opener=opener,
+                headers={"Origin": origin, "X-AgentOps-CSRF": csrf_token},
+            )
+            replay_status, replay_submit = acceptance.http_json(
+                "POST",
+                base_url,
+                "/api/workflows/customer-worker-task/submit",
+                idempotency_body,
+                10,
+                opener=opener,
+                headers={"Origin": origin, "X-AgentOps-CSRF": csrf_token},
+            )
+            conflict_status, conflict_submit = acceptance.http_json(
+                "POST",
+                base_url,
+                "/api/workflows/customer-worker-task/submit",
+                {**idempotency_body, "title": "Changed payload must conflict"},
+                10,
+                opener=opener,
+                headers={"Origin": origin, "X-AgentOps-CSRF": csrf_token},
+            )
+            job_id = str(first_submit.get("job_id") or "")
+            request_hash = str((first_submit.get("job") or {}).get("request_hash") or "")
+            terminal_job = {}
+            deadline = time.time() + 30
+            while job_id and time.time() < deadline:
+                job_status, job_payload = acceptance.http_json(
+                    "GET",
+                    base_url,
+                    f"/api/workflows/jobs/{job_id}",
+                    None,
+                    10,
+                    opener=opener,
+                )
+                if job_status != 200:
+                    break
+                terminal_job = job_payload.get("job") or {}
+                if terminal_job.get("status") in {"completed", "failed"}:
+                    break
+                time.sleep(0.2)
+            list_status, listed_jobs = acceptance.http_json(
+                "GET",
+                base_url,
+                "/api/workflows/jobs?workflow_type=customer_worker_task&limit=200",
+                None,
+                10,
+                opener=opener,
+            )
+            matching_jobs = [
+                item for item in (listed_jobs.get("jobs") or [])
+                if request_hash and item.get("request_hash") == request_hash
+            ]
+            evidence["async_idempotent_replay"] = (
+                first_status == 202
+                and replay_status in {200, 202}
+                and replay_submit.get("idempotent_replay") is True
+                and replay_submit.get("job_id") == job_id
+            )
+            evidence["async_idempotency_conflict"] = (
+                conflict_status == 409
+                and conflict_submit.get("error") == "idempotency_conflict"
+            )
+            evidence["async_single_job"] = (
+                list_status == 200
+                and terminal_job.get("status") == "completed"
+                and len(matching_jobs) == 1
+            )
+            cross_workspace_job_id = "wfjob_cross_workspace_fixture"
+            with sqlite3.connect(temp / "agentops_mis.db") as fixture_conn:
+                fixture_conn.execute(
+                    """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        cross_workspace_job_id,
+                        "other-workspace",
+                        "customer_worker_task",
+                        "queued",
+                        None,
+                        "mock",
+                        0,
+                        "Cross workspace fixture",
+                        "Bounded fixture",
+                        "cross_workspace_hash",
+                        "{}",
+                        None,
+                        None,
+                        None,
+                        None,
+                        "2026-07-12T00:00:00+00:00",
+                        "2026-07-12T00:00:00+00:00",
+                        None,
+                        "2026-07-12T00:00:00+00:00",
+                    ),
+                )
+                fixture_conn.commit()
+            cross_status, cross_payload = acceptance.http_json(
+                "GET",
+                base_url,
+                f"/api/workflows/jobs/{cross_workspace_job_id}",
+                None,
+                10,
+                opener=opener,
+            )
+            evidence["cross_workspace_job_hidden"] = (
+                cross_status == 404 and cross_payload.get("error") == "not found"
+            )
+            cross_list_status, cross_list = acceptance.http_json(
+                "GET",
+                base_url,
+                "/api/workflows/jobs?limit=200",
+                None,
+                10,
+                opener=opener,
+            )
+            evidence["cross_workspace_job_list_hidden"] = (
+                cross_list_status == 200
+                and all(item.get("job_id") != cross_workspace_job_id for item in (cross_list.get("jobs") or []))
+            )
+            cross_stuck_status, cross_stuck = acceptance.http_json(
+                "GET",
+                base_url,
+                "/api/workflows/jobs/stuck?threshold_sec=30&limit=200",
+                None,
+                10,
+                opener=opener,
+            )
+            evidence["cross_workspace_stuck_hidden"] = (
+                cross_stuck_status == 200
+                and all(item.get("job_id") != cross_workspace_job_id for item in (cross_stuck.get("stuck_jobs") or []))
+            )
+            cross_submit_status, cross_submit = acceptance.http_json(
+                "POST",
+                base_url,
+                "/api/workflows/customer-worker-task/submit",
+                {**idempotency_body, "idempotency_key": "fixture-cross-workspace-submit", "workspace_id": "other-workspace"},
+                10,
+                opener=opener,
+                headers={"Origin": origin, "X-AgentOps-CSRF": csrf_token},
+            )
+            evidence["cross_workspace_submit_denied"] = (
+                cross_submit_status == 403 and cross_submit.get("error") == "forbidden"
+            )
             readiness_args = argparse.Namespace(
                 base_url=base_url,
                 timeout=10,
@@ -119,7 +379,14 @@ def main() -> int:
             evidence["authenticated_readiness"] = (
                 readiness_status == 200 and readiness_payload.get("operation") == "local_readiness"
             )
-            if not all((evidence["owner_session_created"], evidence["authenticated_read"], evidence["csrf_write"], evidence["authenticated_readiness"])):
+            disconnect_result = offline_async_disconnect_state_machine()
+            evidence["async_disconnect_state_machine"] = (
+                disconnect_result.get("ok") is True
+                and disconnect_result.get("fresh_session_after_reconnect") is True
+                and disconnect_result.get("anonymous_after_disconnect_status") == 401
+                and disconnect_result.get("matching_job_count") == 1
+            )
+            if not all((evidence["owner_session_created"], evidence["authenticated_read"], evidence["csrf_write"], evidence["authenticated_readiness"], evidence["async_disconnect_state_machine"], evidence["async_idempotent_replay"], evidence["async_idempotency_conflict"], evidence["async_single_job"], evidence["cross_workspace_job_hidden"], evidence["cross_workspace_job_list_hidden"], evidence["cross_workspace_stuck_hidden"], evidence["cross_workspace_submit_denied"])):
                 failures.append(f"Private Host acceptance client auth failed: {evidence}")
         except (OSError, RuntimeError, ValueError) as exc:
             failures.append(f"acceptance client exception: {type(exc).__name__}: {str(exc)[:180]}")

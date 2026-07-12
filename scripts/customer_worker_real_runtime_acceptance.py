@@ -67,11 +67,12 @@ def require(condition: bool, message: str, failures: list[str]) -> None:
         failures.append(message)
 
 
-def authenticate_human_session(args: argparse.Namespace):
+def authenticate_human_session(args: argparse.Namespace, *, include_session_cookie: bool = False):
     password = os.environ.get(args.password_env, "")
     if not password:
         raise RuntimeError(f"Private Host human auth requires password env: {args.password_env}")
-    opener = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    cookie_jar = http.cookiejar.CookieJar()
+    opener = build_opener(HTTPCookieProcessor(cookie_jar))
     status, auth_status = http_json("GET", args.base_url, "/api/human-auth/status", None, args.request_timeout, opener=opener)
     if status != 200 or auth_status.get("required") is not True:
         raise RuntimeError("Private Host did not report required human authentication")
@@ -104,16 +105,23 @@ def authenticate_human_session(args: argparse.Namespace):
     csrf_token = str(authenticated.get("csrf_token") or "")
     if status != expected or not csrf_token or (authenticated.get("user") or {}).get("role") != "owner":
         raise RuntimeError("Private Host Owner authentication failed")
+    session_cookie = next(
+        (cookie.value for cookie in cookie_jar if cookie.name == "agentops_human_session"),
+        "",
+    )
+    if not session_cookie:
+        raise RuntimeError("Private Host Owner Session cookie was not established")
+    if include_session_cookie:
+        return opener, csrf_token, origin, session_cookie
     return opener, csrf_token, origin
 
 
-def run_adapter(args: argparse.Namespace, adapter: str, opener=None, csrf_token: str = "", origin: str = "") -> dict:
+def customer_worker_payload(args: argparse.Namespace, adapter: str) -> dict:
     stamp = time.strftime("%Y%m%d%H%M%S")
-    title = f"真实 {adapter} Worker 产品级闭环验收 {stamp}"
-    payload = {
+    return {
         "adapter": adapter,
         "confirm_run": True,
-        "title": title,
+        "title": f"真实 {adapter} Worker 产品级闭环验收 {stamp}",
         "description": (
             "以客户任务视角审视 AgentOps MIS 工作台，输出三条可执行改进建议。"
             "不要写文件，不要调用外部服务，只通过本地 runtime 返回摘要并写入 MIS 账本。"
@@ -127,6 +135,10 @@ def run_adapter(args: argparse.Namespace, adapter: str, opener=None, csrf_token:
         "hermes_timeout": args.hermes_timeout,
         "hermes_max_tokens": args.hermes_max_tokens,
     }
+
+
+def run_adapter(args: argparse.Namespace, adapter: str, opener=None, csrf_token: str = "", origin: str = "") -> dict:
+    payload = customer_worker_payload(args, adapter)
     headers = {"Origin": origin, "X-AgentOps-CSRF": csrf_token} if opener else None
     status, result = http_json(
         "POST",
@@ -184,6 +196,154 @@ def run_adapter(args: argparse.Namespace, adapter: str, opener=None, csrf_token:
     }
 
 
+def run_adapter_async_disconnect(args: argparse.Namespace, adapter: str) -> dict:
+    failures: list[str] = []
+    try:
+        first_opener, csrf_token, origin, first_session = authenticate_human_session(
+            args,
+            include_session_cookie=True,
+        )
+    except RuntimeError as exc:
+        return {
+            "adapter": adapter,
+            "ok": False,
+            "failures": [f"{adapter}: initial Owner authentication failed: {exc}"],
+        }
+
+    async_payload = customer_worker_payload(args, adapter)
+    async_payload["idempotency_key"] = f"runtime-disconnect-{adapter}-{time.time_ns()}"
+    status, submitted = http_json(
+        "POST",
+        args.base_url,
+        "/api/workflows/customer-worker-task/submit",
+        async_payload,
+        args.request_timeout,
+        opener=first_opener,
+        headers={"Origin": origin, "X-AgentOps-CSRF": csrf_token},
+    )
+    job_id = str(submitted.get("job_id") or "")
+    initial_job = submitted.get("job") or {}
+    require(status == 202, f"{adapter}: async submit expected HTTP 202, got {status}", failures)
+    require(bool(job_id), f"{adapter}: async submit did not return job_id", failures)
+    require(initial_job.get("status") == "queued", f"{adapter}: async job was not initially queued", failures)
+    require(initial_job.get("adapter") == adapter, f"{adapter}: queued job adapter mismatch", failures)
+    require(initial_job.get("confirm_run") is True, f"{adapter}: queued job lost explicit confirmation", failures)
+    request_hash = str(initial_job.get("request_hash") or "")
+    replay_status, replayed = http_json(
+        "POST",
+        args.base_url,
+        "/api/workflows/customer-worker-task/submit",
+        async_payload,
+        args.request_timeout,
+        opener=first_opener,
+        headers={"Origin": origin, "X-AgentOps-CSRF": csrf_token},
+    )
+    require(replay_status in {200, 202}, f"{adapter}: idempotent replay returned HTTP {replay_status}", failures)
+    require(replayed.get("idempotent_replay") is True, f"{adapter}: repeated submit was not identified as a replay", failures)
+    require(replayed.get("job_id") == job_id, f"{adapter}: repeated submit returned a different job", failures)
+
+    # Dropping the opener and CookieJar models closing the browser without
+    # logging out. The server-side job must remain independent of that client.
+    del first_opener
+    anonymous_status, anonymous_payload = http_json(
+        "GET",
+        args.base_url,
+        f"/api/workflows/jobs/{job_id}",
+        None,
+        args.request_timeout,
+    )
+    require(
+        anonymous_status == 401 and anonymous_payload.get("error") == "human_auth_required",
+        f"{adapter}: disconnected anonymous client retained workflow access",
+        failures,
+    )
+    time.sleep(max(args.disconnect_delay_sec, 0.0))
+
+    try:
+        second_opener, _second_csrf, _second_origin, second_session = authenticate_human_session(
+            args,
+            include_session_cookie=True,
+        )
+    except RuntimeError as exc:
+        return {
+            "adapter": adapter,
+            "ok": False,
+            "job_id": job_id,
+            "failures": [*failures, f"{adapter}: reconnect Owner authentication failed: {exc}"],
+        }
+    session_rotated = bool(second_session and second_session != first_session)
+    require(session_rotated, f"{adapter}: reconnect did not establish a distinct Owner Session", failures)
+
+    deadline = time.time() + args.request_timeout
+    job = {}
+    while time.time() < deadline:
+        poll_status, payload = http_json(
+            "GET",
+            args.base_url,
+            f"/api/workflows/jobs/{job_id}",
+            None,
+            min(args.request_timeout, 30),
+            opener=second_opener,
+        )
+        require(poll_status == 200, f"{adapter}: reconnect job read returned HTTP {poll_status}", failures)
+        job = payload.get("job") or {}
+        if job.get("status") in {"completed", "failed"}:
+            break
+        time.sleep(0.5)
+
+    result = job.get("result") or {}
+    evidence = result.get("evidence") or {}
+    task_id = str(job.get("result_task_id") or result.get("task_id") or "")
+    run_id = str(job.get("result_run_id") or result.get("run_id") or "")
+    require(job.get("status") == "completed", f"{adapter}: async job did not complete after reconnect", failures)
+    require(result.get("ok") is True and result.get("dry_run") is False, f"{adapter}: async live result did not pass", failures)
+    require(result.get("adapter") == adapter, f"{adapter}: completed result adapter mismatch", failures)
+    require(bool(task_id) and bool(run_id), f"{adapter}: completed job lacks task/run linkage", failures)
+    require(job.get("result_task_id") == result.get("task_id"), f"{adapter}: job/task linkage mismatch", failures)
+    require(job.get("result_run_id") == result.get("run_id"), f"{adapter}: job/run linkage mismatch", failures)
+    for key in ["tool_calls", "evaluations", "runtime_events", "audit_logs", "artifacts", "memories", "approvals", "plan_evidence_manifests"]:
+        require(evidence.get(key, 0) >= 1, f"{adapter}: reconnect readback missing {key} evidence", failures)
+    require(result.get("plan_evidence_pass") is True, f"{adapter}: reconnect plan evidence did not pass", failures)
+
+    list_status, listed = http_json(
+        "GET",
+        args.base_url,
+        "/api/workflows/jobs?workflow_type=customer_worker_task&limit=200",
+        None,
+        args.request_timeout,
+        opener=second_opener,
+    )
+    matching_jobs = [
+        item for item in (listed.get("jobs") or [])
+        if request_hash and item.get("request_hash") == request_hash
+    ]
+    require(list_status == 200, f"{adapter}: reconnect job list returned HTTP {list_status}", failures)
+    require(len(matching_jobs) == 1, f"{adapter}: disconnect caused duplicate workflow jobs", failures)
+    require(not token_leaked(json.dumps(job, ensure_ascii=False)), f"{adapter}: workflow job readback leaked token-like material", failures)
+
+    return {
+        "adapter": adapter,
+        "ok": not failures,
+        "submit_status": status,
+        "replay_status": replay_status,
+        "idempotent_replay_verified": replayed.get("idempotent_replay") is True,
+        "job_id": job_id,
+        "job_status": job.get("status"),
+        "task_id": task_id,
+        "run_id": run_id,
+        "artifact_id": job.get("result_artifact_id") or result.get("artifact_id"),
+        "approval_id": result.get("approval_id"),
+        "plan_id": result.get("plan_id"),
+        "plan_evidence_manifest_id": result.get("plan_evidence_manifest_id"),
+        "anonymous_after_disconnect_status": anonymous_status,
+        "fresh_session_after_reconnect": session_rotated,
+        "matching_job_count": len(matching_jobs),
+        "disconnect_delay_sec": args.disconnect_delay_sec,
+        "evidence": evidence,
+        "failures": failures,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run manual-live Hermes/OpenClaw customer worker acceptance.")
     parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
@@ -193,6 +353,8 @@ def main() -> int:
     parser.add_argument("--hermes-max-tokens", type=int, default=int(os.environ.get("HERMES_MAX_TOKENS", "512")))
     parser.add_argument("--confirm-live", action="store_true", help="Required: this calls real local Hermes/OpenClaw runtimes.")
     parser.add_argument("--human-auth", action="store_true", help="Authenticate through the Private Host human Session/CSRF boundary.")
+    parser.add_argument("--async-disconnect", action="store_true", help="Submit an async live job, discard the first browser client, then verify it from a fresh Owner Session.")
+    parser.add_argument("--disconnect-delay-sec", type=float, default=2.0, help="Seconds to leave the async job without a connected browser client before reconnecting.")
     parser.add_argument("--origin", default=os.environ.get("AGENTOPS_ACCEPTANCE_ORIGIN", ""))
     parser.add_argument("--username", default=os.environ.get("AGENTOPS_ACCEPTANCE_USERNAME", "owner"))
     parser.add_argument("--password-env", default="AGENTOPS_ACCEPTANCE_PASSWORD")
@@ -208,12 +370,21 @@ def main() -> int:
             "token_omitted": True,
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 2
+    if args.async_disconnect and not args.human_auth:
+        print(json.dumps({
+            "ok": False,
+            "error": "human_auth_required_for_async_disconnect",
+            "message": "Pass --human-auth with --async-disconnect so the first and reconnecting browser Sessions can be verified.",
+            "token_omitted": True,
+        }, ensure_ascii=False, indent=2, sort_keys=True))
+        return 2
     opener = None
     csrf_token = ""
     origin = ""
     if args.human_auth:
         try:
-            opener, csrf_token, origin = authenticate_human_session(args)
+            if not args.async_disconnect:
+                opener, csrf_token, origin = authenticate_human_session(args)
         except RuntimeError as exc:
             print(json.dumps({
                 "ok": False,
@@ -224,7 +395,10 @@ def main() -> int:
                 "token_omitted": True,
             }, ensure_ascii=False, indent=2, sort_keys=True))
             return 2
-    results = [run_adapter(args, adapter, opener=opener, csrf_token=csrf_token, origin=origin) for adapter in adapters]
+    if args.async_disconnect:
+        results = [run_adapter_async_disconnect(args, adapter) for adapter in adapters]
+    else:
+        results = [run_adapter(args, adapter, opener=opener, csrf_token=csrf_token, origin=origin) for adapter in adapters]
     failures = [failure for result in results for failure in result.get("failures", [])]
     output = {
         "ok": not failures,
@@ -235,6 +409,7 @@ def main() -> int:
         "failures": failures,
         "mock_supported": False,
         "human_session_used": bool(args.human_auth),
+        "async_disconnect_verified": bool(args.async_disconnect and not failures),
         "credential_values_omitted": True,
         "token_omitted": True,
     }

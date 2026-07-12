@@ -27,6 +27,37 @@ private-host server process. The smoke:
 The smoke does not claim OS service persistence, process survival after a Host
 restart, or real-runtime completion. Those remain separate acceptance gates.
 
+## Real Runtime Async Mode
+
+The packaged manual-live client also supports an explicit async disconnect
+path:
+
+```bash
+python3 scripts/customer_worker_real_runtime_acceptance.py \
+  --base-url http://127.0.0.1:<host-port> \
+  --human-auth \
+  --confirm-live \
+  --async-disconnect \
+  --adapter hermes \
+  --adapter openclaw
+```
+
+For each adapter the client submits one `202` workflow job with a fresh
+`idempotency_key`, repeats the same request once to prove it resolves to the
+same job, discards the first browser client without logging out, confirms an
+anonymous read returns `401`, waits with no browser attached, then signs in
+through a distinct Owner Session and polls the original job. It fails unless
+the job completes with one matching request hash, the same task/run linkage,
+passing evaluation and verified plan evidence. The key, Session cookies, CSRF,
+credentials, raw prompts and raw responses are omitted from output and ledger
+metadata.
+
+The deterministic Private Host client smoke covers the state machine without
+calling a Runtime. It also proves same-key/different-request conflict handling,
+single-job replay behavior and human Session workspace scoping. Product-level
+real Runtime evidence still requires the command above against an exact
+installed release package.
+
 ## Verification
 
 ```bash

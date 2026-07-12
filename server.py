@@ -12088,13 +12088,26 @@ def run_customer_task_template_workflow(conn, body: dict) -> tuple[dict, int]:
     return result, 201
 
 
-def workflow_stuck_jobs(conn, threshold_sec: int = 900, limit: int = 25) -> list[dict]:
+def workflow_stuck_jobs(
+    conn,
+    threshold_sec: int = 900,
+    limit: int = 25,
+    workspace_id: str | None = None,
+) -> list[dict]:
     threshold_sec = max(int(threshold_sec or 900), 30)
     limit = min(max(int(limit or 25), 1), 200)
     now_dt = dt.datetime.now(dt.timezone.utc)
-    rows = conn.execute(
-        "SELECT * FROM workflow_jobs WHERE status IN ('queued','running') ORDER BY updated_at ASC LIMIT 500"
-    ).fetchall()
+    if workspace_id:
+        rows = conn.execute(
+            """SELECT * FROM workflow_jobs
+            WHERE status IN ('queued','running') AND COALESCE(workspace_id,'local-demo')=?
+            ORDER BY updated_at ASC LIMIT 500""",
+            (normalize_workspace_id(workspace_id),),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM workflow_jobs WHERE status IN ('queued','running') ORDER BY updated_at ASC LIMIT 500"
+        ).fetchall()
     stuck: list[dict] = []
     for row in rows:
         data = workflow_job_stuck_projection(row, now_dt=now_dt, threshold_sec=threshold_sec)
@@ -12499,6 +12512,79 @@ def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
     title = redact_text(body.get("title") or "客户 Worker 任务", 180)
     input_summary = redact_text(body.get("description") or "Customer task should be processed by an AgentOps worker.", 300)
     confirm_run = bool(body.get("confirm_run"))
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    idempotency_key = str(body.get("idempotency_key") or "").strip()
+    if len(idempotency_key) > 512:
+        return {
+            "ok": False,
+            "error": "idempotency_key_too_long",
+            "max_length": 512,
+            "idempotency_key_omitted": True,
+            "token_omitted": True,
+        }, 400
+    job_body = {key: value for key, value in body.items() if key != "idempotency_key"}
+    request_hash = stable_hash(job_body)
+    job_id = (
+        "wfjob_" + stable_hash({
+            "workspace_id": workspace_id,
+            "workflow_type": "customer_worker_task",
+            "idempotency_key": idempotency_key,
+        })[:24]
+        if idempotency_key
+        else new_id("wfjob")
+    )
+    row = {
+        "job_id": job_id,
+        "workspace_id": workspace_id,
+        "workflow_type": "customer_worker_task",
+        "status": "queued",
+        "template_id": body.get("template_id"),
+        "adapter": adapter,
+        "confirm_run": 1 if confirm_run else 0,
+        "title": title,
+        "input_summary": input_summary,
+        "request_hash": request_hash,
+        "result_json": "{}",
+        "result_task_id": None,
+        "result_run_id": None,
+        "result_artifact_id": None,
+        "error_message": None,
+        "created_at": now,
+        "started_at": None,
+        "completed_at": None,
+        "updated_at": now,
+    }
+    reserved = False
+    if idempotency_key:
+        cursor = conn.execute(
+            """INSERT OR IGNORE INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
+            VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
+            row,
+        )
+        reserved = cursor.rowcount == 1
+        if not reserved:
+            existing = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+            if not existing or existing["request_hash"] != request_hash:
+                return {
+                    "ok": False,
+                    "error": "idempotency_conflict",
+                    "job_id": job_id,
+                    "idempotency_key_omitted": True,
+                    "token_omitted": True,
+                }, 409
+            existing_job = workflow_job_public(existing)
+            return {
+                "ok": existing["status"] != "failed",
+                "provider": "agentops-workflow-job",
+                "workflow": "customer_worker_task",
+                "job": existing_job,
+                "job_id": job_id,
+                "status_url": f"/api/workflows/jobs/{job_id}",
+                "idempotent_replay": True,
+                "idempotency_key_omitted": True,
+                "raw_request_omitted": True,
+                "token_omitted": True,
+            }, 409 if existing["status"] == "failed" else (200 if existing["status"] == "completed" else 202)
     if adapter in {"hermes", "openclaw"} and confirm_run:
         connector_id = runtime_connector_for_adapter(adapter)
         connector_trust = runtime_connector_trust(conn, connector_id, refresh_connectors=refresh_runtime_connectors)
@@ -12508,28 +12594,11 @@ def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
             or adapter_readiness.get("readiness") in {"unavailable", "blocked"}
         )
         if should_reject:
-            result, status = run_customer_worker_task_workflow(conn, {**body, "async_job": False})
+            result, status = run_customer_worker_task_workflow(conn, {**job_body, "async_job": False})
             now = now_iso()
-            job_id = new_id("wfjob")
             row = {
-                "job_id": job_id,
-                "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
-                "workflow_type": "customer_worker_task",
+                **row,
                 "status": "failed",
-                "template_id": body.get("template_id"),
-                "adapter": adapter,
-                "confirm_run": 1,
-                "title": title,
-                "input_summary": input_summary,
-                "request_hash": stable_hash({
-                    "workflow_type": "customer_worker_task",
-                    "adapter": adapter,
-                    "confirm_run": True,
-                    "title": title,
-                    "description": input_summary,
-                    "worker_agent_id": body.get("worker_agent_id"),
-                    "early_reject": result.get("reason"),
-                }),
                 "result_json": json.dumps(result, ensure_ascii=False),
                 "result_task_id": result.get("task_id"),
                 "result_run_id": result.get("run_id"),
@@ -12540,11 +12609,21 @@ def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
                 "completed_at": now,
                 "updated_at": now,
             }
-            conn.execute(
-                """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
-                VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
-                row,
-            )
+            if reserved:
+                conn.execute(
+                    """UPDATE workflow_jobs
+                    SET status=:status,result_json=:result_json,result_task_id=:result_task_id,
+                        result_run_id=:result_run_id,result_artifact_id=:result_artifact_id,
+                        error_message=:error_message,completed_at=:completed_at,updated_at=:updated_at
+                    WHERE job_id=:job_id""",
+                    row,
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
+                    VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
+                    row,
+                )
             runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.rejected", "failed", task_id=result.get("task_id"), input_summary=f"Customer worker job {job_id} rejected before async execution.", output_summary=row["error_message"], raw_payload_hash=row["request_hash"])
             audit(conn, "system", "worker-adapter-readiness", "workflow.job.rejected", "workflow_jobs", job_id, None, row, {
                 "adapter": adapter,
@@ -12565,47 +12644,20 @@ def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
                 "reason": result.get("reason") or "adapter_not_ready",
                 "readiness": result.get("readiness"),
                 "result": result,
+                "idempotency_key_omitted": True,
                 "raw_request_omitted": True,
                 "token_omitted": True,
             }, 409
-    job_id = new_id("wfjob")
-    row = {
-        "job_id": job_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
-        "workflow_type": "customer_worker_task",
-        "status": "queued",
-        "template_id": body.get("template_id"),
-        "adapter": adapter,
-        "confirm_run": 1 if confirm_run else 0,
-        "title": title,
-        "input_summary": input_summary,
-        "request_hash": stable_hash({
-            "workflow_type": "customer_worker_task",
-            "adapter": adapter,
-            "confirm_run": confirm_run,
-            "title": title,
-            "description": input_summary,
-            "worker_agent_id": body.get("worker_agent_id"),
-        }),
-        "result_json": "{}",
-        "result_task_id": None,
-        "result_run_id": None,
-        "result_artifact_id": None,
-        "error_message": None,
-        "created_at": now,
-        "started_at": None,
-        "completed_at": None,
-        "updated_at": now,
-    }
-    conn.execute(
-        """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
-        VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
-        row,
-    )
+    if not reserved:
+        conn.execute(
+            """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
+            VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
+            row,
+        )
     runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.submitted", "queued", input_summary=f"Customer worker job {job_id} submitted.", raw_payload_hash=row["request_hash"])
     audit(conn, "user", "usr_customer_demo", "workflow.job.submitted", "workflow_jobs", job_id, None, row, {"workflow_type": "customer_worker_task", "adapter": adapter, "raw_request_omitted": True})
     conn.commit()
-    threading.Thread(target=run_workflow_job_background, args=(job_id, dict(body)), daemon=True).start()
+    threading.Thread(target=run_workflow_job_background, args=(job_id, job_body), daemon=True).start()
     return {
         "ok": True,
         "provider": "agentops-workflow-job",
@@ -12613,6 +12665,8 @@ def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
         "job": workflow_job_public(row),
         "job_id": job_id,
         "status_url": f"/api/workflows/jobs/{job_id}",
+        "idempotency_key_accepted": bool(idempotency_key),
+        "idempotency_key_omitted": True,
         "raw_request_omitted": True,
         "token_omitted": True,
     }, 202
@@ -31044,6 +31098,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"provider": "agentops-worker", "daemon": read_worker_daemon(adapter, include_log=True)})
             if path == "/api/workflows/jobs":
                 limit = min(max(int((qs.get("limit") or ["50"])[0]), 1), 200)
+                human_context = getattr(self, "_human_auth_context", None)
+                human_workspace = (
+                    normalize_workspace_id(human_context.get("workspace_id"))
+                    if human_context
+                    else None
+                )
                 statuses = {
                     value
                     for raw in qs.get("status", [])
@@ -31052,6 +31112,9 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 workflow_types = {value for raw in qs.get("workflow_type", []) for value in str(raw).split(",") if value}
                 where, params = [], []
+                if human_workspace:
+                    where.append("COALESCE(workspace_id,'local-demo')=?")
+                    params.append(human_workspace)
                 if statuses:
                     where.append("status IN (" + ",".join("?" for _ in statuses) + ")")
                     params.extend(sorted(statuses))
@@ -31063,10 +31126,26 @@ class Handler(BaseHTTPRequestHandler):
                     sql += " WHERE " + " AND ".join(where)
                 sql += " ORDER BY created_at DESC LIMIT ?"
                 rows = conn.execute(sql, [*params, limit]).fetchall()
-                summary_rows = conn.execute("SELECT status, COUNT(*) c FROM workflow_jobs GROUP BY status").fetchall()
-                workflow_type_rows = conn.execute("SELECT workflow_type, COUNT(*) c FROM workflow_jobs GROUP BY workflow_type").fetchall()
-                active_count = scalar_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE status IN ('queued','running')")
-                stuck_count = len(workflow_stuck_jobs(conn, threshold_sec=900, limit=200))
+                scope_sql = " WHERE COALESCE(workspace_id,'local-demo')=?" if human_workspace else ""
+                scope_params = (human_workspace,) if human_workspace else ()
+                summary_rows = conn.execute(
+                    f"SELECT status, COUNT(*) c FROM workflow_jobs{scope_sql} GROUP BY status",
+                    scope_params,
+                ).fetchall()
+                workflow_type_rows = conn.execute(
+                    f"SELECT workflow_type, COUNT(*) c FROM workflow_jobs{scope_sql} GROUP BY workflow_type",
+                    scope_params,
+                ).fetchall()
+                active_where = "status IN ('queued','running')"
+                if human_workspace:
+                    active_where += " AND COALESCE(workspace_id,'local-demo')=?"
+                active_count = scalar_count(conn, f"SELECT COUNT(*) FROM workflow_jobs WHERE {active_where}", scope_params)
+                stuck_count = len(workflow_stuck_jobs(
+                    conn,
+                    threshold_sec=900,
+                    limit=200,
+                    workspace_id=human_workspace,
+                ))
                 return self.send_json(workflow_jobs_list_response(
                     rows=rows,
                     limit=limit,
@@ -31080,15 +31159,28 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/workflows/jobs/stuck":
                 threshold = int((qs.get("threshold_sec") or ["900"])[0])
                 limit = int((qs.get("limit") or ["25"])[0])
+                human_context = getattr(self, "_human_auth_context", None)
                 return self.send_json({
                     "provider": "agentops-workflow-job",
                     "threshold_sec": max(threshold, 30),
-                    "stuck_jobs": workflow_stuck_jobs(conn, threshold, limit),
+                    "stuck_jobs": workflow_stuck_jobs(
+                        conn,
+                        threshold,
+                        limit,
+                        workspace_id=(human_context or {}).get("workspace_id"),
+                    ),
                     "token_omitted": True,
                 })
             if path.startswith("/api/workflows/jobs/"):
                 job_id = path.split("/")[-1]
-                row = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+                human_context = getattr(self, "_human_auth_context", None)
+                if human_context:
+                    row = conn.execute(
+                        "SELECT * FROM workflow_jobs WHERE job_id=? AND COALESCE(workspace_id,'local-demo')=?",
+                        (job_id, normalize_workspace_id(human_context.get("workspace_id"))),
+                    ).fetchone()
+                else:
+                    row = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
                 if not row:
                     return self.send_json({"error": "not found", "job_id": job_id}, 404)
                 return self.send_json({"job": workflow_job_public(row), "token_omitted": True})
@@ -31529,10 +31621,28 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/workflows/customer-task":
                 return self.send_json(run_customer_task_workflow(conn, body), 201)
             if path == "/api/workflows/customer-worker-task":
+                if human_context:
+                    session_workspace = normalize_workspace_id(human_context.get("workspace_id"))
+                    requested_workspace = normalize_workspace_id(body.get("workspace_id") or session_workspace)
+                    if requested_workspace != session_workspace:
+                        return self.send_json({
+                            "error": "forbidden",
+                            "message": "Human Session cannot submit a customer Worker task to another workspace.",
+                        }, 403)
+                    body["workspace_id"] = session_workspace
                 body.setdefault("base_url", request_base_url(self.headers) or "http://127.0.0.1:8787")
                 payload, status = run_customer_worker_task_workflow(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workflows/customer-worker-task/submit":
+                if human_context:
+                    session_workspace = normalize_workspace_id(human_context.get("workspace_id"))
+                    requested_workspace = normalize_workspace_id(body.get("workspace_id") or session_workspace)
+                    if requested_workspace != session_workspace:
+                        return self.send_json({
+                            "error": "forbidden",
+                            "message": "Human Session cannot submit a customer Worker job to another workspace.",
+                        }, 403)
+                    body["workspace_id"] = session_workspace
                 body.setdefault("base_url", request_base_url(self.headers) or "http://127.0.0.1:8787")
                 payload, status = submit_customer_worker_task_job(conn, body)
                 return self.send_json(payload, status)

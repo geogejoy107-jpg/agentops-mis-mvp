@@ -774,9 +774,23 @@ queues the same workflow as a `workflow_jobs` row and returns immediately with a
 outlive a short browser or CLI request. Job records store status, request hash,
 safe summaries, result ids, and safe result JSON; they must not store raw
 prompts, raw responses, credentials, tokens, or private transcripts.
+
+`/customer-worker-task/submit` accepts an optional `idempotency_key` with a
+maximum length of 512 characters. The Host uses its hash plus workspace and
+workflow identity to derive a non-revealing job id; the raw key is removed
+before background execution and is never stored or returned. Repeating the
+same key and request returns the existing queued/running/completed job without
+starting a second Worker. Reusing the key with a different request fails with
+`409 idempotency_conflict`. Clients that lose the submit response must retry
+with the same key rather than issuing an unkeyed request.
+
 `GET /api/workflows/jobs` is a read-only queue view with optional `status` and
 `workflow_type` filters. It returns the current job rows, status/type summaries,
 active/stuck counts, and copyable `agentops workflow ...` next actions.
+Authenticated human submit requests are bound to the Session workspace;
+attempting to select another workspace returns `403`. Human reads of the job
+list, stuck list and `GET /api/workflows/jobs/:job_id` are scoped to the Session
+workspace and return no cross-workspace job metadata.
 
 `tpl_local_coding_project` is the local coding project template exposed through
 `GET /api/workflows/customer-task-templates` and executable through
