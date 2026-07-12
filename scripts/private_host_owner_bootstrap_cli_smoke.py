@@ -2,10 +2,12 @@
 """Verify safe first-Owner bootstrap through the packaged Host CLI contract."""
 from __future__ import annotations
 
+import atexit
 import json
 import contextlib
 import io
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -31,6 +33,8 @@ CONNECTION_ENV_KEYS = {
     "AGENTOPS_CONFIG",
     "AGENTOPS_WORKSPACE_ID",
 }
+ACTIVE_HOST_ENVS: list[dict[str, str]] = []
+ACTIVE_FOREGROUND_GROUPS: list[int] = []
 
 from agentops_mis_cli import host as host_module
 
@@ -57,6 +61,53 @@ def run_host(env: dict, *args: str, expected=(0,), input_text: str | None = None
     return json.loads(process.stdout), (process.stdout or "") + (process.stderr or "")
 
 
+def register_host(env: dict[str, str]) -> None:
+    ACTIVE_HOST_ENVS.append(dict(env))
+
+
+def unregister_host(env: dict[str, str]) -> None:
+    host_home = env.get("AGENTOPS_HOST_HOME")
+    for index in range(len(ACTIVE_HOST_ENVS) - 1, -1, -1):
+        if ACTIVE_HOST_ENVS[index].get("AGENTOPS_HOST_HOME") == host_home:
+            ACTIVE_HOST_ENVS.pop(index)
+            return
+
+
+def cleanup_processes() -> None:
+    while ACTIVE_HOST_ENVS:
+        env = ACTIVE_HOST_ENVS.pop()
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "agentops_mis_cli.cli", "host", "stop"],
+                cwd=ROOT,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    while ACTIVE_FOREGROUND_GROUPS:
+        process_group = ACTIVE_FOREGROUND_GROUPS.pop()
+        try:
+            os.killpg(process_group, signal.SIGTERM)
+        except OSError:
+            pass
+
+
+def install_cleanup_handlers() -> None:
+    atexit.register(cleanup_processes)
+
+    def handle_signal(signum, _frame):
+        cleanup_processes()
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+
+
 def request_json(base_url: str, path: str, *, body: dict | None = None) -> tuple[int, dict]:
     request = urllib.request.Request(
         base_url + path,
@@ -72,6 +123,7 @@ def request_json(base_url: str, path: str, *, body: dict | None = None) -> tuple
 
 
 def main() -> int:
+    install_cleanup_handlers()
     failures: list[str] = []
     evidence: dict[str, object] = {}
     parser = host_module.build_parser()
@@ -247,6 +299,7 @@ def main() -> int:
             ):
                 failures.append("credentialed Host commands did not fail closed before a managed Host was running")
 
+            register_host(env)
             started, start_output = run_host(env, "start", "--no-workers")
             base_url = str(started.get("local_console_url") or "").removesuffix("/workspace")
             before_status, before = request_json(base_url, "/api/human-auth/status")
@@ -506,6 +559,7 @@ def main() -> int:
                     str(ui_dist),
                 )
                 concurrent_setup_code = str(concurrent_init.get("owner_setup_code") or "")
+                register_host(concurrent_env)
                 concurrent_start, concurrent_start_output = run_host(concurrent_env, "start", "--no-workers")
                 concurrent_base_url = str(concurrent_start.get("local_console_url") or "").removesuffix("/workspace")
                 candidates = (
@@ -565,6 +619,8 @@ def main() -> int:
                 try:
                     concurrent_stopped, _output = run_host(concurrent_env, "stop")
                     evidence["concurrent_host_stopped"] = concurrent_stopped.get("ok")
+                    if concurrent_stopped.get("ok") is True:
+                        unregister_host(concurrent_env)
                 except Exception as exc:
                     failures.append(f"Concurrent Host cleanup failed: {type(exc).__name__}")
         except (OSError, RuntimeError, ValueError, urllib.error.URLError) as exc:
@@ -574,6 +630,8 @@ def main() -> int:
             try:
                 stopped, _output = run_host(env, "stop")
                 evidence["host_stopped"] = stopped.get("ok")
+                if stopped.get("ok") is True:
+                    unregister_host(env)
             except Exception as exc:
                 failures.append(f"Host cleanup failed: {type(exc).__name__}")
 
@@ -619,6 +677,8 @@ def main() -> int:
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
+            ACTIVE_FOREGROUND_GROUPS.append(foreground_process.pid)
+            register_host(foreground_env)
             foreground_base_url = f"http://127.0.0.1:{foreground_port}"
             deadline = time.time() + 20
             foreground_ready = False
@@ -639,6 +699,10 @@ def main() -> int:
             foreground_machine_key = str(json.loads((foreground_host_home / "secrets.json").read_text(encoding="utf-8")).get("api_key") or "")
             foreground_stopped, _foreground_stop_output = run_host(foreground_env, "stop")
             foreground_process.wait(timeout=20)
+            if foreground_stopped.get("ok") is True:
+                unregister_host(foreground_env)
+            if foreground_process.pid in ACTIVE_FOREGROUND_GROUPS:
+                ACTIVE_FOREGROUND_GROUPS.remove(foreground_process.pid)
             foreground_pid_removed = not (foreground_host_home / "run" / "host.pid.json").exists()
             foreground_secret_omitted = bool(foreground_machine_key and foreground_machine_key not in foreground_config_output)
             evidence["foreground_host"] = {
@@ -660,12 +724,21 @@ def main() -> int:
             failures.append(f"foreground Host smoke exception: {type(exc).__name__}: {str(exc)[:180]}")
         finally:
             if foreground_process and foreground_process.poll() is None:
-                foreground_process.terminate()
+                try:
+                    os.killpg(foreground_process.pid, signal.SIGTERM)
+                except OSError:
+                    pass
                 try:
                     foreground_process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    foreground_process.kill()
+                    try:
+                        os.killpg(foreground_process.pid, signal.SIGKILL)
+                    except OSError:
+                        pass
                     foreground_process.wait(timeout=5)
+            if foreground_process and foreground_process.pid in ACTIVE_FOREGROUND_GROUPS:
+                ACTIVE_FOREGROUND_GROUPS.remove(foreground_process.pid)
+            unregister_host(foreground_env)
 
     print(json.dumps({
         "ok": not failures,
@@ -677,6 +750,7 @@ def main() -> int:
         "init_setup_code_visible_once": True,
         "post_init_credentials_omitted": True,
         "database_persisted": False,
+        "signal_cleanup_registered": True,
     }, indent=2, sort_keys=True))
     return 0 if not failures else 1
 

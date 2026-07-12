@@ -142,6 +142,10 @@ temporary SQLite database and a free loopback port. It verified:
 - Secure cookie policy enabled on confirmed Tailscale apply and disabled after
   confirmed revoke;
 - process-group stop and temporary-state cleanup.
+- Owner-bootstrap smoke Host instances and foreground process groups are
+  registered before launch and cleaned on normal exit, exceptions, `SIGTERM`,
+  or `SIGINT`; an intentional `SIGTERM` acceptance stopped only the newly
+  created fixture Host.
 - stopped-Host, DNS-drift, Funnel, Services and mixed-handler fail-closed cases;
 - single-result background restart and foreground-stream restart contracts;
 - actual version-marker HTTP readback after bundle upgrade and rollback;
