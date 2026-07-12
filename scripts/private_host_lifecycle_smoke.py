@@ -173,8 +173,14 @@ def main() -> int:
                 "preview_only": preview.get("preview_only"),
                 "automatic_execution": preview.get("automatic_execution"),
                 "public_funnel_enabled": preview.get("public_funnel_enabled"),
+                "installation_source": (preview.get("tailscale") or {}).get("installation_source"),
             }
-            if preview.get("preview_only") is not True or preview.get("automatic_execution") is not False or preview.get("public_funnel_enabled") is not False:
+            if (
+                preview.get("preview_only") is not True
+                or preview.get("automatic_execution") is not False
+                or preview.get("public_funnel_enabled") is not False
+                or (preview.get("tailscale") or {}).get("installation_source") != "path"
+            ):
                 failures.append("Tailscale path was not preview-only and Funnel-disabled")
             if any(value and value in preview_output for value in secret_values):
                 failures.append("Tailscale preview output exposed stored secret material")

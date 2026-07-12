@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 STACK = ROOT / "scripts" / "run_local_stack.py"
 BACKUP_UTILITY = ROOT / "scripts" / "agentops_local_backup.py"
 DEFAULT_UI_DIST = ROOT / "ui" / "start-building-app" / "dist"
+MACOS_TAILSCALE_BIN = Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
 
 
 def host_home() -> Path:
@@ -78,9 +79,28 @@ def health(base_url: str) -> dict:
         return {"reachable": False, "status": "unavailable"}
 
 
+def tailscale_binary() -> tuple[str | None, str]:
+    override = os.environ.get("AGENTOPS_TAILSCALE_BIN", "").strip()
+    if override:
+        candidate = Path(override).expanduser()
+        return (str(candidate.resolve()), "configured") if candidate.is_file() and os.access(candidate, os.X_OK) else (None, "configured_invalid")
+    path_binary = shutil.which("tailscale")
+    if path_binary:
+        return path_binary, "path"
+    if MACOS_TAILSCALE_BIN.is_file() and os.access(MACOS_TAILSCALE_BIN, os.X_OK):
+        return str(MACOS_TAILSCALE_BIN), "macos_app"
+    return None, "unavailable"
+
+
 def tailscale_state() -> dict:
-    binary = shutil.which("tailscale")
-    result = {"installed": bool(binary), "backend_state": "unavailable", "dns_name": "", "token_omitted": True}
+    binary, source = tailscale_binary()
+    result = {
+        "installed": bool(binary),
+        "installation_source": source,
+        "backend_state": "unavailable",
+        "dns_name": "",
+        "token_omitted": True,
+    }
     if not binary:
         return result
     try:
@@ -685,7 +705,7 @@ def cmd_tailscale_apply(args) -> int:
         preview.update({"error": "confirmation_required", "message": "Re-run with --confirm after reviewing the Serve command."})
         emit(preview)
         return 2
-    binary = shutil.which("tailscale")
+    binary, _source = tailscale_binary()
     if not binary or ts["backend_state"] != "Running" or not ts["dns_name"]:
         preview.update({"error": "tailscale_not_ready", "message": "Tailscale must be installed, Running, and have a DNS name."})
         emit(preview)
@@ -730,7 +750,7 @@ def cmd_tailscale_revoke(args) -> int:
             "token_omitted": True,
         })
         return 2
-    binary = shutil.which("tailscale")
+    binary, _source = tailscale_binary()
     if not binary:
         emit({"ok": False, "operation": "host_tailscale_revoke", "error": "tailscale_not_installed", "token_omitted": True})
         return 2

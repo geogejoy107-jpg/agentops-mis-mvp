@@ -139,16 +139,25 @@ def run_adapter(args: argparse.Namespace, adapter: str, opener=None, csrf_token:
     )
     evidence = result.get("evidence") or {}
     worker_state = ((result.get("worker_result") or {}).get("state") or {})
+    failure_context = {
+        "provider": result.get("provider"),
+        "workflow": result.get("workflow"),
+        "adapter": result.get("adapter"),
+        "ok": result.get("ok"),
+        "dry_run": result.get("dry_run"),
+        "reason": result.get("reason"),
+        "note": result.get("note"),
+    }
     failures: list[str] = []
-    require(status == 201, f"{adapter}: expected HTTP 201, got {status}: {result}", failures)
-    require(result.get("provider") == "agentops-worker", f"{adapter}: wrong provider: {result}", failures)
-    require(result.get("workflow") == "customer_worker_task", f"{adapter}: wrong workflow: {result}", failures)
-    require(result.get("adapter") == adapter, f"{adapter}: adapter mismatch: {result}", failures)
-    require(result.get("dry_run") is False, f"{adapter}: live acceptance must not be dry-run: {result}", failures)
-    require(result.get("ok") is True, f"{adapter}: live worker task did not complete: {result}", failures)
-    require(bool(result.get("task_id")), f"{adapter}: missing task_id: {result}", failures)
-    require(bool(result.get("run_id")), f"{adapter}: missing run_id: {result}", failures)
-    require(bool(result.get("artifact_id")), f"{adapter}: missing artifact_id: {result}", failures)
+    require(status == 201, f"{adapter}: expected HTTP 201, got {status}: {failure_context}", failures)
+    require(result.get("provider") == "agentops-worker", f"{adapter}: wrong provider: {failure_context}", failures)
+    require(result.get("workflow") == "customer_worker_task", f"{adapter}: wrong workflow: {failure_context}", failures)
+    require(result.get("adapter") == adapter, f"{adapter}: adapter mismatch: {failure_context}", failures)
+    require(result.get("dry_run") is False, f"{adapter}: live acceptance remained dry-run: {failure_context}", failures)
+    require(result.get("ok") is True, f"{adapter}: live worker task did not complete: {failure_context}", failures)
+    require(bool(result.get("task_id")), f"{adapter}: missing task_id", failures)
+    require(bool(result.get("run_id")), f"{adapter}: missing run_id", failures)
+    require(bool(result.get("artifact_id")), f"{adapter}: missing artifact_id", failures)
     require(worker_state.get("base_url") == args.base_url.rstrip("/"), f"{adapter}: worker used wrong base_url: {worker_state}", failures)
     for key in ["tool_calls", "evaluations", "runtime_events", "audit_logs", "artifacts", "memories", "approvals", "plan_evidence_manifests"]:
         require(evidence.get(key, 0) >= 1, f"{adapter}: missing {key} evidence: {evidence}", failures)

@@ -939,6 +939,30 @@ def operator_start_check_acceptance_packet(
     }
 
 
+def operator_start_check_local_readiness_gate(local: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep structural/safety failures hard while allowing an empty-ledger cold start."""
+    local = local if isinstance(local, dict) else {}
+    structurally_safe = (
+        local.get("operation") == "local_readiness"
+        and local.get("live_execution_performed") is False
+        and (local.get("safety") or {}).get("server_executes_shell") is not True
+    )
+    local_status = str(local.get("status") or "unavailable")
+    if not structurally_safe:
+        gate_status = "blocked"
+    elif local_status in {"ready", "attention"}:
+        gate_status = "pass"
+    else:
+        gate_status = "attention"
+    return {
+        "ok": structurally_safe,
+        "status": gate_status,
+        "local_status": local_status,
+        "cold_start_capable": structurally_safe and gate_status == "attention",
+        "token_omitted": True,
+    }
+
+
 def operator_local_loop_admission_packet(
     *,
     status: str,

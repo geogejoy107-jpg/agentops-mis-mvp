@@ -118,6 +118,8 @@ agentops host tailscale-preview
 - 暴露公网；
 - 把 token、setup code 或 Session 放进 URL、终端历史或日志。
 
+macOS 上，CLI 会先查找 `PATH`，随后自动识别 `/Applications/Tailscale.app/Contents/MacOS/Tailscale`。特殊安装位置可以通过 `AGENTOPS_TAILSCALE_BIN` 显式指定；该变量只应指向可执行文件路径，不应包含认证信息。
+
 管理员审查预览后，显式确认应用：
 
 ```bash

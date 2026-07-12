@@ -140,6 +140,7 @@ from agentops_mis_core.operator_start_check import (
     operator_local_loop_admission_packet,
     operator_start_check_acceptance_packet,
     operator_start_check_gate,
+    operator_start_check_local_readiness_gate,
 )
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core import human_auth
@@ -25427,14 +25428,18 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
     current_code_gate = local_run_path.get("current_code_gate") if isinstance(local_run_path.get("current_code_gate"), dict) else {}
     launch_summary = launch_brief.get("summary") if isinstance(launch_brief.get("summary"), dict) else {}
     live_ok = True if adapter == "mock" else bool(live_product and live_product.get("product_readiness_proof") is True)
+    local_readiness_gate = operator_start_check_local_readiness_gate(local)
 
     gates = [
         operator_start_check_gate(
             "local_readiness",
             label="Local MIS readiness",
-            ok=local.get("operation") == "local_readiness" and local.get("live_execution_performed") is False,
-            status="pass" if local.get("status") in {"ready", "attention"} else "blocked",
-            detail=f"local status={local.get('status')}; recommended_adapter={local_summary.get('recommended_adapter')}",
+            ok=local_readiness_gate.get("ok") is True,
+            status=local_readiness_gate.get("status"),
+            detail=(
+                f"local status={local.get('status')}; recommended_adapter={local_summary.get('recommended_adapter')}; "
+                f"cold_start_capable={local_readiness_gate.get('cold_start_capable') is True}"
+            ),
             command="agentops local readiness",
         ),
         operator_start_check_gate(

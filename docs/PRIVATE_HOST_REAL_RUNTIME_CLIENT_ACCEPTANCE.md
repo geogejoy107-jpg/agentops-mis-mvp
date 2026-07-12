@@ -1,6 +1,6 @@
 # Private Host Real Runtime Client Acceptance
 
-Status: deterministic human-auth client path passed; fresh live Runtime evidence pending
+Status: deterministic human-auth and cold-start gates passed; fresh live Runtime rerun pending
 
 ## Purpose
 
