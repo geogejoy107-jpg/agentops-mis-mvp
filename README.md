@@ -140,6 +140,21 @@ Serve，并把对应 HTTPS Origin 写入私有 Host 配置；它不会启用 Fun
 `docs/PRIVATE_HOST_OPERATOR_RUNBOOK.md`；正式远程可用声明仍需第二设备、
 trusted Origin、版本化安装资产和真实 Runtime 验收。
 
+构建 unsigned macOS Host developer preview（先完成 UI build）：
+
+```bash
+cd ui/start-building-app && npm ci && npm run build && cd ../..
+python3 scripts/build_private_host_bundle.py \
+  --version 1.0.0-preview \
+  --output-dir build/private-host
+```
+
+输出包含 `.tar.gz`、`.zip` 和 archive SHA-256 JSON。解压后运行
+`sh install.sh`，默认安装到 `~/.local/share/agentops-mis` 并创建
+`~/.local/bin/agentops`；`sh uninstall.sh` 默认不会删除
+`~/.agentops/host` 用户账本/配置。该预览尚未 Apple 签名或公证，不能当作
+正式 `.pkg/.dmg` 发布。
+
 也可以手动启动 UI：
 
 ```bash

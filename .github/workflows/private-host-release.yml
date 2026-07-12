@@ -1,0 +1,77 @@
+name: Private Host Preview Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag that must point to the selected workflow commit
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - name: Checkout selected commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$GITHUB_SHA"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/start-building-app/package-lock.json
+
+      - name: Build production UI
+        working-directory: ui/start-building-app
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Verify private Host bundle
+        run: |
+          set -euo pipefail
+          python3 scripts/private_host_bundle_smoke.py
+
+      - name: Build versioned release assets
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          python3 scripts/build_private_host_bundle.py \
+            --version "$VERSION" \
+            --output-dir build/private-host
+
+      - name: Publish unsigned developer preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" \
+            build/private-host/* \
+            --verify-tag \
+            --prerelease \
+            --title "AgentOps MIS Private Host ${RELEASE_TAG}" \
+            --notes "Unsigned macOS private Host developer preview. Verify the attached SHA-256 file before installation. Requires Python 3.10+. Hermes, OpenClaw and Tailscale are not installed automatically."
