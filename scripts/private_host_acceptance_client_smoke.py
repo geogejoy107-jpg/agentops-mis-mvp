@@ -226,6 +226,8 @@ def main() -> int:
                 "acceptance_criteria": "One job, task and run must be recorded.",
                 "priority": "high",
                 "risk_level": "low",
+                "task_id": "tsk_async_idempotency_fixture",
+                "worker_agent_id": "agt_async_idempotency_fixture",
                 "idempotency_key": "fixture-async-idempotency-key",
             }
             second_opener, second_csrf, second_origin = acceptance.authenticate_human_session(args)
@@ -345,6 +347,8 @@ def main() -> int:
                 "acceptance_criteria": "The queued reservation completes once.",
                 "priority": "high",
                 "risk_level": "low",
+                "task_id": "tsk_queued_reservation_fixture",
+                "worker_agent_id": "agt_queued_reservation_fixture",
                 "idempotency_key": "fixture-queued-reservation-recovery",
             }
 

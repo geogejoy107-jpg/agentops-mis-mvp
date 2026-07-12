@@ -12414,6 +12414,7 @@ def run_workflow_job_background(job_id: str, body: dict) -> None:
 
 WORKFLOW_JOB_LAUNCH_LOCK = threading.Lock()
 WORKFLOW_JOB_ACTIVE_THREADS: set[str] = set()
+WORKFLOW_JOB_LAUNCH_LEASE_SECONDS = 30
 
 
 def workflow_job_thread_entry(job_id: str, body: dict) -> None:
@@ -12429,6 +12430,26 @@ def launch_workflow_job_background(job_id: str, body: dict) -> bool:
         if job_id in WORKFLOW_JOB_ACTIVE_THREADS:
             return False
         WORKFLOW_JOB_ACTIVE_THREADS.add(job_id)
+        claimed = False
+        claim_time = dt.datetime.now(dt.timezone.utc)
+        stale_before = claim_time - dt.timedelta(seconds=WORKFLOW_JOB_LAUNCH_LEASE_SECONDS)
+        try:
+            with db() as claim_conn:
+                cursor = claim_conn.execute(
+                    """UPDATE workflow_jobs
+                    SET started_at=?, updated_at=?
+                    WHERE job_id=? AND status='queued'
+                      AND (started_at IS NULL OR started_at<?)""",
+                    (claim_time.isoformat(), claim_time.isoformat(), job_id, stale_before.isoformat()),
+                )
+                claimed = cursor.rowcount == 1
+                claim_conn.commit()
+        except Exception:
+            WORKFLOW_JOB_ACTIVE_THREADS.discard(job_id)
+            raise
+        if not claimed:
+            WORKFLOW_JOB_ACTIVE_THREADS.discard(job_id)
+            return False
     try:
         threading.Thread(
             target=workflow_job_thread_entry,
@@ -12437,6 +12458,13 @@ def launch_workflow_job_background(job_id: str, body: dict) -> bool:
             name=f"agentops-workflow-{job_id[-12:]}",
         ).start()
     except Exception:
+        with db() as claim_conn:
+            claim_conn.execute(
+                """UPDATE workflow_jobs SET started_at=NULL,updated_at=?
+                WHERE job_id=? AND status='queued' AND started_at=?""",
+                (now_iso(), job_id, claim_time.isoformat()),
+            )
+            claim_conn.commit()
         with WORKFLOW_JOB_LAUNCH_LOCK:
             WORKFLOW_JOB_ACTIVE_THREADS.discard(job_id)
         raise

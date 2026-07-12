@@ -785,8 +785,11 @@ starting a second Worker. Reusing the key with a different request fails with
 with the same key rather than issuing an unkeyed request. The request hash
 excludes transport-only `base_url` fields. A same-key replay can launch a
 durable `queued` reservation that was persisted before its background thread
-started; an in-process launch registry prevents concurrent requests from
-starting two threads for the same job.
+started. Every launch must first acquire a short SQLite compare-and-swap lease
+on that queued row; an in-process registry supplements the durable claim so
+concurrent requests cannot start two threads for the same job. A failed thread
+start releases its claim, while an abandoned queued lease can be reclaimed
+after its bounded expiry.
 
 This is not a provider-side exactly-once guarantee. A Host crash after a job is
 already `running` may leave it for explicit stuck-job review/recovery; MIS does
