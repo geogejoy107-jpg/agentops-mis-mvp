@@ -24,6 +24,13 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+CONNECTION_ENV_KEYS = {
+    "AGENTOPS_AGENT_ID",
+    "AGENTOPS_API_KEY",
+    "AGENTOPS_BASE_URL",
+    "AGENTOPS_CONFIG",
+    "AGENTOPS_WORKSPACE_ID",
+}
 
 from agentops_mis_cli import host as host_module
 
@@ -195,7 +202,7 @@ def main() -> int:
         ui_dist.mkdir()
         (ui_dist / "index.html").write_text("<!doctype html><div id='root'>OWNER_BOOTSTRAP_FIXTURE</div>\n", encoding="utf-8")
         env = {
-            **os.environ,
+            **{key: value for key, value in os.environ.items() if key not in CONNECTION_ENV_KEYS},
             "HOME": str(fixture_home),
             "AGENTOPS_HOST_HOME": str(host_home),
             "AGENTOPS_CONFIG": str(cli_config_path),
@@ -484,7 +491,10 @@ def main() -> int:
                 failures.append("Owner setup code or password appeared in CLI output")
 
             concurrent_home = root / "concurrent-host"
-            concurrent_env = {**os.environ, "AGENTOPS_HOST_HOME": str(concurrent_home)}
+            concurrent_env = {
+                **{key: value for key, value in os.environ.items() if key not in CONNECTION_ENV_KEYS},
+                "AGENTOPS_HOST_HOME": str(concurrent_home),
+            }
             concurrent_setup_code = ""
             try:
                 concurrent_init, concurrent_init_output = run_host(
@@ -577,7 +587,7 @@ def main() -> int:
         (foreground_ui / "index.html").write_text("<!doctype html><div>FOREGROUND_HOST_FIXTURE</div>\n", encoding="utf-8")
         foreground_port = free_port()
         foreground_env = {
-            **os.environ,
+            **{key: value for key, value in os.environ.items() if key not in CONNECTION_ENV_KEYS},
             "HOME": str(foreground_home),
             "AGENTOPS_HOST_HOME": str(foreground_host_home),
             "AGENTOPS_CONFIG": str(foreground_cli_config),

@@ -138,7 +138,11 @@ def main() -> int:
         sentinel = host_data / "preserve-me"
         sentinel.write_text("user data", encoding="utf-8")
         env = {
-            **os.environ,
+            **{
+                key: value
+                for key, value in os.environ.items()
+                if key not in {"AGENTOPS_AGENT_ID", "AGENTOPS_API_KEY", "AGENTOPS_BASE_URL", "AGENTOPS_CONFIG", "AGENTOPS_WORKSPACE_ID"}
+            },
             "HOME": str(home),
             "AGENTOPS_INSTALL_ROOT": str(install_root),
             "AGENTOPS_BIN_DIR": str(bin_dir),
