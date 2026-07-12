@@ -19,8 +19,12 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_UI_DIST = ROOT / "ui" / "start-building-app" / "dist"
 RUNTIME_FILES = {
+    "AGENT_WORKFLOW.md",
+    "BASE_INDEX.md",
     "LICENSE",
+    "PROJECT_SPEC.md",
     "README.md",
+    "docs/AGENT_WORK_METHOD_BLOCK.md",
     "docs/PRIVATE_HOST_OPERATOR_RUNBOOK.md",
     "docs/RELEASE_PROVENANCE.md",
     "docs/SBOM_MINIMAL.md",

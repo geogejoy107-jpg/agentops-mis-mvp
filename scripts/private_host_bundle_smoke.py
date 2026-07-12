@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.cookiejar
 import json
 import os
 import shutil
@@ -13,6 +14,8 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+from urllib.error import HTTPError
+from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 from pathlib import Path, PurePosixPath
 
 
@@ -36,6 +39,25 @@ def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def http_json(opener, method: str, url: str, body: dict | None = None, headers: dict | None = None) -> tuple[int, dict]:
+    request = Request(
+        url,
+        data=None if body is None else json.dumps(body).encode("utf-8"),
+        method=method,
+        headers={"Content-Type": "application/json", **(headers or {})},
+    )
+    try:
+        with (opener.open(request, timeout=30) if opener else urlopen(request, timeout=30)) as response:
+            raw = response.read().decode("utf-8")
+            return response.status, json.loads(raw) if raw else {}
+    except HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            return exc.code, json.loads(raw)
+        except ValueError:
+            return exc.code, {"error": "non_json_error"}
 
 
 def fail(message: str, process: subprocess.CompletedProcess | None = None) -> None:
@@ -188,6 +210,14 @@ def main() -> int:
         ):
             if not (install_root / "current" / release_doc).is_file():
                 fail(f"installed release evidence missing: {release_doc}")
+        for plan_spec in (
+            "PROJECT_SPEC.md",
+            "AGENT_WORKFLOW.md",
+            "BASE_INDEX.md",
+            "docs/AGENT_WORK_METHOD_BLOCK.md",
+        ):
+            if not (install_root / "current" / plan_spec).is_file():
+                fail(f"installed Agent Plan spec missing: {plan_spec}")
         initialized = run([str(bin_dir / "agentops"), "host", "init", "--port", str(free_port())], env=env)
         if initialized.returncode != 0:
             fail("installed agentops host init failed", initialized)
@@ -195,7 +225,72 @@ def main() -> int:
         if doctor.returncode != 0 or not json.loads(doctor.stdout).get("ok"):
             fail("installed agentops host doctor failed", doctor)
 
+        init_payload = json.loads(initialized.stdout)
         config = json.loads((host_data / "config.json").read_text(encoding="utf-8"))
+        base_url = f"http://127.0.0.1:{config['port']}"
+        started = run([str(bin_dir / "agentops"), "host", "start", "--no-workers"], env=env)
+        if started.returncode != 0 or not json.loads(started.stdout).get("ok"):
+            fail("installed Host failed to start for Agent Plan verification", started)
+        opener = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        auth_status, authenticated = http_json(
+            opener,
+            "POST",
+            base_url + "/api/human-auth/bootstrap",
+            {
+                "setup_code": init_payload["owner_setup_code"],
+                "username": "bundle-smoke-owner",
+                "display_name": "Bundle Smoke Owner",
+                "password": "fixture-bundle-smoke-password",
+            },
+            {"Origin": base_url},
+        )
+        csrf = str(authenticated.get("csrf_token") or "")
+        workflow_status, workflow = http_json(
+            opener,
+            "POST",
+            base_url + "/api/workflows/customer-worker-task",
+            {
+                "adapter": "mock",
+                "confirm_run": True,
+                "title": "Installed bundle Agent Plan verification",
+                "description": "Verify the installed runtime can read its packaged authority specs.",
+                "acceptance_criteria": "Mock run writes bounded plan, run, evaluation, artifact, and audit evidence.",
+                "priority": "high",
+                "risk_level": "low",
+            },
+            {"Origin": base_url, "X-AgentOps-CSRF": csrf},
+        )
+        stopped = run([str(bin_dir / "agentops"), "host", "stop"], env=env)
+        evidence = workflow.get("evidence") or {}
+        if (
+            auth_status != 201
+            or not csrf
+            or workflow_status != 201
+            or workflow.get("ok") is not True
+            or not workflow.get("run_id")
+            or workflow.get("plan_evidence_pass") is not True
+            or int(evidence.get("evaluations") or 0) < 1
+            or int(evidence.get("artifacts") or 0) < 1
+            or stopped.returncode != 0
+        ):
+            fail(
+                "installed Host could not complete Agent Plan verification",
+                subprocess.CompletedProcess(
+                    args=["installed-host-agent-plan"],
+                    returncode=1,
+                    stdout=json.dumps({
+                        "auth_status": auth_status,
+                        "workflow_status": workflow_status,
+                        "workflow_ok": workflow.get("ok"),
+                        "run_id_present": bool(workflow.get("run_id")),
+                        "plan_evidence_pass": workflow.get("plan_evidence_pass"),
+                        "evidence": evidence,
+                        "host_stopped": stopped.returncode == 0,
+                    }, sort_keys=True),
+                    stderr="",
+                ),
+            )
+
         database = Path(config["database_path"])
         with sqlite3.connect(database) as conn:
             conn.execute("CREATE TABLE product_upgrade_smoke(marker TEXT PRIMARY KEY)")
@@ -271,6 +366,8 @@ def main() -> int:
             "installed_host_release_env": "passed",
             "installed_backup_restore_commands": "passed",
             "installed_host_init_and_doctor": "passed",
+            "installed_agent_plan_specs": "passed",
+            "installed_agent_plan_runtime_verification": "passed",
             "installed_live_readback_client": "passed",
             "running_host_update_rejected": True,
             "two_version_upgrade_and_rollback": "passed",
