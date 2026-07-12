@@ -116,13 +116,14 @@ def tailscale_state() -> dict:
     return result
 
 
-def tailscale_serve_state(binary: str | None, target: str) -> dict:
+def tailscale_serve_state(binary: str | None, target: str, https_port: int = 443) -> dict:
     result = {
         "status_available": False,
         "configured": False,
         "target_matches": False,
         "conflict": False,
         "backend_count": 0,
+        "https_port": https_port,
         "raw_config_omitted": True,
         "token_omitted": True,
     }
@@ -150,8 +151,17 @@ def tailscale_serve_state(binary: str | None, target: str) -> dict:
                 return [item for child in value for item in proxy_targets(child)]
             return []
 
-        targets = sorted(set(proxy_targets(payload)))
-        configured = bool((payload.get("TCP") or {}) or (payload.get("Web") or {}) or targets)
+        web = payload.get("Web") or {}
+        selected_web = {
+            key: value
+            for key, value in web.items()
+            if str(key).rsplit(":", 1)[-1] == str(https_port)
+        }
+        tcp = payload.get("TCP") or {}
+        selected_tcp = {str(https_port): tcp[str(https_port)]} if str(https_port) in tcp else {}
+        selected = {"Web": selected_web, "TCP": selected_tcp}
+        targets = sorted(set(proxy_targets(selected)))
+        configured = bool(selected_web or selected_tcp or targets)
         target_matches = target in targets
         result.update({
             "status_available": True,
@@ -200,6 +210,7 @@ def cmd_init(args) -> int:
         "cookie_secure": False,
         "allowed_origins": [f"http://127.0.0.1:{int(args.port)}"],
         "network_publication": "disabled",
+        "tailscale_https_port": 443,
     }
     owner_setup_code = secrets.token_urlsafe(18)
     secret_values = {
@@ -707,10 +718,12 @@ def cmd_console_url(_args) -> int:
     config, _secret_values = require_initialized()
     ts = tailscale_state()
     target = f"http://{config['host']}:{config['port']}"
+    https_port = int(config.get("tailscale_https_port") or 443)
     binary, _source = tailscale_binary()
-    serve = tailscale_serve_state(binary, target)
+    serve = tailscale_serve_state(binary, target, https_port)
     local_url = f"http://{config['host']}:{config['port']}/workspace"
-    private_url = f"https://{ts['dns_name']}/workspace" if ts["dns_name"] else ""
+    private_origin = f"https://{ts['dns_name']}{'' if https_port == 443 else f':{https_port}'}" if ts["dns_name"] else ""
+    private_url = private_origin + "/workspace" if private_origin else ""
     emit({
         "ok": True,
         "operation": "host_console_url",
@@ -729,18 +742,19 @@ def cmd_console_url(_args) -> int:
     return 0
 
 
-def cmd_tailscale_preview(_args) -> int:
+def cmd_tailscale_preview(args) -> int:
     config, _secret_values = require_initialized()
     target = f"http://{config['host']}:{config['port']}"
     ts = tailscale_state()
+    https_port = int(args.https_port)
     binary, _source = tailscale_binary()
-    serve = tailscale_serve_state(binary, target)
+    serve = tailscale_serve_state(binary, target, https_port)
     emit({
         "ok": True,
         "operation": "host_tailscale_preview",
         "preview_only": True,
-        "command": f"tailscale serve --bg {target}",
-        "revoke_command": "tailscale serve reset",
+        "command": f"tailscale serve --https={https_port} --bg {target}",
+        "revoke_command": f"tailscale serve --https={https_port} off",
         "tailscale": ts,
         "serve": serve,
         "apply_blocked_by_conflict": serve["conflict"],
@@ -755,13 +769,14 @@ def cmd_tailscale_apply(args) -> int:
     config, _secret_values = require_initialized()
     target = f"http://{config['host']}:{config['port']}"
     ts = tailscale_state()
+    https_port = int(args.https_port)
     binary, _source = tailscale_binary()
-    serve = tailscale_serve_state(binary, target)
+    serve = tailscale_serve_state(binary, target, https_port)
     preview = {
         "ok": False,
         "operation": "host_tailscale_apply",
         "preview_only": not args.confirm,
-        "command": f"tailscale serve --bg {target}",
+        "command": f"tailscale serve --https={https_port} --bg {target}",
         "tailscale": ts,
         "serve": serve,
         "public_funnel_enabled": False,
@@ -787,17 +802,18 @@ def cmd_tailscale_apply(args) -> int:
         })
         emit(preview)
         return 2
-    process = subprocess.run([binary, "serve", "--bg", target], capture_output=True, text=True, timeout=30, check=False)
+    process = subprocess.run([binary, "serve", f"--https={https_port}", "--bg", target], capture_output=True, text=True, timeout=30, check=False)
     if process.returncode != 0:
         preview.update({"error": "tailscale_serve_failed", "message": "Tailscale Serve failed; command output was omitted.", "exit_code": process.returncode})
         emit(preview)
         return 1
-    origin = f"https://{ts['dns_name']}"
+    origin = f"https://{ts['dns_name']}{'' if https_port == 443 else f':{https_port}'}"
     origins = sorted(set(config.get("allowed_origins") or []) | {origin})
     config.update({
         "allowed_origins": origins,
         "network_publication": "tailscale_serve",
         "private_console_origin": origin,
+        "tailscale_https_port": https_port,
         "cookie_secure": True,
     })
     write_private_json(paths()["config"], config)
@@ -817,13 +833,14 @@ def cmd_tailscale_apply(args) -> int:
 
 def cmd_tailscale_revoke(args) -> int:
     config, _secret_values = require_initialized()
+    https_port = int(config.get("tailscale_https_port") or 443)
     if not args.confirm:
         emit({
             "ok": False,
             "operation": "host_tailscale_revoke",
             "preview_only": True,
             "error": "confirmation_required",
-            "command": "tailscale serve reset",
+            "command": f"tailscale serve --https={https_port} off",
             "token_omitted": True,
         })
         return 2
@@ -832,28 +849,27 @@ def cmd_tailscale_revoke(args) -> int:
         emit({"ok": False, "operation": "host_tailscale_revoke", "error": "tailscale_not_installed", "token_omitted": True})
         return 2
     target = f"http://{config['host']}:{config['port']}"
-    serve = tailscale_serve_state(binary, target)
+    serve = tailscale_serve_state(binary, target, https_port)
     owns_publication = config.get("network_publication") == "tailscale_serve"
     if not serve["status_available"]:
         emit({"ok": False, "operation": "host_tailscale_revoke", "error": "tailscale_serve_status_unavailable", "message": "Existing Tailscale Serve state could not be verified; no changes were made.", "token_omitted": True})
         return 2
-    if (not owns_publication or serve["conflict"] or (serve["configured"] and not serve["target_matches"])) and not args.reset_all_serve:
+    if not owns_publication or serve["conflict"] or (serve["configured"] and not serve["target_matches"]):
         emit({
             "ok": False,
             "operation": "host_tailscale_revoke",
             "error": "tailscale_serve_not_exclusively_owned",
-            "message": "Serve reset could affect another local service. Re-run only after review with --reset-all-serve.",
+            "message": "The configured HTTPS port is not exclusively owned by this Host; no changes were made.",
             "serve": serve,
-            "reset_all_confirmation_required": True,
             "token_omitted": True,
         })
         return 2
-    process = subprocess.run([binary, "serve", "reset"], capture_output=True, text=True, timeout=30, check=False)
+    process = subprocess.run([binary, "serve", f"--https={https_port}", "off"], capture_output=True, text=True, timeout=30, check=False)
     if process.returncode != 0:
         emit({
             "ok": False,
             "operation": "host_tailscale_revoke",
-            "error": "tailscale_reset_failed",
+            "error": "tailscale_serve_disable_failed",
             "exit_code": process.returncode,
             "command_output_omitted": True,
             "token_omitted": True,
@@ -930,14 +946,15 @@ def build_parser() -> argparse.ArgumentParser:
     console_url = sub.add_parser("console-url", help="Show local and private console URLs.")
     console_url.set_defaults(handler=cmd_console_url)
     preview = sub.add_parser("tailscale-preview", help="Preview Tailscale Serve and revoke commands without executing them.")
+    preview.add_argument("--https-port", type=int, choices=range(1, 65536), default=443, metavar="PORT")
     preview.set_defaults(handler=cmd_tailscale_preview)
     apply = sub.add_parser("tailscale-apply", help="Apply Tailscale Serve only after explicit confirmation.")
     apply.add_argument("--confirm", action="store_true")
+    apply.add_argument("--https-port", type=int, choices=range(1, 65536), default=443, metavar="PORT")
     apply.add_argument("--replace-existing-serve", action="store_true")
     apply.set_defaults(handler=cmd_tailscale_apply)
-    revoke = sub.add_parser("tailscale-revoke", help="Reset Tailscale Serve only after explicit confirmation.")
+    revoke = sub.add_parser("tailscale-revoke", help="Disable only the Host-owned Tailscale Serve HTTPS port after confirmation.")
     revoke.add_argument("--confirm", action="store_true")
-    revoke.add_argument("--reset-all-serve", action="store_true")
     revoke.set_defaults(handler=cmd_tailscale_revoke)
     return parser
 

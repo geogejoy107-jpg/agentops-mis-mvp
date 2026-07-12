@@ -133,7 +133,7 @@ agentops host logs
 先只生成并审查预览：
 
 ```bash
-agentops host tailscale-preview
+agentops host tailscale-preview --https-port 8443
 ```
 
 目标输出应包含：
@@ -158,13 +158,13 @@ macOS 上，CLI 会先查找 `PATH`，随后自动识别 `/Applications/Tailscal
 管理员审查预览后，显式确认应用：
 
 ```bash
-agentops host tailscale-apply --confirm
+agentops host tailscale-apply --https-port 8443 --confirm
 agentops host restart
 ```
 
-命令调用当前 Tailscale CLI 的 `serve --bg`，只代理 Host loopback 地址，随后把
+命令调用当前 Tailscale CLI 的 `serve --https=<port> --bg`，只代理 Host loopback 地址，随后把
 tailnet HTTPS Origin 写入私有 Host 配置并启用 `Secure` Session Cookie。没有 `--confirm` 时必须保持零副作用；
-该路径不得调用 `tailscale funnel`。
+该路径不得调用 `tailscale funnel`。如果 `443` 已被 OpenClaw 或其他本地服务使用，优先选择独立端口（例如 `8443`），不得默认替换现有 Serve 入口。
 
 启用后重新检查：
 
@@ -343,7 +343,7 @@ agentops host tailscale-revoke --confirm
 agentops host restart
 ```
 
-撤销内部使用 `tailscale serve reset` 并移除私网 HTTPS trusted Origin。确认：
+撤销内部使用与 apply 相同端口的 `tailscale serve --https=<port> off`，只移除 MIS 入口和对应私网 HTTPS trusted Origin，不清空其他 Serve 服务。确认：
 
 - `console-url` 不再可从另一台电脑访问；
 - Host 受管进程已停止；

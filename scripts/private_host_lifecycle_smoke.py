@@ -80,18 +80,21 @@ def main() -> int:
             "  exit 0\n"
             "fi\n"
             "if [ \"$1\" = serve ] && [ \"$2\" = status ]; then\n"
-            "  if [ \"${AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT:-}\" = 1 ]; then\n"
-            "    printf '%s\\n' '{\"TCP\":{\"443\":{\"HTTPS\":true}},\"Web\":{\"agentops-host.example.ts.net:443\":{\"Handlers\":{\"/\":{\"Proxy\":\"http://127.0.0.1:18789\"}}}}}'\n"
+            "  if [ -n \"${AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT_PORT:-}\" ]; then\n"
+            "    p=$AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT_PORT\n"
+            "    printf '{\"TCP\":{\"%s\":{\"HTTPS\":true}},\"Web\":{\"agentops-host.example.ts.net:%s\":{\"Handlers\":{\"/\":{\"Proxy\":\"http://127.0.0.1:18789\"}}}}}\\n' \"$p\" \"$p\"\n"
             f"  elif [ -f {tailscale_state_file} ]; then\n"
-            f"    target=$(cat {tailscale_state_file})\n"
-            "    printf '{\"TCP\":{\"443\":{\"HTTPS\":true}},\"Web\":{\"agentops-host.example.ts.net:443\":{\"Handlers\":{\"/\":{\"Proxy\":\"%s\"}}}}}\\n' \"$target\"\n"
+            f"    set -- $(cat {tailscale_state_file})\n"
+            "    p=${1#--https=}\n"
+            "    target=$2\n"
+            "    printf '{\"TCP\":{\"%s\":{\"HTTPS\":true}},\"Web\":{\"agentops-host.example.ts.net:%s\":{\"Handlers\":{\"/\":{\"Proxy\":\"%s\"}}}}}\\n' \"$p\" \"$p\" \"$target\"\n"
             "  else\n"
             "    printf '%s\\n' '{\"TCP\":{},\"Web\":{}}'\n"
             "  fi\n"
             "  exit 0\n"
             "fi\n"
-            f"if [ \"$1\" = serve ] && [ \"$2\" = --bg ]; then printf '%s\\n' \"$3\" > {tailscale_state_file}; fi\n"
-            f"if [ \"$1\" = serve ] && [ \"$2\" = reset ]; then rm -f {tailscale_state_file}; fi\n"
+            f"if [ \"$1\" = serve ] && [ \"$3\" = --bg ]; then printf '%s %s\\n' \"$2\" \"$4\" > {tailscale_state_file}; fi\n"
+            f"if [ \"$1\" = serve ] && [ \"$3\" = off ]; then rm -f {tailscale_state_file}; fi\n"
             f"printf '%s\\n' \"$*\" >> {tailscale_log}\n"
             "exit 0\n",
             encoding="utf-8",
@@ -202,24 +205,25 @@ def main() -> int:
             _code, unconfirmed_apply, _output = run_host(env, "tailscale-apply", expected=(2,))
             if unconfirmed_apply.get("error") != "confirmation_required" or tailscale_log.exists():
                 failures.append("unconfirmed Tailscale apply did not remain side-effect free")
-            env["AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT"] = "1"
+            env["AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT_PORT"] = "443"
             _code, conflict_apply, _output = run_host(env, "tailscale-apply", "--confirm", expected=(2,))
             if conflict_apply.get("error") != "tailscale_serve_conflict" or tailscale_log.exists():
                 failures.append("existing Tailscale Serve target was not protected from replacement")
-            env.pop("AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT", None)
-            _code, applied, apply_output = run_host(env, "tailscale-apply", "--confirm")
+            env.pop("AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT_PORT", None)
+            _code, applied, apply_output = run_host(env, "tailscale-apply", "--https-port", "8443", "--confirm")
             _code, applied_url, _output = run_host(env, "console-url")
             config_after_apply = json.loads(config_path.read_text(encoding="utf-8"))
             evidence["tailscale_apply"] = {
                 "ok": applied.get("ok"),
                 "network_publication": config_after_apply.get("network_publication"),
-                "trusted_origin_added": "https://agentops-host.example.ts.net" in (config_after_apply.get("allowed_origins") or []),
+                "trusted_origin_added": "https://agentops-host.example.ts.net:8443" in (config_after_apply.get("allowed_origins") or []),
+                "https_port": config_after_apply.get("tailscale_https_port"),
                 "restart_required": applied.get("restart_required"),
                 "secure_cookie_enabled": config_after_apply.get("cookie_secure"),
                 "private_url_ready": applied_url.get("private_url_ready"),
             }
             command_log = tailscale_log.read_text(encoding="utf-8") if tailscale_log.exists() else ""
-            if "serve --bg" not in command_log or config_after_apply.get("network_publication") != "tailscale_serve" or config_after_apply.get("cookie_secure") is not True or applied_url.get("private_url_ready") is not True:
+            if "serve --https=8443 --bg" not in command_log or config_after_apply.get("network_publication") != "tailscale_serve" or config_after_apply.get("cookie_secure") is not True or applied_url.get("private_url_ready") is not True:
                 failures.append("confirmed Tailscale apply did not persist Serve and trusted-Origin state")
             if any(value and value in apply_output for value in secret_values):
                 failures.append("Tailscale apply output exposed stored secret material")
@@ -227,25 +231,25 @@ def main() -> int:
             _code, unconfirmed_revoke, _output = run_host(env, "tailscale-revoke", expected=(2,))
             if unconfirmed_revoke.get("error") != "confirmation_required":
                 failures.append("unconfirmed Tailscale revoke did not fail closed")
-            env["AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT"] = "1"
+            env["AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT_PORT"] = "8443"
             _code, conflict_revoke, _output = run_host(env, "tailscale-revoke", "--confirm", expected=(2,))
             if conflict_revoke.get("error") != "tailscale_serve_not_exclusively_owned":
                 failures.append("Tailscale revoke did not protect another Serve target")
-            env.pop("AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT", None)
+            env.pop("AGENTOPS_TEST_TAILSCALE_SERVE_CONFLICT_PORT", None)
             _code, revoked, revoke_output = run_host(env, "tailscale-revoke", "--confirm")
             _code, revoked_url, _output = run_host(env, "console-url")
             config_after_revoke = json.loads(config_path.read_text(encoding="utf-8"))
             evidence["tailscale_revoke"] = {
                 "ok": revoked.get("ok"),
                 "network_publication": config_after_revoke.get("network_publication"),
-                "private_origin_removed": "https://agentops-host.example.ts.net" not in (config_after_revoke.get("allowed_origins") or []),
+                "private_origin_removed": "https://agentops-host.example.ts.net:8443" not in (config_after_revoke.get("allowed_origins") or []),
                 "restart_required": revoked.get("restart_required"),
                 "secure_cookie_disabled": config_after_revoke.get("cookie_secure") is False,
                 "private_url_ready": revoked_url.get("private_url_ready"),
             }
             command_log = tailscale_log.read_text(encoding="utf-8") if tailscale_log.exists() else ""
-            if "serve reset" not in command_log or config_after_revoke.get("network_publication") != "disabled" or config_after_revoke.get("cookie_secure") is not False or revoked_url.get("private_url_ready") is not False:
-                failures.append("confirmed Tailscale revoke did not reset Serve and trusted-Origin state")
+            if "serve --https=8443 off" not in command_log or config_after_revoke.get("network_publication") != "disabled" or config_after_revoke.get("cookie_secure") is not False or revoked_url.get("private_url_ready") is not False:
+                failures.append("confirmed Tailscale revoke did not disable the Host Serve port and trusted-Origin state")
             if any(value and value in revoke_output for value in secret_values):
                 failures.append("Tailscale revoke output exposed stored secret material")
         except (OSError, ValueError, RuntimeError) as exc:

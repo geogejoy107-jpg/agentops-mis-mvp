@@ -36,19 +36,19 @@ customer release.
 - Network publication remains `disabled` after init/start.
 - Loopback HTTP uses an `HttpOnly`, `SameSite=Strict` session cookie without the
   HTTPS-only `Secure` attribute, so local Owner login is usable.
-- Tailscale inspection is read-only and `tailscale-preview` only prints a Serve
-  command plus `tailscale serve reset`; it never executes either command and
+- Tailscale inspection is read-only and `tailscale-preview` only prints a
+  port-scoped Serve command plus the matching `off` command; it never executes either and
   never enables Funnel.
-- Existing Serve backends are summarized without returning raw configuration.
-  A target owned by another local service blocks apply, and requires the
-  separate `--replace-existing-serve` acknowledgement after review.
+- Existing Serve backends on the selected HTTPS port are summarized without
+  returning raw configuration. A target owned by another local service blocks
+  apply; selecting another explicit HTTPS port permits safe coexistence.
 - `tailscale-apply` and `tailscale-revoke` remain side-effect free without
   `--confirm`; confirmed apply/reset update the private trusted-Origin config
   and require a Host restart. Apply enables `Secure` cookies for tailnet HTTPS;
   revoke returns to the loopback cookie policy.
-- Revoke refuses `serve reset` when MIS cannot prove exclusive ownership or
-  another backend is present; resetting all Serve handlers requires the
-  separate `--reset-all-serve` acknowledgement.
+- Revoke refuses changes when MIS cannot prove ownership of the selected port
+  and disables only that port with the exact Tailscale `off` form. It never
+  resets unrelated Serve handlers.
 - Host status, doctor, logs and console URL responses omit credential values.
 - `console-url` reports the private HTTPS URL ready only when Tailscale is
   running and its verified Serve target matches this Host without conflict.
