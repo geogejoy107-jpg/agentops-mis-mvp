@@ -2,12 +2,14 @@
 """Build, scan, install, exercise, and uninstall a private-host bundle offline."""
 from __future__ import annotations
 
+import atexit
 import hashlib
 import http.cookiejar
 import json
 import os
 import shutil
 import socket
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -23,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILDER = ROOT / "scripts" / "build_private_host_bundle.py"
 FORBIDDEN_NAMES = {".git", ".agentops_runtime", "__pycache__", "artifacts", "node_modules", "logs"}
 FORBIDDEN_SUFFIXES = {".db", ".sqlite", ".sqlite3", ".log", ".pyc", ".pyo"}
+ACTIVE_HOSTS: list[tuple[Path, dict[str, str]]] = []
 
 
 def digest(path: Path) -> str:
@@ -33,6 +36,45 @@ def digest(path: Path) -> str:
 
 def run(command: list[str], *, env: dict | None = None, cwd: Path | None = None, input_text: str | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(command, cwd=cwd, env=env, input=input_text, capture_output=True, text=True, timeout=120, check=False)
+
+
+def register_host(cli: Path, env: dict[str, str]) -> None:
+    ACTIVE_HOSTS.append((cli, dict(env)))
+
+
+def unregister_host(cli: Path) -> None:
+    for index in range(len(ACTIVE_HOSTS) - 1, -1, -1):
+        if ACTIVE_HOSTS[index][0] == cli:
+            ACTIVE_HOSTS.pop(index)
+            return
+
+
+def cleanup_hosts() -> None:
+    while ACTIVE_HOSTS:
+        cli, env = ACTIVE_HOSTS.pop()
+        try:
+            subprocess.run(
+                [str(cli), "host", "stop"],
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+def install_cleanup_handlers() -> None:
+    atexit.register(cleanup_hosts)
+
+    def handle_signal(signum, _frame):
+        cleanup_hosts()
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
 
 
 def free_port() -> int:
@@ -92,6 +134,7 @@ def extract_bundle(tar_path: Path, destination: Path) -> Path:
 
 
 def main() -> int:
+    install_cleanup_handlers()
     ui = ROOT / "ui" / "start-building-app" / "dist" / "index.html"
     if not ui.is_file():
         fail("production UI dist is required; run npm run build first")
@@ -238,6 +281,7 @@ def main() -> int:
 
         config = json.loads((host_data / "config.json").read_text(encoding="utf-8"))
         base_url = f"http://127.0.0.1:{config['port']}"
+        register_host(bin_dir / "agentops", env)
         started = run([str(bin_dir / "agentops"), "host", "start", "--no-workers"], env=env)
         if started.returncode != 0 or not json.loads(started.stdout).get("ok"):
             fail("installed Host failed to start for Agent Plan verification", started)
@@ -291,6 +335,8 @@ def main() -> int:
             {"Origin": base_url, "X-AgentOps-CSRF": csrf},
         )
         stopped = run([str(bin_dir / "agentops"), "host", "stop"], env=env)
+        if stopped.returncode == 0:
+            unregister_host(bin_dir / "agentops")
         evidence = workflow.get("evidence") or {}
         if (
             configure_cli.returncode != 0
@@ -399,12 +445,15 @@ def main() -> int:
         expected_upgraded_ui = str((install_root / "versions" / version_two / "ui" / "start-building-app" / "dist").resolve())
         if upgraded_status_payload.get("ui_dist") != expected_upgraded_ui or upgraded_status_payload.get("ui_dist_managed") is not True:
             fail("upgrade continued serving the previous release UI", upgraded_status)
+        register_host(bin_dir / "agentops", env)
         upgraded_started = run([str(bin_dir / "agentops"), "host", "start", "--no-workers"], env=env)
         try:
             with urlopen(base_url + "/", timeout=10) as response:
                 upgraded_html = response.read().decode("utf-8")
         finally:
             upgraded_stopped = run([str(bin_dir / "agentops"), "host", "stop"], env=env)
+            if upgraded_stopped.returncode == 0:
+                unregister_host(bin_dir / "agentops")
         if upgraded_started.returncode != 0 or upgraded_stopped.returncode != 0 or ui_marker not in upgraded_html:
             fail("upgraded Host did not serve the current release UI", upgraded_started)
         update_check = run([str(bin_dir / "agentops"), "host", "update", "--check"], env=env)
@@ -429,12 +478,15 @@ def main() -> int:
         expected_rolled_back_ui = str((install_root / "versions" / version / "ui" / "start-building-app" / "dist").resolve())
         if rolled_back_host_payload.get("ui_dist") != expected_rolled_back_ui or rolled_back_host_payload.get("ui_dist_managed") is not True:
             fail("rollback did not restore the matching release UI", rolled_back_host_status)
+        register_host(bin_dir / "agentops", env)
         rolled_back_started = run([str(bin_dir / "agentops"), "host", "start", "--no-workers"], env=env)
         try:
             with urlopen(base_url + "/", timeout=10) as response:
                 rolled_back_html = response.read().decode("utf-8")
         finally:
             rolled_back_stopped = run([str(bin_dir / "agentops"), "host", "stop"], env=env)
+            if rolled_back_stopped.returncode == 0:
+                unregister_host(bin_dir / "agentops")
         if rolled_back_started.returncode != 0 or rolled_back_stopped.returncode != 0 or ui_marker in rolled_back_html:
             fail("rolled-back Host did not serve the restored release UI", rolled_back_started)
         with sqlite3.connect(database) as conn:
@@ -454,6 +506,7 @@ def main() -> int:
             "ok": True,
             "operation": "private_host_bundle_smoke",
             "archive_forbidden_scan": "tar_and_zip_passed",
+            "managed_host_cleanup": "signal_and_exception_safe",
             "manifest_checksums": "passed",
             "installed_sbom_notices_and_runbook": "passed",
             "tampered_payload_rejected": True,

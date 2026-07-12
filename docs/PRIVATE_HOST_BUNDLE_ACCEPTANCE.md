@@ -95,6 +95,10 @@ The smoke uses temporary build/output/HOME/install/data directories and proves:
 - a clean isolated HOME consumes release-shaped assets without a repository,
   verifies checksum/provenance, initializes and starts the Host, exposes the
   Owner bootstrap action, and stops cleanly.
+- bundle-smoke Host instances register before each start and are stopped on
+  normal exit, assertion failure, `SIGTERM`, or `SIGINT`; an intentional
+  `SIGTERM` acceptance confirmed the new fixture Host exited while unrelated
+  processes remained untouched.
 
 No generated archive, DB, credential, log, cache, dependency directory, real
 Runtime call or network publication is committed or retained by the smoke.
