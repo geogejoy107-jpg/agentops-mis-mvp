@@ -161,6 +161,9 @@ Minimum private-host authentication:
 
 - one bootstrap owner created locally on the host;
 - one-time setup code displayed only in the host terminal;
+- the managed installer/launcher may hand that code to the literal-loopback
+  browser through a fragment that is never sent in HTTP and is immediately
+  removed from the address bar; server bootstrap still requires the code;
 - password or passkey enrollment after first login;
 - server-side, expiring, revocable browser session;
 - `HttpOnly`, `Secure`, and `SameSite` cookie when served over HTTPS;
@@ -201,22 +204,25 @@ Target flow:
 
 ```bash
 curl -fsSL <verified-release-installer> | sh
-agentops host init
-agentops host start
+install-agentops-mis-private-host.sh --tag <tag> --init --start
 ```
 
 The initializer performs preflight checks, creates local runtime directories
 with restrictive permissions, builds or installs the production UI, creates the
-owner setup code, and prints local/private URLs. It must not install or enable
-Hermes/OpenClaw without a separate explicit action.
+owner setup code, prints the local URL, and opens the local Console with a
+memory-only setup-code handoff when a graphical macOS session is available.
+The browser immediately scrubs the fragment and performs explicit Owner
+creation inside the existing Workspace shell. It must not install or enable
+Hermes/OpenClaw without a separate explicit action. CLI bootstrap remains a
+headless/recovery path.
 
 ### Console first run
 
 Target flow:
 
-1. Open the private HTTPS URL in a browser.
-2. Enter the one-time setup or invitation code.
-3. Establish the owner/operator account.
+1. On the Host, open the literal-loopback Console and establish the first Owner.
+2. On the second computer, open the private HTTPS URL in a browser.
+3. Sign in with the owner/operator account or use an explicit invitation flow.
 4. See host, ledger, knowledge index, and worker readiness.
 5. Dispatch a safe task or explicitly confirm a live runtime task.
 
@@ -323,4 +329,3 @@ After private-host acceptance:
 - secret manager integration;
 - multiple workspaces with stronger isolation;
 - customer-hosted and vendor-hosted deployment profiles.
-

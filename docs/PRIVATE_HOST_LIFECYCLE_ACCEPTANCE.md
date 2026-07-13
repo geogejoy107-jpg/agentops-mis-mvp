@@ -8,7 +8,8 @@ repo-local product command:
 ```text
 agentops host init
 agentops host start
-agentops host bootstrap-owner --username <name> --confirm
+agentops host open-console
+agentops host bootstrap-owner --username <name> --confirm  # headless/recovery
 agentops host configure-cli --confirm
 agentops host status
 agentops host doctor
@@ -148,7 +149,8 @@ temporary SQLite database and a free loopback port. It verified:
 - explicit Owner-bootstrap-required status before creation and login-ready
   status after creation;
 - real Owner bootstrap and authenticated task read through a loopback CookieJar;
-- installed `agentops host bootstrap-owner` creation followed by browser login;
+- installed browser-first Owner creation inside the existing Workspace shell,
+  with `agentops host bootstrap-owner` retained for headless/recovery use;
 - confirmation, non-TTY, empty-password, password-mismatch and non-loopback
   fail-closed behavior without a bootstrap POST;
 - environment-proxy bypass, redirect rejection, long-option abbreviation

@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -553,6 +554,7 @@ def _cmd_init_unlocked(args) -> int:
     write_private_json(p["config"], config)
     write_private_json(p["secrets"], secret_values)
     ui_ready = (Path(config["ui_dist"]) / "index.html").is_file()
+    local_console_url = f"http://127.0.0.1:{int(args.port)}/workspace"
     next_actions = (
         ["Run: agentops host start"]
         if ui_ready
@@ -561,7 +563,8 @@ def _cmd_init_unlocked(args) -> int:
             "Run: agentops host start --build-ui",
         ]
     )
-    next_actions.append("After Host start, run: agentops host bootstrap-owner --confirm")
+    next_actions.append(f"After Host start, open on this Mac: {local_console_url}")
+    next_actions.append("CLI recovery only: agentops host bootstrap-owner --confirm")
     emit({
         "ok": True,
         "operation": "host_init",
@@ -1119,7 +1122,8 @@ def cmd_status(_args) -> int:
     )
     next_actions = []
     if human_access["status"] == "bootstrap_required":
-        next_actions.append("Run agentops host bootstrap-owner --confirm in an interactive Host terminal.")
+        next_actions.append(f"Open {base_url}/workspace on this Host to create the first Owner.")
+        next_actions.append("CLI recovery only: agentops host bootstrap-owner --confirm")
     elif human_access["status"] in {"host_stopped", "unavailable"}:
         next_actions.append("Run agentops host start, then check Owner readiness again.")
     emit({
@@ -1270,7 +1274,8 @@ def cmd_doctor(_args) -> int:
         "Install and sign in to Tailscale on both devices before private publication.",
     ]
     if human_access["status"] == "bootstrap_required":
-        next_actions.insert(0, "Run agentops host bootstrap-owner --confirm in an interactive Host terminal.")
+        next_actions.insert(0, f"Open {base_url}/workspace on this Host to create the first Owner.")
+        next_actions.insert(1, "CLI recovery only: agentops host bootstrap-owner --confirm")
     elif human_access["status"] == "host_stopped":
         next_actions.insert(0, "Run agentops host start to verify human login readiness.")
     emit({
@@ -1629,6 +1634,61 @@ def cmd_console_url(_args) -> int:
     return 0
 
 
+def cmd_open_console(_args) -> int:
+    config, secret_values = require_initialized()
+    base_url = loopback_base_url(config.get("host"), int(config["port"]))
+    if not base_url:
+        emit({"ok": False, "operation": "host_open_console", "error": "unsafe_console_target", "target_omitted": True, "token_omitted": True})
+        return 2
+    if not managed_host_running() or not health(base_url)["reachable"]:
+        emit({"ok": False, "operation": "host_open_console", "error": "managed_host_not_running", "next_action": "agentops host start", "token_omitted": True})
+        return 2
+
+    local_url = base_url + "/workspace"
+    auth_status, auth_payload = local_json_request(base_url, "/api/human-auth/status")
+    bootstrap_handoff = auth_status == 200 and auth_payload.get("bootstrap_required") is True
+    target_url = local_url
+    if bootstrap_handoff:
+        setup_code = str(secret_values.get("owner_setup_code") or "").strip()
+        if not setup_code:
+            emit({"ok": False, "operation": "host_open_console", "error": "owner_setup_code_unavailable", "setup_code_omitted": True, "token_omitted": True})
+            return 2
+        target_url += "#agentops-owner-setup=" + urllib.parse.quote(setup_code, safe="")
+
+    preview_only = os.environ.get("AGENTOPS_OPEN_CONSOLE_TEST_MODE") == "1"
+    opened = False
+    if not preview_only:
+        if sys.platform != "darwin" or not Path("/usr/bin/osascript").is_file():
+            emit({"ok": False, "operation": "host_open_console", "error": "graphical_console_unavailable", "local_console_url": local_url, "bootstrap_handoff_omitted": True, "setup_code_omitted": True, "token_omitted": True})
+            return 2
+        script = 'open location "' + target_url.replace("\\", "\\\\").replace('"', '\\"') + '"\n'
+        process = subprocess.run(
+            ["/usr/bin/osascript", "-"],
+            input=script,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        opened = process.returncode == 0
+        if not opened:
+            emit({"ok": False, "operation": "host_open_console", "error": "console_open_failed", "command_output_omitted": True, "bootstrap_handoff_omitted": True, "setup_code_omitted": True, "token_omitted": True})
+            return 1
+
+    emit({
+        "ok": True,
+        "operation": "host_open_console",
+        "opened": opened,
+        "preview_only": preview_only,
+        "local_console_url": local_url,
+        "bootstrap_handoff_prepared": bootstrap_handoff,
+        "bootstrap_handoff_omitted": True,
+        "setup_code_omitted": True,
+        "token_omitted": True,
+    })
+    return 0
+
+
 def cmd_tailscale_preview(args) -> int:
     config, _secret_values = require_initialized()
     target = f"http://{config['host']}:{config['port']}"
@@ -1848,6 +1908,8 @@ def build_parser() -> argparse.ArgumentParser:
     rollback.set_defaults(handler=cmd_rollback)
     console_url = sub.add_parser("console-url", help="Show local and private console URLs.")
     console_url.set_defaults(handler=cmd_console_url)
+    open_console = sub.add_parser("open-console", help="Open the local Console and hand off first-Owner pairing without printing the setup code.")
+    open_console.set_defaults(handler=cmd_open_console)
     preview = sub.add_parser("tailscale-preview", help="Preview Tailscale Serve and revoke commands without executing them.")
     preview.add_argument("--https-port", type=int, choices=range(1, 65536), default=443, metavar="PORT")
     preview.set_defaults(handler=cmd_tailscale_preview)

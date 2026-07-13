@@ -83,6 +83,9 @@ Exit gate: one host process can serve the production console and API locally.
 Deliverables:
 
 - add local bootstrap-owner initialization;
+- make setup-code-authorized browser bootstrap the primary graphical path by
+  handing the code from the managed installer/launcher through an immediately
+  scrubbed fragment, while keeping CLI bootstrap for headless/recovery use;
 - implement one-time setup code and password/passkey-ready account storage;
 - use password hashing from a proven library, not custom cryptography;
 - implement expiring/revocable server-side browser sessions;
@@ -98,6 +101,9 @@ Verification:
 - CSRF and disallowed-origin smoke tests pass;
 - no secret or session value appears in logs, URLs, health, or audit metadata;
 - loopback developer mode has an explicit, tested compatibility policy.
+- no-code Owner bootstrap remains rejected, browser handoff values do not enter
+  argv/output/audit/HTTP requests, and concurrent first-owner requests create
+  exactly one Owner Session.
 
 Exit gate: a remote browser cannot read workspace data without a valid human
 session and cannot perform actions outside its role.
@@ -226,4 +232,3 @@ The goal is complete only when:
 
 These items may be planned in parallel but cannot be used to delay or dilute
 the private local-host product closure.
-

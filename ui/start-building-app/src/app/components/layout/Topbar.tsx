@@ -1,11 +1,11 @@
-import { Search, Bell, ChevronDown, Radio, Moon, Sun, Languages, Palette, LogOut } from "lucide-react";
+import { Search, Bell, ChevronDown, Radio, Moon, Sun, Languages, Palette, LogOut, LockKeyhole } from "lucide-react";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 import type { ThemeMode } from "../../context/PreferencesContext";
 import { useHumanAuth } from "../../context/HumanAuthContext";
 
 const themeOrder: ThemeMode[] = ["enterprise", "ops", "workforce"];
 
-export function Topbar() {
+export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLabel?: string }) {
   const { theme, locale, setTheme, setLocale } = usePreferences();
   const { required: humanAuthRequired, user, logout } = useHumanAuth();
   const copy = pick(locale, {
@@ -19,6 +19,8 @@ export function Topbar() {
       switchTheme: "Switch visual style",
       switchLanguage: "Switch language",
       logout: "Sign out",
+      locked: "Locked",
+      searchLocked: "Sign in to search this workspace",
     },
     zh: {
       workspace: "工作区",
@@ -30,6 +32,8 @@ export function Topbar() {
       switchTheme: "切换视觉风格",
       switchLanguage: "切换语言",
       logout: "退出登录",
+      locked: "已锁定",
+      searchLocked: "登录后可搜索工作区",
     },
   });
 
@@ -55,6 +59,7 @@ export function Topbar() {
     >
       {/* Left: workspace switcher */}
       <button
+        disabled={locked}
         className="flex items-center gap-1.5 text-xs rounded px-2 py-1 hover:opacity-80 transition-opacity shrink-0"
         style={{ color: "var(--mis-text)", background: "var(--mis-surface2)" }}
       >
@@ -69,7 +74,7 @@ export function Topbar() {
         style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)" }}
       >
         <Search size={13} />
-        <span>{copy.search}</span>
+        <span>{locked ? copy.searchLocked : copy.search}</span>
       </div>
 
       {/* Right */}
@@ -77,10 +82,13 @@ export function Topbar() {
         {/* Live mode badge */}
         <div
           className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium"
-          style={{ background: "rgba(42,157,143,0.15)", color: "var(--mis-success)" }}
+          style={{
+            background: locked ? "rgba(231,111,81,0.12)" : "rgba(42,157,143,0.15)",
+            color: locked ? "var(--mis-warning)" : "var(--mis-success)",
+          }}
         >
-          <Radio size={11} className="animate-pulse" />
-          {copy.live}
+          {locked ? <LockKeyhole size={11} /> : <Radio size={11} className="animate-pulse" />}
+          {locked ? (lockLabel || copy.locked) : copy.live}
         </div>
 
         <button
@@ -104,26 +112,28 @@ export function Topbar() {
         </button>
 
         {/* Notifications */}
-        <button
-          className="relative p-1.5 rounded hover:opacity-80"
-          style={{ color: "var(--mis-dim)" }}
-        >
-          <Bell size={15} />
-          <span
-            className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full"
-            style={{ background: "var(--mis-warning)" }}
-          />
-        </button>
+        {!locked && (
+          <button
+            className="relative p-1.5 rounded hover:opacity-80"
+            style={{ color: "var(--mis-dim)" }}
+          >
+            <Bell size={15} />
+            <span
+              className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full"
+              style={{ background: "var(--mis-warning)" }}
+            />
+          </button>
+        )}
 
         {/* Avatar */}
         <div
-          className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold cursor-pointer"
+          className={`${locked ? "hidden sm:flex" : "flex"} w-7 h-7 rounded-full items-center justify-center text-[11px] font-semibold cursor-pointer`}
           style={{ background: "var(--mis-purple)", color: "#fff" }}
           title={displayName}
         >
-          {initials}
+          {locked ? <LockKeyhole size={13} /> : initials}
         </div>
-        {humanAuthRequired && (
+        {humanAuthRequired && !locked && (
           <button
             type="button"
             className="h-7 w-7 rounded flex items-center justify-center hover:opacity-80"

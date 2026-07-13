@@ -13,8 +13,8 @@ Usage: install-agentops-mis-private-host.sh --tag <release-tag> [--init] [--star
 
 Downloads one fixed AgentOps MIS Private Host release from GitHub, verifies its
 published SHA-256, installs it, and optionally initializes/starts the loopback
-Host. Owner creation, Tailscale publication, and live Runtime startup remain
-separate explicit actions.
+Host. The local browser performs explicit Owner creation; Tailscale publication
+and live Runtime startup remain separate explicit actions.
 EOF
 }
 
@@ -201,9 +201,18 @@ if [ "$DO_START" = true ]; then
   "$AGENTOPS" host start --no-workers
 fi
 
+LOCAL_CONSOLE_URL="http://127.0.0.1:$PORT/workspace"
+
 cat <<EOF
 AgentOps MIS Private Host $VERSION is installed.
 CLI: $AGENTOPS
 Next: $AGENTOPS host status
-Owner: $AGENTOPS host bootstrap-owner --confirm
+Console: $LOCAL_CONSOLE_URL
+CLI recovery: $AGENTOPS host bootstrap-owner --confirm
 EOF
+
+if [ "$DO_START" = true ] \
+  && [ "${AGENTOPS_INSTALLER_TEST_MODE:-}" != "1" ] \
+  && [ "${AGENTOPS_NO_AUTO_OPEN:-}" != "1" ]; then
+  "$AGENTOPS" host open-console >/dev/null 2>&1 || true
+fi

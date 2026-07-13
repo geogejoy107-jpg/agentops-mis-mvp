@@ -51,7 +51,7 @@ const navGroups: NavGroup[] = [
   },
 ];
 
-export function Sidebar() {
+export function Sidebar({ locked = false }: { locked?: boolean }) {
   const location = useLocation();
   const { locale } = usePreferences();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -79,6 +79,7 @@ export function Sidebar() {
       audit: "Audit",
       privateHostAcceptance: "Private Host Acceptance",
       workspace: "Workspace",
+      productMode: "Private Host",
     },
     zh: {
       clientWorkspace: "前台工作区",
@@ -103,6 +104,7 @@ export function Sidebar() {
       audit: "审计",
       privateHostAcceptance: "私有主机验收",
       workspace: "工作区",
+      productMode: "私有主机",
     },
   });
 
@@ -112,7 +114,7 @@ export function Sidebar() {
 
   return (
     <aside
-      className="flex flex-col w-56 shrink-0 h-full border-r"
+      className={`${locked ? "hidden lg:flex" : "flex"} flex-col w-56 shrink-0 h-full border-r`}
       style={{
         background: "var(--mis-surface)",
         borderColor: "var(--mis-border)",
@@ -134,7 +136,7 @@ export function Sidebar() {
             AgentOps MIS
           </div>
           <div className="text-[10px] leading-tight" style={{ color: "var(--mis-dim)" }}>
-            v1.3
+            {copy.productMode}
           </div>
         </div>
       </div>
@@ -160,25 +162,40 @@ export function Sidebar() {
                   {group.items.map((item) => {
                     const isActive = location.pathname === item.path ||
                       (item.path !== "/workspace" && item.path !== "/admin" && location.pathname.startsWith(item.path));
+                    const content = (
+                      <>
+                        {item.icon}
+                        {copy[item.labelKey as keyof typeof copy]}
+                      </>
+                    );
                     return (
                       <li key={item.path}>
-                        <NavLink
-                          to={item.path}
-                          className="flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors"
-                          style={{
-                            color: isActive ? "var(--mis-cyan)" : "var(--mis-dim)",
-                            background: isActive ? "rgba(34,211,238,0.08)" : "transparent",
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!isActive) (e.currentTarget as HTMLElement).style.color = "var(--mis-text)";
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!isActive) (e.currentTarget as HTMLElement).style.color = "var(--mis-dim)";
-                          }}
-                        >
-                          {item.icon}
-                          {copy[item.labelKey as keyof typeof copy]}
-                        </NavLink>
+                        {locked ? (
+                          <div
+                            aria-disabled="true"
+                            className="flex items-center gap-2 px-2 py-1.5 rounded text-xs"
+                            style={{ color: "var(--mis-muted)", opacity: 0.58 }}
+                          >
+                            {content}
+                          </div>
+                        ) : (
+                          <NavLink
+                            to={item.path}
+                            className="flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors"
+                            style={{
+                              color: isActive ? "var(--mis-cyan)" : "var(--mis-dim)",
+                              background: isActive ? "rgba(34,211,238,0.08)" : "transparent",
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!isActive) (e.currentTarget as HTMLElement).style.color = "var(--mis-text)";
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isActive) (e.currentTarget as HTMLElement).style.color = "var(--mis-dim)";
+                            }}
+                          >
+                            {content}
+                          </NavLink>
+                        )}
                       </li>
                     );
                   })}

@@ -66,6 +66,18 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "private_host_owner_browser_handoff",
+        "command": "python3 scripts/private_host_owner_browser_handoff_smoke.py",
+        "summary": "Setup-code-authorized Owner pairing handed to the local browser through scrubbed fragment state without argv/output/audit disclosure.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "private_host_auth_workspace_ui",
+        "command": "python3 scripts/private_host_auth_workspace_ui_smoke.py",
+        "summary": "Locked AppShell authentication UI, bilingual bootstrap/login, theme controls and setup-code-authorized browser handoff projection.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "release_evidence_packet",
         "command": "python3 scripts/release_evidence_packet_smoke.py",
         "summary": "Runtime RC SHA, CI link/status, canonical test list and release-packet boundaries.",

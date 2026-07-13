@@ -65,9 +65,11 @@ sh install-agentops-mis-private-host.sh \
 ```
 
 该入口不会创建 Owner、安装或启动 Hermes/OpenClaw、修改 Tailscale 或开放
-公网。`--init` 的 setup code 不会回显；下一步仍在 Host 本机交互执行
-`agentops host bootstrap-owner --confirm`。不加 `--init/--start` 时只完成
-校验安装。下面的手工下载和比较步骤保留为审计/故障排查回退路径。
+公网。`--init` 的 setup code 不会回显；`--start` 成功后，安装器会在图形化
+macOS 会话中打开现有 AgentOps MIS Console，并把一次性设置权限安全交给页面。
+用户直接在 Workspace 界面创建 Owner 和登录。只有无图形环境或恢复场景才使用
+`agentops host bootstrap-owner --confirm`。不加 `--init/--start` 时只完成校验
+安装。下面的手工下载和比较步骤保留为审计/故障排查回退路径。
 
 preview.2 已发布但随后被真实 Runtime dogfood 替代：安装版 Worker 能
 claim 任务，但 Agent Plan 在 `run_start` 前发现 archive 缺少
@@ -197,11 +199,21 @@ agentops host console-url
 - `ready`：人类登录入口已就绪；
 - `host_stopped` 或 `unavailable`：先启动或修复 Host，再检查登录状态。
 
-Owner 未创建时，`status` 和 `doctor` 的 `next_actions` 会给出本机
-`bootstrap-owner` 命令；这属于人类控制面就绪状态，不会复用或显示 Agent
-Gateway 机器 token。
+Owner 未创建时，`status` 和 `doctor` 的 `next_actions` 会优先提示打开本机
+Console；CLI 恢复入口列在其后。这属于人类控制面就绪状态，不会复用或显示
+Agent Gateway 机器 token。
 
-首次使用时，在 Host 本机终端安全创建 Owner：
+首次使用时，在 Host 本机打开现有 AgentOps MIS Console：
+
+```bash
+agentops host open-console
+```
+
+命令只输出安全的本地 Console 地址，并通过 macOS 图形会话把受保护的一次性
+设置权限交给浏览器；地址栏 fragment 会被页面立即清除，设置码不会进入命令
+参数、标准输出、HTTP 请求或浏览器持久存储。Owner 密码至少需要 12 个字符。
+
+无图形环境或界面不可用时，才使用恢复入口：
 
 ```bash
 agentops host bootstrap-owner \
@@ -210,12 +222,10 @@ agentops host bootstrap-owner \
   --confirm
 ```
 
-命令会在终端中无回显地要求输入并确认密码，内部读取一次性 setup code，
+恢复命令会在终端中无回显地要求输入并确认密码，内部读取一次性 setup code，
 然后只调用 loopback bootstrap API。不要把密码写进命令行、环境变量、URL
 或聊天。自动化验收只能用 `--password-stdin` 从标准输入读取一行密码；产品
-不提供 `--password` 参数。Owner 密码至少需要 12 个字符；若不满足，CLI
-会返回固定的本地强度提示，同时继续省略密码和 setup code。成功后，操控端
-使用刚设置的用户名和密码登录。
+不提供 `--password` 参数。
 
 若 Host 本机的 `agentops worker preflight` 仍指向旧的开发或验收端口，可显式
 配置本机机器 CLI：

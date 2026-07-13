@@ -60,6 +60,8 @@ jobs:
           timeout 120s python3 scripts/run_local_stack_smoke.py
           timeout 120s python3 scripts/production_ui_host_smoke.py
           timeout 120s python3 scripts/human_browser_auth_smoke.py
+          timeout 120s python3 scripts/private_host_owner_browser_handoff_smoke.py
+          timeout 120s python3 scripts/private_host_auth_workspace_ui_smoke.py
           timeout 120s python3 scripts/private_host_acceptance_client_smoke.py
           timeout 120s python3 scripts/private_host_lifecycle_smoke.py
           timeout 120s python3 scripts/private_host_owner_bootstrap_cli_smoke.py

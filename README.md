@@ -114,9 +114,16 @@ agentops host tailscale-preview
 agentops host tailscale-apply --confirm
 ```
 
-`host init` 只在首次运行时显示 Owner 设置码，并把配置、机器 API key 与
-Admin key 存到仓库外的 `~/.agentops/host/`，文件权限为 `0600`。`host start`
-默认后台启动安全 mock worker；真实 Hermes/OpenClaw 仍必须显式指定并确认：
+`host start` 后直接打开状态输出中的本地 Console URL。在这台主机的
+`127.0.0.1` 浏览器里，首次 Owner 初始化和后续登录都在现有 Workspace 前端
+完成。macOS 安装器会调用 `agentops host open-console`，把受保护的设置码作为
+一次性 fragment 交给页面；fragment 不发送到服务器并会在页面启动时立即擦除，
+用户不需要从终端复制。`agentops host bootstrap-owner --confirm` 仅保留为无图形
+环境和恢复入口。
+
+`host init` 仍生成一次性 Owner 设置码，并把它、机器 API key 与 Admin key
+存到仓库外的 `~/.agentops/host/`，文件权限为 `0600`。`host start` 默认后台
+启动安全 mock worker；真实 Hermes/OpenClaw 仍必须显式指定并确认：
 
 ```bash
 agentops host start \
