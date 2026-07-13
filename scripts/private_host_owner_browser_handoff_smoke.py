@@ -84,6 +84,7 @@ def cli_handoff_checks(setup_code: str, failures: list[str]) -> dict[str, object
         mock.patch.object(host_cli.subprocess, "run", side_effect=fake_run),
         mock.patch.object(host_cli, "emit", side_effect=lambda payload: emitted.append(payload)),
         mock.patch.object(host_cli.sys, "platform", "darwin"),
+        mock.patch.object(host_cli.Path, "is_file", return_value=True),
     ):
         code = host_cli.cmd_open_console(SimpleNamespace())
 
