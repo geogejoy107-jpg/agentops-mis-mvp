@@ -12,14 +12,14 @@ SECOND_DEVICE = ROOT / "docs" / "PRIVATE_HOST_SECOND_DEVICE_ACCEPTANCE.md"
 LAUNCHER = ROOT / "docs" / "PRIVATE_HOST_MACOS_LAUNCHER_ACCEPTANCE.md"
 BACKGROUND_SERVICE = ROOT / "docs" / "PRIVATE_HOST_BACKGROUND_SERVICE_ACCEPTANCE.md"
 
-VERSION = "1.6.0-private-host-preview.25"
+VERSION = "1.6.0-private-host-preview.28"
 TAG = f"v{VERSION}"
-COMMIT = "2baa5aecf8dc5a9f6754ef8adb4bc34bdb5a4a3b"
+COMMIT = "f627e83aae357ce4733123208a9d41c037803434"
 RELEASE_URL = f"https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/{TAG}"
 CHECKSUMS = {
-    "manifest": "b95a64dbf4fe7433822c08db0e52790bb7b65873b80799e31001e10c0e42a2e3",
-    "tar": "aa1978cba1c7b76f054c902990923991c01e024615e5980a05ce58f4ba53e187",
-    "zip": "74a62ec7c72d39c84062ee9b85700ba2595216bb183d7497b099a3cb3da8fa70",
+    "manifest": "12553ad8ca9df7dc66c79999899535b444d5636189412d24af756b67d1aeae6f",
+    "tar": "ddc48c498766566f87ea9bb7f5af996699938e694f99661703f893209e800439",
+    "zip": "6fd4e6e4ce8b6715a31c12a1997f1bd79c47b84c042d22d07e626a5ecac73340",
     "bootstrap": "6f78549bdb4c1da6ff3128907d8b82067a3ae06741cf823b34e1acdaaf03a44f",
 }
 
@@ -38,9 +38,13 @@ def main() -> int:
     rc_headings = [line for line in rc.splitlines() if line.startswith("## Current Preview ")]
     normalized_second = " ".join(second.split())
     normalized_launcher = " ".join(launcher.split())
+    normalized_service = " ".join(service.split()).lower()
 
     require(len(rc_headings) == 1, "RC document must name exactly one Current Preview", failures)
-    require("## Current Preview 25" in rc, "preview.25 must be the current RC prerelease", failures)
+    require("## Current Preview 28" in rc, "preview.28 must be the current RC prerelease", failures)
+    require("## Superseded Preview 27" in rc, "preview.27 must be preserved as superseded history", failures)
+    require("## Superseded Preview 26" in rc, "preview.26 must be preserved as superseded history", failures)
+    require("## Superseded Preview 25" in rc, "preview.25 must be preserved as superseded history", failures)
     require("## Superseded Preview 24" in rc, "preview.24 must be preserved as superseded history", failures)
     require("## Superseded Preview 23" in rc, "preview.23 must be preserved as superseded history", failures)
     require("## Superseded Preview 22" in rc, "preview.22 must be preserved as superseded history", failures)
@@ -72,17 +76,17 @@ def main() -> int:
     require("not the final RC" in rc, "prerelease must not claim final RC", failures)
     require("## Installed App Launch Receipt" in launcher, "installed app launch receipt missing", failures)
     require(TAG in launcher, "installed app receipt must name the current prerelease tag", failures)
-    require("The managed Host PID and all three managed child PIDs" in normalized_launcher,
-            "launcher receipt must preserve Host/server/Worker PIDs", failures)
-    require("remained unchanged across a second app open" in normalized_launcher,
-            "launcher receipt must prove process-tree reuse", failures)
+    require("The Host PID and both independent service Worker PIDs" in normalized_launcher,
+            "launcher receipt must preserve Host and service Worker PIDs", failures)
+    require("remained unchanged across the preview.28 app open" in normalized_launcher,
+            "launcher receipt must prove current-package process reuse", failures)
     require("the address bar contained no fragment" in normalized_launcher, "launcher receipt must prove fragment scrubbing", failures)
     require("the manual setup-code input was absent" in normalized_launcher, "launcher receipt must prove graphical setup-code handoff", failures)
     require("live_execution_performed:false" in normalized_launcher, "launcher receipt must prove no live task ran", failures)
     require("A separate clean Mac still must" in launcher, "another-Mac launcher gate must remain open", failures)
-    require("## Local Service Staging Receipt" in service, "local service staging receipt missing", failures)
-    require("launchd has not loaded the service" in service, "service receipt must remain unloaded", failures)
-    require("staging alone is not logout/reboot proof" in service, "service receipt must not claim reboot proof", failures)
+    require("## Local Service Loaded Receipt" in service, "local loaded-service receipt missing", failures)
+    require("launchd reports the Host-only service loaded" in service, "loaded Host service receipt missing", failures)
+    require("loaded receipt is not logout/reboot proof" in normalized_service, "service receipt must not claim reboot proof", failures)
 
     output = {
         "operation": "private_host_rc_status_smoke",
@@ -91,7 +95,7 @@ def main() -> int:
         "tag": TAG,
         "exact_commit": COMMIT,
         "checksums_recorded": len(CHECKSUMS),
-        "local_receipts": ["installed_app_launch", "host_service_staged_unloaded"],
+        "local_receipts": ["installed_app_launch", "host_service_loaded"],
         "external_gates_open": list(open_gate_markers),
         "failures": failures,
         "safety": {

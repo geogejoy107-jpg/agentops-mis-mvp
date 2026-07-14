@@ -113,42 +113,41 @@ secret scan, and `git diff --check`. Browser review covered both the existing
 dark operations theme and light enterprise theme at desktop width. The latest
 focused review also covered the light enterprise first-Owner state at
 1280x720 and 390x844 with zero browser console errors and no horizontal
-overflow. The real Host now serves preview.25 from the versioned installation;
+overflow. The real Host now serves preview.28 from the versioned installation;
 source assets were not copied over the running installation in place.
 
-The `v1.6.0-private-host-preview.25` package upgrade preserved the same launcher
+The `v1.6.0-private-host-preview.28` package upgrade preserved the same launcher
 boundary and existing Workspace. Its public bundle and clean-HOME launcher
 smokes passed, and installed browser readback returned the Chinese Owner form
-without horizontal overflow. The process-reuse receipt below was last physically
-re-run on preview.22 and remains historical launcher evidence; preview.23,
-preview.24 and preview.25 do not claim a new `open` receipt.
+without horizontal overflow. The process-reuse receipt below was physically
+re-run against the installed preview.28 package.
 
 ## Installed App Launch Receipt
 
 On 2026-07-14, preview.19 first established the installed-app process reuse
-receipt. After the versioned `v1.6.0-private-host-preview.22` upgrade, the
+receipt. After the versioned `v1.6.0-private-host-preview.28` upgrade, the
 launcher was invoked again through the real macOS application boundary:
 
 ```bash
 open ~/Applications/AgentOps\ MIS.app
 ```
 
-Google Chrome opened `http://127.0.0.1:18878/workspace` and the preview.22
+Google Chrome opened `http://127.0.0.1:18878/workspace` and the preview.28
 production Workspace returned HTTP 200. The launcher delivered the protected
 one-time setup authority to the already integrated account page: the address
 bar contained no fragment, the manual setup-code input was absent, and the page
-showed `已从本机安装器安全接收`. The create action remained disabled and no form
+showed `已安全接收`. The create action remained disabled and no form
 was submitted.
 
-The managed Host PID and all three managed child PIDs (server plus the two live
-Worker processes) remained unchanged across a second app open. The AgentOps
-Worker Fleet reported fresh Hermes/OpenClaw heartbeat state with zero processed
-tasks in this launch window and `live_execution_performed:false`. The installed
-HTML, CSS and JavaScript came from the versioned preview.22 release directory.
-This proves that opening the installed app reuses the existing Host and Worker
-set instead of restarting or duplicating them. No Owner was created, no Runtime
-task was dispatched, and no credential or setup-code value was read or
-recorded.
+The Host PID and both independent service Worker PIDs remained unchanged across
+the preview.28 app open. The AgentOps Worker read model reported two fresh
+service Workers, two execution-capacity lanes and zero recent completed runs in
+this launch window. The installed HTML, CSS and JavaScript came from the
+versioned preview.28 release directory. This proves that opening the installed
+app reuses the existing Host and service Worker set instead of restarting or
+duplicating them; `live_execution_performed:false` remains the launcher safety
+contract. No Owner was created, no Runtime task was dispatched, and no
+credential or setup-code value was read or recorded.
 
 ## Remaining External Gate
 

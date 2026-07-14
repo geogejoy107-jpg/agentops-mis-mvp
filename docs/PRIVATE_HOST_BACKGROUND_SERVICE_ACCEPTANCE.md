@@ -64,22 +64,26 @@ private mode, credential omission, read-only check, dry-run control, confirmed
 load/restart/unload, duplicate-load idempotency, loaded-removal blocking,
 confirmed removal and unknown-file overwrite rejection.
 
-## Local Service Staging Receipt
+## Local Service Loaded Receipt
 
 On 2026-07-14, preview.19 first rendered the installation plan in dry-run mode,
 then wrote the default managed LaunchAgent only after the explicit
-`--confirm-install` gate. Readback proved:
+`--confirm-install` gate. During the preview.28 upgrade, the existing Host-only
+service was explicitly unloaded before installation and loaded again afterward.
+Current readback proves:
 
 - the file is a safe regular plist with mode `0600`;
 - its bytes exactly match the packaged managed definition;
 - no credential-like material is present;
 - the service command remains Host-only and starts no Worker;
-- launchd has not loaded the service.
+- launchd reports the Host-only service loaded.
 
-The existing manually started Host and its one Hermes plus one OpenClaw Worker
-were intentionally left running. No service-control action, Runtime task or
-ledger mutation was performed. The plist is staged for a later controlled
-Host-only persistence exercise; staging alone is not logout/reboot proof.
+The loaded service serves the installed preview.28 Workspace on loopback and
+continues to start with `--no-workers`. The independently service-managed Hermes
+and OpenClaw Workers recovered fresh heartbeat state after the Host restart;
+the Host service did not start, stop, or claim their processes. No Runtime task
+was dispatched during the upgrade or app-open receipt. This loaded receipt is
+not logout/reboot proof.
 
 ## Known Limits
 

@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.25 published and installed; the existing Workspace now uses the AgentOps MIS browser identity and verifies Host-managed Hermes/OpenClaw process identity, while Owner completion, current-package Runtime completion, and physical second-device gates remain open
+Status: preview.28 published and installed; the existing Workspace now reports fresh independently service-managed Hermes/OpenClaw execution capacity without claiming Host process verification, while Owner completion, current-package Runtime completion, and physical second-device gates remain open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -11,12 +11,12 @@ physical evidence and cannot be closed by mock output.
 
 | # | Requirement | Current evidence | Status |
 |---|---|---|---|
-| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.25` publishes a no-repository bootstrap plus archive/checksum assets from exact commit `2baa5ae`. Exact-head push/PR CI, bundle/release-consumer gates, Draft and public-download byte equality, clean-HOME candidate/Draft/public roundtrips and the same-Mac preview.24-to-preview.25 upgrade passed. A receipt from another physical Mac remains missing. | Passed locally; external evidence required |
-| 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md`, `PRIVATE_HOST_AUTH_WORKSPACE_UI_ACCEPTANCE.md`, `PRIVATE_HOST_WORKER_OWNERSHIP_ACCEPTANCE.md` and bundle smoke cover installed CLI, production UI, browser-first Owner setup inside the existing React Workspace, init, doctor, start/status/stop, Runtime readiness and fail-closed Worker ownership. Installed preview.25 serves that integrated UI with AgentOps MIS browser metadata, verifies both Host-managed Worker process identities and reports them without double-counting their Agent rows. | Passed locally |
-| 3 | Dependency-free second computer opens private HTTPS console and authenticates | preview.25 is live through private Tailscale HTTPS on port 8443, Funnel is disabled, and the Workspace is ready. The installed application can perform a scrubbed setup-code handoff without output disclosure. Host status remains `bootstrap_required`; Owner completion and physical second-device browser login remain human gates. | Host side passed; external evidence required |
+| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.28` publishes a no-repository bootstrap plus archive/checksum assets from exact commit `f627e83`. Exact-head push/PR CI, bundle/release-consumer gates, local/public asset byte equality, clean-HOME install and the same-Mac preview.27-to-preview.28 upgrade passed. A receipt from another physical Mac remains missing. | Passed locally; external evidence required |
+| 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md`, `PRIVATE_HOST_AUTH_WORKSPACE_UI_ACCEPTANCE.md`, `PRIVATE_HOST_SERVICE_WORKER_PRESENCE_ACCEPTANCE.md` and bundle smoke cover installed CLI, production UI, browser-first Owner setup inside the existing React Workspace, init, doctor, start/status/stop, Runtime readiness and fail-closed Worker ownership. Installed preview.28 serves that integrated UI and reports two fresh external-service Workers plus two execution-capacity lanes while correctly keeping Host-observed `running_workers=0`. | Passed locally |
+| 3 | Dependency-free second computer opens private HTTPS console and authenticates | preview.28 is live through private Tailscale HTTPS on port 8443, Funnel is disabled, and the Workspace is ready. The installed application performed a scrubbed setup-code handoff into the existing Workspace without output disclosure. Host status remains `bootstrap_required`; Owner completion and physical second-device browser login remain human gates. | Host side passed; external evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, `private_host_owner_browser_handoff_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, setup-code authority, role/session separation and CSRF/Origin checks. | Passed locally |
 | 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | Customer dispatch and ledger views exist; Audit and Memory use live APIs; memory decisions write through the approver route; approved artifact download is Session/workspace/approval checked and audited. A second-device end-to-end receipt remains open. | Partial |
-| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | `PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md` records completed Hermes and OpenClaw async runs from preview.4. preview.25 is running exactly one explicitly confirmed, process-verified Host-managed Worker for each adapter. No task was dispatched during this upgrade, and no human Owner has approved preview.25 execution. | Passed previously; exact-current completion pending |
+| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | `PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md` records completed Hermes and OpenClaw async runs from preview.4. preview.28 sees one fresh independently service-managed Worker for each adapter through active short-lived sessions and heartbeat evidence. No task was dispatched during this upgrade/app-open receipt, and no human Owner has approved preview.28 execution. | Passed previously; exact-current completion pending |
 | 7 | Console disconnect does not stop Host Worker or lose task | `PRIVATE_HOST_CONSOLE_DISCONNECT_ACCEPTANCE.md` proves real Hermes/OpenClaw jobs completed after their first Host-local Session clients were discarded, then were read through fresh Owner Sessions. Physical browser/tailnet loss remains missing. | Passed on Host; external evidence required |
 | 8 | Host restart preserves ledger and knowledge state | `PRIVATE_HOST_RESTART_PERSISTENCE_ACCEPTANCE.md` covers Session, task and a 194-document local Markdown/FTS index remaining searchable after managed restart. | Passed locally |
 | 9 | Backup and restore pass on isolated database | `PRIVATE_HOST_BACKUP_RESTORE_ACCEPTANCE.md` covers strict manifest/hash/schema/integrity/foreign-key checks, atomic replacement and access revocation. | Passed locally |
@@ -577,7 +577,7 @@ preview.25 supersedes this package only to remove the original Figma starter
 identity from the browser metadata. The preview.24 Worker identity hardening
 and installed evidence above remain historical evidence.
 
-## Current Preview 25
+## Superseded Preview 25
 
 - Tag: `v1.6.0-private-host-preview.25`
 - Exact commit: `2baa5aecf8dc5a9f6754ef8adb4bc34bdb5a4a3b`
@@ -622,6 +622,78 @@ claims. No task was dispatched during this upgrade.
 Owner creation, current-package approved Runtime completion, physical
 second-device workflow and disconnect evidence, another-Mac clean install and
 logout/reboot service proof remain open. This is a prerelease, not the final RC.
+
+preview.26 supersedes this package by keeping first-Owner setup and sign-in
+inside the complete existing Workspace navigation instead of a setup-only
+shell.
+
+## Superseded Preview 26
+
+- Tag: `v1.6.0-private-host-preview.26`
+- Exact commit: `5fadf74bb281a028f5d4698dbb84fa703c6fc6a6`
+- Release: `https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.26`
+- SHA-256 manifest: `2caf260a646b4f8ad5b8a2dc23b8a0c23a1e63232db9e5153b40175e3fe9b58a`
+- Tar archive: `a17c0555a4a738c9d849f869823c19c3e7303f06b323960a52bc88873838af6a`
+- Zip archive: `13929505ae37717f37d96dccc2411fecd714a8bdda5be5fc07a2be6bff46e850`
+
+preview.26 retained the existing React AppShell, complete front-office/admin
+Sidebar, account settings surface, theme and locale controls for first-Owner
+setup. Its clean-HOME install exposed a packaging defect: the installed bundle
+did not provide the consumer-facing `agentops-worker` shim. preview.27 is the
+corrective package and preview.26 must not be used to install Worker services.
+
+## Superseded Preview 27
+
+- Tag: `v1.6.0-private-host-preview.27`
+- Exact commit: `44d0c4ea1e58d30a91a0cb69baa85457030ca32c`
+- Release: `https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.27`
+- SHA-256 manifest: `e4b0c9dc871030b0b13186ebd0796d6d9ac57ccfe3360153f676879b6d84febe`
+- Tar archive: `9381066e0efc9546472f640edf8f809d078b4a9a6de3376d72027be5028b6e98`
+- Zip archive: `3742f7119adb5e71f592b7e35c76fbc95ec3a3a9247cabfc499e5969425cfccc`
+
+preview.27 fixes installer, upgrade and uninstall ownership for both `agentops`
+and `agentops-worker`, and its clean consumer gate executes both installed
+commands. The real Host was upgraded with its Host-only LaunchAgent and two
+independently service-managed adapter Workers preserved. Its old Worker Console
+still reported zero Host-observed processes because service heartbeat presence
+was not yet projected as execution capacity; preview.28 fixes that read model
+without inventing process verification.
+
+## Current Preview 28
+
+- Tag: `v1.6.0-private-host-preview.28`
+- Exact commit: `f627e83aae357ce4733123208a9d41c037803434`
+- Push CI: passed at the exact commit (`29348330871`)
+- Pull-request CI: passed at the exact commit (`29348334213`)
+- Release: `https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.28`
+- SHA-256 manifest: `12553ad8ca9df7dc66c79999899535b444d5636189412d24af756b67d1aeae6f`
+- Tar archive: `ddc48c498766566f87ea9bb7f5af996699938e694f99661703f893209e800439`
+- Zip archive: `6fd4e6e4ce8b6715a31c12a1997f1bd79c47b84c042d22d07e626a5ecac73340`
+- Release-consumer bootstrap: `6f78549bdb4c1da6ff3128907d8b82067a3ae06741cf823b34e1acdaaf03a44f`
+
+preview.28 keeps the complete existing React Workspace and adds a bounded
+service-presence projection to the existing Worker Console. An external-service
+Worker contributes execution capacity only when both its short-lived Agent
+Gateway Session is active and its `agent.heartbeat` is fresh. It remains
+`management_mode:external_service` and `process_state_verified:false`; the
+browser/server does not execute shell or infer launchd ownership.
+
+Exact-head CI, production UI, clean-clone RC, bundle lifecycle, clean-HOME
+consumer install, both installed CLI shims, public-asset hash equality, secret
+scan and strict release evidence passed. The real Host created an operator
+backup and the installer created a separate pre-update backup before upgrading
+from preview.27. User data was preserved, private HTTPS remained ready and
+Funnel remained disabled.
+
+The installed Host now reports two fresh service Workers and two execution
+capacity lanes while correctly keeping Host-observed `running_workers=0`.
+Launching the installed `AgentOps MIS.app` again kept the Host PID and both
+independent service Worker PIDs unchanged, opened the existing Workspace with
+the setup fragment scrubbed, omitted the manual setup-code input and performed
+no Runtime task. Owner creation, current-package approved Runtime completion,
+physical second-device workflow/disconnect evidence, another-Mac clean install
+and logout/reboot service proof remain open. This is a prerelease, not the final
+RC.
 
 ## Release Gates
 
