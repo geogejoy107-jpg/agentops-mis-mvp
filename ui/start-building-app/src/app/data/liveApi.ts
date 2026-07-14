@@ -3520,6 +3520,10 @@ export interface WorkerDaemonStatus {
   management_mode?: "standalone" | "daemon_api" | "host_stack" | string;
   control_allowed?: boolean;
   process_source?: "daemon_metadata" | "worker_state" | "none" | string;
+  process_claim_active?: boolean;
+  host_management_claim_active?: boolean;
+  process_identity_status?: string;
+  process_identity_verified?: boolean;
   log_path?: string;
   state_path?: string;
   worker_status?: string | null;
@@ -9154,6 +9158,10 @@ function normalizeWorkerDaemon(row: Record<string, unknown>): WorkerDaemonStatus
     management_mode: row.management_mode ? String(row.management_mode) : undefined,
     control_allowed: row.control_allowed === undefined ? undefined : boolValue(row.control_allowed),
     process_source: row.process_source ? String(row.process_source) : undefined,
+    process_claim_active: row.process_claim_active === undefined ? undefined : boolValue(row.process_claim_active),
+    host_management_claim_active: row.host_management_claim_active === undefined ? undefined : boolValue(row.host_management_claim_active),
+    process_identity_status: row.process_identity_status ? String(row.process_identity_status) : undefined,
+    process_identity_verified: row.process_identity_verified === undefined ? undefined : boolValue(row.process_identity_verified),
     log_path: row.log_path ? String(row.log_path) : undefined,
     state_path: row.state_path ? String(row.state_path) : undefined,
     worker_status: row.worker_status ? String(row.worker_status) : null,

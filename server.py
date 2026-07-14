@@ -14377,6 +14377,52 @@ def pid_is_alive(pid) -> bool:
         return False
 
 
+def observed_process_identity(pid) -> dict | None:
+    if not pid_is_alive(pid):
+        return None
+    try:
+        value = int(pid)
+        process = subprocess.run(
+            ["/bin/ps", "-p", str(value), "-o", "lstart=", "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        rendered = process.stdout.strip()
+        process_group_id = os.getpgid(value)
+    except (OSError, TypeError, ValueError, subprocess.TimeoutExpired):
+        return None
+    if process.returncode != 0 or not rendered:
+        return None
+    return {
+        "process_group_id": process_group_id,
+        "process_identity_hash": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
+    }
+
+
+def process_record_identity_status(record: dict, pid) -> tuple[str, bool]:
+    if not pid_is_alive(pid):
+        return "not_alive", False
+    required = ("process_identity_schema_version", "process_group_id", "process_identity_hash")
+    if not all(record.get(key) is not None for key in required):
+        return "missing", False
+    if record.get("process_identity_schema_version") != 1:
+        return "unsupported", False
+    observed = observed_process_identity(pid)
+    if not observed:
+        return "unavailable", False
+    try:
+        group_matches = int(record.get("process_group_id")) == observed["process_group_id"]
+    except (TypeError, ValueError):
+        group_matches = False
+    hash_matches = secrets.compare_digest(
+        str(record.get("process_identity_hash") or ""),
+        observed["process_identity_hash"],
+    )
+    return ("verified", True) if group_matches and hash_matches else ("identity_unverified", False)
+
+
 def tail_text(path: Path, max_lines: int = 30) -> list[str]:
     try:
         if not path.exists():
@@ -14394,12 +14440,27 @@ def read_worker_daemon(adapter: str, include_log: bool = False) -> dict:
     state = read_json_file(state_path, {}) if state_path.exists() else {}
     meta_pid = meta.get("pid")
     state_pid = state.get("pid")
-    pid = meta_pid if pid_is_alive(meta_pid) else state_pid
-    alive = pid_is_alive(pid)
-    status = "running" if alive else "stopped" if meta.get("stopped_at") else "dead" if meta else "not_started"
-    worker_status = state.get("status")
     management_mode = meta.get("management_mode") or state.get("management_mode") or ("daemon_api" if meta else "standalone")
-    control_allowed = management_mode != "host_stack"
+    meta_alive = pid_is_alive(meta_pid)
+    state_alive = pid_is_alive(state_pid)
+    meta_identity_status, meta_identity_verified = process_record_identity_status(meta, meta_pid)
+    state_identity_status, state_identity_verified = process_record_identity_status(state, state_pid)
+    if meta_alive:
+        pid = meta_pid
+        process_source = "daemon_metadata" if meta_identity_verified else "daemon_metadata_unverified"
+        identity_status = meta_identity_status
+        identity_verified = meta_identity_verified
+    else:
+        pid = state_pid
+        process_source = "worker_state" if state_identity_verified else "worker_state_unverified" if state_alive else "none"
+        identity_status = state_identity_status
+        identity_verified = state_identity_verified
+    process_claim_active = bool(meta_alive or state_alive)
+    host_management_claim_active = bool(management_mode == "host_stack" and state_alive)
+    alive = bool(process_claim_active and identity_verified)
+    status = "running" if alive else "identity_unverified" if process_claim_active else "stopped" if meta.get("stopped_at") else "dead" if meta else "not_started"
+    worker_status = state.get("status")
+    control_allowed = bool(management_mode != "host_stack" and (not process_claim_active or identity_verified))
     if alive and worker_status in {"error", "failed", "failed_max_errors"}:
         status = "degraded"
     payload = {
@@ -14416,7 +14477,11 @@ def read_worker_daemon(adapter: str, include_log: bool = False) -> dict:
         "confirm_run": bool(meta.get("confirm_run") if meta.get("confirm_run") is not None else state.get("confirm_run")),
         "management_mode": management_mode,
         "control_allowed": control_allowed,
-        "process_source": "daemon_metadata" if pid == meta_pid and meta_pid is not None else "worker_state" if state_pid is not None else "none",
+        "process_source": process_source,
+        "process_claim_active": process_claim_active,
+        "host_management_claim_active": host_management_claim_active,
+        "process_identity_status": identity_status,
+        "process_identity_verified": identity_verified,
         "log_path": str(log_path),
         "log_retention": worker_log_rotation_config(),
         "state_path": str(state_path),
@@ -14579,6 +14644,17 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
     existing = read_worker_daemon(adapter)
     if existing["running"]:
         return {"provider": "agentops-worker", "ok": True, "already_running": True, "daemon": existing}, 200
+    if existing.get("process_claim_active"):
+        return {
+            "provider": "agentops-worker",
+            "ok": False,
+            "adapter": adapter,
+            "error": "worker_process_identity_unverified",
+            "message": "A live PID is claimed by this worker record but its process identity is not verified.",
+            "daemon": existing,
+            "recommended_action": "Inspect the owning Host lifecycle before replacing worker state.",
+            "token_omitted": True,
+        }, 409
     enforce_intake = body_bool(body.get("enforce_intake"), True)
     intake_gate = worker_intake_start_gate(conn, agent_id, body.get("workspace_id") or "local-demo", status_filters=status_filters, adapter=adapter)
     if enforce_intake and intake_gate["summary"]["blocked_for_intake"] > 0 and not body_bool(body.get("confirm_intake_override")):
@@ -14658,10 +14734,15 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
             close_fds=True,
         )
 
+    process_identity = observed_process_identity(proc.pid) or {}
+
     meta = {
         "adapter": adapter,
         "agent_id": agent_id,
         "pid": proc.pid,
+        "process_identity_schema_version": 1 if process_identity else None,
+        "process_group_id": process_identity.get("process_group_id"),
+        "process_identity_hash": process_identity.get("process_identity_hash"),
         "started_at": now_iso(),
         "stopped_at": None,
         "poll_interval": poll_interval,
@@ -14688,7 +14769,7 @@ def stop_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
     adapters = ["mock", "hermes", "openclaw"] if requested in (None, "", "all") else [coerce_choice(requested, {"mock", "hermes", "openclaw"}, "mock")]
     host_managed = [
         daemon for daemon in (read_worker_daemon(adapter) for adapter in adapters)
-        if daemon.get("running") and daemon.get("management_mode") == "host_stack"
+        if daemon.get("host_management_claim_active")
     ]
     if host_managed:
         return {
@@ -14703,6 +14784,20 @@ def stop_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
                 "host_process_stopped": False,
                 "token_omitted": True,
             },
+            "token_omitted": True,
+        }, 409
+    identity_unverified = [
+        daemon for daemon in (read_worker_daemon(adapter) for adapter in adapters)
+        if daemon.get("process_claim_active") and daemon.get("process_identity_verified") is not True
+    ]
+    if identity_unverified:
+        return {
+            "provider": "agentops-worker",
+            "ok": False,
+            "error": "worker_process_identity_unverified",
+            "message": "Refusing to signal a live PID whose worker process identity is not verified.",
+            "managed_adapters": [daemon.get("adapter") for daemon in identity_unverified],
+            "safety": {"worker_process_stopped": False, "token_omitted": True},
             "token_omitted": True,
         }, 409
     stopped = []
@@ -14766,7 +14861,7 @@ def restart_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
             "error": "confirm_run:true is required before restarting Hermes/OpenClaw live worker daemons.",
         }, 400
     current = read_worker_daemon(adapter)
-    if current.get("running") and current.get("management_mode") == "host_stack":
+    if current.get("host_management_claim_active"):
         return {
             "provider": "agentops-worker",
             "ok": False,
@@ -14780,6 +14875,17 @@ def restart_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
                 "host_process_restarted": False,
                 "token_omitted": True,
             },
+            "token_omitted": True,
+        }, 409
+    if current.get("process_claim_active") and current.get("process_identity_verified") is not True:
+        return {
+            "provider": "agentops-worker",
+            "ok": False,
+            "adapter": adapter,
+            "error": "worker_process_identity_unverified",
+            "message": "Refusing to restart a live PID whose worker process identity is not verified.",
+            "daemon": current,
+            "safety": {"worker_process_restarted": False, "token_omitted": True},
             "token_omitted": True,
         }, 409
     meta_path = worker_runtime_path(adapter, "json")

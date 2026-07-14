@@ -161,6 +161,8 @@ def main() -> int:
                 failures.append("Host-managed worker process was not normalized into daemon status")
             if daemon.get("control_allowed") is not False or not daemon.get("pid"):
                 failures.append("Host-managed worker did not expose bounded process identity/control ownership")
+            if daemon.get("process_identity_verified") is not True or daemon.get("process_identity_status") != "verified":
+                failures.append("Host-managed worker process identity was not verified")
             if (fleet.get("summary") or {}).get("running_local_daemons") != 1:
                 failures.append("Worker Fleet did not count the Host-managed worker as running")
             if (fleet.get("summary") or {}).get("host_managed_workers") != 1:
@@ -210,6 +212,7 @@ def main() -> int:
                 "backend_started": gateway.get("provider") == "agent_gateway",
                 "mock_worker_registered": any(item.get("agent_id") == "agt_worker_local_stack_mock" for item in workers.get("workers", [])),
                 "host_managed_worker_visible": daemon.get("running") is True and daemon.get("management_mode") == "host_stack",
+                "worker_process_identity_verified": daemon.get("process_identity_verified") is True,
                 "running_local_daemons": (fleet.get("summary") or {}).get("running_local_daemons"),
                 "host_managed_workers": (fleet.get("summary") or {}).get("host_managed_workers"),
                 "running_workers": workers.get("running_workers"),

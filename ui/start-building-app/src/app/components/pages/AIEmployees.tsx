@@ -724,6 +724,12 @@ export function AIEmployees() {
       .map(daemon => daemon.adapter),
   );
   const isHostManagedAdapter = (adapter: (typeof WORKER_ADAPTERS)[number]) => hostManagedAdapters.has(adapter);
+  const controlBlockedAdapters = new Set(
+    (workerStatus?.daemons || [])
+      .filter(daemon => daemon.process_claim_active && daemon.control_allowed === false)
+      .map(daemon => daemon.adapter),
+  );
+  const isDaemonControlBlocked = (adapter: (typeof WORKER_ADAPTERS)[number]) => controlBlockedAdapters.has(adapter);
   const lastDaemonAdmissionSummary = lastDaemonControl?.local_loop_admission_summary || lastDaemonControl?.task_intake?.local_loop_admission_summary;
   const lastDaemonAdmissionSafety = lastDaemonAdmissionSummary?.safety || {};
   const lastDaemonAdmissionCommands = lastDaemonAdmissionSummary?.next_safe_commands || [];
@@ -1227,6 +1233,8 @@ export function AIEmployees() {
       hostManaged: "Host managed",
       apiManaged: "Console managed",
       hostManagedHint: "Managed by AgentOps Host. Use the Host lifecycle controls.",
+      processVerified: "Process verified",
+      processUnverified: "Process identity alert",
       dispatching: "Dispatching...",
       restarting: "Restarting...",
       starting: "Starting...",
@@ -1858,6 +1866,8 @@ export function AIEmployees() {
       hostManaged: "主机托管",
       apiManaged: "控制台托管",
       hostManagedHint: "由 AgentOps 主机托管，请使用主机生命周期控制。",
+      processVerified: "进程已核验",
+      processUnverified: "进程身份异常",
       dispatching: "正在派发...",
       restarting: "正在重启...",
       starting: "正在启动...",
@@ -8732,8 +8742,8 @@ export function AIEmployees() {
             <button
               key={item.adapter}
               onClick={() => startDaemon(item.adapter)}
-              disabled={Boolean(dispatching) || workerStartBlocked || liveAdapterConfirmMissing(item.adapter) || isHostManagedAdapter(item.adapter)}
-              title={isHostManagedAdapter(item.adapter) ? copy.hostManagedHint : undefined}
+              disabled={Boolean(dispatching) || workerStartBlocked || liveAdapterConfirmMissing(item.adapter) || isHostManagedAdapter(item.adapter) || isDaemonControlBlocked(item.adapter)}
+              title={isHostManagedAdapter(item.adapter) ? copy.hostManagedHint : isDaemonControlBlocked(item.adapter) ? copy.processUnverified : undefined}
               className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
               style={{ background: "rgba(45,212,191,0.12)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.22)" }}
             >
@@ -8749,8 +8759,8 @@ export function AIEmployees() {
             <button
               key={`restart-${item.adapter}`}
               onClick={() => restartDaemon(item.adapter)}
-              disabled={Boolean(dispatching) || workerStartBlocked || liveAdapterConfirmMissing(item.adapter) || isHostManagedAdapter(item.adapter)}
-              title={isHostManagedAdapter(item.adapter) ? copy.hostManagedHint : undefined}
+              disabled={Boolean(dispatching) || workerStartBlocked || liveAdapterConfirmMissing(item.adapter) || isHostManagedAdapter(item.adapter) || isDaemonControlBlocked(item.adapter)}
+              title={isHostManagedAdapter(item.adapter) ? copy.hostManagedHint : isDaemonControlBlocked(item.adapter) ? copy.processUnverified : undefined}
               className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
               style={{ background: "rgba(122,90,248,0.1)", color: "#A78BFA", border: "1px solid rgba(122,90,248,0.2)" }}
             >
@@ -8760,8 +8770,8 @@ export function AIEmployees() {
           ))}
           <button
             onClick={stopDaemons}
-            disabled={Boolean(dispatching) || hostManagedAdapters.size > 0}
-            title={hostManagedAdapters.size > 0 ? copy.hostManagedHint : undefined}
+            disabled={Boolean(dispatching) || hostManagedAdapters.size > 0 || controlBlockedAdapters.size > 0}
+            title={hostManagedAdapters.size > 0 ? copy.hostManagedHint : controlBlockedAdapters.size > 0 ? copy.processUnverified : undefined}
             className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
             style={{ background: "rgba(248,113,113,0.1)", color: "#F87171", border: "1px solid rgba(248,113,113,0.22)" }}
           >
@@ -8880,6 +8890,7 @@ export function AIEmployees() {
                 <div className="text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>{daemon.adapter}</div>
                 <div className="flex items-center gap-1.5">
                   {daemon.management_mode && <StatusBadge status={daemon.management_mode === "host_stack" ? "ready" : "planned"} label={daemon.management_mode === "host_stack" ? copy.hostManaged : copy.apiManaged} />}
+                  {daemon.process_claim_active && <StatusBadge status={daemon.process_identity_verified ? "pass" : "attention"} label={daemon.process_identity_verified ? copy.processVerified : copy.processUnverified} />}
                   <StatusBadge status={daemon.running ? "running" : daemon.status} />
                 </div>
               </div>

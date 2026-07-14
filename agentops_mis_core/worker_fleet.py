@@ -356,10 +356,22 @@ def build_worker_status_payload(
     adapter_readiness: dict[str, Any],
 ) -> dict[str, Any]:
     active_daemons = [daemon for daemon in daemons if daemon.get("running")]
+    local_daemon_agent_refs = {
+        str(daemon.get("agent_id"))
+        for daemon in daemons
+        if daemon.get("agent_id")
+    }
+    unverified_process_claims = [
+        daemon
+        for daemon in daemons
+        if daemon.get("process_claim_active") and daemon.get("process_identity_verified") is not True
+    ]
     running_worker_refs = {
         str(agent.get("agent_id"))
         for agent in worker_agents
-        if agent.get("status") == "running" and agent.get("agent_id")
+        if agent.get("status") == "running"
+        and agent.get("agent_id")
+        and str(agent.get("agent_id")) not in local_daemon_agent_refs
     }
     running_worker_refs.update(
         str(daemon.get("agent_id") or f"local-daemon:{daemon.get('adapter') or 'unknown'}")
@@ -367,9 +379,10 @@ def build_worker_status_payload(
     )
     payload = {
         "provider": "agentops-worker",
-        "status": "attention" if remote_fleet.get("stale_enrollments") else "running" if active_daemons else "ready",
+        "status": "attention" if remote_fleet.get("stale_enrollments") or unverified_process_claims else "running" if active_daemons else "ready",
         "worker_count": len(worker_agents),
         "running_workers": len(running_worker_refs),
+        "unverified_process_claims": len(unverified_process_claims),
         "recent_completed_runs": len([run for run in worker_runs if run.get("status") == "completed"]),
         "pending_worker_tasks": len([task for task in worker_tasks if task.get("status") in ("planned", "backlog")]),
         "stuck_worker_tasks": len(stuck_tasks),
@@ -422,10 +435,11 @@ def build_worker_fleet_view(
 
     for daemon in daemons:
         running = bool(daemon.get("running"))
-        status = daemon.get("worker_status") or daemon.get("status") or "unknown"
+        identity_unverified = bool(daemon.get("process_claim_active") and daemon.get("process_identity_verified") is not True)
+        status = daemon.get("status") if identity_unverified else daemon.get("worker_status") or daemon.get("status") or "unknown"
         management_mode = daemon.get("management_mode") or "daemon_api"
         control_allowed = daemon.get("control_allowed") is not False
-        health = "pass" if running else "info"
+        health = "warn" if identity_unverified else "pass" if running else "info"
         if running and _int(daemon.get("consecutive_errors")) > 0:
             health = "warn"
         add_lane({
@@ -438,6 +452,9 @@ def build_worker_fleet_view(
             "status": status,
             "management_mode": management_mode,
             "control_allowed": control_allowed,
+            "process_claim_active": bool(daemon.get("process_claim_active")),
+            "process_identity_status": daemon.get("process_identity_status"),
+            "process_identity_verified": daemon.get("process_identity_verified") is True,
             "health": health,
             "heartbeat_state": "local_process" if running else "not_running",
             "session_state": "not_required",
@@ -451,7 +468,7 @@ def build_worker_fleet_view(
             },
             "next_action": (
                 "agentops host status"
-                if running and management_mode == "host_stack"
+                if management_mode == "host_stack" and (running or identity_unverified)
                 else "agentops worker logs --adapter " + str(daemon.get("adapter") or "mock")
                 if running
                 else "agentops worker start --adapter " + str(daemon.get("adapter") or "mock")
@@ -551,6 +568,7 @@ def build_worker_fleet_view(
             "running_local_daemons": len([daemon for daemon in daemons if daemon.get("running")]),
             "host_managed_workers": len([daemon for daemon in daemons if daemon.get("running") and daemon.get("management_mode") == "host_stack"]),
             "api_managed_daemons": len([daemon for daemon in daemons if daemon.get("running") and daemon.get("management_mode") != "host_stack"]),
+            "unverified_process_claims": len([daemon for daemon in daemons if daemon.get("process_claim_active") and daemon.get("process_identity_verified") is not True]),
             "remote_worker_count": remote_fleet.get("remote_worker_count", 0),
             "fresh_remote_enrollments": remote_fleet.get("fresh_enrollments", 0),
             "stale_remote_enrollments": remote_fleet.get("stale_enrollments", 0),

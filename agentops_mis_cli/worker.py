@@ -97,6 +97,30 @@ def stable_hash(value) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def current_process_identity() -> dict:
+    """Return a non-reversible identity for this worker process."""
+    pid = os.getpid()
+    try:
+        process = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "lstart=", "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        rendered = process.stdout.strip()
+        process_group_id = os.getpgid(pid)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if process.returncode != 0 or not rendered:
+        return {}
+    return {
+        "process_identity_schema_version": 1,
+        "process_group_id": process_group_id,
+        "process_identity_hash": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
+    }
+
+
 def json_dumps(data) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)
 
@@ -124,6 +148,7 @@ class WorkerState:
             "workspace_id": args.workspace_id,
             "base_url": args.base_url,
             "pid": os.getpid(),
+            **current_process_identity(),
             "management_mode": management_mode,
             "confirm_run": bool(args.confirm_run),
             "poll_interval": args.poll_interval,

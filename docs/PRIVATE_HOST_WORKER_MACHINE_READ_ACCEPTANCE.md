@@ -36,6 +36,7 @@ python3 scripts/human_browser_auth_smoke.py
 python3 scripts/agentops_worker_status_smoke.py
 python3 scripts/agentops_worker_fleet_smoke.py
 python3 scripts/run_local_stack_smoke.py
+python3 scripts/worker_process_identity_smoke.py
 python3 scripts/worker_console_ui_smoke.py
 python3 scripts/real_runtime_ui_confirm_smoke.py
 python3 scripts/release_evidence_packet_smoke.py
@@ -96,6 +97,34 @@ commit `24d0791bbd1848c275e72b9c7baafcb6c28be1ce`. The real Host reports one
 Hermes plus one OpenClaw child as `host_stack`, two running local daemons, two
 Host-managed Workers, zero API-managed daemons and `running_workers:2`.
 
+## Process Identity Hardening
+
+The source after preview.23 binds every new Worker state record to a
+non-reversible process identity made from the OS process start record, command
+record and process group. Only the SHA-256 digest and process-group number are
+stored; the command, environment, prompt, response and credentials are not.
+
+Status recomputes that identity before accepting a state-file PID as a running
+Worker. A stale, replaced or tampered claim becomes `identity_unverified`,
+`running:false`, and `control_allowed:false`. The backend refuses start, stop
+and restart against the live unverified PID. A Host ownership claim remains
+authoritative even when its identity is unverified, so the console cannot kill
+the child or start a duplicate outside the Host lifecycle.
+
+`worker_process_identity_smoke.py` starts a temporary local stack with a real
+mock Worker process, verifies its initial identity, tampers only the temporary
+state hash, and proves that status fails closed, stop/restart return `409`, and
+both the Worker and Host survive. It also proves that `running_workers` drops to
+zero and Fleet reports one warning-level unverified claim instead of counting
+the stale Agent row as capacity. `run_local_stack_smoke.py` now also requires
+`process_identity_verified:true` in its normal path, and CI runs both smokes.
+
+The existing React Worker Console and AI Employees pages consume this state;
+they disable unsafe controls and show a bilingual process-verification badge.
+No alternate frontend or new visual shell was introduced. This source
+hardening is not yet claimed as installed or released; it must pass exact-head
+CI and the next versioned package upgrade first.
+
 ## Current Result
 
 Validated locally on 2026-07-14:
@@ -112,4 +141,12 @@ Validated locally on 2026-07-14:
   real preview.22-to-preview.23 Host upgrade: pass.
 - Installed Hermes/OpenClaw process visibility, ownership and deduplicated
   capacity readback: pass; both adapters are ready and sleeping for work.
+- Source process-identity tamper/PID-reuse guard: isolated real-process smoke,
+  local-stack smoke, Worker Console static contract and production UI build
+  pass; release/install validation remains pending the next preview.
+- API-managed daemon regression: pass on an isolated server with explicit
+  loopback base URL; the daemon processed one mock task through plan, claim,
+  run, runtime event, tool call, evaluation, artifact, memory proposal, audit
+  and evidence-manifest writes, then stopped normally. No Hermes/OpenClaw model
+  was invoked by this regression.
 - Live Hermes/OpenClaw execution: not called by this read-only slice.
