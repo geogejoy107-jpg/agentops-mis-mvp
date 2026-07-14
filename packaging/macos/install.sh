@@ -176,22 +176,27 @@ elif install_root.is_dir() and any(install_root.iterdir()):
         raise SystemExit("non-empty install root lacks a valid product ownership marker")
 
 shim = bin_dir / "agentops"
-if shim.exists() or shim.is_symlink():
-    if shim.is_symlink() or not old_current:
-        raise SystemExit("existing CLI shim ownership cannot be verified")
-    try:
-        existing_shim = shim.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        raise SystemExit("existing CLI shim ownership cannot be verified")
-    quoted_old_current = shlex.quote(str(current))
-    expected_shim = (
+worker_shim = bin_dir / "agentops-worker"
+
+def shim_content(module):
+    quoted_current = shlex.quote(str(current))
+    return (
         "#!/bin/sh\n"
         "set -eu\n"
-        f"cd {quoted_old_current}\n"
-        f"PYTHONPATH={quoted_old_current} exec python3 -m agentops_mis_cli \"$@\"\n"
+        f"cd {quoted_current}\n"
+        f"PYTHONPATH={quoted_current} exec python3 -m {module} \"$@\"\n"
     )
-    if existing_shim != expected_shim:
-        raise SystemExit("existing CLI shim ownership cannot be verified")
+
+for candidate, module in ((shim, "agentops_mis_cli"), (worker_shim, "agentops_mis_cli.worker")):
+    if candidate.exists() or candidate.is_symlink():
+        if candidate.is_symlink() or not old_current:
+            raise SystemExit(f"existing {candidate.name} shim ownership cannot be verified")
+        try:
+            existing_shim = candidate.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            raise SystemExit(f"existing {candidate.name} shim ownership cannot be verified")
+        if existing_shim != shim_content(module):
+            raise SystemExit(f"existing {candidate.name} shim ownership cannot be verified")
 if target.exists():
     raise SystemExit(f"version is already installed: {version}")
 pre_update_backup = None
@@ -252,15 +257,9 @@ if old_current and old_current != target:
 atomic_symlink(current, target)
 
 bin_dir.mkdir(parents=True, exist_ok=True)
-quoted_current = shlex.quote(str(current))
-shim.write_text(
-    "#!/bin/sh\n"
-    "set -eu\n"
-    f"cd {quoted_current}\n"
-    f"PYTHONPATH={quoted_current} exec python3 -m agentops_mis_cli \"$@\"\n",
-    encoding="utf-8",
-)
-shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+for candidate, module in ((shim, "agentops_mis_cli"), (worker_shim, "agentops_mis_cli.worker")):
+    candidate.write_text(shim_content(module), encoding="utf-8")
+    candidate.chmod(candidate.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 launcher_installed = False
 if install_app:
@@ -360,6 +359,7 @@ print(json.dumps({
     "previous_version": old_current.name if old_current and old_current != target else None,
     "pre_update_backup_path": pre_update_backup,
     "shim": str(shim),
+    "worker_shim": str(worker_shim),
     "launcher": str(app_bundle) if install_app else None,
     "launcher_installed": launcher_installed,
     "launcher_starts_live_workers": False,

@@ -222,6 +222,7 @@ def main() -> int:
         if installed.returncode != 0:
             fail("bundle install failed", installed)
         installed_payload = json.loads(installed.stdout)
+        installed_worker = bin_dir / "agentops-worker"
         launcher_executable = app_bundle / "Contents" / "MacOS" / "agentops-mis-launcher"
         launcher_config_path = app_bundle / "Contents" / "Resources" / "launcher-config.json"
         if (
@@ -230,6 +231,9 @@ def main() -> int:
             or not launcher_executable.is_file()
             or not os.access(launcher_executable, os.X_OK)
             or not launcher_config_path.is_file()
+            or Path(str(installed_payload.get("worker_shim") or "")) != installed_worker
+            or not installed_worker.is_file()
+            or not os.access(installed_worker, os.X_OK)
         ):
             fail("bundle did not install the managed macOS launcher", installed)
         launcher_config = json.loads(launcher_config_path.read_text(encoding="utf-8"))
@@ -279,6 +283,9 @@ def main() -> int:
         help_result = run([str(bin_dir / "agentops"), "host", "--help"], env=env)
         if help_result.returncode != 0 or "Manage the private local AgentOps MIS host" not in help_result.stdout:
             fail("installed agentops host --help failed", help_result)
+        worker_help = run([str(installed_worker), "--help"], env=env)
+        if worker_help.returncode != 0 or "Run an AgentOps MIS worker loop." not in worker_help.stdout:
+            fail("installed agentops-worker --help failed", worker_help)
         for command in ("bootstrap-owner", "configure-cli", "backup", "backup-verify", "restore"):
             command_help = run([str(bin_dir / "agentops"), "host", command, "--help"], env=env)
             if command_help.returncode != 0:
@@ -332,8 +339,7 @@ def main() -> int:
         worker_preflight_payload = json.loads(worker_preflight.stdout or "{}")
         worker_service_path = temp / "local.agentops.worker.agt_bundle_local_config.plist"
         worker_service = run([
-            str(bin_dir / "agentops"),
-            "worker",
+            str(installed_worker),
             "service-install",
             "--manager",
             "launchd",
@@ -396,7 +402,7 @@ def main() -> int:
             {"Origin": base_url, "X-AgentOps-CSRF": csrf},
         )
         running_uninstall = run(["sh", str(bundle / "uninstall.sh")], env=env)
-        if running_uninstall.returncode == 0 or not install_root.is_dir() or not (bin_dir / "agentops").is_file():
+        if running_uninstall.returncode == 0 or not install_root.is_dir() or not (bin_dir / "agentops").is_file() or not installed_worker.is_file():
             fail("uninstaller removed product files while the managed Host was running", running_uninstall)
         stopped = run([str(bin_dir / "agentops"), "host", "stop"], env=env)
         if stopped.returncode == 0:
@@ -674,6 +680,15 @@ def main() -> int:
         if modified_shim_uninstall.returncode == 0 or not install_root.is_dir() or not shim_path.is_file():
             fail("uninstaller accepted a modified CLI shim", modified_shim_uninstall)
 
+        worker_shim_bytes = installed_worker.read_bytes()
+        with installed_worker.open("ab") as handle:
+            handle.write(b"# unexpected content\n")
+        modified_worker_shim_uninstall = run(["sh", str(bundle_two / "uninstall.sh")], env=env)
+        installed_worker.write_bytes(worker_shim_bytes)
+        installed_worker.chmod(0o755)
+        if modified_worker_shim_uninstall.returncode == 0 or not install_root.is_dir() or not installed_worker.is_file():
+            fail("uninstaller accepted a modified worker shim", modified_worker_shim_uninstall)
+
         dangerous_purge_env = {
             **env,
             "AGENTOPS_HOST_HOME": str(home),
@@ -702,6 +717,8 @@ def main() -> int:
             fail("bundle uninstall failed", uninstalled)
         if install_root.exists() or (bin_dir / "agentops").exists() or app_bundle.exists():
             fail("uninstall left product files behind")
+        if installed_worker.exists():
+            fail("uninstall left agentops-worker behind")
         if not sentinel.is_file():
             fail("uninstall removed user data without explicit purge")
 
@@ -715,6 +732,7 @@ def main() -> int:
             "tampered_payload_rejected": True,
             "installed_host_help": "passed",
             "installed_shim_source_shadowing": "rejected",
+            "installed_worker_shim": "passed",
             "installed_host_release_env": "passed",
             "installed_macos_launcher": "passed",
             "launcher_absolute_python": "passed",
@@ -739,6 +757,7 @@ def main() -> int:
             "symlinked_lifecycle_lock_uninstall_rejected": True,
             "missing_marker_uninstall_rejected": True,
             "modified_shim_uninstall_rejected": True,
+            "modified_worker_shim_uninstall_rejected": True,
             "dangerous_root_purge_rejected": True,
             "overlapping_root_purge_rejected": True,
             "two_version_upgrade_and_rollback": "passed",

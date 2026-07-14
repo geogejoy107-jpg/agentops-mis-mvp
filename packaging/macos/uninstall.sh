@@ -28,6 +28,7 @@ data_root = raw_data_root.resolve()
 app_dir = raw_app_dir.resolve()
 purge_data = sys.argv[5].lower() in {"1", "true", "yes"}
 shim = bin_dir / "agentops"
+worker_shim = bin_dir / "agentops-worker"
 app_bundle = app_dir / "AgentOps MIS.app"
 host_service = Path.home() / "Library" / "LaunchAgents" / "dev.agentops.mis.private-host.plist"
 home = Path.home().resolve()
@@ -90,22 +91,25 @@ except (OSError, json.JSONDecodeError):
 if install_marker.is_symlink() or install_marker_payload != expected_install_marker:
     raise SystemExit("installed product ownership marker is missing or invalid")
 
-if shim.is_symlink():
-    raise SystemExit("CLI shim ownership cannot be verified")
-if shim.exists():
-    try:
-        shim_text = shim.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        raise SystemExit("CLI shim ownership cannot be verified")
+def shim_content(module):
     quoted_current = shlex.quote(str(install_root / "current"))
-    expected_shim = (
+    return (
         "#!/bin/sh\n"
         "set -eu\n"
         f"cd {quoted_current}\n"
-        f"PYTHONPATH={quoted_current} exec python3 -m agentops_mis_cli \"$@\"\n"
+        f"PYTHONPATH={quoted_current} exec python3 -m {module} \"$@\"\n"
     )
-    if shim_text != expected_shim:
-        raise SystemExit("CLI shim ownership cannot be verified")
+
+for candidate, module in ((shim, "agentops_mis_cli"), (worker_shim, "agentops_mis_cli.worker")):
+    if candidate.is_symlink():
+        raise SystemExit(f"{candidate.name} shim ownership cannot be verified")
+    if candidate.exists():
+        try:
+            shim_text = candidate.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            raise SystemExit(f"{candidate.name} shim ownership cannot be verified")
+        if shim_text != shim_content(module):
+            raise SystemExit(f"{candidate.name} shim ownership cannot be verified")
 
 if app_bundle.exists() or app_bundle.is_symlink():
     launcher_marker = app_bundle / "Contents" / "Resources" / "agentops-mis-launcher.json"
@@ -173,6 +177,8 @@ if pid_path.exists():
 
 if shim.exists():
     shim.unlink()
+if worker_shim.exists():
+    worker_shim.unlink()
 if app_bundle.exists():
     shutil.rmtree(app_bundle)
 if install_root.exists():
@@ -187,6 +193,7 @@ print(json.dumps({
     "operation": "uninstall",
     "install_removed": not install_root.exists(),
     "shim_removed": not shim.exists(),
+    "worker_shim_removed": not worker_shim.exists(),
     "launcher_removed": not app_bundle.exists(),
     "user_data_preserved": not purge_data,
     "data_path": str(data_root),

@@ -52,8 +52,9 @@ Generated archives and UI `dist` remain untracked.
   excluded.
 - Installer rejects missing, modified, undeclared or traversal paths before
   copying payload files.
-- Default install path is `~/.local/share/agentops-mis`; the CLI shim is
-  `~/.local/bin/agentops`.
+- Default install path is `~/.local/share/agentops-mis`; the operator CLI shim
+  is `~/.local/bin/agentops` and the service/daemon CLI shim is
+  `~/.local/bin/agentops-worker`.
 - Versioned payloads live below `versions/<version>` and `current` points to the
   active version.
 - A verified update stages the new version, preserves the prior version through
@@ -72,8 +73,8 @@ Generated archives and UI `dist` remain untracked.
   invalid/unverifiable, or the shared lifecycle lock is held. It requires valid
   product/data ownership markers and rejects dangerous, overlapping, external,
   or symlinked removal roots.
-- Existing CLI shims must match the installer-generated content exactly before
-  update or uninstall; modified and symlinked shims fail closed.
+- Both existing CLI shims must match the installer-generated content exactly
+  before update or uninstall; modified and symlinked shims fail closed.
 - Installer does not use the network or install Hermes, OpenClaw, Tailscale,
   Python or Node.
 
@@ -94,7 +95,9 @@ The smoke uses temporary build/output/HOME/install/data directories and proves:
 - tar.gz and zip forbidden-member/path-traversal scan;
 - archive and per-file manifest checksums;
 - modified payload rejection before installation;
-- offline install and CLI shim creation;
+- offline install and both CLI shim creations;
+- direct execution of the installed `agentops-worker` command and Worker
+  service-template generation without a repository or module fallback;
 - installed `agentops host --help`;
 - installed `agentops host init` and `agentops host doctor`;
 - installed human-auth capable live Runtime ledger readback client;
@@ -108,7 +111,7 @@ The smoke uses temporary build/output/HOME/install/data directories and proves:
 - uninstall preserves a pre-existing user-data sentinel.
 - running-Host and invalid-PID uninstall attempts fail closed without removing
   the installed version or CLI shim;
-- invalid-PID update, unrelated-root install, and modified-shim uninstall
+- invalid-PID update, unrelated-root install, and modified operator/Worker shim uninstall
   attempts fail closed while preserving their sentinels;
 - lifecycle-lock contention, missing ownership marker, and HOME-root purge
   attempts fail closed without removing product or user data;

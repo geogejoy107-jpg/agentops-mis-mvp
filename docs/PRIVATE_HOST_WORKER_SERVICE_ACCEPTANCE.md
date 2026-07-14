@@ -81,7 +81,10 @@ OpenClaw definitions without `--confirm-run` remain unloadable.
 The Private Host bundle also includes this acceptance file and
 `REMOTE_WORKER_OPERATIONS_RUNBOOK.md`; its installed-bundle smoke confirms the
 same `local_config`, mode `0600`, no-API-key and managed-`current` contract
-without loading launchd or running an adapter.
+without loading launchd or running an adapter. The bundle installs a first-class
+`agentops-worker` shim alongside `agentops`; clean-HOME acceptance invokes that
+consumer command directly, so a repository/module fallback cannot mask a
+missing Worker executable.
 
 ## Real Private Host Readback
 

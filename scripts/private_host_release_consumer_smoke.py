@@ -143,6 +143,7 @@ def main() -> int:
             env=env,
         )
         agentops = bin_dir / "agentops"
+        agentops_worker = bin_dir / "agentops-worker"
         stopped = None
         try:
             combined = installed.stdout + installed.stderr
@@ -152,6 +153,9 @@ def main() -> int:
                 (app_bundle / "Contents" / "MacOS" / "agentops-mis-launcher").is_file(),
                 "release consumer did not install the macOS launcher",
             )
+            require(agentops_worker.is_file() and os.access(agentops_worker, os.X_OK), "release consumer did not install agentops-worker")
+            worker_help = run([str(agentops_worker), "--help"], env=env)
+            require(worker_help.returncode == 0 and "Run an AgentOps MIS worker loop." in worker_help.stdout, "installed agentops-worker is not runnable", worker_help)
 
             version_result = run([str(agentops), "host", "version"], env=env)
             status_result = run([str(agentops), "host", "status"], env=env)
@@ -178,6 +182,7 @@ def main() -> int:
             "host_started": True,
             "owner_bootstrap_required": True,
             "macos_launcher_installed": True,
+            "worker_cli_installed": True,
             "credentials_omitted": True,
             "network_used": False,
         }, indent=2, sort_keys=True))
