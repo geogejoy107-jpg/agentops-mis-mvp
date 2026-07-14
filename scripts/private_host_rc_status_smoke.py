@@ -87,6 +87,12 @@ def main() -> int:
     require("## Local Service Loaded Receipt" in service, "local loaded-service receipt missing", failures)
     require("launchd reports the Host-only service loaded" in service, "loaded Host service receipt missing", failures)
     require("loaded receipt is not logout/reboot proof" in normalized_service, "service receipt must not claim reboot proof", failures)
+    require("still identified exact release commit `f627e83`" in normalized_service,
+            "installed preview.28 service restart receipt missing", failures)
+    require("actual independent hermes and openclaw launchagent units showed both still running" in normalized_service,
+            "service restart must preserve independent Worker receipt", failures)
+    require("still does not substitute for a physical logout/reboot receipt" in normalized_service,
+            "service restart receipt must keep the physical reboot gate open", failures)
 
     output = {
         "operation": "private_host_rc_status_smoke",
@@ -95,7 +101,7 @@ def main() -> int:
         "tag": TAG,
         "exact_commit": COMMIT,
         "checksums_recorded": len(CHECKSUMS),
-        "local_receipts": ["installed_app_launch", "host_service_loaded"],
+        "local_receipts": ["installed_app_launch", "host_service_loaded", "installed_service_restart"],
         "external_gates_open": list(open_gate_markers),
         "failures": failures,
         "safety": {

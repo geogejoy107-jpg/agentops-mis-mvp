@@ -85,6 +85,18 @@ the Host service did not start, stop, or claim their processes. No Runtime task
 was dispatched during the upgrade or app-open receipt. This loaded receipt is
 not logout/reboot proof.
 
+On 2026-07-15 the installed preview.28 service was exercised once more through
+the consumer CLI. The unconfirmed command returned only the planned
+`launchctl kickstart -k` action and reported `service_mutated:false`. The same
+command with `--confirm-control` replaced the Host process, then the loopback
+health check returned ready and `agentops host version` still identified exact
+release commit `f627e83`. Tailscale Serve remained ready on private HTTPS with
+Funnel disabled. The control receipt contained no Worker action and reported
+`live_workers_started:false`; readback of the actual independent Hermes and
+OpenClaw LaunchAgent units showed both still running. This proves an explicit
+installed-service restart without implicit Runtime or Worker ownership. It
+still does not substitute for a physical logout/reboot receipt.
+
 ## Known Limits
 
 - This is an unsigned macOS preview, not a signed/notarized installer service.

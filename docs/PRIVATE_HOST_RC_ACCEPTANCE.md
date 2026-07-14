@@ -690,7 +690,12 @@ capacity lanes while correctly keeping Host-observed `running_workers=0`.
 Launching the installed `AgentOps MIS.app` again kept the Host PID and both
 independent service Worker PIDs unchanged, opened the existing Workspace with
 the setup fragment scrubbed, omitted the manual setup-code input and performed
-no Runtime task. Owner creation, current-package approved Runtime completion,
+no Runtime task. A subsequent preview-first then explicitly confirmed Host
+LaunchAgent restart replaced only the Host process, returned the same exact
+preview.28 release commit, restored loopback/private-HTTPS readiness and left
+the independent Hermes/OpenClaw services running; the receipt reported no
+Worker action or live Runtime execution. Owner creation, current-package
+approved Runtime completion,
 physical second-device workflow/disconnect evidence, another-Mac clean install
 and logout/reboot service proof remain open. This is a prerelease, not the final
 RC.
