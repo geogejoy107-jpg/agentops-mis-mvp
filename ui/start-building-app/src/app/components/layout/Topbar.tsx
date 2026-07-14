@@ -1,4 +1,4 @@
-import { Search, Bell, ChevronDown, Radio, Moon, Sun, Languages, Palette, LogOut, LockKeyhole } from "lucide-react";
+import { Search, Bell, ChevronDown, Radio, Moon, Sun, Languages, Palette, LogOut, LockKeyhole, Zap } from "lucide-react";
 import { Link } from "react-router";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 import type { ThemeMode } from "../../context/PreferencesContext";
@@ -60,10 +60,20 @@ export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLa
         borderColor: "var(--mis-border)",
       }}
     >
+      <div className="flex min-w-0 items-center gap-2 md:hidden">
+        <span
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded"
+          style={{ background: "var(--mis-cyan)", color: "var(--mis-bg)" }}
+        >
+          <Zap size={13} aria-hidden="true" />
+        </span>
+        <span className="truncate text-xs font-semibold" style={{ color: "var(--mis-text)" }}>AgentOps MIS</span>
+      </div>
+
       {/* Left: workspace switcher */}
       <button
         disabled={locked}
-        className="flex items-center gap-1.5 text-xs rounded px-2 py-1 hover:opacity-80 transition-opacity shrink-0"
+        className="hidden items-center gap-1.5 text-xs rounded px-2 py-1 hover:opacity-80 transition-opacity shrink-0 md:flex"
         style={{ color: "var(--mis-text)", background: "var(--mis-surface2)" }}
       >
         <span style={{ color: "var(--mis-dim)" }}>{copy.workspace}:</span>

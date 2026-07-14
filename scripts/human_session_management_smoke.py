@@ -377,6 +377,7 @@ def main() -> int:
         "page": ROOT / "ui/start-building-app/src/app/components/pages/AccountSecurity.tsx",
         "app": ROOT / "ui/start-building-app/src/app/App.tsx",
         "topbar": ROOT / "ui/start-building-app/src/app/components/layout/Topbar.tsx",
+        "settings": ROOT / "ui/start-building-app/src/app/components/shared/WorkspaceSettings.tsx",
         "api": ROOT / "ui/start-building-app/src/app/data/liveApi.ts",
     }
     ui_source = {name: path.read_text(encoding="utf-8") if path.is_file() else "" for name, path in ui_files.items()}
@@ -388,7 +389,11 @@ def main() -> int:
         "session_revoke_bound": "revokeHumanBrowserSession" in ui_source["page"],
         "revoke_requires_confirmation": "window.confirm" in ui_source["page"],
         "current_session_signout_present": "logout()" in ui_source["page"],
-        "settings_layout_reused": 'lg:grid-cols-[220px_minmax(0,680px)]' in ui_source["page"],
+        "settings_layout_reused": (
+            "WorkspaceSettingsPage" in ui_source["page"]
+            and "WorkspaceSettingsSection" in ui_source["page"]
+            and 'lg:grid-cols-[220px_minmax(0,680px)]' in ui_source["settings"]
+        ),
         "api_uses_relative_human_auth_paths": all(
             marker in ui_source["api"]
             for marker in ('"/human-auth/sessions"', '"/human-auth/sessions/revoke"')

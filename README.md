@@ -121,6 +121,10 @@ agentops host tailscale-apply --confirm
 用户不需要从终端复制。`agentops host bootstrap-owner --confirm` 仅保留为无图形
 环境和恢复入口。
 
+首次 Owner 设置、后续登录和登录后的 `/workspace/account` 现在复用同一套
+Workspace 设置组件；账户入口也位于原有侧栏中。全新浏览器默认使用企业浅色
+主题，用户已经选择的深色控制面或员工 OS 主题不会被覆盖。
+
 `host init` 仍生成一次性 Owner 设置码，并把它、机器 API key 与 Admin key
 存到仓库外的 `~/.agentops/host/`，文件权限为 `0600`。`host start` 默认后台
 启动安全 mock worker；真实 Hermes/OpenClaw 仍必须显式指定并确认：

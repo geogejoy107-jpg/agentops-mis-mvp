@@ -12,8 +12,11 @@ AUTH_GATE = UI_COMPONENTS / "auth" / "AuthGate.tsx"
 APP_SHELL = UI_COMPONENTS / "layout" / "AppShell.tsx"
 SIDEBAR = UI_COMPONENTS / "layout" / "Sidebar.tsx"
 TOPBAR = UI_COMPONENTS / "layout" / "Topbar.tsx"
+ACCOUNT_SECURITY = UI_COMPONENTS / "pages" / "AccountSecurity.tsx"
+WORKSPACE_SETTINGS = UI_COMPONENTS / "shared" / "WorkspaceSettings.tsx"
+PREFERENCES = ROOT / "ui" / "start-building-app" / "src" / "app" / "context" / "PreferencesContext.tsx"
 LIVE_API = ROOT / "ui" / "start-building-app" / "src" / "app" / "data" / "liveApi.ts"
-FILES = (AUTH_GATE, APP_SHELL, SIDEBAR, TOPBAR, LIVE_API)
+FILES = (AUTH_GATE, APP_SHELL, SIDEBAR, TOPBAR, ACCOUNT_SECURITY, WORKSPACE_SETTINGS, PREFERENCES, LIVE_API)
 
 
 def load_source(path: Path, failures: list[str]) -> str:
@@ -48,12 +51,15 @@ def main() -> int:
     app_shell = sources[APP_SHELL]
     sidebar = sources[SIDEBAR]
     topbar = sources[TOPBAR]
+    account_security = sources[ACCOUNT_SECURITY]
+    workspace_settings = sources[WORKSPACE_SETTINGS]
+    preferences = sources[PREFERENCES]
     live_api = sources[LIVE_API]
     checks: dict[str, bool] = {}
 
     record(checks, "auth_gate_reuses_locked_app_shell", '<AppShell locked lockLabel={lockLabel}>' in auth_gate)
-    record(checks, "human_auth_workspace_gate_present", 'data-testid="human-auth-workspace-gate"' in auth_gate)
-    record(checks, "auth_gate_uses_workspace_settings_layout", 'data-testid="human-auth-settings-layout"' in auth_gate)
+    record(checks, "human_auth_workspace_gate_present", 'testId="human-auth-workspace-gate"' in auth_gate)
+    record(checks, "auth_gate_uses_workspace_settings_layout", 'testId="human-auth-settings-layout"' in auth_gate)
     record(checks, "auth_gate_uses_workspace_access_panel", 'data-testid="human-auth-access-panel"' in auth_gate)
     record(checks, "auth_gate_uses_workspace_form", 'data-testid="human-auth-workspace-form"' in auth_gate)
     record(checks, "auth_gate_uses_compact_host_boundary", 'data-testid="human-auth-host-boundary"' in auth_gate)
@@ -66,7 +72,34 @@ def main() -> int:
     record(
         checks,
         "auth_gate_uses_existing_settings_grid",
-        'lg:grid-cols-[220px_minmax(0,680px)]' in auth_gate,
+        'lg:grid-cols-[220px_minmax(0,680px)]' in workspace_settings,
+    )
+    record(
+        checks,
+        "auth_and_account_share_workspace_settings_components",
+        "WorkspaceSettingsPage" in auth_gate
+        and "WorkspaceSettingsSection" in auth_gate
+        and "WorkspaceSettingsPage" in account_security
+        and "WorkspaceSettingsSection" in account_security,
+    )
+    record(
+        checks,
+        "account_route_is_visible_in_existing_sidebar",
+        'path: "/workspace/account"' in sidebar
+        and 'account: "Account and access"' in sidebar
+        and 'account: "账户与访问"' in sidebar,
+    )
+    record(
+        checks,
+        "mobile_topbar_keeps_product_identity",
+        "md:hidden" in topbar and "AgentOps MIS" in topbar and "<Zap" in topbar,
+    )
+    record(
+        checks,
+        "fresh_install_defaults_to_enterprise_theme",
+        'if (stored === "dark" || stored === "ops") return "ops";' in preferences
+        and 'if (stored === "workforce") return "workforce";' in preferences
+        and 'return "enterprise";' in preferences,
     )
     record(checks, "locked_shell_uses_workspace_content_spacing", 'className="app-main flex-1 overflow-y-auto p-4 lg:p-5"' in app_shell)
     record(

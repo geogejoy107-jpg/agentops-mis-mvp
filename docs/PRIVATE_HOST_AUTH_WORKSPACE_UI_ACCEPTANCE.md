@@ -13,6 +13,9 @@ ready, `AuthGate` returns the existing workspace unchanged.
 ## Changed Files
 
 - `ui/start-building-app/src/app/components/auth/AuthGate.tsx`
+- `ui/start-building-app/src/app/components/shared/WorkspaceSettings.tsx`
+- `ui/start-building-app/src/app/components/pages/AccountSecurity.tsx`
+- `ui/start-building-app/src/app/context/PreferencesContext.tsx`
 - `ui/start-building-app/src/app/components/layout/AppShell.tsx`
 - `ui/start-building-app/src/app/components/layout/Sidebar.tsx`
 - `ui/start-building-app/src/app/components/layout/Topbar.tsx`
@@ -21,6 +24,7 @@ ready, `AuthGate` returns the existing workspace unchanged.
 - `packaging/macos/install-private-host.sh`
 - `scripts/private_host_auth_workspace_ui_smoke.py`
 - `scripts/private_host_owner_browser_handoff_smoke.py`
+- `scripts/human_session_management_smoke.py`
 - `.github/workflows/ci.yml`
 - `docs/PRIVATE_HOST_AUTH_WORKSPACE_UI_ACCEPTANCE.md`
 
@@ -44,6 +48,11 @@ ready, `AuthGate` returns the existing workspace unchanged.
 - Form density, heading scale, panel radius, and status rows match the existing
   Workspace and Admin surfaces. The first-Owner and sign-in flows retain their
   distinct operational copy without decorative marketing content.
+- First-Owner setup, sign-in and the authenticated `/workspace/account` route
+  now use the same `WorkspaceSettingsPage` and `WorkspaceSettingsSection`
+  components. This is shared product UI, not two visually similar copies.
+- `/workspace/account` is visible in the existing Sidebar as `Account and
+  access` / `账户与访问`; the Topbar avatar remains a direct shortcut.
 - Locked Sidebar items render as disabled non-link rows. They do not navigate
   to workspace or Admin routes before authentication.
 - The Topbar communicates the locked state while keeping theme and language
@@ -54,6 +63,8 @@ ready, `AuthGate` returns the existing workspace unchanged.
 
 - The authentication content uses the existing full-height application shell
   on desktop and mobile viewports.
+- When the Sidebar collapses at the mobile breakpoint, the Topbar keeps the
+  AgentOps MIS product mark instead of leaving an orphaned workspace selector.
 - The main authentication form and local-host boundary content remain a single
   flow at narrower widths and become a two-column settings layout at the
   existing `lg` breakpoint. The normal Sidebar remains visible on desktop and
@@ -72,6 +83,9 @@ ready, `AuthGate` returns the existing workspace unchanged.
   locale before bootstrap or login.
 - The theme control remains usable while locked and continues to use the
   existing `enterprise`, `ops`, and `workforce` theme modes.
+- A fresh browser now starts in the light `enterprise` theme, which matches the
+  customer Workspace. Explicitly stored `ops` and `workforce` choices remain
+  unchanged.
 
 ### Browser-first Owner Setup
 
@@ -127,13 +141,14 @@ cd ui/start-building-app && npm run build
 git diff --check
 ```
 
-The static smoke passed all checks and returned JSON with `ok: true`, no
+The static smoke passed all 31 checks and returned JSON with `ok: true`, no
 failures, and exit code 0. It verifies locked-shell reuse, the authentication
 gate marker, the unframed Workspace settings layout, shared content
-spacing, bilingual Owner bootstrap/login copy, password confirmation and minimum
-length, locked non-link Sidebar items, persistent theme/language controls,
-logout omission while locked, and the setup-code-authorized browser handoff
-projection.
+spacing and shared setup/account components, bilingual Owner bootstrap/login
+copy, password confirmation and minimum length, the visible Account navigation
+entry, mobile product identity, locked non-link Sidebar items, persistent
+theme/language controls, logout omission while locked, and the
+setup-code-authorized browser handoff projection.
 
 The browser-handoff integration smoke passed against a temporary Host and
 database. It proved that no-code bootstrap is rejected, setup-code bootstrap
@@ -141,7 +156,7 @@ creates the Owner, audit metadata omits credentials, the CLI uses `osascript -`
 stdin rather than argv, and the frontend scrubs and bounds the fragment. The
 existing browser-auth and CLI bootstrap smokes also passed.
 
-The Vite production build passed with 2,280 modules transformed. Vite reported
+The Vite production build passed with 2,282 modules transformed. Vite reported
 the existing large-chunk advisory for the main bundle; this is a performance
 follow-up and did not fail this scoped acceptance. The final `git diff --check`
 also passed.

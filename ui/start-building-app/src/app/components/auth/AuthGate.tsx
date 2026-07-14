@@ -18,6 +18,7 @@ import {
 import { HumanAuthContext } from "../../context/HumanAuthContext";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 import { AppShell } from "../layout/AppShell";
+import { WorkspaceSettingsPage, WorkspaceSettingsSection } from "../shared/WorkspaceSettings";
 
 type GateState = "checking" | "login" | "bootstrap" | "ready" | "unavailable";
 type OwnerSetupHandoff = { seen: boolean; value: string };
@@ -164,53 +165,42 @@ export function AuthGate({ children }: { children: ReactNode }) {
     en: isBootstrap ? "Initialize local host" : "Sign in to AgentOps MIS",
   });
   const pageTitle = pick(locale, {
-    zh: isBootstrap ? "完成工作区设置" : "登录工作区",
-    en: isBootstrap ? "Finish workspace setup" : "Sign in to workspace",
+    zh: "账户与访问",
+    en: "Account and access",
+  });
+  const pageSubtitle = pick(locale, {
+    zh: isBootstrap ? "完成本地主机的首次设置" : "登录后继续使用当前工作区",
+    en: isBootstrap ? "Complete first-time setup for this local host" : "Sign in to continue to this workspace",
   });
 
   return (
     <HumanAuthContext.Provider value={contextValue}>
       <AppShell locked lockLabel={lockLabel}>
-        <section
-          data-testid="human-auth-workspace-gate"
-          className="min-h-full w-full"
-        >
-          <header className="flex flex-wrap items-start justify-between gap-3 border-b pb-4" style={{ borderColor: "var(--mis-border)" }}>
-            <div className="min-w-0">
-              <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>{pageTitle}</h1>
-              <p className="mt-1 text-xs" style={{ color: "var(--mis-dim)" }}>
-                {pick(locale, {
-                  zh: isBootstrap ? "创建这台主机的首位所有者账户。" : "使用你的主机账户继续。",
-                  en: isBootstrap ? "Create the first owner account for this host." : "Continue with your host account.",
-                })}
-              </p>
-            </div>
+        <WorkspaceSettingsPage
+          testId="human-auth-workspace-gate"
+          title={pageTitle}
+          subtitle={pageSubtitle}
+          status={(
             <div className="flex items-center gap-2 text-[11px]" style={{ color: gate === "unavailable" ? "var(--mis-warning)" : "var(--mis-dim)" }}>
               {gate === "checking" ? <LoaderCircle className="animate-spin" size={12} /> : <span className="h-1.5 w-1.5 rounded-full" style={{ background: gate === "unavailable" ? "var(--mis-warning)" : "var(--mis-success)" }} />}
               {lockLabel}
             </div>
-          </header>
-
-          <div
-            data-testid="human-auth-settings-layout"
-            className="mt-6 grid max-w-5xl gap-5 lg:grid-cols-[220px_minmax(0,680px)] lg:gap-10"
-          >
-            <aside className="min-w-0 lg:pt-0.5">
-              <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>
-                {pick(locale, { zh: "账户与访问", en: "Account and access" })}
-              </h2>
-              <p className="mt-1.5 text-xs leading-5" style={{ color: "var(--mis-dim)" }}>
-                {pick(locale, {
-                  zh: isBootstrap ? "设置首位所有者，之后可直接从这套工作台登录。" : "使用这台主机上的账户进入当前工作区。",
-                  en: isBootstrap ? "Set up the first owner, then sign in through this same workspace." : "Use an account on this host to enter the workspace.",
-                })}
-              </p>
+          )}
+        >
+          <WorkspaceSettingsSection
+            testId="human-auth-settings-layout"
+            title={pick(locale, { zh: isBootstrap ? "创建首位所有者" : "登录", en: isBootstrap ? "Create first owner" : "Sign in" })}
+            description={pick(locale, {
+              zh: isBootstrap ? "设置完成后，这台电脑和你的其他浏览器都从同一个工作台登录。" : "使用这台主机上的账户进入工作台。",
+              en: isBootstrap ? "After setup, this computer and your other browsers use the same workspace sign-in." : "Use an account on this host to enter the workspace.",
+            })}
+            meta={(
               <p data-testid="human-auth-host-boundary" className="mt-3 text-[11px]" style={{ color: "var(--mis-muted)" }}>
                 {pick(locale, { zh: "本地主机 · 私人网络", en: "Local host · private network" })}
               </p>
-            </aside>
-
-            <section data-testid="human-auth-access-panel" className="min-w-0">
+            )}
+          >
+            <div data-testid="human-auth-access-panel">
               <div className="border-b pb-3" style={{ borderColor: "var(--mis-border)" }}>
                 <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{title}</h2>
                 <p className="mt-1 text-[11px]" style={{ color: "var(--mis-muted)" }}>
@@ -329,9 +319,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   </div>
                 </form>
               )}
-            </section>
-          </div>
-        </section>
+            </div>
+          </WorkspaceSettingsSection>
+        </WorkspaceSettingsPage>
       </AppShell>
     </HumanAuthContext.Provider>
   );

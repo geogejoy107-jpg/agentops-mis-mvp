@@ -8,6 +8,7 @@ import {
 } from "../../data/liveApi";
 import { useHumanAuth } from "../../context/HumanAuthContext";
 import { pick, usePreferences } from "../../context/PreferencesContext";
+import { WorkspaceSettingsPage, WorkspaceSettingsSection } from "../shared/WorkspaceSettings";
 
 function formatDate(value: string | null | undefined, locale: "zh" | "en") {
   if (!value) return "-";
@@ -137,17 +138,8 @@ export function AccountSecurity() {
   };
 
   return (
-    <div className="max-w-6xl space-y-6" data-testid="account-security-page">
-      <header className="border-b pb-4" style={{ borderColor: "var(--mis-border)" }}>
-        <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>{copy.title}</h1>
-        <p className="mt-1 text-xs" style={{ color: "var(--mis-dim)" }}>{copy.subtitle}</p>
-      </header>
-
-      <section className="grid gap-5 lg:grid-cols-[220px_minmax(0,680px)] lg:gap-10" data-testid="account-profile-section">
-        <div>
-          <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.account}</h2>
-          <p className="mt-1.5 text-xs leading-5" style={{ color: "var(--mis-dim)" }}>{copy.accountHint}</p>
-        </div>
+    <WorkspaceSettingsPage title={copy.title} subtitle={copy.subtitle} testId="account-security-page">
+      <WorkspaceSettingsSection title={copy.account} description={copy.accountHint} testId="account-profile-section">
         <dl className="border-t text-xs" style={{ borderColor: "var(--mis-border)" }}>
           {[
             [copy.name, user?.display_name || "-"],
@@ -161,19 +153,18 @@ export function AccountSecurity() {
             </div>
           ))}
         </dl>
-      </section>
+      </WorkspaceSettingsSection>
 
-      <section className="grid gap-5 lg:grid-cols-[220px_minmax(0,680px)] lg:gap-10" data-testid="browser-session-section">
-        <div>
-          <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.sessions}</h2>
-          <p className="mt-1.5 text-xs leading-5" style={{ color: "var(--mis-dim)" }}>{copy.sessionsHint}</p>
-          {payload && (
+      <WorkspaceSettingsSection
+        title={copy.sessions}
+        description={copy.sessionsHint}
+        testId="browser-session-section"
+        meta={payload && (
             <p className="mt-2 text-[11px]" style={{ color: "var(--mis-muted)" }}>
               {payload.active_count} {copy.active} · {payload.session_count} {copy.total}
             </p>
-          )}
-        </div>
-
+        )}
+      >
         <div className="min-w-0">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3" style={{ borderColor: "var(--mis-border)" }}>
             <div className="flex items-center gap-2 text-xs" style={{ color: "var(--mis-dim)" }}>
@@ -272,7 +263,7 @@ export function AccountSecurity() {
             )}
           </div>
         </div>
-      </section>
-    </div>
+      </WorkspaceSettingsSection>
+    </WorkspaceSettingsPage>
   );
 }

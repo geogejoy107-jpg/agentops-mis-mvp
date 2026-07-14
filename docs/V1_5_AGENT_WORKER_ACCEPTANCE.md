@@ -1170,7 +1170,7 @@ Latest workspace visual style switch verification:
 ```text
 page: http://127.0.0.1:19001/workspace/agents
 styles: enterprise, ops, workforce
-default legacy migration: light -> enterprise; dark/unknown -> ops
+default migration: light/enterprise/unknown -> enterprise; ops/dark -> ops; workforce -> workforce
 Playwright: button changed from 控制面 to 员工 OS, then to 企业版 after fresh snapshot/click
 build: cd ui/start-building-app && npm run build
 note: this is a presentation/customer usability layer only; it does not change Agent Gateway, worker, or ledger behavior

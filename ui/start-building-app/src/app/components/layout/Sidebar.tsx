@@ -4,7 +4,7 @@ import { NavLink, useLocation } from "react-router";
 import {
   Home, CheckSquare, Bot, ShieldCheck, Brain, BarChart2, Package,
   Activity, List, Wrench, Plug, Database, ClipboardList, Map,
-  ChevronDown, ChevronRight, Zap, TerminalSquare, ClipboardCheck, MonitorCheck,
+  ChevronDown, ChevronRight, Zap, TerminalSquare, ClipboardCheck, MonitorCheck, UserRound,
 } from "lucide-react";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 
@@ -32,6 +32,7 @@ const navGroups: NavGroup[] = [
       { labelKey: "approvals",    path: "/workspace/approvals",    icon: <ShieldCheck size={15} /> },
       { labelKey: "memory",       path: "/workspace/memory",       icon: <Brain size={15} /> },
       { labelKey: "reports",      path: "/workspace/reports",      icon: <BarChart2 size={15} /> },
+      { labelKey: "account",      path: "/workspace/account",      icon: <UserRound size={15} /> },
       { labelKey: "templates",    path: "/admin/templates",        icon: <Package size={15} /> },
     ],
   },
@@ -68,6 +69,7 @@ export function Sidebar({ locked = false }: { locked?: boolean }) {
       approvals: "Approvals",
       memory: "Memory",
       reports: "Reports",
+      account: "Account and access",
       templates: "Templates",
       controlTower: "Control Tower",
       agentRegistry: "Agent Registry",
@@ -93,6 +95,7 @@ export function Sidebar({ locked = false }: { locked?: boolean }) {
       approvals: "审批",
       memory: "记忆",
       reports: "报告",
+      account: "账户与访问",
       templates: "模板",
       controlTower: "控制塔",
       agentRegistry: "代理注册表",
