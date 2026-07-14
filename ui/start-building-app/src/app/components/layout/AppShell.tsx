@@ -25,7 +25,7 @@ export function AppShell({
         <Topbar locked={locked} lockLabel={lockLabel} />
         <main
           data-testid={locked ? "locked-workspace-main" : "workspace-main"}
-          className="app-main flex-1 overflow-y-auto p-4 lg:p-5"
+          className={`app-main ${locked ? "app-main-locked" : ""} flex-1 overflow-y-auto p-4 lg:p-5`}
         >
           {children ?? <Outlet />}
         </main>

@@ -19,6 +19,7 @@ ready, `AuthGate` returns the existing workspace unchanged.
 - `ui/start-building-app/src/app/components/layout/AppShell.tsx`
 - `ui/start-building-app/src/app/components/layout/Sidebar.tsx`
 - `ui/start-building-app/src/app/components/layout/Topbar.tsx`
+- `ui/start-building-app/src/styles/theme.css`
 - `ui/start-building-app/src/app/data/liveApi.ts`
 - `agentops_mis_cli/host.py`
 - `packaging/macos/install-private-host.sh`
@@ -65,6 +66,29 @@ ready, `AuthGate` returns the existing workspace unchanged.
 - The Topbar communicates the locked state as a quiet inline status, while
   keeping theme and language controls available. Search, workspace switching,
   notifications, and logout are unavailable while locked.
+
+### Visual consistency correction
+
+The final source pass responds to a product review that the first-Owner state
+still read like a generated setup screen even though it already reused
+`AppShell`. The correction stays inside the existing Workspace implementation:
+
+- the shared settings grid now fills the available Workspace column instead of
+  stopping at a fixed 680-pixel content track and leaving an accidental empty
+  strip;
+- account fields remain bounded to the normal form width, and the submit action
+  starts on the same control grid instead of floating against the far edge;
+- installer authorization is a short operational row, not a technical status
+  explanation;
+- the action uses the existing primary product color instead of the bright
+  cyan runtime accent;
+- the light locked state uses the normal flat enterprise surface rather than a
+  decorative page gradient; and
+- copy is shorter and task-oriented in both locales, with no feature pitch,
+  product tour, or second onboarding design system.
+
+No backend route, credential handoff, Human Session, CSRF, role, Runtime, or
+ledger behavior changed in this visual correction.
 
 ### Responsive Behavior
 
@@ -176,6 +200,16 @@ The Vite production build passed with 2,282 modules transformed. Vite reported
 the existing large-chunk advisory for the main bundle; this is a performance
 follow-up and did not fail this scoped acceptance. The final `git diff --check`
 also passed.
+
+The final visual-correction source was also rendered through a Vite proxy to
+the real loopback Host at desktop width and at `390x844`. The installer-style
+handoff used a synthetic bounded fragment only to exercise the presentation;
+the address bar was immediately scrubbed, no form was submitted, and no real
+setup code, account credential, database value, Runtime task, raw prompt, or
+raw response was read. The enterprise and operations themes both rendered
+without horizontal overflow or browser errors beyond the development-only
+React DevTools notice. Browser screenshots remain ignored local evidence and
+are not release assets.
 
 An isolated production build was visually exercised at narrow and desktop
 viewports in Chinese and English across `ops`, `workforce`, and `enterprise`

@@ -72,7 +72,7 @@ def main() -> int:
     record(
         checks,
         "auth_gate_uses_existing_settings_grid",
-        'lg:grid-cols-[220px_minmax(0,680px)]' in workspace_settings,
+        'lg:grid-cols-[220px_minmax(0,1fr)]' in workspace_settings,
     )
     record(
         checks,
@@ -123,7 +123,12 @@ def main() -> int:
         and 'if (stored === "workforce") return "workforce";' in preferences
         and 'return "enterprise";' in preferences,
     )
-    record(checks, "locked_shell_uses_workspace_content_spacing", 'className="app-main flex-1 overflow-y-auto p-4 lg:p-5"' in app_shell)
+    record(
+        checks,
+        "locked_shell_uses_workspace_content_spacing",
+        'locked ? "app-main-locked" : ""' in app_shell
+        and "flex-1 overflow-y-auto p-4 lg:p-5" in app_shell,
+    )
     record(
         checks,
         "auth_form_uses_compact_workspace_rows",
@@ -142,10 +147,10 @@ def main() -> int:
         all(
             marker in auth_gate
             for marker in (
-                'zh: isBootstrap ? "\u9996\u4f4d\u6240\u6709\u8005"',
-                'en: isBootstrap ? "First owner"',
-                'zh: isBootstrap ? "\u521b\u5efa\u6240\u6709\u8005\u5e76\u8fdb\u5165"',
-                'en: isBootstrap ? "Create owner and continue"',
+                'zh: isBootstrap ? "\u521b\u5efa\u6240\u6709\u8005\u8d26\u6237"',
+                'en: isBootstrap ? "Create owner account"',
+                'zh: isBootstrap ? "\u521b\u5efa\u8d26\u6237\u5e76\u8fdb\u5165"',
+                'en: isBootstrap ? "Create account and continue"',
             )
         ),
     )
@@ -155,10 +160,10 @@ def main() -> int:
         all(
             marker in auth_gate
             for marker in (
-                ': "\u5de5\u4f5c\u533a\u767b\u5f55"',
-                ': "Workspace sign-in"',
-                ': "\u767b\u5f55\u5de5\u4f5c\u53f0"',
-                ': "Enter workspace"',
+                ': "\u767b\u5f55\u5de5\u4f5c\u533a"',
+                ': "Sign in to workspace"',
+                ': "\u767b\u5f55"',
+                ': "Sign in"',
             )
         ),
     )

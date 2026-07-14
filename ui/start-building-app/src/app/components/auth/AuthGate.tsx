@@ -200,8 +200,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
     en: "Account and access",
   });
   const pageSubtitle = pick(locale, {
-    zh: isBootstrap ? "完成本地主机的首次设置" : "登录后继续使用当前工作区",
-    en: isBootstrap ? "Complete first-time setup for this local host" : "Sign in to continue to this workspace",
+    zh: isBootstrap ? "创建账户后即可进入当前工作区" : "使用这台主机上的账户继续",
+    en: isBootstrap ? "Create an account to enter this workspace" : "Continue with an account on this host",
   });
 
   return (
@@ -214,15 +214,15 @@ export function AuthGate({ children }: { children: ReactNode }) {
         >
           <WorkspaceSettingsSection
             testId="human-auth-settings-layout"
-            title={pick(locale, { zh: isBootstrap ? "首位所有者" : "工作区登录", en: isBootstrap ? "First owner" : "Workspace sign-in" })}
+            title={pick(locale, { zh: isBootstrap ? "创建所有者账户" : "登录工作区", en: isBootstrap ? "Create owner account" : "Sign in to workspace" })}
             description={pick(locale, {
-              zh: isBootstrap ? "为这台主机创建管理员账户。以后在其他电脑上也使用这个账户登录。" : "使用这台主机上的账户进入工作区。",
-              en: isBootstrap ? "Create the administrator account for this host. Use it to sign in from your other computers." : "Use an account on this host to enter the workspace.",
+              zh: isBootstrap ? "只需设置一次。之后可从本机或已授权的私人网络浏览器登录。" : "输入账户信息，继续管理任务、代理和运行记录。",
+              en: isBootstrap ? "Set this up once, then sign in locally or from an authorized private-network browser." : "Enter your account details to manage tasks, agents, and runs.",
             })}
             meta={(
               <p data-testid="human-auth-host-boundary" className="mt-3 flex items-center gap-1.5 text-[11px]" style={{ color: "var(--mis-muted)" }}>
                 <LockKeyhole size={11} aria-hidden="true" />
-                {pick(locale, { zh: "数据保留在本地主机", en: "Data stays on this host" })}
+                {pick(locale, { zh: "账户与运行数据仅保留在主机", en: "Account and runtime data stay on the host" })}
               </p>
             )}
           >
@@ -264,10 +264,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
                         data-testid="owner-setup-handoff-ready"
                         className="grid gap-1.5 py-3 text-xs sm:grid-cols-[160px_minmax(0,1fr)] sm:items-center sm:gap-3"
                       >
-                        <span className="font-medium" style={{ color: "var(--mis-text)" }}>{pick(locale, { zh: "主机设置码", en: "Host setup code" })}</span>
-                        <span className="flex items-center gap-2" style={{ color: "var(--mis-success)" }}>
+                        <span className="font-medium" style={{ color: "var(--mis-text)" }}>{pick(locale, { zh: "安装授权", en: "Installer authorization" })}</span>
+                        <span className="flex max-w-md items-center gap-2" style={{ color: "var(--mis-success)" }}>
                           <CheckCircle2 size={14} aria-hidden="true" />
-                          {pick(locale, { zh: "已从本机安装器安全接收", en: "Securely received from the local installer" })}
+                          {pick(locale, { zh: "已安全接收", en: "Received securely" })}
                         </span>
                       </div>
                     )}
@@ -277,6 +277,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                         value={displayName}
                         onChange={setDisplayName}
                         autoComplete="name"
+                        placeholder={pick(locale, { zh: "例如：Joy", en: "For example: Joy" })}
                         required={false}
                       />
                     )}
@@ -286,6 +287,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                       value={username}
                       onChange={setUsername}
                       autoComplete="username"
+                      placeholder={isBootstrap ? "joy-owner" : undefined}
                       pattern={isBootstrap ? "[a-z0-9][a-z0-9._-]{2,63}" : undefined}
                     />
                     <AuthField
@@ -323,24 +325,26 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   </div>
 
                   {error && (
-                    <div
-                      role="alert"
-                      className="border-b px-3 py-2.5 text-xs"
-                      style={{ borderColor: "rgba(231,111,81,0.4)", color: "var(--mis-warning)" }}
-                    >
-                      {error}
+                    <div className="grid gap-1.5 border-b py-3 text-xs sm:grid-cols-[160px_minmax(0,1fr)] sm:gap-3" style={{ borderColor: "var(--mis-border)" }}>
+                      <span className="hidden sm:block" aria-hidden="true" />
+                      <div role="alert" className="max-w-md rounded px-3 py-2.5" style={{ background: "color-mix(in srgb, var(--mis-warning) 8%, transparent)", color: "var(--mis-warning)" }}>
+                        {error}
+                      </div>
                     </div>
                   )}
 
-                  <div className="flex justify-end pt-4">
-                    <button
-                      disabled={submitting || (isBootstrap && !bootstrapFormReady)}
-                      className="inline-flex h-9 w-full items-center justify-center gap-2 rounded px-4 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:min-w-40"
-                      style={{ background: "var(--mis-cyan)", color: "var(--mis-bg)" }}
-                    >
-                      {submitting ? <LoaderCircle className="animate-spin" size={16} aria-hidden="true" /> : <ArrowRight size={16} aria-hidden="true" />}
-                      {pick(locale, { zh: isBootstrap ? "创建所有者并进入" : "登录工作台", en: isBootstrap ? "Create owner and continue" : "Enter workspace" })}
-                    </button>
+                  <div className="grid gap-3 pt-4 sm:grid-cols-[160px_minmax(0,1fr)]">
+                    <span className="hidden sm:block" aria-hidden="true" />
+                    <div className="flex max-w-md justify-start">
+                      <button
+                        disabled={submitting || (isBootstrap && !bootstrapFormReady)}
+                        className="inline-flex h-9 w-full items-center justify-center gap-2 rounded px-4 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:min-w-40"
+                        style={{ background: "var(--mis-primary)", color: "#fff" }}
+                      >
+                        {submitting ? <LoaderCircle className="animate-spin" size={16} aria-hidden="true" /> : <ArrowRight size={16} aria-hidden="true" />}
+                        {pick(locale, { zh: isBootstrap ? "创建账户并进入" : "登录", en: isBootstrap ? "Create account and continue" : "Sign in" })}
+                      </button>
+                    </div>
                   </div>
                 </form>
               )}
@@ -363,6 +367,7 @@ function AuthField({
   required = true,
   minLength,
   pattern,
+  placeholder,
   revealControl,
 }: {
   label: string;
@@ -375,6 +380,7 @@ function AuthField({
   required?: boolean;
   minLength?: number;
   pattern?: string;
+  placeholder?: string;
   revealControl?: {
     visible: boolean;
     label: string;
@@ -394,7 +400,7 @@ function AuthField({
         <label htmlFor={inputId} className="block font-medium" style={{ color: "var(--mis-text)" }}>{label}</label>
         {hint && <span aria-live="polite" className="mt-0.5 block text-[10px] font-normal" style={{ color: hintColor }}>{hint}</span>}
       </span>
-      <div className="relative min-w-0">
+      <div className="relative min-w-0 max-w-md">
         <input
           id={inputId}
           type={type}
@@ -404,6 +410,7 @@ function AuthField({
           required={required}
           minLength={minLength}
           pattern={pattern}
+          placeholder={placeholder}
           className={`h-9 w-full min-w-0 rounded border px-3 text-sm outline-none transition-colors focus:ring-2 ${revealControl ? "pr-10" : ""}`}
           style={{
             background: "var(--mis-surface)",

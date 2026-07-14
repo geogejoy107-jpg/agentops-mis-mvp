@@ -166,8 +166,8 @@ export function Sidebar({ locked = false }: { locked?: boolean }) {
               aria-current="page"
               className="flex items-center gap-2 rounded px-2 py-1.5 text-xs"
               style={{
-                color: "var(--mis-cyan)",
-                background: "color-mix(in srgb, var(--mis-cyan) 8%, transparent)",
+                color: "var(--mis-primary)",
+                background: "color-mix(in srgb, var(--mis-primary) 8%, transparent)",
               }}
             >
               <UserRound size={15} />
