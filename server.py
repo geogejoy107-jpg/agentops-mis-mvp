@@ -3223,7 +3223,13 @@ def agent_gateway_admin_auth_error(headers) -> dict | None:
     return {"error": "unauthorized", "message": "Admin token is required for Agent Gateway enrollment management."}
 
 
-def agent_gateway_auth_context(conn, headers, required_scope: str | None = None, allow_session: bool = True) -> tuple[dict | None, dict | None]:
+def agent_gateway_auth_context(
+    conn,
+    headers,
+    required_scope: str | None = None,
+    allow_session: bool = True,
+    record_usage: bool = True,
+) -> tuple[dict | None, dict | None]:
     expected = os.environ.get("AGENTOPS_API_KEY", "").strip()
     supplied = bearer_token(headers)
     if expected and hmac.compare_digest(supplied, expected):
@@ -3240,13 +3246,15 @@ def agent_gateway_auth_context(conn, headers, required_scope: str | None = None,
             if row["status"] != "active":
                 return None, {"error": "unauthorized", "message": f"Agent Gateway token is {row['status']}."}
             if row["expires_at"] and row["expires_at"] < now_iso():
-                conn.execute("UPDATE agent_gateway_tokens SET status='expired' WHERE token_id=?", (row["token_id"],))
-                audit(conn, "system", "agent-gateway-auth", "agent_gateway.token_expired", "agent_gateway_tokens", row["token_id"], dict(row), {"status": "expired"}, {})
+                if record_usage:
+                    conn.execute("UPDATE agent_gateway_tokens SET status='expired' WHERE token_id=?", (row["token_id"],))
+                    audit(conn, "system", "agent-gateway-auth", "agent_gateway.token_expired", "agent_gateway_tokens", row["token_id"], dict(row), {"status": "expired"}, {})
                 return None, {"error": "unauthorized", "message": "Agent Gateway token is expired."}
             scopes = parse_scope_list(row["scopes_json"])
             if required_scope and required_scope not in scopes:
                 return None, {"error": "forbidden", "message": f"Agent token is missing required scope: {required_scope}"}
-            conn.execute("UPDATE agent_gateway_tokens SET last_used_at=? WHERE token_id=?", (now_iso(), row["token_id"]))
+            if record_usage:
+                conn.execute("UPDATE agent_gateway_tokens SET last_used_at=? WHERE token_id=?", (now_iso(), row["token_id"]))
             return {
                 "mode": "agent_token",
                 "token_id": row["token_id"],
@@ -3260,8 +3268,9 @@ def agent_gateway_auth_context(conn, headers, required_scope: str | None = None,
             if session["status"] != "active":
                 return None, {"error": "unauthorized", "message": f"Agent Gateway session is {session['status']}."}
             if session["expires_at"] < now_iso():
-                conn.execute("UPDATE agent_gateway_sessions SET status='expired' WHERE session_id=?", (session["session_id"],))
-                audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_expired", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "expired"}, {"token_omitted": True})
+                if record_usage:
+                    conn.execute("UPDATE agent_gateway_sessions SET status='expired' WHERE session_id=?", (session["session_id"],))
+                    audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_expired", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "expired"}, {"token_omitted": True})
                 return None, {"error": "unauthorized", "message": "Agent Gateway session is expired."}
             if session["parent_token_id"]:
                 parent = conn.execute(
@@ -3269,26 +3278,31 @@ def agent_gateway_auth_context(conn, headers, required_scope: str | None = None,
                     (session["parent_token_id"],),
                 ).fetchone()
                 if not parent:
-                    conn.execute("UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE session_id=?", (now_iso(), session["session_id"]))
-                    audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_parent_missing", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "revoked"}, {"parent_token_id": session["parent_token_id"], "token_omitted": True})
+                    if record_usage:
+                        conn.execute("UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE session_id=?", (now_iso(), session["session_id"]))
+                        audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_parent_missing", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "revoked"}, {"parent_token_id": session["parent_token_id"], "token_omitted": True})
                     return None, {"error": "unauthorized", "message": "Agent Gateway session parent token is missing."}
                 if parent["status"] != "active":
-                    conn.execute("UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE session_id=?", (now_iso(), session["session_id"]))
-                    audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_parent_revoked", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "revoked"}, {"parent_token_id": parent["token_id"], "parent_status": parent["status"], "token_omitted": True})
+                    if record_usage:
+                        conn.execute("UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE session_id=?", (now_iso(), session["session_id"]))
+                        audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_parent_revoked", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "revoked"}, {"parent_token_id": parent["token_id"], "parent_status": parent["status"], "token_omitted": True})
                     return None, {"error": "unauthorized", "message": f"Agent Gateway session parent token is {parent['status']}."}
                 if parent["expires_at"] and parent["expires_at"] < now_iso():
-                    conn.execute("UPDATE agent_gateway_tokens SET status='expired' WHERE token_id=?", (parent["token_id"],))
-                    conn.execute("UPDATE agent_gateway_sessions SET status='expired' WHERE session_id=?", (session["session_id"],))
-                    audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_parent_expired", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "expired"}, {"parent_token_id": parent["token_id"], "token_omitted": True})
+                    if record_usage:
+                        conn.execute("UPDATE agent_gateway_tokens SET status='expired' WHERE token_id=?", (parent["token_id"],))
+                        conn.execute("UPDATE agent_gateway_sessions SET status='expired' WHERE session_id=?", (session["session_id"],))
+                        audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_parent_expired", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "expired"}, {"parent_token_id": parent["token_id"], "token_omitted": True})
                     return None, {"error": "unauthorized", "message": "Agent Gateway session parent token is expired."}
                 if normalize_workspace_id(parent["workspace_id"]) != normalize_workspace_id(session["workspace_id"]) or parent["agent_id"] != session["agent_id"]:
-                    conn.execute("UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE session_id=?", (now_iso(), session["session_id"]))
-                    audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_parent_binding_mismatch", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "revoked"}, {"parent_token_id": parent["token_id"], "token_omitted": True})
+                    if record_usage:
+                        conn.execute("UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE session_id=?", (now_iso(), session["session_id"]))
+                        audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_parent_binding_mismatch", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "revoked"}, {"parent_token_id": parent["token_id"], "token_omitted": True})
                     return None, {"error": "unauthorized", "message": "Agent Gateway session binding no longer matches its parent token."}
             scopes = parse_scope_list(session["scopes_json"])
             if required_scope and required_scope not in scopes:
                 return None, {"error": "forbidden", "message": f"Agent session is missing required scope: {required_scope}"}
-            conn.execute("UPDATE agent_gateway_sessions SET last_used_at=? WHERE session_id=?", (now_iso(), session["session_id"]))
+            if record_usage:
+                conn.execute("UPDATE agent_gateway_sessions SET last_used_at=? WHERE session_id=?", (now_iso(), session["session_id"]))
             return {
                 "mode": "agent_session",
                 "session_id": session["session_id"],
@@ -3328,6 +3342,54 @@ def agent_gateway_auth_error(headers) -> dict | None:
 
 def agent_gateway_error_status(error: dict | None) -> int:
     return 403 if error and error.get("error") == "forbidden" else 401
+
+
+HOST_MACHINE_AUTH_MODES = {"global_api_key", "local_dev_no_token"}
+
+
+def host_machine_auth_context(conn, headers, required_scope: str = "tasks:read") -> tuple[dict | None, dict | None, int]:
+    auth_ctx, auth_error = agent_gateway_auth_context(conn, headers, required_scope, record_usage=False)
+    if auth_error:
+        return None, auth_error, agent_gateway_error_status(auth_error)
+    if (auth_ctx or {}).get("mode") == "local_dev_no_token" and production_security_requested():
+        return None, {
+            "error": "host_machine_credential_not_configured",
+            "message": "Private/shared Host Worker telemetry requires AGENTOPS_API_KEY to be configured.",
+            "required_scope": required_scope,
+            "host_machine_only": True,
+            "token_omitted": True,
+        }, 503
+    if (auth_ctx or {}).get("mode") not in HOST_MACHINE_AUTH_MODES:
+        return None, {
+            "error": "host_machine_credential_required",
+            "message": "Host worker telemetry requires the local Host machine credential.",
+            "required_scope": required_scope,
+            "host_machine_only": True,
+            "token_omitted": True,
+        }, 403
+    return auth_ctx, None, 200
+
+
+def host_worker_machine_read_payload(payload: dict, auth_ctx: dict, operation: str) -> dict:
+    result = dict(payload)
+    result["operation"] = result.get("operation") or operation
+    result["auth"] = {
+        "mode": auth_ctx.get("mode"),
+        "required_scope": "tasks:read",
+        "host_machine_only": True,
+        "token_omitted": True,
+    }
+    result["safety"] = {
+        **(result.get("safety") or {}),
+        "read_only": True,
+        "ledger_mutated": False,
+        "live_execution_performed": False,
+        "server_executes_shell": False,
+        "token_omitted": True,
+    }
+    result["live_execution_performed"] = False
+    result["token_omitted"] = True
+    return result
 
 
 def local_ui_write_auth_error(headers) -> tuple[dict, int] | None:
@@ -30348,6 +30410,36 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status = agent_gateway_status(conn, self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
+            if path in {
+                "/api/agent-gateway/host-workers/status",
+                "/api/agent-gateway/host-workers/fleet",
+                "/api/agent-gateway/host-workers/adapter-readiness",
+                "/api/agent-gateway/host-workers/stuck-tasks",
+            }:
+                auth_ctx, auth_error, auth_status = host_machine_auth_context(conn, self.headers)
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, auth_status)
+                if path == "/api/agent-gateway/host-workers/status":
+                    payload = worker_status(conn, refresh_runtime=False)
+                    operation = "host_worker_status"
+                elif path == "/api/agent-gateway/host-workers/fleet":
+                    payload = worker_fleet_view(conn)
+                    operation = "host_worker_fleet"
+                elif path == "/api/agent-gateway/host-workers/adapter-readiness":
+                    payload = worker_adapter_readiness(conn, refresh=False)
+                    operation = "host_worker_adapter_readiness"
+                else:
+                    threshold = int((qs.get("threshold_sec") or ["900"])[0])
+                    limit = int((qs.get("limit") or ["25"])[0])
+                    payload = {
+                        "provider": "agentops-worker",
+                        "threshold_sec": max(threshold, 30),
+                        "stuck_tasks": worker_stuck_tasks(conn, threshold, limit),
+                    }
+                    operation = "host_worker_stuck_tasks"
+                conn.rollback()
+                return self.send_json(host_worker_machine_read_payload(payload, auth_ctx, operation))
             if path == "/api/local/readiness":
                 payload = local_readiness(conn, self.headers)
                 conn.commit()

@@ -1335,6 +1335,14 @@ It is read-only and does not print raw tokens. The response also includes
 This makes the CLI/API layer usable by external workers and automation scripts,
 not only by a human browsing the admin UI.
 
+In Private Host mode this command maps to
+`GET /api/agent-gateway/host-workers/status`. It requires the Host machine
+credential (`global_api_key`; `local_dev_no_token` remains available only in
+loopback developer mode). A bound Agent enrollment or Session token receives
+`403 host_machine_credential_required`, because the response includes
+Host-wide daemon, process, enrollment, and adapter telemetry. The browser keeps
+using `/api/workers/status` with a Human Session.
+
 ### `agentops runtime connectors`
 
 Returns the complete runtime connector trust registry and capability manifest
@@ -1428,6 +1436,12 @@ behavior from memory. The v1.5 defaults are `--use-session --session-ttl-sec
 adapter failures may retry according to `adapter_retry`; non-retryable safety
 gates such as missing `--confirm-run` must not retry.
 
+In Private Host mode the packaged Host CLI maps this command to
+`GET /api/agent-gateway/host-workers/adapter-readiness`. It follows the same
+Host-machine-only rule as `agentops worker status`. Remote Agent tokens should
+consume their scoped task/run/evidence contract rather than Host filesystem,
+daemon, or runtime prerequisite telemetry.
+
 ### `agentops worker preflight`
 
 Runs read-only Gateway and adapter readiness checks from the main operator CLI.
@@ -1485,7 +1499,11 @@ Lists running worker tasks that exceeded the local recovery threshold. This is a
 agentops worker stuck --threshold-sec 900 --limit 25
 ```
 
-Maps to `GET /api/workers/stuck-tasks`.
+In Private Host mode this maps to
+`GET /api/agent-gateway/host-workers/stuck-tasks`. The browser operator view
+remains `/api/workers/stuck-tasks` behind Human Session. The CLI route is
+Host-machine-only because stuck-task recovery is an installation-wide operator
+view, not an Agent-scoped task feed.
 
 ### `agentops worker release`
 
@@ -1547,6 +1565,10 @@ All endpoints are under the existing local API server.
 GET  /api/agent-gateway/enrollments
 GET  /api/agent-gateway/sessions
 GET  /api/agent-gateway/status
+GET  /api/agent-gateway/host-workers/status
+GET  /api/agent-gateway/host-workers/fleet
+GET  /api/agent-gateway/host-workers/adapter-readiness
+GET  /api/agent-gateway/host-workers/stuck-tasks
 POST /api/agent-gateway/enrollment/create
 POST /api/agent-gateway/enrollment/request
 POST /api/agent-gateway/enrollment/issue-approved
@@ -2512,6 +2534,10 @@ Current endpoint scope map:
 | `POST /api/agent-gateway/session/create` | valid enrollment token or local API key |
 | `GET /api/agent-gateway/sessions` | admin/local authority |
 | `POST /api/agent-gateway/session/revoke` | admin/local authority |
+| `GET /api/agent-gateway/host-workers/status` | Host machine credential only; `tasks:read` contract |
+| `GET /api/agent-gateway/host-workers/fleet` | Host machine credential only; `tasks:read` contract |
+| `GET /api/agent-gateway/host-workers/adapter-readiness` | Host machine credential only; `tasks:read` contract |
+| `GET /api/agent-gateway/host-workers/stuck-tasks` | Host machine credential only; `tasks:read` contract |
 | `POST /api/agent-gateway/register` | `agents:write` |
 | `POST /api/agent-gateway/heartbeat` | `agents:heartbeat` |
 | `POST /api/agent-gateway/tasks` | `tasks:create` |

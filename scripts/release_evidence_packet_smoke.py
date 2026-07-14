@@ -84,6 +84,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "private_host_worker_machine_read",
+        "command": "python3 scripts/private_host_worker_machine_read_smoke.py",
+        "summary": "Private Host keeps browser Worker routes behind Human Session while Host CLI read commands use a separate machine-only Gateway path; bound Agent tokens/sessions fail closed and reads do not mutate ledger or usage state.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "private_host_background_service",
         "command": "python3 scripts/private_host_background_service_smoke.py",
         "summary": "Preview-first host-only macOS LaunchAgent install/check/control/remove lifecycle with explicit confirmation, exact ownership and no Worker or credential material.",

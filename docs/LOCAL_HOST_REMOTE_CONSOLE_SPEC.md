@@ -176,6 +176,14 @@ Minimum private-host authentication:
 Machine workers continue to use scoped enrollment/session tokens bound to
 `agent_id`, `workspace_id`, expiry, and permission scopes.
 
+Host-wide Worker telemetry is a separate machine-operator surface. Browser
+pages continue to read `/api/workers/*` with a Human Session. The packaged Host
+CLI reads `/api/agent-gateway/host-workers/*` with the Host machine credential.
+Agent-bound enrollment and Session tokens must fail closed on these Host-wide
+routes even when they include `tasks:read`; they can use only scoped Agent
+Gateway task/run/evidence routes. Rejected Host telemetry reads must not update
+the bound credential's usage timestamp or write ledger/audit rows.
+
 ## 8. Data and Privacy Boundary
 
 By default, all durable state remains on the host:

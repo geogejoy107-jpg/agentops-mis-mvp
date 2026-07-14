@@ -5081,19 +5081,19 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_worker_stuck(args, client: AgentOpsClient) -> dict:
-    return client.get("/api/workers/stuck-tasks", query={"threshold_sec": args.threshold_sec, "limit": args.limit})
+    return client.get("/api/agent-gateway/host-workers/stuck-tasks", query={"threshold_sec": args.threshold_sec, "limit": args.limit})
 
 
 def cmd_worker_status(args, client: AgentOpsClient) -> dict:
-    return client.get("/api/workers/status")
+    return client.get("/api/agent-gateway/host-workers/status")
 
 
 def cmd_worker_fleet(args, client: AgentOpsClient) -> dict:
-    return client.get("/api/workers/fleet")
+    return client.get("/api/agent-gateway/host-workers/fleet")
 
 
 def cmd_worker_readiness(args, client: AgentOpsClient) -> dict:
-    return client.get("/api/workers/adapter-readiness")
+    return client.get("/api/agent-gateway/host-workers/adapter-readiness")
 
 
 def cmd_worker_logs(args, client: AgentOpsClient) -> dict:

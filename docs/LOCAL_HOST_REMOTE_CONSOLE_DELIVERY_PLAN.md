@@ -93,6 +93,8 @@ Deliverables:
 - enforce owner/operator/approver/viewer permissions server-side;
 - audit authentication, dispatch, approval, download, and admin actions;
 - ensure Agent Gateway machine tokens remain a separate credential class.
+- separate Host machine Worker telemetry from both Human Session routes and
+  Agent-bound enrollment/Session tokens; rejected reads remain non-mutating.
 
 Verification:
 
@@ -100,6 +102,9 @@ Verification:
 - expired, revoked, cross-workspace, and wrong-role sessions fail;
 - CSRF and disallowed-origin smoke tests pass;
 - no secret or session value appears in logs, URLs, health, or audit metadata;
+- Host CLI Worker status/fleet/readiness/stuck reads succeed with the Host
+  machine credential, while Agent-bound tokens fail closed without usage-state
+  or ledger mutation;
 - loopback developer mode has an explicit, tested compatibility policy.
 - no-code Owner bootstrap remains rejected, browser handoff values do not enter
   argv/output/audit/HTTP requests, and concurrent first-owner requests create

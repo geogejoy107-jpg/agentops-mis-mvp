@@ -122,11 +122,20 @@ actions remain human/operator actions, not agent-scoped automatic decisions.
 ```http
 GET /api/workers/adapter-readiness
 GET /api/workers/status
+GET /api/agent-gateway/host-workers/status
+GET /api/agent-gateway/host-workers/fleet
+GET /api/agent-gateway/host-workers/adapter-readiness
+GET /api/agent-gateway/host-workers/stuck-tasks
 ```
 
 `GET /api/workers/adapter-readiness` is a read-only route-selection endpoint
-for operators and external agents. It does not pull tasks, execute models, or
-write ledger rows. Each adapter entry includes:
+for the browser operator console and uses Human Session authentication in
+Private Host mode. The `host-workers/*` mirrors are for the packaged Host CLI
+and require the Host machine credential. Agent-bound enrollment/Session tokens
+cannot read Host-wide Worker telemetry; they continue to use scoped task/run
+and evidence routes. These reads do not pull tasks, execute models, write ledger
+rows, or update rejected bound-credential usage timestamps. Each adapter entry
+includes:
 
 - `readiness`
 - `trust_status`
