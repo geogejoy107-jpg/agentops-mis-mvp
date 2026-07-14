@@ -45,6 +45,21 @@ Result:
 - credential values and raw ledger rows: absent from command output;
 - real user database: not used.
 
+## Installed Preview 28 Backup Receipt
+
+On 2026-07-15 the installed preview.28 consumer CLI created an online backup
+while the real Host remained ready, then immediately verified the selected
+backup through `agentops host backup-verify`. Manifest, file hash, size, schema,
+SQLite integrity and foreign-key checks all passed. The receipt reported that
+the secret store was excluded, authentication state was hash-only, and no raw
+ledger rows or token values were printed. The verification was read-only and
+the Host continued to serve the same loopback and private-HTTPS Workspace.
+
+This is real current-package backup evidence, not a restore of the user's live
+ledger. Confirmed restore, pre-restore safety copy and access revocation remain
+covered by the isolated acceptance below so verification does not replace the
+operator's current state.
+
 ## Boundaries
 
 - Credentials, logs, PID state, raw prompts/responses, and Runtime files are not

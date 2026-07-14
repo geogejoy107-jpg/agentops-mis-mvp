@@ -11,6 +11,7 @@ RC = ROOT / "docs" / "PRIVATE_HOST_RC_ACCEPTANCE.md"
 SECOND_DEVICE = ROOT / "docs" / "PRIVATE_HOST_SECOND_DEVICE_ACCEPTANCE.md"
 LAUNCHER = ROOT / "docs" / "PRIVATE_HOST_MACOS_LAUNCHER_ACCEPTANCE.md"
 BACKGROUND_SERVICE = ROOT / "docs" / "PRIVATE_HOST_BACKGROUND_SERVICE_ACCEPTANCE.md"
+BACKUP_RESTORE = ROOT / "docs" / "PRIVATE_HOST_BACKUP_RESTORE_ACCEPTANCE.md"
 
 VERSION = "1.6.0-private-host-preview.28"
 TAG = f"v{VERSION}"
@@ -35,10 +36,12 @@ def main() -> int:
     second = SECOND_DEVICE.read_text(encoding="utf-8")
     launcher = LAUNCHER.read_text(encoding="utf-8")
     service = BACKGROUND_SERVICE.read_text(encoding="utf-8")
+    backup = BACKUP_RESTORE.read_text(encoding="utf-8")
     rc_headings = [line for line in rc.splitlines() if line.startswith("## Current Preview ")]
     normalized_second = " ".join(second.split())
     normalized_launcher = " ".join(launcher.split())
     normalized_service = " ".join(service.split()).lower()
+    normalized_backup = " ".join(backup.split()).lower()
 
     require(len(rc_headings) == 1, "RC document must name exactly one Current Preview", failures)
     require("## Current Preview 28" in rc, "preview.28 must be the current RC prerelease", failures)
@@ -93,6 +96,12 @@ def main() -> int:
             "service restart must preserve independent Worker receipt", failures)
     require("still does not substitute for a physical logout/reboot receipt" in normalized_service,
             "service restart receipt must keep the physical reboot gate open", failures)
+    require("## Installed Preview 28 Backup Receipt" in backup,
+            "installed preview.28 backup receipt missing", failures)
+    require("secret store was excluded" in normalized_backup and "no raw" in normalized_backup,
+            "installed backup privacy receipt missing", failures)
+    require("not a restore of the user's live ledger" in normalized_backup,
+            "installed backup receipt must not claim a live restore", failures)
 
     output = {
         "operation": "private_host_rc_status_smoke",
@@ -101,7 +110,12 @@ def main() -> int:
         "tag": TAG,
         "exact_commit": COMMIT,
         "checksums_recorded": len(CHECKSUMS),
-        "local_receipts": ["installed_app_launch", "host_service_loaded", "installed_service_restart"],
+        "local_receipts": [
+            "installed_app_launch",
+            "host_service_loaded",
+            "installed_service_restart",
+            "installed_backup_verified",
+        ],
         "external_gates_open": list(open_gate_markers),
         "failures": failures,
         "safety": {

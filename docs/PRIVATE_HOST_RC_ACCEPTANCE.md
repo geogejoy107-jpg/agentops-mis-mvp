@@ -700,6 +700,13 @@ physical second-device workflow/disconnect evidence, another-Mac clean install
 and logout/reboot service proof remain open. This is a prerelease, not the final
 RC.
 
+The installed preview.28 CLI also created and verified a fresh online backup
+while the Host remained ready. Manifest, hash, size, schema, SQLite integrity
+and foreign-key checks passed; the secret store was excluded and no raw ledger
+rows or token values were printed. The user's live ledger was not restored;
+confirmed restore and access-revocation behavior remain proven against isolated
+state.
+
 ## Release Gates
 
 The RC may be declared only after all of the following are attached to one
