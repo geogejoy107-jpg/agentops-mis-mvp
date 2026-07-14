@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+INDEX_HTML = ROOT / "ui" / "start-building-app" / "index.html"
 UI_COMPONENTS = ROOT / "ui" / "start-building-app" / "src" / "app" / "components"
 AUTH_GATE = UI_COMPONENTS / "auth" / "AuthGate.tsx"
 APP_SHELL = UI_COMPONENTS / "layout" / "AppShell.tsx"
@@ -16,7 +17,7 @@ ACCOUNT_SECURITY = UI_COMPONENTS / "pages" / "AccountSecurity.tsx"
 WORKSPACE_SETTINGS = UI_COMPONENTS / "shared" / "WorkspaceSettings.tsx"
 PREFERENCES = ROOT / "ui" / "start-building-app" / "src" / "app" / "context" / "PreferencesContext.tsx"
 LIVE_API = ROOT / "ui" / "start-building-app" / "src" / "app" / "data" / "liveApi.ts"
-FILES = (AUTH_GATE, APP_SHELL, SIDEBAR, TOPBAR, ACCOUNT_SECURITY, WORKSPACE_SETTINGS, PREFERENCES, LIVE_API)
+FILES = (INDEX_HTML, AUTH_GATE, APP_SHELL, SIDEBAR, TOPBAR, ACCOUNT_SECURITY, WORKSPACE_SETTINGS, PREFERENCES, LIVE_API)
 
 
 def load_source(path: Path, failures: list[str]) -> str:
@@ -47,6 +48,7 @@ def slice_between(source: str, start: str, end: str) -> str:
 def main() -> int:
     failures: list[str] = []
     sources = {path: load_source(path, failures) for path in FILES}
+    index_html = sources[INDEX_HTML]
     auth_gate = sources[AUTH_GATE]
     app_shell = sources[APP_SHELL]
     sidebar = sources[SIDEBAR]
@@ -57,6 +59,13 @@ def main() -> int:
     live_api = sources[LIVE_API]
     checks: dict[str, bool] = {}
 
+    record(
+        checks,
+        "browser_metadata_uses_product_identity",
+        "<title>AgentOps MIS</title>" in index_html
+        and "Local-first workspace for AI worker tasks" in index_html
+        and "Start Building App" not in index_html,
+    )
     record(checks, "auth_gate_reuses_locked_app_shell", '<AppShell locked lockLabel={lockLabel}>' in auth_gate)
     record(checks, "human_auth_workspace_gate_present", 'testId="human-auth-workspace-gate"' in auth_gate)
     record(checks, "auth_gate_uses_workspace_settings_layout", 'testId="human-auth-settings-layout"' in auth_gate)
