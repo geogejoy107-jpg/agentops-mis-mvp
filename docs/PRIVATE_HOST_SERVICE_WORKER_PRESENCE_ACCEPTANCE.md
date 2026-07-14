@@ -67,6 +67,9 @@ The deterministic module fixture covers a service-only Worker with:
 - `active_service_workers = 1`; and
 - `execution_capacity_workers = 1`.
 
+The same isolated integration smoke is wired into the GitHub Actions Backend
+deterministic lane and the canonical release-evidence command list.
+
 ## Real Host Readback
 
 After installing a package containing this slice, the real Host acceptance is:

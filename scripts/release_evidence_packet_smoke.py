@@ -78,6 +78,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "private_host_service_worker_presence",
+        "command": "python3 scripts/private_host_service_worker_presence_smoke.py",
+        "summary": "Independent service Workers contribute heartbeat-confirmed execution capacity without claiming Host process verification or executing a Runtime.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "human_session_management",
         "command": "python3 scripts/human_session_management_smoke.py",
         "summary": "Owner-only browser Session list/revoke, current-Session preservation, role/CSRF/account isolation, safe references, audit omission and existing Workspace account UI.",
