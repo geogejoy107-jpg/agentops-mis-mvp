@@ -96,6 +96,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "private_host_rc_status",
+        "command": "python3 scripts/private_host_rc_status_smoke.py",
+        "summary": "Current public Private Host prerelease provenance stays aligned while Owner, physical second-device, current-package Runtime and another-Mac gates remain explicitly open.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "private_host_background_service",
         "command": "python3 scripts/private_host_background_service_smoke.py",
         "summary": "Preview-first host-only macOS LaunchAgent install/check/control/remove lifecycle with explicit confirmation, exact ownership and no Worker or credential material.",

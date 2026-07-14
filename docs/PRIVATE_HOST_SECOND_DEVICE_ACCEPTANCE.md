@@ -120,16 +120,17 @@ text, project files, database path, or unrestricted Host paths.
 
 ## Current Result
 
-Host-side staging was completed on 2026-07-12 with
-`v1.6.0-private-host-preview.11` at exact commit
-`00ef8ea3babaec2ff141db19a48b0998496ececc`:
+Host-side staging was refreshed on 2026-07-14 with
+`v1.6.0-private-host-preview.19` at exact commit
+`ac69d8c59dc8b7a9753f57f9bf1cb4a9fbc3f1a5`:
 
 - GitHub download and published checksum verification passed;
 - upgrade created a pre-update ledger backup and preserved user data;
-- Host health, managed preview.11 production UI and real Hermes/OpenClaw Workers
+- Host health, managed preview.19 production UI and real Hermes/OpenClaw Workers
   are ready;
-- the published no-repository bootstrap passed Draft round-trip and public
-  GitHub clean-HOME install/init/start/status/stop gates;
+- the published no-repository bootstrap passed release-consumer
+  install gates from the public GitHub tag in a fresh temporary HOME without a
+  repository on the consumer; this same-Mac receipt is not another-Mac proof;
 - installed Agent Gateway CLI configuration is machine-only, confirmation
   gated, origin bound and separate from the browser Session;
 - installed Gateway, Hermes and OpenClaw preflight checks passed without live
@@ -137,7 +138,10 @@ Host-side staging was completed on 2026-07-12 with
 - private Tailscale HTTPS uses port 8443 with one exclusive MIS handler;
 - Funnel is disabled and the unrelated port 443 target remains unchanged;
 - the private HTTPS Workspace returned HTTP 200;
-- one physical Console peer was online and reachable over the tailnet.
+- the existing Workspace account UI, installed HTML/JavaScript and exact
+  installed version were verified locally;
+- one Hermes and one OpenClaw Worker are running, and same-adapter duplicate
+  Host ownership now fails closed without terminating an external Worker.
 
 Fresh Hermes run `run_gw_242eac97293e` and OpenClaw run
 `run_gw_23bb6ba9f13e` are `waiting_approval`. This is expected: machine
