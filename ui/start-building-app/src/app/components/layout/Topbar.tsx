@@ -128,7 +128,9 @@ export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLa
         {/* Avatar */}
         <div
           className={`${locked ? "hidden sm:flex" : "flex"} w-7 h-7 rounded-full items-center justify-center text-[11px] font-semibold cursor-pointer`}
-          style={{ background: "var(--mis-purple)", color: "#fff" }}
+          style={locked
+            ? { background: "var(--mis-surface2)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }
+            : { background: "var(--mis-purple)", color: "#fff" }}
           title={displayName}
         >
           {locked ? <LockKeyhole size={13} /> : initials}

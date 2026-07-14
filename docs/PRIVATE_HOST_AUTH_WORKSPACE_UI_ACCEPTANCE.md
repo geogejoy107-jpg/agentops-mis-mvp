@@ -31,9 +31,16 @@ ready, `AuthGate` returns the existing workspace unchanged.
 - `AuthGate` renders the authentication entry inside `AppShell` with
   `locked={true}` and exposes `human-auth-workspace-gate` for bounded UI
   verification.
-- The existing Sidebar, Topbar, theme variables, spacing, typography, borders,
-  and workspace frame remain visible during connection, Owner bootstrap,
-  login, and unavailable states.
+- The existing Sidebar, Topbar, theme variables, typography, borders, and
+  workspace frame remain visible during connection, Owner bootstrap, login,
+  and unavailable states.
+- Locked and authenticated routes use the same `p-4 lg:p-5` main-content
+  spacing. The auth state is laid out as a normal MIS page with a compact page
+  header, a primary access panel, and a secondary host-status panel; it is not
+  a centered landing-page hero or a separate authentication product.
+- Form density, heading scale, panel radius, and status rows match the existing
+  Workspace and Admin surfaces. The first-Owner and sign-in flows retain their
+  distinct operational copy without decorative marketing content.
 - Locked Sidebar items render as disabled non-link rows. They do not navigate
   to workspace or Admin routes before authentication.
 - The Topbar communicates the locked state while keeping theme and language
@@ -116,12 +123,13 @@ cd ui/start-building-app && npm run build
 git diff --check
 ```
 
-The static smoke passed all 19 checks and returned JSON with `ok: true`, no
+The static smoke passed all 22 checks and returned JSON with `ok: true`, no
 failures, and exit code 0. It verifies locked-shell reuse, the authentication
-gate marker, bilingual Owner bootstrap/login copy, password confirmation and
-minimum length, locked non-link Sidebar items, persistent theme/language
-controls, logout omission while locked, and the setup-code-authorized browser
-handoff projection.
+gate marker, Workspace-style access and host-status panels, shared content
+spacing, bilingual Owner bootstrap/login copy, password confirmation and minimum
+length, locked non-link Sidebar items, persistent theme/language controls,
+logout omission while locked, and the setup-code-authorized browser handoff
+projection.
 
 The browser-handoff integration smoke passed against a temporary Host and
 database. It proved that no-code bootstrap is rejected, setup-code bootstrap

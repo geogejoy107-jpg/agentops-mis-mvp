@@ -173,43 +173,82 @@ export function AuthGate({ children }: { children: ReactNode }) {
       <AppShell locked lockLabel={lockLabel}>
         <section
           data-testid="human-auth-workspace-gate"
-          className="mx-auto flex min-h-full w-full max-w-[1180px] items-center px-5 py-8 lg:px-10 lg:py-12"
+          className="min-h-full w-full space-y-4"
         >
-          <div className="grid w-full gap-10 xl:grid-cols-[minmax(0,1.25fr)_minmax(300px,0.75fr)] xl:gap-14">
+          <header className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="mb-8 flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>
+                  {pick(locale, { zh: "主机接入", en: "Host access" })}
+                </h1>
                 <span
-                  className="flex h-10 w-10 items-center justify-center rounded"
-                  style={{ background: "var(--mis-cyan)", color: "var(--mis-bg)" }}
+                  className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-medium"
+                  style={{
+                    background: gate === "unavailable" ? "rgba(231,111,81,0.10)" : "rgba(34,211,238,0.10)",
+                    border: `1px solid ${gate === "unavailable" ? "rgba(231,111,81,0.24)" : "rgba(34,211,238,0.20)"}`,
+                    color: gate === "unavailable" ? "var(--mis-warning)" : "var(--mis-cyan)",
+                  }}
                 >
-                  <ShieldCheck size={19} aria-hidden="true" />
+                  {gate === "checking" ? <LoaderCircle className="animate-spin" size={11} /> : <LockKeyhole size={11} />}
+                  {lockLabel}
                 </span>
-                <div>
-                  <div className="text-[11px] font-semibold uppercase" style={{ color: "var(--mis-cyan)" }}>
-                    {pick(locale, {
-                      zh: isBootstrap ? "所有者设置" : "私人主机会话",
-                      en: isBootstrap ? "Owner setup" : "Private host session",
-                    })}
-                  </div>
-                  <div className="mt-0.5 text-xs" style={{ color: "var(--mis-dim)" }}>
-                    {pick(locale, { zh: "AgentOps MIS 本地 AI 主机", en: "AgentOps MIS local AI host" })}
+              </div>
+              <p className="mt-1 text-xs" style={{ color: "var(--mis-dim)" }}>
+                {pick(locale, {
+                  zh: "登录后进入现有任务、运行、审批和审计工作台。",
+                  en: "Sign in to the existing tasks, runs, approvals, and audit workspace.",
+                })}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 text-[11px]" style={{ color: "var(--mis-muted)" }}>
+              <Server size={13} style={{ color: "var(--mis-success)" }} />
+              {pick(locale, { zh: "本地主机 · 私人网络", en: "Local host · private network" })}
+            </div>
+          </header>
+
+          <div className="grid grid-cols-12 items-start gap-4">
+            <section
+              data-testid="human-auth-access-panel"
+              className="col-span-12 overflow-hidden rounded-lg xl:col-span-8"
+              style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+            >
+              <div className="flex items-center justify-between gap-3 border-b px-4 py-3" style={{ borderColor: "var(--mis-border)" }}>
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <span
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded"
+                    style={{ background: "var(--mis-surface2)", color: "var(--mis-cyan)", border: "1px solid var(--mis-border)" }}
+                  >
+                    {isBootstrap ? <ShieldCheck size={15} aria-hidden="true" /> : <KeyRound size={15} aria-hidden="true" />}
+                  </span>
+                  <div className="min-w-0">
+                    <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{title}</h2>
+                    <p className="mt-0.5 text-[11px]" style={{ color: "var(--mis-dim)" }}>
+                      {pick(locale, {
+                        zh: isBootstrap ? "首次设置 · 创建主机所有者" : "使用主机账户继续",
+                        en: isBootstrap ? "First-time setup · create the host owner" : "Continue with a host account",
+                      })}
+                    </p>
                   </div>
                 </div>
+                <span className="hidden text-[10px] sm:inline" style={{ color: "var(--mis-muted)" }}>
+                  {pick(locale, { zh: "AgentOps MIS 工作区", en: "AgentOps MIS workspace" })}
+                </span>
               </div>
 
+              <div className="p-4 lg:p-5">
               {gate === "checking" ? (
-                <div className="flex min-h-72 items-center gap-3 text-sm" style={{ color: "var(--mis-dim)" }}>
-                  <LoaderCircle className="animate-spin" size={21} aria-hidden="true" />
+                <div className="flex min-h-44 items-center justify-center gap-2.5 text-xs" style={{ color: "var(--mis-dim)" }}>
+                  <LoaderCircle className="animate-spin" size={17} aria-hidden="true" />
                   {pick(locale, { zh: "正在验证主机会话...", en: "Checking host session..." })}
                 </div>
               ) : gate === "unavailable" ? (
-                <div className="max-w-xl">
-                  <h1 className="text-2xl font-semibold">{pick(locale, { zh: "无法连接本地主机", en: "Cannot reach local host" })}</h1>
-                  <p className="mt-3 text-sm leading-6" style={{ color: "var(--mis-dim)" }}>{error}</p>
+                <div className="max-w-2xl py-2">
+                  <h3 className="text-sm font-semibold">{pick(locale, { zh: "无法连接本地主机", en: "Cannot reach local host" })}</h3>
+                  <p className="mt-2 text-xs leading-5" style={{ color: "var(--mis-dim)" }}>{error}</p>
                   <button
                     type="button"
                     onClick={() => void refresh()}
-                    className="mt-6 inline-flex h-10 items-center justify-center gap-2 rounded px-4 text-sm font-semibold"
+                    className="mt-4 inline-flex h-9 items-center justify-center gap-2 rounded px-3 text-xs font-semibold"
                     style={{ background: "var(--mis-cyan)", color: "var(--mis-bg)" }}
                   >
                     <RefreshCw size={15} aria-hidden="true" />
@@ -217,16 +256,15 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   </button>
                 </div>
               ) : (
-                <form onSubmit={submit} className="max-w-2xl">
-                  <h1 className="text-2xl font-semibold">{title}</h1>
-                  <p className="mt-3 max-w-xl text-sm leading-6" style={{ color: "var(--mis-dim)" }}>
+                <form onSubmit={submit} className="max-w-3xl">
+                  <p className="max-w-2xl text-xs leading-5" style={{ color: "var(--mis-dim)" }}>
                     {pick(locale, {
-                      zh: isBootstrap ? "创建首位 Owner，完成这台 AI 主机与工作台的安全绑定。" : "使用主机账户进入工作台。Agent 密钥与运行数据不会发送到浏览器。",
+                      zh: isBootstrap ? "创建首位所有者账户，完成这台 AI 主机与工作台的安全绑定。" : "使用主机账户进入工作台。AI 员工密钥与运行数据不会发送到浏览器。",
                       en: isBootstrap ? "Create the first owner and securely bind this AI host to its workspace." : "Use your host account. Agent credentials and runtime data are never sent to the browser.",
                     })}
                   </p>
 
-                  <div className="mt-7 grid gap-4 sm:grid-cols-2">
+                  <div className="mt-5 grid gap-4 sm:grid-cols-2">
                     {isBootstrap && !hasInstallerHandoff && (
                       <div className="sm:col-span-2">
                         <AuthField
@@ -299,21 +337,32 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
                   <button
                     disabled={submitting}
-                    className="mt-6 inline-flex h-10 min-w-40 items-center justify-center gap-2 rounded px-4 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                    className="mt-5 inline-flex h-9 w-full items-center justify-center gap-2 rounded px-4 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:min-w-44"
                     style={{ background: "var(--mis-cyan)", color: "var(--mis-bg)" }}
                   >
                     {submitting ? <LoaderCircle className="animate-spin" size={16} aria-hidden="true" /> : <ArrowRight size={16} aria-hidden="true" />}
-                    {pick(locale, { zh: isBootstrap ? "创建 Owner 并进入" : "登录工作台", en: isBootstrap ? "Create owner and continue" : "Enter workspace" })}
+                    {pick(locale, { zh: isBootstrap ? "创建所有者并进入" : "登录工作台", en: isBootstrap ? "Create owner and continue" : "Enter workspace" })}
                   </button>
                 </form>
               )}
-            </div>
-
-            <aside className="border-t pt-7 xl:border-l xl:border-t-0 xl:pl-10 xl:pt-0" style={{ borderColor: "var(--mis-border)" }}>
-              <div className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>
-                {pick(locale, { zh: "本地主机边界", en: "Local host boundary" })}
               </div>
-              <div className="mt-5 space-y-6">
+            </section>
+
+            <aside
+              data-testid="human-auth-host-boundary-panel"
+              className="col-span-12 overflow-hidden rounded-lg xl:col-span-4"
+              style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+            >
+              <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: "var(--mis-border)" }}>
+                <div className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>
+                  {pick(locale, { zh: "主机状态", en: "Host status" })}
+                </div>
+                <span className="inline-flex items-center gap-1 text-[10px]" style={{ color: "var(--mis-success)" }}>
+                  <CheckCircle2 size={12} />
+                  {pick(locale, { zh: "本机可用", en: "Host available" })}
+                </span>
+              </div>
+              <div className="divide-y px-4" style={{ borderColor: "var(--mis-border)" }}>
                 <BoundaryRow
                   icon={<Server size={16} />}
                   title={pick(locale, { zh: "权威账本留在本机", en: "Authoritative ledger stays local" })}
@@ -322,19 +371,19 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 />
                 <BoundaryRow
                   icon={<Bot size={16} />}
-                  title={pick(locale, { zh: "Agent 在主机侧运行", en: "Agents run on the host" })}
+                  title={pick(locale, { zh: "AI 员工在主机侧运行", en: "Agents run on the host" })}
                   detail={pick(locale, { zh: "Hermes 与 OpenClaw 不向浏览器暴露密钥。", en: "Hermes and OpenClaw never expose credentials to the browser." })}
                   status={pick(locale, { zh: "受控", en: "Controlled" })}
                 />
                 <BoundaryRow
                   icon={<KeyRound size={16} />}
                   title={pick(locale, { zh: "人类会话独立认证", en: "Human sessions use separate auth" })}
-                  detail={pick(locale, { zh: "Owner 登录与 Agent 机器令牌相互隔离。", en: "Owner login is isolated from Agent machine tokens." })}
+                  detail={pick(locale, { zh: "所有者登录与 AI 员工机器令牌相互隔离。", en: "Owner login is isolated from Agent machine tokens." })}
                   status={isBootstrap ? pick(locale, { zh: "待绑定", en: "Pending" }) : pick(locale, { zh: "已启用", en: "Enabled" })}
                 />
               </div>
-              <div className="mt-8 flex items-center gap-2 border-t pt-5 text-xs" style={{ borderColor: "var(--mis-border)", color: "var(--mis-dim)" }}>
-                <CheckCircle2 size={14} style={{ color: "var(--mis-success)" }} />
+              <div className="flex items-center gap-2 border-t px-4 py-3 text-[11px]" style={{ borderColor: "var(--mis-border)", color: "var(--mis-dim)" }}>
+                <ShieldCheck size={13} style={{ color: "var(--mis-success)" }} />
                 {pick(locale, { zh: "私人网络 · 非公开互联网服务", en: "Private network · not a public internet service" })}
               </div>
             </aside>
@@ -367,7 +416,7 @@ function AuthField({
   pattern?: string;
 }) {
   return (
-    <label className="block text-sm font-medium">
+    <label className="block text-xs font-medium">
       <span className="mb-1.5 flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
         <span>{label}</span>
         {hint && <span className="text-[10px] font-normal" style={{ color: "var(--mis-muted)" }}>{hint}</span>}
@@ -380,7 +429,7 @@ function AuthField({
         required={required}
         minLength={minLength}
         pattern={pattern}
-        className="h-10 w-full rounded border px-3 outline-none transition-colors focus:ring-2"
+        className="h-9 w-full rounded border px-3 text-sm outline-none transition-colors focus:ring-2"
         style={{
           background: "var(--mis-surface)",
           borderColor: "var(--mis-border)",
@@ -404,15 +453,15 @@ function BoundaryRow({
   status: string;
 }) {
   return (
-    <div className="grid grid-cols-[28px_minmax(0,1fr)_auto] gap-3">
-      <span className="mt-0.5 flex h-7 w-7 items-center justify-center rounded" style={{ background: "var(--mis-surface2)", color: "var(--mis-cyan)" }}>
+    <div className="grid grid-cols-[28px_minmax(0,1fr)_auto] gap-3 py-3.5">
+      <span className="flex h-7 w-7 items-center justify-center rounded" style={{ background: "var(--mis-surface2)", color: "var(--mis-cyan)" }}>
         {icon}
       </span>
       <div className="min-w-0">
         <div className="text-xs font-medium" style={{ color: "var(--mis-text)" }}>{title}</div>
-        <p className="mt-1 text-[11px] leading-5" style={{ color: "var(--mis-dim)" }}>{detail}</p>
+        <p className="mt-0.5 text-[11px] leading-4" style={{ color: "var(--mis-dim)" }}>{detail}</p>
       </div>
-      <span className="mt-0.5 text-[10px] font-medium" style={{ color: "var(--mis-success)" }}>{status}</span>
+      <span className="text-[10px] font-medium" style={{ color: "var(--mis-success)" }}>{status}</span>
     </div>
   );
 }

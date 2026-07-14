@@ -53,6 +53,9 @@ def main() -> int:
 
     record(checks, "auth_gate_reuses_locked_app_shell", '<AppShell locked lockLabel={lockLabel}>' in auth_gate)
     record(checks, "human_auth_workspace_gate_present", 'data-testid="human-auth-workspace-gate"' in auth_gate)
+    record(checks, "auth_gate_uses_workspace_access_panel", 'data-testid="human-auth-access-panel"' in auth_gate)
+    record(checks, "auth_gate_uses_host_status_panel", 'data-testid="human-auth-host-boundary-panel"' in auth_gate)
+    record(checks, "locked_shell_uses_workspace_content_spacing", 'className="app-main flex-1 overflow-y-auto p-4 lg:p-5"' in app_shell)
     record(
         checks,
         "owner_bootstrap_copy_bilingual",
@@ -61,7 +64,7 @@ def main() -> int:
             for marker in (
                 'zh: isBootstrap ? "\u521d\u59cb\u5316\u672c\u5730\u4e3b\u673a"',
                 'en: isBootstrap ? "Initialize local host"',
-                'zh: isBootstrap ? "\u521b\u5efa Owner \u5e76\u8fdb\u5165"',
+                'zh: isBootstrap ? "\u521b\u5efa\u6240\u6709\u8005\u5e76\u8fdb\u5165"',
                 'en: isBootstrap ? "Create owner and continue"',
             )
         ),
