@@ -109,7 +109,7 @@ def main() -> int:
         checks,
         "locked_sidebar_omits_demo_identity",
         "copy.productMode" in locked_sidebar_footer
-        and "copy.account" in locked_sidebar_footer
+        and "copy.lockedNavigation" in locked_sidebar_footer
         and "jiwu@agentops.dev" not in locked_sidebar_footer,
     )
     record(
@@ -266,21 +266,23 @@ def main() -> int:
         "<Topbar locked={locked} lockLabel={lockLabel} />" in app_shell,
     )
 
-    sidebar_locked_render = slice_between(sidebar, "{locked ? (\n          <div>", ") : navGroups.map")
+    sidebar_locked_render = slice_between(sidebar, "{locked ? (\n                          <div", ") : (\n                          <NavLink")
     sidebar_unlocked_render = slice_between(sidebar, ") : (\n                          <NavLink", "</NavLink>")
     record(
         checks,
-        "locked_sidebar_renders_single_current_item",
-        'aria-current="page"' in sidebar_locked_render
-        and "copy.setupGroup" in sidebar_locked_render
-        and "copy.account" in sidebar_locked_render,
+        "locked_sidebar_preserves_workspace_information_architecture",
+        "{navGroups.map((group) =>" in sidebar
+        and 'aria-current={isActive ? "page" : undefined}' in sidebar_locked_render
+        and 'aria-disabled="true"' in sidebar_locked_render
+        and 'item.path === "/workspace/account"' in sidebar,
     )
     record(checks, "locked_sidebar_item_is_not_link", "NavLink" not in sidebar_locked_render)
     record(
         checks,
-        "locked_sidebar_omits_disabled_menu_wall",
-        "navGroups.map" not in sidebar_locked_render
-        and 'aria-disabled="true"' not in sidebar_locked_render,
+        "locked_sidebar_has_no_setup_only_alternate_navigation",
+        "copy.setupGroup" not in sidebar
+        and "copy.setupHint" not in sidebar
+        and 'aria-current="page"' not in sidebar,
     )
     record(checks, "unlocked_sidebar_keeps_navigation", "<NavLink" in sidebar_unlocked_render)
 

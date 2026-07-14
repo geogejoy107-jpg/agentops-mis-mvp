@@ -154,8 +154,10 @@ ledger behavior changed in this visual correction.
   produce one Owner Session and one fail-closed conflict.
 - Terminal bootstrap failures clear the in-memory handoff. Only locally
   correctable username/password-strength errors retain it for the next submit.
-- Locked navigation does not expose authenticated workspace routes through
-  clickable Sidebar links, and the locked Topbar does not expose logout.
+- Locked navigation preserves the existing Workspace information architecture
+  so first-run setup does not look like a second product. Its items are inert
+  and expose no authenticated route or workspace data; Account and access is
+  the current location, and the locked Topbar does not expose logout.
 - The smoke is static and read-only. It does not start a Host, mutate a ledger,
   inspect or print credentials, read a database, or invoke Hermes, OpenClaw, or
   another runtime.
@@ -186,8 +188,9 @@ spacing and shared setup/account components, bilingual Owner bootstrap/login
 copy, password confirmation, live readiness/match guidance, accessible
 visibility controls and minimum length, the visible Account navigation
 entry, locked Account current-location treatment, demo-identity omission,
-compact responsive form rows, mobile product identity, locked non-link Sidebar
-items, persistent theme/language controls, logout omission while locked, and
+compact responsive form rows, mobile product identity, the full existing
+Workspace navigation rendered as inert non-link items while locked, persistent
+theme/language controls, logout omission while locked, and
 the setup-code-authorized browser handoff projection.
 
 The browser-handoff integration smoke passed against a temporary Host and
