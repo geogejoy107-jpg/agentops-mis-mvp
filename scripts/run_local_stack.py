@@ -43,6 +43,7 @@ SUBPROCESS_AGENTOPS_ENV = frozenset({
     "AGENTOPS_REQUEST_TIMEOUT", "AGENTOPS_SESSION_REFRESH_MARGIN_SEC",
     "AGENTOPS_SESSION_SCOPES", "AGENTOPS_SESSION_TTL_SEC", "AGENTOPS_TASK_ID",
     "AGENTOPS_WORKSPACE_ID", "AGENTOPS_WORKER_CWD",
+    "AGENTOPS_WORKER_MANAGEMENT_MODE",
     "AGENTOPS_WORKER_RUNTIME_DIR", "AGENTOPS_WORKER_STATE_PATH",
 })
 WORKER_RUNTIME_ENV = frozenset({
@@ -82,6 +83,7 @@ def cli_environment(base_env: dict[str, str]) -> dict[str, str]:
 def worker_environment(base_env: dict[str, str], adapter: str) -> dict[str, str]:
     worker_env = projected_environment(base_env, include_agentops=True, extra_allowed=WORKER_RUNTIME_ENV)
     worker_env["AGENTOPS_AGENT_ID"] = f"agt_worker_local_stack_{adapter}"
+    worker_env["AGENTOPS_WORKER_MANAGEMENT_MODE"] = "host_stack"
     return worker_env
 
 

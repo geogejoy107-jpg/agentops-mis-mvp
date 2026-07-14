@@ -115,11 +115,19 @@ class WorkerState:
         else:
             self.path = DEFAULT_RUNTIME_DIR / f"{args.adapter}.state.json"
         self.enabled = bool(args.write_state or args.state_path)
+        management_mode = str(os.environ.get("AGENTOPS_WORKER_MANAGEMENT_MODE") or "standalone").strip().lower()
+        if management_mode not in {"standalone", "daemon_api", "host_stack"}:
+            management_mode = "standalone"
         self.data = {
             "adapter": args.adapter,
             "agent_id": args.agent_id,
             "workspace_id": args.workspace_id,
             "base_url": args.base_url,
+            "pid": os.getpid(),
+            "management_mode": management_mode,
+            "confirm_run": bool(args.confirm_run),
+            "poll_interval": args.poll_interval,
+            "max_tasks": args.max_tasks,
             "status": "starting",
             "processed": 0,
             "iterations": 0,

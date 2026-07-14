@@ -197,7 +197,9 @@ SQLITE_SCHEMA_BASELINE_ID = "2026-06-22-v1.5-sqlite-reliability"
 STATIC_DIR = ROOT / "static"
 ARTIFACTS_DIR = ROOT / "artifacts"
 RUNTIME_DIR = ROOT / ".agentops_runtime"
-WORKER_RUNTIME_DIR = RUNTIME_DIR / "workers"
+WORKER_RUNTIME_DIR = Path(
+    os.environ.get("AGENTOPS_WORKER_RUNTIME_DIR") or (RUNTIME_DIR / "workers")
+).expanduser().resolve()
 KNOWLEDGE_DIR = ROOT / "knowledge"
 OPENCLAW_HOME = Path.home() / ".openclaw"
 HERMES_HOME = Path.home() / ".hermes"
@@ -14390,10 +14392,14 @@ def read_worker_daemon(adapter: str, include_log: bool = False) -> dict:
     state_path = worker_runtime_path(adapter, "state.json")
     meta = read_json_file(pid_path, {}) if pid_path.exists() else {}
     state = read_json_file(state_path, {}) if state_path.exists() else {}
-    pid = meta.get("pid")
+    meta_pid = meta.get("pid")
+    state_pid = state.get("pid")
+    pid = meta_pid if pid_is_alive(meta_pid) else state_pid
     alive = pid_is_alive(pid)
     status = "running" if alive else "stopped" if meta.get("stopped_at") else "dead" if meta else "not_started"
     worker_status = state.get("status")
+    management_mode = meta.get("management_mode") or state.get("management_mode") or ("daemon_api" if meta else "standalone")
+    control_allowed = management_mode != "host_stack"
     if alive and worker_status in {"error", "failed", "failed_max_errors"}:
         status = "degraded"
     payload = {
@@ -14401,13 +14407,16 @@ def read_worker_daemon(adapter: str, include_log: bool = False) -> dict:
         "status": status,
         "running": alive,
         "pid": pid,
-        "agent_id": meta.get("agent_id"),
-        "started_at": meta.get("started_at"),
+        "agent_id": meta.get("agent_id") or state.get("agent_id"),
+        "started_at": meta.get("started_at") or state.get("started_at"),
         "stopped_at": meta.get("stopped_at"),
         "last_exit_note": meta.get("last_exit_note"),
-        "poll_interval": meta.get("poll_interval"),
-        "max_tasks": meta.get("max_tasks"),
-        "confirm_run": bool(meta.get("confirm_run")),
+        "poll_interval": meta.get("poll_interval") if meta.get("poll_interval") is not None else state.get("poll_interval"),
+        "max_tasks": meta.get("max_tasks") if meta.get("max_tasks") is not None else state.get("max_tasks"),
+        "confirm_run": bool(meta.get("confirm_run") if meta.get("confirm_run") is not None else state.get("confirm_run")),
+        "management_mode": management_mode,
+        "control_allowed": control_allowed,
+        "process_source": "daemon_metadata" if pid == meta_pid and meta_pid is not None else "worker_state" if state_pid is not None else "none",
         "log_path": str(log_path),
         "log_retention": worker_log_rotation_config(),
         "state_path": str(state_path),
@@ -14637,7 +14646,17 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
             log.write(f"[{now_iso()}] previous worker log rotated to {log_rotation.get('rotated_to')} ({log_rotation.get('current_bytes')} bytes)\n")
         log.write(f"\n[{now_iso()}] starting {' '.join(shlex.quote(part) for part in cmd)}\n")
         log.flush()
-        proc = subprocess.Popen(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+        worker_env = os.environ.copy()
+        worker_env["AGENTOPS_WORKER_MANAGEMENT_MODE"] = "daemon_api"
+        proc = subprocess.Popen(
+            cmd,
+            cwd=ROOT,
+            env=worker_env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            close_fds=True,
+        )
 
     meta = {
         "adapter": adapter,
@@ -14649,6 +14668,7 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
         "max_tasks": max_tasks,
         "status_filters": status_filters,
         "confirm_run": confirm_run,
+        "management_mode": "daemon_api",
         "cmd": [part if "key" not in part.lower() and "token" not in part.lower() else "[REDACTED]" for part in cmd],
         "continue_on_error": True,
         "max_errors": max(int(body.get("max_errors") or 5), 1),
@@ -14666,6 +14686,25 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
 def stop_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
     requested = body.get("adapter")
     adapters = ["mock", "hermes", "openclaw"] if requested in (None, "", "all") else [coerce_choice(requested, {"mock", "hermes", "openclaw"}, "mock")]
+    host_managed = [
+        daemon for daemon in (read_worker_daemon(adapter) for adapter in adapters)
+        if daemon.get("running") and daemon.get("management_mode") == "host_stack"
+    ]
+    if host_managed:
+        return {
+            "provider": "agentops-worker",
+            "ok": False,
+            "error": "worker_managed_by_host",
+            "message": "Host-managed workers must be stopped through the AgentOps Host lifecycle.",
+            "managed_adapters": [daemon.get("adapter") for daemon in host_managed],
+            "recommended_action": "agentops host restart",
+            "safety": {
+                "worker_process_stopped": False,
+                "host_process_stopped": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }, 409
     stopped = []
     for adapter in adapters:
         pid_path = worker_runtime_path(adapter, "json")
@@ -14726,6 +14765,23 @@ def restart_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
             "adapter": adapter,
             "error": "confirm_run:true is required before restarting Hermes/OpenClaw live worker daemons.",
         }, 400
+    current = read_worker_daemon(adapter)
+    if current.get("running") and current.get("management_mode") == "host_stack":
+        return {
+            "provider": "agentops-worker",
+            "ok": False,
+            "adapter": adapter,
+            "error": "worker_managed_by_host",
+            "message": "Host-managed workers must be restarted through the AgentOps Host lifecycle.",
+            "daemon": current,
+            "recommended_action": "agentops host restart",
+            "safety": {
+                "worker_process_restarted": False,
+                "host_process_restarted": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }, 409
     meta_path = worker_runtime_path(adapter, "json")
     meta = read_json_file(meta_path, {}) if meta_path.exists() else {}
     previous = read_worker_daemon(adapter, include_log=True)

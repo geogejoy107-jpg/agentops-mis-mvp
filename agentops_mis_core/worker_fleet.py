@@ -135,15 +135,16 @@ def worker_fleet_health(payload: dict[str, Any]) -> dict[str, Any]:
 
     if active_daemons:
         daemon_summaries = [
-            f"{daemon.get('adapter')} pid={daemon.get('pid')}"
+            f"{daemon.get('adapter')} pid={daemon.get('pid')} ({daemon.get('management_mode') or 'daemon_api'})"
             for daemon in active_daemons
             if daemon.get("adapter")
         ]
+        host_managed = [daemon for daemon in active_daemons if daemon.get("management_mode") == "host_stack"]
         add_gate(
             "local_daemons",
             "pass",
-            "Local worker daemon(s) running: " + ", ".join(daemon_summaries[:3]),
-            "agentops worker logs --adapter mock",
+            "Local worker process(es) running: " + ", ".join(daemon_summaries[:3]),
+            "agentops host status" if host_managed else "agentops worker logs --adapter mock",
         )
     else:
         add_gate(
@@ -355,11 +356,20 @@ def build_worker_status_payload(
     adapter_readiness: dict[str, Any],
 ) -> dict[str, Any]:
     active_daemons = [daemon for daemon in daemons if daemon.get("running")]
+    running_worker_refs = {
+        str(agent.get("agent_id"))
+        for agent in worker_agents
+        if agent.get("status") == "running" and agent.get("agent_id")
+    }
+    running_worker_refs.update(
+        str(daemon.get("agent_id") or f"local-daemon:{daemon.get('adapter') or 'unknown'}")
+        for daemon in active_daemons
+    )
     payload = {
         "provider": "agentops-worker",
         "status": "attention" if remote_fleet.get("stale_enrollments") else "running" if active_daemons else "ready",
         "worker_count": len(worker_agents),
-        "running_workers": len([agent for agent in worker_agents if agent.get("status") == "running"]) + len(active_daemons),
+        "running_workers": len(running_worker_refs),
         "recent_completed_runs": len([run for run in worker_runs if run.get("status") == "completed"]),
         "pending_worker_tasks": len([task for task in worker_tasks if task.get("status") in ("planned", "backlog")]),
         "stuck_worker_tasks": len(stuck_tasks),
@@ -413,6 +423,8 @@ def build_worker_fleet_view(
     for daemon in daemons:
         running = bool(daemon.get("running"))
         status = daemon.get("worker_status") or daemon.get("status") or "unknown"
+        management_mode = daemon.get("management_mode") or "daemon_api"
+        control_allowed = daemon.get("control_allowed") is not False
         health = "pass" if running else "info"
         if running and _int(daemon.get("consecutive_errors")) > 0:
             health = "warn"
@@ -424,6 +436,8 @@ def build_worker_fleet_view(
             "workspace_id": "local-demo",
             "runtime_type": daemon.get("adapter") or "mock",
             "status": status,
+            "management_mode": management_mode,
+            "control_allowed": control_allowed,
             "health": health,
             "heartbeat_state": "local_process" if running else "not_running",
             "session_state": "not_required",
@@ -435,7 +449,13 @@ def build_worker_fleet_view(
                 "consecutive_errors": _int(daemon.get("consecutive_errors")),
                 "total_errors": _int(daemon.get("total_errors")),
             },
-            "next_action": "agentops worker logs --adapter " + str(daemon.get("adapter") or "mock") if running else "agentops worker start --adapter " + str(daemon.get("adapter") or "mock"),
+            "next_action": (
+                "agentops host status"
+                if running and management_mode == "host_stack"
+                else "agentops worker logs --adapter " + str(daemon.get("adapter") or "mock")
+                if running
+                else "agentops worker start --adapter " + str(daemon.get("adapter") or "mock")
+            ),
             "safe_ref": stable_id("fleet_lane", "local_daemon", daemon.get("adapter") or "mock")[-12:],
         })
 
@@ -529,6 +549,8 @@ def build_worker_fleet_view(
             "health_counts": health_counts,
             "local_daemon_count": len(daemons),
             "running_local_daemons": len([daemon for daemon in daemons if daemon.get("running")]),
+            "host_managed_workers": len([daemon for daemon in daemons if daemon.get("running") and daemon.get("management_mode") == "host_stack"]),
+            "api_managed_daemons": len([daemon for daemon in daemons if daemon.get("running") and daemon.get("management_mode") != "host_stack"]),
             "remote_worker_count": remote_fleet.get("remote_worker_count", 0),
             "fresh_remote_enrollments": remote_fleet.get("fresh_enrollments", 0),
             "stale_remote_enrollments": remote_fleet.get("stale_enrollments", 0),

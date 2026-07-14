@@ -130,6 +130,9 @@ export function WorkerConsole() {
       remoteLanes: "Remote lanes",
       localLanes: "Local lanes",
       daemonControl: "Daemon control",
+      hostManaged: "Host managed",
+      apiManaged: "Console managed",
+      hostManagedHint: "Managed by AgentOps Host. Use the Host lifecycle controls.",
       dispatchOnce: "Dispatch once",
       startDaemon: "Start daemon",
       restartDaemon: "Restart daemon",
@@ -251,6 +254,9 @@ export function WorkerConsole() {
       remoteLanes: "远程 lane",
       localLanes: "本地 lane",
       daemonControl: "常驻控制",
+      hostManaged: "主机托管",
+      apiManaged: "控制台托管",
+      hostManagedHint: "由 AgentOps 主机托管，请使用主机生命周期控制。",
       dispatchOnce: "派发一次",
       startDaemon: "启动常驻",
       restartDaemon: "重启常驻",
@@ -350,6 +356,9 @@ export function WorkerConsole() {
   const selectedRoute = executionMode?.selected_route;
   const selectedReadiness = adapterReadiness?.adapters?.[selectedAdapter];
   const liveBlocked = selectedAdapter !== "mock" && !confirmRun;
+  const selectedDaemon = (workerStatus?.daemons || []).find((daemon) => daemon.adapter === selectedAdapter);
+  const selectedHostManaged = Boolean(selectedDaemon?.running && selectedDaemon.management_mode === "host_stack");
+  const hostManagedRunning = (workerStatus?.daemons || []).some((daemon) => daemon.running && daemon.management_mode === "host_stack");
   const primaryCommand = executionMode?.commands?.execution_mode
     || selectedRoute?.recommended_action
     || selectedReadiness?.remediation?.primary_next_action
@@ -684,15 +693,15 @@ export function WorkerConsole() {
                 {busyAction === `dispatch:${selectedAdapter}` ? <RefreshCw size={12} /> : <Play size={12} />}
                 {copy.dispatchOnce}
               </button>
-              <button onClick={startDaemon} disabled={Boolean(busyAction) || liveBlocked} className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-[11px] disabled:opacity-45" style={{ background: "rgba(45,212,191,0.12)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.22)" }}>
+              <button onClick={startDaemon} disabled={Boolean(busyAction) || liveBlocked || selectedHostManaged} title={selectedHostManaged ? copy.hostManagedHint : undefined} className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-[11px] disabled:opacity-45" style={{ background: "rgba(45,212,191,0.12)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.22)" }}>
                 {busyAction === `start:${selectedAdapter}` ? <RefreshCw size={12} /> : <Power size={12} />}
                 {copy.startDaemon}
               </button>
-              <button onClick={restartDaemon} disabled={Boolean(busyAction) || liveBlocked} className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-[11px] disabled:opacity-45" style={{ background: "rgba(122,90,248,0.10)", color: "#A78BFA", border: "1px solid rgba(122,90,248,0.2)" }}>
+              <button onClick={restartDaemon} disabled={Boolean(busyAction) || liveBlocked || selectedHostManaged} title={selectedHostManaged ? copy.hostManagedHint : undefined} className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-[11px] disabled:opacity-45" style={{ background: "rgba(122,90,248,0.10)", color: "#A78BFA", border: "1px solid rgba(122,90,248,0.2)" }}>
                 {busyAction === `restart:${selectedAdapter}` ? <RefreshCw size={12} /> : <RotateCw size={12} />}
                 {copy.restartDaemon}
               </button>
-              <button onClick={stopAll} disabled={Boolean(busyAction)} className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-[11px] disabled:opacity-45" style={{ background: "rgba(248,113,113,0.10)", color: "#F87171", border: "1px solid rgba(248,113,113,0.22)" }}>
+              <button onClick={stopAll} disabled={Boolean(busyAction) || hostManagedRunning} title={hostManagedRunning ? copy.hostManagedHint : undefined} className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-[11px] disabled:opacity-45" style={{ background: "rgba(248,113,113,0.10)", color: "#F87171", border: "1px solid rgba(248,113,113,0.22)" }}>
                 {busyAction === "stop:all" ? <RefreshCw size={12} /> : <Square size={12} />}
                 {copy.stopDaemons}
               </button>
@@ -897,7 +906,10 @@ export function WorkerConsole() {
               <div key={daemon.adapter} className="rounded px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-[11px] font-semibold" style={{ color: adapterColor(daemon.adapter) }}>{daemon.adapter}</div>
-                  <StatusBadge status={daemon.running ? "running" : daemon.status} />
+                  <div className="flex items-center gap-1.5">
+                    {daemon.management_mode && <StatusBadge status={daemon.management_mode === "host_stack" ? "ready" : "planned"} label={daemon.management_mode === "host_stack" ? copy.hostManaged : copy.apiManaged} />}
+                    <StatusBadge status={daemon.running ? "running" : daemon.status} />
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 mt-2">
                   <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.pid}: <span style={{ color: "var(--mis-text)" }}>{daemon.pid || "—"}</span></div>

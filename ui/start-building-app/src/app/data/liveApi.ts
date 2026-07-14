@@ -858,6 +858,8 @@ export interface WorkerFleetLane {
   workload?: Record<string, unknown>;
   next_action?: string;
   safe_ref?: string | null;
+  management_mode?: string | null;
+  control_allowed?: boolean;
   token_omitted?: boolean;
   session_id_omitted?: boolean;
   token_id_omitted?: boolean;
@@ -873,6 +875,8 @@ export interface WorkerFleetPayload {
     health_counts: Record<string, number>;
     local_daemon_count: number;
     running_local_daemons: number;
+    host_managed_workers?: number;
+    api_managed_daemons?: number;
     remote_worker_count: number;
     fresh_remote_enrollments: number;
     stale_remote_enrollments: number;
@@ -3513,6 +3517,9 @@ export interface WorkerDaemonStatus {
   poll_interval?: number | null;
   max_tasks?: number | null;
   confirm_run?: boolean;
+  management_mode?: "standalone" | "daemon_api" | "host_stack" | string;
+  control_allowed?: boolean;
+  process_source?: "daemon_metadata" | "worker_state" | "none" | string;
   log_path?: string;
   state_path?: string;
   worker_status?: string | null;
@@ -5012,6 +5019,8 @@ export async function loadWorkerFleet(): Promise<WorkerFleetPayload> {
       health_counts: numberRecord(summaryRaw.health_counts),
       local_daemon_count: numberValue(summaryRaw.local_daemon_count, 0),
       running_local_daemons: numberValue(summaryRaw.running_local_daemons, 0),
+      host_managed_workers: numberValue(summaryRaw.host_managed_workers, 0),
+      api_managed_daemons: numberValue(summaryRaw.api_managed_daemons, 0),
       remote_worker_count: numberValue(summaryRaw.remote_worker_count, 0),
       fresh_remote_enrollments: numberValue(summaryRaw.fresh_remote_enrollments, 0),
       stale_remote_enrollments: numberValue(summaryRaw.stale_remote_enrollments, 0),
@@ -5040,6 +5049,8 @@ export async function loadWorkerFleet(): Promise<WorkerFleetPayload> {
       workload: typeof lane.workload === "object" && lane.workload !== null ? lane.workload as Record<string, unknown> : undefined,
       next_action: lane.next_action ? String(lane.next_action) : undefined,
       safe_ref: lane.safe_ref ? String(lane.safe_ref) : null,
+      management_mode: lane.management_mode ? String(lane.management_mode) : null,
+      control_allowed: lane.control_allowed === undefined ? undefined : boolValue(lane.control_allowed),
       token_omitted: boolValue(lane.token_omitted),
       session_id_omitted: boolValue(lane.session_id_omitted),
       token_id_omitted: boolValue(lane.token_id_omitted),
@@ -9140,6 +9151,9 @@ function normalizeWorkerDaemon(row: Record<string, unknown>): WorkerDaemonStatus
     poll_interval: row.poll_interval ? numberValue(row.poll_interval, 0) : null,
     max_tasks: row.max_tasks === undefined || row.max_tasks === null ? null : numberValue(row.max_tasks, 0),
     confirm_run: boolValue(row.confirm_run),
+    management_mode: row.management_mode ? String(row.management_mode) : undefined,
+    control_allowed: row.control_allowed === undefined ? undefined : boolValue(row.control_allowed),
+    process_source: row.process_source ? String(row.process_source) : undefined,
     log_path: row.log_path ? String(row.log_path) : undefined,
     state_path: row.state_path ? String(row.state_path) : undefined,
     worker_status: row.worker_status ? String(row.worker_status) : null,

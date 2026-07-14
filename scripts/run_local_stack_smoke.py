@@ -31,6 +31,20 @@ def get_json(url: str) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+def post_json(url: str, payload: dict) -> tuple[int, dict]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
+
+
 def main() -> int:
     failures: list[str] = []
     boundary_env = {
@@ -81,7 +95,7 @@ def main() -> int:
             {
                 "AGENTOPS_DB_PATH": str(tmp_path / "agentops_mis.db"),
                 "AGENTOPS_CONFIG": str(tmp_path / "config.json"),
-                "AGENTOPS_WORKER_STATE_PATH": str(tmp_path / "worker-state.json"),
+                "AGENTOPS_WORKER_RUNTIME_DIR": str(tmp_path / "workers"),
                 "AGENTOPS_SKIP_SEED_EXPORTS": "1",
                 "HERMES_ALLOW_REAL_RUN": "false",
             }
@@ -106,6 +120,12 @@ def main() -> int:
         )
         gateway = {}
         workers = {}
+        fleet = {}
+        daemon = {}
+        stop_status = 0
+        stop_result = {}
+        restart_status = 0
+        restart_result = {}
         try:
             deadline = time.time() + 30
             while time.time() < deadline:
@@ -114,8 +134,17 @@ def main() -> int:
                 try:
                     gateway = get_json(base_url + "/api/agent-gateway/status")
                     workers = get_json(base_url + "/api/workers/status")
+                    fleet = get_json(base_url + "/api/workers/fleet")
                     registered = [item for item in workers.get("workers", []) if item.get("agent_id") == "agt_worker_local_stack_mock"]
-                    if gateway.get("provider") == "agent_gateway" and registered:
+                    daemon = next((item for item in workers.get("daemons", []) if item.get("adapter") == "mock"), {})
+                    if (
+                        gateway.get("provider") == "agent_gateway"
+                        and registered
+                        and daemon.get("running") is True
+                        and daemon.get("management_mode") == "host_stack"
+                        and (fleet.get("summary") or {}).get("running_local_daemons") == 1
+                        and workers.get("running_workers") == 1
+                    ):
                         break
                 except (OSError, ValueError, urllib.error.URLError):
                     pass
@@ -128,6 +157,26 @@ def main() -> int:
                 failures.append("Agent Gateway status was not reachable")
             if not any(item.get("agent_id") == "agt_worker_local_stack_mock" for item in workers.get("workers", [])):
                 failures.append("safe mock worker was not registered")
+            if daemon.get("running") is not True or daemon.get("management_mode") != "host_stack":
+                failures.append("Host-managed worker process was not normalized into daemon status")
+            if daemon.get("control_allowed") is not False or not daemon.get("pid"):
+                failures.append("Host-managed worker did not expose bounded process identity/control ownership")
+            if (fleet.get("summary") or {}).get("running_local_daemons") != 1:
+                failures.append("Worker Fleet did not count the Host-managed worker as running")
+            if (fleet.get("summary") or {}).get("host_managed_workers") != 1:
+                failures.append("Worker Fleet did not classify the Host-managed worker")
+            if workers.get("running_workers") != 1:
+                failures.append("Worker status double-counted one Host-managed process and its Agent row")
+            stop_status, stop_result = post_json(base_url + "/api/workers/local/stop", {"adapter": "mock"})
+            if stop_status != 409 or stop_result.get("error") != "worker_managed_by_host":
+                failures.append("Host-managed worker stop did not fail closed at the Host lifecycle boundary")
+            if process.poll() is not None:
+                failures.append("Host stack stopped after a rejected child-worker stop request")
+            restart_status, restart_result = post_json(base_url + "/api/workers/local/restart", {"adapter": "mock"})
+            if restart_status != 409 or restart_result.get("error") != "worker_managed_by_host":
+                failures.append("Host-managed worker restart did not fail closed at the Host lifecycle boundary")
+            if process.poll() is not None:
+                failures.append("Host stack stopped after a rejected child-worker restart request")
             if (tmp_path / "config.json").exists():
                 failures.append("stack mutated CLI config without --configure-cli")
         finally:
@@ -160,6 +209,12 @@ def main() -> int:
                 "operation": "run_local_stack_smoke",
                 "backend_started": gateway.get("provider") == "agent_gateway",
                 "mock_worker_registered": any(item.get("agent_id") == "agt_worker_local_stack_mock" for item in workers.get("workers", [])),
+                "host_managed_worker_visible": daemon.get("running") is True and daemon.get("management_mode") == "host_stack",
+                "running_local_daemons": (fleet.get("summary") or {}).get("running_local_daemons"),
+                "host_managed_workers": (fleet.get("summary") or {}).get("host_managed_workers"),
+                "running_workers": workers.get("running_workers"),
+                "host_managed_stop_rejected": stop_status == 409 and stop_result.get("error") == "worker_managed_by_host",
+                "host_managed_restart_rejected": restart_status == 409 and restart_result.get("error") == "worker_managed_by_host",
                 "live_worker_confirmation_required": blocked.returncode != 0,
                 "real_runtime_called": False,
                 "user_config_mutated": False,
