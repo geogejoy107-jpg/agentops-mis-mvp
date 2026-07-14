@@ -91,9 +91,10 @@ proves all of the following without a real model call:
 - the Host stack remains alive after both rejected child-control requests;
 - no user CLI config or credential material is written or printed.
 
-This normalization is source-level acceptance until it is included in and
-installed from the next versioned Private Host preview. The currently installed
-preview must not be cited as evidence for these new Fleet counters or controls.
+This normalization is installed in `v1.6.0-private-host-preview.23` from exact
+commit `24d0791bbd1848c275e72b9c7baafcb6c28be1ce`. The real Host reports one
+Hermes plus one OpenClaw child as `host_stack`, two running local daemons, two
+Host-managed Workers, zero API-managed daemons and `running_workers:2`.
 
 ## Current Result
 
@@ -107,4 +108,8 @@ Validated locally on 2026-07-14:
 - Existing Worker status/fleet, Human Auth, account Workspace UI, bundle,
   release-consumer, release-evidence, Python compile, secret scan, and diff
   checks: pass.
+- Draft/public asset equality, two no-repository clean-HOME installs and the
+  real preview.22-to-preview.23 Host upgrade: pass.
+- Installed Hermes/OpenClaw process visibility, ownership and deduplicated
+  capacity readback: pass; both adapters are ready and sleeping for work.
 - Live Hermes/OpenClaw execution: not called by this read-only slice.

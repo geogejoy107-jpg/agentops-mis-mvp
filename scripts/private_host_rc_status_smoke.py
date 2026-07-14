@@ -12,14 +12,14 @@ SECOND_DEVICE = ROOT / "docs" / "PRIVATE_HOST_SECOND_DEVICE_ACCEPTANCE.md"
 LAUNCHER = ROOT / "docs" / "PRIVATE_HOST_MACOS_LAUNCHER_ACCEPTANCE.md"
 BACKGROUND_SERVICE = ROOT / "docs" / "PRIVATE_HOST_BACKGROUND_SERVICE_ACCEPTANCE.md"
 
-VERSION = "1.6.0-private-host-preview.22"
+VERSION = "1.6.0-private-host-preview.23"
 TAG = f"v{VERSION}"
-COMMIT = "b3bff2784d9f1036f28250caae5922e450d8e4ce"
+COMMIT = "24d0791bbd1848c275e72b9c7baafcb6c28be1ce"
 RELEASE_URL = f"https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/{TAG}"
 CHECKSUMS = {
-    "manifest": "fdba696511b1b8b02aede06b956ac935796f06b83810eb8be67a89e580c662f0",
-    "tar": "f4716f6a0dcc424cb034c5b79df34b85c8e247e818036064f2931970159418d7",
-    "zip": "22cde6d06bee91f29229502a62be67ac639abe0a36c8702b3f4519ec75462396",
+    "manifest": "921a450ea279a741affc1297506b53e2b493bdd45a9c65fb7eb4fb78ce991668",
+    "tar": "e3cac3ec7c82b710001040f869b9f2379f28cd5155c11711a0b1b1e9eef8e67d",
+    "zip": "b53f3e10b6f1887603833b1da7c1089687c91a043127b4cce0144df015200b0e",
     "bootstrap": "6f78549bdb4c1da6ff3128907d8b82067a3ae06741cf823b34e1acdaaf03a44f",
 }
 
@@ -40,7 +40,8 @@ def main() -> int:
     normalized_launcher = " ".join(launcher.split())
 
     require(len(rc_headings) == 1, "RC document must name exactly one Current Preview", failures)
-    require("## Current Preview 22" in rc, "preview.22 must be the current RC prerelease", failures)
+    require("## Current Preview 23" in rc, "preview.23 must be the current RC prerelease", failures)
+    require("## Superseded Preview 22" in rc, "preview.22 must be preserved as superseded history", failures)
     require("## Superseded Preview 21" in rc, "preview.21 must be preserved as superseded history", failures)
     require("## Superseded Preview 20" in rc, "preview.20 must be preserved as superseded history", failures)
     require("## Superseded Preview 19" in rc, "preview.19 must be preserved as superseded history", failures)
