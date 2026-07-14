@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.19 published and installed; the existing Workspace now owns browser-first account setup and Host identity, while Owner completion, current-package Runtime completion, and physical second-device gates remain open
+Status: preview.20 published and installed; the existing Workspace now owns a compact browser-first account setup and Host identity, while Owner completion, current-package Runtime completion, and physical second-device gates remain open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -11,12 +11,12 @@ physical evidence and cannot be closed by mock output.
 
 | # | Requirement | Current evidence | Status |
 |---|---|---|---|
-| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.19` publishes a no-repository bootstrap plus archive/checksum assets from exact commit `ac69d8c`. Exact-head push/PR CI, bundle and release-consumer smokes, checksum verification and the same-Mac preview.18-to-preview.19 upgrade passed. A receipt from another physical Mac remains missing. | Passed locally; external evidence required |
-| 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md`, `PRIVATE_HOST_AUTH_WORKSPACE_UI_ACCEPTANCE.md`, `PRIVATE_HOST_WORKER_OWNERSHIP_ACCEPTANCE.md` and bundle smoke cover installed CLI, production UI, browser-first Owner setup in the existing Workspace, init, doctor, start/status/stop, Runtime readiness and fail-closed duplicate Worker ownership. The installed preview.19 macOS app opened that Workspace without changing the Host or Worker PIDs. | Passed locally |
-| 3 | Dependency-free second computer opens private HTTPS console and authenticates | preview.19 is live through private Tailscale HTTPS on port 8443, Funnel is disabled, and the Workspace is ready. The installed `open-console` can perform a scrubbed setup-code handoff without output disclosure. Host status remains `bootstrap_required`; Owner completion and physical second-device browser login remain human gates. | Host side passed; external evidence required |
+| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.20` publishes a no-repository bootstrap plus archive/checksum assets from exact commit `3b6518f`. Exact-head push/PR CI, bundle and release-consumer smokes, public-download byte equality, checksum verification and the same-Mac preview.19-to-preview.20 upgrade passed. A receipt from another physical Mac remains missing. | Passed locally; external evidence required |
+| 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md`, `PRIVATE_HOST_AUTH_WORKSPACE_UI_ACCEPTANCE.md`, `PRIVATE_HOST_WORKER_OWNERSHIP_ACCEPTANCE.md` and bundle smoke cover installed CLI, production UI, compact browser-first Owner setup in the existing Workspace, init, doctor, start/status/stop, Runtime readiness and fail-closed duplicate Worker ownership. The installed preview.20 macOS app opened that Workspace without changing the Host or Worker PIDs. | Passed locally |
+| 3 | Dependency-free second computer opens private HTTPS console and authenticates | preview.20 is live through private Tailscale HTTPS on port 8443, Funnel is disabled, and the Workspace is ready. The installed `open-console` can perform a scrubbed setup-code handoff without output disclosure. Host status remains `bootstrap_required`; Owner completion and physical second-device browser login remain human gates. | Host side passed; external evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, `private_host_owner_browser_handoff_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, setup-code authority, role/session separation and CSRF/Origin checks. | Passed locally |
 | 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | Customer dispatch and ledger views exist; Audit and Memory use live APIs; memory decisions write through the approver route; approved artifact download is Session/workspace/approval checked and audited. A second-device end-to-end receipt remains open. | Partial |
-| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | `PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md` records completed Hermes and OpenClaw async runs from preview.4. preview.19 is running exactly one explicitly confirmed Worker for each adapter. Runs `run_gw_242eac97293e` and `run_gw_23bb6ba9f13e` remain approval-gated; no human Owner has approved current-package execution. | Passed previously; exact-current completion pending |
+| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | `PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md` records completed Hermes and OpenClaw async runs from preview.4. preview.20 is running exactly one explicitly confirmed Worker for each adapter. Runs `run_gw_242eac97293e` and `run_gw_23bb6ba9f13e` remain approval-gated; no human Owner has approved current-package execution. | Passed previously; exact-current completion pending |
 | 7 | Console disconnect does not stop Host Worker or lose task | `PRIVATE_HOST_CONSOLE_DISCONNECT_ACCEPTANCE.md` proves real Hermes/OpenClaw jobs completed after their first Host-local Session clients were discarded, then were read through fresh Owner Sessions. Physical browser/tailnet loss remains missing. | Passed on Host; external evidence required |
 | 8 | Host restart preserves ledger and knowledge state | `PRIVATE_HOST_RESTART_PERSISTENCE_ACCEPTANCE.md` covers Session, task and a 194-document local Markdown/FTS index remaining searchable after managed restart. | Passed locally |
 | 9 | Backup and restore pass on isolated database | `PRIVATE_HOST_BACKUP_RESTORE_ACCEPTANCE.md` covers strict manifest/hash/schema/integrity/foreign-key checks, atomic replacement and access revocation. | Passed locally |
@@ -294,7 +294,7 @@ restart passed. Owner creation, current-package approved Runtime completion,
 physical second-device workflow/disconnect evidence, and another-Mac clean
 install remain open, so this is still a preview rather than the final RC.
 
-## Current Preview 19
+## Superseded Preview 19
 
 - Tag: `v1.6.0-private-host-preview.19`
 - Exact commit: `ac69d8c59dc8b7a9753f57f9bf1cb4a9fbc3f1a5`
@@ -339,6 +339,52 @@ OpenClaw PIDs. The managed Host-only LaunchAgent plist was staged through its
 dry-run and explicit install gates with exact definition, `0600` mode and no
 credential material, but it remains unloaded. Logout/reboot persistence is not
 claimed.
+
+preview.20 supersedes this package with the compact locked Workspace shell and
+responsive account form. The preview.19 release and installation evidence above
+remains historical evidence only.
+
+## Current Preview 20
+
+- Tag: `v1.6.0-private-host-preview.20`
+- Exact commit: `3b6518f3870c0e299e74f757da41623e8c14f526`
+- Push CI: passed at the exact commit (`29316887569`)
+- Pull-request CI: passed at the exact commit (`29316891385`)
+- Release: `https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.20`
+- SHA-256 manifest: `b8c0c4f38d4764705185469cd5c96da045658779cc79dd90f0b44b17e8470e23`
+- Tar archive: `8ca2e218f178756d1c2773a722d15086078f9158a47a513ea8d15425a81cfe8e`
+- Zip archive: `ab961783542137cb6b7940a2ce1dac2ea575bbe29ff0da2faad6af5bda542a19`
+- Release-consumer bootstrap: `6f78549bdb4c1da6ff3128907d8b82067a3ae06741cf823b34e1acdaaf03a44f`
+
+preview.20 keeps Owner setup and sign-in inside the existing React Workspace,
+but removes the locked navigation wall and inactive Topbar controls. Before
+authentication, the Sidebar exposes only the current account-and-access step;
+the account form uses compact settings rows on desktop and label-over-input
+rows on narrow screens. The package introduces no second frontend, standalone
+auth card, marketing surface or third-party UI asset.
+
+Both published archives, the checksum document and bootstrap were downloaded
+from GitHub and compared byte-for-byte with the locally built release assets.
+The archive policy scan found no unsafe names or forbidden payload members. The
+public bootstrap then installed preview.20 at the exact release commit in a
+fresh temporary HOME without a repository, without creating a Host Owner and
+without starting a Runtime.
+
+The real Host upgraded from preview.19 after a verified operator backup; the
+installer also created and verified its automatic pre-update backup. It
+preserved the ledger, installed the managed UI and restored one explicitly
+confirmed Hermes Worker plus one explicitly confirmed OpenClaw Worker. The
+installed HTML, CSS and JavaScript matched the source release build
+byte-for-byte. Browser review of the installed `18878` Workspace at 1280x720
+reported HTTP 200, zero console errors and the compact setup-only shell.
+
+Opening the installed macOS application after the upgrade reused the running
+Host and both Workers: the Host, server, Hermes and OpenClaw PIDs remained
+unchanged. Private Tailscale HTTPS stayed ready with Funnel disabled. No Owner
+was created and no live Runtime task was executed during this package upgrade.
+Owner creation, current-package approved Runtime completion, physical
+second-device workflow and disconnect evidence, another-Mac clean install and
+logout/reboot service proof remain open. This is a prerelease, not the final RC.
 
 ## Release Gates
 

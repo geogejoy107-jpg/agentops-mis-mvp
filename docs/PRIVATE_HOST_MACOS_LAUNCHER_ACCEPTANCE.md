@@ -120,19 +120,22 @@ installation in place.
 
 ## Installed App Launch Receipt
 
-On 2026-07-14, the installed preview.19 launcher was invoked through the real
-macOS application boundary:
+On 2026-07-14, preview.19 first established the installed-app process reuse
+receipt. After the versioned preview.20 upgrade, the launcher was invoked again
+through the real macOS application boundary:
 
 ```bash
 open ~/Applications/AgentOps\ MIS.app
 ```
 
-Google Chrome opened `http://127.0.0.1:18878/workspace` and the production
-Workspace returned HTTP 200. The managed Host PID remained unchanged, and the
-single Hermes and single OpenClaw Worker PIDs both remained unchanged. This
-proves that opening the installed app reuses the existing Host and Worker set
-instead of restarting or duplicating them. No Owner was created, no Runtime
-task was dispatched, and no credential or setup-code value was recorded.
+Google Chrome opened `http://127.0.0.1:18878/workspace` and the preview.20
+production Workspace returned HTTP 200. The managed Host PID remained
+unchanged, and the single Hermes and single OpenClaw Worker PIDs both remained
+unchanged. The installed HTML, CSS and JavaScript also matched the preview.20
+release build byte-for-byte. This proves that opening the installed app reuses
+the existing Host and Worker set instead of restarting or duplicating them. No
+Owner was created, no Runtime task was dispatched, and no credential or
+setup-code value was recorded.
 
 ## Remaining External Gate
 

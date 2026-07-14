@@ -12,14 +12,14 @@ SECOND_DEVICE = ROOT / "docs" / "PRIVATE_HOST_SECOND_DEVICE_ACCEPTANCE.md"
 LAUNCHER = ROOT / "docs" / "PRIVATE_HOST_MACOS_LAUNCHER_ACCEPTANCE.md"
 BACKGROUND_SERVICE = ROOT / "docs" / "PRIVATE_HOST_BACKGROUND_SERVICE_ACCEPTANCE.md"
 
-VERSION = "1.6.0-private-host-preview.19"
+VERSION = "1.6.0-private-host-preview.20"
 TAG = f"v{VERSION}"
-COMMIT = "ac69d8c59dc8b7a9753f57f9bf1cb4a9fbc3f1a5"
+COMMIT = "3b6518f3870c0e299e74f757da41623e8c14f526"
 RELEASE_URL = f"https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/{TAG}"
 CHECKSUMS = {
-    "manifest": "696d18dd9983af11d6c1a069650247ef29db42ea6000e1d899236d27c4afe7bb",
-    "tar": "def82d5ebbcca5e029419c61a470bb655f02d4f1ed1ec5711e8f3f1527775c42",
-    "zip": "43906173569ddcdaff10c849441f3001830dc60535b1f9f4a8320698781fc3a3",
+    "manifest": "b8c0c4f38d4764705185469cd5c96da045658779cc79dd90f0b44b17e8470e23",
+    "tar": "8ca2e218f178756d1c2773a722d15086078f9158a47a513ea8d15425a81cfe8e",
+    "zip": "ab961783542137cb6b7940a2ce1dac2ea575bbe29ff0da2faad6af5bda542a19",
     "bootstrap": "6f78549bdb4c1da6ff3128907d8b82067a3ae06741cf823b34e1acdaaf03a44f",
 }
 
@@ -37,9 +37,11 @@ def main() -> int:
     service = BACKGROUND_SERVICE.read_text(encoding="utf-8")
     rc_headings = [line for line in rc.splitlines() if line.startswith("## Current Preview ")]
     normalized_second = " ".join(second.split())
+    normalized_launcher = " ".join(launcher.split())
 
     require(len(rc_headings) == 1, "RC document must name exactly one Current Preview", failures)
-    require("## Current Preview 19" in rc, "preview.19 must be the current RC prerelease", failures)
+    require("## Current Preview 20" in rc, "preview.20 must be the current RC prerelease", failures)
+    require("## Superseded Preview 19" in rc, "preview.19 must be preserved as superseded history", failures)
     require("## Superseded Preview 12" in rc, "preview.12 must be marked superseded", failures)
     require(TAG in rc and VERSION in rc, "current version/tag missing from RC document", failures)
     require(COMMIT in rc and COMMIT in second, "exact release commit missing from acceptance documents", failures)
@@ -64,8 +66,8 @@ def main() -> int:
             "physical evidence anti-substitution boundary missing", failures)
     require("not the final RC" in rc, "prerelease must not claim final RC", failures)
     require("## Installed App Launch Receipt" in launcher, "installed app launch receipt missing", failures)
-    require("Host PID remained unchanged" in launcher, "launcher receipt must preserve Host PID", failures)
-    require("Worker PIDs both remained unchanged" in launcher, "launcher receipt must preserve Worker PIDs", failures)
+    require("Host PID remained unchanged" in normalized_launcher, "launcher receipt must preserve Host PID", failures)
+    require("Worker PIDs both remained unchanged" in normalized_launcher, "launcher receipt must preserve Worker PIDs", failures)
     require("A separate clean Mac still must" in launcher, "another-Mac launcher gate must remain open", failures)
     require("## Local Service Staging Receipt" in service, "local service staging receipt missing", failures)
     require("launchd has not loaded the service" in service, "service receipt must remain unloaded", failures)
