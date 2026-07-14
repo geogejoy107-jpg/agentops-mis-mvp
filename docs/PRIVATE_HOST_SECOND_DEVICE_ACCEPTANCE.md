@@ -121,12 +121,12 @@ text, project files, database path, or unrestricted Host paths.
 ## Current Result
 
 Host-side staging was refreshed on 2026-07-14 with
-`v1.6.0-private-host-preview.24` at exact commit
-`d52415f7d838c584faa61204fe27fafb4c622324`:
+`v1.6.0-private-host-preview.25` at exact commit
+`2baa5aecf8dc5a9f6754ef8adb4bc34bdb5a4a3b`:
 
 - GitHub download and published checksum verification passed;
 - upgrade created a pre-update ledger backup and preserved user data;
-- Host health, managed preview.24 production UI and real Hermes/OpenClaw Workers
+- Host health, managed preview.25 production UI and real Hermes/OpenClaw Workers
   are ready; Worker Status/Fleet verify both process identities, report both as
   Host-managed without double-counting their Agent rows, and report zero
   unverified process claims;
@@ -142,7 +142,8 @@ Host-side staging was refreshed on 2026-07-14 with
 - the private HTTPS Workspace returned HTTP 200;
 - the self-validating existing Workspace account UI, installed
   HTML/CSS/JavaScript and exact installed version were verified locally and
-  matched the release build;
+  matched the release build; installed browser metadata now uses the AgentOps
+  MIS product identity rather than the original Figma starter title;
 - one Hermes and one OpenClaw Worker are running, and same-adapter duplicate
   Host ownership now fails closed without terminating an external Worker.
 

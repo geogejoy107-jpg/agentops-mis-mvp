@@ -113,15 +113,15 @@ secret scan, and `git diff --check`. Browser review covered both the existing
 dark operations theme and light enterprise theme at desktop width. The latest
 focused review also covered the light enterprise first-Owner state at
 1280x720 and 390x844 with zero browser console errors and no horizontal
-overflow. The real Host now serves preview.24 from the versioned installation;
+overflow. The real Host now serves preview.25 from the versioned installation;
 source assets were not copied over the running installation in place.
 
-The `v1.6.0-private-host-preview.24` package upgrade preserved the same launcher
+The `v1.6.0-private-host-preview.25` package upgrade preserved the same launcher
 boundary and existing Workspace. Its public bundle and clean-HOME launcher
 smokes passed, and installed browser readback returned the Chinese Owner form
 without horizontal overflow. The process-reuse receipt below was last physically
-re-run on preview.22 and remains historical launcher evidence; preview.23 and
-preview.24 do not claim a new `open` receipt.
+re-run on preview.22 and remains historical launcher evidence; preview.23,
+preview.24 and preview.25 do not claim a new `open` receipt.
 
 ## Installed App Launch Receipt
 
