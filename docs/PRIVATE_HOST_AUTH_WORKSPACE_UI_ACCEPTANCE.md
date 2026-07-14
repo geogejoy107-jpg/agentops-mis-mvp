@@ -210,9 +210,9 @@ host trust assumption, not a browser bootstrap authority granted by the port.
 
 - Owner bootstrap still depends on the protected one-time setup code. The
   graphical path removes manual copying; it does not weaken that authority.
-- The real installed Private Host currently serves preview.20. The password
-  usability changes in this worktree still require a versioned package upgrade;
-  source/build evidence is not yet installed-product evidence for this slice.
+- The real installed Private Host serves preview.21 from exact commit
+  `c29addf2fb1155e6046432007c7d6282ac6d1754`. Installed UI bytes match the
+  release build; Owner completion remains a human action.
 - Owner bootstrap/login and the real Hermes or OpenClaw runtime closure still
   require user input. No unattended automation or machine credential may
   substitute for those human actions.

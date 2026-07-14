@@ -121,12 +121,12 @@ text, project files, database path, or unrestricted Host paths.
 ## Current Result
 
 Host-side staging was refreshed on 2026-07-14 with
-`v1.6.0-private-host-preview.20` at exact commit
-`3b6518f3870c0e299e74f757da41623e8c14f526`:
+`v1.6.0-private-host-preview.21` at exact commit
+`c29addf2fb1155e6046432007c7d6282ac6d1754`:
 
 - GitHub download and published checksum verification passed;
 - upgrade created a pre-update ledger backup and preserved user data;
-- Host health, managed preview.20 production UI and real Hermes/OpenClaw Workers
+- Host health, managed preview.21 production UI and real Hermes/OpenClaw Workers
   are ready;
 - the published no-repository bootstrap passed release-consumer
   install gates from the public GitHub tag in a fresh temporary HOME without a
@@ -138,8 +138,9 @@ Host-side staging was refreshed on 2026-07-14 with
 - private Tailscale HTTPS uses port 8443 with one exclusive MIS handler;
 - Funnel is disabled and the unrelated port 443 target remains unchanged;
 - the private HTTPS Workspace returned HTTP 200;
-- the compact existing Workspace account UI, installed HTML/CSS/JavaScript and
-  exact installed version were verified locally and matched the release build;
+- the self-validating existing Workspace account UI, installed
+  HTML/CSS/JavaScript and exact installed version were verified locally and
+  matched the release build;
 - one Hermes and one OpenClaw Worker are running, and same-adapter duplicate
   Host ownership now fails closed without terminating an external Worker.
 
