@@ -13,6 +13,7 @@ export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLa
     en: {
       workspace: "Workspace",
       workspaceName: "AgentOps Demo",
+      privateHost: "Private Host",
       search: "Search agents, tasks, runs...",
       live: "Live",
       themeLabel: theme === "enterprise" ? "Enterprise" : theme === "ops" ? "Ops" : "Workforce",
@@ -27,6 +28,7 @@ export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLa
     zh: {
       workspace: "工作区",
       workspaceName: "AgentOps 演示",
+      privateHost: "本地主机",
       search: "搜索代理、任务、运行...",
       live: "实时",
       themeLabel: theme === "enterprise" ? "企业版" : theme === "ops" ? "控制面" : "员工 OS",
@@ -45,6 +47,7 @@ export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLa
     setTheme(themeOrder[nextIndex]);
   };
   const displayName = user?.display_name || user?.username || "Jiwu Wang";
+  const workspaceName = locked ? copy.privateHost : user?.workspace_id || copy.workspaceName;
   const initials = displayName
     .split(/\s+/)
     .filter(Boolean)
@@ -77,7 +80,7 @@ export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLa
         style={{ color: "var(--mis-text)", background: "var(--mis-surface2)" }}
       >
         <span style={{ color: "var(--mis-dim)" }}>{copy.workspace}:</span>
-        {copy.workspaceName}
+        {workspaceName}
         <ChevronDown size={12} style={{ color: "var(--mis-dim)" }} />
       </button>
 

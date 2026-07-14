@@ -105,6 +105,14 @@ def main() -> int:
     )
     record(
         checks,
+        "authenticated_shell_uses_real_account_identity",
+        "useHumanAuth" in sidebar
+        and "user?.workspace_id" in sidebar
+        and "user?.display_name" in sidebar
+        and "user?.username" in sidebar,
+    )
+    record(
+        checks,
         "mobile_topbar_keeps_product_identity",
         "md:hidden" in topbar and "AgentOps MIS" in topbar and "<Zap" in topbar,
     )
@@ -225,6 +233,12 @@ def main() -> int:
         "locked_topbar_hides_placeholder_avatar",
         ") : !locked ? (" in topbar
         and "title={displayName}" in topbar,
+    )
+    record(
+        checks,
+        "locked_topbar_uses_private_host_workspace",
+        "const workspaceName = locked ? copy.privateHost" in topbar
+        and "{workspaceName}" in topbar,
     )
 
     failures.extend(name for name, passed in checks.items() if not passed)

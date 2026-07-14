@@ -56,6 +56,10 @@ ready, `AuthGate` returns the existing workspace unchanged.
 - During bootstrap or sign-in, that existing Sidebar entry is the current
   location. Locked rows remain non-links, and the locked footer shows the
   Private Host/account context instead of the demo workspace identity.
+- The locked workspace switcher says `Private Host` / `本地主机`. After
+  authentication, the Sidebar and Topbar use the actual Human Session
+  `workspace_id`, display name, or username; demo identity is only a fallback
+  when human authentication is disabled.
 - Locked Sidebar items render as disabled non-link rows. They do not navigate
   to workspace or Admin routes before authentication.
 - The Topbar communicates the locked state as a quiet inline status, while

@@ -7,6 +7,7 @@ import {
   ChevronDown, ChevronRight, Zap, TerminalSquare, ClipboardCheck, MonitorCheck, UserRound,
 } from "lucide-react";
 import { pick, usePreferences } from "../../context/PreferencesContext";
+import { useHumanAuth } from "../../context/HumanAuthContext";
 
 interface NavItem {
   labelKey: string;
@@ -55,6 +56,7 @@ const navGroups: NavGroup[] = [
 export function Sidebar({ locked = false }: { locked?: boolean }) {
   const location = useLocation();
   const { locale } = usePreferences();
+  const { required: humanAuthRequired, user } = useHumanAuth();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const copy = pick(locale, {
     en: {
@@ -114,6 +116,8 @@ export function Sidebar({ locked = false }: { locked?: boolean }) {
   const toggleGroup = (title: string) => {
     setCollapsed((prev) => ({ ...prev, [title]: !prev[title] }));
   };
+  const workspaceLabel = user?.workspace_id || (humanAuthRequired ? copy.productMode : "AgentOps Demo");
+  const accountLabel = user?.display_name || user?.username || (humanAuthRequired ? copy.account : "jiwu@agentops.dev");
 
   return (
     <aside
@@ -228,8 +232,8 @@ export function Sidebar({ locked = false }: { locked?: boolean }) {
           </>
         ) : (
           <>
-            <div>{copy.workspace}: AgentOps Demo</div>
-            <div style={{ color: "var(--mis-muted)" }}>jiwu@agentops.dev</div>
+            <div>{copy.workspace}: {workspaceLabel}</div>
+            <div style={{ color: "var(--mis-muted)" }}>{accountLabel}</div>
           </>
         )}
       </div>
