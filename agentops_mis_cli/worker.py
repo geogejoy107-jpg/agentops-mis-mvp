@@ -22,6 +22,7 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -35,6 +36,7 @@ from agentops_mis_cli.http_transport import credential_opener, credential_transp
 from agentops_mis_cli.redaction import redact_text
 
 
+PACKAGE_LINK_ROOT = Path(__file__).absolute().parents[1]
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = PACKAGE_ROOT if (PACKAGE_ROOT / "server.py").exists() else None
 DEFAULT_BASE_URL = "http://127.0.0.1:8787"
@@ -45,6 +47,26 @@ DEFAULT_HERMES_MODEL = "hermes-agent"
 DEFAULT_HERMES_MAX_TOKENS = int(os.environ.get("HERMES_MAX_TOKENS", "512"))
 DEFAULT_OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
 WORKER_SECRET_BOUNDARY_VERSION = "trusted_worker_client_v1"
+DEFAULT_CONFIG_PATH = Path(os.environ.get("AGENTOPS_CONFIG", "~/.agentops/config.json")).expanduser()
+LOCAL_CONFIG_WORKER_SESSION_SCOPES = (
+    "agents:write",
+    "agents:heartbeat",
+    "agent_plans:read",
+    "agent_plans:write",
+    "plan_evidence:read",
+    "plan_evidence:write",
+    "knowledge:read",
+    "knowledge:write",
+    "tasks:read",
+    "tasks:claim",
+    "runs:write",
+    "runtime_events:write",
+    "toolcalls:write",
+    "artifacts:write",
+    "memories:propose",
+    "evaluations:submit",
+    "audit:write",
+)
 
 
 def default_runtime_dir() -> Path:
@@ -60,7 +82,9 @@ def default_worker_cwd() -> Path:
     configured = os.environ.get("AGENTOPS_WORKER_CWD")
     if configured:
         return Path(configured).expanduser()
-    return REPO_ROOT or Path.cwd()
+    if REPO_ROOT:
+        return PACKAGE_LINK_ROOT
+    return Path.cwd()
 
 
 DEFAULT_RUNTIME_DIR = default_runtime_dir()
@@ -130,6 +154,78 @@ def safe_error(exc: Exception | str) -> dict:
         "error_type": exc.__class__.__name__ if isinstance(exc, Exception) else "WorkerError",
         "error_message": redact_text(str(exc), 260),
     }
+
+
+class WorkerCredentialError(RuntimeError):
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+def load_local_config_api_key(args) -> str:
+    if str(getattr(args, "api_key", "") or ""):
+        raise WorkerCredentialError("local_config_conflicts_with_direct_api_key")
+    config_path = Path(str(getattr(args, "config_path", "") or DEFAULT_CONFIG_PATH)).expanduser()
+    if config_path.is_symlink():
+        raise WorkerCredentialError("local_config_symlink_rejected")
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(config_path, flags)
+    except FileNotFoundError as exc:
+        raise WorkerCredentialError("local_config_not_found") from exc
+    except OSError as exc:
+        raise WorkerCredentialError("local_config_unreadable") from exc
+    try:
+        file_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise WorkerCredentialError("local_config_not_regular_file")
+        if file_stat.st_mode & 0o077:
+            raise WorkerCredentialError("local_config_permissions_too_open")
+        if hasattr(os, "getuid") and file_stat.st_uid != os.getuid():
+            raise WorkerCredentialError("local_config_owner_mismatch")
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            descriptor = -1
+            config = json.load(handle)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise WorkerCredentialError("local_config_invalid") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if not isinstance(config, dict):
+        raise WorkerCredentialError("local_config_invalid")
+    requested_base_url = str(args.base_url or "").rstrip("/")
+    configured_base_url = str(config.get("base_url") or "").rstrip("/")
+    configured_key_origin = str(config.get("api_key_base_url") or "").rstrip("/")
+    if not requested_base_url or configured_base_url != requested_base_url or configured_key_origin != requested_base_url:
+        raise WorkerCredentialError("local_config_origin_mismatch")
+    if str(config.get("workspace_id") or "") != str(args.workspace_id or ""):
+        raise WorkerCredentialError("local_config_workspace_mismatch")
+    api_key = str(config.get("api_key") or "").strip()
+    if not api_key:
+        raise WorkerCredentialError("local_config_api_key_missing")
+    if not credential_transport_url_allowed(requested_base_url):
+        raise WorkerCredentialError("local_config_transport_rejected")
+    return api_key
+
+
+def resolve_worker_api_key(args) -> str:
+    source = str(getattr(args, "credential_source", "direct") or "direct").strip().lower()
+    if source == "direct":
+        return str(getattr(args, "api_key", "") or "")
+    if source == "local_config":
+        return load_local_config_api_key(args)
+    raise WorkerCredentialError("credential_source_unsupported")
+
+
+def apply_local_config_session_policy(args) -> None:
+    if str(getattr(args, "credential_source", "direct") or "direct") != "local_config":
+        return
+    allowed = set(LOCAL_CONFIG_WORKER_SESSION_SCOPES)
+    requested = split_csv(getattr(args, "session_scopes", ""))
+    if requested and not set(requested).issubset(allowed):
+        raise WorkerCredentialError("local_config_session_scopes_exceed_worker_policy")
+    args.session_scopes = ",".join(requested or LOCAL_CONFIG_WORKER_SESSION_SCOPES)
+    args.use_session = True
 
 
 class WorkerState:
@@ -1981,6 +2077,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace-id", default=os.environ.get("AGENTOPS_WORKSPACE_ID", DEFAULT_WORKSPACE_ID))
     parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
     parser.add_argument("--api-key", default=os.environ.get("AGENTOPS_API_KEY", ""))
+    parser.add_argument("--credential-source", choices=["direct", "local_config"], default=os.environ.get("AGENTOPS_WORKER_CREDENTIAL_SOURCE", "direct"), help="Load a direct API key or a locked local AgentOps CLI config at process start.")
+    parser.add_argument("--config-path", default=os.environ.get("AGENTOPS_CONFIG", str(DEFAULT_CONFIG_PATH)), help="Path used only with --credential-source local_config.")
     parser.add_argument("--use-session", action="store_true", help="Mint a short-lived Agent Gateway session before running the worker.")
     parser.add_argument("--session-ttl-sec", type=int, default=int(os.environ.get("AGENTOPS_SESSION_TTL_SEC", "900")), help="Session TTL when --use-session is set.")
     parser.add_argument("--session-refresh-margin-sec", type=float, default=float(os.environ.get("AGENTOPS_SESSION_REFRESH_MARGIN_SEC", "60")), help="Refresh the short-lived session when it has this many seconds or less remaining.")
@@ -2039,8 +2137,13 @@ def service_env_values(args) -> dict[str, str]:
         "AGENTOPS_WORKER_RUNTIME_DIR": args.runtime_dir,
         "AGENTOPS_WORKER_CWD": args.working_directory,
     }
+    credential_source = str(getattr(args, "credential_source", "direct") or "direct")
+    if credential_source == "local_config":
+        config_path = Path(str(getattr(args, "config_path", "") or DEFAULT_CONFIG_PATH)).expanduser().resolve(strict=False)
+        env_values["AGENTOPS_WORKER_CREDENTIAL_SOURCE"] = "local_config"
+        env_values["AGENTOPS_CONFIG"] = str(config_path)
     api_key_placeholder = str(args.api_key_placeholder or "").strip()
-    if api_key_placeholder and api_key_placeholder != DEFAULT_API_KEY_PLACEHOLDER:
+    if credential_source == "direct" and api_key_placeholder and api_key_placeholder != DEFAULT_API_KEY_PLACEHOLDER:
         env_values["AGENTOPS_API_KEY"] = api_key_placeholder
     return env_values
 
@@ -2059,7 +2162,7 @@ def build_worker_command(args) -> list[str]:
         "--jsonl-log",
     ]
     api_key_placeholder = str(args.api_key_placeholder or "").strip()
-    if getattr(args, "use_session", False) or api_key_placeholder not in {"", DEFAULT_API_KEY_PLACEHOLDER}:
+    if getattr(args, "use_session", False) or getattr(args, "credential_source", "direct") == "local_config" or api_key_placeholder not in {"", DEFAULT_API_KEY_PLACEHOLDER}:
         command.extend([
             "--use-session",
             "--session-ttl-sec",
@@ -2157,6 +2260,8 @@ def build_service_template_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runtime-dir", default="")
     parser.add_argument("--log-path", default="")
     parser.add_argument("--api-key-placeholder", default=DEFAULT_API_KEY_PLACEHOLDER)
+    parser.add_argument("--credential-source", choices=["direct", "local_config"], default="direct")
+    parser.add_argument("--config-path", default=str(DEFAULT_CONFIG_PATH))
     parser.add_argument("--worker-command", default="", help="Worker executable command for service templates. Defaults to installed agentops-worker or python -m fallback.")
     return parser
 
@@ -2285,6 +2390,18 @@ def check_service_installation(args) -> dict:
     adapter_present = args.adapter in content
     use_session_present = "--use-session" in content
     if args.manager == "launchd":
+        local_config_reference = bool(
+            re.search(r"AGENTOPS_WORKER_CREDENTIAL_SOURCE</key>\s*<string>local_config</string>", content)
+            and re.search(r"AGENTOPS_CONFIG</key>\s*<string>[^<]+</string>", content)
+            and "AGENTOPS_API_KEY" not in content
+        )
+    else:
+        local_config_reference = bool(
+            re.search(r"(?m)^Environment=.*AGENTOPS_WORKER_CREDENTIAL_SOURCE=local_config", content)
+            and re.search(r"(?m)^Environment=.*AGENTOPS_CONFIG=\S+", content)
+            and "AGENTOPS_API_KEY" not in content
+        )
+    if args.manager == "launchd":
         local_dev_no_token = bool(
             not re.search(r"AGENTOPS_API_KEY", content)
             and re.search(r"AGENTOPS_BASE_URL</key>\s*<string>http://127\.0\.0\.1:", content)
@@ -2318,7 +2435,15 @@ def check_service_installation(args) -> dict:
     else:
         unit = service_path.name
         service_status = systemd_status(unit, args.timeout)
-    ok = bool(exists and command_has_worker and adapter_present and (use_session_present or local_dev_no_token) and confirm_gate_ok and relaunch_policy["enabled"] and not token_like_detected)
+    observed_credential_source = "local_config" if local_config_reference else "direct"
+    requested_credential_source = str(getattr(args, "credential_source", "auto") or "auto")
+    credential_source_matches = requested_credential_source == "auto" or requested_credential_source == observed_credential_source
+    credential_source_ok = credential_source_matches and bool(
+        local_config_reference and use_session_present
+        if local_config_reference
+        else (use_session_present or local_dev_no_token)
+    )
+    ok = bool(exists and command_has_worker and adapter_present and credential_source_ok and confirm_gate_ok and relaunch_policy["enabled"] and not token_like_detected)
     hints = []
     if not exists:
         hints.append("Render a template with agentops-worker service-template and write it to service_path.")
@@ -2330,6 +2455,10 @@ def check_service_installation(args) -> dict:
         hints.append("Hermes/OpenClaw services need --confirm-run only when the operator intentionally allows live execution.")
     if exists and not use_session_present and not local_dev_no_token:
         hints.append("Remote/shared service files should use --use-session with a scoped token source; local loopback can run without a session token.")
+    if "AGENTOPS_WORKER_CREDENTIAL_SOURCE" in content and not local_config_reference:
+        hints.append("Local config credential references must include a config path, omit raw API keys, and mint a short-lived session.")
+    if exists and not credential_source_matches:
+        hints.append("Installed service credential source does not match the requested check policy.")
     if exists and not service_status.get("loaded"):
         hints.append("Service file exists but does not appear loaded; load it manually on the agent machine after review.")
     return {
@@ -2347,6 +2476,9 @@ def check_service_installation(args) -> dict:
             "command_has_worker": command_has_worker,
             "adapter_present": adapter_present,
             "use_session_present": use_session_present,
+            "credential_source": observed_credential_source,
+            "credential_source_matches": credential_source_matches,
+            "local_config_reference": local_config_reference,
             "local_dev_no_token": local_dev_no_token,
             "relaunch_policy_ok": relaunch_policy["enabled"],
             "confirm_gate_ok": confirm_gate_ok,
@@ -2371,6 +2503,8 @@ def build_service_check_parser() -> argparse.ArgumentParser:
     parser.add_argument("--label", default="")
     parser.add_argument("--service-path", default="")
     parser.add_argument("--api-key-placeholder", default=DEFAULT_API_KEY_PLACEHOLDER)
+    parser.add_argument("--credential-source", choices=["auto", "direct", "local_config"], default="auto")
+    parser.add_argument("--config-path", default=str(DEFAULT_CONFIG_PATH))
     parser.add_argument("--timeout", type=int, default=5)
     return parser
 
@@ -2407,6 +2541,8 @@ def install_service_file(args) -> dict:
         label=label,
         service_path=str(service_path),
         api_key_placeholder=args.api_key_placeholder,
+        credential_source=getattr(args, "credential_source", "direct"),
+        config_path=getattr(args, "config_path", str(DEFAULT_CONFIG_PATH)),
         worker_command=args.worker_command,
         timeout=args.timeout,
     )
@@ -2447,6 +2583,7 @@ def install_service_file(args) -> dict:
         "agent_id": args.agent_id,
         "workspace_id": args.workspace_id,
         "adapter": args.adapter,
+        "credential_source": getattr(args, "credential_source", "direct"),
         "service_path": str(service_path),
         "service_file_mode": "0600" if wrote else None,
         "template_hash": stable_hash(template),
@@ -2479,6 +2616,8 @@ def build_service_install_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runtime-dir", default="")
     parser.add_argument("--log-path", default="")
     parser.add_argument("--api-key-placeholder", default=DEFAULT_API_KEY_PLACEHOLDER)
+    parser.add_argument("--credential-source", choices=["direct", "local_config"], default="direct")
+    parser.add_argument("--config-path", default=str(DEFAULT_CONFIG_PATH))
     parser.add_argument("--worker-command", default="", help="Worker executable command for service templates. Defaults to installed agentops-worker or python -m fallback.")
     parser.add_argument("--service-path", default="")
     parser.add_argument("--confirm-install", action="store_true", help="Write the service file. Default is dry-run.")
@@ -2524,6 +2663,8 @@ def control_service(args) -> dict:
         label=label,
         service_path=str(service_path),
         api_key_placeholder=args.api_key_placeholder,
+        credential_source=getattr(args, "credential_source", "auto"),
+        config_path=getattr(args, "config_path", str(DEFAULT_CONFIG_PATH)),
         timeout=args.timeout,
     )
     service_check = check_service_installation(check_args)
@@ -2609,6 +2750,8 @@ def build_service_control_parser() -> argparse.ArgumentParser:
     parser.add_argument("--label", default="")
     parser.add_argument("--service-path", default="")
     parser.add_argument("--api-key-placeholder", default=DEFAULT_API_KEY_PLACEHOLDER)
+    parser.add_argument("--credential-source", choices=["auto", "direct", "local_config"], default="auto")
+    parser.add_argument("--config-path", default=str(DEFAULT_CONFIG_PATH))
     parser.add_argument("--timeout", type=int, default=10)
     parser.add_argument("--confirm-control", action="store_true", help="Actually call launchctl/systemctl. Default is preview only.")
     return parser
@@ -2763,15 +2906,29 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     signal.signal(signal.SIGTERM, handle_stop_signal)
     signal.signal(signal.SIGINT, handle_stop_signal)
-    client = AgentOpsClient(args.base_url, args.workspace_id, args.agent_id, args.api_key)
     state = WorkerState(args)
+    try:
+        parent_api_key = resolve_worker_api_key(args)
+        apply_local_config_session_policy(args)
+    except WorkerCredentialError as exc:
+        state.stop("failed_credential_source")
+        print(json_dumps({
+            "ok": False,
+            "processed": 0,
+            "credential_source": str(getattr(args, "credential_source", "direct") or "direct"),
+            "error": exc.code,
+            "state": state.data,
+            "token_omitted": True,
+        }))
+        return 1
+    args.api_key = parent_api_key
+    client = AgentOpsClient(args.base_url, args.workspace_id, args.agent_id, parent_api_key)
     processed = 0
     results = []
     registered = False
     fatal_failure = False
     session_info = None
     session_history = []
-    parent_api_key = args.api_key
     if args.use_session:
         try:
             session_info = ensure_worker_session(client, args, state, parent_api_key, session_info, session_history)

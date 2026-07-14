@@ -182,7 +182,9 @@ jobs:
           timeout 120s python3 scripts/operator_live_product_readiness_smoke.py
           timeout 120s python3 scripts/live_worker_loop_demo_slice_smoke.py
           timeout 120s python3 scripts/agentops_worker_service_check_smoke.py
+          timeout 120s python3 scripts/agentops_worker_service_install_smoke.py
           timeout 120s python3 scripts/agentops_worker_service_control_smoke.py
+          timeout 120s python3 scripts/agentops_worker_local_config_smoke.py
           timeout 120s python3 scripts/local_runtime_identity_smoke.py
           timeout 120s python3 scripts/agentops_cli_connection_hint_smoke.py
           timeout 120s python3 scripts/worker_log_rotation_smoke.py

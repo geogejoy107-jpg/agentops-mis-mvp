@@ -38,6 +38,8 @@ LOCAL_DEMO_DEFAULT_URL = os.environ.get("AGENTOPS_LOCAL_DEMO_DEFAULT_URL", DEFAU
 DEFAULT_WORKSPACE_ID = "local-demo"
 DEFAULT_REQUEST_TIMEOUT = 30
 CONFIG_PATH = Path(os.environ.get("AGENTOPS_CONFIG", "~/.agentops/config.json")).expanduser()
+PACKAGE_LINK_ROOT = Path(__file__).absolute().parents[1]
+DEFAULT_WORKER_SERVICE_CWD = PACKAGE_LINK_ROOT if (PACKAGE_LINK_ROOT / "server.py").is_file() else Path.cwd()
 REORDERABLE_GLOBAL_OPTIONS = {
     "--base-url": True,
     "--api-key": True,
@@ -5141,6 +5143,8 @@ def cmd_worker_service_check(args, client: AgentOpsClient) -> dict:
         label=args.label or "",
         service_path=args.service_path or "",
         api_key_placeholder=args.api_key_placeholder,
+        credential_source=args.credential_source,
+        config_path=args.config_path,
         timeout=args.timeout,
     )
     payload = worker_mod.check_service_installation(check_args)
@@ -5167,6 +5171,8 @@ def cmd_worker_service_install(args, client: AgentOpsClient) -> dict:
         runtime_dir=args.runtime_dir or "",
         log_path=args.log_path or "",
         api_key_placeholder=args.api_key_placeholder,
+        credential_source=args.credential_source,
+        config_path=args.config_path,
         worker_command=args.worker_command or "",
         service_path=args.service_path or "",
         confirm_install=bool(args.confirm_install),
@@ -5190,6 +5196,8 @@ def cmd_worker_service_control(args, client: AgentOpsClient) -> dict:
         label=args.label or "",
         service_path=args.service_path or "",
         api_key_placeholder=args.api_key_placeholder,
+        credential_source=args.credential_source,
+        config_path=args.config_path,
         timeout=args.timeout,
         confirm_control=bool(args.confirm_control),
     )
@@ -6413,6 +6421,8 @@ def build_parser() -> argparse.ArgumentParser:
     worker_service_check.add_argument("--label", default="")
     worker_service_check.add_argument("--service-path", default="")
     worker_service_check.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    worker_service_check.add_argument("--credential-source", choices=["auto", "direct", "local_config"], default="auto")
+    worker_service_check.add_argument("--config-path", default=str(CONFIG_PATH))
     worker_service_check.add_argument("--timeout", type=int, default=5)
     worker_service_check.set_defaults(handler="worker_service_check")
     worker_service_install = worker_sub.add_parser("service-install", help="Dry-run or write a safe launchd/systemd worker service file.")
@@ -6425,10 +6435,12 @@ def build_parser() -> argparse.ArgumentParser:
     worker_service_install.add_argument("--session-refresh-margin-sec", type=float, default=60)
     worker_service_install.add_argument("--poll-interval", type=float, default=5.0)
     worker_service_install.add_argument("--label", default="")
-    worker_service_install.add_argument("--working-directory", default=str(Path.cwd()))
+    worker_service_install.add_argument("--working-directory", default=str(DEFAULT_WORKER_SERVICE_CWD))
     worker_service_install.add_argument("--runtime-dir", default="")
     worker_service_install.add_argument("--log-path", default="")
     worker_service_install.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    worker_service_install.add_argument("--credential-source", choices=["direct", "local_config"], default="direct")
+    worker_service_install.add_argument("--config-path", default=str(CONFIG_PATH))
     worker_service_install.add_argument("--worker-command", default="", help="Worker executable command for service templates. Defaults to installed agentops-worker or python -m fallback.")
     worker_service_install.add_argument("--service-path", default="")
     worker_service_install.add_argument("--confirm-install", action="store_true", help="Write the service file. Default is dry-run.")
@@ -6443,6 +6455,8 @@ def build_parser() -> argparse.ArgumentParser:
     worker_service_control.add_argument("--label", default="")
     worker_service_control.add_argument("--service-path", default="")
     worker_service_control.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    worker_service_control.add_argument("--credential-source", choices=["auto", "direct", "local_config"], default="auto")
+    worker_service_control.add_argument("--config-path", default=str(CONFIG_PATH))
     worker_service_control.add_argument("--timeout", type=int, default=10)
     worker_service_control.add_argument("--confirm-control", action="store_true", help="Actually call launchctl/systemctl. Default is preview only.")
     worker_service_control.set_defaults(handler="worker_service_control")

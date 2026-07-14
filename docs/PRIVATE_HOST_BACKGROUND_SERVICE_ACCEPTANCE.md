@@ -88,7 +88,10 @@ Host-only persistence exercise; staging alone is not logout/reboot proof.
   logout/reboot persistence still requires a clean macOS account or VM receipt.
 - The service keeps only the MIS Host control plane alive. Hermes/OpenClaw
   Worker services remain independent and require their own explicit live-run
-  confirmation.
+  confirmation. Same-Mac Worker services can use the credential-free
+  `local_config` reference described in
+  `docs/PRIVATE_HOST_WORKER_SERVICE_ACCEPTANCE.md`; this does not change the
+  Host-only service command.
 - Browser UI controls for service installation are not included in this slice;
   the existing `.app` remains the normal low-friction way to initialize, start
   safely and open the same React Workspace.
