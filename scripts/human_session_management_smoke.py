@@ -392,7 +392,7 @@ def main() -> int:
         "settings_layout_reused": (
             "WorkspaceSettingsPage" in ui_source["page"]
             and "WorkspaceSettingsSection" in ui_source["page"]
-            and 'lg:grid-cols-[220px_minmax(0,680px)]' in ui_source["settings"]
+            and 'lg:grid-cols-[220px_minmax(0,1fr)]' in ui_source["settings"]
         ),
         "api_uses_relative_human_auth_paths": all(
             marker in ui_source["api"]
