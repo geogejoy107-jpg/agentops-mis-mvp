@@ -38,8 +38,6 @@ LOCAL_DEMO_DEFAULT_URL = os.environ.get("AGENTOPS_LOCAL_DEMO_DEFAULT_URL", DEFAU
 DEFAULT_WORKSPACE_ID = "local-demo"
 DEFAULT_REQUEST_TIMEOUT = 30
 CONFIG_PATH = Path(os.environ.get("AGENTOPS_CONFIG", "~/.agentops/config.json")).expanduser()
-PACKAGE_LINK_ROOT = Path(__file__).absolute().parents[1]
-DEFAULT_WORKER_SERVICE_CWD = PACKAGE_LINK_ROOT if (PACKAGE_LINK_ROOT / "server.py").is_file() else Path.cwd()
 REORDERABLE_GLOBAL_OPTIONS = {
     "--base-url": True,
     "--api-key": True,
@@ -5167,7 +5165,7 @@ def cmd_worker_service_install(args, client: AgentOpsClient) -> dict:
         session_refresh_margin_sec=args.session_refresh_margin_sec,
         poll_interval=args.poll_interval,
         label=args.label or "",
-        working_directory=args.working_directory,
+        working_directory=args.working_directory or str(worker_mod.DEFAULT_WORKER_CWD),
         runtime_dir=args.runtime_dir or "",
         log_path=args.log_path or "",
         api_key_placeholder=args.api_key_placeholder,
@@ -6435,7 +6433,7 @@ def build_parser() -> argparse.ArgumentParser:
     worker_service_install.add_argument("--session-refresh-margin-sec", type=float, default=60)
     worker_service_install.add_argument("--poll-interval", type=float, default=5.0)
     worker_service_install.add_argument("--label", default="")
-    worker_service_install.add_argument("--working-directory", default=str(DEFAULT_WORKER_SERVICE_CWD))
+    worker_service_install.add_argument("--working-directory", default="", help="Worker project directory. Installed Private Host defaults to its managed current package link.")
     worker_service_install.add_argument("--runtime-dir", default="")
     worker_service_install.add_argument("--log-path", default="")
     worker_service_install.add_argument("--api-key-placeholder", default="<paste one-time token here>")

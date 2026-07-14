@@ -5,9 +5,11 @@ from __future__ import annotations
 import atexit
 import fcntl
 import hashlib
+import html
 import http.cookiejar
 import json
 import os
+import re
 import shutil
 import socket
 import signal
@@ -287,7 +289,9 @@ def main() -> int:
             fail("installed real-runtime ledger readback client missing")
         for release_doc in (
             "docs/PRIVATE_HOST_OPERATOR_RUNBOOK.md",
+            "docs/PRIVATE_HOST_WORKER_SERVICE_ACCEPTANCE.md",
             "docs/RELEASE_PROVENANCE.md",
+            "docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md",
             "docs/SBOM_MINIMAL.md",
             "docs/THIRD_PARTY_NOTICES.md",
         ):
@@ -326,6 +330,27 @@ def main() -> int:
         configured_machine_key = str(json.loads((host_data / "secrets.json").read_text(encoding="utf-8")).get("api_key") or "")
         worker_preflight = run([str(bin_dir / "agentops"), "worker", "preflight", "--adapter", "mock"], env=env)
         worker_preflight_payload = json.loads(worker_preflight.stdout or "{}")
+        worker_service_path = temp / "local.agentops.worker.agt_bundle_local_config.plist"
+        worker_service = run([
+            str(bin_dir / "agentops"),
+            "worker",
+            "service-install",
+            "--manager",
+            "launchd",
+            "--adapter",
+            "mock",
+            "--agent-id",
+            "agt_bundle_local_config",
+            "--credential-source",
+            "local_config",
+            "--service-path",
+            str(worker_service_path),
+            "--confirm-install",
+        ], env=env)
+        worker_service_payload = json.loads(worker_service.stdout or "{}")
+        worker_service_text = worker_service_path.read_text(encoding="utf-8") if worker_service_path.is_file() else ""
+        worker_service_cwd_match = re.search(r"<key>WorkingDirectory</key>\s*<string>([^<]+)</string>", worker_service_text)
+        worker_service_cwd = html.unescape(worker_service_cwd_match.group(1)) if worker_service_cwd_match else ""
         bootstrap_password = "fixture-bundle-smoke-password"
         bootstrap_cli = run(
             [
@@ -385,6 +410,14 @@ def main() -> int:
             or configured_machine_key in ((configure_cli.stdout or "") + (configure_cli.stderr or "") + (worker_preflight.stdout or "") + (worker_preflight.stderr or ""))
             or worker_preflight.returncode != 0
             or worker_preflight_payload.get("ok") is not True
+            or worker_service.returncode != 0
+            or worker_service_payload.get("wrote") is not True
+            or worker_service_payload.get("credential_source") != "local_config"
+            or (worker_service_path.stat().st_mode & 0o777 if worker_service_path.exists() else 0) != 0o600
+            or "AGENTOPS_API_KEY" in worker_service_text
+            or "AGENTOPS_WORKER_CREDENTIAL_SOURCE" not in worker_service_text
+            or "--use-session" not in worker_service_text
+            or Path(worker_service_cwd) != install_root / "current"
             or bootstrap_cli.returncode != 0
             or bootstrap_payload.get("owner_created") is not True
             or bootstrap_password in ((bootstrap_cli.stdout or "") + (bootstrap_cli.stderr or ""))
@@ -407,6 +440,17 @@ def main() -> int:
                         "auth_status": auth_status,
                         "configure_cli_ok": configure_cli.returncode == 0,
                         "worker_preflight_ok": worker_preflight_payload.get("ok"),
+                        "worker_service": {
+                            "returncode": worker_service.returncode,
+                            "wrote": worker_service_payload.get("wrote"),
+                            "credential_source": worker_service_payload.get("credential_source"),
+                            "mode_ok": (worker_service_path.stat().st_mode & 0o777 if worker_service_path.exists() else 0) == 0o600,
+                            "api_key_omitted": "AGENTOPS_API_KEY" not in worker_service_text,
+                            "local_config_present": "AGENTOPS_WORKER_CREDENTIAL_SOURCE" in worker_service_text,
+                            "use_session_present": "--use-session" in worker_service_text,
+                            "follows_current": Path(worker_service_cwd) == install_root / "current",
+                            "working_directory": worker_service_cwd,
+                        },
                         "bootstrap_cli_ok": bootstrap_cli.returncode == 0,
                         "bootstrap_owner_created": bootstrap_payload.get("owner_created"),
                         "workflow_status": workflow_status,
@@ -681,6 +725,7 @@ def main() -> int:
             "installed_agent_plan_runtime_verification": "passed",
             "installed_owner_bootstrap_cli": "passed",
             "installed_host_cli_configuration": "passed",
+            "installed_worker_service_local_config": "passed",
             "installed_live_readback_client": "passed",
             "running_host_update_rejected": True,
             "lifecycle_locked_install_rejected": True,

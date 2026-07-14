@@ -78,6 +78,10 @@ The isolated local-config smoke proves:
 Existing service check/install/control smokes prove the original direct/local
 development behavior and remote placeholder flow did not regress. Hermes and
 OpenClaw definitions without `--confirm-run` remain unloadable.
+The Private Host bundle also includes this acceptance file and
+`REMOTE_WORKER_OPERATIONS_RUNBOOK.md`; its installed-bundle smoke confirms the
+same `local_config`, mode `0600`, no-API-key and managed-`current` contract
+without loading launchd or running an adapter.
 
 ## Real Private Host Readback
 

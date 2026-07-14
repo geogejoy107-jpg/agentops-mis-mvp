@@ -83,6 +83,10 @@ def default_worker_cwd() -> Path:
     if configured:
         return Path(configured).expanduser()
     if REPO_ROOT:
+        if PACKAGE_ROOT.parent.name == "versions":
+            current = PACKAGE_ROOT.parent.parent / "current"
+            if current.is_symlink() and current.resolve() == PACKAGE_ROOT:
+                return current
         return PACKAGE_LINK_ROOT
     return Path.cwd()
 
