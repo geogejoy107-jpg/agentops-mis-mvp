@@ -86,6 +86,13 @@ ready, `AuthGate` returns the existing workspace unchanged.
 - Owner bootstrap and sign-in remain distinct states in both locales.
 - Password confirmation is required for Owner bootstrap, and both new-password
   fields preserve the 12-character minimum.
+- Password and confirmation rows provide live bilingual readiness/match status,
+  and the create action remains disabled until the setup code, username,
+  12-character minimum and matching confirmation are all locally valid.
+- Password visibility uses bounded eye-icon buttons with accessible bilingual
+  labels. The controls do not change password storage, transport or server-side
+  validation, and visibility resets after authentication, logout or Session
+  expiry.
 - The language control remains usable while locked, so a user can choose a
   locale before bootstrap or login.
 - The theme control remains usable while locked and continues to use the
@@ -152,7 +159,8 @@ The static smoke passed all current checks and returned JSON with `ok: true`, no
 failures, and exit code 0. It verifies locked-shell reuse, the authentication
 gate marker, the unframed Workspace settings layout, shared content
 spacing and shared setup/account components, bilingual Owner bootstrap/login
-copy, password confirmation and minimum length, the visible Account navigation
+copy, password confirmation, live readiness/match guidance, accessible
+visibility controls and minimum length, the visible Account navigation
 entry, locked Account current-location treatment, demo-identity omission,
 compact responsive form rows, mobile product identity, locked non-link Sidebar
 items, persistent theme/language controls, logout omission while locked, and
@@ -202,9 +210,9 @@ host trust assumption, not a browser bootstrap authority granted by the port.
 
 - Owner bootstrap still depends on the protected one-time setup code. The
   graphical path removes manual copying; it does not weaken that authority.
-- The real installed Private Host has not yet been upgraded to a build
-  containing this worktree slice. Local static and production-build evidence is
-  not installed-product evidence.
+- The real installed Private Host currently serves preview.20. The password
+  usability changes in this worktree still require a versioned package upgrade;
+  source/build evidence is not yet installed-product evidence for this slice.
 - Owner bootstrap/login and the real Hermes or OpenClaw runtime closure still
   require user input. No unattended automation or machine credential may
   substitute for those human actions.

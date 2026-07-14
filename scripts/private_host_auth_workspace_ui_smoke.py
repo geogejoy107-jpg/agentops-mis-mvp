@@ -181,6 +181,55 @@ def main() -> int:
     )
     record(
         checks,
+        "bootstrap_password_live_validation",
+        all(
+            marker in auth_gate
+            for marker in (
+                "const passwordReady = password.length >= 12;",
+                "const passwordsMatch = confirmPassword.length > 0 && password === confirmPassword;",
+                "const bootstrapFormReady = Boolean(setupCode.trim()) && usernameReady && passwordReady && passwordsMatch;",
+                "disabled={submitting || (isBootstrap && !bootstrapFormReady)}",
+            )
+        ),
+    )
+    record(
+        checks,
+        "bootstrap_password_guidance_bilingual",
+        all(
+            marker in auth_gate
+            for marker in (
+                'zh: "已满足 12 个字符", en: "12-character minimum met"',
+                'zh: "两次输入一致", en: "Passwords match"',
+                'zh: "两次输入不一致", en: "Passwords do not match"',
+            )
+        ),
+    )
+    record(
+        checks,
+        "password_visibility_controls_are_accessible_icons",
+        "Eye," in auth_gate
+        and "EyeOff," in auth_gate
+        and "aria-label={revealControl.label}" in auth_gate
+        and "aria-pressed={revealControl.visible}" in auth_gate
+        and 'type="button"' in auth_gate
+        and "togglePasswordLabel" in auth_gate
+        and "toggleConfirmPasswordLabel" in auth_gate,
+    )
+    record(
+        checks,
+        "password_visibility_resets_across_auth_boundaries",
+        auth_gate.count("setShowPassword(false);") >= 3
+        and auth_gate.count("setShowConfirmPassword(false);") >= 3,
+    )
+    record(
+        checks,
+        "auth_fields_keep_explicit_label_binding",
+        "const inputId = useId();" in auth_gate
+        and "<label htmlFor={inputId}" in auth_gate
+        and "id={inputId}" in auth_gate,
+    )
+    record(
+        checks,
         "installer_handoff_hides_setup_code",
         "{isBootstrap && !hasInstallerHandoff && (" in auth_gate,
     )

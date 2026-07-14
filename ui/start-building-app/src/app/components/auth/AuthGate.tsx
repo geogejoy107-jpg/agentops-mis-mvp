@@ -1,7 +1,9 @@
-import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useId, useMemo, useState } from "react";
 import {
   ArrowRight,
   CheckCircle2,
+  Eye,
+  EyeOff,
   LoaderCircle,
   LockKeyhole,
   RefreshCw,
@@ -54,6 +56,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [displayName, setDisplayName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const refresh = useCallback(async () => {
     setGate("checking");
@@ -95,6 +99,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
       setHumanAuthCsrf(null);
       setStatus((current) => current ? { ...current, authenticated: false, user: undefined } : current);
       setGate("login");
+      setShowPassword(false);
+      setShowConfirmPassword(false);
       setError(pick(locale, {
         zh: "登录已过期，请重新登录。",
         en: "Your session expired. Please sign in again.",
@@ -121,6 +127,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
       setConfirmPassword("");
       setSetupCode("");
       setSetupHandoffActive(false);
+      setShowPassword(false);
+      setShowConfirmPassword(false);
       setGate("ready");
     } catch (nextError) {
       const code = errorCode(nextError);
@@ -140,6 +148,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
     } finally {
       setHumanAuthCsrf(null);
       setStatus((current) => current ? { ...current, authenticated: false, user: undefined } : current);
+      setShowPassword(false);
+      setShowConfirmPassword(false);
       setGate("login");
     }
   }, []);
@@ -156,6 +166,31 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   const isBootstrap = gate === "bootstrap";
   const hasInstallerHandoff = isBootstrap && setupHandoffActive;
+  const passwordReady = password.length >= 12;
+  const passwordsMatch = confirmPassword.length > 0 && password === confirmPassword;
+  const usernameReady = /^[a-z0-9][a-z0-9._-]{2,63}$/.test(username);
+  const bootstrapFormReady = Boolean(setupCode.trim()) && usernameReady && passwordReady && passwordsMatch;
+  const passwordHint = !isBootstrap
+    ? undefined
+    : password.length === 0
+      ? pick(locale, { zh: "至少 12 个字符", en: "At least 12 characters" })
+      : passwordReady
+        ? pick(locale, { zh: "已满足 12 个字符", en: "12-character minimum met" })
+        : pick(locale, {
+            zh: `还需 ${12 - password.length} 个字符`,
+            en: `${12 - password.length} more characters required`,
+          });
+  const confirmPasswordHint = confirmPassword.length === 0
+    ? pick(locale, { zh: "再次输入相同密码", en: "Enter the same password again" })
+    : passwordsMatch
+      ? pick(locale, { zh: "两次输入一致", en: "Passwords match" })
+      : pick(locale, { zh: "两次输入不一致", en: "Passwords do not match" });
+  const togglePasswordLabel = showPassword
+    ? pick(locale, { zh: "隐藏密码", en: "Hide password" })
+    : pick(locale, { zh: "显示密码", en: "Show password" });
+  const toggleConfirmPasswordLabel = showConfirmPassword
+    ? pick(locale, { zh: "隐藏确认密码", en: "Hide confirmation password" })
+    : pick(locale, { zh: "显示确认密码", en: "Show confirmation password" });
   const lockLabel = pick(locale, {
     zh: gate === "checking" ? "正在连接" : isBootstrap ? "需要初始化" : "需要登录",
     en: gate === "checking" ? "Connecting" : isBootstrap ? "Setup required" : "Sign-in required",
@@ -255,21 +290,34 @@ export function AuthGate({ children }: { children: ReactNode }) {
                     />
                     <AuthField
                       label={pick(locale, { zh: "密码", en: "Password" })}
-                      hint={isBootstrap ? pick(locale, { zh: "至少 12 个字符", en: "At least 12 characters" }) : undefined}
+                      hint={passwordHint}
+                      hintTone={password.length > 0 ? (passwordReady ? "success" : "warning") : "muted"}
                       value={password}
                       onChange={setPassword}
-                      type="password"
+                      type={showPassword ? "text" : "password"}
                       autoComplete={isBootstrap ? "new-password" : "current-password"}
                       minLength={isBootstrap ? 12 : undefined}
+                      revealControl={{
+                        visible: showPassword,
+                        label: togglePasswordLabel,
+                        onToggle: () => setShowPassword((current) => !current),
+                      }}
                     />
                     {isBootstrap && (
                       <AuthField
                         label={pick(locale, { zh: "确认密码", en: "Confirm password" })}
+                        hint={confirmPasswordHint}
+                        hintTone={confirmPassword.length > 0 ? (passwordsMatch ? "success" : "warning") : "muted"}
                         value={confirmPassword}
                         onChange={setConfirmPassword}
-                        type="password"
+                        type={showConfirmPassword ? "text" : "password"}
                         autoComplete="new-password"
                         minLength={12}
+                        revealControl={{
+                          visible: showConfirmPassword,
+                          label: toggleConfirmPasswordLabel,
+                          onToggle: () => setShowConfirmPassword((current) => !current),
+                        }}
                       />
                     )}
                   </div>
@@ -286,7 +334,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
                   <div className="flex justify-end pt-4">
                     <button
-                      disabled={submitting}
+                      disabled={submitting || (isBootstrap && !bootstrapFormReady)}
                       className="inline-flex h-9 w-full items-center justify-center gap-2 rounded px-4 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:min-w-40"
                       style={{ background: "var(--mis-cyan)", color: "var(--mis-bg)" }}
                     >
@@ -307,6 +355,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 function AuthField({
   label,
   hint,
+  hintTone = "muted",
   value,
   onChange,
   type = "text",
@@ -314,9 +363,11 @@ function AuthField({
   required = true,
   minLength,
   pattern,
+  revealControl,
 }: {
   label: string;
   hint?: string;
+  hintTone?: "muted" | "success" | "warning";
   value: string;
   onChange: (value: string) => void;
   type?: string;
@@ -324,30 +375,58 @@ function AuthField({
   required?: boolean;
   minLength?: number;
   pattern?: string;
+  revealControl?: {
+    visible: boolean;
+    label: string;
+    onToggle: () => void;
+  };
 }) {
+  const inputId = useId();
+  const hintColor = hintTone === "success"
+    ? "var(--mis-success)"
+    : hintTone === "warning"
+      ? "var(--mis-warning)"
+      : "var(--mis-muted)";
+
   return (
-    <label className="grid gap-1.5 py-3 text-xs sm:grid-cols-[160px_minmax(0,1fr)] sm:items-center sm:gap-3">
+    <div className="grid gap-1.5 py-3 text-xs sm:grid-cols-[160px_minmax(0,1fr)] sm:items-center sm:gap-3">
       <span className="min-w-0">
-        <span className="block font-medium" style={{ color: "var(--mis-text)" }}>{label}</span>
-        {hint && <span className="mt-0.5 block text-[10px] font-normal" style={{ color: "var(--mis-muted)" }}>{hint}</span>}
+        <label htmlFor={inputId} className="block font-medium" style={{ color: "var(--mis-text)" }}>{label}</label>
+        {hint && <span aria-live="polite" className="mt-0.5 block text-[10px] font-normal" style={{ color: hintColor }}>{hint}</span>}
       </span>
-      <input
-        type={type}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        autoComplete={autoComplete}
-        required={required}
-        minLength={minLength}
-        pattern={pattern}
-        className="h-9 w-full min-w-0 rounded border px-3 text-sm outline-none transition-colors focus:ring-2"
-        style={{
-          background: "var(--mis-surface)",
-          borderColor: "var(--mis-border)",
-          color: "var(--mis-text)",
-          boxShadow: "0 0 0 0 color-mix(in srgb, var(--mis-cyan) 24%, transparent)",
-        }}
-      />
-    </label>
+      <div className="relative min-w-0">
+        <input
+          id={inputId}
+          type={type}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          autoComplete={autoComplete}
+          required={required}
+          minLength={minLength}
+          pattern={pattern}
+          className={`h-9 w-full min-w-0 rounded border px-3 text-sm outline-none transition-colors focus:ring-2 ${revealControl ? "pr-10" : ""}`}
+          style={{
+            background: "var(--mis-surface)",
+            borderColor: "var(--mis-border)",
+            color: "var(--mis-text)",
+            boxShadow: "0 0 0 0 color-mix(in srgb, var(--mis-cyan) 24%, transparent)",
+          }}
+        />
+        {revealControl && (
+          <button
+            type="button"
+            onClick={revealControl.onToggle}
+            aria-label={revealControl.label}
+            aria-pressed={revealControl.visible}
+            title={revealControl.label}
+            className="absolute right-1 top-1 inline-flex h-7 w-7 items-center justify-center rounded"
+            style={{ color: "var(--mis-dim)" }}
+          >
+            {revealControl.visible ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
