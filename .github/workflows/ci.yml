@@ -287,5 +287,6 @@ jobs:
       - name: Private Host bundle smoke
         run: |
           set -euo pipefail
+          python3 scripts/private_host_macos_launcher_smoke.py
           python3 scripts/private_host_bundle_smoke.py
           python3 scripts/private_host_release_consumer_smoke.py

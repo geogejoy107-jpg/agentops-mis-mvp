@@ -30,6 +30,7 @@ RUNTIME_FILES = {
     "docs/SBOM_MINIMAL.md",
     "docs/THIRD_PARTY_NOTICES.md",
     "pyproject.toml",
+    "packaging/macos/launcher.py",
     "server.py",
     "scripts/agent_worker.py",
     "scripts/agentops_local_backup.py",

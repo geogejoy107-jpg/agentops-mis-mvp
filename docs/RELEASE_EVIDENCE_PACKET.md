@@ -80,6 +80,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/run_local_stack_smoke.py`
 - `python3 scripts/private_host_owner_browser_handoff_smoke.py`
 - `python3 scripts/private_host_auth_workspace_ui_smoke.py`
+- `python3 scripts/private_host_macos_launcher_smoke.py`
 - `python3 scripts/release_evidence_packet_smoke.py`
 - `python3 scripts/merge_readiness_status_smoke.py`
 - `python3 scripts/v1_5_product_closure_evidence_smoke.py`

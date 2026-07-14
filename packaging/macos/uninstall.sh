@@ -4,8 +4,9 @@ set -eu
 INSTALL_ROOT=${AGENTOPS_INSTALL_ROOT:-"$HOME/.local/share/agentops-mis"}
 BIN_DIR=${AGENTOPS_BIN_DIR:-"$HOME/.local/bin"}
 DATA_ROOT=${AGENTOPS_HOST_HOME:-"$HOME/.agentops/host"}
+APP_DIR=${AGENTOPS_APP_DIR:-"$HOME/Applications"}
 
-python3 - "$INSTALL_ROOT" "$BIN_DIR" "$DATA_ROOT" "${AGENTOPS_PURGE_DATA:-false}" <<'PY'
+python3 - "$INSTALL_ROOT" "$BIN_DIR" "$DATA_ROOT" "$APP_DIR" "${AGENTOPS_PURGE_DATA:-false}" <<'PY'
 import json
 import fcntl
 import os
@@ -18,13 +19,16 @@ from pathlib import Path
 raw_install_root = Path(sys.argv[1]).expanduser()
 raw_bin_dir = Path(sys.argv[2]).expanduser()
 raw_data_root = Path(sys.argv[3]).expanduser()
-if raw_install_root.is_symlink() or raw_bin_dir.is_symlink() or raw_data_root.is_symlink():
+raw_app_dir = Path(sys.argv[4]).expanduser()
+if raw_install_root.is_symlink() or raw_bin_dir.is_symlink() or raw_data_root.is_symlink() or raw_app_dir.is_symlink():
     raise SystemExit("unsafe symlinked uninstall path")
 install_root = raw_install_root.resolve()
 bin_dir = raw_bin_dir.resolve()
 data_root = raw_data_root.resolve()
-purge_data = sys.argv[4].lower() in {"1", "true", "yes"}
+app_dir = raw_app_dir.resolve()
+purge_data = sys.argv[5].lower() in {"1", "true", "yes"}
 shim = bin_dir / "agentops"
+app_bundle = app_dir / "AgentOps MIS.app"
 home = Path.home().resolve()
 
 def require_home_managed_path(path, label):
@@ -38,6 +42,12 @@ def require_home_managed_path(path, label):
 require_home_managed_path(install_root, "install root")
 require_home_managed_path(bin_dir, "binary directory")
 require_home_managed_path(data_root, "Host data root")
+try:
+    app_relative = app_dir.relative_to(home)
+except ValueError:
+    raise SystemExit("application directory is outside HOME; automatic uninstall refused")
+if not app_relative.parts:
+    raise SystemExit("unsafe application directory")
 if (
     install_root == data_root
     or install_root in data_root.parents
@@ -47,6 +57,15 @@ if (
     or data_root == bin_dir
     or data_root in bin_dir.parents
     or bin_dir in data_root.parents
+    or app_dir == install_root
+    or app_dir in install_root.parents
+    or install_root in app_dir.parents
+    or app_dir == data_root
+    or app_dir in data_root.parents
+    or data_root in app_dir.parents
+    or app_dir == bin_dir
+    or app_dir in bin_dir.parents
+    or bin_dir in app_dir.parents
 ):
     raise SystemExit("overlapping uninstall roots are unsafe")
 
@@ -79,6 +98,20 @@ if shim.exists():
     )
     if shim_text != expected_shim:
         raise SystemExit("CLI shim ownership cannot be verified")
+
+if app_bundle.exists() or app_bundle.is_symlink():
+    launcher_marker = app_bundle / "Contents" / "Resources" / "agentops-mis-launcher.json"
+    expected_launcher_marker = {
+        "schema_version": 1,
+        "product": "AgentOps MIS Private Host Launcher",
+        "managed": True,
+    }
+    try:
+        launcher_marker_payload = json.loads(launcher_marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raise SystemExit("AgentOps MIS application ownership cannot be verified")
+    if app_bundle.is_symlink() or not app_bundle.is_dir() or launcher_marker.is_symlink() or launcher_marker_payload != expected_launcher_marker:
+        raise SystemExit("AgentOps MIS application ownership cannot be verified")
 
 if purge_data:
     expected_data_marker = {
@@ -132,6 +165,8 @@ if pid_path.exists():
 
 if shim.exists():
     shim.unlink()
+if app_bundle.exists():
+    shutil.rmtree(app_bundle)
 if install_root.exists():
     shutil.rmtree(install_root)
 if purge_data and data_root.exists():
@@ -144,6 +179,7 @@ print(json.dumps({
     "operation": "uninstall",
     "install_removed": not install_root.exists(),
     "shim_removed": not shim.exists(),
+    "launcher_removed": not app_bundle.exists(),
     "user_data_preserved": not purge_data,
     "data_path": str(data_root),
 }, indent=2, sort_keys=True))

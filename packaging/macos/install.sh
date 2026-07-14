@@ -5,6 +5,11 @@ BUNDLE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 INSTALL_ROOT=${AGENTOPS_INSTALL_ROOT:-"$HOME/.local/share/agentops-mis"}
 BIN_DIR=${AGENTOPS_BIN_DIR:-"$HOME/.local/bin"}
 DATA_ROOT=${AGENTOPS_HOST_HOME:-"$HOME/.agentops/host"}
+APP_DIR=${AGENTOPS_APP_DIR:-"$HOME/Applications"}
+INSTALL_APP=true
+if [ "${AGENTOPS_NO_APP_INSTALL:-}" = "1" ]; then
+  INSTALL_APP=false
+fi
 
 if [ "$(uname -s)" != "Darwin" ] && [ "${AGENTOPS_BUNDLE_INSTALLER_TEST_MODE:-}" != "1" ]; then
   echo "this unsigned Private Host bundle supports macOS only" >&2
@@ -16,7 +21,7 @@ if sys.version_info < (3, 10):
     raise SystemExit("Python 3.10+ is required")
 PY
 
-python3 - "$BUNDLE_DIR" "$INSTALL_ROOT" "$BIN_DIR" "$DATA_ROOT" <<'PY'
+python3 - "$BUNDLE_DIR" "$INSTALL_ROOT" "$BIN_DIR" "$DATA_ROOT" "$APP_DIR" "$INSTALL_APP" <<'PY'
 import json
 import fcntl
 import hashlib
@@ -33,12 +38,48 @@ bundle = Path(sys.argv[1]).resolve()
 install_root = Path(sys.argv[2]).expanduser().resolve()
 bin_dir = Path(sys.argv[3]).expanduser().resolve()
 data_root = Path(sys.argv[4]).expanduser().resolve()
+raw_app_dir = Path(sys.argv[5]).expanduser()
+install_app = sys.argv[6].lower() == "true"
+if raw_app_dir.is_symlink():
+    raise SystemExit("unsafe symlinked application directory")
+app_dir = raw_app_dir.resolve()
 manifest_path = bundle / "manifest.json"
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 version = str(manifest["version"])
 if not version or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for char in version):
     raise SystemExit("invalid bundle version")
 target = install_root / "versions" / version
+app_bundle = app_dir / "AgentOps MIS.app"
+launcher_marker_payload = {
+    "schema_version": 1,
+    "product": "AgentOps MIS Private Host Launcher",
+    "managed": True,
+}
+
+if install_app:
+    home = Path.home().resolve()
+    try:
+        app_relative = app_dir.relative_to(home)
+    except ValueError:
+        raise SystemExit("application directory is outside HOME; install refused")
+    if not app_relative.parts:
+        raise SystemExit("unsafe application directory")
+    managed_roots = (install_root, bin_dir, data_root)
+    if any(
+        app_dir == root
+        or app_dir in root.parents
+        or root in app_dir.parents
+        for root in managed_roots
+    ):
+        raise SystemExit("application directory overlaps another managed root")
+    if app_bundle.exists() or app_bundle.is_symlink():
+        launcher_marker = app_bundle / "Contents" / "Resources" / "agentops-mis-launcher.json"
+        try:
+            existing_launcher_marker = json.loads(launcher_marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            raise SystemExit("existing AgentOps MIS application ownership cannot be verified")
+        if app_bundle.is_symlink() or not app_bundle.is_dir() or launcher_marker.is_symlink() or existing_launcher_marker != launcher_marker_payload:
+            raise SystemExit("existing AgentOps MIS application ownership cannot be verified")
 
 lock_path = data_root.parent / ".agentops-mis-host-lifecycle.lock"
 lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -220,6 +261,93 @@ shim.write_text(
     encoding="utf-8",
 )
 shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+launcher_installed = False
+if install_app:
+    app_dir.mkdir(parents=True, exist_ok=True)
+    stage_parent = Path(tempfile.mkdtemp(prefix=".agentops-mis-app-", dir=app_dir))
+    stage_app = stage_parent / "AgentOps MIS.app"
+    contents = stage_app / "Contents"
+    macos = contents / "MacOS"
+    resources = contents / "Resources"
+    macos.mkdir(parents=True)
+    resources.mkdir(parents=True)
+    launcher_source = target / "packaging" / "macos" / "launcher.py"
+    if not launcher_source.is_file():
+        raise SystemExit("installed release lacks the managed macOS launcher")
+    shutil.copy2(launcher_source, resources / "launcher.py")
+    (resources / "launcher.py").chmod(0o644)
+    launcher_config = {
+        "schema_version": 1,
+        "product": "AgentOps MIS Private Host Launcher",
+        "version": version,
+        "agentops_path": str(shim),
+        "bin_dir": str(bin_dir),
+        "current_path": str(current),
+        "host_home": str(data_root),
+        "install_root": str(install_root),
+        "python_path": str(Path(sys.executable).resolve()),
+        "default_port": 18878,
+        "credentials_included": False,
+    }
+    (resources / "launcher-config.json").write_text(
+        json.dumps(launcher_config, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (resources / "launcher-config.json").chmod(0o644)
+    (resources / "agentops-mis-launcher.json").write_text(
+        json.dumps(launcher_marker_payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (resources / "agentops-mis-launcher.json").chmod(0o644)
+    (contents / "Info.plist").write_text(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+        "<plist version=\"1.0\">\n"
+        "<dict>\n"
+        "  <key>CFBundleDisplayName</key><string>AgentOps MIS</string>\n"
+        "  <key>CFBundleExecutable</key><string>agentops-mis-launcher</string>\n"
+        "  <key>CFBundleIdentifier</key><string>dev.agentops.mis.private-host</string>\n"
+        "  <key>CFBundleName</key><string>AgentOps MIS</string>\n"
+        "  <key>CFBundlePackageType</key><string>APPL</string>\n"
+        f"  <key>CFBundleShortVersionString</key><string>{version}</string>\n"
+        "  <key>CFBundleVersion</key><string>1</string>\n"
+        "  <key>LSUIElement</key><true/>\n"
+        "</dict>\n"
+        "</plist>\n",
+        encoding="utf-8",
+    )
+    executable = macos / "agentops-mis-launcher"
+    final_launcher_source = app_bundle / "Contents" / "Resources" / "launcher.py"
+    executable.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        f"exec {shlex.quote(str(Path(sys.executable).resolve()))} {shlex.quote(str(final_launcher_source))} \"$@\"\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    backup_app = app_dir / ".AgentOps MIS.app.previous"
+    if backup_app.exists() or backup_app.is_symlink():
+        shutil.rmtree(stage_parent)
+        raise SystemExit("stale AgentOps MIS application update state; install refused")
+    previous_app = False
+    try:
+        if app_bundle.exists():
+            app_bundle.rename(backup_app)
+            previous_app = True
+        stage_app.rename(app_bundle)
+    except Exception:
+        if previous_app and backup_app.exists() and not app_bundle.exists():
+            backup_app.rename(app_bundle)
+        raise
+    else:
+        if previous_app:
+            shutil.rmtree(backup_app)
+        launcher_installed = True
+    finally:
+        if stage_parent.exists():
+            shutil.rmtree(stage_parent)
+
 fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
 os.close(lock_descriptor)
 
@@ -232,6 +360,9 @@ print(json.dumps({
     "previous_version": old_current.name if old_current and old_current != target else None,
     "pre_update_backup_path": pre_update_backup,
     "shim": str(shim),
+    "launcher": str(app_bundle) if install_app else None,
+    "launcher_installed": launcher_installed,
+    "launcher_starts_live_workers": False,
     "user_data_preserved": True,
 }, indent=2, sort_keys=True))
 PY

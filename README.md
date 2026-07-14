@@ -158,7 +158,11 @@ python3 scripts/build_private_host_bundle.py \
 
 输出包含 `.tar.gz`、`.zip` 和 archive SHA-256 JSON。解压后运行
 `sh install.sh`，默认安装到 `~/.local/share/agentops-mis` 并创建
-`~/.local/bin/agentops`；`sh uninstall.sh` 默认不会删除
+`~/.local/bin/agentops`，同时在 `~/Applications` 安装可双击的
+`AgentOps MIS.app`。双击入口只负责必要时初始化本地主机、以
+`--no-workers` 安全启动并打开现有浏览器 Workspace；它不是另一套桌面前端，
+也不会自动启用 Hermes/OpenClaw。无图形环境可在安装前设置
+`AGENTOPS_NO_APP_INSTALL=1`。`sh uninstall.sh` 默认不会删除
 `~/.agentops/host` 用户账本/配置。该预览尚未 Apple 签名或公证，不能当作
 正式 `.pkg/.dmg` 发布。
 

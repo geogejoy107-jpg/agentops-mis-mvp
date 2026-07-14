@@ -178,6 +178,8 @@ def main() -> int:
         install_root = home / ".local" / "share" / "agentops-mis"
         bin_dir = home / ".local" / "bin"
         host_data = home / ".agentops" / "host"
+        app_dir = home / "Applications"
+        app_bundle = app_dir / "AgentOps MIS.app"
         sentinel = host_data / "preserve-me"
         env = {
             **{
@@ -188,6 +190,7 @@ def main() -> int:
             "HOME": str(home),
             "AGENTOPS_INSTALL_ROOT": str(install_root),
             "AGENTOPS_BIN_DIR": str(bin_dir),
+            "AGENTOPS_APP_DIR": str(app_dir),
             "AGENTOPS_HOST_HOME": str(host_data),
             "AGENTOPS_BUNDLE_INSTALLER_TEST_MODE": "1",
         }
@@ -216,6 +219,25 @@ def main() -> int:
         installed = run(["sh", str(bundle / "install.sh")], env=env)
         if installed.returncode != 0:
             fail("bundle install failed", installed)
+        installed_payload = json.loads(installed.stdout)
+        launcher_executable = app_bundle / "Contents" / "MacOS" / "agentops-mis-launcher"
+        launcher_config_path = app_bundle / "Contents" / "Resources" / "launcher-config.json"
+        if (
+            installed_payload.get("launcher_installed") is not True
+            or Path(str(installed_payload.get("launcher") or "")) != app_bundle
+            or not launcher_executable.is_file()
+            or not os.access(launcher_executable, os.X_OK)
+            or not launcher_config_path.is_file()
+        ):
+            fail("bundle did not install the managed macOS launcher", installed)
+        launcher_config = json.loads(launcher_config_path.read_text(encoding="utf-8"))
+        if (
+            launcher_config.get("credentials_included") is not False
+            or launcher_config.get("default_port") != 18878
+            or not Path(str(launcher_config.get("python_path") or "")).is_absolute()
+            or launcher_config.get("current_path") != str(install_root / "current")
+        ):
+            fail("installed macOS launcher config is unsafe", installed)
         version_status = run(
             [str(bin_dir / "agentops"), "host", "version"],
             env={**env, "PYTHONPATH": str(ROOT)},
@@ -448,6 +470,7 @@ def main() -> int:
             "HOME": str(claim_home),
             "AGENTOPS_INSTALL_ROOT": str(claim_install_root),
             "AGENTOPS_BIN_DIR": str(claim_home / ".local" / "bin"),
+            "AGENTOPS_APP_DIR": str(claim_home / "Applications"),
             "AGENTOPS_HOST_HOME": str(claim_home / ".agentops" / "host"),
         }
         claimed_install = run(["sh", str(bundle_two / "install.sh")], env=claim_env)
@@ -497,6 +520,13 @@ def main() -> int:
             fail("upgrade did not retain the previous version pointer", upgraded)
         if not Path(str(upgraded_payload.get("pre_update_backup_path") or "")).is_file():
             fail("upgrade did not create a verified pre-update ledger backup", upgraded)
+        upgraded_launcher_config = json.loads(launcher_config_path.read_text(encoding="utf-8"))
+        if (
+            upgraded_payload.get("launcher_installed") is not True
+            or upgraded_launcher_config.get("version") != version_two
+            or upgraded_launcher_config.get("current_path") != str(install_root / "current")
+        ):
+            fail("upgrade did not refresh the managed launcher", upgraded)
         version_status = run([str(bin_dir / "agentops"), "host", "version"], env=env)
         version_payload = json.loads(version_status.stdout)
         if version_status.returncode != 0 or version_payload.get("version") != version_two or version_payload.get("previous_version") != version:
@@ -626,7 +656,7 @@ def main() -> int:
         uninstalled = run(["sh", str(bundle_two / "uninstall.sh")], env=env)
         if uninstalled.returncode != 0:
             fail("bundle uninstall failed", uninstalled)
-        if install_root.exists() or (bin_dir / "agentops").exists():
+        if install_root.exists() or (bin_dir / "agentops").exists() or app_bundle.exists():
             fail("uninstall left product files behind")
         if not sentinel.is_file():
             fail("uninstall removed user data without explicit purge")
@@ -642,6 +672,9 @@ def main() -> int:
             "installed_host_help": "passed",
             "installed_shim_source_shadowing": "rejected",
             "installed_host_release_env": "passed",
+            "installed_macos_launcher": "passed",
+            "launcher_absolute_python": "passed",
+            "launcher_no_live_workers_default": True,
             "installed_backup_restore_commands": "passed",
             "installed_host_init_and_doctor": "passed",
             "installed_agent_plan_specs": "passed",
@@ -672,6 +705,7 @@ def main() -> int:
             "custom_ui_preserved": True,
             "served_ui_followed_upgrade_and_rollback": True,
             "uninstall_preserved_user_data": True,
+            "uninstall_removed_launcher": True,
             "network_used": False,
         }, indent=2, sort_keys=True))
     return 0

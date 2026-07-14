@@ -138,6 +138,8 @@ Exit gate: the second computer is a useful zero-install control console.
 Deliverables:
 
 - build a versioned macOS host bundle/installer;
+- install a managed user-level `AgentOps MIS.app` launcher that opens the same
+  browser Workspace and never starts live workers implicitly;
 - include production UI assets and Python application without local project
   data;
 - provide checksums, provenance, SBOM, third-party notices, uninstall, backup,

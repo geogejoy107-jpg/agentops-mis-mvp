@@ -78,6 +78,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "private_host_macos_launcher",
+        "command": "python3 scripts/private_host_macos_launcher_smoke.py",
+        "summary": "Managed user-level macOS launcher installs in a clean HOME, pins the validated Python runtime, initializes once, starts with no live workers, opens the existing Workspace, and uninstalls without deleting Host data.",
+        "ci_step": "Private Host bundle smoke",
+    },
+    {
         "id": "release_evidence_packet",
         "command": "python3 scripts/release_evidence_packet_smoke.py",
         "summary": "Runtime RC SHA, CI link/status, canonical test list and release-packet boundaries.",

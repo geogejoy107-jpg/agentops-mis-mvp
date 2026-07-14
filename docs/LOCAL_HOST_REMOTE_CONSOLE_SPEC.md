@@ -273,6 +273,7 @@ automatically provides source archives.
 Minimum release assets:
 
 - versioned host bundle or installer for macOS;
+- managed user-level macOS launcher for opening the existing browser Console;
 - SHA-256 checksum file;
 - software bill of materials and third-party notices;
 - install, uninstall, backup, restore, and upgrade instructions;
@@ -315,6 +316,8 @@ The private-host slice is accepted only when all items pass:
 - moving the knowledge corpus or model execution to the console computer;
 - Notion/Dify live synchronization;
 - mobile-native or Electron/Tauri desktop clients;
+- a second native desktop UI; the macOS `.app` is only a managed launcher for
+  the browser Console;
 - universal interception of every internal runtime tool action.
 
 ## 14. Future Expansion

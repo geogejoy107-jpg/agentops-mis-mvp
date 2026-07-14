@@ -83,6 +83,7 @@ def main() -> int:
             "HOME": str(tampered_home),
             "AGENTOPS_INSTALL_ROOT": str(tampered_home / ".local" / "share" / "agentops-mis"),
             "AGENTOPS_BIN_DIR": str(tampered_home / ".local" / "bin"),
+            "AGENTOPS_APP_DIR": str(tampered_home / "Applications"),
             "AGENTOPS_HOST_HOME": str(tampered_home / ".agentops" / "host"),
             "AGENTOPS_INSTALLER_TEST_MODE": "1",
             "AGENTOPS_INSTALLER_TEST_RELEASE_DIR": str(tampered_release),
@@ -110,6 +111,7 @@ def main() -> int:
             "HOME": str(unsafe_home),
             "AGENTOPS_INSTALL_ROOT": str(unsafe_home / ".local" / "share" / "agentops-mis"),
             "AGENTOPS_BIN_DIR": str(unsafe_home / ".local" / "bin"),
+            "AGENTOPS_APP_DIR": str(unsafe_home / "Applications"),
             "AGENTOPS_HOST_HOME": str(unsafe_home / ".agentops" / "host"),
             "AGENTOPS_INSTALLER_TEST_MODE": "1",
             "AGENTOPS_INSTALLER_TEST_RELEASE_DIR": str(unsafe_release),
@@ -124,11 +126,13 @@ def main() -> int:
         install_root = home / ".local" / "share" / "agentops-mis"
         bin_dir = home / ".local" / "bin"
         host_home = home / ".agentops" / "host"
+        app_bundle = home / "Applications" / "AgentOps MIS.app"
         env = {
             **base_env,
             "HOME": str(home),
             "AGENTOPS_INSTALL_ROOT": str(install_root),
             "AGENTOPS_BIN_DIR": str(bin_dir),
+            "AGENTOPS_APP_DIR": str(home / "Applications"),
             "AGENTOPS_HOST_HOME": str(host_home),
             "AGENTOPS_INSTALLER_TEST_MODE": "1",
             "AGENTOPS_INSTALLER_TEST_RELEASE_DIR": str(output),
@@ -144,6 +148,10 @@ def main() -> int:
             combined = installed.stdout + installed.stderr
             require(installed.returncode == 0, "release consumer install/start failed", installed)
             require("owner_setup_code" not in combined and "agthost_" not in combined, "release consumer output exposed credential material")
+            require(
+                (app_bundle / "Contents" / "MacOS" / "agentops-mis-launcher").is_file(),
+                "release consumer did not install the macOS launcher",
+            )
 
             version_result = run([str(agentops), "host", "version"], env=env)
             status_result = run([str(agentops), "host", "status"], env=env)
@@ -169,6 +177,7 @@ def main() -> int:
             "repository_required_on_consumer": False,
             "host_started": True,
             "owner_bootstrap_required": True,
+            "macos_launcher_installed": True,
             "credentials_omitted": True,
             "network_used": False,
         }, indent=2, sort_keys=True))

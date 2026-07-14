@@ -54,7 +54,9 @@ def main() -> int:
     record(checks, "auth_gate_reuses_locked_app_shell", '<AppShell locked lockLabel={lockLabel}>' in auth_gate)
     record(checks, "human_auth_workspace_gate_present", 'data-testid="human-auth-workspace-gate"' in auth_gate)
     record(checks, "auth_gate_uses_workspace_access_panel", 'data-testid="human-auth-access-panel"' in auth_gate)
-    record(checks, "auth_gate_uses_host_status_panel", 'data-testid="human-auth-host-boundary-panel"' in auth_gate)
+    record(checks, "auth_gate_uses_workspace_form", 'data-testid="human-auth-workspace-form"' in auth_gate)
+    record(checks, "auth_gate_uses_compact_host_boundary", 'data-testid="human-auth-host-boundary"' in auth_gate)
+    record(checks, "auth_gate_has_no_standalone_status_panel", 'data-testid="human-auth-host-boundary-panel"' not in auth_gate)
     record(checks, "locked_shell_uses_workspace_content_spacing", 'className="app-main flex-1 overflow-y-auto p-4 lg:p-5"' in app_shell)
     record(
         checks,
@@ -86,7 +88,7 @@ def main() -> int:
     confirm_password = slice_between(
         auth_gate,
         'label={pick(locale, { zh: "\u786e\u8ba4\u5bc6\u7801", en: "Confirm password" })}',
-        "                      />",
+        "                    )}",
     )
     record(
         checks,
