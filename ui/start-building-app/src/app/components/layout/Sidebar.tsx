@@ -163,8 +163,10 @@ export function Sidebar({ locked = false }: { locked?: boolean }) {
               {!isCollapsed && (
                 <ul className="space-y-0.5">
                   {group.items.map((item) => {
-                    const isActive = location.pathname === item.path ||
-                      (item.path !== "/workspace" && item.path !== "/admin" && location.pathname.startsWith(item.path));
+                    const isActive = locked
+                      ? item.path === "/workspace/account"
+                      : location.pathname === item.path ||
+                        (item.path !== "/workspace" && item.path !== "/admin" && location.pathname.startsWith(item.path));
                     const content = (
                       <>
                         {item.icon}
@@ -176,8 +178,13 @@ export function Sidebar({ locked = false }: { locked?: boolean }) {
                         {locked ? (
                           <div
                             aria-disabled="true"
+                            aria-current={isActive ? "page" : undefined}
                             className="flex items-center gap-2 px-2 py-1.5 rounded text-xs"
-                            style={{ color: "var(--mis-muted)", opacity: 0.58 }}
+                            style={{
+                              color: isActive ? "var(--mis-cyan)" : "var(--mis-muted)",
+                              background: isActive ? "rgba(34,211,238,0.08)" : "transparent",
+                              opacity: isActive ? 1 : 0.48,
+                            }}
                           >
                             {content}
                           </div>
@@ -214,8 +221,17 @@ export function Sidebar({ locked = false }: { locked?: boolean }) {
         className="px-4 py-3 border-t text-[10px]"
         style={{ borderColor: "var(--mis-border)", color: "var(--mis-dim)" }}
       >
-        <div>{copy.workspace}: AgentOps Demo</div>
-        <div style={{ color: "var(--mis-muted)" }}>jiwu@agentops.dev</div>
+        {locked ? (
+          <>
+            <div>{copy.productMode}</div>
+            <div style={{ color: "var(--mis-muted)" }}>{copy.account}</div>
+          </>
+        ) : (
+          <>
+            <div>{copy.workspace}: AgentOps Demo</div>
+            <div style={{ color: "var(--mis-muted)" }}>jiwu@agentops.dev</div>
+          </>
+        )}
       </div>
     </aside>
   );

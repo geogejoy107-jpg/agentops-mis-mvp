@@ -160,10 +160,6 @@ export function AuthGate({ children }: { children: ReactNode }) {
     zh: gate === "checking" ? "正在连接" : isBootstrap ? "需要初始化" : "需要登录",
     en: gate === "checking" ? "Connecting" : isBootstrap ? "Setup required" : "Sign-in required",
   });
-  const title = pick(locale, {
-    zh: isBootstrap ? "初始化本地主机" : "登录 AgentOps MIS",
-    en: isBootstrap ? "Initialize local host" : "Sign in to AgentOps MIS",
-  });
   const pageTitle = pick(locale, {
     zh: "账户与访问",
     en: "Account and access",
@@ -180,44 +176,29 @@ export function AuthGate({ children }: { children: ReactNode }) {
           testId="human-auth-workspace-gate"
           title={pageTitle}
           subtitle={pageSubtitle}
-          status={(
-            <div className="flex items-center gap-2 text-[11px]" style={{ color: gate === "unavailable" ? "var(--mis-warning)" : "var(--mis-dim)" }}>
-              {gate === "checking" ? <LoaderCircle className="animate-spin" size={12} /> : <span className="h-1.5 w-1.5 rounded-full" style={{ background: gate === "unavailable" ? "var(--mis-warning)" : "var(--mis-success)" }} />}
-              {lockLabel}
-            </div>
-          )}
         >
           <WorkspaceSettingsSection
             testId="human-auth-settings-layout"
-            title={pick(locale, { zh: isBootstrap ? "创建首位所有者" : "登录", en: isBootstrap ? "Create first owner" : "Sign in" })}
+            title={pick(locale, { zh: isBootstrap ? "首位所有者" : "工作区登录", en: isBootstrap ? "First owner" : "Workspace sign-in" })}
             description={pick(locale, {
-              zh: isBootstrap ? "设置完成后，这台电脑和你的其他浏览器都从同一个工作台登录。" : "使用这台主机上的账户进入工作台。",
-              en: isBootstrap ? "After setup, this computer and your other browsers use the same workspace sign-in." : "Use an account on this host to enter the workspace.",
+              zh: isBootstrap ? "为这台主机创建管理员账户。以后在其他电脑上也使用这个账户登录。" : "使用这台主机上的账户进入工作区。",
+              en: isBootstrap ? "Create the administrator account for this host. Use it to sign in from your other computers." : "Use an account on this host to enter the workspace.",
             })}
             meta={(
-              <p data-testid="human-auth-host-boundary" className="mt-3 text-[11px]" style={{ color: "var(--mis-muted)" }}>
-                {pick(locale, { zh: "本地主机 · 私人网络", en: "Local host · private network" })}
+              <p data-testid="human-auth-host-boundary" className="mt-3 flex items-center gap-1.5 text-[11px]" style={{ color: "var(--mis-muted)" }}>
+                <LockKeyhole size={11} aria-hidden="true" />
+                {pick(locale, { zh: "数据保留在本地主机", en: "Data stays on this host" })}
               </p>
             )}
           >
             <div data-testid="human-auth-access-panel">
-              <div className="border-b pb-3" style={{ borderColor: "var(--mis-border)" }}>
-                <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{title}</h2>
-                <p className="mt-1 text-[11px]" style={{ color: "var(--mis-muted)" }}>
-                  {pick(locale, {
-                    zh: isBootstrap ? "只需完成一次，数据和凭据仍保留在本机。" : "登录后继续管理任务、代理和运行记录。",
-                    en: isBootstrap ? "Complete this once. Data and credentials remain on this host." : "Continue managing tasks, agents, and run records after sign-in.",
-                  })}
-                </p>
-              </div>
-
               {gate === "checking" ? (
-                <div className="flex min-h-40 items-center gap-2.5 border-b text-xs" style={{ borderColor: "var(--mis-border)", color: "var(--mis-dim)" }}>
+                <div className="flex min-h-32 items-center gap-2.5 border-y text-xs" style={{ borderColor: "var(--mis-border)", color: "var(--mis-dim)" }}>
                   <LoaderCircle className="animate-spin" size={17} aria-hidden="true" />
                   {pick(locale, { zh: "正在验证主机会话...", en: "Checking host session..." })}
                 </div>
               ) : gate === "unavailable" ? (
-                <div className="border-b py-5" style={{ borderColor: "var(--mis-border)" }}>
+                <div className="border-y py-5" style={{ borderColor: "var(--mis-border)" }}>
                   <h3 className="text-sm font-semibold">{pick(locale, { zh: "无法连接本地主机", en: "Cannot reach local host" })}</h3>
                   <p className="mt-2 text-xs leading-5" style={{ color: "var(--mis-dim)" }}>{error}</p>
                   <button
@@ -232,7 +213,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 </div>
               ) : (
                 <form onSubmit={submit} data-testid="human-auth-workspace-form">
-                  <div className="divide-y border-b" style={{ borderColor: "var(--mis-border)" }}>
+                  <div className="divide-y border-y" style={{ borderColor: "var(--mis-border)" }}>
                     {isBootstrap && !hasInstallerHandoff && (
                       <AuthField
                         label={pick(locale, { zh: "主机设置码", en: "Host setup code" })}
@@ -246,7 +227,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                     {hasInstallerHandoff && (
                       <div
                         data-testid="owner-setup-handoff-ready"
-                        className="grid gap-2 py-3.5 text-xs md:grid-cols-[180px_minmax(0,1fr)] md:items-center"
+                        className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-3 py-3 text-xs sm:grid-cols-[160px_minmax(0,1fr)]"
                       >
                         <span className="font-medium" style={{ color: "var(--mis-text)" }}>{pick(locale, { zh: "主机设置码", en: "Host setup code" })}</span>
                         <span className="flex items-center gap-2" style={{ color: "var(--mis-success)" }}>
@@ -296,18 +277,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   {error && (
                     <div
                       role="alert"
-                      className="border-b py-3 text-xs"
-                      style={{ borderColor: "rgba(231,111,81,0.4)", background: "rgba(231,111,81,0.06)", color: "var(--mis-warning)" }}
+                      className="border-b px-3 py-2.5 text-xs"
+                      style={{ borderColor: "rgba(231,111,81,0.4)", color: "var(--mis-warning)" }}
                     >
                       {error}
                     </div>
                   )}
 
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-4">
-                    <span className="flex items-center gap-1.5 text-[11px]" style={{ color: "var(--mis-muted)" }}>
-                      <LockKeyhole size={12} />
-                      {pick(locale, { zh: "凭据与运行数据保留在主机", en: "Credentials and runtime data stay on the host" })}
-                    </span>
+                  <div className="flex justify-end pt-4">
                     <button
                       disabled={submitting}
                       className="inline-flex h-9 w-full items-center justify-center gap-2 rounded px-4 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:min-w-40"
@@ -349,7 +326,7 @@ function AuthField({
   pattern?: string;
 }) {
   return (
-    <label className="grid gap-2 py-3.5 text-xs md:grid-cols-[180px_minmax(0,1fr)] md:items-center">
+    <label className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-3 py-3 text-xs sm:grid-cols-[160px_minmax(0,1fr)]">
       <span className="min-w-0">
         <span className="block font-medium" style={{ color: "var(--mis-text)" }}>{label}</span>
         {hint && <span className="mt-0.5 block text-[10px] font-normal" style={{ color: "var(--mis-muted)" }}>{hint}</span>}
@@ -362,9 +339,9 @@ function AuthField({
         required={required}
         minLength={minLength}
         pattern={pattern}
-        className="h-9 w-full rounded border px-3 text-sm outline-none transition-colors focus:ring-2"
+        className="h-9 w-full min-w-0 rounded border px-3 text-sm outline-none transition-colors focus:ring-2"
         style={{
-          background: "var(--mis-bg)",
+          background: "var(--mis-surface)",
           borderColor: "var(--mis-border)",
           color: "var(--mis-text)",
           boxShadow: "0 0 0 0 color-mix(in srgb, var(--mis-cyan) 24%, transparent)",

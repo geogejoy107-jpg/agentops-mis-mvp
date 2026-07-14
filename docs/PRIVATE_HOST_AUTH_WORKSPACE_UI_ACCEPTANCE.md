@@ -53,11 +53,14 @@ ready, `AuthGate` returns the existing workspace unchanged.
   components. This is shared product UI, not two visually similar copies.
 - `/workspace/account` is visible in the existing Sidebar as `Account and
   access` / `账户与访问`; the Topbar avatar remains a direct shortcut.
+- During bootstrap or sign-in, that existing Sidebar entry is the current
+  location. Locked rows remain non-links, and the locked footer shows the
+  Private Host/account context instead of the demo workspace identity.
 - Locked Sidebar items render as disabled non-link rows. They do not navigate
   to workspace or Admin routes before authentication.
-- The Topbar communicates the locked state while keeping theme and language
-  controls available. Search, workspace switching, notifications, and logout
-  are unavailable while locked.
+- The Topbar communicates the locked state as a quiet inline status, while
+  keeping theme and language controls available. Search, workspace switching,
+  notifications, and logout are unavailable while locked.
 
 ### Responsive Behavior
 
@@ -65,10 +68,10 @@ ready, `AuthGate` returns the existing workspace unchanged.
   on desktop and mobile viewports.
 - When the Sidebar collapses at the mobile breakpoint, the Topbar keeps the
   AgentOps MIS product mark instead of leaving an orphaned workspace selector.
-- The main authentication form and local-host boundary content remain a single
-  flow at narrower widths and become a two-column settings layout at the
-  existing `lg` breakpoint. The normal Sidebar remains visible on desktop and
-  collapses at the same mobile breakpoint as the rest of the product.
+- The main authentication form uses compact label/control rows at narrow
+  widths and becomes a two-column settings layout at the existing `lg`
+  breakpoint. The normal Sidebar remains visible on desktop and collapses at
+  the same mobile breakpoint as the rest of the product.
 - Form controls use bounded widths and the shell main area remains scrollable,
   so bootstrap and login content do not require a separate responsive page.
 
@@ -141,14 +144,15 @@ cd ui/start-building-app && npm run build
 git diff --check
 ```
 
-The static smoke passed all 31 checks and returned JSON with `ok: true`, no
+The static smoke passed all current checks and returned JSON with `ok: true`, no
 failures, and exit code 0. It verifies locked-shell reuse, the authentication
 gate marker, the unframed Workspace settings layout, shared content
 spacing and shared setup/account components, bilingual Owner bootstrap/login
 copy, password confirmation and minimum length, the visible Account navigation
-entry, mobile product identity, locked non-link Sidebar items, persistent
-theme/language controls, logout omission while locked, and the
-setup-code-authorized browser handoff projection.
+entry, locked Account current-location treatment, demo-identity omission,
+compact responsive form rows, mobile product identity, locked non-link Sidebar
+items, persistent theme/language controls, logout omission while locked, and
+the setup-code-authorized browser handoff projection.
 
 The browser-handoff integration smoke passed against a temporary Host and
 database. It proved that no-code bootstrap is rejected, setup-code bootstrap

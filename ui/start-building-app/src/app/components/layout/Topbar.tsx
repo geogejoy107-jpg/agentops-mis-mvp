@@ -94,9 +94,8 @@ export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLa
       <div className="flex items-center gap-2 shrink-0">
         {/* Live mode badge */}
         <div
-          className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium"
+          className="flex items-center gap-1.5 px-1 text-[11px] font-medium"
           style={{
-            background: locked ? "rgba(231,111,81,0.12)" : "rgba(42,157,143,0.15)",
             color: locked ? "var(--mis-warning)" : "var(--mis-success)",
           }}
         >
@@ -139,7 +138,7 @@ export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLa
         )}
 
         {/* Avatar */}
-        {humanAuthRequired && !locked ? (
+        {!locked && humanAuthRequired ? (
           <Link
             to="/workspace/account"
             className="flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold"
@@ -149,17 +148,15 @@ export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLa
           >
             {initials}
           </Link>
-        ) : (
+        ) : !locked ? (
           <div
-            className={`${locked ? "hidden sm:flex" : "flex"} w-7 h-7 rounded-full items-center justify-center text-[11px] font-semibold`}
-            style={locked
-              ? { background: "var(--mis-surface2)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }
-              : { background: "var(--mis-purple)", color: "#fff" }}
+            className="flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold"
+            style={{ background: "var(--mis-purple)", color: "#fff" }}
             title={displayName}
           >
-            {locked ? <LockKeyhole size={13} /> : initials}
+            {initials}
           </div>
-        )}
+        ) : null}
         {humanAuthRequired && !locked && (
           <button
             type="button"

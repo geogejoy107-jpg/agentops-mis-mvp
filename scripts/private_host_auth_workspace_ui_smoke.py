@@ -91,6 +91,20 @@ def main() -> int:
     )
     record(
         checks,
+        "locked_sidebar_marks_account_as_current",
+        'item.path === "/workspace/account"' in sidebar
+        and 'aria-current={isActive ? "page" : undefined}' in sidebar,
+    )
+    locked_sidebar_footer = slice_between(sidebar, "{locked ? (\n          <>", "\n        ) : (")
+    record(
+        checks,
+        "locked_sidebar_omits_demo_identity",
+        "copy.productMode" in locked_sidebar_footer
+        and "copy.account" in locked_sidebar_footer
+        and "jiwu@agentops.dev" not in locked_sidebar_footer,
+    )
+    record(
+        checks,
         "mobile_topbar_keeps_product_identity",
         "md:hidden" in topbar and "AgentOps MIS" in topbar and "<Zap" in topbar,
     )
@@ -104,12 +118,24 @@ def main() -> int:
     record(checks, "locked_shell_uses_workspace_content_spacing", 'className="app-main flex-1 overflow-y-auto p-4 lg:p-5"' in app_shell)
     record(
         checks,
+        "auth_form_uses_compact_workspace_rows",
+        'grid-cols-[120px_minmax(0,1fr)]' in auth_gate
+        and 'background: "var(--mis-surface)"' in auth_gate,
+    )
+    record(
+        checks,
+        "auth_gate_uses_single_lock_status",
+        "status={(" not in auth_gate
+        and "<Topbar locked={locked} lockLabel={lockLabel} />" in app_shell,
+    )
+    record(
+        checks,
         "owner_bootstrap_copy_bilingual",
         all(
             marker in auth_gate
             for marker in (
-                'zh: isBootstrap ? "\u521d\u59cb\u5316\u672c\u5730\u4e3b\u673a"',
-                'en: isBootstrap ? "Initialize local host"',
+                'zh: isBootstrap ? "\u9996\u4f4d\u6240\u6709\u8005"',
+                'en: isBootstrap ? "First owner"',
                 'zh: isBootstrap ? "\u521b\u5efa\u6240\u6709\u8005\u5e76\u8fdb\u5165"',
                 'en: isBootstrap ? "Create owner and continue"',
             )
@@ -121,8 +147,8 @@ def main() -> int:
         all(
             marker in auth_gate
             for marker in (
-                ': "\u767b\u5f55 AgentOps MIS"',
-                ': "Sign in to AgentOps MIS"',
+                ': "\u5de5\u4f5c\u533a\u767b\u5f55"',
+                ': "Workspace sign-in"',
                 ': "\u767b\u5f55\u5de5\u4f5c\u53f0"',
                 ': "Enter workspace"',
             )
@@ -194,6 +220,12 @@ def main() -> int:
     )
     logout_control = slice_between(topbar, "{humanAuthRequired && !locked && (", "\n        )}")
     record(checks, "locked_topbar_hides_logout", "logout()" in logout_control and "<LogOut" in logout_control)
+    record(
+        checks,
+        "locked_topbar_hides_placeholder_avatar",
+        ") : !locked ? (" in topbar
+        and "title={displayName}" in topbar,
+    )
 
     failures.extend(name for name, passed in checks.items() if not passed)
     output = {
