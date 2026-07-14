@@ -140,6 +140,23 @@ agentops host restart
 agentops host stop
 ```
 
+需要登录后自动恢复 Host 控制面时，可显式安装 macOS 用户级 LaunchAgent。
+安装、加载、卸载和删除都默认只预览；确认安装的服务只运行 Host，固定带
+`--no-workers`，不会自动启动 Hermes/OpenClaw：
+
+```bash
+agentops host service-install
+agentops host service-install --confirm-install
+agentops host service-check
+agentops host stop
+agentops host service-control --action load
+agentops host service-control --action load --confirm-control
+```
+
+移除前先显式 unload，再运行 `agentops host service-remove --confirm-remove`。
+服务文件不保存 API key、Admin key、Owner 设置码或 Runtime 凭据。完整边界见
+`docs/PRIVATE_HOST_BACKGROUND_SERVICE_ACCEPTANCE.md`。
+
 `tailscale-preview` 仅输出当前机器的 Serve/撤销命令，不会执行网络变更。
 审查后必须显式运行 `tailscale-apply --confirm` 才会配置 tailnet 内 HTTPS
 Serve，并把对应 HTTPS Origin 写入私有 Host 配置；它不会启用 Funnel 或开放
@@ -163,7 +180,8 @@ python3 scripts/build_private_host_bundle.py \
 `--no-workers` 安全启动并打开现有浏览器 Workspace；它不是另一套桌面前端，
 也不会自动启用 Hermes/OpenClaw。无图形环境可在安装前设置
 `AGENTOPS_NO_APP_INSTALL=1`。`sh uninstall.sh` 默认不会删除
-`~/.agentops/host` 用户账本/配置。该预览尚未 Apple 签名或公证，不能当作
+`~/.agentops/host` 用户账本/配置；若安装了 Host LaunchAgent，卸载产品前必须
+先 unload 并删除该服务。该预览尚未 Apple 签名或公证，不能当作
 正式 `.pkg/.dmg` 发布。
 
 也可以手动启动 UI：

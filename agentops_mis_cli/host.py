@@ -6,6 +6,7 @@ import contextlib
 import fcntl
 import getpass
 import hashlib
+import html
 import io
 import ipaddress
 import json
@@ -16,6 +17,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -29,6 +31,7 @@ BACKUP_UTILITY = ROOT / "scripts" / "agentops_local_backup.py"
 DEFAULT_UI_DIST = ROOT / "ui" / "start-building-app" / "dist"
 MACOS_TAILSCALE_BIN = Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
 HOST_STOP_GRACE_SECONDS = 20
+HOST_SERVICE_LABEL = "dev.agentops.mis.private-host"
 HOST_DATA_MARKER = {
     "schema_version": 1,
     "product": "AgentOps MIS Private Host Data",
@@ -1453,6 +1456,367 @@ def install_state() -> dict:
     }
 
 
+def default_host_service_path() -> Path:
+    return Path("~/Library/LaunchAgents").expanduser() / f"{HOST_SERVICE_LABEL}.plist"
+
+
+def host_service_path(value: str = "") -> Path:
+    return Path(value).expanduser().absolute() if value else default_host_service_path().absolute()
+
+
+def host_service_definition() -> dict:
+    state = install_state()
+    packaged = bool(state["current"])
+    current_path = Path(state["current_link"]) if packaged else ROOT
+    install_root = Path(state["install_root"]).resolve()
+    p = paths()
+    return {
+        "Label": HOST_SERVICE_LABEL,
+        "ProgramArguments": [
+            str(Path(sys.executable).resolve()),
+            "-m",
+            "agentops_mis_cli",
+            "host",
+            "start",
+            "--foreground",
+            "--no-workers",
+        ],
+        "EnvironmentVariables": {
+            "AGENTOPS_HOST_HOME": str(p["home"]),
+            "AGENTOPS_INSTALL_ROOT": str(install_root),
+            "PYTHONPATH": str(current_path),
+        },
+        "WorkingDirectory": str(current_path),
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "ThrottleInterval": 5,
+        "StandardOutPath": str(p["logs"] / "launchd.log"),
+        "StandardErrorPath": str(p["logs"] / "launchd.log"),
+    }
+
+
+def host_service_template() -> bytes:
+    service = host_service_definition()
+    arguments = "\n".join(
+        f"      <string>{html.escape(str(value))}</string>"
+        for value in service["ProgramArguments"]
+    )
+    environment = "\n".join(
+        "\n".join(
+            (
+                f"      <key>{html.escape(str(key))}</key>",
+                f"      <string>{html.escape(str(value))}</string>",
+            )
+        )
+        for key, value in sorted(service["EnvironmentVariables"].items())
+    )
+    rendered = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{html.escape(service['Label'])}</string>
+  <key>ProgramArguments</key>
+  <array>
+{arguments}
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+{environment}
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>{html.escape(service['WorkingDirectory'])}</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>{service['ThrottleInterval']}</integer>
+  <key>StandardOutPath</key>
+  <string>{html.escape(service['StandardOutPath'])}</string>
+  <key>StandardErrorPath</key>
+  <string>{html.escape(service['StandardErrorPath'])}</string>
+</dict>
+</plist>
+"""
+    return rendered.encode("utf-8")
+
+
+def launchctl_binary() -> str | None:
+    override = os.environ.get("AGENTOPS_LAUNCHCTL_BIN", "").strip()
+    if override:
+        candidate = Path(override).expanduser().resolve()
+        return str(candidate) if candidate.is_file() and os.access(candidate, os.X_OK) else None
+    candidate = Path("/bin/launchctl")
+    return str(candidate) if candidate.is_file() and os.access(candidate, os.X_OK) else shutil.which("launchctl")
+
+
+def host_service_launchd_state(*, timeout: int = 5) -> dict:
+    binary = launchctl_binary()
+    result = {
+        "checked": True,
+        "available": bool(binary),
+        "loaded": False,
+        "label": HOST_SERVICE_LABEL,
+        "domain": f"gui/{os.getuid()}",
+        "command_output_omitted": True,
+    }
+    if not binary:
+        return result
+    try:
+        process = subprocess.run(
+            [binary, "print", f"gui/{os.getuid()}/{HOST_SERVICE_LABEL}"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=max(1, min(int(timeout), 20)),
+            check=False,
+        )
+        result.update({"loaded": process.returncode == 0, "returncode": process.returncode})
+    except (OSError, subprocess.TimeoutExpired):
+        result["check_failed"] = True
+    return result
+
+
+def inspect_host_service(path: Path, *, timeout: int = 5) -> dict:
+    exists = path.exists()
+    safe_regular_file = bool(exists and not path.is_symlink() and path.is_file())
+    content = b""
+    if safe_regular_file:
+        try:
+            content = path.read_bytes()
+        except OSError:
+            pass
+    parse_ok = bool(content.startswith(b'<?xml version="1.0"') and content.rstrip().endswith(b"</plist>"))
+    exact_definition = bool(content and secrets.compare_digest(content, host_service_template()))
+    text = content.decode("utf-8", errors="replace")
+    token_like_detected = any(prefix in text for prefix in ("agthost_", "agtadmin_", "agtok_", "agtsess_", "ntn_", "sk-"))
+    mode_private = bool(safe_regular_file and (path.stat().st_mode & 0o077) == 0)
+    service_state = host_service_launchd_state(timeout=timeout)
+    return {
+        "ok": bool(safe_regular_file and parse_ok and exact_definition and mode_private and not token_like_detected),
+        "operation": "host_service_check",
+        "manager": "launchd",
+        "label": HOST_SERVICE_LABEL,
+        "service_path": str(path),
+        "service_file": {
+            "exists": exists,
+            "safe_regular_file": safe_regular_file,
+            "parse_ok": parse_ok,
+            "exact_managed_definition": exact_definition,
+            "mode_private": mode_private,
+            "token_like_detected": token_like_detected,
+            "raw_content_omitted": True,
+        },
+        "service_state": service_state,
+        "host_only": True,
+        "workers": [],
+        "live_workers_started": False,
+        "credential_material_in_service": False,
+        "token_omitted": True,
+    }
+
+
+def cmd_service_check(args) -> int:
+    require_initialized()
+    payload = inspect_host_service(host_service_path(args.service_path), timeout=args.timeout)
+    emit(payload)
+    return 0 if payload["ok"] else 1
+
+
+def _atomic_write_service(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if path.parent.is_symlink() or not path.parent.is_dir():
+        raise RuntimeError("Host service directory is unsafe.")
+    path.parent.chmod(path.parent.stat().st_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        path.chmod(0o600)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def cmd_service_install(args) -> int:
+    require_initialized()
+    path = host_service_path(args.service_path)
+    template = host_service_template()
+    before = inspect_host_service(path, timeout=args.timeout)
+    exists_before = bool(before["service_file"]["exists"])
+    overwrite_allowed = bool(not exists_before or (args.overwrite and before["ok"]))
+    blockers = []
+    if path.is_symlink():
+        blockers.append("service_path_is_symlink")
+    if exists_before and not args.overwrite:
+        blockers.append("service_file_exists")
+    if exists_before and args.overwrite and not before["ok"]:
+        blockers.append("existing_service_not_owned")
+    if any(prefix.encode("ascii") in template for prefix in ("agthost_", "agtadmin_", "agtok_", "agtsess_", "ntn_", "sk-")):
+        blockers.append("token_like_content_detected")
+    wrote = False
+    if args.confirm_install and overwrite_allowed and not blockers:
+        _atomic_write_service(path, template)
+        wrote = True
+    after = inspect_host_service(path, timeout=args.timeout) if wrote else before
+    dry_run = not args.confirm_install
+    ok = bool((dry_run and not blockers) or (wrote and after["ok"]))
+    emit({
+        "ok": ok,
+        "operation": "host_service_install",
+        "manager": "launchd",
+        "dry_run": dry_run,
+        "confirmed_install": bool(args.confirm_install),
+        "wrote": wrote,
+        "overwrite": bool(args.overwrite),
+        "exists_before": exists_before,
+        "service_path": str(path),
+        "service_file_mode": "0600" if wrote else None,
+        "template_hash": hashlib.sha256(template).hexdigest(),
+        "template_bytes": len(template),
+        "service_check": after,
+        "blockers": blockers,
+        "next_action": (
+            "agentops host service-control --action load"
+            if wrote
+            else "Re-run with --confirm-install after reviewing this preview."
+        ),
+        "service_loaded": False,
+        "host_only": True,
+        "workers": [],
+        "live_workers_started": False,
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    })
+    return 0 if ok else 1
+
+
+def host_service_control_commands(path: Path, action: str, *, loaded: bool) -> list[list[str]]:
+    binary = launchctl_binary() or "/bin/launchctl"
+    domain = f"gui/{os.getuid()}"
+    target = f"{domain}/{HOST_SERVICE_LABEL}"
+    if action == "load":
+        return [] if loaded else [[binary, "bootstrap", domain, str(path)]]
+    if action == "unload":
+        return [[binary, "bootout", target]] if loaded else []
+    return [[binary, "kickstart", "-k", target]] if loaded else []
+
+
+def cmd_service_control(args) -> int:
+    require_initialized()
+    path = host_service_path(args.service_path)
+    checked = inspect_host_service(path, timeout=args.timeout)
+    state = checked["service_state"]
+    loaded = bool(state["loaded"])
+    commands = host_service_control_commands(path, args.action, loaded=loaded)
+    blockers = []
+    if not checked["ok"]:
+        blockers.append("managed_service_check_failed")
+    if not state["available"]:
+        blockers.append("launchctl_unavailable")
+    if state.get("check_failed"):
+        blockers.append("launchctl_state_unverified")
+    if args.action == "restart" and not loaded:
+        blockers.append("service_not_loaded")
+    if args.action == "load" and not loaded and managed_host_running():
+        blockers.append("unmanaged_host_already_running")
+    dry_run = not args.confirm_control
+    results = []
+    if args.confirm_control and not blockers:
+        for command in commands:
+            try:
+                process = subprocess.run(
+                    command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=max(1, min(int(args.timeout), 30)),
+                    check=False,
+                )
+                results.append({"returncode": process.returncode, "ok": process.returncode == 0, "command_output_omitted": True})
+                if process.returncode != 0:
+                    blockers.append("launchctl_command_failed")
+                    break
+            except (OSError, subprocess.TimeoutExpired):
+                results.append({"ok": False, "command_failed": True, "command_output_omitted": True})
+                blockers.append("launchctl_command_failed")
+                break
+    state_after = host_service_launchd_state(timeout=args.timeout) if args.confirm_control and not blockers else state
+    expected_loaded = args.action in {"load", "restart"}
+    if args.confirm_control and not blockers and bool(state_after["loaded"]) != expected_loaded:
+        blockers.append("launchctl_state_verification_failed")
+    no_op = not commands and not blockers
+    ok = not blockers
+    emit({
+        "ok": ok,
+        "operation": "host_service_control",
+        "manager": "launchd",
+        "action": args.action,
+        "dry_run": dry_run,
+        "confirmed_control": bool(args.confirm_control),
+        "service_path": str(path),
+        "service_loaded_before": loaded,
+        "service_state_after": state_after,
+        "service_control_skipped": no_op,
+        "service_mutated": bool(args.confirm_control and commands and not blockers),
+        "planned_commands": commands,
+        "command_results": results,
+        "blockers": blockers,
+        "host_only": True,
+        "workers": [],
+        "live_workers_started": False,
+        "command_output_omitted": True,
+        "token_omitted": True,
+    })
+    return 0 if ok else 1
+
+
+def cmd_service_remove(args) -> int:
+    require_initialized()
+    path = host_service_path(args.service_path)
+    checked = inspect_host_service(path, timeout=args.timeout)
+    loaded = bool(checked["service_state"]["loaded"])
+    blockers = []
+    if not checked["ok"]:
+        blockers.append("managed_service_check_failed")
+    if not checked["service_state"]["available"] or checked["service_state"].get("check_failed"):
+        blockers.append("launchctl_state_unverified")
+    if loaded:
+        blockers.append("service_still_loaded")
+    removed = False
+    if args.confirm_remove and not blockers:
+        path.unlink()
+        removed = True
+    dry_run = not args.confirm_remove
+    ok = not blockers
+    emit({
+        "ok": ok,
+        "operation": "host_service_remove",
+        "manager": "launchd",
+        "dry_run": dry_run,
+        "confirmed_remove": bool(args.confirm_remove),
+        "removed": removed,
+        "service_path": str(path),
+        "blockers": blockers,
+        "next_action": (
+            "agentops host service-control --action unload --confirm-control"
+            if loaded
+            else "Re-run with --confirm-remove after reviewing this preview."
+        ),
+        "host_only": True,
+        "workers": [],
+        "live_workers_started": False,
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    })
+    return 0 if ok else 1
+
+
 def cmd_version(_args) -> int:
     state = install_state()
     current = state["current"]
@@ -1906,6 +2270,27 @@ def build_parser() -> argparse.ArgumentParser:
     rollback = sub.add_parser("rollback", help="Switch to the previous verified binary after a local ledger backup.")
     rollback.add_argument("--confirm-rollback", action="store_true")
     rollback.set_defaults(handler=cmd_rollback)
+    service_install = sub.add_parser("service-install", help="Preview or install a host-only macOS LaunchAgent without starting workers.")
+    service_install.add_argument("--service-path", default="")
+    service_install.add_argument("--confirm-install", action="store_true")
+    service_install.add_argument("--overwrite", action="store_true")
+    service_install.add_argument("--timeout", type=int, default=5)
+    service_install.set_defaults(handler=cmd_service_install)
+    service_check = sub.add_parser("service-check", help="Read-only check for the managed host-only macOS LaunchAgent.")
+    service_check.add_argument("--service-path", default="")
+    service_check.add_argument("--timeout", type=int, default=5)
+    service_check.set_defaults(handler=cmd_service_check)
+    service_control = sub.add_parser("service-control", help="Preview or explicitly load, unload, or restart the managed Host LaunchAgent.")
+    service_control.add_argument("--action", choices=["load", "unload", "restart"], required=True)
+    service_control.add_argument("--service-path", default="")
+    service_control.add_argument("--timeout", type=int, default=10)
+    service_control.add_argument("--confirm-control", action="store_true")
+    service_control.set_defaults(handler=cmd_service_control)
+    service_remove = sub.add_parser("service-remove", help="Preview or remove an unloaded managed Host LaunchAgent file.")
+    service_remove.add_argument("--service-path", default="")
+    service_remove.add_argument("--timeout", type=int, default=5)
+    service_remove.add_argument("--confirm-remove", action="store_true")
+    service_remove.set_defaults(handler=cmd_service_remove)
     console_url = sub.add_parser("console-url", help="Show local and private console URLs.")
     console_url.set_defaults(handler=cmd_console_url)
     open_console = sub.add_parser("open-console", help="Open the local Console and hand off first-Owner pairing without printing the setup code.")

@@ -84,6 +84,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "private_host_background_service",
+        "command": "python3 scripts/private_host_background_service_smoke.py",
+        "summary": "Preview-first host-only macOS LaunchAgent install/check/control/remove lifecycle with explicit confirmation, exact ownership and no Worker or credential material.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "private_host_macos_launcher",
         "command": "python3 scripts/private_host_macos_launcher_smoke.py",
         "summary": "Managed user-level macOS launcher installs in a clean HOME, pins the validated Python runtime, initializes once, starts with no live workers, opens the existing Workspace, and uninstalls without deleting Host data.",

@@ -217,6 +217,39 @@ Owner 未创建时，`status` 和 `doctor` 的 `next_actions` 会优先提示打
 Console；CLI 恢复入口列在其后。这属于人类控制面就绪状态，不会复用或显示
 Agent Gateway 机器 token。
 
+### 4.2.1 可选：登录后自动恢复 Host
+
+默认安装不会注册后台服务。需要 macOS 用户登录后由 launchd 自动恢复 Host
+控制面时，先预览，再显式确认安装：
+
+```bash
+agentops host service-install
+agentops host service-install --confirm-install
+agentops host service-check
+agentops host stop
+agentops host service-control --action load
+agentops host service-control --action load --confirm-control
+```
+
+该 LaunchAgent 只运行 `agentops host start --foreground --no-workers`。它不会
+安装、启用或执行 Hermes/OpenClaw，也不会在 plist 中保存 API key、Admin key、
+Owner 设置码或 Runtime 凭据。`service-install` 只写文件且不加载；
+`service-control` 不带 `--confirm-control` 时只返回计划。不要在一个已经由手工
+`host start` 启动的 Host 上再加载服务，命令会拒绝制造第二个进程。
+
+升级或卸载前先停止自动恢复并删除服务文件：
+
+```bash
+agentops host service-control --action unload
+agentops host service-control --action unload --confirm-control
+agentops host service-remove
+agentops host service-remove --confirm-remove
+```
+
+删除仍处于 loaded 状态的服务会失败关闭；覆盖不属于 AgentOps MIS 的同名 plist
+也会失败关闭。服务能力的可复现证据见
+`docs/PRIVATE_HOST_BACKGROUND_SERVICE_ACCEPTANCE.md`。
+
 首次使用时，在 Host 本机打开现有 AgentOps MIS Console：
 
 ```bash

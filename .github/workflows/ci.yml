@@ -65,6 +65,7 @@ jobs:
           timeout 120s python3 scripts/private_host_auth_workspace_ui_smoke.py
           timeout 120s python3 scripts/private_host_acceptance_client_smoke.py
           timeout 120s python3 scripts/private_host_lifecycle_smoke.py
+          timeout 120s python3 scripts/private_host_background_service_smoke.py
           timeout 120s python3 scripts/private_host_owner_bootstrap_cli_smoke.py
           timeout 120s python3 scripts/host_cli_credential_binding_smoke.py
           timeout 120s python3 scripts/private_host_backup_restore_smoke.py

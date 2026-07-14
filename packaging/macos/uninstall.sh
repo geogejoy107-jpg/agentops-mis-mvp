@@ -29,7 +29,15 @@ app_dir = raw_app_dir.resolve()
 purge_data = sys.argv[5].lower() in {"1", "true", "yes"}
 shim = bin_dir / "agentops"
 app_bundle = app_dir / "AgentOps MIS.app"
+host_service = Path.home() / "Library" / "LaunchAgents" / "dev.agentops.mis.private-host.plist"
 home = Path.home().resolve()
+
+if host_service.exists() or host_service.is_symlink():
+    raise SystemExit(
+        "managed Host LaunchAgent may still be installed; run agentops host "
+        "service-control --action unload --confirm-control and agentops host "
+        "service-remove --confirm-remove before uninstalling"
+    )
 
 def require_home_managed_path(path, label):
     try:

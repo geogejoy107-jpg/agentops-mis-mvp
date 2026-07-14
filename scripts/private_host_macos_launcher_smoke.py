@@ -188,6 +188,17 @@ def main() -> int:
         require(rejected_uninstall.returncode != 0 and app.is_dir(), "uninstaller accepted a modified launcher marker", rejected_uninstall)
         marker_path.write_bytes(marker_bytes)
 
+        host_service = home / "Library" / "LaunchAgents" / "dev.agentops.mis.private-host.plist"
+        host_service.parent.mkdir(parents=True, exist_ok=True)
+        host_service.write_text("service fixture\n", encoding="utf-8")
+        service_guarded_uninstall = run(["sh", str(bundle / "uninstall.sh")], env=env)
+        require(
+            service_guarded_uninstall.returncode != 0 and app.is_dir(),
+            "uninstaller accepted an installed Host LaunchAgent",
+            service_guarded_uninstall,
+        )
+        host_service.unlink()
+
         uninstalled = run(["sh", str(bundle / "uninstall.sh")], env=env)
         require(uninstalled.returncode == 0, "launcher fixture uninstall failed", uninstalled)
         uninstall_payload = json.loads(uninstalled.stdout)
@@ -227,6 +238,7 @@ def main() -> int:
             "setup_material_omitted": True,
             "foreign_app_rejected": True,
             "modified_marker_uninstall_rejected": True,
+            "installed_host_service_uninstall_rejected": True,
             "partial_host_state_rejected": True,
             "uninstall_preserved_host_data": True,
             "real_runtime_called": False,

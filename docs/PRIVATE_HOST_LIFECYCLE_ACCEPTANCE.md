@@ -18,6 +18,10 @@ agentops host restart
 agentops host stop
 agentops host console-url
 agentops host tailscale-preview
+agentops host service-install
+agentops host service-check
+agentops host service-control --action load|unload|restart
+agentops host service-remove
 ```
 
 It does not publish the Host, install Hermes/OpenClaw, or claim a packaged
@@ -108,6 +112,11 @@ customer release.
 - Foreground Host mode writes the same managed PID contract while running and
   removes only its own matching record on exit, so credentialed setup commands
   remain available without weakening process ownership checks.
+- The optional macOS Host LaunchAgent is preview-first and host-only. Its exact
+  managed definition follows the packaged `current` link, uses `--no-workers`,
+  stores no credential material, writes mode `0600`, and requires separate
+  confirmation for install, launchctl mutation, and removal. Unknown same-name
+  files and removal while loaded fail closed.
 
 ## Verification
 
@@ -115,6 +124,7 @@ customer release.
 python3 -m py_compile agentops_mis_cli/host.py agentops_mis_cli/cli.py \
   scripts/run_local_stack.py scripts/private_host_lifecycle_smoke.py
 python3 scripts/private_host_lifecycle_smoke.py
+python3 scripts/private_host_background_service_smoke.py
 python3 scripts/private_host_owner_bootstrap_cli_smoke.py
 python3 scripts/host_cli_credential_binding_smoke.py
 python3 scripts/private_host_bundle_smoke.py
