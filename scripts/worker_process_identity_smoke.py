@@ -102,7 +102,7 @@ def main() -> int:
                 "--worker",
                 "mock",
                 "--worker-poll-interval",
-                "0.2",
+                "30",
             ],
             cwd=ROOT,
             env=env,
@@ -111,7 +111,14 @@ def main() -> int:
             text=True,
         )
         try:
-            verified = wait_for(lambda: (item if (item := daemon_status(base_url)).get("process_identity_verified") is True else {}))
+            verified = wait_for(
+                lambda: (
+                    item
+                    if (item := daemon_status(base_url)).get("process_identity_verified") is True
+                    and item.get("worker_status") == "sleeping"
+                    else {}
+                )
+            )
             pid = int(verified.get("pid") or 0)
             if not verified or not pid:
                 failures.append(f"Host-managed Worker never reached verified identity: {verified}")
