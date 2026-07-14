@@ -99,7 +99,7 @@ Host-managed Workers, zero API-managed daemons and `running_workers:2`.
 
 ## Process Identity Hardening
 
-The source after preview.23 binds every new Worker state record to a
+preview.24 binds every new Worker state record to a
 non-reversible process identity made from the OS process start record, command
 record and process group. Only the SHA-256 digest and process-group number are
 stored; the command, environment, prompt, response and credentials are not.
@@ -121,9 +121,9 @@ the stale Agent row as capacity. `run_local_stack_smoke.py` now also requires
 
 The existing React Worker Console and AI Employees pages consume this state;
 they disable unsafe controls and show a bilingual process-verification badge.
-No alternate frontend or new visual shell was introduced. This source
-hardening is not yet claimed as installed or released; it must pass exact-head
-CI and the next versioned package upgrade first.
+No alternate frontend or new visual shell was introduced. This hardening is
+published and installed in `v1.6.0-private-host-preview.24` from exact commit
+`d52415f7d838c584faa61204fe27fafb4c622324`.
 
 ## Current Result
 
@@ -138,12 +138,14 @@ Validated locally on 2026-07-14:
   release-consumer, release-evidence, Python compile, secret scan, and diff
   checks: pass.
 - Draft/public asset equality, two no-repository clean-HOME installs and the
-  real preview.22-to-preview.23 Host upgrade: pass.
+  real preview.23-to-preview.24 Host upgrade: pass.
 - Installed Hermes/OpenClaw process visibility, ownership and deduplicated
   capacity readback: pass; both adapters are ready and sleeping for work.
-- Source process-identity tamper/PID-reuse guard: isolated real-process smoke,
+- Process-identity tamper/PID-reuse guard: isolated real-process smoke,
   local-stack smoke, Worker Console static contract and production UI build
-  pass; release/install validation remains pending the next preview.
+  pass; exact-head CI, public Release, clean installation and real Host upgrade
+  validation also pass. The real Host reports two verified identities and zero
+  unverified process claims.
 - API-managed daemon regression: pass on an isolated server with explicit
   loopback base URL; the daemon processed one mock task through plan, claim,
   run, runtime event, tool call, evaluation, artifact, memory proposal, audit

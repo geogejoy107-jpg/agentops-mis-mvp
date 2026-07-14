@@ -121,14 +121,15 @@ text, project files, database path, or unrestricted Host paths.
 ## Current Result
 
 Host-side staging was refreshed on 2026-07-14 with
-`v1.6.0-private-host-preview.23` at exact commit
-`24d0791bbd1848c275e72b9c7baafcb6c28be1ce`:
+`v1.6.0-private-host-preview.24` at exact commit
+`d52415f7d838c584faa61204fe27fafb4c622324`:
 
 - GitHub download and published checksum verification passed;
 - upgrade created a pre-update ledger backup and preserved user data;
-- Host health, managed preview.23 production UI and real Hermes/OpenClaw Workers
-  are ready; Worker Status/Fleet report both as Host-managed without
-  double-counting their Agent rows;
+- Host health, managed preview.24 production UI and real Hermes/OpenClaw Workers
+  are ready; Worker Status/Fleet verify both process identities, report both as
+  Host-managed without double-counting their Agent rows, and report zero
+  unverified process claims;
 - the published no-repository bootstrap passed release-consumer
   install gates from the public GitHub tag in a fresh temporary HOME without a
   repository on the consumer; this same-Mac receipt is not another-Mac proof;

@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.23 published and installed; the existing Workspace now reports Host-managed Hermes/OpenClaw Workers truthfully, while Owner completion, current-package Runtime completion, and physical second-device gates remain open
+Status: preview.24 published and installed; the existing Workspace now verifies Host-managed Hermes/OpenClaw process identity before reporting or controlling Workers, while Owner completion, current-package Runtime completion, and physical second-device gates remain open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -11,12 +11,12 @@ physical evidence and cannot be closed by mock output.
 
 | # | Requirement | Current evidence | Status |
 |---|---|---|---|
-| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.23` publishes a no-repository bootstrap plus archive/checksum assets from exact commit `24d0791`. Exact-head push/PR CI, bundle/release-consumer gates, Draft and public-download byte equality, two clean-HOME roundtrips and the same-Mac preview.22-to-preview.23 upgrade passed. A receipt from another physical Mac remains missing. | Passed locally; external evidence required |
-| 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md`, `PRIVATE_HOST_AUTH_WORKSPACE_UI_ACCEPTANCE.md`, `PRIVATE_HOST_WORKER_OWNERSHIP_ACCEPTANCE.md` and bundle smoke cover installed CLI, production UI, browser-first Owner setup inside the existing React Workspace, init, doctor, start/status/stop, Runtime readiness and fail-closed Worker ownership. Installed preview.23 serves that integrated UI and reports both Host-managed Worker processes without double-counting their Agent rows. | Passed locally |
-| 3 | Dependency-free second computer opens private HTTPS console and authenticates | preview.23 is live through private Tailscale HTTPS on port 8443, Funnel is disabled, and the Workspace is ready. The installed application can perform a scrubbed setup-code handoff without output disclosure. Host status remains `bootstrap_required`; Owner completion and physical second-device browser login remain human gates. | Host side passed; external evidence required |
+| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.24` publishes a no-repository bootstrap plus archive/checksum assets from exact commit `d52415f`. Exact-head push/PR CI, bundle/release-consumer gates, Draft and public-download byte equality, two clean-HOME roundtrips and the same-Mac preview.23-to-preview.24 upgrade passed. A receipt from another physical Mac remains missing. | Passed locally; external evidence required |
+| 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md`, `PRIVATE_HOST_AUTH_WORKSPACE_UI_ACCEPTANCE.md`, `PRIVATE_HOST_WORKER_OWNERSHIP_ACCEPTANCE.md` and bundle smoke cover installed CLI, production UI, browser-first Owner setup inside the existing React Workspace, init, doctor, start/status/stop, Runtime readiness and fail-closed Worker ownership. Installed preview.24 serves that integrated UI, verifies both Host-managed Worker process identities and reports them without double-counting their Agent rows. | Passed locally |
+| 3 | Dependency-free second computer opens private HTTPS console and authenticates | preview.24 is live through private Tailscale HTTPS on port 8443, Funnel is disabled, and the Workspace is ready. The installed application can perform a scrubbed setup-code handoff without output disclosure. Host status remains `bootstrap_required`; Owner completion and physical second-device browser login remain human gates. | Host side passed; external evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, `private_host_owner_browser_handoff_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, setup-code authority, role/session separation and CSRF/Origin checks. | Passed locally |
 | 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | Customer dispatch and ledger views exist; Audit and Memory use live APIs; memory decisions write through the approver route; approved artifact download is Session/workspace/approval checked and audited. A second-device end-to-end receipt remains open. | Partial |
-| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | `PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md` records completed Hermes and OpenClaw async runs from preview.4. preview.23 is running exactly one explicitly confirmed Host-managed Worker for each adapter. No task was dispatched during this upgrade, and no human Owner has approved preview.23 execution. | Passed previously; exact-current completion pending |
+| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | `PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md` records completed Hermes and OpenClaw async runs from preview.4. preview.24 is running exactly one explicitly confirmed, process-verified Host-managed Worker for each adapter. No task was dispatched during this upgrade, and no human Owner has approved preview.24 execution. | Passed previously; exact-current completion pending |
 | 7 | Console disconnect does not stop Host Worker or lose task | `PRIVATE_HOST_CONSOLE_DISCONNECT_ACCEPTANCE.md` proves real Hermes/OpenClaw jobs completed after their first Host-local Session clients were discarded, then were read through fresh Owner Sessions. Physical browser/tailnet loss remains missing. | Passed on Host; external evidence required |
 | 8 | Host restart preserves ledger and knowledge state | `PRIVATE_HOST_RESTART_PERSISTENCE_ACCEPTANCE.md` covers Session, task and a 194-document local Markdown/FTS index remaining searchable after managed restart. | Passed locally |
 | 9 | Backup and restore pass on isolated database | `PRIVATE_HOST_BACKUP_RESTORE_ACCEPTANCE.md` covers strict manifest/hash/schema/integrity/foreign-key checks, atomic replacement and access revocation. | Passed locally |
@@ -479,7 +479,7 @@ preview.23 supersedes this package with Host-managed Worker process
 normalization, safe lifecycle ownership and deduplicated Fleet capacity. The
 preview.22 visual-consistency evidence above remains historical evidence only.
 
-## Current Preview 23
+## Superseded Preview 23
 
 - Tag: `v1.6.0-private-host-preview.23`
 - Exact commit: `24d0791bbd1848c275e72b9c7baafcb6c28be1ce`
@@ -516,6 +516,58 @@ Worker are running. Worker Status reports both as `host_stack`,
 `control_allowed:false`, and `process_source:worker_state`; Fleet reports two
 running local daemons, two Host-managed Workers, zero API-managed daemons and
 `running_workers:2`. No task was dispatched during the upgrade.
+
+Owner creation, current-package approved Runtime completion, physical
+second-device workflow and disconnect evidence, another-Mac clean install and
+logout/reboot service proof remain open. This is a prerelease, not the final RC.
+
+preview.24 supersedes this package with fail-closed Worker process identity
+verification. The preview.23 Host ownership and Fleet normalization evidence
+above remains historical evidence only.
+
+## Current Preview 24
+
+- Tag: `v1.6.0-private-host-preview.24`
+- Exact commit: `d52415f7d838c584faa61204fe27fafb4c622324`
+- Push CI: passed at the exact commit (`29331012829`)
+- Pull-request CI: passed at the exact commit (`29331015928`)
+- Release: `https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.24`
+- SHA-256 manifest: `4eca6f47451fb6522e65cdca72e80e5201630649e7851781e86d5e5abb4622c2`
+- Tar archive: `6069d4a6f84318a21aecb9d8169478a88f48c00a031b7406e3f02233b2cf9e6a`
+- Zip archive: `6cb6a182feca600d1016b732c71884bcfd958ac82b670f0147e9c3c247d92e1d`
+- Release-consumer bootstrap: `6f78549bdb4c1da6ff3128907d8b82067a3ae06741cf823b34e1acdaaf03a44f`
+
+preview.24 keeps the existing React Workspace and Host-owned Worker topology.
+Every new Worker state now carries a bounded SHA-256 process identity derived
+from its OS start record, command record and process group. Status recomputes
+that identity before accepting the PID. A stale, replaced or tampered claim is
+reported as `identity_unverified`, removed from running capacity, blocked from
+start/stop/restart, and retained as a warning without exposing the process
+command, environment, prompt, response or credentials.
+
+Both exact-head CI runs passed. The local candidate passed process-identity
+tamper, normal Host stack, API-managed daemon, Worker UI contract, production
+UI build, bundle, release-consumer, backup/restore and secret-scan gates. All
+four Draft assets matched the local candidate byte-for-byte; a clean temporary
+HOME installed, initialized, started, reported `bootstrap_required`, and
+stopped without a repository or live Runtime execution. The published assets
+again matched byte-for-byte, and a second clean HOME completed the same public
+bootstrap roundtrip.
+
+The real Host created a verified operator backup, and the public installer
+created a second verified pre-update backup before upgrading from preview.23 to
+preview.24. User data was preserved. The installed Host is ready at
+`127.0.0.1:18878`; private HTTPS remains ready on port 8443 and Funnel remains
+disabled. Read-only browser QA rendered the Chinese first-Owner form inside the
+existing Workspace shell with no horizontal overflow; no credential was entered
+and no Owner was created.
+
+One explicitly confirmed Hermes Worker and one explicitly confirmed OpenClaw
+Worker are running. Both report `management_mode:host_stack`,
+`process_source:worker_state`, `process_identity_verified:true`, and
+`control_allowed:false`. Fleet reports two running local daemons, two
+Host-managed Workers, zero API-managed daemons, zero unverified process claims
+and `running_workers:2`. No task was dispatched during the upgrade.
 
 Owner creation, current-package approved Runtime completion, physical
 second-device workflow and disconnect evidence, another-Mac clean install and
