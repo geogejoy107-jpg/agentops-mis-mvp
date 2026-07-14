@@ -35,9 +35,12 @@ ready, `AuthGate` returns the existing workspace unchanged.
   workspace frame remain visible during connection, Owner bootstrap, login,
   and unavailable states.
 - Locked and authenticated routes use the same `p-4 lg:p-5` main-content
-  spacing. The auth state is laid out as a normal MIS page with a compact page
-  header, a primary access panel, and a secondary host-status panel; it is not
-  a centered landing-page hero or a separate authentication product.
+  spacing. The auth state is laid out as a normal MIS account-settings page:
+  compact page header, contextual left column, and a bounded form column. It is
+  not a centered landing-page hero, feature-card wall, or separate product.
+- The first-Owner form intentionally has no rounded standalone card shell or
+  decorative product pitch. It uses the same borders, field density, content
+  width, and action hierarchy as the existing Workspace and Admin surfaces.
 - Form density, heading scale, panel radius, and status rows match the existing
   Workspace and Admin surfaces. The first-Owner and sign-in flows retain their
   distinct operational copy without decorative marketing content.
@@ -52,8 +55,9 @@ ready, `AuthGate` returns the existing workspace unchanged.
 - The authentication content uses the existing full-height application shell
   on desktop and mobile viewports.
 - The main authentication form and local-host boundary content remain a single
-  flow at narrower widths and become a two-column layout at the existing `xl`
-  breakpoint.
+  flow at narrower widths and become a two-column settings layout at the
+  existing `lg` breakpoint. The normal Sidebar remains visible on desktop and
+  collapses at the same mobile breakpoint as the rest of the product.
 - Form controls use bounded widths and the shell main area remains scrollable,
   so bootstrap and login content do not require a separate responsive page.
 
@@ -123,9 +127,9 @@ cd ui/start-building-app && npm run build
 git diff --check
 ```
 
-The static smoke passed all 22 checks and returned JSON with `ok: true`, no
+The static smoke passed all checks and returned JSON with `ok: true`, no
 failures, and exit code 0. It verifies locked-shell reuse, the authentication
-gate marker, Workspace-style access and host-status panels, shared content
+gate marker, the unframed Workspace settings layout, shared content
 spacing, bilingual Owner bootstrap/login copy, password confirmation and minimum
 length, locked non-link Sidebar items, persistent theme/language controls,
 logout omission while locked, and the setup-code-authorized browser handoff

@@ -2,7 +2,6 @@ import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 
 import {
   ArrowRight,
   CheckCircle2,
-  KeyRound,
   LoaderCircle,
   LockKeyhole,
   RefreshCw,
@@ -192,29 +191,43 @@ export function AuthGate({ children }: { children: ReactNode }) {
             </div>
           </header>
 
-          <div className="mt-4 max-w-3xl">
-            <section
-              data-testid="human-auth-access-panel"
-              className="overflow-hidden rounded-lg"
-              style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
-            >
-              <div className="flex items-center gap-2 border-b px-4 py-3" style={{ borderColor: "var(--mis-border)" }}>
-                <KeyRound size={14} aria-hidden="true" style={{ color: "var(--mis-cyan)" }} />
-                <div>
-                  <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{title}</h2>
-                  <span className="text-[11px]" style={{ color: "var(--mis-muted)" }}>
-                    {pick(locale, { zh: "账户与访问", en: "Account and access" })}
-                  </span>
-                </div>
+          <div
+            data-testid="human-auth-settings-layout"
+            className="mt-6 grid max-w-5xl gap-5 lg:grid-cols-[220px_minmax(0,680px)] lg:gap-10"
+          >
+            <aside className="min-w-0 lg:pt-0.5">
+              <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>
+                {pick(locale, { zh: "账户与访问", en: "Account and access" })}
+              </h2>
+              <p className="mt-1.5 text-xs leading-5" style={{ color: "var(--mis-dim)" }}>
+                {pick(locale, {
+                  zh: isBootstrap ? "设置首位所有者，之后可直接从这套工作台登录。" : "使用这台主机上的账户进入当前工作区。",
+                  en: isBootstrap ? "Set up the first owner, then sign in through this same workspace." : "Use an account on this host to enter the workspace.",
+                })}
+              </p>
+              <p data-testid="human-auth-host-boundary" className="mt-3 text-[11px]" style={{ color: "var(--mis-muted)" }}>
+                {pick(locale, { zh: "本地主机 · 私人网络", en: "Local host · private network" })}
+              </p>
+            </aside>
+
+            <section data-testid="human-auth-access-panel" className="min-w-0">
+              <div className="border-b pb-3" style={{ borderColor: "var(--mis-border)" }}>
+                <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{title}</h2>
+                <p className="mt-1 text-[11px]" style={{ color: "var(--mis-muted)" }}>
+                  {pick(locale, {
+                    zh: isBootstrap ? "只需完成一次，数据和凭据仍保留在本机。" : "登录后继续管理任务、代理和运行记录。",
+                    en: isBootstrap ? "Complete this once. Data and credentials remain on this host." : "Continue managing tasks, agents, and run records after sign-in.",
+                  })}
+                </p>
               </div>
 
               {gate === "checking" ? (
-                <div className="flex min-h-40 items-center justify-center gap-2.5 px-4 text-xs" style={{ color: "var(--mis-dim)" }}>
+                <div className="flex min-h-40 items-center gap-2.5 border-b text-xs" style={{ borderColor: "var(--mis-border)", color: "var(--mis-dim)" }}>
                   <LoaderCircle className="animate-spin" size={17} aria-hidden="true" />
                   {pick(locale, { zh: "正在验证主机会话...", en: "Checking host session..." })}
                 </div>
               ) : gate === "unavailable" ? (
-                <div className="px-4 py-5">
+                <div className="border-b py-5" style={{ borderColor: "var(--mis-border)" }}>
                   <h3 className="text-sm font-semibold">{pick(locale, { zh: "无法连接本地主机", en: "Cannot reach local host" })}</h3>
                   <p className="mt-2 text-xs leading-5" style={{ color: "var(--mis-dim)" }}>{error}</p>
                   <button
@@ -229,7 +242,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 </div>
               ) : (
                 <form onSubmit={submit} data-testid="human-auth-workspace-form">
-                  <div className="divide-y" style={{ borderColor: "var(--mis-border)" }}>
+                  <div className="divide-y border-b" style={{ borderColor: "var(--mis-border)" }}>
                     {isBootstrap && !hasInstallerHandoff && (
                       <AuthField
                         label={pick(locale, { zh: "主机设置码", en: "Host setup code" })}
@@ -243,7 +256,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                     {hasInstallerHandoff && (
                       <div
                         data-testid="owner-setup-handoff-ready"
-                        className="grid gap-2 px-4 py-3.5 text-xs md:grid-cols-[180px_minmax(0,1fr)] md:items-center"
+                        className="grid gap-2 py-3.5 text-xs md:grid-cols-[180px_minmax(0,1fr)] md:items-center"
                       >
                         <span className="font-medium" style={{ color: "var(--mis-text)" }}>{pick(locale, { zh: "主机设置码", en: "Host setup code" })}</span>
                         <span className="flex items-center gap-2" style={{ color: "var(--mis-success)" }}>
@@ -293,14 +306,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   {error && (
                     <div
                       role="alert"
-                      className="border-t px-4 py-3 text-xs"
+                      className="border-b py-3 text-xs"
                       style={{ borderColor: "rgba(231,111,81,0.4)", background: "rgba(231,111,81,0.06)", color: "var(--mis-warning)" }}
                     >
                       {error}
                     </div>
                   )}
 
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3" style={{ borderColor: "var(--mis-border)", background: "var(--mis-surface2)" }}>
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-4">
                     <span className="flex items-center gap-1.5 text-[11px]" style={{ color: "var(--mis-muted)" }}>
                       <LockKeyhole size={12} />
                       {pick(locale, { zh: "凭据与运行数据保留在主机", en: "Credentials and runtime data stay on the host" })}
@@ -317,10 +330,6 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 </form>
               )}
             </section>
-
-            <p data-testid="human-auth-host-boundary" className="mt-3 text-[11px]" style={{ color: "var(--mis-muted)" }}>
-              {pick(locale, { zh: "当前连接：本地主机 · 私人网络", en: "Connected to: local host · private network" })}
-            </p>
           </div>
         </section>
       </AppShell>
@@ -350,7 +359,7 @@ function AuthField({
   pattern?: string;
 }) {
   return (
-    <label className="grid gap-2 px-4 py-3.5 text-xs md:grid-cols-[180px_minmax(0,1fr)] md:items-center">
+    <label className="grid gap-2 py-3.5 text-xs md:grid-cols-[180px_minmax(0,1fr)] md:items-center">
       <span className="min-w-0">
         <span className="block font-medium" style={{ color: "var(--mis-text)" }}>{label}</span>
         {hint && <span className="mt-0.5 block text-[10px] font-normal" style={{ color: "var(--mis-muted)" }}>{hint}</span>}
