@@ -84,6 +84,8 @@ export function Sidebar({ locked = false }: { locked?: boolean }) {
       privateHostAcceptance: "Private Host Acceptance",
       workspace: "Workspace",
       productMode: "Private Host",
+      setupGroup: "Host setup",
+      setupHint: "Sign in to unlock the workspace",
     },
     zh: {
       clientWorkspace: "前台工作区",
@@ -110,6 +112,8 @@ export function Sidebar({ locked = false }: { locked?: boolean }) {
       privateHostAcceptance: "私有主机验收",
       workspace: "工作区",
       productMode: "私有主机",
+      setupGroup: "主机设置",
+      setupHint: "登录后解锁完整工作台",
     },
   });
 
@@ -150,7 +154,30 @@ export function Sidebar({ locked = false }: { locked?: boolean }) {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
-        {navGroups.map((group) => {
+        {locked ? (
+          <div>
+            <div
+              className="px-2 py-1 text-[10px] font-semibold tracking-wider uppercase mb-1"
+              style={{ color: "var(--mis-muted)" }}
+            >
+              {copy.setupGroup}
+            </div>
+            <div
+              aria-current="page"
+              className="flex items-center gap-2 rounded px-2 py-1.5 text-xs"
+              style={{
+                color: "var(--mis-cyan)",
+                background: "color-mix(in srgb, var(--mis-cyan) 8%, transparent)",
+              }}
+            >
+              <UserRound size={15} />
+              {copy.account}
+            </div>
+            <p className="px-2 pt-3 text-[10px] leading-4" style={{ color: "var(--mis-muted)" }}>
+              {copy.setupHint}
+            </p>
+          </div>
+        ) : navGroups.map((group) => {
           const groupTitle = copy[group.titleKey as keyof typeof copy];
           const isCollapsed = collapsed[group.titleKey];
           return (

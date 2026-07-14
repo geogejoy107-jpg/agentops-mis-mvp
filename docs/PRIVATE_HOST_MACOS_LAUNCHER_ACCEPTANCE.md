@@ -41,9 +41,16 @@ selection, network exposure option, or Worker confirmation.
 - The locked state is a compact `Account and access` settings form inside the
   Workspace content area. It does not use a standalone hero, feature pitch,
   host-status card wall, or separate product navigation.
+- The locked Sidebar shows only the current account-setup step instead of a
+  wall of disabled product routes. The locked Topbar keeps the Workspace
+  identity, theme and language controls while omitting the inactive search and
+  workspace-switch controls.
 - The form keeps only the setup/login fields, submission action, and a bounded
   local-host connection note. Host and Agent operational detail remains in the
   normal Workspace after authentication.
+- At narrow widths the existing Sidebar collapses and each field becomes a
+  label-over-input row; the desktop settings grid remains unchanged for the
+  authenticated product surface.
 
 ## Lifecycle Boundary
 
@@ -99,11 +106,14 @@ does not call a real Runtime or inspect a real Host database. It verifies:
 - partial Host state rejection;
 - launcher removal with Host data preserved.
 
-Local acceptance on 2026-07-14 passed the React production build (2,280
+Local acceptance on 2026-07-14 passed the React production build (2,282
 modules), the auth Workspace contract, launcher smoke, full bundle lifecycle,
 clean release-consumer install, release evidence packet, Python compilation,
 secret scan, and `git diff --check`. Browser review covered both the existing
-dark operations theme and light enterprise theme at desktop width. The
+dark operations theme and light enterprise theme at desktop width. The latest
+focused review also covered the light enterprise first-Owner state at
+1280x720 and 390x844 with zero browser console errors and no horizontal
+overflow. The
 installed Host must still be upgraded through the versioned installer before
 its served asset hash changes; source assets are never copied over a running
 installation in place.

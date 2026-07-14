@@ -23,7 +23,7 @@ export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLa
       logout: "Sign out",
       account: "Account and access",
       locked: "Locked",
-      searchLocked: "Sign in to search this workspace",
+      setup: "Account setup",
     },
     zh: {
       workspace: "工作区",
@@ -38,7 +38,7 @@ export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLa
       logout: "退出登录",
       account: "账户与访问",
       locked: "已锁定",
-      searchLocked: "登录后可搜索工作区",
+      setup: "账户设置",
     },
   });
 
@@ -74,24 +74,35 @@ export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLa
       </div>
 
       {/* Left: workspace switcher */}
-      <button
-        disabled={locked}
-        className="hidden items-center gap-1.5 text-xs rounded px-2 py-1 hover:opacity-80 transition-opacity shrink-0 md:flex"
-        style={{ color: "var(--mis-text)", background: "var(--mis-surface2)" }}
-      >
-        <span style={{ color: "var(--mis-dim)" }}>{copy.workspace}:</span>
-        {workspaceName}
-        <ChevronDown size={12} style={{ color: "var(--mis-dim)" }} />
-      </button>
+      {locked ? (
+        <div className="hidden min-w-0 items-center gap-2 text-xs md:flex" style={{ color: "var(--mis-dim)" }}>
+          <span className="font-medium" style={{ color: "var(--mis-text)" }}>{workspaceName}</span>
+          <span aria-hidden="true">/</span>
+          <span>{copy.setup}</span>
+        </div>
+      ) : (
+        <button
+          className="hidden items-center gap-1.5 text-xs rounded px-2 py-1 hover:opacity-80 transition-opacity shrink-0 md:flex"
+          style={{ color: "var(--mis-text)", background: "var(--mis-surface2)" }}
+        >
+          <span style={{ color: "var(--mis-dim)" }}>{copy.workspace}:</span>
+          {workspaceName}
+          <ChevronDown size={12} style={{ color: "var(--mis-dim)" }} />
+        </button>
+      )}
 
       {/* Center: search */}
-      <div
-        className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded text-xs w-full max-w-xl"
-        style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)" }}
-      >
-        <Search size={13} />
-        <span>{locked ? copy.searchLocked : copy.search}</span>
-      </div>
+      {locked ? (
+        <div className="hidden flex-1 md:block" />
+      ) : (
+        <div
+          className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded text-xs w-full max-w-xl"
+          style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)" }}
+        >
+          <Search size={13} />
+          <span>{copy.search}</span>
+        </div>
+      )}
 
       {/* Right */}
       <div className="flex items-center gap-2 shrink-0">

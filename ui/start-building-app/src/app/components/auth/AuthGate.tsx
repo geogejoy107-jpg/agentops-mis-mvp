@@ -227,7 +227,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                     {hasInstallerHandoff && (
                       <div
                         data-testid="owner-setup-handoff-ready"
-                        className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-3 py-3 text-xs sm:grid-cols-[160px_minmax(0,1fr)]"
+                        className="grid gap-1.5 py-3 text-xs sm:grid-cols-[160px_minmax(0,1fr)] sm:items-center sm:gap-3"
                       >
                         <span className="font-medium" style={{ color: "var(--mis-text)" }}>{pick(locale, { zh: "主机设置码", en: "Host setup code" })}</span>
                         <span className="flex items-center gap-2" style={{ color: "var(--mis-success)" }}>
@@ -326,7 +326,7 @@ function AuthField({
   pattern?: string;
 }) {
   return (
-    <label className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-3 py-3 text-xs sm:grid-cols-[160px_minmax(0,1fr)]">
+    <label className="grid gap-1.5 py-3 text-xs sm:grid-cols-[160px_minmax(0,1fr)] sm:items-center sm:gap-3">
       <span className="min-w-0">
         <span className="block font-medium" style={{ color: "var(--mis-text)" }}>{label}</span>
         {hint && <span className="mt-0.5 block text-[10px] font-normal" style={{ color: "var(--mis-muted)" }}>{hint}</span>}

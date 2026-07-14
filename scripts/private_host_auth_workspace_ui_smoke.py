@@ -127,7 +127,7 @@ def main() -> int:
     record(
         checks,
         "auth_form_uses_compact_workspace_rows",
-        'grid-cols-[120px_minmax(0,1fr)]' in auth_gate
+        'grid gap-1.5 py-3 text-xs sm:grid-cols-[160px_minmax(0,1fr)]' in auth_gate
         and 'background: "var(--mis-surface)"' in auth_gate,
     )
     record(
@@ -203,14 +203,22 @@ def main() -> int:
         "<Topbar locked={locked} lockLabel={lockLabel} />" in app_shell,
     )
 
-    sidebar_locked_render = slice_between(sidebar, "{locked ? (", ") : (")
+    sidebar_locked_render = slice_between(sidebar, "{locked ? (\n          <div>", ") : navGroups.map")
     sidebar_unlocked_render = slice_between(sidebar, ") : (\n                          <NavLink", "</NavLink>")
     record(
         checks,
-        "locked_sidebar_renders_disabled_item",
-        'aria-disabled="true"' in sidebar_locked_render and "<div" in sidebar_locked_render,
+        "locked_sidebar_renders_single_current_item",
+        'aria-current="page"' in sidebar_locked_render
+        and "copy.setupGroup" in sidebar_locked_render
+        and "copy.account" in sidebar_locked_render,
     )
     record(checks, "locked_sidebar_item_is_not_link", "NavLink" not in sidebar_locked_render)
+    record(
+        checks,
+        "locked_sidebar_omits_disabled_menu_wall",
+        "navGroups.map" not in sidebar_locked_render
+        and 'aria-disabled="true"' not in sidebar_locked_render,
+    )
     record(checks, "unlocked_sidebar_keeps_navigation", "<NavLink" in sidebar_unlocked_render)
 
     topbar_persistent_controls = slice_between(topbar, "{/* Right */}", "{/* Notifications */}")
@@ -239,6 +247,12 @@ def main() -> int:
         "locked_topbar_uses_private_host_workspace",
         "const workspaceName = locked ? copy.privateHost" in topbar
         and "{workspaceName}" in topbar,
+    )
+    record(
+        checks,
+        "locked_topbar_omits_fake_search",
+        "{locked ? (\n        <div className=\"hidden flex-1 md:block\" />" in topbar
+        and "searchLocked" not in topbar,
     )
 
     failures.extend(name for name, passed in checks.items() if not passed)
