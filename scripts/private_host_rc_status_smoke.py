@@ -66,6 +66,7 @@ def main() -> int:
         "current-package approved Runtime completion",
         "physical second-device",
         "another-Mac clean install",
+        "logout/reboot service proof",
     )
     for marker in open_gate_markers:
         require(marker in rc, f"open external gate is no longer explicit: {marker}", failures)
