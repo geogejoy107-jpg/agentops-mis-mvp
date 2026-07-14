@@ -918,7 +918,9 @@ export function WorkerConsole() {
             {serviceWorkerLanes.map((worker) => (
               <div key={worker.lane_id} data-testid="gateway-service-worker" className="rounded px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-[11px] font-semibold" style={{ color: adapterColor(worker.adapter || "external") }}>{worker.agent_name || worker.agent_id}</div>
+                  <div className="text-[11px] font-semibold" style={{ color: adapterColor(worker.adapter || "external") }}>
+                    {worker.adapter === "openclaw" ? "OpenClaw Worker" : worker.adapter === "hermes" ? "Hermes Worker" : worker.agent_name || worker.agent_id}
+                  </div>
                   <div className="flex items-center gap-1.5">
                     <StatusBadge status={worker.heartbeat_state === "fresh" ? "running" : "attention"} label={worker.heartbeat_state || "unknown"} />
                     <StatusBadge status="ready" label={copy.serviceWorkers} />

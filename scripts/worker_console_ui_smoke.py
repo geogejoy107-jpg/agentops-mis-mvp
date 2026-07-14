@@ -36,6 +36,7 @@ EXPECTED = {
     "real_fleet_loader": (CONSOLE, "loadWorkerFleet()"),
     "service_worker_lane": (CONSOLE, 'lane.lane_type === "gateway_service_worker"'),
     "service_worker_card": (CONSOLE, 'data-testid="gateway-service-worker"'),
+    "service_worker_adapter_names": (CONSOLE, 'worker.adapter === "openclaw" ? "OpenClaw Worker" : worker.adapter === "hermes" ? "Hermes Worker"'),
     "execution_capacity_metric": (CONSOLE, "workerStatus?.execution_capacity_workers"),
     "service_worker_metric": (CONSOLE, "workerStatus?.active_service_workers"),
     "real_fleet_hygiene_loader": (CONSOLE, "loadWorkerFleetHygiene({ limit: 8 })"),
