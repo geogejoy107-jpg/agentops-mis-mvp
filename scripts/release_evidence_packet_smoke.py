@@ -90,6 +90,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "private_host_worker_ownership",
+        "command": "python3 scripts/private_host_worker_ownership_smoke.py",
+        "summary": "Private Host refuses duplicate same-adapter local Workers, preserves explicit external Worker ownership through --no-workers, and never terminates an existing process automatically.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "private_host_background_service",
         "command": "python3 scripts/private_host_background_service_smoke.py",
         "summary": "Preview-first host-only macOS LaunchAgent install/check/control/remove lifecycle with explicit confirmation, exact ownership and no Worker or credential material.",

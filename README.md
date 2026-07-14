@@ -136,6 +136,11 @@ agentops host start \
   --confirm-live-workers
 ```
 
+Host 启动前会检查本机是否已经存在同 adapter 的 Worker。若发现 Hermes、
+OpenClaw 或 mock Worker 已由另一套服务管理，启动会在后端端口打开前失败，
+只返回 adapter 和 PID，不读取或输出进程命令。要继续复用这些外部 Worker，
+显式使用 `agentops host start --no-workers`；Host 不会自动杀进程或卸载服务。
+
 停止和检查：
 
 ```bash

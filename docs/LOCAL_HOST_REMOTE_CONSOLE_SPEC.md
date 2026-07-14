@@ -99,6 +99,12 @@ The console must not:
 - Remains loopback behind a recommended private-network proxy when possible.
 - Requires human authentication before any workspace data is returned.
 - Requires explicit confirmation before enabling live Hermes/OpenClaw workers.
+- A Host-owned Worker start must first prove that no same-adapter local Worker
+  process already exists. A conflict fails closed with adapter and PID evidence
+  only; process commands and credentials remain omitted.
+- Operators may intentionally keep independently service-managed Workers and
+  start the Host with `--no-workers`. The Host never kills or unloads an
+  existing Worker automatically.
 
 ### Hosted/public mode
 
@@ -183,6 +189,12 @@ Agent-bound enrollment and Session tokens must fail closed on these Host-wide
 routes even when they include `tasks:read`; they can use only scoped Agent
 Gateway task/run/evidence routes. Rejected Host telemetry reads must not update
 the bound credential's usage timestamp or write ledger/audit rows.
+
+Host and independently service-managed Workers are two explicit ownership
+models. `agentops host start --worker <adapter>` owns the selected Worker
+processes as children of the Host stack. `agentops host start --no-workers`
+owns only the API/UI Host and leaves external Workers untouched. Mixing both
+models for the same adapter is rejected before the backend port opens.
 
 ## 8. Data and Privacy Boundary
 

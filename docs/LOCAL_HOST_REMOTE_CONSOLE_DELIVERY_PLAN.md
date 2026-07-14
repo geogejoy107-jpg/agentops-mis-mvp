@@ -150,6 +150,8 @@ Deliverables:
 - provide checksums, provenance, SBOM, third-party notices, uninstall, backup,
   restore, and upgrade instructions;
 - add preview-first background service installation;
+- reject duplicate same-adapter Worker ownership before Host startup while
+  preserving an explicit `--no-workers` external-owner mode;
 - implement update check, pre-migration backup, migration verification, and
   rollback instructions;
 - publish actual GitHub Release assets rather than relying only on automatic
@@ -161,6 +163,8 @@ Verification:
 - install path contains no source-machine DB, token, config, cache, log, or
   dependency dump;
 - service survives logout/reboot when explicitly installed;
+- duplicate Worker ownership fails closed without opening the Host port or
+  terminating the existing process;
 - upgrade preserves ledger/knowledge and rollback is exercised;
 - checksum and exact-commit provenance validation pass.
 

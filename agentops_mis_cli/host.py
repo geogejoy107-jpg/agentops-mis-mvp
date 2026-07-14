@@ -37,6 +37,12 @@ HOST_DATA_MARKER = {
     "product": "AgentOps MIS Private Host Data",
     "managed": True,
 }
+HOST_WORKER_ADAPTERS = {"mock", "hermes", "openclaw"}
+HOST_WORKER_PROCESS_PATTERNS = (
+    r"-m[[:space:]]+agentops_mis_cli\.worker([[:space:]]|$).*--adapter([=[:space:]]){adapter}([[:space:]]|$)",
+    r"(^|[ /])agentops-worker([[:space:]]|$).*--adapter([=[:space:]]){adapter}([[:space:]]|$)",
+    r"agent_worker\.py([[:space:]]|$).*--adapter([=[:space:]]){adapter}([[:space:]]|$)",
+)
 
 
 class HostArgumentError(ValueError):
@@ -939,6 +945,89 @@ def effective_ui_dist(config: dict) -> tuple[Path, bool]:
     return configured, False
 
 
+def requested_host_worker_adapters(args) -> list[str]:
+    if args.no_workers:
+        return []
+    return list(dict.fromkeys(args.worker or ["mock"]))
+
+
+def running_worker_adapter_pids(adapter: str) -> list[int] | None:
+    if adapter not in HOST_WORKER_ADAPTERS:
+        return []
+    pgrep = shutil.which("pgrep")
+    if not pgrep:
+        return None
+    pids: set[int] = set()
+    for template in HOST_WORKER_PROCESS_PATTERNS:
+        try:
+            process = subprocess.run(
+                [pgrep, "-f", "--", template.format(adapter=adapter)],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if process.returncode not in {0, 1}:
+            return None
+        for raw in process.stdout.splitlines():
+            try:
+                pid = int(raw.strip())
+            except ValueError:
+                continue
+            if pid > 0 and pid != os.getpid():
+                pids.add(pid)
+    return sorted(pids)
+
+
+def host_worker_ownership_preflight(args) -> dict:
+    requested = requested_host_worker_adapters(args)
+    conflicts = []
+    unavailable = []
+    for adapter in requested:
+        pids = running_worker_adapter_pids(adapter)
+        if pids is None:
+            unavailable.append(adapter)
+        elif pids:
+            conflicts.append({
+                "adapter": adapter,
+                "pids": pids,
+                "process_command_omitted": True,
+            })
+    return {
+        "ok": not conflicts and not unavailable,
+        "operation": "host_worker_ownership_preflight",
+        "requested_workers": requested,
+        "conflicts": conflicts,
+        "check_unavailable_adapters": unavailable,
+        "process_command_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def emit_host_worker_ownership_error(preflight: dict) -> int:
+    check_unavailable = bool(preflight.get("check_unavailable_adapters"))
+    emit({
+        **preflight,
+        "ok": False,
+        "operation": "host_start",
+        "error": "worker_ownership_check_unavailable" if check_unavailable else "worker_ownership_conflict",
+        "message": (
+            "Host could not prove exclusive Worker ownership on this machine."
+            if check_unavailable
+            else "A requested adapter already has a local Worker process. Choose one ownership model before starting Host workers."
+        ),
+        "remediation": {
+            "existing_worker_mode": "agentops host start --no-workers",
+            "host_owned_worker_mode": "Stop or unload the existing local Worker owner, then retry the requested Host start.",
+            "automatic_process_termination": False,
+        },
+        "live_execution_performed": False,
+    })
+    return 2
+
+
 def stack_command(config: dict, args) -> list[str]:
     ui_dist, _managed = effective_ui_dist(config)
     command = [
@@ -974,6 +1063,9 @@ def _cmd_start_unlocked(args) -> int:
     if process_alive(pid):
         emit({"ok": False, "operation": "host_start", "error": "already_running", "pid": pid, "token_omitted": True})
         return 2
+    worker_preflight = host_worker_ownership_preflight(args)
+    if not worker_preflight["ok"]:
+        return emit_host_worker_ownership_error(worker_preflight)
     command = stack_command(config, args)
     env = host_env(config, secret_values)
     if args.foreground:
@@ -1043,6 +1135,9 @@ def _launch_foreground_locked(args):
     if process_alive(pid):
         emit({"ok": False, "operation": "host_start", "error": "already_running", "pid": pid, "token_omitted": True})
         return None, p, 2
+    worker_preflight = host_worker_ownership_preflight(args)
+    if not worker_preflight["ok"]:
+        return None, p, emit_host_worker_ownership_error(worker_preflight)
     process = subprocess.Popen(stack_command(config, args), cwd=ROOT, env=host_env(config, secret_values))
     write_managed_pid_record(p["pid"], process, foreground=True)
     return process, p, 0
