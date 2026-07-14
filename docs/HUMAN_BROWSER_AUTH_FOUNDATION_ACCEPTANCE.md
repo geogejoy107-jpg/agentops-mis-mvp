@@ -13,7 +13,9 @@ It adds:
 - `HttpOnly`, `SameSite=Strict` browser cookie behavior;
 - CSRF tokens for state-changing browser requests;
 - Owner bootstrap, login, status and logout APIs;
+- Owner-only browser Session list and revoke APIs using safe references;
 - a bilingual React login/Owner initialization gate;
+- an existing-Workspace `/workspace/account` Session management page;
 - anonymous workspace read denial in private/shared/production modes;
 - continued separation of human sessions from Agent Gateway credentials;
 - a minimal public `/health` response that omits workspace state.
@@ -39,6 +41,7 @@ The browser does not receive the Agent Gateway API key or Admin key.
 ```bash
 python3 -m py_compile server.py agentops_mis_core/*.py scripts/*.py
 python3 scripts/human_browser_auth_smoke.py
+python3 scripts/human_session_management_smoke.py
 python3 scripts/run_local_stack_smoke.py
 python3 scripts/production_ui_host_smoke.py
 python3 scripts/startup_security_guard_smoke.py
@@ -59,6 +62,10 @@ Verified behavior:
 - missing CSRF blocked a task write;
 - valid CSRF allowed a bounded task write;
 - logout revoked the session and subsequent workspace read returned `401`;
+- Owner listed current/other browser Sessions, revoked one or all other
+  Sessions, and could not revoke the current Session except through logout;
+- Viewer access, missing CSRF, ambiguous input, and cross-account Session
+  references failed closed;
 - no real runtime or external connector was called;
 - all persistence used a temporary SQLite database;
 - UI production build passed with 2,279 transformed modules;
@@ -88,8 +95,9 @@ Verified behavior:
 
 ## Known Limitations
 
-- Only first-Owner bootstrap and login/logout are exposed; invitation, account
-  creation, disable, role change and session/device revocation UI are pending.
+- First-Owner bootstrap, login/logout, and current-account Session revocation
+  are exposed. Invitation, additional account creation, disable, and role
+  change UI are pending.
 - State-changing requests, bootstrap, login and logout enforce the configured
   Origin allowlist; missing or untrusted origins fail closed when configured.
 - Host-sensitive routes currently require Owner but still need a stricter
@@ -101,7 +109,6 @@ Verified behavior:
 
 ## Next Slice
 
-Add the `agentops host init/start/status` lifecycle with generated local secret
-files, trusted-origin configuration and Tailscale Serve preview. Then perform a
-second-computer browser acceptance without installing repository dependencies
-on the console machine.
+Perform the physical second-computer browser acceptance without installing
+repository dependencies on the console machine, then add the preview-first
+managed background service required by the packaging plan.

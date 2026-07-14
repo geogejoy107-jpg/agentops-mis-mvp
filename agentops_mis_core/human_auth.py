@@ -61,6 +61,11 @@ def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def session_reference(session_id: str) -> str:
+    digest = hashlib.sha256(f"agentops-human-session-ref-v1:{session_id}".encode("utf-8")).hexdigest()
+    return f"hsref_{digest[:16]}"
+
+
 def init_schema(conn) -> None:
     conn.executescript(SCHEMA_SQL)
 
@@ -190,10 +195,16 @@ def auth_context(conn, headers, *, touch=True) -> tuple[dict | None, dict | None
 
 def required_role(path: str, method: str) -> str:
     if method == "GET":
-        if path in {"/api/workers/local/logs", "/api/runs/export", "/api/memories/export"}:
+        if path in {
+            "/api/human-auth/sessions",
+            "/api/workers/local/logs",
+            "/api/runs/export",
+            "/api/memories/export",
+        }:
             return "owner"
         return "viewer"
     if path == "/api/knowledge/index" or path.startswith((
+        "/api/human-auth/sessions",
         "/api/workers/local/",
         "/api/integrations/",
         "/api/migration/",
@@ -343,4 +354,156 @@ def logout(conn, headers) -> tuple[dict, int, dict]:
         "event": "logout",
         "account_id": context["account_id"],
         "session_id": context["session_id"],
+    }
+
+
+def _expire_account_sessions(conn, account_id: str) -> int:
+    timestamp = now_iso()
+    cursor = conn.execute(
+        """
+        UPDATE human_sessions
+        SET status='expired',revoked_at=?
+        WHERE account_id=? AND status='active' AND expires_at<=?
+        """,
+        (timestamp, account_id, timestamp),
+    )
+    return max(0, int(cursor.rowcount or 0))
+
+
+def list_sessions(conn, context) -> tuple[dict, int]:
+    if not context:
+        return {"error": "human_auth_required", "message": "A human browser session is required."}, 401
+    _expire_account_sessions(conn, context["account_id"])
+    rows = conn.execute(
+        """
+        SELECT session_id,status,created_at,expires_at,last_seen_at,revoked_at
+        FROM human_sessions
+        WHERE account_id=?
+        ORDER BY created_at DESC
+        LIMIT 50
+        """,
+        (context["account_id"],),
+    ).fetchall()
+    sessions = [
+        {
+            "session_ref": session_reference(row["session_id"]),
+            "status": row["status"],
+            "current": hmac.compare_digest(row["session_id"], context["session_id"]),
+            "created_at": row["created_at"],
+            "expires_at": row["expires_at"],
+            "last_seen_at": row["last_seen_at"],
+            "revoked_at": row["revoked_at"],
+        }
+        for row in rows
+    ]
+    return {
+        "provider": "agentops-human-auth",
+        "operation": "human_sessions_list",
+        "sessions": sessions,
+        "current_session_ref": session_reference(context["session_id"]),
+        "active_count": sum(1 for row in sessions if row["status"] == "active"),
+        "session_count": len(sessions),
+        "session_id_omitted": True,
+        "session_hash_omitted": True,
+        "token_omitted": True,
+    }, 200
+
+
+def revoke_sessions(conn, context, body) -> tuple[dict, int, dict]:
+    if not context:
+        payload = {"error": "human_auth_required", "message": "A human browser session is required."}
+        return payload, 401, {"event": "sessions_revoke_failed", "target_ref": "unavailable"}
+    body = body if isinstance(body, dict) else {}
+    unexpected = sorted(set(body) - {"session_ref", "all_other"})
+    requested_ref = str(body.get("session_ref") or "").strip()
+    all_other = body.get("all_other") is True
+    has_session_ref = "session_ref" in body
+    has_all_other = "all_other" in body
+    invalid_operation = (
+        has_session_ref == has_all_other
+        or (has_session_ref and not requested_ref)
+        or (has_all_other and not all_other)
+    )
+    if unexpected or invalid_operation:
+        payload = {
+            "error": "invalid_session_revoke_request",
+            "message": "Provide exactly one of session_ref or all_other=true.",
+            "unexpected_fields": unexpected,
+        }
+        return payload, 400, {"event": "sessions_revoke_failed", "target_ref": requested_ref or "all_other"}
+
+    _expire_account_sessions(conn, context["account_id"])
+    current_ref = session_reference(context["session_id"])
+    timestamp = now_iso()
+    revoked_refs: list[str] = []
+
+    if all_other:
+        rows = conn.execute(
+            """
+            SELECT session_id FROM human_sessions
+            WHERE account_id=? AND status='active' AND session_id<>?
+            """,
+            (context["account_id"], context["session_id"]),
+        ).fetchall()
+        revoked_refs = [session_reference(row["session_id"]) for row in rows]
+        if rows:
+            conn.execute(
+                """
+                UPDATE human_sessions
+                SET status='revoked',revoked_at=?
+                WHERE account_id=? AND status='active' AND session_id<>?
+                """,
+                (timestamp, context["account_id"], context["session_id"]),
+            )
+        target_ref = "all_other"
+    else:
+        target = None
+        rows = conn.execute(
+            """
+            SELECT session_id,status FROM human_sessions
+            WHERE account_id=?
+            """,
+            (context["account_id"],),
+        ).fetchall()
+        for row in rows:
+            if hmac.compare_digest(session_reference(row["session_id"]), requested_ref):
+                target = row
+                break
+        if target is None:
+            payload = {"error": "human_session_not_found", "message": "The browser session was not found."}
+            return payload, 404, {"event": "sessions_revoke_failed", "target_ref": requested_ref}
+        if hmac.compare_digest(target["session_id"], context["session_id"]):
+            payload = {
+                "error": "current_session_requires_logout",
+                "message": "Use sign out to revoke the current browser session.",
+                "current_session_ref": current_ref,
+            }
+            return payload, 409, {"event": "sessions_revoke_blocked", "target_ref": requested_ref}
+        target_ref = requested_ref
+        if target["status"] == "active":
+            conn.execute(
+                """
+                UPDATE human_sessions
+                SET status='revoked',revoked_at=?
+                WHERE account_id=? AND session_id=? AND status='active'
+                """,
+                (timestamp, context["account_id"], target["session_id"]),
+            )
+            revoked_refs = [requested_ref]
+
+    return {
+        "provider": "agentops-human-auth",
+        "operation": "human_sessions_revoke",
+        "status": "revoked" if revoked_refs else "no_active_session_changed",
+        "revoked_count": len(revoked_refs),
+        "revoked_session_refs": revoked_refs,
+        "current_session_ref": current_ref,
+        "current_session_preserved": True,
+        "session_id_omitted": True,
+        "session_hash_omitted": True,
+        "token_omitted": True,
+    }, 200, {
+        "event": "sessions_revoked",
+        "target_ref": target_ref,
+        "revoked_session_refs": revoked_refs,
     }

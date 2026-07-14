@@ -78,6 +78,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "human_session_management",
+        "command": "python3 scripts/human_session_management_smoke.py",
+        "summary": "Owner-only browser Session list/revoke, current-Session preservation, role/CSRF/account isolation, safe references, audit omission and existing Workspace account UI.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "private_host_macos_launcher",
         "command": "python3 scripts/private_host_macos_launcher_smoke.py",
         "summary": "Managed user-level macOS launcher installs in a clean HOME, pins the validated Python runtime, initializes once, starts with no live workers, opens the existing Workspace, and uninstalls without deleting Host data.",

@@ -37,6 +37,41 @@ export interface HumanAuthSession {
   csrf_token: string;
 }
 
+export interface HumanBrowserSession {
+  session_ref: string;
+  status: "active" | "revoked" | "expired";
+  current: boolean;
+  created_at: string;
+  expires_at: string;
+  last_seen_at?: string | null;
+  revoked_at?: string | null;
+}
+
+export interface HumanBrowserSessionsPayload {
+  provider: string;
+  operation: string;
+  sessions: HumanBrowserSession[];
+  current_session_ref: string;
+  active_count: number;
+  session_count: number;
+  session_id_omitted: boolean;
+  session_hash_omitted: boolean;
+  token_omitted: boolean;
+}
+
+export interface HumanBrowserSessionRevokePayload {
+  provider: string;
+  operation: string;
+  status: string;
+  revoked_count: number;
+  revoked_session_refs: string[];
+  current_session_ref: string;
+  current_session_preserved: boolean;
+  session_id_omitted: boolean;
+  session_hash_omitted: boolean;
+  token_omitted: boolean;
+}
+
 export type PrivateHostAcceptanceCheckId =
   | "human_session"
   | "local_readiness"
@@ -169,6 +204,17 @@ export async function bootstrapHuman(input: {
 export async function logoutHuman(): Promise<void> {
   await apiJson<Record<string, unknown>>("/human-auth/logout", { method: "POST", body: "{}" });
   setHumanAuthCsrf(null);
+}
+
+export async function loadHumanBrowserSessions(): Promise<HumanBrowserSessionsPayload> {
+  return apiJson<HumanBrowserSessionsPayload>("/human-auth/sessions");
+}
+
+export async function revokeHumanBrowserSession(input: { session_ref: string } | { all_other: true }): Promise<HumanBrowserSessionRevokePayload> {
+  return apiJson<HumanBrowserSessionRevokePayload>("/human-auth/sessions/revoke", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export interface DashboardMetrics {

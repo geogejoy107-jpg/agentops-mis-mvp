@@ -1,4 +1,5 @@
 import { Search, Bell, ChevronDown, Radio, Moon, Sun, Languages, Palette, LogOut, LockKeyhole } from "lucide-react";
+import { Link } from "react-router";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 import type { ThemeMode } from "../../context/PreferencesContext";
 import { useHumanAuth } from "../../context/HumanAuthContext";
@@ -19,6 +20,7 @@ export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLa
       switchTheme: "Switch visual style",
       switchLanguage: "Switch language",
       logout: "Sign out",
+      account: "Account and access",
       locked: "Locked",
       searchLocked: "Sign in to search this workspace",
     },
@@ -32,6 +34,7 @@ export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLa
       switchTheme: "切换视觉风格",
       switchLanguage: "切换语言",
       logout: "退出登录",
+      account: "账户与访问",
       locked: "已锁定",
       searchLocked: "登录后可搜索工作区",
     },
@@ -126,15 +129,27 @@ export function Topbar({ locked = false, lockLabel }: { locked?: boolean; lockLa
         )}
 
         {/* Avatar */}
-        <div
-          className={`${locked ? "hidden sm:flex" : "flex"} w-7 h-7 rounded-full items-center justify-center text-[11px] font-semibold cursor-pointer`}
-          style={locked
-            ? { background: "var(--mis-surface2)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }
-            : { background: "var(--mis-purple)", color: "#fff" }}
-          title={displayName}
-        >
-          {locked ? <LockKeyhole size={13} /> : initials}
-        </div>
+        {humanAuthRequired && !locked ? (
+          <Link
+            to="/workspace/account"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold"
+            style={{ background: "var(--mis-purple)", color: "#fff" }}
+            title={copy.account}
+            aria-label={copy.account}
+          >
+            {initials}
+          </Link>
+        ) : (
+          <div
+            className={`${locked ? "hidden sm:flex" : "flex"} w-7 h-7 rounded-full items-center justify-center text-[11px] font-semibold`}
+            style={locked
+              ? { background: "var(--mis-surface2)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }
+              : { background: "var(--mis-purple)", color: "#fff" }}
+            title={displayName}
+          >
+            {locked ? <LockKeyhole size={13} /> : initials}
+          </div>
+        )}
         {humanAuthRequired && !locked && (
           <button
             type="button"

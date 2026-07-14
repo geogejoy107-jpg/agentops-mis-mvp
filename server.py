@@ -30338,6 +30338,12 @@ class Handler(BaseHTTPRequestHandler):
                     payload, status = auth_error
                     return self.send_json(payload, status)
                 self._human_auth_context = context
+            if path == "/api/human-auth/sessions":
+                if not human_auth.required():
+                    return self.send_json({"error": "human_auth_disabled", "message": "Human authentication is not enabled."}, 409)
+                payload, status = human_auth.list_sessions(conn, self._human_auth_context)
+                conn.commit()
+                return self.send_json(payload, status)
             if path == "/api/agent-gateway/status":
                 payload, status = agent_gateway_status(conn, self.headers)
                 conn.commit()
@@ -31362,13 +31368,15 @@ class Handler(BaseHTTPRequestHandler):
                     payload, status = origin_error
                     return self.send_json(payload, status)
                 payload, status, token, event = human_auth.login(conn, body)
-                audit(conn, "user", event.get("account_id"), f"human_auth.{event['event']}", "human_sessions", event.get("session_id") or "login", None, {"status": status}, {"credentials_omitted": True, "username_hash": event.get("username_hash")})
+                session_ref = human_auth.session_reference(event["session_id"]) if event.get("session_id") else "login"
+                audit(conn, "user", event.get("account_id"), f"human_auth.{event['event']}", "human_sessions", session_ref, None, {"status": status}, {"credentials_omitted": True, "session_id_omitted": True, "token_omitted": True, "username_hash": event.get("username_hash")})
                 conn.commit()
                 response_headers = {"Set-Cookie": human_auth.session_cookie(token)} if token else None
                 return self.send_json(payload, status, headers=response_headers)
             if path == "/api/human-auth/logout":
                 payload, status, event = human_auth.logout(conn, self.headers)
-                audit(conn, "user", event.get("account_id"), f"human_auth.{event['event']}", "human_sessions", event.get("session_id") or "logout", None, {"status": status}, {"credentials_omitted": True})
+                session_ref = human_auth.session_reference(event["session_id"]) if event.get("session_id") else "logout"
+                audit(conn, "user", event.get("account_id"), f"human_auth.{event['event']}", "human_sessions", session_ref, None, {"status": status}, {"credentials_omitted": True, "session_id_omitted": True, "token_omitted": True})
                 conn.commit()
                 response_headers = {"Set-Cookie": human_auth.session_cookie("", clear=True)} if status == 200 else None
                 return self.send_json(payload, status, headers=response_headers)
@@ -31527,6 +31535,29 @@ class Handler(BaseHTTPRequestHandler):
                     payload, status = local_write_auth_error
                     conn.rollback()
                     return self.send_json(payload, status)
+            if path == "/api/human-auth/sessions/revoke":
+                if not human_auth.required():
+                    return self.send_json({"error": "human_auth_disabled", "message": "Human authentication is not enabled."}, 409)
+                payload, status, event = human_auth.revoke_sessions(conn, human_context, body)
+                audit(
+                    conn,
+                    "user",
+                    human_context.get("account_id") if human_context else None,
+                    f"human_auth.{event['event']}",
+                    "human_sessions",
+                    event.get("target_ref") or "session_revoke",
+                    None,
+                    {"status": status, "revoked_count": int(payload.get("revoked_count") or 0)},
+                    {
+                        "credentials_omitted": True,
+                        "session_ids_omitted": True,
+                        "session_hashes_omitted": True,
+                        "tokens_omitted": True,
+                        "revoked_session_refs": event.get("revoked_session_refs") or [],
+                    },
+                )
+                conn.commit()
+                return self.send_json(payload, status)
             if path == "/api/host/acceptance-receipts":
                 payload, status = create_private_host_acceptance_receipt(conn, body, human_context)
                 if status in {200, 201}:

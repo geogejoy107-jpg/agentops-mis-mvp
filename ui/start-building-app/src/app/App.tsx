@@ -22,6 +22,7 @@ import { TemplateSwitching } from "./components/pages/TemplateSwitching";
 import { AuditCenter } from "./components/pages/AuditCenter";
 import { CustomerProjectReport } from "./components/pages/CustomerProjectReport";
 import { PrivateHostAcceptance } from "./components/pages/PrivateHostAcceptance";
+import { AccountSecurity } from "./components/pages/AccountSecurity";
 import { PreferencesProvider } from "./context/PreferencesContext";
 import { AuthGate } from "./components/auth/AuthGate";
 
@@ -42,6 +43,7 @@ export default function App() {
               <Route path="/workspace/approvals" element={<ApprovalsInbox />} />
               <Route path="/workspace/memory" element={<MemoryLibrary />} />
               <Route path="/workspace/reports" element={<Reports />} />
+              <Route path="/workspace/account" element={<AccountSecurity />} />
               <Route path="/workspace/customer-projects/:projectId/report" element={<CustomerProjectReport />} />
               <Route path="/admin" element={<ControlTower />} />
               <Route path="/admin/evaluations" element={<EvaluationRoom />} />
