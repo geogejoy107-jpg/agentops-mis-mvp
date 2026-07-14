@@ -152,29 +152,57 @@ def main() -> int:
     )
     record(
         checks,
-        "owner_bootstrap_copy_bilingual",
+        "administrator_bootstrap_copy_bilingual",
         all(
             marker in auth_gate
             for marker in (
-                'zh: isBootstrap ? "\u521b\u5efa\u6240\u6709\u8005\u8d26\u6237"',
-                'en: isBootstrap ? "Create owner account"',
-                'zh: isBootstrap ? "\u521b\u5efa\u8d26\u6237\u5e76\u8fdb\u5165"',
-                'en: isBootstrap ? "Create account and continue"',
+                'zh: isBootstrap ? "\u8bbe\u7f6e\u7ba1\u7406\u5458\u8d26\u6237"',
+                'en: isBootstrap ? "Set up administrator"',
+                'zh: isBootstrap ? "\u521b\u5efa\u7ba1\u7406\u5458\u5e76\u8fdb\u5165"',
+                'en: isBootstrap ? "Create administrator"',
             )
         ),
     )
     record(
         checks,
-        "owner_login_copy_bilingual",
+        "login_copy_bilingual",
         all(
             marker in auth_gate
             for marker in (
-                ': "\u767b\u5f55\u5de5\u4f5c\u533a"',
-                ': "Sign in to workspace"',
-                ': "\u767b\u5f55"',
-                ': "Sign in"',
+                'isRecovery ? "\u91cd\u8bbe\u5bc6\u7801" : "\u767b\u5f55"',
+                'isRecovery ? "Reset password" : "Sign in"',
+                '"\u8f93\u5165\u8d26\u6237\u4fe1\u606f\u7ee7\u7eed\u3002"',
+                '"Enter your account details to continue."',
             )
         ),
+    )
+    record(
+        checks,
+        "forgot_password_action_bilingual",
+        'status?.password_recovery_available' in auth_gate
+        and "onClick={() => void beginRecovery()}" in auth_gate
+        and 'zh: "\u5fd8\u8bb0\u5bc6\u7801", en: "Forgot password"' in auth_gate
+        and "<KeyRound" in auth_gate,
+    )
+    record(
+        checks,
+        "recovery_page_is_local_only_and_revokes_other_sessions",
+        all(
+            marker in auth_gate
+            for marker in (
+                'isRecovery ? "\u4ec5\u53ef\u5728\u5b89\u88c5 AgentOps MIS \u7684\u4e3b\u673a\u4e0a\u5b8c\u6210"',
+                'isRecovery ? "Complete recovery on the AgentOps MIS host"',
+                '"\u8bbe\u7f6e\u65b0\u5bc6\u7801\u540e\uff0c\u5176\u4ed6\u5df2\u767b\u5f55\u8bbe\u5907\u4f1a\u81ea\u52a8\u9000\u51fa\u3002"',
+                '"Other signed-in devices will be signed out after the password changes."',
+            )
+        ),
+    )
+    record(
+        checks,
+        "recovery_can_return_to_login",
+        "onClick={returnToLogin}" in auth_gate
+        and 'zh: "\u8fd4\u56de\u767b\u5f55", en: "Back to sign in"' in auth_gate
+        and "<ArrowLeft" in auth_gate,
     )
 
     confirm_password = slice_between(
@@ -190,31 +218,50 @@ def main() -> int:
     record(checks, "confirm_password_min_length_12", "minLength={12}" in confirm_password)
     record(
         checks,
-        "bootstrap_password_min_length_12",
-        "minLength={isBootstrap ? 12 : undefined}" in auth_gate,
+        "bootstrap_and_recovery_password_min_length_12",
+        "minLength={isBootstrap || isRecovery ? 12 : undefined}" in auth_gate,
     )
     record(
         checks,
-        "bootstrap_password_live_validation",
+        "bootstrap_and_recovery_password_live_validation",
         all(
             marker in auth_gate
             for marker in (
-                "const passwordReady = password.length >= 12;",
+                "const passwordLength = Array.from(password).length;",
+                "const passwordReady = passwordLength >= 12;",
                 "const passwordsMatch = confirmPassword.length > 0 && password === confirmPassword;",
                 "const bootstrapFormReady = Boolean(setupCode.trim()) && usernameReady && passwordReady && passwordsMatch;",
-                "disabled={submitting || (isBootstrap && !bootstrapFormReady)}",
+                "const recoveryFormReady = Boolean(recoveryAuthority) && usernameReady && passwordReady && passwordsMatch;",
+                "disabled={submitting || (isBootstrap && !bootstrapFormReady) || (isRecovery && !recoveryFormReady)}",
             )
         ),
     )
     record(
         checks,
-        "bootstrap_password_guidance_bilingual",
+        "passphrase_guidance_bilingual",
         all(
             marker in auth_gate
             for marker in (
-                'zh: "已满足 12 个字符", en: "12-character minimum met"',
+                'zh: "至少 12 个字符，不要求大小写或符号组合"',
+                'en: "At least 12 characters; no composition rules"',
+                'zh: "长度已满足", en: "Length requirement met"',
                 'zh: "两次输入一致", en: "Passwords match"',
                 'zh: "两次输入不一致", en: "Passwords do not match"',
+            )
+        ),
+    )
+    record(
+        checks,
+        "password_policy_has_no_composition_rules",
+        not any(
+            marker in auth_gate.lower()
+            for marker in (
+                "uppercase letter",
+                "special character",
+                "at least one number",
+                "大写字母",
+                "特殊字符",
+                "至少一个数字",
             )
         ),
     )
@@ -244,8 +291,43 @@ def main() -> int:
     )
     record(
         checks,
-        "installer_handoff_hides_setup_code",
-        "{isBootstrap && !hasInstallerHandoff && (" in auth_gate,
+        "username_html_pattern_is_browser_valid",
+        '"[a-z0-9][a-z0-9._\\\\-]{2,63}"' in auth_gate,
+    )
+    record(
+        checks,
+        "normal_setup_omits_internal_authority_copy",
+        not any(
+            marker in auth_gate
+            for marker in (
+                "主机设置码",
+                "安装授权",
+                "Host setup code",
+                "Installation authorization",
+            )
+        ),
+    )
+    record(
+        checks,
+        "manual_setup_authority_is_advanced_only",
+        "{isBootstrap && !hasInstallerHandoff && (" in auth_gate
+        and 'data-testid="human-auth-advanced-setup"' in auth_gate
+        and "<details" in auth_gate
+        and 'zh: "无法继续？使用手动初始化", en: "Can\'t continue? Use manual setup"' in auth_gate
+        and 'zh: "初始化密钥", en: "Initialization key"' in auth_gate
+        and 'autoComplete="one-time-code"' in auth_gate,
+    )
+    installer_handoff = slice_between(
+        auth_gate,
+        "{hasInstallerHandoff && (",
+        "                    )}",
+    )
+    record(
+        checks,
+        "installer_handoff_is_screen_reader_only",
+        'data-testid="owner-setup-handoff-ready"' in installer_handoff
+        and 'className="sr-only"' in installer_handoff
+        and 'zh: "初始化已就绪", en: "Setup is ready"' in installer_handoff,
     )
     record(
         checks,
@@ -256,6 +338,25 @@ def main() -> int:
         checks,
         "setup_code_remains_required_authority",
         "setup_code: string;" in live_api,
+    )
+    record(
+        checks,
+        "password_recovery_uses_dedicated_api_contract",
+        "startHumanPasswordRecovery" in auth_gate
+        and "startHumanPasswordRecovery(setupCode)" in auth_gate
+        and "completeHumanPasswordRecovery" in auth_gate
+        and '"/human-auth/password-recovery/start"' in live_api
+        and "JSON.stringify({ setup_code: setupCode })" in live_api
+        and '"/human-auth/password-recovery/complete"' in live_api
+        and "recovery_authority: string;" in live_api,
+    )
+    record(
+        checks,
+        "recovery_authority_stays_in_component_memory",
+        'const [recoveryAuthority, setRecoveryAuthority] = useState("");' in auth_gate
+        and "setRecoveryAuthority(recovery.recovery_authority);" in auth_gate
+        and "sessionStorage.setItem" not in auth_gate
+        and "localStorage.setItem" not in auth_gate,
     )
 
     record(checks, "app_shell_accepts_locked", "locked?: boolean;" in app_shell)

@@ -4,16 +4,20 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
 import secrets
+import urllib.parse
 import uuid
 from http.cookies import SimpleCookie
 
 
 SESSION_COOKIE = "agentops_human_session"
 SESSION_TTL_SECONDS = 12 * 60 * 60
+RECOVERY_TTL_SECONDS = 10 * 60
+MIN_PASSWORD_LENGTH = 12
 ROLE_RANK = {"viewer": 10, "operator": 20, "approver": 30, "owner": 40}
 
 SCHEMA_SQL = """
@@ -46,6 +50,20 @@ CREATE TABLE IF NOT EXISTS human_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_human_sessions_hash ON human_sessions(session_hash);
 CREATE INDEX IF NOT EXISTS idx_human_sessions_account ON human_sessions(account_id,status);
+
+CREATE TABLE IF NOT EXISTS human_recovery_challenges (
+    challenge_id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    challenge_hash TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK(status IN ('active','used','expired')),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    FOREIGN KEY(account_id) REFERENCES human_accounts(account_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_human_recovery_challenges_hash
+ON human_recovery_challenges(challenge_hash,status);
 """
 
 
@@ -106,6 +124,25 @@ def origin_error(headers) -> tuple[dict, int] | None:
     return {
         "error": "origin_validation_failed",
         "message": "The browser Origin is not allowed for this Host.",
+        "origin_omitted": True,
+    }, 403
+
+
+def local_recovery_origin_error(headers) -> tuple[dict, int] | None:
+    supplied = (headers.get("Origin") or "").strip().rstrip("/") if headers else ""
+    scheme = ""
+    try:
+        parsed = urllib.parse.urlsplit(supplied)
+        scheme = parsed.scheme
+        hostname = parsed.hostname or ""
+        is_loopback = bool(hostname and ipaddress.ip_address(hostname).is_loopback)
+    except ValueError:
+        is_loopback = False
+    if supplied and scheme == "http" and is_loopback:
+        return None
+    return {
+        "error": "local_recovery_required",
+        "message": "Password recovery can only be started from the Host's loopback Console.",
         "origin_omitted": True,
     }, 403
 
@@ -252,6 +289,8 @@ def status(conn, headers) -> dict:
         "authenticated": bool(context),
         "bootstrap_required": is_required and account_count == 0,
         "bootstrap_available": bool(os.environ.get("AGENTOPS_OWNER_SETUP_CODE", "").strip()),
+        "password_recovery_available": is_required and account_count > 0,
+        "password_recovery_local_only": True,
         "cookie_secure": cookie_secure(),
         "token_omitted": True,
     }
@@ -310,8 +349,8 @@ def bootstrap_owner(conn, body) -> tuple[dict, int, str | None, dict]:
     password = str(body.get("password") or "")
     if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,63}", username):
         return {"error": "invalid_username", "message": "Username must be 3-64 lowercase letters, digits, dot, underscore, or dash."}, 400, None, {"event": "bootstrap_failed"}
-    if len(password) < 12:
-        return {"error": "weak_password", "message": "Password must contain at least 12 characters."}, 400, None, {"event": "bootstrap_failed"}
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return {"error": "weak_password", "message": f"Password must contain at least {MIN_PASSWORD_LENGTH} characters."}, 400, None, {"event": "bootstrap_failed"}
     salt = secrets.token_bytes(16)
     derived, params = password_hash(password, salt)
     account_id = new_id("husr")
@@ -335,6 +374,120 @@ def login(conn, body) -> tuple[dict, int, str | None, dict]:
         return {"error": "invalid_credentials", "message": "Username or password is invalid."}, 401, None, {"event": "login_failed", "username_hash": username_hash}
     payload, token, audit = create_session(conn, account)
     return payload, 200, token, {"event": "login_succeeded", **audit}
+
+
+def start_password_recovery(conn, body) -> tuple[dict, int, dict]:
+    if not required():
+        return {"error": "human_auth_disabled", "message": "Human authentication is not enabled."}, 409, {"event": "password_recovery_blocked"}
+    expected = os.environ.get("AGENTOPS_OWNER_SETUP_CODE", "").strip()
+    supplied = str(body.get("setup_code") or "").strip()
+    if not expected or not supplied or not hmac.compare_digest(supplied, expected):
+        return {
+            "error": "local_recovery_authority_required",
+            "message": "Reopen the local Console from the AgentOps MIS application before resetting the password.",
+        }, 403, {"event": "password_recovery_blocked"}
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    account = conn.execute(
+        "SELECT * FROM human_accounts WHERE role='owner' AND status='active' ORDER BY created_at LIMIT 1"
+    ).fetchone()
+    if not account:
+        return {"error": "owner_not_initialized", "message": "Create the administrator account first."}, 409, {"event": "password_recovery_blocked"}
+    timestamp = now_iso()
+    conn.execute(
+        "UPDATE human_recovery_challenges SET status='expired' WHERE status='active'",
+    )
+    authority = secrets.token_urlsafe(32)
+    challenge_id = new_id("hrec")
+    expires_at = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=RECOVERY_TTL_SECONDS)).isoformat()
+    conn.execute(
+        "INSERT INTO human_recovery_challenges(challenge_id,account_id,challenge_hash,status,created_at,expires_at,used_at) VALUES(?,?,?,?,?,?,?)",
+        (challenge_id, account["account_id"], token_hash(authority), "active", timestamp, expires_at, None),
+    )
+    return {
+        "provider": "agentops-human-auth",
+        "operation": "password_recovery_start",
+        "recovery_authority": authority,
+        "expires_at": expires_at,
+        "local_host_only": True,
+        "single_use": True,
+        "recovery_authority_ephemeral": True,
+        "token_omitted": True,
+    }, 201, {
+        "event": "password_recovery_started",
+        "account_id": account["account_id"],
+        "challenge_ref": session_reference(challenge_id),
+    }
+
+
+def complete_password_recovery(conn, body) -> tuple[dict, int, str | None, dict]:
+    authority = str(body.get("recovery_authority") or "").strip()
+    username = str(body.get("username") or "").strip().lower()
+    password = str(body.get("password") or "")
+    generic_error = {"error": "invalid_recovery_authority", "message": "The recovery request is invalid or expired."}
+    if not authority or not username:
+        return generic_error, 401, None, {"event": "password_recovery_failed"}
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    row = conn.execute(
+        """
+        SELECT c.*,a.username,a.status AS account_status
+        FROM human_recovery_challenges c
+        JOIN human_accounts a ON a.account_id=c.account_id
+        WHERE c.challenge_hash=?
+        """,
+        (token_hash(authority),),
+    ).fetchone()
+    if not row or row["status"] != "active" or row["account_status"] != "active":
+        return generic_error, 401, None, {"event": "password_recovery_failed"}
+    timestamp = now_iso()
+    if row["expires_at"] <= timestamp:
+        conn.execute(
+            "UPDATE human_recovery_challenges SET status='expired' WHERE challenge_id=? AND status='active'",
+            (row["challenge_id"],),
+        )
+        return generic_error, 401, None, {"event": "password_recovery_failed", "challenge_ref": session_reference(row["challenge_id"])}
+    if not hmac.compare_digest(username, row["username"]):
+        return generic_error, 401, None, {"event": "password_recovery_failed", "challenge_ref": session_reference(row["challenge_id"])}
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return {"error": "weak_password", "message": f"Password must contain at least {MIN_PASSWORD_LENGTH} characters."}, 400, None, {
+            "event": "password_recovery_failed",
+            "account_id": row["account_id"],
+            "challenge_ref": session_reference(row["challenge_id"]),
+        }
+    consumed = conn.execute(
+        "UPDATE human_recovery_challenges SET status='used',used_at=? WHERE challenge_id=? AND status='active'",
+        (timestamp, row["challenge_id"]),
+    ).rowcount
+    if consumed != 1:
+        return generic_error, 401, None, {
+            "event": "password_recovery_failed",
+            "challenge_ref": session_reference(row["challenge_id"]),
+        }
+    salt = secrets.token_bytes(16)
+    derived, params = password_hash(password, salt)
+    conn.execute(
+        "UPDATE human_accounts SET password_hash=?,password_salt=?,password_params_json=?,updated_at=? WHERE account_id=?",
+        (derived, salt.hex(), json.dumps(params, sort_keys=True), timestamp, row["account_id"]),
+    )
+    revoked = conn.execute(
+        "UPDATE human_sessions SET status='revoked',revoked_at=? WHERE account_id=? AND status='active'",
+        (timestamp, row["account_id"]),
+    ).rowcount
+    account = conn.execute("SELECT * FROM human_accounts WHERE account_id=?", (row["account_id"],)).fetchone()
+    payload, token, session_audit = create_session(conn, account)
+    payload.update({
+        "operation": "password_recovery_complete",
+        "previous_sessions_revoked": max(0, int(revoked or 0)),
+        "recovery_authority_omitted": True,
+    })
+    return payload, 200, token, {
+        "event": "password_recovery_completed",
+        "account_id": row["account_id"],
+        "challenge_ref": session_reference(row["challenge_id"]),
+        "revoked_count": max(0, int(revoked or 0)),
+        **session_audit,
+    }
 
 
 def logout(conn, headers) -> tuple[dict, int, dict]:

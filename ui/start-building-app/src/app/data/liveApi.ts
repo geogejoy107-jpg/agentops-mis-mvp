@@ -29,12 +29,23 @@ export interface HumanAuthStatus {
   authenticated: boolean;
   user?: HumanAuthUser;
   bootstrap_required: boolean;
+  password_recovery_available?: boolean;
+  password_recovery_local_only?: boolean;
   csrf_token?: string;
 }
 
 export interface HumanAuthSession {
   user: HumanAuthUser;
   csrf_token: string;
+}
+
+export interface HumanPasswordRecoveryStart {
+  operation: "password_recovery_start";
+  recovery_authority: string;
+  expires_at: string;
+  local_host_only: true;
+  single_use: true;
+  recovery_authority_ephemeral: true;
 }
 
 export interface HumanBrowserSession {
@@ -194,6 +205,26 @@ export async function bootstrapHuman(input: {
   display_name?: string;
 }): Promise<HumanAuthSession> {
   const session = await apiJson<HumanAuthSession>("/human-auth/bootstrap", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  setHumanAuthCsrf(session.csrf_token);
+  return session;
+}
+
+export async function startHumanPasswordRecovery(setupCode: string): Promise<HumanPasswordRecoveryStart> {
+  return apiJson<HumanPasswordRecoveryStart>("/human-auth/password-recovery/start", {
+    method: "POST",
+    body: JSON.stringify({ setup_code: setupCode }),
+  });
+}
+
+export async function completeHumanPasswordRecovery(input: {
+  recovery_authority: string;
+  username: string;
+  password: string;
+}): Promise<HumanAuthSession> {
+  const session = await apiJson<HumanAuthSession>("/human-auth/password-recovery/complete", {
     method: "POST",
     body: JSON.stringify(input),
   });

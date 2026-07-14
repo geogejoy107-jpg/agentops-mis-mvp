@@ -1,20 +1,23 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useId, useMemo, useState } from "react";
 import {
+  ArrowLeft,
   ArrowRight,
-  CheckCircle2,
   Eye,
   EyeOff,
+  KeyRound,
   LoaderCircle,
   LockKeyhole,
   RefreshCw,
 } from "lucide-react";
 import {
   bootstrapHuman,
+  completeHumanPasswordRecovery,
   getHumanAuthStatus,
   HUMAN_AUTH_UNAUTHORIZED_EVENT,
   loginHuman,
   logoutHuman,
   setHumanAuthCsrf,
+  startHumanPasswordRecovery,
   type HumanAuthStatus,
 } from "../../data/liveApi";
 import { HumanAuthContext } from "../../context/HumanAuthContext";
@@ -22,7 +25,7 @@ import { pick, usePreferences } from "../../context/PreferencesContext";
 import { AppShell } from "../layout/AppShell";
 import { WorkspaceSettingsPage, WorkspaceSettingsSection } from "../shared/WorkspaceSettings";
 
-type GateState = "checking" | "login" | "bootstrap" | "ready" | "unavailable";
+type GateState = "checking" | "login" | "bootstrap" | "recovery" | "ready" | "unavailable";
 type OwnerSetupHandoff = { seen: boolean; value: string };
 
 function errorCode(error: unknown): string {
@@ -58,6 +61,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [recoveryAuthority, setRecoveryAuthority] = useState("");
 
   const refresh = useCallback(async () => {
     setGate("checking");
@@ -71,7 +75,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       setError(authErrorMessage(errorCode(nextError), locale));
       setGate("unavailable");
     }
-  }, []);
+  }, [locale]);
 
   useEffect(() => {
     void refresh();
@@ -81,7 +85,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     const handleSetupHandoff = () => {
       const next = consumeOwnerSetupHandoff();
       if (!next.seen) return;
-      if (gate !== "checking" && gate !== "bootstrap") {
+      if (gate !== "checking" && gate !== "bootstrap" && gate !== "login") {
         setSetupCode("");
         setSetupHandoffActive(false);
         return;
@@ -112,7 +116,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (gate === "bootstrap" && password !== confirmPassword) {
+    if ((gate === "bootstrap" || gate === "recovery") && password !== confirmPassword) {
       setError(pick(locale, { zh: "两次输入的密码不一致。", en: "The passwords do not match." }));
       return;
     }
@@ -121,25 +125,67 @@ export function AuthGate({ children }: { children: ReactNode }) {
     try {
       const session = gate === "bootstrap"
         ? await bootstrapHuman({ setup_code: setupCode, username, password, display_name: displayName || undefined })
-        : await loginHuman({ username, password });
-      setStatus({ required: true, authenticated: true, bootstrap_required: false, user: session.user });
+        : gate === "recovery"
+          ? await completeHumanPasswordRecovery({ recovery_authority: recoveryAuthority, username, password })
+          : await loginHuman({ username, password });
+      setStatus({
+        required: true,
+        authenticated: true,
+        bootstrap_required: false,
+        password_recovery_available: true,
+        password_recovery_local_only: true,
+        user: session.user,
+      });
       setPassword("");
       setConfirmPassword("");
       setSetupCode("");
       setSetupHandoffActive(false);
+      setRecoveryAuthority("");
       setShowPassword(false);
       setShowConfirmPassword(false);
       setGate("ready");
     } catch (nextError) {
       const code = errorCode(nextError);
-      if (!["weak_password", "invalid_username"].includes(code)) {
+      if (gate === "bootstrap" && !["weak_password", "invalid_username"].includes(code)) {
         setSetupCode("");
         setSetupHandoffActive(false);
+      }
+      if (gate === "recovery" && code === "invalid_recovery_authority") {
+        setRecoveryAuthority("");
+        setGate("login");
       }
       setError(authErrorMessage(code, locale));
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const beginRecovery = async () => {
+    setSubmitting(true);
+    setError("");
+    try {
+      const recovery = await startHumanPasswordRecovery(setupCode);
+      setRecoveryAuthority(recovery.recovery_authority);
+      setPassword("");
+      setConfirmPassword("");
+      setShowPassword(false);
+      setShowConfirmPassword(false);
+      setGate("recovery");
+    } catch (nextError) {
+      setError(authErrorMessage(errorCode(nextError), locale));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const returnToLogin = () => {
+    setRecoveryAuthority("");
+    setPassword("");
+    setConfirmPassword("");
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+    setError("");
+    setGate("login");
   };
 
   const logout = useCallback(async () => {
@@ -165,20 +211,26 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
 
   const isBootstrap = gate === "bootstrap";
+  const isRecovery = gate === "recovery";
   const hasInstallerHandoff = isBootstrap && setupHandoffActive;
-  const passwordReady = password.length >= 12;
+  const passwordLength = Array.from(password).length;
+  const passwordReady = passwordLength >= 12;
   const passwordsMatch = confirmPassword.length > 0 && password === confirmPassword;
   const usernameReady = /^[a-z0-9][a-z0-9._-]{2,63}$/.test(username);
   const bootstrapFormReady = Boolean(setupCode.trim()) && usernameReady && passwordReady && passwordsMatch;
-  const passwordHint = !isBootstrap
+  const recoveryFormReady = Boolean(recoveryAuthority) && usernameReady && passwordReady && passwordsMatch;
+  const passwordHint = !isBootstrap && !isRecovery
     ? undefined
     : password.length === 0
-      ? pick(locale, { zh: "至少 12 个字符", en: "At least 12 characters" })
+      ? pick(locale, {
+          zh: "至少 12 个字符，不要求大小写或符号组合",
+          en: "At least 12 characters; no composition rules",
+        })
       : passwordReady
-        ? pick(locale, { zh: "已满足 12 个字符", en: "12-character minimum met" })
+        ? pick(locale, { zh: "长度已满足", en: "Length requirement met" })
         : pick(locale, {
-            zh: `还需 ${12 - password.length} 个字符`,
-            en: `${12 - password.length} more characters required`,
+            zh: `还需 ${12 - passwordLength} 个字符`,
+            en: `${12 - passwordLength} more characters required`,
           });
   const confirmPasswordHint = confirmPassword.length === 0
     ? pick(locale, { zh: "再次输入相同密码", en: "Enter the same password again" })
@@ -192,16 +244,16 @@ export function AuthGate({ children }: { children: ReactNode }) {
     ? pick(locale, { zh: "隐藏确认密码", en: "Hide confirmation password" })
     : pick(locale, { zh: "显示确认密码", en: "Show confirmation password" });
   const lockLabel = pick(locale, {
-    zh: gate === "checking" ? "正在连接" : isBootstrap ? "需要初始化" : "需要登录",
-    en: gate === "checking" ? "Connecting" : isBootstrap ? "Setup required" : "Sign-in required",
+    zh: gate === "checking" ? "正在连接" : isBootstrap ? "需要初始化" : isRecovery ? "账户恢复" : "需要登录",
+    en: gate === "checking" ? "Connecting" : isBootstrap ? "Setup required" : isRecovery ? "Account recovery" : "Sign-in required",
   });
   const pageTitle = pick(locale, {
     zh: "账户与访问",
     en: "Account and access",
   });
   const pageSubtitle = pick(locale, {
-    zh: isBootstrap ? "创建账户后即可进入当前工作区" : "使用这台主机上的账户继续",
-    en: isBootstrap ? "Create an account to enter this workspace" : "Continue with an account on this host",
+    zh: isBootstrap ? "设置管理员后即可进入当前工作区" : isRecovery ? "仅可在安装 AgentOps MIS 的主机上完成" : "使用这台主机上的账户继续",
+    en: isBootstrap ? "Set up the administrator to enter this workspace" : isRecovery ? "Complete recovery on the AgentOps MIS host" : "Continue with an account on this host",
   });
 
   return (
@@ -214,10 +266,21 @@ export function AuthGate({ children }: { children: ReactNode }) {
         >
           <WorkspaceSettingsSection
             testId="human-auth-settings-layout"
-            title={pick(locale, { zh: isBootstrap ? "创建所有者账户" : "登录工作区", en: isBootstrap ? "Create owner account" : "Sign in to workspace" })}
+            title={pick(locale, {
+              zh: isBootstrap ? "设置管理员账户" : isRecovery ? "重设密码" : "登录",
+              en: isBootstrap ? "Set up administrator" : isRecovery ? "Reset password" : "Sign in",
+            })}
             description={pick(locale, {
-              zh: isBootstrap ? "只需设置一次。之后可从本机或已授权的私人网络浏览器登录。" : "输入账户信息，继续管理任务、代理和运行记录。",
-              en: isBootstrap ? "Set this up once, then sign in locally or from an authorized private-network browser." : "Enter your account details to manage tasks, agents, and runs.",
+              zh: isBootstrap
+                ? "创建第一个管理员。之后可从本机或已授权的私人网络浏览器登录。"
+                : isRecovery
+                  ? "设置新密码后，其他已登录设备会自动退出。"
+                  : "输入账户信息继续。",
+              en: isBootstrap
+                ? "Create the first administrator, then sign in locally or from an authorized private network."
+                : isRecovery
+                  ? "Other signed-in devices will be signed out after the password changes."
+                  : "Enter your account details to continue.",
             })}
             meta={(
               <p data-testid="human-auth-host-boundary" className="mt-3 flex items-center gap-1.5 text-[11px]" style={{ color: "var(--mis-muted)" }}>
@@ -250,26 +313,26 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 <form onSubmit={submit} data-testid="human-auth-workspace-form">
                   <div className="divide-y border-y" style={{ borderColor: "var(--mis-border)" }}>
                     {isBootstrap && !hasInstallerHandoff && (
-                      <AuthField
-                        label={pick(locale, { zh: "主机设置码", en: "Host setup code" })}
-                        hint={pick(locale, { zh: "安装时生成的一次性凭据", en: "One-time credential from installation" })}
-                        value={setupCode}
-                        onChange={setSetupCode}
-                        type="password"
-                        autoComplete="one-time-code"
-                      />
+                      <details data-testid="human-auth-advanced-setup" className="py-3 text-xs">
+                        <summary className="cursor-pointer font-medium" style={{ color: "var(--mis-dim)" }}>
+                          {pick(locale, { zh: "无法继续？使用手动初始化", en: "Can't continue? Use manual setup" })}
+                        </summary>
+                        <div className="mt-2 border-t" style={{ borderColor: "var(--mis-border)" }}>
+                          <AuthField
+                            label={pick(locale, { zh: "初始化密钥", en: "Initialization key" })}
+                            hint={pick(locale, { zh: "仅在应用未自动接入时使用", en: "Use only when the app did not connect automatically" })}
+                            value={setupCode}
+                            onChange={setSetupCode}
+                            type="password"
+                            autoComplete="one-time-code"
+                          />
+                        </div>
+                      </details>
                     )}
                     {hasInstallerHandoff && (
-                      <div
-                        data-testid="owner-setup-handoff-ready"
-                        className="grid gap-1.5 py-3 text-xs sm:grid-cols-[160px_minmax(0,1fr)] sm:items-center sm:gap-3"
-                      >
-                        <span className="font-medium" style={{ color: "var(--mis-text)" }}>{pick(locale, { zh: "安装授权", en: "Installer authorization" })}</span>
-                        <span className="flex max-w-md items-center gap-2" style={{ color: "var(--mis-success)" }}>
-                          <CheckCircle2 size={14} aria-hidden="true" />
-                          {pick(locale, { zh: "已安全接收", en: "Received securely" })}
-                        </span>
-                      </div>
+                      <span data-testid="owner-setup-handoff-ready" className="sr-only">
+                        {pick(locale, { zh: "初始化已就绪", en: "Setup is ready" })}
+                      </span>
                     )}
                     {isBootstrap && (
                       <AuthField
@@ -283,12 +346,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
                     )}
                     <AuthField
                       label={pick(locale, { zh: "用户名", en: "Username" })}
-                      hint={isBootstrap ? pick(locale, { zh: "3–64 位小写字母、数字或 . _ -", en: "3–64 lowercase letters, digits, or . _ -" }) : undefined}
+                      hint={isBootstrap || isRecovery ? pick(locale, { zh: "用于登录，可使用小写字母、数字和 . _ -", en: "Used to sign in; lowercase letters, digits, and . _ -" }) : undefined}
                       value={username}
                       onChange={setUsername}
                       autoComplete="username"
                       placeholder={isBootstrap ? "joy-owner" : undefined}
-                      pattern={isBootstrap ? "[a-z0-9][a-z0-9._-]{2,63}" : undefined}
+                      pattern={isBootstrap || isRecovery ? "[a-z0-9][a-z0-9._\\-]{2,63}" : undefined}
                     />
                     <AuthField
                       label={pick(locale, { zh: "密码", en: "Password" })}
@@ -297,15 +360,15 @@ export function AuthGate({ children }: { children: ReactNode }) {
                       value={password}
                       onChange={setPassword}
                       type={showPassword ? "text" : "password"}
-                      autoComplete={isBootstrap ? "new-password" : "current-password"}
-                      minLength={isBootstrap ? 12 : undefined}
+                      autoComplete={isBootstrap || isRecovery ? "new-password" : "current-password"}
+                      minLength={isBootstrap || isRecovery ? 12 : undefined}
                       revealControl={{
                         visible: showPassword,
                         label: togglePasswordLabel,
                         onToggle: () => setShowPassword((current) => !current),
                       }}
                     />
-                    {isBootstrap && (
+                    {(isBootstrap || isRecovery) && (
                       <AuthField
                         label={pick(locale, { zh: "确认密码", en: "Confirm password" })}
                         hint={confirmPasswordHint}
@@ -335,15 +398,42 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
                   <div className="grid gap-3 pt-4 sm:grid-cols-[160px_minmax(0,1fr)]">
                     <span className="hidden sm:block" aria-hidden="true" />
-                    <div className="flex max-w-md justify-start">
+                    <div className="flex max-w-md flex-wrap items-center gap-3">
                       <button
-                        disabled={submitting || (isBootstrap && !bootstrapFormReady)}
+                        disabled={submitting || (isBootstrap && !bootstrapFormReady) || (isRecovery && !recoveryFormReady)}
                         className="inline-flex h-9 w-full items-center justify-center gap-2 rounded px-4 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:min-w-40"
                         style={{ background: "var(--mis-primary)", color: "#fff" }}
                       >
                         {submitting ? <LoaderCircle className="animate-spin" size={16} aria-hidden="true" /> : <ArrowRight size={16} aria-hidden="true" />}
-                        {pick(locale, { zh: isBootstrap ? "创建账户并进入" : "登录", en: isBootstrap ? "Create account and continue" : "Sign in" })}
+                        {pick(locale, {
+                          zh: isBootstrap ? "创建管理员并进入" : isRecovery ? "重设密码并进入" : "登录",
+                          en: isBootstrap ? "Create administrator" : isRecovery ? "Reset password" : "Sign in",
+                        })}
                       </button>
+                      {!isBootstrap && !isRecovery && status?.password_recovery_available === true && (
+                        <button
+                          type="button"
+                          onClick={() => void beginRecovery()}
+                          disabled={submitting}
+                          className="inline-flex h-9 items-center gap-1.5 px-1 text-xs font-medium disabled:opacity-50"
+                          style={{ color: "var(--mis-primary)" }}
+                        >
+                          <KeyRound size={14} aria-hidden="true" />
+                          {pick(locale, { zh: "忘记密码", en: "Forgot password" })}
+                        </button>
+                      )}
+                      {isRecovery && (
+                        <button
+                          type="button"
+                          onClick={returnToLogin}
+                          disabled={submitting}
+                          className="inline-flex h-9 items-center gap-1.5 px-1 text-xs font-medium disabled:opacity-50"
+                          style={{ color: "var(--mis-dim)" }}
+                        >
+                          <ArrowLeft size={14} aria-hidden="true" />
+                          {pick(locale, { zh: "返回登录", en: "Back to sign in" })}
+                        </button>
+                      )}
                     </div>
                   </div>
                 </form>
@@ -439,11 +529,15 @@ function AuthField({
 
 function authErrorMessage(code: string, locale: "zh" | "en"): string {
   const messages: Record<string, { zh: string; en: string }> = {
-    invalid_setup_code: { zh: "主机设置码无效，请使用安装时生成的设置码。", en: "The host setup code is invalid." },
+    invalid_setup_code: { zh: "初始化密钥无效，请从 AgentOps MIS 应用重新打开。", en: "The initialization key is invalid. Reopen the AgentOps MIS app." },
     bootstrap_unavailable: { zh: "这台主机已经完成初始化，请直接登录。", en: "This host is already initialized. Sign in instead." },
     invalid_username: { zh: "用户名需为 3–64 位小写字母、数字或 . _ -。", en: "Use 3–64 lowercase letters, digits, or . _ -." },
-    weak_password: { zh: "密码至少需要 12 个字符。", en: "Password must contain at least 12 characters." },
+    weak_password: { zh: "请使用至少 12 个字符的长短语。", en: "Use a passphrase with at least 12 characters." },
     invalid_credentials: { zh: "用户名或密码不正确。", en: "The username or password is incorrect." },
+    local_recovery_required: { zh: "为了保护主机数据，请在安装 AgentOps MIS 的电脑上打开本地控制台后重试。", en: "For security, open the local Console on the AgentOps MIS host to reset the password." },
+    invalid_recovery_authority: { zh: "恢复请求已失效，请重新点击“忘记密码”。", en: "The recovery request expired. Start password recovery again." },
+    owner_not_initialized: { zh: "请先设置管理员账户。", en: "Set up the administrator account first." },
+    local_recovery_authority_required: { zh: "请从这台电脑上的 AgentOps MIS 应用重新打开控制台，再点击“忘记密码”。", en: "Reopen the Console from the AgentOps MIS app on this computer, then select Forgot password." },
     origin_validation_failed: { zh: "当前访问来源未被这台主机信任。", en: "This browser origin is not trusted by the host." },
     owner_already_initialized: { zh: "这台主机已经完成初始化，请直接登录。", en: "This host is already initialized. Sign in instead." },
     rate_limited: { zh: "尝试次数过多，请稍后再试。", en: "Too many attempts. Try again later." },

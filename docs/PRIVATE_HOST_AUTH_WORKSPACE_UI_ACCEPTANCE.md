@@ -21,11 +21,15 @@ ready, `AuthGate` returns the existing workspace unchanged.
 - `ui/start-building-app/src/app/components/layout/Topbar.tsx`
 - `ui/start-building-app/src/styles/theme.css`
 - `ui/start-building-app/src/app/data/liveApi.ts`
+- `agentops_mis_core/human_auth.py`
+- `server.py`
 - `agentops_mis_cli/host.py`
 - `packaging/macos/install-private-host.sh`
 - `scripts/private_host_auth_workspace_ui_smoke.py`
 - `scripts/private_host_owner_browser_handoff_smoke.py`
 - `scripts/human_session_management_smoke.py`
+- `scripts/human_password_recovery_smoke.py`
+- `docs/PRIVATE_HOST_PASSWORD_RECOVERY_ACCEPTANCE.md`
 - `.github/workflows/ci.yml`
 - `docs/PRIVATE_HOST_AUTH_WORKSPACE_UI_ACCEPTANCE.md`
 
@@ -78,8 +82,8 @@ still read like a generated setup screen even though it already reused
   strip;
 - account fields remain bounded to the normal form width, and the submit action
   starts on the same control grid instead of floating against the far edge;
-- installer authorization is a short operational row, not a technical status
-  explanation;
+- installer handoff state is screen-reader-only; normal users see the account
+  fields, while manual deployment recovery stays under `Advanced setup`;
 - the action uses the existing primary product color instead of the bright
   cyan runtime accent;
 - the light locked state uses the normal flat enterprise surface rather than a
@@ -107,9 +111,17 @@ ledger behavior changed in this visual correction.
 
 - Connection, unavailable, Owner initialization, login, field, validation,
   action, and local-host boundary copy is available in English and Chinese.
-- Owner bootstrap and sign-in remain distinct states in both locales.
-- Password confirmation is required for Owner bootstrap, and both new-password
+- Owner bootstrap is presented as administrator setup. The one-time
+  initialization authority is consumed automatically from the application
+  handoff; its manual field lives under `Advanced setup` and is not part of the
+  normal customer path.
+- Administrator setup and sign-in remain distinct states in both locales.
+- Password confirmation is required for administrator setup and password
+  recovery, and both new-password
   fields preserve the 12-character minimum.
+- The minimum is a length rule, not a composition puzzle: the UI recommends a
+  memorable passphrase and does not require arbitrary uppercase, number, or
+  symbol combinations.
 - Password and confirmation rows provide live bilingual readiness/match status,
   and the create action remains disabled until the setup code, username,
   12-character minimum and matching confirmation are all locally valid.
@@ -141,6 +153,30 @@ ledger behavior changed in this visual correction.
   confirmed `--start` installation when a graphical macOS session is
   available. `AGENTOPS_NO_AUTO_OPEN=1` disables that convenience.
 
+### Local Password Recovery
+
+- Sign-in exposes a real `Forgot password` / `忘记密码` action after the Host
+  reports an initialized administrator account.
+- Starting recovery requires both a literal loopback HTTP Origin and the
+  protected local authority handed to the page when the desktop application
+  opens the Console. Completing recovery also requires the loopback Origin.
+  A browser connected through the private-network URL receives
+  `local_recovery_required` and is directed to the computer running AgentOps
+  MIS.
+- The application handoff is consumed and scrubbed before requests, remains
+  component-memory-only, and is never rendered in the normal sign-in UI. A
+  loopback-looking request without it cannot start recovery.
+- The local browser then receives one memory-only, single-use recovery authority
+  with a ten-minute lifetime. SQLite stores only its SHA-256 hash; audit rows
+  contain only a bounded challenge reference and omission flags.
+- A successful reset changes the scrypt password, revokes every older active
+  browser Session, consumes the challenge, and creates one fresh Session for
+  the local browser. Replaying the challenge fails closed.
+- There is deliberately no fake email link or cloud reset promise. This
+  Private Host release has no account email service; physical access to the
+  Host is the recovery authority. Passkeys, MFA, and delegated recovery remain
+  later product work.
+
 ## Safety Boundary
 
 - Human browser authentication remains separate from Agent machine
@@ -167,6 +203,9 @@ ledger behavior changed in this visual correction.
 - Backend Session, CSRF, Origin, role, and workspace enforcement remain the
   authoritative security boundary; the locked UI is defense in depth and user
   guidance, not a replacement for server enforcement.
+- Password recovery never records a submitted password or raw recovery
+  authority in audit metadata, logs, or the database. The response returns the
+  authority only to the initiating loopback browser and marks it ephemeral.
 
 ## Verification
 
@@ -176,6 +215,7 @@ Commands run against the current worktree on 2026-07-14:
 python3 scripts/private_host_auth_workspace_ui_smoke.py
 python3 scripts/private_host_owner_browser_handoff_smoke.py
 python3 scripts/human_browser_auth_smoke.py
+python3 scripts/human_password_recovery_smoke.py
 python3 scripts/private_host_owner_bootstrap_cli_smoke.py
 cd ui/start-building-app && npm run build
 git diff --check
@@ -184,14 +224,15 @@ git diff --check
 The static smoke passed all current checks and returned JSON with `ok: true`, no
 failures, and exit code 0. It verifies locked-shell reuse, the authentication
 gate marker, the unframed Workspace settings layout, shared content
-spacing and shared setup/account components, bilingual Owner bootstrap/login
-copy, password confirmation, live readiness/match guidance, accessible
+spacing and shared setup/account components, bilingual administrator
+setup/login/recovery copy, password confirmation, live readiness/match
+guidance, accessible
 visibility controls and minimum length, the visible Account navigation
 entry, locked Account current-location treatment, demo-identity omission,
 compact responsive form rows, mobile product identity, the full existing
 Workspace navigation rendered as inert non-link items while locked, persistent
-theme/language controls, logout omission while locked, and
-the setup-code-authorized browser handoff projection.
+theme/language controls, logout omission while locked, and the
+initialization-authority browser handoff projection.
 
 The browser-handoff integration smoke passed against a temporary Host and
 database. It proved that no-code bootstrap is rejected, setup-code bootstrap
@@ -214,6 +255,25 @@ without horizontal overflow or browser errors beyond the development-only
 React DevTools notice. Browser screenshots remain ignored local evidence and
 are not release assets.
 
+### 2026-07-15 Recovery UX Follow-up
+
+A fresh production build was exercised against a new temporary Private Host
+and SQLite database. The browser consumed and scrubbed the desktop-application
+handoff, created an administrator through the existing Workspace shell, entered
+the Workspace, signed out, and exposed the normal two-field sign-in form plus a
+`忘记密码` action. Reopening that login tab through the application handoff
+entered the local recovery state and a completed password reset returned to the
+Workspace while revoking prior Sessions.
+
+The rendered recovery surface contained only username, new password,
+confirmation, reset, and back actions. It explained the 12-character length
+rule without composition requirements and the old-Session revocation effect;
+it did not render the initialization authority. A browser-valid escaped
+username `pattern` replaced the previous unescaped hyphen form discovered by
+this exercise. A fresh browser loaded the corrected production asset and
+reported no console errors; the remaining password-form message was a browser
+verbose accessibility advisory, not an application error.
+
 An isolated production build was visually exercised at narrow and desktop
 viewports in Chinese and English across `ops`, `workforce`, and `enterprise`
 themes. A temporary browser completed Owner bootstrap, entered Workspace,
@@ -221,10 +281,10 @@ logged out, and signed in again without reading or changing the installed Host
 database.
 
 The final production build also exercised installer-style same-document
-handoff against a fresh temporary Host: the Console first rendered its manual
-setup-code field, then received the fragment on the already-mounted page,
-scrubbed the address bar, hid the manual field, displayed the bounded pairing
-receipt, created the Owner, and entered the existing Workspace. No installed
+handoff against a fresh temporary Host: the Console first exposed its manual
+initialization field only under `Advanced setup`, then received the fragment on
+the already-mounted page, scrubbed the address bar, hid that advanced field,
+created the Owner, and entered the existing Workspace. No installed
 Host database or real credential was used.
 
 ## Security Review Closure

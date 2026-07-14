@@ -2106,19 +2106,22 @@ def cmd_open_console(_args) -> int:
     local_url = base_url + "/workspace"
     auth_status, auth_payload = local_json_request(base_url, "/api/human-auth/status")
     bootstrap_handoff = auth_status == 200 and auth_payload.get("bootstrap_required") is True
+    local_authority_handoff = auth_status == 200 and auth_payload.get("required") is True
     target_url = local_url
-    if bootstrap_handoff:
+    setup_code = ""
+    if local_authority_handoff:
         setup_code = str(secret_values.get("owner_setup_code") or "").strip()
-        if not setup_code:
+        if not setup_code and bootstrap_handoff:
             emit({"ok": False, "operation": "host_open_console", "error": "owner_setup_code_unavailable", "setup_code_omitted": True, "token_omitted": True})
             return 2
-        target_url += "#agentops-owner-setup=" + urllib.parse.quote(setup_code, safe="")
+        if setup_code:
+            target_url += "#agentops-owner-setup=" + urllib.parse.quote(setup_code, safe="")
 
     preview_only = os.environ.get("AGENTOPS_OPEN_CONSOLE_TEST_MODE") == "1"
     opened = False
     if not preview_only:
         if sys.platform != "darwin" or not Path("/usr/bin/osascript").is_file():
-            emit({"ok": False, "operation": "host_open_console", "error": "graphical_console_unavailable", "local_console_url": local_url, "bootstrap_handoff_omitted": True, "setup_code_omitted": True, "token_omitted": True})
+            emit({"ok": False, "operation": "host_open_console", "error": "graphical_console_unavailable", "local_console_url": local_url, "bootstrap_handoff_omitted": True, "local_authority_handoff_omitted": True, "setup_code_omitted": True, "token_omitted": True})
             return 2
         script = 'open location "' + target_url.replace("\\", "\\\\").replace('"', '\\"') + '"\n'
         process = subprocess.run(
@@ -2131,7 +2134,7 @@ def cmd_open_console(_args) -> int:
         )
         opened = process.returncode == 0
         if not opened:
-            emit({"ok": False, "operation": "host_open_console", "error": "console_open_failed", "command_output_omitted": True, "bootstrap_handoff_omitted": True, "setup_code_omitted": True, "token_omitted": True})
+            emit({"ok": False, "operation": "host_open_console", "error": "console_open_failed", "command_output_omitted": True, "bootstrap_handoff_omitted": True, "local_authority_handoff_omitted": True, "setup_code_omitted": True, "token_omitted": True})
             return 1
 
     emit({
@@ -2141,7 +2144,9 @@ def cmd_open_console(_args) -> int:
         "preview_only": preview_only,
         "local_console_url": local_url,
         "bootstrap_handoff_prepared": bootstrap_handoff,
+        "local_authority_handoff_prepared": bool(setup_code),
         "bootstrap_handoff_omitted": True,
+        "local_authority_handoff_omitted": True,
         "setup_code_omitted": True,
         "token_omitted": True,
     })
@@ -2388,7 +2393,7 @@ def build_parser() -> argparse.ArgumentParser:
     service_remove.set_defaults(handler=cmd_service_remove)
     console_url = sub.add_parser("console-url", help="Show local and private console URLs.")
     console_url.set_defaults(handler=cmd_console_url)
-    open_console = sub.add_parser("open-console", help="Open the local Console and hand off first-Owner pairing without printing the setup code.")
+    open_console = sub.add_parser("open-console", help="Open the local Console with a protected browser handoff without printing local authority.")
     open_console.set_defaults(handler=cmd_open_console)
     preview = sub.add_parser("tailscale-preview", help="Preview Tailscale Serve and revoke commands without executing them.")
     preview.add_argument("--https-port", type=int, choices=range(1, 65536), default=443, metavar="PORT")

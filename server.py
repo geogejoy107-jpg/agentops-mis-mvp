@@ -31643,6 +31643,50 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 response_headers = {"Set-Cookie": human_auth.session_cookie(token)} if token else None
                 return self.send_json(payload, status, headers=response_headers)
+            if path == "/api/human-auth/password-recovery/start":
+                origin_error = human_auth.local_recovery_origin_error(self.headers)
+                if origin_error:
+                    payload, status = origin_error
+                    audit(conn, "system", None, "human_auth.password_recovery_blocked", "human_accounts", "owner", None, {"status": status}, {"credentials_omitted": True, "origin_omitted": True})
+                    conn.commit()
+                    return self.send_json(payload, status)
+                payload, status, event = human_auth.start_password_recovery(conn, body)
+                audit(
+                    conn,
+                    "system",
+                    event.get("account_id"),
+                    f"human_auth.{event['event']}",
+                    "human_recovery_challenges",
+                    event.get("challenge_ref") or "password_recovery",
+                    None,
+                    {"status": status},
+                    {"credentials_omitted": True, "recovery_authority_omitted": True},
+                )
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/human-auth/password-recovery/complete":
+                origin_error = human_auth.local_recovery_origin_error(self.headers)
+                if origin_error:
+                    payload, status = origin_error
+                    audit(conn, "system", None, "human_auth.password_recovery_blocked", "human_accounts", "owner", None, {"status": status}, {"credentials_omitted": True, "origin_omitted": True})
+                    conn.commit()
+                    return self.send_json(payload, status)
+                payload, status, token, event = human_auth.complete_password_recovery(conn, body)
+                session_ref = human_auth.session_reference(event["session_id"]) if event.get("session_id") else event.get("challenge_ref") or "password_recovery"
+                audit(
+                    conn,
+                    "system",
+                    event.get("account_id"),
+                    f"human_auth.{event['event']}",
+                    "human_recovery_challenges",
+                    session_ref,
+                    None,
+                    {"status": status, "revoked_count": int(event.get("revoked_count") or 0)},
+                    {"credentials_omitted": True, "recovery_authority_omitted": True, "password_omitted": True, "session_id_omitted": True},
+                )
+                conn.commit()
+                response_headers = {"Set-Cookie": human_auth.session_cookie(token)} if token else None
+                return self.send_json(payload, status, headers=response_headers)
             if path == "/api/human-auth/logout":
                 payload, status, event = human_auth.logout(conn, self.headers)
                 session_ref = human_auth.session_reference(event["session_id"]) if event.get("session_id") else "logout"

@@ -74,7 +74,13 @@ TEST_COMMANDS = [
     {
         "id": "private_host_auth_workspace_ui",
         "command": "python3 scripts/private_host_auth_workspace_ui_smoke.py",
-        "summary": "Locked AppShell authentication UI, bilingual bootstrap/login, theme controls and setup-code-authorized browser handoff projection.",
+        "summary": "Locked AppShell authentication UI, bilingual administrator setup/login/recovery, theme controls and initialization-authority browser handoff projection.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "human_password_recovery",
+        "command": "python3 scripts/human_password_recovery_smoke.py",
+        "summary": "Desktop-authority plus loopback-gated one-time password recovery, old-session revocation, replay rejection and credential/audit omission against an isolated database.",
         "ci_step": "Offline safety smokes",
     },
     {

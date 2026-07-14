@@ -55,57 +55,75 @@ def browser_source_checks(failures: list[str]) -> dict[str, bool]:
         "fragment_scrubbed_immediately": "window.history.replaceState" in source,
         "same_document_handoff_consumed": 'window.addEventListener("hashchange", handleSetupHandoff)' in source,
         "same_document_listener_removed": 'window.removeEventListener("hashchange", handleSetupHandoff)' in source,
-        "late_handoff_not_retained": 'gate !== "checking" && gate !== "bootstrap"' in source,
+        "late_handoff_not_retained": 'gate !== "checking" && gate !== "bootstrap" && gate !== "login"' in source,
         "handoff_bounded": "{16,256}" in source,
         "handoff_charset_bounded": "[A-Za-z0-9_-]" in source,
         "setup_field_hidden_for_handoff": "{isBootstrap && !hasInstallerHandoff && (" in source,
         "handoff_stays_component_state": "useState(initialSetupHandoff.value)" in source,
         "handoff_not_persisted": "localStorage" not in source and "sessionStorage" not in source,
-        "terminal_handoff_error_clears_value": 'if (!["weak_password", "invalid_username"].includes(code))' in source,
+        "terminal_handoff_error_clears_value": 'if (gate === "bootstrap" && !["weak_password", "invalid_username"].includes(code))' in source,
     }
     failures.extend(name for name, passed in checks.items() if not passed)
     return checks
 
 
 def cli_handoff_checks(setup_code: str, failures: list[str]) -> dict[str, object]:
-    emitted: list[dict] = []
-    calls: list[tuple[list[str], str]] = []
-
-    def fake_run(argv, **kwargs):
-        calls.append((list(argv), str(kwargs.get("input") or "")))
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
     config = {"host": "127.0.0.1", "port": 18878}
-    with (
-        mock.patch.object(host_cli, "require_initialized", return_value=(config, {"owner_setup_code": setup_code})),
-        mock.patch.object(host_cli, "managed_host_running", return_value=True),
-        mock.patch.object(host_cli, "health", return_value={"reachable": True, "status": "ready"}),
-        mock.patch.object(host_cli, "local_json_request", return_value=(200, {"required": True, "bootstrap_required": True})),
-        mock.patch.object(host_cli.subprocess, "run", side_effect=fake_run),
-        mock.patch.object(host_cli, "emit", side_effect=lambda payload: emitted.append(payload)),
-        mock.patch.object(host_cli.sys, "platform", "darwin"),
-        mock.patch.object(host_cli.Path, "is_file", return_value=True),
-    ):
-        code = host_cli.cmd_open_console(SimpleNamespace())
 
-    serialized_output = json.dumps(emitted, ensure_ascii=False, sort_keys=True)
+    def project(auth_payload: dict) -> tuple[int, list[dict], list[tuple[list[str], str]]]:
+        emitted: list[dict] = []
+        calls: list[tuple[list[str], str]] = []
+
+        def fake_run(argv, **kwargs):
+            calls.append((list(argv), str(kwargs.get("input") or "")))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with (
+            mock.patch.object(host_cli, "require_initialized", return_value=(config, {"owner_setup_code": setup_code})),
+            mock.patch.object(host_cli, "managed_host_running", return_value=True),
+            mock.patch.object(host_cli, "health", return_value={"reachable": True, "status": "ready"}),
+            mock.patch.object(host_cli, "local_json_request", return_value=(200, auth_payload)),
+            mock.patch.object(host_cli.subprocess, "run", side_effect=fake_run),
+            mock.patch.object(host_cli, "emit", side_effect=lambda payload: emitted.append(payload)),
+            mock.patch.object(host_cli.sys, "platform", "darwin"),
+            mock.patch.object(host_cli.Path, "is_file", return_value=True),
+        ):
+            code = host_cli.cmd_open_console(SimpleNamespace())
+        return code, emitted, calls
+
+    code, emitted, calls = project({"required": True, "bootstrap_required": True})
+    login_code, login_emitted, login_calls = project({"required": True, "bootstrap_required": False})
+    serialized_output = json.dumps([*emitted, *login_emitted], ensure_ascii=False, sort_keys=True)
     argv = calls[0][0] if calls else []
     script_input = calls[0][1] if calls else ""
+    login_script_input = login_calls[0][1] if login_calls else ""
     checks = {
         "return_code": code,
+        "login_return_code": login_code,
         "opened": bool(emitted and emitted[-1].get("opened")),
         "setup_code_absent_from_argv": setup_code not in " ".join(argv),
         "setup_code_absent_from_output": setup_code not in serialized_output,
         "handoff_fragment_sent_over_stdin": f"#agentops-owner-setup={setup_code}" in script_input,
+        "login_recovery_handoff_sent_over_stdin": f"#agentops-owner-setup={setup_code}" in login_script_input,
         "osascript_reads_stdin": argv == ["/usr/bin/osascript", "-"],
         "handoff_reported_but_omitted": bool(
             emitted
             and emitted[-1].get("bootstrap_handoff_prepared") is True
+            and emitted[-1].get("local_authority_handoff_prepared") is True
             and emitted[-1].get("bootstrap_handoff_omitted") is True
+            and emitted[-1].get("local_authority_handoff_omitted") is True
             and emitted[-1].get("setup_code_omitted") is True
         ),
+        "login_handoff_reported_but_omitted": bool(
+            login_emitted
+            and login_emitted[-1].get("bootstrap_handoff_prepared") is False
+            and login_emitted[-1].get("local_authority_handoff_prepared") is True
+            and login_emitted[-1].get("bootstrap_handoff_omitted") is True
+            and login_emitted[-1].get("local_authority_handoff_omitted") is True
+            and login_emitted[-1].get("setup_code_omitted") is True
+        ),
     }
-    if code != 0 or not all(value is True for key, value in checks.items() if key != "return_code"):
+    if code != 0 or login_code != 0 or not all(value is True for key, value in checks.items() if key not in {"return_code", "login_return_code"}):
         failures.append("managed CLI browser handoff did not preserve setup-code secrecy")
     return checks
 
