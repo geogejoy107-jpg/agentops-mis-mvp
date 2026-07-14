@@ -810,6 +810,9 @@ export interface WorkerStatusPayload {
   status: string;
   worker_count: number;
   running_workers: number;
+  active_service_workers: number;
+  stale_service_workers: number;
+  execution_capacity_workers: number;
   recent_completed_runs: number;
   pending_worker_tasks: number;
   stuck_worker_tasks: number;
@@ -822,6 +825,7 @@ export interface WorkerStatusPayload {
   never_seen_remote_enrollments: number;
   active_remote_sessions: number;
   remote_worker_health: Record<string, unknown>;
+  service_workers: Record<string, unknown>[];
   adapter_readiness?: WorkerAdapterReadinessSummary;
   fleet_health?: WorkerFleetHealth;
   daemons: WorkerDaemonStatus[];
@@ -860,6 +864,7 @@ export interface WorkerFleetLane {
   safe_ref?: string | null;
   management_mode?: string | null;
   control_allowed?: boolean;
+  process_state_verified?: boolean;
   token_omitted?: boolean;
   session_id_omitted?: boolean;
   token_id_omitted?: boolean;
@@ -875,6 +880,9 @@ export interface WorkerFleetPayload {
     health_counts: Record<string, number>;
     local_daemon_count: number;
     running_local_daemons: number;
+    active_service_workers: number;
+    stale_service_workers: number;
+    execution_capacity_workers: number;
     host_managed_workers?: number;
     api_managed_daemons?: number;
     remote_worker_count: number;
@@ -4955,6 +4963,9 @@ export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
     status: String(raw.status || "unknown"),
     worker_count: numberValue(raw.worker_count, 0),
     running_workers: numberValue(raw.running_workers, 0),
+    active_service_workers: numberValue(raw.active_service_workers, 0),
+    stale_service_workers: numberValue(raw.stale_service_workers, 0),
+    execution_capacity_workers: numberValue(raw.execution_capacity_workers, 0),
     recent_completed_runs: numberValue(raw.recent_completed_runs, 0),
     pending_worker_tasks: numberValue(raw.pending_worker_tasks, 0),
     stuck_worker_tasks: numberValue(raw.stuck_worker_tasks, 0),
@@ -4967,6 +4978,7 @@ export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
     never_seen_remote_enrollments: numberValue(raw.never_seen_remote_enrollments, 0),
     active_remote_sessions: numberValue(raw.active_remote_sessions, 0),
     remote_worker_health: normalizeWorkerRemoteHealth(remoteHealthRaw),
+    service_workers: asArray<Record<string, unknown>>(raw.service_workers),
     adapter_readiness: typeof raw.adapter_readiness === "object" && raw.adapter_readiness !== null ? raw.adapter_readiness as WorkerAdapterReadinessSummary : undefined,
     fleet_health: normalizeWorkerFleetHealth(fleetHealthRaw),
     daemons: asArray<Record<string, unknown>>(raw.daemons).map(normalizeWorkerDaemon),
@@ -5023,6 +5035,9 @@ export async function loadWorkerFleet(): Promise<WorkerFleetPayload> {
       health_counts: numberRecord(summaryRaw.health_counts),
       local_daemon_count: numberValue(summaryRaw.local_daemon_count, 0),
       running_local_daemons: numberValue(summaryRaw.running_local_daemons, 0),
+      active_service_workers: numberValue(summaryRaw.active_service_workers, 0),
+      stale_service_workers: numberValue(summaryRaw.stale_service_workers, 0),
+      execution_capacity_workers: numberValue(summaryRaw.execution_capacity_workers, 0),
       host_managed_workers: numberValue(summaryRaw.host_managed_workers, 0),
       api_managed_daemons: numberValue(summaryRaw.api_managed_daemons, 0),
       remote_worker_count: numberValue(summaryRaw.remote_worker_count, 0),
@@ -5055,6 +5070,7 @@ export async function loadWorkerFleet(): Promise<WorkerFleetPayload> {
       safe_ref: lane.safe_ref ? String(lane.safe_ref) : null,
       management_mode: lane.management_mode ? String(lane.management_mode) : null,
       control_allowed: lane.control_allowed === undefined ? undefined : boolValue(lane.control_allowed),
+      process_state_verified: lane.process_state_verified === undefined ? undefined : boolValue(lane.process_state_verified),
       token_omitted: boolValue(lane.token_omitted),
       session_id_omitted: boolValue(lane.session_id_omitted),
       token_id_omitted: boolValue(lane.token_id_omitted),

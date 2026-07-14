@@ -141,6 +141,8 @@ export function WorkerConsole() {
       restartDaemon: "Restart daemon",
       stopDaemons: "Stop all daemons",
       runningDaemons: "Running daemons",
+      executionCapacity: "Execution capacity",
+      serviceWorkers: "Service workers",
       pendingTasks: "Pending tasks",
       stuckTasks: "Stuck tasks",
       completedRuns: "Completed runs",
@@ -268,6 +270,8 @@ export function WorkerConsole() {
       restartDaemon: "重启常驻",
       stopDaemons: "停止全部常驻",
       runningDaemons: "运行中的常驻",
+      executionCapacity: "可用执行通道",
+      serviceWorkers: "服务 Worker",
       pendingTasks: "待处理任务",
       stuckTasks: "卡住任务",
       completedRuns: "已完成运行",
@@ -453,6 +457,7 @@ export function WorkerConsole() {
   const hygieneActionsAvailable = fleetHygiene?.summary.actions_available || 0;
   const remoteLaneCount = workerFleet?.summary.remote_worker_count ?? workerStatus?.remote_worker_count ?? 0;
   const localLaneCount = workerFleet?.summary.local_daemon_count ?? workerStatus?.worker_count ?? 0;
+  const serviceWorkerLanes = (workerFleet?.lanes || []).filter((lane) => lane.lane_type === "gateway_service_worker");
   const localAdmissionPacket = (startCheck?.local_loop_admission_packet || {}) as Record<string, unknown>;
   const localDeployment = (typeof localAdmissionPacket.local_deployment === "object" && localAdmissionPacket.local_deployment !== null
     ? localAdmissionPacket.local_deployment
@@ -596,11 +601,11 @@ export function WorkerConsole() {
   });
 
   const statCards = [
-    { label: copy.runningDaemons, value: workerStatus?.running_workers ?? workerFleet?.summary.running_local_daemons ?? "—", status: (workerStatus?.running_workers || 0) > 0 ? "running" : "ready" },
+    { label: copy.executionCapacity, value: workerStatus?.execution_capacity_workers ?? workerFleet?.summary.execution_capacity_workers ?? "—", status: (workerStatus?.execution_capacity_workers || 0) > 0 ? "running" : "attention" },
     { label: copy.pendingTasks, value: workerStatus?.pending_worker_tasks ?? "—", status: (workerStatus?.pending_worker_tasks || 0) > 0 ? "planned" : "pass" },
     { label: copy.stuckTasks, value: workerStatus?.stuck_worker_tasks ?? "—", status: (workerStatus?.stuck_worker_tasks || 0) > 0 ? "attention" : "pass" },
     { label: copy.completedRuns, value: workerStatus?.recent_completed_runs ?? "—", status: "completed" },
-    { label: copy.remoteWorkers, value: workerStatus?.remote_worker_count ?? workerFleet?.summary.remote_worker_count ?? "—", status: (workerStatus?.stale_remote_enrollments || 0) > 0 ? "attention" : "ready" },
+    { label: copy.serviceWorkers, value: workerStatus?.active_service_workers ?? workerFleet?.summary.active_service_workers ?? "—", status: (workerStatus?.stale_service_workers || 0) > 0 ? "attention" : (workerStatus?.active_service_workers || 0) > 0 ? "running" : "planned" },
     { label: copy.activeSessions, value: workerStatus?.active_remote_sessions ?? "—", status: (workerStatus?.active_remote_sessions || 0) > 0 ? "ready" : "planned" },
     { label: copy.activeJobs, value: executionMode?.summary.active_workflow_jobs ?? workerStatus?.stuck_workflow_jobs ?? "—", status: (executionMode?.summary.active_workflow_jobs || 0) > 0 ? "running" : "pass" },
     { label: copy.approvals, value: executionMode?.summary.pending_approvals ?? "—", status: (executionMode?.summary.pending_approvals || 0) > 0 ? "attention" : "pass" },
@@ -910,6 +915,22 @@ export function WorkerConsole() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+            {serviceWorkerLanes.map((worker) => (
+              <div key={worker.lane_id} data-testid="gateway-service-worker" className="rounded px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[11px] font-semibold" style={{ color: adapterColor(worker.adapter || "external") }}>{worker.agent_name || worker.agent_id}</div>
+                  <div className="flex items-center gap-1.5">
+                    <StatusBadge status={worker.heartbeat_state === "fresh" ? "running" : "attention"} label={worker.heartbeat_state || "unknown"} />
+                    <StatusBadge status="ready" label={copy.serviceWorkers} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.selectedAdapter}: <span style={{ color: "var(--mis-text)" }}>{worker.adapter || "—"}</span></div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.activeSessions}: <span style={{ color: "var(--mis-text)" }}>{worker.active_session_count}</span></div>
+                </div>
+                <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-dim)" }}>{worker.agent_id || "—"}</div>
+              </div>
+            ))}
             {(workerStatus?.daemons || []).map((daemon) => (
               <div key={daemon.adapter} className="rounded px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                 <div className="flex items-center justify-between gap-2">

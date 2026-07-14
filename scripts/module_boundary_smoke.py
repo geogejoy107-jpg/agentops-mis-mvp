@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import datetime as dt
 import json
 import sqlite3
 import sys
@@ -1466,6 +1467,59 @@ def main() -> int:
         enrollments=[remote_enrollment],
         sessions=[remote_session],
         agents_by_id={"agt_worker_remote_smoke": {"name": "Remote Smoke Worker", "runtime_type": "mock", "status": "idle"}},
+        heartbeats_by_agent={"agt_worker_remote_smoke": {"last_heartbeat_at": "2026-06-22T00:00:20+00:00"}},
+        now_dt=dt.datetime(2026, 6, 22, 0, 0, 30, tzinfo=dt.timezone.utc),
+    )
+    service_only_summary = build_worker_remote_fleet_summary(
+        enrollments=[],
+        sessions=[{
+            "session_id": "fixture_service_session_ref",
+            "agent_id": "agt_worker_service_smoke",
+            "workspace_id": "local-demo",
+            "status": "active",
+            "session_state": "active",
+            "scopes": ["tasks:read"],
+        }],
+        agents_by_id={
+            "agt_worker_service_smoke": {
+                "name": "Service Smoke Worker",
+                "runtime_type": "hermes",
+                "status": "idle",
+            },
+        },
+        heartbeats_by_agent={
+            "agt_worker_service_smoke": {"last_heartbeat_at": "2026-06-22T00:00:20+00:00"},
+        },
+        now_dt=dt.datetime(2026, 6, 22, 0, 0, 30, tzinfo=dt.timezone.utc),
+    )
+    service_status = build_worker_status_payload(
+        worker_agents=[{
+            "agent_id": "agt_worker_service_smoke",
+            "name": "Service Smoke Worker",
+            "runtime_type": "hermes",
+            "status": "idle",
+        }],
+        worker_runs=[],
+        worker_tasks=[],
+        worker_events=[],
+        daemons=[],
+        stuck_tasks=[],
+        remote_fleet=service_only_summary,
+        stuck_workflow_jobs=[],
+        adapter_readiness=adapter_readiness,
+    )
+    service_fleet = build_worker_fleet_view(
+        daemons=[],
+        remote_fleet=service_only_summary,
+        adapter_readiness=adapter_readiness["summary"],
+        stuck_tasks=[],
+        stuck_workflow_jobs=[],
+        worker_agents=[{
+            "agent_id": "agt_worker_service_smoke",
+            "name": "Service Smoke Worker",
+            "runtime_type": "hermes",
+            "status": "idle",
+        }],
     )
     require(status_payload.get("status") == "attention", "worker status payload did not reflect stale remote attention", failures)
     require(status_payload.get("fleet_health", {}).get("overall") == "blocked", "worker status payload missing blocked fleet health", failures)
@@ -1485,7 +1539,15 @@ def main() -> int:
     require(public_session.get("session_id_omitted") is True and public_session.get("session_ref") and public_session.get("parent_token_ref") and not public_session.get("session_id"), "remote session projection leaked session id", failures)
     remote_summary_serialized = json.dumps(remote_summary, ensure_ascii=False)
     require(remote_summary.get("status") == "ready" and remote_summary.get("active_sessions") == 1, "remote fleet summary failed active session aggregation", failures)
+    require(remote_summary.get("fresh_service_workers") == 1, "remote fleet summary missed fresh service worker", failures)
     require("fixture_remote_fleet_token_ref" not in remote_summary_serialized and "fixture_remote_session_ref" not in remote_summary_serialized, "remote fleet summary leaked raw token/session ids", failures)
+    require(service_status.get("running_workers") == 0, "service-only status must not claim a locally verified process", failures)
+    require(service_status.get("active_service_workers") == 1 and service_status.get("execution_capacity_workers") == 1, "service-only status missed heartbeat-confirmed execution capacity", failures)
+    require(service_status.get("status") == "running", "service-only status should report available execution capacity", failures)
+    require(service_fleet.get("summary", {}).get("active_service_workers") == 1, "service-only fleet missed active service worker", failures)
+    require(service_fleet.get("summary", {}).get("execution_capacity_workers") == 1, "service-only fleet missed execution capacity", failures)
+    require(service_fleet.get("summary", {}).get("lane_counts", {}).get("gateway_service_worker") == 1, "service-only fleet missed gateway service lane", failures)
+    require(service_fleet.get("lanes", [{}])[0].get("process_state_verified") is False, "service-only fleet must not claim process verification", failures)
     workflow_job_projection = workflow_job_public({
         "job_id": "wfjob_projection_smoke",
         "workspace_id": "local-demo",

@@ -4076,8 +4076,13 @@ def agent_gateway_public_session_rows(conn) -> list[dict]:
 def worker_remote_fleet_summary(conn) -> dict:
     enrollments = agent_gateway_enrollment_rows(conn)
     sessions = agent_gateway_session_rows(conn)
-    remote_agent_ids = sorted({row.get("agent_id") for row in enrollments if row.get("agent_id")})
+    remote_agent_ids = sorted({
+        row.get("agent_id")
+        for row in [*enrollments, *sessions]
+        if row.get("agent_id")
+    })
     agents_by_id = {}
+    heartbeats_by_agent = {}
     if remote_agent_ids:
         placeholders = ",".join("?" for _ in remote_agent_ids)
         agents_by_id = {
@@ -4087,10 +4092,21 @@ def worker_remote_fleet_summary(conn) -> dict:
                 tuple(remote_agent_ids),
             ).fetchall())
         }
+        heartbeats_by_agent = {
+            row["agent_id"]: row
+            for row in rows_to_dicts(conn.execute(
+                f"""SELECT agent_id, MAX(created_at) AS last_heartbeat_at
+                FROM runtime_events
+                WHERE event_type='agent.heartbeat' AND agent_id IN ({placeholders})
+                GROUP BY agent_id""",
+                tuple(remote_agent_ids),
+            ).fetchall())
+        }
     return build_worker_remote_fleet_summary(
         enrollments=enrollments,
         sessions=sessions,
         agents_by_id=agents_by_id,
+        heartbeats_by_agent=heartbeats_by_agent,
     )
 
 

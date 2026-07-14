@@ -1,6 +1,7 @@
 """Pure worker fleet read-model aggregation helpers."""
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import re
 from typing import Any
@@ -21,11 +22,28 @@ def _int(value: Any) -> int:
         return 0
 
 
+def _heartbeat_state(
+    timestamp: Any,
+    *,
+    now_dt: dt.datetime,
+    timeout_sec: int,
+) -> str:
+    if not timestamp:
+        return "never_seen"
+    try:
+        seen = dt.datetime.fromisoformat(str(timestamp))
+        if seen.tzinfo is None:
+            seen = seen.replace(tzinfo=dt.timezone.utc)
+        return "stale" if (now_dt - seen).total_seconds() > max(timeout_sec, 1) else "fresh"
+    except (TypeError, ValueError):
+        return "unknown"
+
+
 def worker_fleet_health(payload: dict[str, Any]) -> dict[str, Any]:
     remote = payload.get("remote_worker_health") or {}
     daemons = payload.get("daemons") or []
     active_daemons = [daemon for daemon in daemons if daemon.get("running")]
-    running_workers = _int(payload.get("running_workers"))
+    running_workers = _int(payload.get("execution_capacity_workers", payload.get("running_workers")))
     pending_tasks = _int(payload.get("pending_worker_tasks"))
     stuck_tasks = _int(payload.get("stuck_worker_tasks"))
     workflow_stuck_jobs = _int(payload.get("stuck_workflow_jobs"))
@@ -291,14 +309,19 @@ def build_worker_remote_fleet_summary(
     enrollments: list[dict[str, Any]],
     sessions: list[dict[str, Any]],
     agents_by_id: dict[str, dict[str, Any]],
+    heartbeats_by_agent: dict[str, dict[str, Any]] | None = None,
+    now_dt: dt.datetime | None = None,
+    service_heartbeat_timeout_sec: int = 90,
 ) -> dict[str, Any]:
     active_sessions_by_agent: dict[str, int] = {}
+    active_session_by_agent: dict[str, dict[str, Any]] = {}
     session_state_counts: dict[str, int] = {}
     for session in sessions:
         state = session.get("session_state") or session.get("status") or "unknown"
         session_state_counts[state] = session_state_counts.get(state, 0) + 1
         if state == "active" and session.get("agent_id"):
             active_sessions_by_agent[session["agent_id"]] = active_sessions_by_agent.get(session["agent_id"], 0) + 1
+            active_session_by_agent.setdefault(session["agent_id"], session)
 
     heartbeat_counts: dict[str, int] = {}
     token_status_counts: dict[str, int] = {}
@@ -319,8 +342,43 @@ def build_worker_remote_fleet_summary(
     stale_enrollments = [item for item in remote_workers if item.get("heartbeat_state") == "stale"]
     never_seen_enrollments = [item for item in remote_workers if item.get("heartbeat_state") == "never_seen"]
     fresh_enrollments = [item for item in remote_workers if item.get("heartbeat_state") == "fresh"]
-    health_status = "attention" if stale_enrollments else "ready"
+    heartbeats_by_agent = heartbeats_by_agent or {}
+    now_dt = now_dt or dt.datetime.now(dt.timezone.utc)
+    service_workers = []
+    for agent_id, active_session_count in active_sessions_by_agent.items():
+        agent = agents_by_id.get(agent_id) or {}
+        session = active_session_by_agent.get(agent_id) or {}
+        heartbeat = heartbeats_by_agent.get(agent_id) or {}
+        last_heartbeat_at = heartbeat.get("last_heartbeat_at") or heartbeat.get("created_at")
+        heartbeat_state = _heartbeat_state(
+            last_heartbeat_at,
+            now_dt=now_dt,
+            timeout_sec=service_heartbeat_timeout_sec,
+        )
+        service_workers.append({
+            "agent_id": agent_id,
+            "agent_name": agent.get("name") or agent_id,
+            "workspace_id": session.get("workspace_id") or "local-demo",
+            "runtime_type": agent.get("runtime_type") or "external",
+            "agent_status": agent.get("status") or "unknown",
+            "heartbeat_state": heartbeat_state,
+            "heartbeat_timeout_sec": service_heartbeat_timeout_sec,
+            "last_heartbeat_at": last_heartbeat_at,
+            "active_session_count": active_session_count,
+            "session_state": "active",
+            "management_mode": "external_service",
+            "process_state_verified": False,
+            "token_omitted": True,
+            "session_id_omitted": True,
+        })
+
+    fresh_service_workers = [item for item in service_workers if item.get("heartbeat_state") == "fresh"]
+    stale_service_workers = [item for item in service_workers if item.get("heartbeat_state") == "stale"]
+    never_seen_service_workers = [item for item in service_workers if item.get("heartbeat_state") == "never_seen"]
+    health_status = "attention" if stale_enrollments or stale_service_workers else "ready"
     if active_enrollments and not fresh_enrollments and len(never_seen_enrollments) == len(active_enrollments):
+        health_status = "waiting_for_heartbeat"
+    if service_workers and not fresh_service_workers and len(never_seen_service_workers) == len(service_workers):
         health_status = "waiting_for_heartbeat"
 
     return {
@@ -332,12 +390,17 @@ def build_worker_remote_fleet_summary(
         "stale_enrollments": len(stale_enrollments),
         "never_seen_enrollments": len(never_seen_enrollments),
         "active_sessions": session_state_counts.get("active", 0),
+        "service_worker_count": len(service_workers),
+        "fresh_service_workers": len(fresh_service_workers),
+        "stale_service_workers": len(stale_service_workers),
+        "never_seen_service_workers": len(never_seen_service_workers),
         "expired_sessions": session_state_counts.get("expired", 0),
         "revoked_sessions": session_state_counts.get("revoked", 0),
         "heartbeat_state_counts": heartbeat_counts,
         "token_status_counts": token_status_counts,
         "session_state_counts": session_state_counts,
         "remote_workers": remote_workers[:50],
+        "service_workers": service_workers[:50],
         "recent_sessions": [public_remote_session(session) for session in sessions[:25]],
         "token_omitted": True,
     }
@@ -377,11 +440,21 @@ def build_worker_status_payload(
         str(daemon.get("agent_id") or f"local-daemon:{daemon.get('adapter') or 'unknown'}")
         for daemon in active_daemons
     )
+    fresh_service_worker_refs = {
+        str(worker.get("agent_id"))
+        for worker in (remote_fleet.get("service_workers") or [])
+        if worker.get("agent_id") and worker.get("heartbeat_state") == "fresh"
+    }
+    execution_capacity_refs = set(running_worker_refs)
+    execution_capacity_refs.update(fresh_service_worker_refs)
     payload = {
         "provider": "agentops-worker",
-        "status": "attention" if remote_fleet.get("stale_enrollments") or unverified_process_claims else "running" if active_daemons else "ready",
+        "status": "attention" if remote_fleet.get("stale_enrollments") or remote_fleet.get("stale_service_workers") or unverified_process_claims else "running" if execution_capacity_refs else "ready",
         "worker_count": len(worker_agents),
         "running_workers": len(running_worker_refs),
+        "active_service_workers": len(fresh_service_worker_refs),
+        "stale_service_workers": remote_fleet.get("stale_service_workers", 0),
+        "execution_capacity_workers": len(execution_capacity_refs),
         "unverified_process_claims": len(unverified_process_claims),
         "recent_completed_runs": len([run for run in worker_runs if run.get("status") == "completed"]),
         "pending_worker_tasks": len([task for task in worker_tasks if task.get("status") in ("planned", "backlog")]),
@@ -395,6 +468,7 @@ def build_worker_status_payload(
         "never_seen_remote_enrollments": remote_fleet.get("never_seen_enrollments", 0),
         "active_remote_sessions": remote_fleet.get("active_sessions", 0),
         "remote_worker_health": remote_fleet,
+        "service_workers": remote_fleet.get("service_workers") or [],
         "adapter_readiness": adapter_readiness.get("summary"),
         "daemons": daemons,
         "workers": worker_agents,
@@ -516,6 +590,33 @@ def build_worker_fleet_view(
             "token_id_omitted": True,
         })
 
+    for worker in (remote_fleet.get("service_workers") or []):
+        agent_id = worker.get("agent_id")
+        if agent_id in seen_agents:
+            continue
+        heartbeat_state = worker.get("heartbeat_state") or "unknown"
+        health = "pass" if heartbeat_state == "fresh" else "warn"
+        add_lane({
+            "lane_id": f"gateway_service_worker:{agent_id}",
+            "lane_type": "gateway_service_worker",
+            "adapter": worker.get("runtime_type") or "external",
+            "agent_id": agent_id,
+            "agent_name": worker.get("agent_name"),
+            "workspace_id": worker.get("workspace_id"),
+            "runtime_type": worker.get("runtime_type") or "external",
+            "status": worker.get("agent_status") or "unknown",
+            "health": health,
+            "heartbeat_state": heartbeat_state,
+            "session_state": worker.get("session_state") or "active",
+            "active_session_count": _int(worker.get("active_session_count")),
+            "last_seen_at": worker.get("last_heartbeat_at"),
+            "management_mode": "external_service",
+            "control_allowed": False,
+            "process_state_verified": False,
+            "next_action": "agentops worker status" if health == "pass" else "agentops doctor",
+            "safe_ref": stable_id("fleet_lane", "gateway_service_worker", agent_id or "")[-12:],
+        })
+
     for agent in worker_agents:
         if agent.get("agent_id") in seen_agents:
             continue
@@ -544,6 +645,17 @@ def build_worker_fleet_view(
         lane_counts[lane["lane_type"]] = lane_counts.get(lane["lane_type"], 0) + 1
         health_counts[lane["health"]] = health_counts.get(lane["health"], 0) + 1
     overall = "blocked" if health_counts.get("fail") else "attention" if health_counts.get("warn") else "ready"
+    running_local_refs = {
+        str(daemon.get("agent_id") or f"local-daemon:{daemon.get('adapter') or 'unknown'}")
+        for daemon in daemons
+        if daemon.get("running")
+    }
+    fresh_service_refs = {
+        str(worker.get("agent_id"))
+        for worker in (remote_fleet.get("service_workers") or [])
+        if worker.get("agent_id") and worker.get("heartbeat_state") == "fresh"
+    }
+    execution_capacity_refs = running_local_refs | fresh_service_refs
     next_actions = []
     for lane in lanes:
         action = lane.get("next_action")
@@ -566,6 +678,9 @@ def build_worker_fleet_view(
             "health_counts": health_counts,
             "local_daemon_count": len(daemons),
             "running_local_daemons": len([daemon for daemon in daemons if daemon.get("running")]),
+            "active_service_workers": len(fresh_service_refs),
+            "stale_service_workers": remote_fleet.get("stale_service_workers", 0),
+            "execution_capacity_workers": len(execution_capacity_refs),
             "host_managed_workers": len([daemon for daemon in daemons if daemon.get("running") and daemon.get("management_mode") == "host_stack"]),
             "api_managed_daemons": len([daemon for daemon in daemons if daemon.get("running") and daemon.get("management_mode") != "host_stack"]),
             "unverified_process_claims": len([daemon for daemon in daemons if daemon.get("process_claim_active") and daemon.get("process_identity_verified") is not True]),
