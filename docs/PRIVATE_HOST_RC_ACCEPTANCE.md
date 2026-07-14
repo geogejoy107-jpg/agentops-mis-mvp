@@ -12,7 +12,7 @@ physical evidence and cannot be closed by mock output.
 | # | Requirement | Current evidence | Status |
 |---|---|---|---|
 | 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.19` publishes a no-repository bootstrap plus archive/checksum assets from exact commit `ac69d8c`. Exact-head push/PR CI, bundle and release-consumer smokes, checksum verification and the same-Mac preview.18-to-preview.19 upgrade passed. A receipt from another physical Mac remains missing. | Passed locally; external evidence required |
-| 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md`, `PRIVATE_HOST_AUTH_WORKSPACE_UI_ACCEPTANCE.md`, `PRIVATE_HOST_WORKER_OWNERSHIP_ACCEPTANCE.md` and bundle smoke cover installed CLI, production UI, browser-first Owner setup in the existing Workspace, init, doctor, start/status/stop, Runtime readiness and fail-closed duplicate Worker ownership. | Passed locally |
+| 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md`, `PRIVATE_HOST_AUTH_WORKSPACE_UI_ACCEPTANCE.md`, `PRIVATE_HOST_WORKER_OWNERSHIP_ACCEPTANCE.md` and bundle smoke cover installed CLI, production UI, browser-first Owner setup in the existing Workspace, init, doctor, start/status/stop, Runtime readiness and fail-closed duplicate Worker ownership. The installed preview.19 macOS app opened that Workspace without changing the Host or Worker PIDs. | Passed locally |
 | 3 | Dependency-free second computer opens private HTTPS console and authenticates | preview.19 is live through private Tailscale HTTPS on port 8443, Funnel is disabled, and the Workspace is ready. The installed `open-console` can perform a scrubbed setup-code handoff without output disclosure. Host status remains `bootstrap_required`; Owner completion and physical second-device browser login remain human gates. | Host side passed; external evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, `private_host_owner_browser_handoff_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, setup-code authority, role/session separation and CSRF/Origin checks. | Passed locally |
 | 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | Customer dispatch and ledger views exist; Audit and Memory use live APIs; memory decisions write through the approver route; approved artifact download is Session/workspace/approval checked and audited. A second-device end-to-end receipt remains open. | Partial |
@@ -332,6 +332,13 @@ version and one Hermes plus one OpenClaw Worker passed. Owner creation,
 current-package approved Runtime completion, physical second-device workflow
 and disconnect evidence, and another-Mac clean install remain open. This is a
 prerelease, not the final RC.
+
+The installed macOS app was also launched through `open` and opened the same
+production Workspace in Chrome while preserving the existing Host, Hermes and
+OpenClaw PIDs. The managed Host-only LaunchAgent plist was staged through its
+dry-run and explicit install gates with exact definition, `0600` mode and no
+credential material, but it remains unloaded. Logout/reboot persistence is not
+claimed.
 
 ## Release Gates
 

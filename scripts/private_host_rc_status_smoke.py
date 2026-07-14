@@ -9,6 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RC = ROOT / "docs" / "PRIVATE_HOST_RC_ACCEPTANCE.md"
 SECOND_DEVICE = ROOT / "docs" / "PRIVATE_HOST_SECOND_DEVICE_ACCEPTANCE.md"
+LAUNCHER = ROOT / "docs" / "PRIVATE_HOST_MACOS_LAUNCHER_ACCEPTANCE.md"
+BACKGROUND_SERVICE = ROOT / "docs" / "PRIVATE_HOST_BACKGROUND_SERVICE_ACCEPTANCE.md"
 
 VERSION = "1.6.0-private-host-preview.19"
 TAG = f"v{VERSION}"
@@ -31,6 +33,8 @@ def main() -> int:
     failures: list[str] = []
     rc = RC.read_text(encoding="utf-8")
     second = SECOND_DEVICE.read_text(encoding="utf-8")
+    launcher = LAUNCHER.read_text(encoding="utf-8")
+    service = BACKGROUND_SERVICE.read_text(encoding="utf-8")
     rc_headings = [line for line in rc.splitlines() if line.startswith("## Current Preview ")]
     normalized_second = " ".join(second.split())
 
@@ -59,6 +63,13 @@ def main() -> int:
     require("Automated browser runtimes outside the Host tailnet are not accepted as a substitute." in normalized_second,
             "physical evidence anti-substitution boundary missing", failures)
     require("not the final RC" in rc, "prerelease must not claim final RC", failures)
+    require("## Installed App Launch Receipt" in launcher, "installed app launch receipt missing", failures)
+    require("Host PID remained unchanged" in launcher, "launcher receipt must preserve Host PID", failures)
+    require("Worker PIDs both remained unchanged" in launcher, "launcher receipt must preserve Worker PIDs", failures)
+    require("A separate clean Mac still must" in launcher, "another-Mac launcher gate must remain open", failures)
+    require("## Local Service Staging Receipt" in service, "local service staging receipt missing", failures)
+    require("launchd has not loaded the service" in service, "service receipt must remain unloaded", failures)
+    require("staging alone is not logout/reboot proof" in service, "service receipt must not claim reboot proof", failures)
 
     output = {
         "operation": "private_host_rc_status_smoke",
@@ -67,6 +78,7 @@ def main() -> int:
         "tag": TAG,
         "exact_commit": COMMIT,
         "checksums_recorded": len(CHECKSUMS),
+        "local_receipts": ["installed_app_launch", "host_service_staged_unloaded"],
         "external_gates_open": list(open_gate_markers),
         "failures": failures,
         "safety": {

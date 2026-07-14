@@ -108,10 +108,26 @@ installed Host must still be upgraded through the versioned installer before
 its served asset hash changes; source assets are never copied over a running
 installation in place.
 
+## Installed App Launch Receipt
+
+On 2026-07-14, the installed preview.19 launcher was invoked through the real
+macOS application boundary:
+
+```bash
+open ~/Applications/AgentOps\ MIS.app
+```
+
+Google Chrome opened `http://127.0.0.1:18878/workspace` and the production
+Workspace returned HTTP 200. The managed Host PID remained unchanged, and the
+single Hermes and single OpenClaw Worker PIDs both remained unchanged. This
+proves that opening the installed app reuses the existing Host and Worker set
+instead of restarting or duplicating them. No Owner was created, no Runtime
+task was dispatched, and no credential or setup-code value was recorded.
+
 ## Remaining External Gate
 
-CI can execute the app's `Contents/MacOS` entry point, but it cannot prove a
-physical Finder double-click. The release candidate still needs one real macOS
-receipt using `open ~/Applications/AgentOps\ MIS.app`, followed by browser
-Workspace entry. Signing/notarization remain future work and must not be
-claimed by this preview.
+The installed-app `open` receipt now covers this Host account and browser
+Workspace entry. A separate clean Mac still must download and install the
+published asset, launch the app from that installation, and complete the
+no-repository consumer acceptance before final RC. Signing/notarization remain
+future work and must not be claimed by this preview.
