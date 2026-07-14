@@ -67,8 +67,14 @@ def main() -> int:
             "physical evidence anti-substitution boundary missing", failures)
     require("not the final RC" in rc, "prerelease must not claim final RC", failures)
     require("## Installed App Launch Receipt" in launcher, "installed app launch receipt missing", failures)
-    require("Host PID remained unchanged" in normalized_launcher, "launcher receipt must preserve Host PID", failures)
-    require("Worker PIDs both remained unchanged" in normalized_launcher, "launcher receipt must preserve Worker PIDs", failures)
+    require(TAG in launcher, "installed app receipt must name the current prerelease tag", failures)
+    require("The managed Host PID and all three managed child PIDs" in normalized_launcher,
+            "launcher receipt must preserve Host/server/Worker PIDs", failures)
+    require("remained unchanged across a second app open" in normalized_launcher,
+            "launcher receipt must prove process-tree reuse", failures)
+    require("the address bar contained no fragment" in normalized_launcher, "launcher receipt must prove fragment scrubbing", failures)
+    require("the manual setup-code input was absent" in normalized_launcher, "launcher receipt must prove graphical setup-code handoff", failures)
+    require("live_execution_performed:false" in normalized_launcher, "launcher receipt must prove no live task ran", failures)
     require("A separate clean Mac still must" in launcher, "another-Mac launcher gate must remain open", failures)
     require("## Local Service Staging Receipt" in service, "local service staging receipt missing", failures)
     require("launchd has not loaded the service" in service, "service receipt must remain unloaded", failures)

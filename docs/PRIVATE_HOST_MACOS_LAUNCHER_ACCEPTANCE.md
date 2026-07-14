@@ -113,29 +113,35 @@ secret scan, and `git diff --check`. Browser review covered both the existing
 dark operations theme and light enterprise theme at desktop width. The latest
 focused review also covered the light enterprise first-Owner state at
 1280x720 and 390x844 with zero browser console errors and no horizontal
-overflow. The
-installed Host must still be upgraded through the versioned installer before
-its served asset hash changes; source assets are never copied over a running
-installation in place.
+overflow. The real Host now serves preview.21 from the versioned installation;
+source assets were not copied over the running installation in place.
 
 ## Installed App Launch Receipt
 
 On 2026-07-14, preview.19 first established the installed-app process reuse
-receipt. After the versioned preview.20 upgrade, the launcher was invoked again
-through the real macOS application boundary:
+receipt. After the versioned `v1.6.0-private-host-preview.21` upgrade, the
+launcher was invoked again through the real macOS application boundary:
 
 ```bash
 open ~/Applications/AgentOps\ MIS.app
 ```
 
-Google Chrome opened `http://127.0.0.1:18878/workspace` and the preview.20
-production Workspace returned HTTP 200. The managed Host PID remained
-unchanged, and the single Hermes and single OpenClaw Worker PIDs both remained
-unchanged. The installed HTML, CSS and JavaScript also matched the preview.20
-release build byte-for-byte. This proves that opening the installed app reuses
-the existing Host and Worker set instead of restarting or duplicating them. No
-Owner was created, no Runtime task was dispatched, and no credential or
-setup-code value was recorded.
+Google Chrome opened `http://127.0.0.1:18878/workspace` and the preview.21
+production Workspace returned HTTP 200. The launcher delivered the protected
+one-time setup authority to the already integrated account page: the address
+bar contained no fragment, the manual setup-code input was absent, and the page
+showed `已从本机安装器安全接收`. The create action remained disabled and no form
+was submitted.
+
+The managed Host PID and all three managed child PIDs (server plus the two live
+Worker processes) remained unchanged across a second app open. The AgentOps
+Worker Fleet reported fresh Hermes/OpenClaw heartbeat state with zero processed
+tasks in this launch window and `live_execution_performed:false`. The installed
+HTML, CSS and JavaScript matched the preview.21 release build byte-for-byte.
+This proves that opening the installed app reuses the existing Host and Worker
+set instead of restarting or duplicating them. No Owner was created, no Runtime
+task was dispatched, and no credential or setup-code value was read or
+recorded.
 
 ## Remaining External Gate
 
