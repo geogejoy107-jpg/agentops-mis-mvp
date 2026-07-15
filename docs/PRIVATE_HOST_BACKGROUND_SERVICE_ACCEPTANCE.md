@@ -122,6 +122,25 @@ real physical logout/reboot persistence remains open.
 preview.29 was published through the manual prerelease path; the Private Host
 Preview Release workflow did not run.
 
+## Current Preview 31
+
+On 2026-07-15, the real Host upgraded from preview.30 to public prerelease
+`v1.6.0-private-host-preview.31` at exact commit
+`fed1b2410d6725a217c9727dba570db62cc46963`. The Host-only LaunchAgent was
+explicitly unloaded before installation and loaded again afterward. The Host
+returned ready on loopback and private Tailscale HTTPS, while Funnel remained
+disabled.
+
+The installer atomically replaced both CLI shim inodes and the commands ran
+immediately after installation. The independently managed Hermes and OpenClaw
+services stayed running through the install without exit 137 or `-9`; explicit
+service restarts then created PIDs `38056` and `38080`, both with fresh Agent
+Gateway heartbeats and no recorded exit. The Host LaunchAgent still contains
+no Worker command or credential material.
+
+This is same-login service-control, upgrade and Worker-continuity evidence. It
+still does not substitute for a physical logout/reboot receipt.
+
 ## Known Limits
 
 - This is an unsigned macOS preview, not a signed/notarized installer service.

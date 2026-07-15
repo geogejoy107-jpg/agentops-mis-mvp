@@ -173,6 +173,19 @@ account identifier, raw browser state, prompt or response was recorded.
 preview.29 was published through the manual prerelease path; the Private Host
 Preview Release workflow did not run.
 
+## Current Preview 31 Pending App Receipt
+
+`v1.6.0-private-host-preview.31` is installed at exact commit
+`fed1b2410d6725a217c9727dba570db62cc46963`, and clean-HOME bundle/consumer
+smokes passed for its packaged macOS launcher and both CLI entry points. A new
+same-Mac `open ~/Applications/AgentOps\ MIS.app` process-reuse observation was
+not performed after this upgrade because the workstation was locked.
+
+`preview.31 installed app open pending` is therefore an explicit external
+receipt gate, not an inferred pass from preview.29 or CI. No browser visual,
+fragment, account, credential or live-Runtime claim is attributed to this
+pending receipt.
+
 ## Remaining External Gate
 
 The installed-app `open` receipt covers only same-Mac process reuse. A separate clean Mac still must

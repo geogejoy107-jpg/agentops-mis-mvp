@@ -159,30 +159,29 @@ browser runtimes outside the Host tailnet are not accepted as a substitute.
 No tailnet DNS name, IP address, account identifier, credential or setup code is
 recorded in this document.
 
-## Current Preview 29
+## Current Preview 31
 
 Host-side staging was refreshed on 2026-07-15 with
-`v1.6.0-private-host-preview.29` at exact commit
-`574c735541d95b70180254235a385ff764f8c45c`:
+`v1.6.0-private-host-preview.31` at exact commit
+`fed1b2410d6725a217c9727dba570db62cc46963`:
 
 - candidate and public clean-HOME install/start/status/stop passed without a
-  repository, and the public assets were byte-equal to the candidate assets;
-- exact-commit push CI `29362408547` and pull-request CI `29362410590` passed;
+  repository; candidate, Draft and public assets were byte-equal;
+- exact-commit push CI `29391744378` and pull-request CI `29391746311` passed;
 - the Release was published through the manual prerelease path; the Private
   Host Preview Release workflow did not run;
-- the real Host upgraded from preview.28 with explicit Host LaunchAgent
-  unload, install and load steps, and reported `previous_version=.28`;
-- the existing first Owner passed local login, logout and Workspace readback;
-- password recovery was available and local-only, while a remote Origin and a
-  request without app authority both failed closed;
-- the installed production HTML, CSS and JavaScript were byte-equal to the
-  exact preview.29 build;
-- the independently managed Hermes and OpenClaw Worker PIDs were preserved,
-  and app open reused the existing Host and Worker processes without executing
-  a model task.
+- the real Host upgraded from preview.30 with explicit Host LaunchAgent
+  unload, install and load steps, created a pre-update backup, preserved user
+  data and reported `previous_version=1.6.0-private-host-preview.30`;
+- the existing first Owner remained present and login-ready;
+- the independently managed Hermes and OpenClaw services survived installation
+  and were explicitly restarted from preview.31;
+- one real OpenClaw task and one real Hermes task completed with bounded ledger
+  evidence and verified plan-evidence manifests.
 
 This same-Mac evidence does not close the physical second-computer protocol.
 No physical second-device login, real network disconnect, physical logout,
-reboot, another-Mac installation, or exact-package approved Runtime task is
-claimed. No external evidence is synthesized from local, CI, or prior-preview
-receipts.
+reboot or another-Mac installation is claimed. Owner review of the new memory
+candidates and two conservative prepared-action false positives remains
+pending while the workstation is locked. No external evidence is synthesized
+from local, CI, or prior-preview receipts.

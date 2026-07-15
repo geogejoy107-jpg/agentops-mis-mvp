@@ -45,7 +45,28 @@ Result:
 - credential values and raw ledger rows: absent from command output;
 - real user database: not used.
 
-## Installed Preview 29 Backup Receipt
+## Installed Preview 31 Pre-Update Backup Receipt
+
+On 2026-07-15 the public
+`v1.6.0-private-host-preview.31` installer created a verified backup before
+switching the real Host from preview.30. The installed preview.31 CLI then
+verified that exact backup at
+`~/.agentops/host/backups/agentops-mis-20260715T054425269391Z.sqlite`.
+Its SHA-256 is
+`4a7e6df29d81f33ae0353be48ba4f3bae6dd565948093604052c75010560520e`.
+
+Manifest, file hash, size, schema, SQLite integrity and foreign-key checks all
+passed. The command was read-only, raw ledger rows were not printed, and token
+values and the independent Host secret store were omitted. The installer
+reported `previous_version=1.6.0-private-host-preview.30` and preserved user
+data before changing the active binary.
+
+This receipt proves the preview.31 upgrade rollback point, not a restore of the
+user's live ledger and not a backup of the real Hermes/OpenClaw tasks completed
+after the upgrade. Confirmed restore and access-revocation behavior remain
+covered by isolated acceptance state.
+
+## Superseded Preview 29 Backup Receipt
 
 On 2026-07-15 the installed
 `v1.6.0-private-host-preview.29` consumer CLI created and verified an online
