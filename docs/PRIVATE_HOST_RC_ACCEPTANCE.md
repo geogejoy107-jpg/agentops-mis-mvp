@@ -792,6 +792,11 @@ then ran Hermes and OpenClaw from the preview.31 `current` directory. Host
 health, Owner login readiness and private HTTPS returned ready, with Funnel
 still disabled.
 
+Opening the installed preview.31 macOS app preserved Host PID `37995`, Hermes
+Worker PID `38056`, OpenClaw Worker PID `38080` and the bounded Run count of 36.
+It opened the existing console without creating a Runtime task or duplicate
+process. No browser visual readback is claimed for that receipt.
+
 Installed service Workers completed tasks
 `tsk_preview31_openclaw_readonly_20260715T055005Z` and
 `tsk_preview31_hermes_readonly_20260715T055005Z`. Their runs
@@ -802,9 +807,11 @@ negated external-action wording remain safely paused behind prepared-action
 approval; no Runtime was called for those rows.
 
 Owner review closure, physical second-device login/disconnect, another-Mac
-clean install, current-package app-open receipt and logout/reboot service proof
+clean install and logout/reboot service proof
 remain open. The Mac was locked during Human Session follow-up, so no Keychain
-authority was bypassed and no external evidence is synthesized. This is a
+authority was bypassed. After unlock, a new Keychain authorization prompt still
+required local user action before the scripted Owner Session could continue;
+no external evidence is synthesized. This is a
 prerelease, not the final RC.
 
 ## Release Gates

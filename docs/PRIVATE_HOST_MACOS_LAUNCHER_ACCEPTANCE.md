@@ -173,18 +173,26 @@ account identifier, raw browser state, prompt or response was recorded.
 preview.29 was published through the manual prerelease path; the Private Host
 Preview Release workflow did not run.
 
-## Current Preview 31 Pending App Receipt
+## Current Preview 31 App Receipt
 
 `v1.6.0-private-host-preview.31` is installed at exact commit
 `fed1b2410d6725a217c9727dba570db62cc46963`, and clean-HOME bundle/consumer
-smokes passed for its packaged macOS launcher and both CLI entry points. A new
-same-Mac `open ~/Applications/AgentOps\ MIS.app` process-reuse observation was
-not performed after this upgrade because the workstation was locked.
+smokes passed for its packaged macOS launcher and both CLI entry points. After
+the workstation was unlocked, the installed app was opened through:
 
-`preview.31 installed app open pending` is therefore an explicit external
-receipt gate, not an inferred pass from preview.29 or CI. No browser visual,
-fragment, account, credential or live-Runtime claim is attributed to this
-pending receipt.
+```bash
+open ~/Applications/AgentOps\ MIS.app
+```
+
+Across the preview.31 app open, Host PID `37995`, Hermes Worker PID `38056`
+and OpenClaw Worker PID `38080` remained unchanged. The bounded Run list count
+remained 36 before and after. No Runtime task was created or executed by the
+launcher, and no duplicate Host or Worker appeared.
+
+This is a process-reuse receipt only:
+`browser_visual_readback_performed:false`. It does not attribute a new visual,
+fragment, account or credential observation to preview.31, and it does not
+replace physical another-Mac or logout/reboot acceptance.
 
 ## Remaining External Gate
 

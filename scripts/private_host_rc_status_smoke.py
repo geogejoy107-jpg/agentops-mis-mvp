@@ -68,7 +68,6 @@ def main() -> int:
         "Owner review closure",
         "physical second-device",
         "another-Mac clean install",
-        "current-package app-open receipt",
         "logout/reboot service proof",
     )
     for marker in open_gate_markers:
@@ -83,8 +82,10 @@ def main() -> int:
     require("not the final RC" in rc, "prerelease must not claim final RC", failures)
     require("## Installed App Launch Receipt" in launcher, "installed app launch receipt missing", failures)
     require(TAG in launcher, "installed app receipt must name the current prerelease tag", failures)
-    require("preview.31 installed app open pending" in normalized_launcher,
-            "current-package app-open gate must remain explicit while the Mac is locked", failures)
+    require("preview.31 app open" in normalized_launcher,
+            "current-package app-open process-reuse receipt missing", failures)
+    require("Host PID `37995`" in launcher and "Hermes Worker PID `38056`" in launcher and "OpenClaw Worker PID `38080`" in launcher,
+            "current-package app-open PID preservation receipt missing", failures)
     require("browser_visual_readback_performed:false" in normalized_launcher,
             "launcher history must not synthesize a browser visual check", failures)
     require("the address bar contained no fragment" in normalized_launcher, "launcher receipt must prove fragment scrubbing", failures)
@@ -118,7 +119,7 @@ def main() -> int:
         "exact_commit": COMMIT,
         "checksums_recorded": len(CHECKSUMS),
         "local_receipts": [
-            "historical_installed_app_launch_current_pending",
+            "installed_app_launch",
             "host_service_loaded",
             "installed_service_restart",
             "installed_backup_verified",
