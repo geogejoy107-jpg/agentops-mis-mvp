@@ -883,6 +883,29 @@ EXTERNAL_WRITE_INTENT_KEYWORDS = {
 }
 
 
+EXTERNAL_WRITE_NEGATION_RE = re.compile(
+    r"(?:\b(?:do\s+not|don't|must\s+not|never|without|no)\b[^.!?;\n]{0,48}|"
+    r"(?:不要|不得|禁止|无需|无须|不进行|不执行|仅限本地)[^。！？；\n]{0,32})$",
+    re.IGNORECASE,
+)
+
+
+def positive_external_write_intent(text: str) -> bool:
+    lowered = text.lower()
+    for keyword in EXTERNAL_WRITE_INTENT_KEYWORDS:
+        needle = keyword.lower()
+        start = 0
+        while True:
+            index = lowered.find(needle, start)
+            if index < 0:
+                break
+            prefix = lowered[max(0, index - 64):index]
+            if not EXTERNAL_WRITE_NEGATION_RE.search(prefix):
+                return True
+            start = index + len(needle)
+    return False
+
+
 def worker_external_write_intent(task: dict, args, capability: dict) -> bool:
     if args.adapter not in {"hermes", "openclaw"}:
         return False
@@ -897,7 +920,7 @@ def worker_external_write_intent(task: dict, args, capability: dict) -> bool:
         str(task.get("target_resource") or ""),
         str(task.get("external_action_type") or ""),
     ]).lower()
-    return any(keyword.lower() in combined for keyword in EXTERNAL_WRITE_INTENT_KEYWORDS)
+    return positive_external_write_intent(combined)
 
 
 def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, plan_id: str, run_id: str, capability: dict, loop_supervision_gate: dict | None = None) -> dict:

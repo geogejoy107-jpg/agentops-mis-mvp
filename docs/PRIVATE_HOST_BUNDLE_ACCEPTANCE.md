@@ -151,8 +151,57 @@ The installer now stages each shim in the destination directory, flushes it,
 sets mode `0755`, and atomically replaces the verified old path. The bundle
 smoke requires both shim inodes to change across an upgrade and directly runs
 the upgraded commands. preview.30 remains immutable with this in-place-upgrade
-defect; a later corrective preview is required before final installed Runtime
-acceptance.
+defect and must not be used for another in-place upgrade.
+
+`v1.6.0-private-host-preview.31` is the corrective prerelease at exact commit
+`fed1b2410d6725a217c9727dba570db62cc46963`. Push CI `29391744378` and
+pull-request CI `29391746311` passed at that commit. Candidate, Draft and
+public Release assets were byte-equal; clean-HOME download, install, both CLI
+entry points, Host init/start/status/stop and a preview.30-to-preview.31
+isolated upgrade all passed. The Private Host Preview Release workflow was not
+available on the default branch, so the prerelease used the documented manual
+Draft-to-public path.
+
+The real installed Host then unloaded only its Host LaunchAgent, installed the
+public preview.31 tar archive and loaded the service again. The installer
+created a verified pre-update backup, preserved user data and reported
+`previous_version=1.6.0-private-host-preview.30`. Both CLI shim inodes changed,
+both commands executed immediately, and the independently managed Hermes and
+OpenClaw Worker processes survived the install without exit 137 or `-9`.
+After explicit Worker restarts, both new processes reported fresh heartbeats
+from the preview.31 `current` directory. No credential, database, raw prompt,
+raw response, Worker log or generated release asset is tracked in Git.
+
+## Preview.31 Installed Runtime Dogfood
+
+Two new tasks were submitted through the installed preview.31 CLI and consumed
+by the independently managed service Workers rather than a one-shot helper or
+mock adapter:
+
+- OpenClaw task `tsk_preview31_openclaw_readonly_20260715T055005Z` completed as
+  run `run_gw_612fb884979c` in 13,173 ms. It produced one tool call, evaluation,
+  artifact and reviewable memory candidate. Plan-evidence manifest
+  `pem_d873db245a315031` is `verified`.
+- Hermes task `tsk_preview31_hermes_readonly_20260715T055005Z` completed as run
+  `run_gw_9767258929f0` in 28,261 ms with the same bounded evidence classes.
+  Plan-evidence manifest `pem_691181d2ac0d35ea` is `verified`.
+
+Both rule evaluations passed, both runs ended without an error type, and both
+Workers remained loaded with fresh heartbeats. Their bounded output summaries
+also correctly surfaced stale service-control readback and weak task-specific
+knowledge retrieval as operator attention instead of claiming that every
+release gate had passed. The two memory rows remain candidates until an Owner
+reviews them; workstation lock prevented a new Keychain-backed Human Session
+from being opened during this receipt.
+
+An earlier pair of task descriptions included the negated phrase “do not
+perform external writes.” preview.31 conservatively matched the keyword and
+created prepared-action approvals before invoking either Runtime. Those rows
+remain safely paused for Owner rejection. Post-release source now evaluates
+each keyword occurrence with bounded English/Chinese clause negation, while a
+later positive action in the same task still triggers the Approval Wall. The
+full external-write preflight smoke passes, but this follow-up source fix is
+not retroactively attributed to the immutable preview.31 package.
 
 ## Known Limitations
 
