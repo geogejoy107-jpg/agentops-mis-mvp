@@ -222,7 +222,10 @@ def main() -> int:
         if installed.returncode != 0:
             fail("bundle install failed", installed)
         installed_payload = json.loads(installed.stdout)
+        installed_cli = bin_dir / "agentops"
         installed_worker = bin_dir / "agentops-worker"
+        initial_cli_inode = installed_cli.stat().st_ino
+        initial_worker_inode = installed_worker.stat().st_ino
         launcher_executable = app_bundle / "Contents" / "MacOS" / "agentops-mis-launcher"
         launcher_config_path = app_bundle / "Contents" / "Resources" / "launcher-config.json"
         if (
@@ -568,6 +571,8 @@ def main() -> int:
         upgraded_payload = json.loads(upgraded.stdout)
         if upgraded_payload.get("previous_version") != version:
             fail("upgrade did not retain the previous version pointer", upgraded)
+        if installed_cli.stat().st_ino == initial_cli_inode or installed_worker.stat().st_ino == initial_worker_inode:
+            fail("upgrade rewrote an installed CLI shim in place instead of replacing it atomically", upgraded)
         if not Path(str(upgraded_payload.get("pre_update_backup_path") or "")).is_file():
             fail("upgrade did not create a verified pre-update ledger backup", upgraded)
         upgraded_launcher_config = json.loads(launcher_config_path.read_text(encoding="utf-8"))
@@ -765,6 +770,7 @@ def main() -> int:
             "pre_update_backup": "passed",
             "upgrade_data_preserved": True,
             "upgrade_ui_followed_current_release": True,
+            "upgrade_shims_atomically_replaced": True,
             "rollback_ui_followed_current_release": True,
             "custom_ui_preserved": True,
             "served_ui_followed_upgrade_and_rollback": True,

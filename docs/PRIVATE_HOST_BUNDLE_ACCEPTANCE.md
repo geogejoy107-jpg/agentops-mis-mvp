@@ -75,6 +75,8 @@ Generated archives and UI `dist` remain untracked.
   or symlinked removal roots.
 - Both existing CLI shims must match the installer-generated content exactly
   before update or uninstall; modified and symlinked shims fail closed.
+- Updates replace both verified CLI shims atomically through same-directory
+  temporary files. They never rewrite a live shim inode in place.
 - Installer does not use the network or install Hermes, OpenClaw, Tailscale,
   Python or Node.
 
@@ -102,6 +104,8 @@ The smoke uses temporary build/output/HOME/install/data directories and proves:
 - installed `agentops host init` and `agentops host doctor`;
 - installed human-auth capable live Runtime ledger readback client;
 - two versioned bundles upgrade and roll back through `current`/`previous`;
+- upgrade changes both CLI shim inodes and directly executes the upgraded
+  `agentops` and `agentops-worker` commands;
 - rollback requires confirmation and creates a verified ledger backup;
 - upgrade creates a verified ledger backup before switching binaries;
 - Host ledger and user data survive the binary switch;
@@ -127,6 +131,28 @@ The smoke uses temporary build/output/HOME/install/data directories and proves:
 
 No generated archive, DB, credential, log, cache, dependency directory, real
 Runtime call or network publication is committed or retained by the smoke.
+
+## 2026-07-15 Live Upgrade Regression
+
+The real preview.29-to-preview.30 upgrade exposed a macOS lifecycle defect that
+clean-HOME installation did not reproduce. The installer verified both existing
+CLI shims but then rewrote them in place. With independently managed Worker
+LaunchAgents already using those executable paths, direct shim execution was
+terminated with exit 137 and both service Workers recorded a `-9` exit. The
+versioned payload, Host data and pre-update backup remained valid; invoking the
+same installed Python module directly also remained healthy.
+
+The Host was recovered through the installed module entry point. Replacing the
+two shims with byte-identical files on new inodes restored direct CLI execution,
+after which the Hermes and OpenClaw LaunchAgents restarted successfully with
+new PIDs. No Runtime task was executed during recovery.
+
+The installer now stages each shim in the destination directory, flushes it,
+sets mode `0755`, and atomically replaces the verified old path. The bundle
+smoke requires both shim inodes to change across an upgrade and directly runs
+the upgraded commands. preview.30 remains immutable with this in-place-upgrade
+defect; a later corrective preview is required before final installed Runtime
+acceptance.
 
 ## Known Limitations
 

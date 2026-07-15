@@ -257,9 +257,26 @@ if old_current and old_current != target:
 atomic_symlink(current, target)
 
 bin_dir.mkdir(parents=True, exist_ok=True)
+
+def atomic_write_shim(candidate, content):
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{candidate.name}.",
+        suffix=".next",
+        dir=candidate.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.chmod(0o755)
+        os.replace(temporary, candidate)
+    finally:
+        temporary.unlink(missing_ok=True)
+
 for candidate, module in ((shim, "agentops_mis_cli"), (worker_shim, "agentops_mis_cli.worker")):
-    candidate.write_text(shim_content(module), encoding="utf-8")
-    candidate.chmod(candidate.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    atomic_write_shim(candidate, shim_content(module))
 
 launcher_installed = False
 if install_app:
