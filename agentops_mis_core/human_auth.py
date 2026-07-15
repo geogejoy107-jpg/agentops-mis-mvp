@@ -105,6 +105,32 @@ def cookie_secure(env=None) -> bool:
     return required(env)
 
 
+def cookie_secure_for_request(headers, env=None) -> bool:
+    if not cookie_secure(env):
+        return False
+    supplied = (headers.get("Origin") or "").strip().rstrip("/") if headers else ""
+    if supplied:
+        try:
+            parsed = urllib.parse.urlsplit(supplied)
+            if parsed.scheme == "https":
+                return True
+            hostname = parsed.hostname or ""
+            if parsed.scheme == "http" and hostname:
+                if hostname.lower() == "localhost" or ipaddress.ip_address(hostname).is_loopback:
+                    return False
+        except ValueError:
+            return True
+    host = (headers.get("Host") or "").strip() if headers else ""
+    try:
+        hostname = urllib.parse.urlsplit(f"//{host}").hostname or ""
+        if hostname:
+            if hostname.lower() == "localhost" or ipaddress.ip_address(hostname).is_loopback:
+                return False
+    except ValueError:
+        pass
+    return True
+
+
 def allowed_origins(env=None) -> list[str]:
     env = env or os.environ
     return sorted({
@@ -291,7 +317,7 @@ def status(conn, headers) -> dict:
         "bootstrap_available": bool(os.environ.get("AGENTOPS_OWNER_SETUP_CODE", "").strip()),
         "password_recovery_available": is_required and account_count > 0,
         "password_recovery_local_only": True,
-        "cookie_secure": cookie_secure(),
+        "cookie_secure": cookie_secure_for_request(headers),
         "token_omitted": True,
     }
     if context:
@@ -303,13 +329,14 @@ def status(conn, headers) -> dict:
     return payload
 
 
-def session_cookie(token: str, *, clear=False) -> str:
+def session_cookie(token: str, *, clear=False, secure=None) -> str:
     parts = [f"{SESSION_COOKIE}={'' if clear else token}", "Path=/", "HttpOnly", "SameSite=Strict"]
     if clear:
         parts.extend(["Max-Age=0", "Expires=Thu, 01 Jan 1970 00:00:00 GMT"])
     else:
         parts.append(f"Max-Age={SESSION_TTL_SECONDS}")
-    if cookie_secure():
+    effective_secure = cookie_secure() if secure is None else bool(secure)
+    if effective_secure:
         parts.append("Secure")
     return "; ".join(parts)
 

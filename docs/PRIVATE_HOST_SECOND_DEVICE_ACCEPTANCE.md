@@ -48,6 +48,65 @@ On the Console:
    Agent Runtime.
 3. Open the HTTPS Console URL without adding credentials to the URL.
 
+## Three-Step Console Quick Start
+
+1. Install or open Tailscale on the Console computer and join the same trusted
+   tailnet as the Host.
+2. Open `<private-console-url>/workspace` in a modern browser and sign in with a
+   human MIS account. Enter the password manually; never place it in a Codex
+   prompt, URL, screenshot, shell command or acceptance receipt.
+3. Keep all work in the browser. The Console computer does not need the
+   repository, AgentOps MIS, Python, Node, Git, Hermes, OpenClaw or an Agent
+   Gateway token.
+
+The Host must remain powered on with AgentOps MIS, Tailscale and at least one
+ready Worker running. If the private URL does not open, first confirm the
+Console is on the same tailnet; do not enable Funnel or expose the Host through
+a router port as a workaround.
+
+## Browser-Only Codex Acceptance Prompt
+
+After the operator has manually signed in, the following prompt can be given
+to Codex on the Console computer. Do not include the password or private URL in
+the prompt; open the authenticated tab first.
+
+```text
+You are the independent second-device acceptance operator for AgentOps MIS.
+Use only the already-open, already-authenticated browser tab. Do not inspect or
+request passwords, cookies, browser storage, session values, setup codes, API
+keys or machine tokens. Do not clone a repository and do not install AgentOps
+MIS, Python, Node, Git, Hermes, OpenClaw or another Agent Runtime.
+
+Goal: verify that this dependency-free Console computer can operate the remote
+Private Host through the browser while all ledger, knowledge and AI execution
+remain on the Host.
+
+Run this bounded flow:
+1. Confirm Workspace data is visible only after the existing human login.
+2. Open Admin Console > Host Acceptance and refresh readiness.
+3. Confirm ledger, knowledge, Worker and adapter states are explicit.
+4. Create one low-risk acceptance marker task and retain only its task ID.
+5. From Dispatch Desk, submit one explicitly confirmed Hermes or OpenClaw
+   customer task and retain only task/run IDs.
+6. Tell me when the run has started so I can disconnect this computer from the
+   tailnet. After I reconnect, verify the same task and run continued without a
+   duplicate.
+7. Review the related Evaluation, Audit, approval and memory candidate. Stop
+   before any consequential approval decision and ask me to choose approve or
+   reject.
+8. After my decision, download only an approved ID-addressed artifact and the
+   Host acceptance receipt.
+9. Log out, then verify protected workspace reads and downloads fail closed.
+
+Return only bounded evidence: release version, Console OS/browser major
+version, task_id, run_id, adapter, approval_id, evaluation status, memory_id and
+decision, artifact_id/hash, receipt_id/hash, disconnect/reconnect result,
+logout-denial result and final pass/fail. Do not quote raw prompts, model
+responses, knowledge text, project files, audit bodies, usernames, private
+URLs, DNS names, IPs or local filesystem paths. Do not claim success for a step
+you did not directly verify.
+```
+
 ## Browser Acceptance Flow
 
 Perform the following from the Console browser:

@@ -177,6 +177,23 @@ ledger behavior changed in this visual correction.
   Host is the recovery authority. Passkeys, MFA, and delegated recovery remain
   later product work.
 
+### Loopback And Private HTTPS Session Cookies
+
+- A Host may serve both the literal-loopback Console over HTTP and the remote
+  Console through private Tailscale HTTPS. Cookie transport is therefore
+  selected from the validated request Origin/Host rather than one global
+  publication flag.
+- `http://127.0.0.1`, `http://localhost`, and loopback IPv6 receive an
+  `HttpOnly; SameSite=Strict` Session cookie without `Secure`, allowing the
+  local browser to return it over literal loopback.
+- Private HTTPS requests retain `Secure; HttpOnly; SameSite=Strict`. Non-
+  loopback HTTP origins do not receive the loopback exception and remain
+  fail-closed.
+- `human_browser_auth_smoke.py` runs with secure-cookie mode enabled and proves
+  both sides of the split: authenticated loopback reads/writes/logout work,
+  while a private HTTPS Origin receives a `Secure` cookie. Password recovery,
+  Origin, CSRF, workspace and machine-token separation remain unchanged.
+
 ## Safety Boundary
 
 - Human browser authentication remains separate from Agent machine

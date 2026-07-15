@@ -31630,7 +31630,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status, token, event = human_auth.bootstrap_owner(conn, body)
                 audit(conn, "user", event.get("account_id"), f"human_auth.{event['event']}", "human_accounts", event.get("account_id") or "bootstrap", None, {"status": status}, {"credentials_omitted": True})
                 conn.commit()
-                response_headers = {"Set-Cookie": human_auth.session_cookie(token)} if token else None
+                response_headers = {"Set-Cookie": human_auth.session_cookie(token, secure=human_auth.cookie_secure_for_request(self.headers))} if token else None
                 return self.send_json(payload, status, headers=response_headers)
             if path == "/api/human-auth/login":
                 origin_error = human_auth.origin_error(self.headers)
@@ -31641,7 +31641,7 @@ class Handler(BaseHTTPRequestHandler):
                 session_ref = human_auth.session_reference(event["session_id"]) if event.get("session_id") else "login"
                 audit(conn, "user", event.get("account_id"), f"human_auth.{event['event']}", "human_sessions", session_ref, None, {"status": status}, {"credentials_omitted": True, "session_id_omitted": True, "token_omitted": True, "username_hash": event.get("username_hash")})
                 conn.commit()
-                response_headers = {"Set-Cookie": human_auth.session_cookie(token)} if token else None
+                response_headers = {"Set-Cookie": human_auth.session_cookie(token, secure=human_auth.cookie_secure_for_request(self.headers))} if token else None
                 return self.send_json(payload, status, headers=response_headers)
             if path == "/api/human-auth/password-recovery/start":
                 origin_error = human_auth.local_recovery_origin_error(self.headers)
@@ -31685,14 +31685,14 @@ class Handler(BaseHTTPRequestHandler):
                     {"credentials_omitted": True, "recovery_authority_omitted": True, "password_omitted": True, "session_id_omitted": True},
                 )
                 conn.commit()
-                response_headers = {"Set-Cookie": human_auth.session_cookie(token)} if token else None
+                response_headers = {"Set-Cookie": human_auth.session_cookie(token, secure=human_auth.cookie_secure_for_request(self.headers))} if token else None
                 return self.send_json(payload, status, headers=response_headers)
             if path == "/api/human-auth/logout":
                 payload, status, event = human_auth.logout(conn, self.headers)
                 session_ref = human_auth.session_reference(event["session_id"]) if event.get("session_id") else "logout"
                 audit(conn, "user", event.get("account_id"), f"human_auth.{event['event']}", "human_sessions", session_ref, None, {"status": status}, {"credentials_omitted": True, "session_id_omitted": True, "token_omitted": True})
                 conn.commit()
-                response_headers = {"Set-Cookie": human_auth.session_cookie("", clear=True)} if status == 200 else None
+                response_headers = {"Set-Cookie": human_auth.session_cookie("", clear=True, secure=human_auth.cookie_secure_for_request(self.headers))} if status == 200 else None
                 return self.send_json(payload, status, headers=response_headers)
             if path.startswith("/api/agent-gateway/"):
                 if path == "/api/agent-gateway/enrollment/policy-preview":

@@ -50,11 +50,11 @@ def main() -> int:
                 "AGENTOPS_SKIP_SEED_EXPORTS": "1",
                 "AGENTOPS_DEPLOYMENT_MODE": "private_host",
                 "AGENTOPS_HUMAN_AUTH_REQUIRED": "true",
-                "AGENTOPS_COOKIE_SECURE": "false",
+                "AGENTOPS_COOKIE_SECURE": "true",
                 "AGENTOPS_API_KEY": "fixture-machine-key",
                 "AGENTOPS_ADMIN_KEY": "fixture-admin-key",
                 "AGENTOPS_OWNER_SETUP_CODE": "fixture-owner-setup-code",
-                "AGENTOPS_ALLOWED_ORIGINS": base_url,
+                "AGENTOPS_ALLOWED_ORIGINS": f"{base_url},https://host.tailnet.test:8443",
                 "HERMES_ALLOW_REAL_RUN": "false",
             }
         )
@@ -119,7 +119,7 @@ def main() -> int:
 
             status, _headers, payload = request_json(browser, base_url + "/api/human-auth/status")
             evidence["bootstrap_status"] = payload
-            if status != 200 or not payload.get("required") or not payload.get("bootstrap_required"):
+            if status != 200 or not payload.get("required") or not payload.get("bootstrap_required") or payload.get("cookie_secure") is not False:
                 failures.append("human auth did not report owner bootstrap requirement")
 
             status, _headers, payload = request_json(
@@ -151,10 +151,29 @@ def main() -> int:
                 "role": (payload.get("user") or {}).get("role"),
                 "http_only": "HttpOnly" in set_cookie,
                 "same_site_strict": "SameSite=Strict" in set_cookie,
+                "loopback_cookie_not_secure": "Secure" not in set_cookie,
                 "token_omitted": payload.get("token_omitted"),
             }
-            if status != 201 or not csrf_token or "HttpOnly" not in set_cookie or "SameSite=Strict" not in set_cookie:
-                failures.append("owner bootstrap did not create the expected secure browser session")
+            if status != 201 or not csrf_token or "HttpOnly" not in set_cookie or "SameSite=Strict" not in set_cookie or "Secure" in set_cookie:
+                failures.append("owner bootstrap did not create the expected loopback browser session")
+
+            remote_browser = urllib.request.build_opener()
+            status, remote_headers, payload = request_json(
+                remote_browser,
+                base_url + "/api/human-auth/login",
+                method="POST",
+                body={"username": "owner", "password": "fixture-password-value"},
+                headers={"Origin": "https://host.tailnet.test:8443"},
+            )
+            remote_set_cookie = remote_headers.get("Set-Cookie", "")
+            evidence["private_https_cookie"] = {
+                "status": status,
+                "secure": "Secure" in remote_set_cookie,
+                "http_only": "HttpOnly" in remote_set_cookie,
+                "same_site_strict": "SameSite=Strict" in remote_set_cookie,
+            }
+            if status != 200 or "Secure" not in remote_set_cookie or "HttpOnly" not in remote_set_cookie or "SameSite=Strict" not in remote_set_cookie:
+                failures.append("private HTTPS login did not retain a Secure browser cookie")
 
             status, _headers, payload = request_json(
                 browser,
