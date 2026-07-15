@@ -124,6 +124,8 @@ re-run against the installed preview.28 package.
 
 ## Installed App Launch Receipt
 
+**Superseded Preview 28.**
+
 On 2026-07-14, preview.19 first established the installed-app process reuse
 receipt. After the versioned `v1.6.0-private-host-preview.28` upgrade, the
 launcher was invoked again through the real macOS application boundary:
@@ -149,10 +151,33 @@ duplicating them; `live_execution_performed:false` remains the launcher safety
 contract. No Owner was created, no Runtime task was dispatched, and no
 credential or setup-code value was read or recorded.
 
+## Current Preview 29
+
+On 2026-07-15, the launcher from
+`v1.6.0-private-host-preview.29` at exact commit
+`574c735541d95b70180254235a385ff764f8c45c` was invoked through the installed
+macOS application boundary after the versioned upgrade.
+
+The Host PID and both independent service Worker PIDs remained unchanged across
+the preview.29 app open, and no duplicate Host or Worker was started. The
+installed HTML, CSS and JavaScript were byte-equal to the exact preview.29
+build. No model task was dispatched or executed, so
+`live_execution_performed:false` remains true.
+
+This receipt did not perform an installed-state browser address-bar, fragment,
+or page-visual inspection: `browser_visual_readback_performed:false`. The
+preview.28 browser/fragment observations above remain superseded historical
+evidence and are not attributed to preview.29. No credential, setup authority,
+account identifier, raw browser state, prompt or response was recorded.
+
+preview.29 was published through the manual prerelease path; the Private Host
+Preview Release workflow did not run.
+
 ## Remaining External Gate
 
-The installed-app `open` receipt now covers this Host account and browser
-Workspace entry. A separate clean Mac still must download and install the
-published asset, launch the app from that installation, and complete the
-no-repository consumer acceptance before final RC. Signing/notarization remain
-future work and must not be claimed by this preview.
+The installed-app `open` receipt covers only same-Mac process reuse. A separate clean Mac still must
+download and install the published asset, launch the app
+from that installation, and complete the no-repository consumer acceptance
+before final RC. Physical logout/reboot and exact-package approved Runtime
+execution also remain open. Signing/notarization remain future work and must
+not be claimed by this preview.

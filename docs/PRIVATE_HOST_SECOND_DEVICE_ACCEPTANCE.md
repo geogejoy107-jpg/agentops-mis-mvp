@@ -118,7 +118,7 @@ Do not record the tailnet DNS name, IP address, account email, username,
 password, setup code, cookies, tokens, URL query, raw model content, knowledge
 text, project files, database path, or unrestricted Host paths.
 
-## Current Result
+## Superseded Preview 28
 
 Host-side staging was refreshed on 2026-07-14 with
 `v1.6.0-private-host-preview.28` at exact commit
@@ -158,3 +158,31 @@ disconnect/reconnect or logout-denial receipt is attached yet. Automated
 browser runtimes outside the Host tailnet are not accepted as a substitute.
 No tailnet DNS name, IP address, account identifier, credential or setup code is
 recorded in this document.
+
+## Current Preview 29
+
+Host-side staging was refreshed on 2026-07-15 with
+`v1.6.0-private-host-preview.29` at exact commit
+`574c735541d95b70180254235a385ff764f8c45c`:
+
+- candidate and public clean-HOME install/start/status/stop passed without a
+  repository, and the public assets were byte-equal to the candidate assets;
+- exact-commit push CI `29362408547` and pull-request CI `29362410590` passed;
+- the Release was published through the manual prerelease path; the Private
+  Host Preview Release workflow did not run;
+- the real Host upgraded from preview.28 with explicit Host LaunchAgent
+  unload, install and load steps, and reported `previous_version=.28`;
+- the existing first Owner passed local login, logout and Workspace readback;
+- password recovery was available and local-only, while a remote Origin and a
+  request without app authority both failed closed;
+- the installed production HTML, CSS and JavaScript were byte-equal to the
+  exact preview.29 build;
+- the independently managed Hermes and OpenClaw Worker PIDs were preserved,
+  and app open reused the existing Host and Worker processes without executing
+  a model task.
+
+This same-Mac evidence does not close the physical second-computer protocol.
+No physical second-device login, real network disconnect, physical logout,
+reboot, another-Mac installation, or exact-package approved Runtime task is
+claimed. No external evidence is synthesized from local, CI, or prior-preview
+receipts.

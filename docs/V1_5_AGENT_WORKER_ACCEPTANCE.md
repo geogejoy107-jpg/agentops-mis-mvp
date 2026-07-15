@@ -2012,3 +2012,33 @@ Observed evidence:
   `runtime_internal_tools_remain_opaque:true`.
 - `operator evidence-report` now exposes `worker_runtime_summary.status=ready`
   and top-level `worker_runtime_summary_ready` counts for worker runs.
+
+## 2026-07-15 Long-Lived Idle Backoff Saturation
+
+Real preview.29 service dogfood exposed a long-running Worker defect rather than
+a Runtime outage. After many idle polling iterations, `backoff_sleep` computed
+`factor ** consecutive_idle` before applying the configured 30-second cap. The
+unbounded intermediate exponent eventually raised `(34, 'Result too large')`,
+so fresh Hermes/OpenClaw service Workers alternated valid idle heartbeats with
+an incorrect Agent `error` status even though task pull and adapter preflight
+remained available.
+
+The Worker now calculates the saturation step before exponentiation and treats
+the configured cap as a hard upper bound, including when `cap < base`. The
+daemon resilience smoke directly covers a one-million-iteration idle streak,
+normal growth, zero base, unit factor and cap-below-base behavior. It also keeps
+the existing isolated mock-daemon and bad-URL error-recovery coverage.
+
+Validated without the real Host database or live adapters:
+
+```text
+python3 scripts/worker_daemon_resilience_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/worker_adapter_readiness_smoke.py
+```
+
+The first command completed a fixture task with run, tool, evaluation,
+artifact, memory, audit and verified plan-evidence records; the large idle
+streak returned exactly 30 seconds with no overflow. This source fix is not
+retroactive evidence for the already-running preview.29 Worker processes. A
+new versioned package, explicit Worker service restart and fresh real adapter
+task are still required before claiming installed closure.

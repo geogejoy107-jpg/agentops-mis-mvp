@@ -17,6 +17,7 @@ import datetime as dt
 import html
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -1024,9 +1025,21 @@ def backoff_sleep(base_interval: float, cap: float, streak: int, factor: float) 
     base = max(float(base_interval or 0), 0.0)
     if base <= 0:
         return 0.0
-    capped = max(float(cap or base), base)
-    multiplier = max(float(factor or 1.0), 1.0) ** max(int(streak or 1) - 1, 0)
-    return min(base * multiplier, capped)
+    capped = max(float(base if cap is None else cap), 0.0)
+    if capped <= 0 or base >= capped:
+        return capped
+    growth = max(float(factor or 1.0), 1.0)
+    steps = max(int(streak or 1) - 1, 0)
+    if steps == 0 or growth == 1.0:
+        return base
+
+    # Saturate before exponentiation. A long-lived idle Worker can accumulate
+    # thousands of iterations; calculating growth ** steps first overflows even
+    # though the configured result is capped to a few seconds.
+    saturation_step = (math.log(capped) - math.log(base)) / math.log(growth)
+    if steps >= saturation_step:
+        return capped
+    return min(base * (growth ** steps), capped)
 
 
 def register_worker(client: AgentOpsClient, adapter: str):

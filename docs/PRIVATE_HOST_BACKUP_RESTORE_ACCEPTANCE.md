@@ -45,7 +45,27 @@ Result:
 - credential values and raw ledger rows: absent from command output;
 - real user database: not used.
 
-## Installed Preview 28 Backup Receipt
+## Installed Preview 29 Backup Receipt
+
+On 2026-07-15 the installed
+`v1.6.0-private-host-preview.29` consumer CLI created and verified an online
+backup while the real Host remained ready. The exact release commit was
+`574c735541d95b70180254235a385ff764f8c45c`, and the bounded installed-backup
+receipt hash was
+`c8bb0335d0602bec5c3588cd9a7ee013fc71d697ee440c645310508cfc2a3031`.
+
+Manifest, file hash, size, schema, SQLite integrity and foreign-key checks all
+passed. The secret store was excluded, authentication state remained hash-only,
+and raw ledger rows, token values and credentials were omitted. Verification
+was read-only and the Host continued serving the same loopback and private
+HTTPS Workspace.
+
+This is installed preview.29 backup evidence, not a restore of the user's live
+ledger. Confirmed restore, pre-restore safety-copy and access-revocation
+behavior remain covered only by the isolated acceptance. The Release used the
+manual prerelease path; the Private Host Preview Release workflow did not run.
+
+## Superseded Preview 28 Backup Receipt
 
 On 2026-07-15 the installed preview.28 consumer CLI created an online backup
 while the real Host remained ready, then immediately verified the selected

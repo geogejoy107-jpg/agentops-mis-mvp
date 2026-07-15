@@ -66,6 +66,8 @@ confirmed removal and unknown-file overwrite rejection.
 
 ## Local Service Loaded Receipt
 
+**Superseded Preview 28.**
+
 On 2026-07-14, preview.19 first rendered the installation plan in dry-run mode,
 then wrote the default managed LaunchAgent only after the explicit
 `--confirm-install` gate. During the preview.28 upgrade, the existing Host-only
@@ -96,6 +98,29 @@ Funnel disabled. The control receipt contained no Worker action and reported
 OpenClaw LaunchAgent units showed both still running. This proves an explicit
 installed-service restart without implicit Runtime or Worker ownership. It
 still does not substitute for a physical logout/reboot receipt.
+
+## Current Preview 29
+
+On 2026-07-15, the real Host upgraded from preview.28 to
+`v1.6.0-private-host-preview.29` at exact commit
+`574c735541d95b70180254235a385ff764f8c45c`. The Host LaunchAgent was
+explicitly unloaded, preview.29 was installed, and the Host LaunchAgent was
+loaded again. Upgrade readback reported `previous_version=.28`.
+
+The preview.29 Host service loaded successfully and returned ready through the
+installed consumer CLI. The managed plist remained Host-only, followed the
+packaged `current` link and started with `--no-workers`. The independent Hermes
+and OpenClaw Worker PIDs were preserved across the Host service upgrade; no
+Worker was installed, started, stopped or claimed by the Host LaunchAgent. No
+model task was dispatched or executed. Readback identified exact release commit
+`574c735`.
+
+Opening the installed app afterward reused the loaded Host and both Worker
+processes. This is same-login service-control and process-reuse evidence only;
+real physical logout/reboot persistence remains open.
+
+preview.29 was published through the manual prerelease path; the Private Host
+Preview Release workflow did not run.
 
 ## Known Limits
 

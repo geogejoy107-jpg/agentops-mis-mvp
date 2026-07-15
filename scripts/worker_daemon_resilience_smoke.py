@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import subprocess
 import sys
 import time
@@ -15,6 +16,10 @@ from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from agentops_mis_cli.worker import backoff_sleep  # noqa: E402
 
 
 def stamp() -> str:
@@ -57,6 +62,27 @@ def poll_until(deadline: float, interval: float, fn):
             return last
         time.sleep(interval)
     return last
+
+
+def direct_backoff_sleep_smoke() -> dict:
+    cases = [
+        ("streak_one", 2.0, 30.0, 1, 2.0, 2.0),
+        ("normal_growth", 2.0, 30.0, 4, 2.0, 16.0),
+        ("huge_streak", 1.0, 30.0, 1_000_000, 2.0, 30.0),
+        ("zero_base", 0.0, 30.0, 10, 2.0, 0.0),
+        ("unit_factor", 2.0, 30.0, 10, 1.0, 2.0),
+        ("cap_below_base", 10.0, 3.0, 2, 2.0, 3.0),
+    ]
+    results = {}
+    for name, base, cap, streak, factor, expected in cases:
+        sleep_sec = backoff_sleep(base, cap, streak, factor)
+        require(math.isfinite(sleep_sec), f"{name} backoff is not finite: {sleep_sec}")
+        require(sleep_sec >= 0.0, f"{name} backoff is negative: {sleep_sec}")
+        require(sleep_sec <= cap, f"{name} backoff exceeds cap {cap}: {sleep_sec}")
+        require(sleep_sec == expected, f"{name} backoff mismatch: expected {expected}, got {sleep_sec}")
+        results[name] = sleep_sec
+    require(results["huge_streak"] == 30.0, f"huge streak did not saturate cap exactly: {results['huge_streak']}")
+    return {"cases": results, "huge_streak": 1_000_000, "huge_streak_saturated_cap": True}
 
 
 def server_daemon_smoke(base_url: str, run_stamp: str) -> dict:
@@ -181,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     run_stamp = stamp()
     result = {"ok": False, "base_url": args.base_url}
     try:
+        result["direct_backoff_sleep"] = direct_backoff_sleep_smoke()
         result["server_daemon"] = server_daemon_smoke(args.base_url, run_stamp)
         result["direct_error_recovery"] = direct_error_recovery_smoke(run_stamp)
         result["ok"] = True
