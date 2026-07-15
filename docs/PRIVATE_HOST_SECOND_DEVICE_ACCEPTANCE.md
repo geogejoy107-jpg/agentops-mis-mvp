@@ -240,7 +240,8 @@ Host-side staging was refreshed on 2026-07-15 with
 
 This same-Mac evidence does not close the physical second-computer protocol.
 No physical second-device login, real network disconnect, physical logout,
-reboot or another-Mac installation is claimed. Owner review of the new memory
-candidates and two conservative prepared-action false positives remains
-pending while the workstation is locked. No external evidence is synthesized
-from local, CI, or prior-preview receipts.
+reboot or another-Mac installation is claimed. A fresh Owner Human Session over
+the private HTTPS route rejected the two new low-value memory candidates and
+two conservative prepared-action false positives, then logged out. That closes
+the Host-side Owner review gate only; it is not a physical Console receipt. No
+external evidence is synthesized from local, CI, or prior-preview receipts.

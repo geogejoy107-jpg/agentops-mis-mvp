@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.31 published and installed; exact-package Hermes/OpenClaw service-Worker tasks completed with verified evidence, while Owner review and physical-device gates remain open
+Status: preview.31 published and installed; exact-package Hermes/OpenClaw service-Worker tasks and Owner review completed with verified evidence, while physical-device gates remain open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -13,10 +13,10 @@ physical evidence and cannot be closed by mock output.
 |---|---|---|---|
 | 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.31` publishes a no-repository bootstrap plus archive/checksum assets from exact commit `fed1b2410d6725a217c9727dba570db62cc46963`. Candidate, Draft and public assets were byte-equal; clean-HOME install/start/status/stop and preview.30-to-preview.31 upgrade passed. A receipt from another physical Mac remains missing. | Passed locally; external evidence required |
 | 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md`, `PRIVATE_HOST_AUTH_WORKSPACE_UI_ACCEPTANCE.md`, `PRIVATE_HOST_SERVICE_WORKER_PRESENCE_ACCEPTANCE.md` and bundle smoke cover installed CLI, production UI, browser-first Owner setup inside the existing React Workspace, init, doctor, start/status/stop, Runtime readiness and fail-closed Worker ownership. Installed preview.31 serves that integrated UI and reports the existing Owner login ready. | Passed locally |
-| 3 | Dependency-free second computer opens private HTTPS console and authenticates | preview.31 is live through private Tailscale HTTPS on port 8443, Funnel is disabled, and the Workspace is ready. The existing first Owner remains present and login-ready; a fresh Human Session could not be opened during this receipt because the workstation was locked. Physical second-device browser login remains a human gate. | Host side passed; external evidence required |
+| 3 | Dependency-free second computer opens private HTTPS console and authenticates | preview.31 is live through private Tailscale HTTPS on port 8443, Funnel is disabled, and the Workspace is ready. A fresh Owner Human Session authenticated through that private HTTPS route and logged out after bounded review. This same-Host client receipt does not replace physical second-device browser login. | Host side passed; external evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, `private_host_owner_browser_handoff_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, setup-code authority, role/session separation and CSRF/Origin checks. | Passed locally |
-| 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | Customer dispatch and ledger views exist; Audit and Memory use live APIs; memory decisions write through the approver route; approved artifact download is Session/workspace/approval checked and audited. preview.31 created two reviewable memory candidates and two safely paused false-positive prepared actions; Owner review and second-device end-to-end receipts remain open. | Partial |
-| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | Installed preview.31 service Workers completed OpenClaw run `run_gw_612fb884979c` and Hermes run `run_gw_9767258929f0`. Each has a completed task/run, tool call, runtime summary event, passing evaluation, artifact, memory candidate, audit chain and verified plan-evidence manifest. | Passed on current package; Owner review pending |
+| 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | Customer dispatch and ledger views exist; Audit and Memory use live APIs; memory decisions write through the approver route; approved artifact download is Session/workspace/approval checked and audited. A real Owner Session rejected the two false-positive prepared actions and two low-value memory candidates, producing bounded audit rows. The physical second-device task/disconnect/download/logout receipt remains open. | Partial; Owner review passed |
+| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | Installed preview.31 service Workers completed OpenClaw run `run_gw_612fb884979c` and Hermes run `run_gw_9767258929f0`. Each has a completed task/run, tool call, runtime summary event, passing evaluation, artifact, memory candidate, audit chain and verified plan-evidence manifest. Both memory candidates received explicit Owner decisions. | Passed on current package |
 | 7 | Console disconnect does not stop Host Worker or lose task | `PRIVATE_HOST_CONSOLE_DISCONNECT_ACCEPTANCE.md` proves real Hermes/OpenClaw jobs completed after their first Host-local Session clients were discarded, then were read through fresh Owner Sessions. Physical browser/tailnet loss remains missing. | Passed on Host; external evidence required |
 | 8 | Host restart preserves ledger and knowledge state | `PRIVATE_HOST_RESTART_PERSISTENCE_ACCEPTANCE.md` covers Session, task and a 194-document local Markdown/FTS index remaining searchable after managed restart. | Passed locally |
 | 9 | Backup and restore pass on isolated database | `PRIVATE_HOST_BACKUP_RESTORE_ACCEPTANCE.md` covers strict manifest/hash/schema/integrity/foreign-key checks, atomic replacement and access revocation. | Passed locally |
@@ -803,16 +803,15 @@ Installed service Workers completed tasks
 `run_gw_612fb884979c` and `run_gw_9767258929f0` completed without an error type,
 each producing one tool call, passing evaluation, artifact, reviewable memory
 candidate and a verified plan-evidence manifest. Two earlier tasks containing
-negated external-action wording remain safely paused behind prepared-action
-approval; no Runtime was called for those rows.
+negated external-action wording never invoked a Runtime. A fresh private-HTTPS
+Owner Session rejected both prepared actions and both low-value generic memory
+candidates. The approvals, memories and four bounded audit rows all read back
+as rejected; the Session logged out without exposing credential or raw content.
 
-Owner review closure, physical second-device login/disconnect, another-Mac
-clean install and logout/reboot service proof
-remain open. The Mac was locked during Human Session follow-up, so no Keychain
-authority was bypassed. After unlock, a new Keychain authorization prompt still
-required local user action before the scripted Owner Session could continue;
-no external evidence is synthesized. This is a
-prerelease, not the final RC.
+Physical second-device login/disconnect, another-Mac clean install and
+logout/reboot service proof remain open. The same-Host private-HTTPS Owner
+receipt does not substitute for those physical gates, and no external evidence
+is synthesized. This is a prerelease, not the final RC.
 
 ## Release Gates
 

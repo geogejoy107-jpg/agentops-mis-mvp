@@ -65,13 +65,16 @@ def main() -> int:
         require(checksum in rc, f"{label} checksum missing from RC document", failures)
 
     open_gate_markers = (
-        "Owner review closure",
         "physical second-device",
         "another-Mac clean install",
         "logout/reboot service proof",
     )
     for marker in open_gate_markers:
         require(marker in rc, f"open external gate is no longer explicit: {marker}", failures)
+    require("Owner review completed" in rc and "Owner review passed" in rc,
+            "current-package Owner review closure is not explicit", failures)
+    require("A fresh Owner Human Session over the private HTTPS route rejected" in normalized_second,
+            "second-device document must record Host-side Owner review without claiming physical evidence", failures)
     require(
         "Status: execution protocol; physical second-device evidence pending" in second,
         "second-device protocol must remain pending until physical evidence exists",

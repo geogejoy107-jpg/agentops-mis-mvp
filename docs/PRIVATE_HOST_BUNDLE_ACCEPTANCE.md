@@ -190,14 +190,18 @@ Both rule evaluations passed, both runs ended without an error type, and both
 Workers remained loaded with fresh heartbeats. Their bounded output summaries
 also correctly surfaced stale service-control readback and weak task-specific
 knowledge retrieval as operator attention instead of claiming that every
-release gate had passed. The two memory rows remain candidates until an Owner
-reviews them; workstation lock prevented a new Keychain-backed Human Session
-from being opened during this receipt.
+release gate had passed. A Keychain-backed Owner Human Session later rejected
+both low-value generic memory candidates. The ledger records
+`mem_gw_643cafa6c4cdd588` and `mem_gw_ffb731901b9426c1` as `rejected`, with
+bounded audit rows `aud_aaef199cbeb8` and `aud_4d06bc9c043d`. The Session then
+logged out; no password, Cookie, CSRF value or raw memory content was emitted.
 
 An earlier pair of task descriptions included the negated phrase “do not
 perform external writes.” preview.31 conservatively matched the keyword and
 created prepared-action approvals before invoking either Runtime. Those rows
-remain safely paused for Owner rejection. Post-release source now evaluates
+were rejected by the same Owner Session, moving the two non-executed tasks to
+`blocked`. Approval audit rows `aud_3ff892cc911d` and `aud_df91003af40f`
+preserve the decisions without raw task or Runtime content. Post-release source now evaluates
 each keyword occurrence with bounded English/Chinese clause negation, while a
 later positive action in the same task still triggers the Approval Wall. The
 full external-write preflight smoke passes, but this follow-up source fix is
