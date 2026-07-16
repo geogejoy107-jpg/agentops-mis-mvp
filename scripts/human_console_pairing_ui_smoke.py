@@ -57,6 +57,11 @@ def main() -> int:
         failures,
     )
     require(
+        "too_many_attempts" in auth and "尝试次数过多" in auth and "Too many attempts" in auth,
+        "bounded authentication throttling error is not bilingual",
+        failures,
+    )
+    require(
         "一次性邀请授权另一台电脑的浏览器" in auth
         and "one-time invitation" in auth
         and "私人网络浏览器" not in auth
@@ -103,7 +108,7 @@ def main() -> int:
     output = {
         "operation": "human_console_pairing_ui_smoke",
         "ok": not failures,
-        "checks": 16,
+        "checks": 17,
         "route": "/workspace/account",
         "pairing_fragment": "immediately_scrubbed_memory_only",
         "existing_workspace_shell": True,

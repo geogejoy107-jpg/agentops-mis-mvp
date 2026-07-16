@@ -84,6 +84,7 @@ def main() -> int:
             "device_id_added": "device_id" in migrated_columns,
             "devices_table_added": "human_devices" in migrated_tables,
             "pairing_table_added": "human_pairing_invitations" in migrated_tables,
+            "throttle_table_added": "human_auth_throttle_buckets" in migrated_tables,
         }
         if not all(evidence["legacy_schema_migration"].values()):
             failures.append("legacy Human Session schema did not migrate additively")

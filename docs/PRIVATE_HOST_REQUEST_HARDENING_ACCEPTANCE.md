@@ -37,8 +37,8 @@ It does not call a Runtime or use a real credential.
 
 ## Still Blocking Internet Relay Exposure
 
-- bounded source-independent login and pairing throttling without storing IP,
-  User-Agent, raw usernames or invitation secrets;
+- source-independent login and pairing throttling is implemented separately in
+  `docs/PRIVATE_HOST_AUTH_THROTTLE_ACCEPTANCE.md`;
 - exact Host/SNI/Origin validation and fail-closed forwarded-header policy;
 - deployed Host-terminated TLS Relay and physical second-computer acceptance.
 

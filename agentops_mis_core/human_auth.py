@@ -21,6 +21,12 @@ DEVICE_TTL_SECONDS = 90 * 24 * 60 * 60
 RECOVERY_TTL_SECONDS = 10 * 60
 PAIRING_TTL_SECONDS = 10 * 60
 PAIRING_MAX_ATTEMPTS = 5
+AUTH_THROTTLE_WINDOW_SECONDS = 5 * 60
+AUTH_THROTTLE_BLOCK_SECONDS = 5 * 60
+LOGIN_SUBJECT_MAX_FAILURES = 8
+LOGIN_GLOBAL_MAX_FAILURES = 100
+PAIRING_SUBJECT_MAX_FAILURES = 8
+PAIRING_GLOBAL_MAX_FAILURES = 60
 MIN_PASSWORD_LENGTH = 12
 ROLE_RANK = {"viewer": 10, "operator": 20, "approver": 30, "owner": 40}
 
@@ -107,6 +113,18 @@ CREATE TABLE IF NOT EXISTS human_pairing_invitations (
 
 CREATE INDEX IF NOT EXISTS idx_human_pairing_invitations_workspace
 ON human_pairing_invitations(workspace_id,status,created_at);
+
+CREATE TABLE IF NOT EXISTS human_auth_throttle_buckets (
+    bucket_key TEXT PRIMARY KEY,
+    scope TEXT NOT NULL CHECK(scope IN ('login_subject','login_global','pairing_subject','pairing_global')),
+    window_started_at TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    blocked_until TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_human_auth_throttle_updated
+ON human_auth_throttle_buckets(updated_at);
 """
 
 
@@ -120,6 +138,111 @@ def new_id(prefix: str) -> str:
 
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def throttle_bucket_key(scope: str, discriminator: str) -> str:
+    digest = hashlib.sha256(
+        f"agentops-human-auth-throttle-v1:{scope}:{discriminator}".encode("utf-8")
+    ).hexdigest()
+    return f"hatb_{digest}"
+
+
+def _throttle_retry_after(blocked_until: str, current: dt.datetime) -> int:
+    try:
+        remaining = (dt.datetime.fromisoformat(blocked_until) - current).total_seconds()
+    except (TypeError, ValueError):
+        remaining = AUTH_THROTTLE_BLOCK_SECONDS
+    return max(1, int(remaining) + 1)
+
+
+def _throttle_response(retry_after_seconds: int) -> dict:
+    return {
+        "error": "too_many_attempts",
+        "message": "Too many authentication attempts. Try again later.",
+        "retry_after_seconds": max(1, int(retry_after_seconds)),
+        "source_identity_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def _throttle_scope_keys(kind: str, discriminator: str) -> tuple[tuple[str, str, int], tuple[str, str, int]]:
+    if kind == "login":
+        return (
+            ("login_subject", throttle_bucket_key("login_subject", discriminator or "missing"), LOGIN_SUBJECT_MAX_FAILURES),
+            ("login_global", throttle_bucket_key("login_global", "endpoint"), LOGIN_GLOBAL_MAX_FAILURES),
+        )
+    if kind != "pairing":
+        raise ValueError("unsupported human authentication throttle kind")
+    return (
+        ("pairing_subject", throttle_bucket_key("pairing_subject", discriminator or "missing"), PAIRING_SUBJECT_MAX_FAILURES),
+        ("pairing_global", throttle_bucket_key("pairing_global", "endpoint"), PAIRING_GLOBAL_MAX_FAILURES),
+    )
+
+
+def auth_throttle_check(conn, kind: str, discriminator: str) -> dict | None:
+    current = dt.datetime.now(dt.timezone.utc)
+    retry_after = 0
+    for _scope, bucket_key, _limit in _throttle_scope_keys(kind, discriminator):
+        row = conn.execute(
+            "SELECT blocked_until FROM human_auth_throttle_buckets WHERE bucket_key=?",
+            (bucket_key,),
+        ).fetchone()
+        if row and row["blocked_until"] and row["blocked_until"] > current.isoformat():
+            retry_after = max(retry_after, _throttle_retry_after(row["blocked_until"], current))
+    return _throttle_response(retry_after) if retry_after else None
+
+
+def _record_throttle_bucket(conn, scope: str, bucket_key: str, limit: int, current: dt.datetime) -> int:
+    timestamp = current.isoformat()
+    window_cutoff = (current - dt.timedelta(seconds=AUTH_THROTTLE_WINDOW_SECONDS)).isoformat()
+    row = conn.execute(
+        "SELECT window_started_at,attempt_count,blocked_until FROM human_auth_throttle_buckets WHERE bucket_key=?",
+        (bucket_key,),
+    ).fetchone()
+    if not row or row["window_started_at"] <= window_cutoff or (
+        row["blocked_until"] and row["blocked_until"] <= timestamp
+    ):
+        attempt_count = 1
+        window_started_at = timestamp
+    else:
+        attempt_count = int(row["attempt_count"] or 0) + 1
+        window_started_at = row["window_started_at"]
+    blocked_until = None
+    if attempt_count >= limit:
+        blocked_until = (current + dt.timedelta(seconds=AUTH_THROTTLE_BLOCK_SECONDS)).isoformat()
+    conn.execute(
+        """
+        INSERT INTO human_auth_throttle_buckets(
+            bucket_key,scope,window_started_at,attempt_count,blocked_until,updated_at
+        ) VALUES(?,?,?,?,?,?)
+        ON CONFLICT(bucket_key) DO UPDATE SET
+            scope=excluded.scope,
+            window_started_at=excluded.window_started_at,
+            attempt_count=excluded.attempt_count,
+            blocked_until=excluded.blocked_until,
+            updated_at=excluded.updated_at
+        """,
+        (bucket_key, scope, window_started_at, attempt_count, blocked_until, timestamp),
+    )
+    return _throttle_retry_after(blocked_until, current) if blocked_until else 0
+
+
+def auth_throttle_failure(conn, kind: str, discriminator: str) -> dict | None:
+    current = dt.datetime.now(dt.timezone.utc)
+    stale_cutoff = (current - dt.timedelta(days=1)).isoformat()
+    conn.execute("DELETE FROM human_auth_throttle_buckets WHERE updated_at<?", (stale_cutoff,))
+    retry_after = 0
+    for scope, bucket_key, limit in _throttle_scope_keys(kind, discriminator):
+        retry_after = max(retry_after, _record_throttle_bucket(conn, scope, bucket_key, limit, current))
+    return _throttle_response(retry_after) if retry_after else None
+
+
+def auth_throttle_clear_subject(conn, kind: str, discriminator: str) -> None:
+    scope, bucket_key, _limit = _throttle_scope_keys(kind, discriminator)[0]
+    conn.execute(
+        "DELETE FROM human_auth_throttle_buckets WHERE bucket_key=? AND scope=?",
+        (bucket_key, scope),
+    )
 
 
 def session_reference(session_id: str) -> str:
@@ -497,9 +620,23 @@ def bootstrap_owner(conn, body) -> tuple[dict, int, str | None, dict]:
 def login(conn, body, headers=None) -> tuple[dict, int, str | None, dict]:
     username = str(body.get("username") or "").strip().lower()
     password = str(body.get("password") or "")
-    account = conn.execute("SELECT * FROM human_accounts WHERE username=?", (username,)).fetchone()
     username_hash = hashlib.sha256(username.encode("utf-8")).hexdigest()
+    throttle = auth_throttle_check(conn, "login", username_hash)
+    if throttle:
+        return throttle, 429, None, {
+            "event": "login_throttled",
+            "username_hash": username_hash,
+            "retry_after_seconds": throttle["retry_after_seconds"],
+        }
+    account = conn.execute("SELECT * FROM human_accounts WHERE username=?", (username,)).fetchone()
     if not account or account["status"] != "active" or not password_valid(password, account):
+        throttle = auth_throttle_failure(conn, "login", username_hash)
+        if throttle:
+            return throttle, 429, None, {
+                "event": "login_throttled",
+                "username_hash": username_hash,
+                "retry_after_seconds": throttle["retry_after_seconds"],
+            }
         return {"error": "invalid_credentials", "message": "Username or password is invalid."}, 401, None, {"event": "login_failed", "username_hash": username_hash}
     paired_device_id = None
     supplied_device = device_token(headers)
@@ -515,9 +652,17 @@ def login(conn, body, headers=None) -> tuple[dict, int, str | None, dict]:
         (account["account_id"],),
     ).fetchone())
     if has_device_binding and not paired_device_id:
+        throttle = auth_throttle_failure(conn, "login", username_hash)
+        if throttle:
+            return throttle, 429, None, {
+                "event": "login_throttled",
+                "username_hash": username_hash,
+                "retry_after_seconds": throttle["retry_after_seconds"],
+            }
         return {"error": "invalid_credentials", "message": "Username or password is invalid."}, 401, None, {
             "event": "login_failed", "username_hash": username_hash
         }
+    auth_throttle_clear_subject(conn, "login", username_hash)
     payload, token, audit = create_session(conn, account, device_id=paired_device_id)
     return payload, 200, token, {"event": "login_succeeded", **audit}
 
@@ -961,9 +1106,28 @@ def revoke_pairing_invitation(conn, context, invitation_ref: str) -> tuple[dict,
 def redeem_pairing_invitation(conn, body) -> tuple[dict, int, str | None, str | None, dict]:
     body = body if isinstance(body, dict) else {}
     secret = str(body.get("pairing_secret") or "").strip()
+    secret_fingerprint = token_hash(secret)
     generic_error = {"error": "invalid_pairing_invitation", "message": "The pairing invitation is invalid or expired."}
+
+    def failed(payload: dict, status: int, event: dict):
+        throttle = auth_throttle_failure(conn, "pairing", secret_fingerprint)
+        if throttle:
+            return throttle, 429, None, None, {
+                "event": "pairing_throttled",
+                "invitation_ref": event.get("invitation_ref") or "unavailable",
+                "retry_after_seconds": throttle["retry_after_seconds"],
+            }
+        return payload, status, None, None, event
+
+    throttle = auth_throttle_check(conn, "pairing", secret_fingerprint)
+    if throttle:
+        return throttle, 429, None, None, {
+            "event": "pairing_throttled",
+            "invitation_ref": "unavailable",
+            "retry_after_seconds": throttle["retry_after_seconds"],
+        }
     if not secret:
-        return generic_error, 401, None, None, {"event": "pairing_failed", "invitation_ref": "unavailable"}
+        return failed(generic_error, 401, {"event": "pairing_failed", "invitation_ref": "unavailable"})
     if not conn.in_transaction:
         conn.execute("BEGIN IMMEDIATE")
     row = conn.execute(
@@ -971,21 +1135,21 @@ def redeem_pairing_invitation(conn, body) -> tuple[dict, int, str | None, str | 
         (token_hash(secret),),
     ).fetchone()
     if not row:
-        return generic_error, 401, None, None, {"event": "pairing_failed", "invitation_ref": "unavailable"}
+        return failed(generic_error, 401, {"event": "pairing_failed", "invitation_ref": "unavailable"})
     ref = invitation_reference(row["invitation_id"])
     timestamp = now_iso()
     if row["status"] != "active":
-        return generic_error, 401, None, None, {"event": "pairing_failed", "invitation_ref": ref}
+        return failed(generic_error, 401, {"event": "pairing_failed", "invitation_ref": ref})
     if row["expires_at"] <= timestamp:
         conn.execute("UPDATE human_pairing_invitations SET status='expired' WHERE invitation_id=?", (row["invitation_id"],))
-        return generic_error, 401, None, None, {"event": "pairing_failed", "invitation_ref": ref}
+        return failed(generic_error, 401, {"event": "pairing_failed", "invitation_ref": ref})
     attempt_count = int(row["attempt_count"] or 0) + 1
     if attempt_count > int(row["max_attempts"] or PAIRING_MAX_ATTEMPTS):
         conn.execute(
             "UPDATE human_pairing_invitations SET status='locked',attempt_count=? WHERE invitation_id=?",
             (attempt_count, row["invitation_id"]),
         )
-        return generic_error, 401, None, None, {"event": "pairing_failed", "invitation_ref": ref}
+        return failed(generic_error, 401, {"event": "pairing_failed", "invitation_ref": ref})
     conn.execute(
         "UPDATE human_pairing_invitations SET attempt_count=? WHERE invitation_id=?",
         (attempt_count, row["invitation_id"]),
@@ -994,17 +1158,17 @@ def redeem_pairing_invitation(conn, body) -> tuple[dict, int, str | None, str | 
     username = str(body.get("username") or "").strip().lower()
     password = str(body.get("password") or "")
     if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,63}", username):
-        return {"error": "invalid_pairing_profile", "message": "The pairing profile is invalid."}, 400, None, None, {
+        return failed({"error": "invalid_pairing_profile", "message": "The pairing profile is invalid."}, 400, {
             "event": "pairing_failed", "invitation_ref": ref
-        }
+        })
     if len(password) < MIN_PASSWORD_LENGTH:
-        return {"error": "weak_password", "message": f"Password must contain at least {MIN_PASSWORD_LENGTH} characters."}, 400, None, None, {
+        return failed({"error": "weak_password", "message": f"Password must contain at least {MIN_PASSWORD_LENGTH} characters."}, 400, {
             "event": "pairing_failed", "invitation_ref": ref
-        }
+        })
     if conn.execute("SELECT 1 FROM human_accounts WHERE username=?", (username,)).fetchone():
-        return {"error": "invalid_pairing_profile", "message": "The pairing profile is invalid."}, 409, None, None, {
+        return failed({"error": "invalid_pairing_profile", "message": "The pairing profile is invalid."}, 409, {
             "event": "pairing_failed", "invitation_ref": ref
-        }
+        })
 
     salt = secrets.token_bytes(16)
     derived, params = password_hash(password, salt)
@@ -1041,8 +1205,9 @@ def redeem_pairing_invitation(conn, body) -> tuple[dict, int, str | None, str | 
         (timestamp, account_id, device_id, row["invitation_id"]),
     ).rowcount
     if consumed != 1:
-        return generic_error, 401, None, None, {"event": "pairing_failed", "invitation_ref": ref}
+        return failed(generic_error, 401, {"event": "pairing_failed", "invitation_ref": ref})
     account = conn.execute("SELECT * FROM human_accounts WHERE account_id=?", (account_id,)).fetchone()
+    auth_throttle_clear_subject(conn, "pairing", secret_fingerprint)
     payload, session_secret, session_audit = create_session(conn, account, device_id=device_id)
     payload.update({
         "operation": "human_pairing_complete",

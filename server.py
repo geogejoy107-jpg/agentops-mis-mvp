@@ -31695,8 +31695,12 @@ class Handler(BaseHTTPRequestHandler):
                 session_ref = human_auth.session_reference(event["session_id"]) if event.get("session_id") else "login"
                 audit(conn, "user", event.get("account_id"), f"human_auth.{event['event']}", "human_sessions", session_ref, None, {"status": status}, {"credentials_omitted": True, "session_id_omitted": True, "token_omitted": True, "username_hash": event.get("username_hash")})
                 conn.commit()
-                response_headers = {"Set-Cookie": human_auth.session_cookie(token, secure=human_auth.cookie_secure_for_request(self.headers))} if token else None
-                return self.send_json(payload, status, headers=response_headers)
+                response_headers = {}
+                if status == 429 and payload.get("retry_after_seconds"):
+                    response_headers["Retry-After"] = str(int(payload["retry_after_seconds"]))
+                if token:
+                    response_headers["Set-Cookie"] = human_auth.session_cookie(token, secure=human_auth.cookie_secure_for_request(self.headers))
+                return self.send_json(payload, status, headers=response_headers or None)
             if path == "/api/human-auth/pair":
                 origin_error = human_auth.origin_error(self.headers)
                 if origin_error:
@@ -31722,14 +31726,16 @@ class Handler(BaseHTTPRequestHandler):
                     },
                 )
                 conn.commit()
-                response_headers = None
+                response_headers = {}
+                if status == 429 and payload.get("retry_after_seconds"):
+                    response_headers["Retry-After"] = str(int(payload["retry_after_seconds"]))
                 if session_token and device_token:
                     secure = human_auth.cookie_secure_for_request(self.headers)
-                    response_headers = {"Set-Cookie": [
+                    response_headers["Set-Cookie"] = [
                         human_auth.session_cookie(session_token, secure=secure),
                         human_auth.device_cookie(device_token, secure=secure),
-                    ]}
-                return self.send_json(payload, status, headers=response_headers)
+                    ]
+                return self.send_json(payload, status, headers=response_headers or None)
             if path == "/api/human-auth/password-recovery/start":
                 origin_error = human_auth.local_recovery_origin_error(self.headers)
                 if origin_error:

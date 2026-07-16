@@ -87,10 +87,10 @@ the required physical second-computer acceptance.
 
 ## Remaining Gates
 
-- add login/pairing source-independent throttling for unknown invitation
-  guessing and proxy-header hardening before internet exposure; bounded JSON
-  request framing is closed separately in
-  `docs/PRIVATE_HOST_REQUEST_HARDENING_ACCEPTANCE.md`;
+- add proxy-header hardening before internet exposure; source-independent
+  login/pairing throttling is closed in
+  `docs/PRIVATE_HOST_AUTH_THROTTLE_ACCEPTANCE.md`, and bounded JSON request
+  framing is closed in `docs/PRIVATE_HOST_REQUEST_HARDENING_ACCEPTANCE.md`;
 - add cryptographic Host identity, per-Host TLS/SNI, Relay tunnel and deployed
   browser-only acceptance;
 - verify a physical second computer, disconnect/reconnect, real Runtime task,

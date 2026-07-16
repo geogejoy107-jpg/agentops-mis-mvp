@@ -642,6 +642,7 @@ function authErrorMessage(code: string, locale: "zh" | "en"): string {
     origin_validation_failed: { zh: "当前访问来源未被这台主机信任。", en: "This browser origin is not trusted by the host." },
     owner_already_initialized: { zh: "这台主机已经完成初始化，请直接登录。", en: "This host is already initialized. Sign in instead." },
     rate_limited: { zh: "尝试次数过多，请稍后再试。", en: "Too many attempts. Try again later." },
+    too_many_attempts: { zh: "尝试次数过多，请稍后再试。", en: "Too many attempts. Try again later." },
     unknown: { zh: "请求未完成，请检查主机连接后重试。", en: "The request did not complete. Check the host connection and retry." },
   };
   return messages[code]?.[locale] || messages.unknown[locale];
