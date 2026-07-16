@@ -102,7 +102,8 @@ Host 基础，不是已认证的远程访问模式；不要通过修改绑定地
 ## Private Host Preview
 
 `agentops host` 把同源生产 UI、SQLite 权威账本和 Worker 作为一个受管的
-loopback Host 运行。初始化不会安装 Runtime，也不会自动修改 Tailscale：
+loopback Host 运行。普通用户只需在主机安装并启动 AgentOps；另一台电脑的
+正式产品路径只需要浏览器，不需要安装 Tailscale、VPN 或开发环境：
 
 ```bash
 python3 -m pip install .
@@ -110,8 +111,6 @@ agentops host init
 agentops host start --build-ui
 agentops host status
 agentops host doctor
-agentops host tailscale-preview
-agentops host tailscale-apply --confirm
 ```
 
 `host start` 后直接打开状态输出中的本地 Console URL。在这台主机的
@@ -171,6 +170,16 @@ agentops host service-control --action load --confirm-control
 移除前先显式 unload，再运行 `agentops host service-remove --confirm-remove`。
 服务文件不保存 API key、Admin key、Owner 设置码或 Runtime 凭据。完整边界见
 `docs/PRIVATE_HOST_BACKGROUND_SERVICE_ACCEPTANCE.md`。
+
+### 高级私网备选
+
+Tailscale 不是普通用户或第二台电脑的安装前提。只有已经使用自管 tailnet、且
+明确选择高级私网模式的管理员，才需要下面的命令：
+
+```bash
+agentops host tailscale-preview
+agentops host tailscale-apply --confirm
+```
 
 `tailscale-preview` 仅输出当前机器的 Serve/撤销命令，不会执行网络变更。
 审查后必须显式运行 `tailscale-apply --confirm` 才会配置 tailnet 内 HTTPS
