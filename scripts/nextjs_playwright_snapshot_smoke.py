@@ -571,8 +571,27 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-def playwright(env: dict[str, str], *args: str, timeout: int = 45) -> subprocess.CompletedProcess[str]:
-    return run(["bash", str(PWCLI), *args], env=env, timeout=timeout)
+def resolve_direct_playwright_cli() -> Path | None:
+    env_path = os.environ.get("PLAYWRIGHT_CLI_BIN", "").strip()
+    if env_path:
+        candidate = Path(env_path).expanduser()
+        if candidate.exists():
+            return candidate
+    npx_root = Path.home() / ".npm" / "_npx"
+    candidates = list(npx_root.glob("*/node_modules/.bin/playwright-cli"))
+    candidates.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
+    return candidates[0] if candidates else None
+
+
+def playwright_cli_command() -> list[str]:
+    direct = resolve_direct_playwright_cli()
+    if direct:
+        return [str(direct)]
+    return ["bash", str(PWCLI)]
+
+
+def playwright(env: dict[str, str], *args: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
+    return run([*playwright_cli_command(), *args], env=env, timeout=timeout)
 
 
 def snapshot_route(base_url: str, path: str, expected: list[str], env: dict[str, str]) -> dict:
@@ -581,7 +600,10 @@ def snapshot_route(base_url: str, path: str, expected: list[str], env: dict[str,
     require(goto.returncode == 0, f"Playwright goto failed for {path}: {goto.stderr or goto.stdout}")
     time.sleep(1.0)
 
-    snapshot = playwright(env, "snapshot")
+    try:
+        snapshot = playwright(env, "snapshot", timeout=120)
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError(f"Playwright snapshot timed out for {path} after {exc.timeout}s") from exc
     require(snapshot.returncode == 0, f"Playwright snapshot failed for {path}: {snapshot.stderr or snapshot.stdout}")
     text = snapshot.stdout + snapshot.stderr
     missing = [item for item in expected if item not in text]
@@ -591,17 +613,26 @@ def snapshot_route(base_url: str, path: str, expected: list[str], env: dict[str,
 
 
 def first_button_ref(snapshot_text: str, label: str) -> str:
-    for line in snapshot_text.splitlines():
-        if "button" not in line or label not in line:
+    label_lines = [line for line in snapshot_text.splitlines() if label in line]
+    for line in label_lines:
+        if "button" not in line.lower():
             continue
-        match = re.search(r"\[ref=(e\d+)\]", line)
+        match = re.search(r"\[ref=([^\]]+)\]", line)
         if match:
             return match.group(1)
-    raise AssertionError(f"Could not find Playwright ref for {label!r} button")
+    for line in label_lines:
+        match = re.search(r"\[ref=([^\]]+)\]", line)
+        if match:
+            return match.group(1)
+    sample = " | ".join(line.strip() for line in label_lines[:8])
+    raise AssertionError(f"Could not find Playwright ref for {label!r} button; matching lines: {sample}")
 
 
 def snapshot_text(env: dict[str, str], path: str) -> str:
-    snapshot = playwright(env, "snapshot")
+    try:
+        snapshot = playwright(env, "snapshot", timeout=120)
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError(f"Playwright snapshot timed out for {path} after {exc.timeout}s") from exc
     require(snapshot.returncode == 0, f"Playwright snapshot failed for {path}: {snapshot.stderr or snapshot.stdout}")
     text = snapshot.stdout + snapshot.stderr
     require(not leaked_secret(text), f"Snapshot for {path} leaked token-like material")
@@ -1276,12 +1307,13 @@ def main() -> int:
     parser.add_argument("--no-install-postgres-driver", action="store_true", help="Do not install psycopg into a temporary target for --postgres-write-fixture.")
     args = parser.parse_args()
 
-    if not PWCLI.exists():
-        print(json.dumps({"ok": False, "error": f"missing Playwright wrapper: {PWCLI}"}, indent=2), file=sys.stderr)
-        return 1
-    if run(["bash", "-lc", "command -v npx >/dev/null 2>&1"]).returncode != 0:
-        print(json.dumps({"ok": False, "error": "npx is required for Playwright CLI wrapper"}, indent=2), file=sys.stderr)
-        return 1
+    if not resolve_direct_playwright_cli():
+        if not PWCLI.exists():
+            print(json.dumps({"ok": False, "error": f"missing Playwright wrapper: {PWCLI}"}, indent=2), file=sys.stderr)
+            return 1
+        if run(["bash", "-lc", "command -v npx >/dev/null 2>&1"]).returncode != 0:
+            print(json.dumps({"ok": False, "error": "npx is required for Playwright CLI wrapper"}, indent=2), file=sys.stderr)
+            return 1
     if args.configured_retention_fixture:
         return run_configured_retention_fixture(args.api_port, args.next_port)
     if args.postgres_write_fixture:

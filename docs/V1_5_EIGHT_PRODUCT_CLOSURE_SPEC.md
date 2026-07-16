@@ -137,7 +137,7 @@ Current v1.5 implementation:
   - `trust_note`
   - `trust_updated_at`
   - `POST /api/runtime-connectors/:id/trust`
-  - `/admin/connectors` trust controls
+  - `/workspace/connectors` trust controls
 - Hermes/OpenClaw real execution requires explicit `--confirm-run`.
 - Hermes/OpenClaw customer worker live execution is blocked when the linked runtime connector has `trust_status=blocked`.
 - Hermes adapter timeout is configurable through `--hermes-timeout` / `HERMES_TIMEOUT`; customer worker live dogfood uses a 300s Hermes window.
@@ -457,12 +457,12 @@ Current v1.5 implementation:
   async workflow jobs, stuck workflow-job recovery, and the async integration
   inbox for commander review of work that returns at different speeds.
 - `/workspace/approvals` reads live approvals from the backend and can approve/reject through the real API.
-- `/admin/toolcalls` reads live tool-call evidence from the backend instead of mock data.
+- `/workspace/tool-calls` reads live tool-call evidence from the backend instead of mock data.
 - `/workspace/tasks/:id` shows delivery artifacts and links related runs to their Run Detail pages; legacy `/admin/tasks/:id` redirects to the workspace route.
 - Approval decisions preserve the original approval reason and synchronize linked tool/run/task status: approval completes the tool without overwriting completed run output; rejection blocks the tool, run and task.
 - Browser verification confirmed the controls render.
 - The Agent Gateway card shows gateway readiness, auth mode, workspace, scope count, active enrollments, and stale heartbeats.
-- `/admin/connectors` shows runtime trust controls for trusted/review/blocked decisions.
+- `/workspace/connectors` shows runtime trust controls for trusted/review/blocked decisions.
 
 Acceptance evidence:
 

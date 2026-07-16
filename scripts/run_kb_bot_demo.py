@@ -486,8 +486,8 @@ def main() -> int:
             "tasks": f"{args.base_url.replace(':8787', ':19001')}/workspace/tasks",
             "runs": f"{args.base_url.replace(':8787', ':19001')}/workspace/runs",
             "approvals": f"{args.base_url.replace(':8787', ':19001')}/workspace/approvals",
-            "evaluations": f"{args.base_url.replace(':8787', ':19001')}/admin/evaluations",
-            "audit": f"{args.base_url.replace(':8787', ':19001')}/admin/audit",
+            "evaluations": f"{args.base_url.replace(':8787', ':19001')}/workspace/evaluations",
+            "audit": f"{args.base_url.replace(':8787', ':19001')}/workspace/audit",
         },
     }
     print(json.dumps(output, ensure_ascii=False, indent=2))

@@ -251,6 +251,7 @@ python3 scripts/ui_route_naming_decision_smoke.py
 python3 scripts/ui_legacy_route_alias_smoke.py
 python3 scripts/ui_navigation_inventory_smoke.py
 python3 scripts/ui_route_retirement_packet_smoke.py
+python3 scripts/ui_admin_operations_route_retirement_smoke.py
 python3 scripts/ui_covered_route_retirement_packet_smoke.py
 python3 scripts/pixel_office_dispatch_retirement_evidence_smoke.py
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
@@ -315,9 +316,9 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   servers, proves `/workspace/templates` renders live `/template-packages`,
   `/template-bindings`, `/bases`, and `/migration/preview` evidence, exercises
   the migration-preview form fallback, and keeps the transcript free of
-  token-like material. This covers the former full template/base-switching gap
-  while keeping Vite `/admin/templates` retirement blocked until an explicit
-  route retirement commit.
+  token-like material. This covers the former full template/base-switching gap;
+  Vite `/admin/templates` now redirects to `/workspace/templates` under the
+  admin-operations route retirement packet.
 
   `python3 scripts/nextjs_local_brief_smoke.py` (`nextjs_local_brief_v1`)
   starts isolated MIS API and Next.js servers, proves the Next
@@ -377,25 +378,31 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   rotation, and revocation remain outside the Next browser migration slice.
 
   The route naming decision smoke verifies the structured
-  `ui_route_naming_decision_v1` contract: Next and Vite primary task/run routes
-  now use `/workspace` as the commercial namespace. Vite `/admin` task/run
-  routes are redirect-only compatibility deep links, and Next `/admin`
-  task/run routes remain redirect aliases.
+  `ui_route_naming_decision_v1` contract: Next and Vite primary task/run plus
+  admin-operations routes now use `/workspace` as the commercial namespace.
+  Vite retired `/admin` routes are redirect-only compatibility deep links, and
+  Next `/admin` task/run routes remain redirect aliases.
 
   The legacy route alias smoke starts a Next.js dev server and verifies Next
   `/admin/tasks/:taskId`, `/admin/runs`, and `/admin/runs/:runId` deep links
   redirect to their `/workspace` task/run targets.
 
   The navigation inventory smoke verifies `ui_navigation_inventory_v1`: Next
-  and Vite primary task/run navigation use `/workspace`, `/admin` task/run
-  routes are redirect aliases only, and the task/run route cutover has no
-  remaining explicit-commit blocker.
+  and Vite primary navigation use `/workspace`, retired `/admin` routes are
+  redirect aliases only, and the route cutover has no remaining explicit-commit
+  blocker.
 
   The route retirement packet smoke verifies `ui_route_retirement_packet_v1`:
-  the task/run `/admin` routes are retired to workspace redirect aliases with
-  `retirement_action=executed_workspace_redirect` and
-  `retirement_allowed=true` for `task_detail`, `run_ledger`, and `run_detail`
-  only.
+  the task/run plus admin-operations `/admin` routes are retired to workspace
+  redirect aliases with `retirement_action=executed_workspace_redirect` and
+  `retirement_allowed=true` for the named route pairs.
+
+  The admin operations route retirement smoke verifies
+  `ui_admin_operations_route_retirement_v1`: Vite `/admin/agents/:id`,
+  `/admin/evaluations`, `/admin/toolcalls`, `/admin/connectors`,
+  `/admin/bases/notion`, `/admin/templates`, and `/admin/audit` are
+  redirect-only deep links to their `/workspace` targets while Control Tower
+  and Worker Console remain candidate-only.
 
   The covered-route retirement packet smoke verifies
   `ui_covered_route_retirement_packet_v1`: Control Tower and Worker Console are
@@ -593,6 +600,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/ui_legacy_route_alias_smoke.py`
   - `scripts/ui_navigation_inventory_smoke.py`
   - `scripts/ui_route_retirement_packet_smoke.py`
+  - `scripts/ui_admin_operations_route_retirement_smoke.py`
   - `scripts/ui_covered_route_retirement_packet_smoke.py`
 
 ### Gate 5: BYOC / Enterprise Deployment

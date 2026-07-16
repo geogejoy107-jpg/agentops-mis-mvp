@@ -31,12 +31,12 @@ Scope: v1.3 acceptance pass for the current Pixel Operating Map implementation.
 | Star Office is only an optional legacy link via `VITE_STAR_OFFICE_URL` | Pass | `WorkspaceHome.tsx` and `PixelOffice.tsx` gate the legacy Star Office link behind `import.meta.env.VITE_STAR_OFFICE_URL`. |
 | Pixel map uses original React/CSS only | Pass | `PixelOperatingMap.tsx`, `PixelZone.tsx`, `AgentSprite.tsx`, and related components are React/CSS DOM components. No PixiJS, Phaser, canvas engine, or sprite atlas is used. |
 | No third-party assets were copied | Pass | No image or sprite assets were found under `ui/start-building-app/src`; the implementation uses CSS shapes and text. |
-| Zones route to formal MIS pages | Pass | `pixelModel.ts` maps zones to MIS routes such as `/admin`, `/workspace/agents`, `/workspace/tasks`, `/admin/connectors`, `/admin/toolcalls`, `/workspace/approvals`, `/admin/evaluations`, `/workspace/memory`, `/admin/audit`, `/admin/bases/notion`, `/workspace/runs`, and `/admin/templates`. |
+| Zones route to formal MIS pages | Pass | `pixelModel.ts` maps zones to MIS routes such as `/admin`, `/workspace/agents`, `/workspace/tasks`, `/workspace/connectors`, `/workspace/tool-calls`, `/workspace/approvals`, `/workspace/evaluations`, `/workspace/memory`, `/workspace/audit`, `/workspace/external-bases/notion`, `/workspace/runs`, and `/workspace/templates`. |
 | Agents derive from AgentOps MIS/mock state | Pass | `PixelOffice.tsx` loads live MIS data through `loadAgentOpsSnapshot`, and `pixelModel.ts` derives pixel agents from the AgentOps snapshot with deterministic fallback state. |
 | Task cards appear in Task Hall | Pass | `deriveTaskCards` creates task cards for the Task Hall zone, and `PixelOperatingMap.tsx` renders them with `TaskCardSprite`. |
 | Zone Inspector exists | Pass | `ui/start-building-app/src/app/components/pixel/ZoneInspector.tsx` exists and is rendered by `PixelOperatingMap.tsx`. |
 | Operations Bar exists | Pass | `ui/start-building-app/src/app/components/pixel/OperationsBar.tsx` exists and is rendered by `PixelOffice.tsx`. |
-| `/admin/evaluations` exists | Pass | `App.tsx` defines `/admin/evaluations`, rendering `EvaluationRoom`. |
+| `/workspace/evaluations` exists | Pass | `App.tsx` defines `/workspace/evaluations`, rendering `EvaluationRoom`; legacy `/admin/evaluations` redirects there. |
 | Build passes | Pass | `npm run build` completed successfully on 2026-06-16. |
 
 ## Known Limitations

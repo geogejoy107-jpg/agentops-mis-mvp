@@ -96,47 +96,43 @@ route retirement:
   it does not retire any Vite route, keeps `retirement_allowed: false`, and
   requires a future route-pair commit to preserve deep links, rerun Vite/Next
   browser evidence, and keep Agent Gateway CLI/API/MCP unchanged.
-- Template/base switching is now covered by `/workspace/templates`, backed by
-  live `/template-packages`, `/template-bindings`, `/bases`, and
-  `/migration/preview` readback/preview evidence. Vite `/admin/templates`
-  remains until a separate explicit route retirement commit preserves deep
-  links and reruns side-by-side browser evidence. Tool calls, evaluation room,
-  runtime connectors, Notion external base, and agent detail now have Next
-  parity at `/workspace/tool-calls`, `/workspace/evaluations`,
-  `/workspace/connectors`, `/workspace/external-bases/notion`, and
-  `/workspace/agents/:agentId`.
+- Template/base switching, tool calls, evaluation room, runtime connectors,
+  Notion external base, audit, and agent detail now execute workspace redirect
+  retirement in Vite: primary links use `/workspace/templates`,
+  `/workspace/tool-calls`, `/workspace/evaluations`, `/workspace/connectors`,
+  `/workspace/external-bases/notion`, `/workspace/audit`, and
+  `/workspace/agents/:agentId`, while the legacy `/admin` routes remain
+  redirect-only deep links.
 - Several `covered` routes still need a route-level Vite/Next data-shape diff
   before a retirement decision. Browser snapshot evidence is necessary but not
   sufficient.
 - Tool calls now have a Next read-only parity route at `/workspace/tool-calls`.
   It reads `GET /tool-calls`, exposes risk/status filtering, links each tool
-  call to `/workspace/runs/:runId`, and keeps `/admin/toolcalls` canonical until
-  browser evidence and route retirement are explicit.
+  call to `/workspace/runs/:runId`, and Vite `/admin/toolcalls` redirects to
+  `/workspace/tool-calls`.
 - Evaluation Room now has a Next read-only parity route at
   `/workspace/evaluations`. It reads `GET /evaluations`, exposes score,
   pass/fail, evaluator type, agent, run, task, and created-at evidence, links
-  rows to `/workspace/runs/:runId` and `/workspace/tasks/:taskId`, and keeps
-  `/admin/evaluations` canonical until evaluation-case actions and route
-  retirement are explicit.
+  rows to `/workspace/runs/:runId` and `/workspace/tasks/:taskId`, and Vite
+  `/admin/evaluations` redirects to `/workspace/evaluations`.
 - Runtime Connectors now have a Next parity route at `/workspace/connectors`.
   It reads `GET /runtime-connectors`, exposes status, trust, allow-real-run,
   require-confirm, endpoint, health, and connector-audit evidence, and writes
   trust changes through the Next `/workspace/connectors/trust` fallback to
-  `POST /runtime-connectors/:id/trust`. `/admin/connectors` remains canonical
-  until browser evidence and route retirement are explicit.
+  `POST /runtime-connectors/:id/trust`. Vite `/admin/connectors` redirects to
+  `/workspace/connectors`.
 - Notion External Base now has a Next parity route at
   `/workspace/external-bases/notion`. It reads live Notion status and preview
   data through `/api/mis/integrations/notion/*`, exposes dry-run default,
   writeback blocking, connector state, preview-only report evidence, and token
   omission copy, runs dry-run export safely, and verifies Free Local blocks
-  confirmed export for `notion_confirmed_export`. `/admin/bases/notion`
-  remains canonical until prepared-action resume UX and route retirement are
-  explicit.
+  confirmed export for `notion_confirmed_export`. Vite `/admin/bases/notion`
+  redirects to `/workspace/external-bases/notion`.
 - Agent Detail now has a Next parity route at `/workspace/agents/:agentId`.
   It reads `GET /agents/:id/performance`, exposes the agent profile, success
   rate, failures, approval count, budget usage, allowed tools, recent error
-  groups, and recent run/task links. `/admin/agents/:id` remains canonical until
-  worker console mutations and route retirement are explicit.
+  groups, and recent run/task links. Vite `/admin/agents/:id` redirects to
+  `/workspace/agents/:id`.
 - Task and run list/detail now have executed route-retirement evidence:
   `python3 scripts/ui_task_run_route_parity_smoke.py`
   (`ui_task_run_route_parity_v1`) checks Next list links to detail routes and
@@ -147,21 +143,23 @@ route retirement:
   sections; it also keeps `/admin` task/run deep-link redirect coverage.
   `python3 scripts/ui_route_naming_decision_smoke.py`
   (`ui_route_naming_decision_v1`) records `/workspace` as the commercial
-  namespace for task/run routes while making `/admin` redirect-only
-  compatibility;
+  namespace for task/run and admin operations routes while making retired
+  `/admin` routes redirect-only compatibility;
   the human and machine-readable decision live in
   `docs/UI_ROUTE_NAMING_DECISION.md` and
   `docs/UI_ROUTE_NAMING_DECISION.json`. `python3
   scripts/ui_legacy_route_alias_smoke.py` (`ui_legacy_route_alias_v1`) verifies
   Next.js `/admin` task/run deep links redirect to the `/workspace` target
   routes. `python3 scripts/ui_navigation_inventory_smoke.py`
-  (`ui_navigation_inventory_v1`) verifies Next and Vite primary task/run
-  navigation use `/workspace` and treats `/admin` task/run routes as redirect
-  aliases only.
+  (`ui_navigation_inventory_v1`) verifies Next and Vite primary navigation use
+  `/workspace` and treats retired `/admin` routes as redirect aliases only.
   `python3 scripts/ui_route_retirement_packet_smoke.py`
-  (`ui_route_retirement_packet_v1`) verifies the task/run `/admin` routes are
-  retired to workspace redirect aliases while Agent Gateway CLI/API/MCP remains
-  unchanged.
+  (`ui_route_retirement_packet_v1`) verifies the task/run and admin-operations
+  `/admin` routes are retired to workspace redirect aliases while Agent Gateway
+  CLI/API/MCP remains unchanged. `python3
+  scripts/ui_admin_operations_route_retirement_smoke.py`
+  (`ui_admin_operations_route_retirement_v1`) verifies the admin-operations
+  route set specifically.
 
 ## Verification Stack
 
@@ -174,6 +172,7 @@ python3 scripts/ui_route_naming_decision_smoke.py
 python3 scripts/ui_legacy_route_alias_smoke.py
 python3 scripts/ui_navigation_inventory_smoke.py
 python3 scripts/ui_route_retirement_packet_smoke.py
+python3 scripts/ui_admin_operations_route_retirement_smoke.py
 python3 scripts/ui_covered_route_retirement_packet_smoke.py
 python3 scripts/pixel_office_dispatch_retirement_evidence_smoke.py
 python3 scripts/nextjs_parity_smoke.py

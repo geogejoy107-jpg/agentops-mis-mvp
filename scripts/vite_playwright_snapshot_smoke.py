@@ -31,6 +31,7 @@ from nextjs_playwright_snapshot_smoke import (  # noqa: E402
     leaked_secret,
     playwright,
     require,
+    resolve_direct_playwright_cli,
     run,
     seed_customer_project_fixture,
     start_process,
@@ -49,7 +50,12 @@ VITE_ROUTE_EXPECTATIONS: list[tuple[str, list[Expectation]]] = [
     ("/workspace/memory", ["Memory Library", "candidate"]),
     ("/workspace/reports", [("Reports", "报告"), ("Customer delivery board", "客户交付看板")]),
     ("/workspace/runs", [("Run Ledger", "运行账本"), ("Run", "运行")]),
-    ("/admin/audit", ["Audit Center", "Chain intact"]),
+    ("/workspace/evaluations", [("Evaluation Room", "质量"), ("Quality gate surface", "质量门")]),
+    ("/workspace/tool-calls", [("Tool Call Ledger", "工具调用"), ("Tool", "工具")]),
+    ("/workspace/connectors", [("Runtime Connectors", "运行时连接器"), ("Runtime Trust Registry", "运行时信任")]),
+    ("/workspace/external-bases/notion", [("Notion External Base", "Notion 外部库"), ("Preview only", "只生成预览")]),
+    ("/workspace/templates", [("Template + Base Switching", "模板"), ("Template packages", "模板包")]),
+    ("/workspace/audit", ["Audit Center", "Chain intact"]),
 ]
 
 
@@ -171,6 +177,12 @@ def snapshot_vite_detail_routes(base_url: str, run: dict, env: dict[str, str]) -
         f"/admin/tasks/{task_id}": f"/workspace/tasks/{task_id}",
         "/admin/runs": "/workspace/runs",
         f"/admin/runs/{run_id}": f"/workspace/runs/{run_id}",
+        "/admin/evaluations": "/workspace/evaluations",
+        "/admin/toolcalls": "/workspace/tool-calls",
+        "/admin/connectors": "/workspace/connectors",
+        "/admin/bases/notion": "/workspace/external-bases/notion",
+        "/admin/templates": "/workspace/templates",
+        "/admin/audit": "/workspace/audit",
     }
     for legacy_path, expected_target in legacy_paths.items():
         legacy_goto = playwright(env, "goto", base_url.rstrip("/") + legacy_path)
@@ -178,14 +190,25 @@ def snapshot_vite_detail_routes(base_url: str, run: dict, env: dict[str, str]) -
         legacy_text = wait_for_snapshot_text(
             env,
             legacy_path,
-            lambda text: (task_id in text or run_id in text or "Run Ledger" in text or "运行账本" in text),
-            "Vite legacy admin task/run deep link to redirect to workspace content",
+            lambda text: (
+                task_id in text
+                or run_id in text
+                or "Run Ledger" in text
+                or "运行账本" in text
+                or "Evaluation Room" in text
+                or "Tool Call Ledger" in text
+                or "Runtime Connectors" in text
+                or "Notion External Base" in text
+                or "Template + Base Switching" in text
+                or "Audit Center" in text
+            ),
+            "Vite legacy admin deep link to redirect to workspace content",
         )
         require(not leaked_secret(legacy_text), f"Vite legacy redirect snapshot for {legacy_path} leaked token-like material")
         details.append({
             "path": legacy_path,
             "redirect_target": expected_target,
-            "expected": ["workspace task/run content via Vite redirect"],
+            "expected": ["workspace content via Vite redirect"],
             "snapshot_chars": len(legacy_text),
         })
     return details
@@ -197,12 +220,13 @@ def main() -> int:
     parser.add_argument("--vite-port", type=int, default=0)
     args = parser.parse_args()
 
-    if not PWCLI.exists():
-        print(json.dumps({"ok": False, "error": f"missing Playwright wrapper: {PWCLI}"}, indent=2), file=sys.stderr)
-        return 1
-    if run(["bash", "-lc", "command -v npx >/dev/null 2>&1"]).returncode != 0:
-        print(json.dumps({"ok": False, "error": "npx is required for Playwright CLI wrapper"}, indent=2), file=sys.stderr)
-        return 1
+    if not resolve_direct_playwright_cli():
+        if not PWCLI.exists():
+            print(json.dumps({"ok": False, "error": f"missing Playwright wrapper: {PWCLI}"}, indent=2), file=sys.stderr)
+            return 1
+        if run(["bash", "-lc", "command -v npx >/dev/null 2>&1"]).returncode != 0:
+            print(json.dumps({"ok": False, "error": "npx is required for Playwright CLI wrapper"}, indent=2), file=sys.stderr)
+            return 1
 
     api_port = args.api_port or free_port()
     vite_port = args.vite_port or free_port()

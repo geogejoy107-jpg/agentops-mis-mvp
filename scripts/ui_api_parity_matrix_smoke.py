@@ -33,7 +33,17 @@ GATE4_REQUIRED_IDS = {
     "external_bases_notion",
     "next_mis_proxy",
 }
-EXECUTED_RETIREMENT_IDS = {"task_detail", "run_ledger", "run_detail"}
+TASK_RUN_RETIREMENT_IDS = {"task_detail", "run_ledger", "run_detail"}
+ADMIN_OPERATION_RETIREMENT_IDS = {
+    "agent_detail",
+    "evaluation_room",
+    "tool_calls",
+    "runtime_connectors",
+    "external_bases_notion",
+    "template_switching",
+    "audit",
+}
+EXECUTED_RETIREMENT_IDS = TASK_RUN_RETIREMENT_IDS | ADMIN_OPERATION_RETIREMENT_IDS
 
 
 def require(condition: bool, message: str) -> None:
@@ -137,6 +147,7 @@ def main() -> int:
     require("ui_legacy_route_alias_v1" in route_contracts, "matrix policy must include the legacy route alias contract")
     require("ui_navigation_inventory_v1" in route_contracts, "matrix policy must include the navigation inventory contract")
     require("ui_route_retirement_packet_v1" in route_contracts, "matrix policy must include the route retirement packet contract")
+    require("ui_admin_operations_route_retirement_v1" in route_contracts, "matrix policy must include the admin operations route retirement contract")
     require("ui_covered_route_retirement_packet_v1" in route_contracts, "matrix policy must include the covered-route retirement packet contract")
     require("nextjs_agent_gateway_task_proxy_v1" in route_contracts, "matrix policy must include the Next Gateway task proxy contract")
     require("nextjs_agent_gateway_cli_worker_dogfood_v1" in route_contracts, "matrix policy must include the Next Gateway CLI worker dogfood contract")
@@ -224,7 +235,7 @@ def main() -> int:
         matrix_vite_routes.update(map(str, vite_routes))
         matrix_next_routes.update(map(str, next_routes))
 
-    require(set(retired) == EXECUTED_RETIREMENT_IDS, f"only task/run legacy admin routes may be retired in this gate slice; found {retired}")
+    require(set(retired) == EXECUTED_RETIREMENT_IDS, f"only approved task/run and admin operations legacy routes may be retired in this gate slice; found {retired}")
     require(GATE4_REQUIRED_IDS.issubset(gate4_required), f"missing Gate 4 required ids: {sorted(GATE4_REQUIRED_IDS - gate4_required)}")
     vite_smoke_text = read_text(ROOT / "scripts" / "vite_playwright_snapshot_smoke.py")
     require("snapshot_vite_detail_routes" in vite_smoke_text, "Vite browser smoke must include task/run detail snapshot coverage")
@@ -233,10 +244,16 @@ def main() -> int:
     for detail_id in ("task_detail", "run_detail"):
         evidence = entries_by_id.get(detail_id, {}).get("evidence_commands") or []
         require("python3 scripts/vite_playwright_snapshot_smoke.py" in evidence, f"{detail_id} must include Vite browser detail snapshot evidence")
-    for route_id in ("task_detail", "run_ledger", "run_detail"):
+    for route_id in TASK_RUN_RETIREMENT_IDS:
         evidence = entries_by_id.get(route_id, {}).get("evidence_commands") or []
         require("python3 scripts/ui_route_naming_decision_smoke.py" in evidence, f"{route_id} must include route naming decision evidence")
         require("python3 scripts/ui_legacy_route_alias_smoke.py" in evidence, f"{route_id} must include legacy route alias evidence")
+        require("python3 scripts/ui_navigation_inventory_smoke.py" in evidence, f"{route_id} must include navigation inventory evidence")
+        require("python3 scripts/ui_route_retirement_packet_smoke.py" in evidence, f"{route_id} must include route retirement packet evidence")
+    for route_id in ADMIN_OPERATION_RETIREMENT_IDS:
+        evidence = entries_by_id.get(route_id, {}).get("evidence_commands") or []
+        require("python3 scripts/ui_admin_operations_route_retirement_smoke.py" in evidence, f"{route_id} must include admin operations route retirement evidence")
+        require("python3 scripts/ui_route_naming_decision_smoke.py" in evidence, f"{route_id} must include route naming decision evidence")
         require("python3 scripts/ui_navigation_inventory_smoke.py" in evidence, f"{route_id} must include navigation inventory evidence")
         require("python3 scripts/ui_route_retirement_packet_smoke.py" in evidence, f"{route_id} must include route retirement packet evidence")
     for route_id in EXECUTED_RETIREMENT_IDS:
@@ -246,7 +263,7 @@ def main() -> int:
     assert_entry_routes(entries_by_id.get("task_detail"), "task_detail", ["/workspace/tasks/:id", "/admin/tasks/:id"], ["/workspace/tasks/:taskId"], retirement_allowed=True)
     assert_entry_routes(entries_by_id.get("run_ledger"), "run_ledger", ["/workspace/runs", "/admin/runs"], ["/workspace/runs"], retirement_allowed=True)
     assert_entry_routes(entries_by_id.get("run_detail"), "run_detail", ["/workspace/runs/:id", "/admin/runs/:id"], ["/workspace/runs/:runId"], retirement_allowed=True)
-    assert_entry_routes(entries_by_id.get("agent_detail"), "agent_detail", ["/admin/agents/:id"], ["/workspace/agents/:agentId"])
+    assert_entry_routes(entries_by_id.get("agent_detail"), "agent_detail", ["/workspace/agents/:id", "/admin/agents/:id"], ["/workspace/agents/:agentId"], retirement_allowed=True)
     agent_detail_evidence = entries_by_id.get("agent_detail", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_parity_smoke.py" in agent_detail_evidence, "agent_detail must include Next static parity evidence")
     require("python3 scripts/nextjs_playwright_snapshot_smoke.py" in agent_detail_evidence, "agent_detail must include Next browser evidence")
@@ -318,7 +335,7 @@ def main() -> int:
     require("/workspace/governance" in control_gate and "/workspace/deployment" in control_gate, "control_tower gate must record governance/deployment split")
     require("ui_covered_route_retirement_packet_v1" in control_gate and "/admin deep-link redirect or alias" in control_gate, "control_tower gate must record covered-route packet and /admin redirect requirement")
     require("explicit route retirement commit" in control_gate, "control_tower gate must still require explicit route retirement")
-    assert_entry_routes(entries_by_id.get("template_switching"), "template_switching", ["/admin/templates"], ["/workspace/dispatch", "/workspace/templates", "/workspace/templates/migration-preview"])
+    assert_entry_routes(entries_by_id.get("template_switching"), "template_switching", ["/workspace/templates", "/admin/templates"], ["/workspace/dispatch", "/workspace/templates", "/workspace/templates/migration-preview"], retirement_allowed=True)
     require(entries_by_id.get("template_switching", {}).get("status") == "covered", "template_switching should be covered once Next template/base switching readback exists")
     template_switching_evidence = entries_by_id.get("template_switching", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_template_switching_smoke.py" in template_switching_evidence, "template_switching must include focused Next template switching evidence")
@@ -330,23 +347,27 @@ def main() -> int:
     template_switching_gate = str(entries_by_id.get("template_switching", {}).get("retirement_gate") or "")
     require("/workspace/templates live template/base switching" in template_switching_gate, "template_switching gate must record Next live readback")
     require("/migration/preview" in template_switching_gate and "preview-only" in template_switching_gate, "template_switching gate must record preview-only migration evidence")
-    require("explicit route retirement commit" in template_switching_gate, "template_switching gate must still require explicit route retirement")
-    assert_entry_routes(entries_by_id.get("tool_calls"), "tool_calls", ["/admin/toolcalls"], ["/workspace/tool-calls"])
+    require("Explicit route retirement executed" in template_switching_gate, "template_switching gate must record executed route retirement")
+    assert_entry_routes(entries_by_id.get("tool_calls"), "tool_calls", ["/workspace/tool-calls", "/admin/toolcalls"], ["/workspace/tool-calls"], retirement_allowed=True)
     tool_call_evidence = entries_by_id.get("tool_calls", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_parity_smoke.py" in tool_call_evidence, "tool_calls must include Next static parity evidence")
     require("python3 scripts/nextjs_playwright_snapshot_smoke.py" in tool_call_evidence, "tool_calls must include Next browser evidence")
-    assert_entry_routes(entries_by_id.get("evaluation_room"), "evaluation_room", ["/admin/evaluations"], ["/workspace/evaluations"])
+    assert_entry_routes(entries_by_id.get("evaluation_room"), "evaluation_room", ["/workspace/evaluations", "/admin/evaluations"], ["/workspace/evaluations"], retirement_allowed=True)
     evaluation_evidence = entries_by_id.get("evaluation_room", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_parity_smoke.py" in evaluation_evidence, "evaluation_room must include Next static parity evidence")
     require("python3 scripts/nextjs_playwright_snapshot_smoke.py" in evaluation_evidence, "evaluation_room must include Next browser evidence")
-    assert_entry_routes(entries_by_id.get("runtime_connectors"), "runtime_connectors", ["/admin/connectors"], ["/workspace/connectors", "/workspace/connectors/trust"])
+    assert_entry_routes(entries_by_id.get("runtime_connectors"), "runtime_connectors", ["/workspace/connectors", "/admin/connectors"], ["/workspace/connectors", "/workspace/connectors/trust"], retirement_allowed=True)
     connector_evidence = entries_by_id.get("runtime_connectors", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_parity_smoke.py" in connector_evidence, "runtime_connectors must include Next static parity evidence")
     require("python3 scripts/nextjs_playwright_snapshot_smoke.py" in connector_evidence, "runtime_connectors must include Next browser evidence")
-    assert_entry_routes(entries_by_id.get("external_bases_notion"), "external_bases_notion", ["/admin/bases/notion"], ["/workspace/external-bases/notion", "/workspace/external-bases/notion/export"])
+    assert_entry_routes(entries_by_id.get("external_bases_notion"), "external_bases_notion", ["/workspace/external-bases/notion", "/admin/bases/notion"], ["/workspace/external-bases/notion", "/workspace/external-bases/notion/export"], retirement_allowed=True)
     notion_evidence = entries_by_id.get("external_bases_notion", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_parity_smoke.py" in notion_evidence, "external_bases_notion must include Next static parity evidence")
     require("python3 scripts/nextjs_playwright_snapshot_smoke.py" in notion_evidence, "external_bases_notion must include Next browser evidence")
+    assert_entry_routes(entries_by_id.get("audit"), "audit", ["/workspace/audit", "/admin/audit"], ["/workspace/audit"], retirement_allowed=True)
+    audit_evidence = entries_by_id.get("audit", {}).get("evidence_commands") or []
+    require("python3 scripts/nextjs_parity_smoke.py" in audit_evidence, "audit must include Next static parity evidence")
+    require("python3 scripts/nextjs_playwright_snapshot_smoke.py" in audit_evidence, "audit must include Next browser evidence")
     next_proxy_evidence = entries_by_id.get("next_mis_proxy", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next Gateway task proxy evidence")
     require("python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next Gateway CLI worker dogfood evidence")

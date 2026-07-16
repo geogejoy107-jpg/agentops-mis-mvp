@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static smoke for the Gate 4 task/run route naming decision."""
+"""Static smoke for the Gate 4 workspace route naming decision."""
 from __future__ import annotations
 
 import json
@@ -33,6 +33,48 @@ REQUIRED_ROUTE_PAIRS = {
         "vite_target_route": "/workspace/runs/:id",
         "target_route": "/workspace/runs/:runId",
         "next_alias_route": "/admin/runs/:runId",
+    },
+    "agent_detail": {
+        "legacy_route": "/admin/agents/:id",
+        "vite_target_route": "/workspace/agents/:id",
+        "target_route": "/workspace/agents/:agentId",
+        "next_alias_route": None,
+    },
+    "evaluation_room": {
+        "legacy_route": "/admin/evaluations",
+        "vite_target_route": "/workspace/evaluations",
+        "target_route": "/workspace/evaluations",
+        "next_alias_route": None,
+    },
+    "tool_calls": {
+        "legacy_route": "/admin/toolcalls",
+        "vite_target_route": "/workspace/tool-calls",
+        "target_route": "/workspace/tool-calls",
+        "next_alias_route": None,
+    },
+    "runtime_connectors": {
+        "legacy_route": "/admin/connectors",
+        "vite_target_route": "/workspace/connectors",
+        "target_route": "/workspace/connectors",
+        "next_alias_route": None,
+    },
+    "external_bases_notion": {
+        "legacy_route": "/admin/bases/notion",
+        "vite_target_route": "/workspace/external-bases/notion",
+        "target_route": "/workspace/external-bases/notion",
+        "next_alias_route": None,
+    },
+    "template_switching": {
+        "legacy_route": "/admin/templates",
+        "vite_target_route": "/workspace/templates",
+        "target_route": "/workspace/templates",
+        "next_alias_route": None,
+    },
+    "audit": {
+        "legacy_route": "/admin/audit",
+        "vite_target_route": "/workspace/audit",
+        "target_route": "/workspace/audit",
+        "next_alias_route": None,
     },
 }
 
@@ -98,7 +140,7 @@ def main() -> int:
     decision = read_json(DECISION_PATH)
     require(decision.get("contract_id") == CONTRACT_ID, f"contract_id must be {CONTRACT_ID}")
     require(decision.get("gate") == "gate_4_ui_api_parity_before_nextjs", "route naming decision is attached to the wrong gate")
-    require(decision.get("status") == "accepted_task_run_workspace_redirect_retirement", "route naming decision must record the task/run retirement execution")
+    require(decision.get("status") == "accepted_admin_operations_workspace_redirect_retirement", "route naming decision must record the admin operations retirement execution")
 
     policy = decision.get("policy") or {}
     require(policy.get("legacy_namespace") == "/admin", "legacy namespace must remain /admin")
@@ -108,8 +150,9 @@ def main() -> int:
     require(policy.get("alias_contract") == "ui_legacy_route_alias_v1", "route naming decision must bind the legacy alias contract")
     require(policy.get("navigation_inventory_contract") == "ui_navigation_inventory_v1", "route naming decision must bind the navigation inventory contract")
     require(policy.get("retirement_packet_contract") == "ui_route_retirement_packet_v1", "route naming decision must bind the retirement packet contract")
+    require(policy.get("admin_operations_contract") == "ui_admin_operations_route_retirement_v1", "route naming decision must bind the admin operations route contract")
     require(policy.get("retirement_allowed_by_default") is False, "future route retirement must remain fail-closed by default")
-    require(set(policy.get("executed_route_retirement_ids") or []) == set(REQUIRED_ROUTE_PAIRS), "task/run route retirements must be explicitly executed")
+    require(set(policy.get("executed_route_retirement_ids") or []) == set(REQUIRED_ROUTE_PAIRS), "workspace route retirements must be explicitly executed")
     require(policy.get("redirects_required_before_retirement") is True, "route retirement must require redirects or aliases")
     require(policy.get("no_breaking_deep_links") is True, "route retirement must preserve deep links")
 
@@ -132,9 +175,10 @@ def main() -> int:
         require(pair.get("legacy_route") == legacy_route, f"{pair_id} legacy route changed")
         require(pair.get("target_route") == target_route, f"{pair_id} target route changed")
         require(pair.get("next_alias_route") == next_alias_route, f"{pair_id} Next alias route changed")
-        require(pair.get("decision") == "next_workspace_route_is_future_canonical", f"{pair_id} decision is not explicit")
+        require(pair.get("decision") in {"next_workspace_route_is_future_canonical", "workspace_route_is_future_canonical"}, f"{pair_id} decision is not explicit")
         require(pair.get("legacy_route_status") == "redirects_to_target_route", f"{pair_id} legacy route status must be redirect-only")
-        require(pair.get("next_alias_status") == "redirects_to_target_route", f"{pair_id} Next alias must redirect to target route")
+        expected_alias_status = "redirects_to_target_route" if next_alias_route else "not_required_for_vite_only_legacy_alias"
+        require(pair.get("next_alias_status") == expected_alias_status, f"{pair_id} Next alias status changed")
         require(pair.get("target_route_status") == "workspace_canonical_route", f"{pair_id} target route status must identify workspace as canonical")
         require(pair.get("retirement_allowed") is True, f"{pair_id} must allow the executed route retirement")
         evidence = set(pair.get("cutover_evidence") or [])
@@ -142,6 +186,8 @@ def main() -> int:
         require("canonical_navigation_inventory_verified" in evidence, f"{pair_id} must record canonical navigation inventory evidence")
         require("retirement_packet_executed" in evidence, f"{pair_id} must record executed retirement packet evidence")
         require("vite_primary_links_migrated_to_workspace" in evidence, f"{pair_id} must record Vite primary link migration")
+        if not next_alias_route:
+            require("admin_operations_route_retirement_verified" in evidence, f"{pair_id} must record admin operations route evidence")
         require("agent_gateway_cli_api_mcp_unchanged" in evidence, f"{pair_id} must preserve Agent Gateway CLI/API/MCP")
         remaining = set(pair.get("remaining_cutover_requires") or [])
         require(not remaining, f"{pair_id} should not have remaining cutover requirements after this execution: {sorted(remaining)}")
@@ -154,7 +200,8 @@ def main() -> int:
         require(legacy_route in vite_routes, f"{pair_id} legacy route is not implemented in Vite App.tsx: {legacy_route}")
         require(vite_target_route in vite_routes, f"{pair_id} Vite canonical workspace route is not implemented: {vite_target_route}")
         require(target_route in next_routes, f"{pair_id} target route is not implemented in Next app: {target_route}")
-        require(next_alias_route in next_routes, f"{pair_id} Next alias route is not implemented: {next_alias_route}")
+        if next_alias_route:
+            require(next_alias_route in next_routes, f"{pair_id} Next alias route is not implemented: {next_alias_route}")
 
         matrix_entry = entries.get(pair_id)
         require(isinstance(matrix_entry, dict), f"matrix entry missing for {pair_id}")
@@ -163,20 +210,25 @@ def main() -> int:
         require(legacy_route in matrix_vite_routes, f"{pair_id} matrix vite routes must include naming decision route")
         require(vite_target_route in matrix_vite_routes, f"{pair_id} matrix vite routes must include Vite workspace target route")
         require(target_route in matrix_next_routes, f"{pair_id} matrix next routes must include naming decision route")
-        require(next_alias_route in matrix_next_routes, f"{pair_id} matrix next routes must include legacy alias route")
+        if next_alias_route:
+            require(next_alias_route in matrix_next_routes, f"{pair_id} matrix next routes must include legacy alias route")
         require(matrix_entry.get("retirement_allowed") is True, f"{pair_id} matrix retirement must be executed")
         require(matrix_entry.get("retirement_action") == "executed_workspace_redirect", f"{pair_id} matrix must record workspace redirect retirement")
         matrix_evidence = matrix_entry.get("evidence_commands") or []
         require("python3 scripts/ui_route_naming_decision_smoke.py" in matrix_evidence, f"{pair_id} matrix evidence must include route naming decision smoke")
-        require("python3 scripts/ui_legacy_route_alias_smoke.py" in matrix_evidence, f"{pair_id} matrix evidence must include legacy route alias smoke")
+        if next_alias_route:
+            require("python3 scripts/ui_legacy_route_alias_smoke.py" in matrix_evidence, f"{pair_id} matrix evidence must include legacy route alias smoke")
         require("python3 scripts/ui_navigation_inventory_smoke.py" in matrix_evidence, f"{pair_id} matrix evidence must include navigation inventory smoke")
         require("python3 scripts/ui_route_retirement_packet_smoke.py" in matrix_evidence, f"{pair_id} matrix evidence must include route retirement packet smoke")
+        if not next_alias_route:
+            require("python3 scripts/ui_admin_operations_route_retirement_smoke.py" in matrix_evidence, f"{pair_id} matrix evidence must include admin operations smoke")
 
     md_text = read_text(ROOT / "docs" / "UI_ROUTE_NAMING_DECISION.md")
     require(CONTRACT_ID in md_text, "human route naming doc must name the contract")
     for expected in REQUIRED_ROUTE_PAIRS.values():
+        alias = expected["next_alias_route"] or "not_required_for_vite_only_legacy_alias"
         require(
-            expected["legacy_route"] in md_text and expected["target_route"] in md_text and expected["next_alias_route"] in md_text,
+            expected["legacy_route"] in md_text and expected["target_route"] in md_text and alias in md_text,
             "human route naming doc must list every route pair and alias",
         )
 
@@ -186,6 +238,7 @@ def main() -> int:
     require("scripts/ui_legacy_route_alias_smoke.py" in closed_loop_text, "closed-loop doc must include legacy route alias smoke")
     require("scripts/ui_navigation_inventory_smoke.py" in closed_loop_text, "closed-loop doc must include navigation inventory smoke")
     require("scripts/ui_route_retirement_packet_smoke.py" in closed_loop_text, "closed-loop doc must include route retirement packet smoke")
+    require("scripts/ui_admin_operations_route_retirement_smoke.py" in closed_loop_text, "closed-loop doc must include admin operations route retirement smoke")
     require(CONTRACT_ID in readiness_text, "readiness checker must require the route naming decision contract")
 
     print(json.dumps({

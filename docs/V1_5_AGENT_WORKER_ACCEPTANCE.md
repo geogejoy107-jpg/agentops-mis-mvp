@@ -518,7 +518,7 @@ rows: 12
 latest pending approval: ap_gw_f289a8baafcd
 actions: approve/reject buttons call POST /api/approvals/:id/approve|reject
 
-page: /admin/toolcalls
+page: /workspace/tool-calls
 source: GET /api/tool-calls
 rows: 6928
 latest tool: artifact.delivery_summary

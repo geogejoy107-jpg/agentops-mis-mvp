@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static smoke for Next.js task/run navigation inventory."""
+"""Static smoke for workspace navigation inventory."""
 from __future__ import annotations
 
 import json
@@ -21,6 +21,13 @@ CANONICAL_NEXT_ROUTES = {
     "/workspace/tasks/:taskId",
     "/workspace/runs",
     "/workspace/runs/:runId",
+    "/workspace/agents/:agentId",
+    "/workspace/evaluations",
+    "/workspace/tool-calls",
+    "/workspace/connectors",
+    "/workspace/external-bases/notion",
+    "/workspace/templates",
+    "/workspace/audit",
 }
 ALLOWED_ALIAS_ROUTES = {
     "/admin/tasks/:taskId",
@@ -43,11 +50,25 @@ CANONICAL_VITE_ROUTES = {
     "/workspace/tasks/:id",
     "/workspace/runs",
     "/workspace/runs/:id",
+    "/workspace/agents/:id",
+    "/workspace/evaluations",
+    "/workspace/tool-calls",
+    "/workspace/connectors",
+    "/workspace/external-bases/notion",
+    "/workspace/templates",
+    "/workspace/audit",
 }
 ALLOWED_VITE_ALIAS_ROUTES = {
     "/admin/tasks/:id",
     "/admin/runs",
     "/admin/runs/:id",
+    "/admin/agents/:id",
+    "/admin/evaluations",
+    "/admin/toolcalls",
+    "/admin/connectors",
+    "/admin/bases/notion",
+    "/admin/templates",
+    "/admin/audit",
 }
 
 
@@ -124,23 +145,37 @@ def assert_no_vite_primary_admin_task_run_links() -> list[str]:
     return violations
 
 
+def assert_no_vite_primary_admin_operations_links() -> list[str]:
+    violations: list[str] = []
+    pattern = re.compile(r"/admin/(?:agents|evaluations|toolcalls|connectors|bases/notion|templates|audit)(?:/|[\"'`<\s)]|$)")
+    for path in sorted((VITE_APP / "src" / "app" / "components").rglob("*")):
+        if path.suffix not in {".ts", ".tsx"}:
+            continue
+        text = read_text(path)
+        for match in pattern.finditer(text):
+            line = text.count("\n", 0, match.start()) + 1
+            violations.append(f"{path.relative_to(ROOT)}:{line}:{match.group(0)}")
+    return violations
+
+
 def main() -> int:
     inventory = read_json(INVENTORY_PATH)
     require(inventory.get("contract_id") == CONTRACT_ID, f"inventory contract_id must be {CONTRACT_ID}")
     require(inventory.get("gate") == "gate_4_ui_api_parity_before_nextjs", "inventory gate id is wrong")
-    require(inventory.get("status") == "accepted_task_run_workspace_redirect_retirement", "inventory must record task/run route retirement execution")
+    require(inventory.get("status") == "accepted_admin_operations_workspace_redirect_retirement", "inventory must record workspace route retirement execution")
     policy = inventory.get("policy") or {}
     require(policy.get("next_primary_namespace") == "/workspace", "Next primary namespace must be /workspace")
-    require(policy.get("vite_primary_namespace") == "/workspace", "Vite primary namespace must be /workspace for task/run routes")
+    require(policy.get("vite_primary_namespace") == "/workspace", "Vite primary namespace must be /workspace for retired routes")
     require(policy.get("legacy_namespace") == "/admin", "legacy namespace must be /admin")
     require(policy.get("legacy_admin_usage_in_next") == "redirect_alias_only", "Next /admin usage must be redirect-alias only")
-    require(policy.get("legacy_admin_usage_in_vite") == "redirect_alias_only", "Vite /admin task/run usage must be redirect-alias only")
-    require(policy.get("retirement_allowed") is True, "inventory must allow the executed task/run route retirement")
+    require(policy.get("legacy_admin_usage_in_vite") == "redirect_alias_only", "Vite /admin usage must be redirect-alias only")
+    require(policy.get("admin_operations_contract") == "ui_admin_operations_route_retirement_v1", "inventory must bind the admin operations contract")
+    require(policy.get("retirement_allowed") is True, "inventory must allow the executed route retirement")
     require(policy.get("verification_command") == "python3 scripts/ui_navigation_inventory_smoke.py", "inventory verification command is wrong")
 
-    require(set(inventory.get("canonical_next_routes") or []) == CANONICAL_NEXT_ROUTES, "canonical Next task/run routes changed")
+    require(set(inventory.get("canonical_next_routes") or []) == CANONICAL_NEXT_ROUTES, "canonical Next workspace routes changed")
     require(set(inventory.get("allowed_next_alias_routes") or []) == ALLOWED_ALIAS_ROUTES, "allowed Next alias routes changed")
-    require(set(inventory.get("canonical_vite_routes") or []) == CANONICAL_VITE_ROUTES, "canonical Vite task/run routes changed")
+    require(set(inventory.get("canonical_vite_routes") or []) == CANONICAL_VITE_ROUTES, "canonical Vite workspace routes changed")
     require(set(inventory.get("allowed_vite_alias_routes") or []) == ALLOWED_VITE_ALIAS_ROUTES, "allowed Vite alias routes changed")
     require(set(inventory.get("next_primary_inventory_files") or []) >= REQUIRED_INVENTORY_FILES, "inventory misses primary Next files")
     require(set(inventory.get("next_alias_files") or []) == ALIAS_FILES, "inventory alias file list changed")
@@ -175,6 +210,8 @@ def main() -> int:
     require(not violations, "Next primary source contains task/run /admin links: " + ", ".join(violations))
     vite_violations = assert_no_vite_primary_admin_task_run_links()
     require(not vite_violations, "Vite primary source contains task/run /admin links: " + ", ".join(vite_violations))
+    vite_admin_ops_violations = assert_no_vite_primary_admin_operations_links()
+    require(not vite_admin_ops_violations, "Vite primary source contains admin operations /admin links: " + ", ".join(vite_admin_ops_violations))
 
     next_pages = actual_next_pages()
     require(CANONICAL_NEXT_ROUTES <= next_pages, f"Next app misses canonical task/run pages: {sorted(CANONICAL_NEXT_ROUTES - next_pages)}")
@@ -183,7 +220,9 @@ def main() -> int:
     require(CANONICAL_VITE_ROUTES <= vite_routes, f"Vite app misses canonical task/run routes: {sorted(CANONICAL_VITE_ROUTES - vite_routes)}")
     require(ALLOWED_VITE_ALIAS_ROUTES <= vite_routes, f"Vite app misses allowed task/run alias routes: {sorted(ALLOWED_VITE_ALIAS_ROUTES - vite_routes)}")
     vite_app_text = read_text(VITE_APP / "src" / "app" / "App.tsx")
-    require("LegacyTaskDetailRedirect" in vite_app_text and "LegacyRunDetailRedirect" in vite_app_text, "Vite app must preserve admin deep links with redirect components")
+    require("LegacyTaskDetailRedirect" in vite_app_text and "LegacyRunDetailRedirect" in vite_app_text and "LegacyAgentDetailRedirect" in vite_app_text, "Vite app must preserve admin deep links with redirect components")
+    for target in ("/workspace/evaluations", "/workspace/tool-calls", "/workspace/connectors", "/workspace/external-bases/notion", "/workspace/templates", "/workspace/audit"):
+        require(target in vite_app_text, f"Vite legacy admin operations route must redirect to {target}")
 
     decision_text = read_text(DECISION_PATH)
     matrix_text = read_text(MATRIX_PATH)
@@ -191,6 +230,7 @@ def main() -> int:
     closed_loop_text = read_text(ROOT / "docs" / "COMMERCIAL_MIGRATION_CLOSED_LOOP.md")
     require(CONTRACT_ID in decision_text, "route naming decision must reference navigation inventory contract")
     require(CONTRACT_ID in matrix_text, "UI/API matrix must reference navigation inventory contract")
+    require("ui_admin_operations_route_retirement_v1" in matrix_text, "UI/API matrix must reference admin operations contract")
     require(CONTRACT_ID in readiness_text, "readiness checker must require navigation inventory contract")
     require("scripts/ui_navigation_inventory_smoke.py" in closed_loop_text, "closed-loop doc must include navigation inventory smoke")
 
@@ -201,6 +241,7 @@ def main() -> int:
         "canonical_vite_routes": sorted(CANONICAL_VITE_ROUTES),
         "allowed_next_alias_routes": sorted(ALLOWED_ALIAS_ROUTES),
         "allowed_vite_alias_routes": sorted(ALLOWED_VITE_ALIAS_ROUTES),
+        "admin_operations_retired": True,
         "retirement_allowed": True,
         "remaining_cutover_requires": [],
     }, ensure_ascii=False, indent=2, sort_keys=True))

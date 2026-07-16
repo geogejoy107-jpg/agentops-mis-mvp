@@ -30,7 +30,8 @@
       "nextjs_worker_console_parity_v1",
       "operator_execution_mode_v1",
       "nextjs_template_switching_parity_v1",
-      "nextjs_control_tower_parity_v1"
+      "nextjs_control_tower_parity_v1",
+      "ui_admin_operations_route_retirement_v1"
     ],
     "retirement_rule": "A Vite route can be retired only after the matrix marks its capability covered, Vite and Next browser evidence both pass, API contracts match, and the route has an explicit retirement decision."
   },
@@ -310,6 +311,7 @@
       "status": "covered",
       "gate4_required": true,
       "vite_routes": [
+        "/workspace/agents/:id",
         "/admin/agents/:id"
       ],
       "next_routes": [
@@ -331,10 +333,16 @@
       "evidence_commands": [
         "python3 scripts/ui_api_parity_matrix_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py",
-        "python3 scripts/nextjs_playwright_snapshot_smoke.py"
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/ui_admin_operations_route_retirement_smoke.py",
+        "python3 scripts/ui_route_naming_decision_smoke.py",
+        "python3 scripts/ui_navigation_inventory_smoke.py",
+        "python3 scripts/ui_route_retirement_packet_smoke.py",
+        "python3 scripts/vite_playwright_snapshot_smoke.py"
       ],
-      "retirement_allowed": false,
-      "retirement_gate": "Next agent detail covers live per-agent performance, budget, allowed tools, recent runs, run/task links, and error groups; Vite remains canonical until worker console mutations and route retirement are explicit."
+      "retirement_allowed": true,
+      "retirement_gate": "Explicit route retirement executed for /admin/agents/:id -> /workspace/agents/:id: Vite primary navigation now uses the workspace route, the legacy admin route is redirect-only for deep links, Next workspace parity remains covered, browser evidence must be rerun, and Agent Gateway CLI/API/MCP remains unchanged. Next agent detail covers live per-agent performance, budget, allowed tools, recent runs, run/task links, and error groups; Vite /admin/agents/:id now redirects to /workspace/agents/:id.",
+      "retirement_action": "executed_workspace_redirect"
     },
     {
       "id": "approvals",
@@ -562,6 +570,7 @@
       "status": "covered",
       "gate4_required": true,
       "vite_routes": [
+        "/workspace/tool-calls",
         "/admin/toolcalls"
       ],
       "next_routes": [
@@ -582,10 +591,16 @@
       "evidence_commands": [
         "python3 scripts/ui_api_parity_matrix_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py",
-        "python3 scripts/nextjs_playwright_snapshot_smoke.py"
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/ui_admin_operations_route_retirement_smoke.py",
+        "python3 scripts/ui_route_naming_decision_smoke.py",
+        "python3 scripts/ui_navigation_inventory_smoke.py",
+        "python3 scripts/ui_route_retirement_packet_smoke.py",
+        "python3 scripts/vite_playwright_snapshot_smoke.py"
       ],
-      "retirement_allowed": false,
-      "retirement_gate": "Next read-only tool call ledger covers list/risk/status/run-link parity; Vite remains canonical until browser snapshot evidence and route retirement decision are explicit."
+      "retirement_allowed": true,
+      "retirement_gate": "Explicit route retirement executed for /admin/toolcalls -> /workspace/tool-calls: Vite primary navigation now uses the workspace route, the legacy admin route is redirect-only for deep links, Next workspace parity remains covered, browser evidence must be rerun, and Agent Gateway CLI/API/MCP remains unchanged. Next read-only tool call ledger covers list/risk/status/run-link parity; Vite /admin/toolcalls now redirects to /workspace/tool-calls.",
+      "retirement_action": "executed_workspace_redirect"
     },
     {
       "id": "evaluation_room",
@@ -593,6 +608,7 @@
       "status": "covered",
       "gate4_required": true,
       "vite_routes": [
+        "/workspace/evaluations",
         "/admin/evaluations"
       ],
       "next_routes": [
@@ -612,10 +628,16 @@
       "evidence_commands": [
         "python3 scripts/ui_api_parity_matrix_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py",
-        "python3 scripts/nextjs_playwright_snapshot_smoke.py"
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/ui_admin_operations_route_retirement_smoke.py",
+        "python3 scripts/ui_route_naming_decision_smoke.py",
+        "python3 scripts/ui_navigation_inventory_smoke.py",
+        "python3 scripts/ui_route_retirement_packet_smoke.py",
+        "python3 scripts/vite_playwright_snapshot_smoke.py"
       ],
-      "retirement_allowed": false,
-      "retirement_gate": "Next read-only evaluation ledger covers score/pass-fail/evaluator/run/task-link parity; Vite remains canonical until evaluation-case actions and route retirement decision are explicit."
+      "retirement_allowed": true,
+      "retirement_gate": "Explicit route retirement executed for /admin/evaluations -> /workspace/evaluations: Vite primary navigation now uses the workspace route, the legacy admin route is redirect-only for deep links, Next workspace parity remains covered, browser evidence must be rerun, and Agent Gateway CLI/API/MCP remains unchanged. Next read-only evaluation ledger covers score/pass-fail/evaluator/run/task-link parity; Vite /admin/evaluations now redirects to /workspace/evaluations.",
+      "retirement_action": "executed_workspace_redirect"
     },
     {
       "id": "control_tower",
@@ -662,6 +684,7 @@
       "status": "covered",
       "gate4_required": true,
       "vite_routes": [
+        "/workspace/connectors",
         "/admin/connectors"
       ],
       "next_routes": [
@@ -685,10 +708,16 @@
       "evidence_commands": [
         "python3 scripts/ui_api_parity_matrix_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py",
-        "python3 scripts/nextjs_playwright_snapshot_smoke.py"
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/ui_admin_operations_route_retirement_smoke.py",
+        "python3 scripts/ui_route_naming_decision_smoke.py",
+        "python3 scripts/ui_navigation_inventory_smoke.py",
+        "python3 scripts/ui_route_retirement_packet_smoke.py",
+        "python3 scripts/vite_playwright_snapshot_smoke.py"
       ],
-      "retirement_allowed": false,
-      "retirement_gate": "Next runtime connectors parity covers live connector status, allow-real-run and confirm gates, trust mutation fallback, and connector audit evidence; Vite remains canonical until browser evidence and route retirement are explicit."
+      "retirement_allowed": true,
+      "retirement_gate": "Explicit route retirement executed for /admin/connectors -> /workspace/connectors: Vite primary navigation now uses the workspace route, the legacy admin route is redirect-only for deep links, Next workspace parity remains covered, browser evidence must be rerun, and Agent Gateway CLI/API/MCP remains unchanged. Next runtime connectors parity covers live connector status, allow-real-run and confirm gates, trust mutation fallback, and connector audit evidence; Vite /admin/connectors now redirects to /workspace/connectors.",
+      "retirement_action": "executed_workspace_redirect"
     },
     {
       "id": "external_bases_notion",
@@ -696,6 +725,7 @@
       "status": "covered",
       "gate4_required": true,
       "vite_routes": [
+        "/workspace/external-bases/notion",
         "/admin/bases/notion"
       ],
       "next_routes": [
@@ -718,10 +748,16 @@
       "evidence_commands": [
         "python3 scripts/ui_api_parity_matrix_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py",
-        "python3 scripts/nextjs_playwright_snapshot_smoke.py"
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/ui_admin_operations_route_retirement_smoke.py",
+        "python3 scripts/ui_route_naming_decision_smoke.py",
+        "python3 scripts/ui_navigation_inventory_smoke.py",
+        "python3 scripts/ui_route_retirement_packet_smoke.py",
+        "python3 scripts/vite_playwright_snapshot_smoke.py"
       ],
-      "retirement_allowed": false,
-      "retirement_gate": "Next Notion External Base parity covers live status, preview-only report evidence, dry-run export, Free Local confirmed-export entitlement blocking, and Next export fallback; Vite remains canonical until prepared-action resume UX and route retirement are explicit."
+      "retirement_allowed": true,
+      "retirement_gate": "Explicit route retirement executed for /admin/bases/notion -> /workspace/external-bases/notion: Vite primary navigation now uses the workspace route, the legacy admin route is redirect-only for deep links, Next workspace parity remains covered, browser evidence must be rerun, and Agent Gateway CLI/API/MCP remains unchanged. Next Notion External Base parity covers live status, preview-only report evidence, dry-run export, Free Local confirmed-export entitlement blocking, and Next export fallback; Vite /admin/bases/notion now redirects to /workspace/external-bases/notion.",
+      "retirement_action": "executed_workspace_redirect"
     },
     {
       "id": "template_switching",
@@ -729,6 +765,7 @@
       "status": "covered",
       "gate4_required": false,
       "vite_routes": [
+        "/workspace/templates",
         "/admin/templates"
       ],
       "next_routes": [
@@ -761,10 +798,16 @@
       "evidence_commands": [
         "python3 scripts/nextjs_template_switching_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
-        "python3 scripts/nextjs_parity_smoke.py"
+        "python3 scripts/nextjs_parity_smoke.py",
+        "python3 scripts/ui_admin_operations_route_retirement_smoke.py",
+        "python3 scripts/ui_route_naming_decision_smoke.py",
+        "python3 scripts/ui_navigation_inventory_smoke.py",
+        "python3 scripts/ui_route_retirement_packet_smoke.py",
+        "python3 scripts/vite_playwright_snapshot_smoke.py"
       ],
-      "retirement_allowed": false,
-      "retirement_gate": "Next now covers template dispatch plus /workspace/templates live template/base switching readback from /template-packages, /template-bindings, /bases, and /migration/preview with local-ledger protection and preview-only external base migration evidence. Vite /admin/templates remains until an explicit route retirement commit preserves deep links, reruns Vite/Next browser evidence, and keeps Agent Gateway CLI/API/MCP unchanged."
+      "retirement_allowed": true,
+      "retirement_gate": "Explicit route retirement executed for /admin/templates -> /workspace/templates: Vite primary navigation now uses the workspace route, the legacy admin route is redirect-only for deep links, Next workspace parity remains covered, browser evidence must be rerun, and Agent Gateway CLI/API/MCP remains unchanged. Next now covers template dispatch plus /workspace/templates live template/base switching readback from /template-packages, /template-bindings, /bases, and /migration/preview with local-ledger protection and preview-only external base migration evidence. Vite /admin/templates now redirects to /workspace/templates while Agent Gateway CLI/API/MCP remains unchanged.",
+      "retirement_action": "executed_workspace_redirect"
     },
     {
       "id": "audit",
@@ -772,6 +815,7 @@
       "status": "covered",
       "gate4_required": true,
       "vite_routes": [
+        "/workspace/audit",
         "/admin/audit"
       ],
       "next_routes": [
@@ -794,10 +838,15 @@
       "evidence_commands": [
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
-        "python3 scripts/nextjs_parity_smoke.py"
+        "python3 scripts/nextjs_parity_smoke.py",
+        "python3 scripts/ui_admin_operations_route_retirement_smoke.py",
+        "python3 scripts/ui_route_naming_decision_smoke.py",
+        "python3 scripts/ui_navigation_inventory_smoke.py",
+        "python3 scripts/ui_route_retirement_packet_smoke.py"
       ],
-      "retirement_allowed": false,
-      "retirement_gate": "Need hash-chain and pagination route diff before retiring the Vite audit route."
+      "retirement_allowed": true,
+      "retirement_gate": "Explicit route retirement executed for /admin/audit -> /workspace/audit: Vite primary navigation now uses the workspace route, the legacy admin route is redirect-only for deep links, Next workspace parity remains covered, browser evidence must be rerun, and Agent Gateway CLI/API/MCP remains unchanged. Vite /admin/audit now redirects to /workspace/audit; deeper hash-chain and pagination improvements remain future page-quality work, not route-retirement blockers.",
+      "retirement_action": "executed_workspace_redirect"
     },
     {
       "id": "commercial_entitlements_next_only",

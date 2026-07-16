@@ -1,23 +1,31 @@
 {
   "contract_id": "ui_navigation_inventory_v1",
   "gate": "gate_4_ui_api_parity_before_nextjs",
-  "status": "accepted_task_run_workspace_redirect_retirement",
+  "status": "accepted_admin_operations_workspace_redirect_retirement",
   "updated_at": "2026-06-25",
   "policy": {
-    "scope": "task_run_route_cutover",
+    "scope": "task_run_and_admin_operations_route_cutover",
     "next_primary_namespace": "/workspace",
     "legacy_namespace": "/admin",
     "legacy_admin_usage_in_next": "redirect_alias_only",
     "retirement_allowed": true,
     "verification_command": "python3 scripts/ui_navigation_inventory_smoke.py",
     "vite_primary_namespace": "/workspace",
-    "legacy_admin_usage_in_vite": "redirect_alias_only"
+    "legacy_admin_usage_in_vite": "redirect_alias_only",
+    "admin_operations_contract": "ui_admin_operations_route_retirement_v1"
   },
   "canonical_next_routes": [
     "/workspace/tasks",
     "/workspace/tasks/:taskId",
     "/workspace/runs",
-    "/workspace/runs/:runId"
+    "/workspace/runs/:runId",
+    "/workspace/agents/:agentId",
+    "/workspace/evaluations",
+    "/workspace/tool-calls",
+    "/workspace/connectors",
+    "/workspace/external-bases/notion",
+    "/workspace/templates",
+    "/workspace/audit"
   ],
   "allowed_next_alias_routes": [
     "/admin/tasks/:taskId",
@@ -41,19 +49,36 @@
     "legacy_admin_task_run_routes_are_redirect_aliases_in_next",
     "vite_primary_navigation_uses_workspace_task_run_routes",
     "legacy_admin_task_run_routes_are_redirect_aliases_in_vite",
-    "agent_gateway_cli_api_mcp_unchanged"
+    "agent_gateway_cli_api_mcp_unchanged",
+    "vite_primary_navigation_uses_workspace_admin_operations_routes",
+    "legacy_admin_operations_routes_are_redirect_aliases_in_vite",
+    "admin_operations_route_retirement_verified"
   ],
   "remaining_cutover_requires": [],
   "canonical_vite_routes": [
     "/workspace/tasks",
     "/workspace/tasks/:id",
     "/workspace/runs",
-    "/workspace/runs/:id"
+    "/workspace/runs/:id",
+    "/workspace/agents/:id",
+    "/workspace/evaluations",
+    "/workspace/tool-calls",
+    "/workspace/connectors",
+    "/workspace/external-bases/notion",
+    "/workspace/templates",
+    "/workspace/audit"
   ],
   "allowed_vite_alias_routes": [
     "/admin/tasks/:id",
     "/admin/runs",
-    "/admin/runs/:id"
+    "/admin/runs/:id",
+    "/admin/agents/:id",
+    "/admin/evaluations",
+    "/admin/toolcalls",
+    "/admin/connectors",
+    "/admin/bases/notion",
+    "/admin/templates",
+    "/admin/audit"
   ],
   "vite_primary_inventory_files": [
     "ui/start-building-app/src/app/App.tsx",

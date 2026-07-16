@@ -164,6 +164,11 @@ jobs:
           set -euo pipefail
           python3 scripts/nextjs_parity_smoke.py
           python3 scripts/ui_api_parity_matrix_smoke.py
+          python3 scripts/ui_route_naming_decision_smoke.py
+          python3 scripts/ui_legacy_route_alias_smoke.py
+          python3 scripts/ui_navigation_inventory_smoke.py
+          python3 scripts/ui_route_retirement_packet_smoke.py
+          python3 scripts/ui_admin_operations_route_retirement_smoke.py
           python3 scripts/ui_covered_route_retirement_packet_smoke.py
           python3 scripts/vite_playwright_snapshot_smoke.py
           python3 scripts/nextjs_playwright_snapshot_smoke.py

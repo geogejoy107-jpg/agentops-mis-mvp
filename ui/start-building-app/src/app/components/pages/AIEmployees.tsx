@@ -3784,7 +3784,7 @@ export function AIEmployees() {
           return (
             <Link
               key={agent.agent_id}
-              to={`/admin/agents/${agent.agent_id}`}
+              to={`/workspace/agents/${agent.agent_id}`}
               className="block rounded-xl p-5 hover:opacity-90 transition-opacity"
               style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
             >

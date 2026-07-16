@@ -70,10 +70,10 @@ AGENTOPS_API_KEY="$AGENTOPS_API_KEY" python3 scripts/run_kb_bot_demo.py
 - `/workspace/pixel-office`: customer dispatch entry and pixel operating map.
 - `/workspace/tasks`: created knowledge-base tasks.
 - `/workspace/runs`: run ledger. Legacy `/admin/runs` redirects to this route.
-- `/admin/toolcalls`: tool calls and external upload plan.
+- `/workspace/tool-calls`: tool calls and external upload plan.
 - `/workspace/approvals`: pending approval for Dify/OpenAI/AnythingLLM upload.
-- `/admin/evaluations`: quality gate evidence.
-- `/admin/audit`: tamper-chain audit records.
+- `/workspace/evaluations`: quality gate evidence.
+- `/workspace/audit`: tamper-chain audit records.
 - Task or run detail: customer delivery artifact summary.
 
 ## Safety Boundaries

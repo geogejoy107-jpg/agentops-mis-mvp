@@ -1,10 +1,10 @@
 {
   "contract_id": "ui_route_retirement_packet_v1",
   "gate": "gate_4_ui_api_parity_before_nextjs",
-  "status": "executed_task_run_workspace_redirect_retirement",
+  "status": "executed_admin_operations_workspace_redirect_retirement",
   "updated_at": "2026-06-25",
   "policy": {
-    "scope": "task_run_legacy_admin_routes",
+    "scope": "task_run_and_admin_operations_legacy_admin_routes",
     "retirement_action": "executed_workspace_redirect",
     "retirement_allowed": true,
     "candidate_only": false,
@@ -14,9 +14,20 @@
     "executed_route_ids": [
       "task_detail",
       "run_ledger",
-      "run_detail"
+      "run_detail",
+      "agent_detail",
+      "evaluation_room",
+      "tool_calls",
+      "runtime_connectors",
+      "external_bases_notion",
+      "template_switching",
+      "audit"
     ],
-    "agent_gateway_cli_api_mcp_unchanged": true
+    "agent_gateway_cli_api_mcp_unchanged": true,
+    "contracts": [
+      "ui_route_retirement_packet_v1",
+      "ui_admin_operations_route_retirement_v1"
+    ]
   },
   "candidate_routes": [
     {
@@ -90,6 +101,188 @@
         "vite_and_next_browser_evidence_re_run",
         "agent_gateway_cli_api_mcp_unchanged"
       ]
+    },
+    {
+      "id": "agent_detail",
+      "legacy_vite_route": "/admin/agents/:id",
+      "canonical_vite_route": "/workspace/agents/:id",
+      "canonical_next_route": "/workspace/agents/:agentId",
+      "next_alias_route": null,
+      "current_state": "vite_legacy_route_redirects_to_workspace_next_ready",
+      "retirement_allowed_now": true,
+      "explicit_commit_required": false,
+      "required_commit_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged"
+      ],
+      "retirement_action": "executed_workspace_redirect",
+      "executed_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged",
+        "admin_operations_route_retirement_verified"
+      ]
+    },
+    {
+      "id": "evaluation_room",
+      "legacy_vite_route": "/admin/evaluations",
+      "canonical_vite_route": "/workspace/evaluations",
+      "canonical_next_route": "/workspace/evaluations",
+      "next_alias_route": null,
+      "current_state": "vite_legacy_route_redirects_to_workspace_next_ready",
+      "retirement_allowed_now": true,
+      "explicit_commit_required": false,
+      "required_commit_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged"
+      ],
+      "retirement_action": "executed_workspace_redirect",
+      "executed_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged",
+        "admin_operations_route_retirement_verified"
+      ]
+    },
+    {
+      "id": "tool_calls",
+      "legacy_vite_route": "/admin/toolcalls",
+      "canonical_vite_route": "/workspace/tool-calls",
+      "canonical_next_route": "/workspace/tool-calls",
+      "next_alias_route": null,
+      "current_state": "vite_legacy_route_redirects_to_workspace_next_ready",
+      "retirement_allowed_now": true,
+      "explicit_commit_required": false,
+      "required_commit_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged"
+      ],
+      "retirement_action": "executed_workspace_redirect",
+      "executed_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged",
+        "admin_operations_route_retirement_verified"
+      ]
+    },
+    {
+      "id": "runtime_connectors",
+      "legacy_vite_route": "/admin/connectors",
+      "canonical_vite_route": "/workspace/connectors",
+      "canonical_next_route": "/workspace/connectors",
+      "next_alias_route": null,
+      "current_state": "vite_legacy_route_redirects_to_workspace_next_ready",
+      "retirement_allowed_now": true,
+      "explicit_commit_required": false,
+      "required_commit_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged"
+      ],
+      "retirement_action": "executed_workspace_redirect",
+      "executed_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged",
+        "admin_operations_route_retirement_verified"
+      ]
+    },
+    {
+      "id": "external_bases_notion",
+      "legacy_vite_route": "/admin/bases/notion",
+      "canonical_vite_route": "/workspace/external-bases/notion",
+      "canonical_next_route": "/workspace/external-bases/notion",
+      "next_alias_route": null,
+      "current_state": "vite_legacy_route_redirects_to_workspace_next_ready",
+      "retirement_allowed_now": true,
+      "explicit_commit_required": false,
+      "required_commit_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged"
+      ],
+      "retirement_action": "executed_workspace_redirect",
+      "executed_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged",
+        "admin_operations_route_retirement_verified"
+      ]
+    },
+    {
+      "id": "template_switching",
+      "legacy_vite_route": "/admin/templates",
+      "canonical_vite_route": "/workspace/templates",
+      "canonical_next_route": "/workspace/templates",
+      "next_alias_route": null,
+      "current_state": "vite_legacy_route_redirects_to_workspace_next_ready",
+      "retirement_allowed_now": true,
+      "explicit_commit_required": false,
+      "required_commit_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged"
+      ],
+      "retirement_action": "executed_workspace_redirect",
+      "executed_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged",
+        "admin_operations_route_retirement_verified"
+      ]
+    },
+    {
+      "id": "audit",
+      "legacy_vite_route": "/admin/audit",
+      "canonical_vite_route": "/workspace/audit",
+      "canonical_next_route": "/workspace/audit",
+      "next_alias_route": null,
+      "current_state": "vite_legacy_route_redirects_to_workspace_next_ready",
+      "retirement_allowed_now": true,
+      "explicit_commit_required": false,
+      "required_commit_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged"
+      ],
+      "retirement_action": "executed_workspace_redirect",
+      "executed_evidence": [
+        "route_pair_named_in_commit",
+        "deep_link_redirect_or_alias_preserved",
+        "matrix_retirement_decision_updated",
+        "vite_and_next_browser_evidence_re_run",
+        "agent_gateway_cli_api_mcp_unchanged",
+        "admin_operations_route_retirement_verified"
+      ]
     }
   ],
   "evidence_commands": [
@@ -103,7 +296,8 @@
     "python3 scripts/nextjs_playwright_snapshot_smoke.py",
     "python3 scripts/nextjs_parity_smoke.py",
     "cd ui/start-building-app && npm run build",
-    "cd ui/next-app && npm run build"
+    "cd ui/next-app && npm run build",
+    "python3 scripts/ui_admin_operations_route_retirement_smoke.py"
   ],
   "retirement_commit_checklist": [
     "Keep or replace every retired Vite deep link with a redirect/alias before removal.",

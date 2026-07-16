@@ -35,16 +35,16 @@ AgentOps MIS remains the authority system for agents, tasks, runs, tool calls, a
 | Control Tower | `/admin` | Control Tower dashboard |
 | Agent Lobby | `/workspace/agents` | AI Employees / Agent Registry |
 | Task Hall | `/workspace/tasks` | Task Hall / My Tasks |
-| Runtime Lab | `/admin/connectors` | Runtime Connectors |
-| Tool Workshop | `/admin/toolcalls` | Tool Call Ledger |
+| Runtime Lab | `/workspace/connectors` | Runtime Connectors |
+| Tool Workshop | `/workspace/tool-calls` | Tool Call Ledger |
 | Approval Gate | `/workspace/approvals` | Approvals Inbox |
-| Evaluation Room | `/admin/evaluations` | Evaluation Room |
+| Evaluation Room | `/workspace/evaluations` | Evaluation Room |
 | Memory Archive | `/workspace/memory` | Memory Library |
-| Audit Vault | `/admin/audit` | Audit Center |
-| External Base Dock | `/admin/bases/notion` | External Base Dock / Notion Base |
+| Audit Vault | `/workspace/audit` | Audit Center |
+| External Base Dock | `/workspace/external-bases/notion` | External Base Dock / Notion Base |
 | Run Stream | `/workspace/runs` | Run Ledger |
 | Incident Corner | `/workspace/runs` | Failed/blocked run inspection |
-| Template Market | `/admin/templates` | Template Switching / Template Market |
+| Template Market | `/workspace/templates` | Template Switching / Template Market |
 
 ## State-to-zone mapping
 
@@ -78,7 +78,7 @@ The first implementation reads existing frontend data loaders: `loadDashboard`, 
 | `components/pixel/TaskCardSprite.tsx` | Pixel task-card chips inside Task Hall |
 | `components/pixel/ZoneInspector.tsx` | Selected zone/agent inspector and route actions |
 | `components/pixel/OperationsBar.tsx` | Active run/approval/gate/memory/runtime/incident summary |
-| `components/pages/EvaluationRoom.tsx` | Lightweight quality gate review page for `/admin/evaluations` |
+| `components/pages/EvaluationRoom.tsx` | Lightweight quality gate review page for `/workspace/evaluations` |
 
 ## Interaction model
 
@@ -107,7 +107,7 @@ Star-Office-UI can remain useful as a legacy local visualizer, visual inspiratio
 - Task cards appear in Task Hall.
 - Zone Inspector displays selected zone/agent details.
 - Operations Bar displays active runs, pending approvals, failed gates, memory candidates, runtime health, incident count and audit/base signals.
-- `/admin/evaluations` exists as the Evaluation Room target.
+- `/workspace/evaluations` exists as the Evaluation Room target.
 - No external assets are committed.
 - Backend core logic is unchanged.
 

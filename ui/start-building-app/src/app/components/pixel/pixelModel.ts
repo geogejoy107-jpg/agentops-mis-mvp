@@ -128,7 +128,7 @@ export const PIXEL_ZONES: PixelZoneDefinition[] = [
   {
     id: "runtime_lab",
     label: "Runtime Lab",
-    route: "/admin/connectors",
+    route: "/workspace/connectors",
     description: "OpenClaw, Hermes, Agnesfallback and OpenAI-compatible runtime connectors.",
     x: 6,
     y: 25,
@@ -140,7 +140,7 @@ export const PIXEL_ZONES: PixelZoneDefinition[] = [
   {
     id: "tool_workshop",
     label: "Tool Workshop",
-    route: "/admin/toolcalls",
+    route: "/workspace/tool-calls",
     description: "GitHub, shell, browser, API, Notion and other tool-call execution evidence.",
     x: 33,
     y: 29,
@@ -164,7 +164,7 @@ export const PIXEL_ZONES: PixelZoneDefinition[] = [
   {
     id: "evaluation_room",
     label: "Evaluation Room",
-    route: "/admin/evaluations",
+    route: "/workspace/evaluations",
     description: "Quality gates, evaluator scores, pass/fail reasons and improvement loops.",
     x: 79,
     y: 28,
@@ -188,7 +188,7 @@ export const PIXEL_ZONES: PixelZoneDefinition[] = [
   {
     id: "external_base_dock",
     label: "External Base Dock",
-    route: "/admin/bases/notion",
+    route: "/workspace/external-bases/notion",
     description: "Notion, W&B, Plane, Docmost and Mattermost sync configuration.",
     x: 33,
     y: 56,
@@ -200,7 +200,7 @@ export const PIXEL_ZONES: PixelZoneDefinition[] = [
   {
     id: "audit_vault",
     label: "Audit Vault",
-    route: "/admin/audit",
+    route: "/workspace/audit",
     description: "Append-only audit events, hash-chain proof, actor/action/entity evidence.",
     x: 59,
     y: 56,
@@ -224,7 +224,7 @@ export const PIXEL_ZONES: PixelZoneDefinition[] = [
   {
     id: "template_market",
     label: "Template Market",
-    route: "/admin/templates",
+    route: "/workspace/templates",
     description: "Template packages, base binding previews and safe migration checks.",
     x: 37,
     y: 80,
@@ -421,7 +421,7 @@ export const DEMO_AGENTS: PixelAgent[] = [
     taskTitle: "Notion dry-run export",
     latestRunId: "demo_run_sync",
     risk: "medium",
-    routeToDetail: "/admin/bases/notion",
+    routeToDetail: "/workspace/external-bases/notion",
     isDemo: true,
   },
   {
@@ -435,7 +435,7 @@ export const DEMO_AGENTS: PixelAgent[] = [
     taskTitle: "Record approval evidence",
     latestRunId: "demo_run_audit",
     risk: "low",
-    routeToDetail: "/admin/audit",
+    routeToDetail: "/workspace/audit",
     isDemo: true,
   },
 ];
@@ -566,7 +566,7 @@ export function derivePixelAgents(input: {
       latestRunId: activeRun?.run_id || failedRun?.run_id,
       risk: activeTask?.risk_level || (agent.failure_count > 5 ? "high" : "low"),
       approvalState: pendingApproval?.decision,
-      routeToDetail: agent.agent_id ? `/admin/agents/${agent.agent_id}` : "/workspace/agents",
+      routeToDetail: agent.agent_id ? `/workspace/agents/${agent.agent_id}` : "/workspace/agents",
     };
   });
 }

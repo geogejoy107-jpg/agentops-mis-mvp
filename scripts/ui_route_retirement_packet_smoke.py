@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static smoke for the Gate 4 task/run route retirement packet."""
+"""Static smoke for the Gate 4 workspace route retirement packet."""
 from __future__ import annotations
 
 import json
@@ -41,6 +41,62 @@ REQUIRED_ROUTES = {
         "alias_file": "ui/next-app/app/admin/runs/[runId]/page.tsx",
         "alias_target_fragment": "/workspace/runs/${encodeURIComponent(runId)}",
     },
+    "agent_detail": {
+        "legacy_vite_route": "/admin/agents/:id",
+        "canonical_vite_route": "/workspace/agents/:id",
+        "canonical_next_route": "/workspace/agents/:agentId",
+        "next_alias_route": None,
+        "alias_file": "ui/start-building-app/src/app/App.tsx",
+        "alias_target_fragment": "LegacyAgentDetailRedirect",
+    },
+    "evaluation_room": {
+        "legacy_vite_route": "/admin/evaluations",
+        "canonical_vite_route": "/workspace/evaluations",
+        "canonical_next_route": "/workspace/evaluations",
+        "next_alias_route": None,
+        "alias_file": "ui/start-building-app/src/app/App.tsx",
+        "alias_target_fragment": 'to="/workspace/evaluations"',
+    },
+    "tool_calls": {
+        "legacy_vite_route": "/admin/toolcalls",
+        "canonical_vite_route": "/workspace/tool-calls",
+        "canonical_next_route": "/workspace/tool-calls",
+        "next_alias_route": None,
+        "alias_file": "ui/start-building-app/src/app/App.tsx",
+        "alias_target_fragment": 'to="/workspace/tool-calls"',
+    },
+    "runtime_connectors": {
+        "legacy_vite_route": "/admin/connectors",
+        "canonical_vite_route": "/workspace/connectors",
+        "canonical_next_route": "/workspace/connectors",
+        "next_alias_route": None,
+        "alias_file": "ui/start-building-app/src/app/App.tsx",
+        "alias_target_fragment": 'to="/workspace/connectors"',
+    },
+    "external_bases_notion": {
+        "legacy_vite_route": "/admin/bases/notion",
+        "canonical_vite_route": "/workspace/external-bases/notion",
+        "canonical_next_route": "/workspace/external-bases/notion",
+        "next_alias_route": None,
+        "alias_file": "ui/start-building-app/src/app/App.tsx",
+        "alias_target_fragment": 'to="/workspace/external-bases/notion"',
+    },
+    "template_switching": {
+        "legacy_vite_route": "/admin/templates",
+        "canonical_vite_route": "/workspace/templates",
+        "canonical_next_route": "/workspace/templates",
+        "next_alias_route": None,
+        "alias_file": "ui/start-building-app/src/app/App.tsx",
+        "alias_target_fragment": 'to="/workspace/templates"',
+    },
+    "audit": {
+        "legacy_vite_route": "/admin/audit",
+        "canonical_vite_route": "/workspace/audit",
+        "canonical_next_route": "/workspace/audit",
+        "next_alias_route": None,
+        "alias_file": "ui/start-building-app/src/app/App.tsx",
+        "alias_target_fragment": 'to="/workspace/audit"',
+    },
 }
 
 REQUIRED_EVIDENCE_COMMANDS = {
@@ -50,6 +106,7 @@ REQUIRED_EVIDENCE_COMMANDS = {
     "python3 scripts/ui_legacy_route_alias_smoke.py",
     "python3 scripts/ui_navigation_inventory_smoke.py",
     "python3 scripts/ui_route_retirement_packet_smoke.py",
+    "python3 scripts/ui_admin_operations_route_retirement_smoke.py",
     "python3 scripts/vite_playwright_snapshot_smoke.py",
     "python3 scripts/nextjs_playwright_snapshot_smoke.py",
     "python3 scripts/nextjs_parity_smoke.py",
@@ -105,15 +162,16 @@ def main() -> int:
     packet = read_json(PACKET_PATH)
     require(packet.get("contract_id") == CONTRACT_ID, f"packet contract_id must be {CONTRACT_ID}")
     require(packet.get("gate") == "gate_4_ui_api_parity_before_nextjs", "packet gate id is wrong")
-    require(packet.get("status") == "executed_task_run_workspace_redirect_retirement", "packet must record executed task/run route retirement")
+    require(packet.get("status") == "executed_admin_operations_workspace_redirect_retirement", "packet must record executed workspace route retirement")
     policy = packet.get("policy") or {}
-    require(policy.get("scope") == "task_run_legacy_admin_routes", "packet scope is wrong")
+    require(policy.get("scope") == "task_run_and_admin_operations_legacy_admin_routes", "packet scope is wrong")
     require(policy.get("retirement_action") == "executed_workspace_redirect", "packet must execute workspace redirect retirement")
-    require(policy.get("retirement_allowed") is True, "packet must allow the executed task/run retirement")
+    require(policy.get("retirement_allowed") is True, "packet must allow the executed route retirement")
     require(policy.get("candidate_only") is False, "packet must no longer be candidate-only")
     require(policy.get("requires_explicit_route_retirement_commit") is False, "packet must close the explicit retirement requirement")
     require(policy.get("no_breaking_deep_links") is True, "packet must preserve deep links")
-    require(set(policy.get("executed_route_ids") or []) == set(REQUIRED_ROUTES), "packet must name the executed task/run route ids")
+    require(set(policy.get("executed_route_ids") or []) == set(REQUIRED_ROUTES), "packet must name the executed route ids")
+    require("ui_admin_operations_route_retirement_v1" in set(policy.get("contracts") or []), "packet must bind the admin operations route contract")
     require(policy.get("agent_gateway_cli_api_mcp_unchanged") is True, "packet must preserve Agent Gateway CLI/API/MCP")
     require(policy.get("verification_command") == "python3 scripts/ui_route_retirement_packet_smoke.py", "packet verification command is wrong")
 
@@ -130,6 +188,7 @@ def main() -> int:
     matrix_policy = matrix.get("policy") or {}
     route_contracts = set(matrix_policy.get("route_level_contracts") or [])
     require(CONTRACT_ID in route_contracts, "UI/API matrix must include the retirement packet contract")
+    require("ui_admin_operations_route_retirement_v1" in route_contracts, "UI/API matrix must include the admin operations route contract")
 
     vite_routes = actual_vite_routes()
     next_routes = actual_next_routes()
@@ -144,7 +203,8 @@ def main() -> int:
         require(route.get("legacy_vite_route") == expected["legacy_vite_route"], f"{route_id} legacy route changed")
         require(route.get("canonical_next_route") == expected["canonical_next_route"], f"{route_id} canonical route changed")
         require(route.get("next_alias_route") == expected["next_alias_route"], f"{route_id} alias route changed")
-        require(route.get("current_state") == "vite_legacy_route_redirects_to_workspace_next_alias_ready", f"{route_id} current state is wrong")
+        expected_state = "vite_legacy_route_redirects_to_workspace_next_alias_ready" if expected["next_alias_route"] else "vite_legacy_route_redirects_to_workspace_next_ready"
+        require(route.get("current_state") == expected_state, f"{route_id} current state is wrong")
         require(route.get("retirement_allowed_now") is True, f"{route_id} must be retired by this packet")
         require(route.get("explicit_commit_required") is False, f"{route_id} must close the explicit retirement requirement")
         require(route.get("retirement_action") == "executed_workspace_redirect", f"{route_id} must record workspace redirect retirement")
@@ -154,7 +214,8 @@ def main() -> int:
         require(expected["legacy_vite_route"] in vite_routes, f"{route_id} Vite legacy route is already missing")
         require(expected["canonical_vite_route"] in vite_routes, f"{route_id} Vite canonical workspace route is missing")
         require(expected["canonical_next_route"] in next_routes, f"{route_id} Next canonical route is missing")
-        require(expected["next_alias_route"] in next_routes, f"{route_id} Next alias route is missing")
+        if expected["next_alias_route"]:
+            require(expected["next_alias_route"] in next_routes, f"{route_id} Next alias route is missing")
         alias_file = ROOT / expected["alias_file"]
         require(alias_file.exists(), f"{route_id} alias file is missing")
         require(expected["alias_target_fragment"] in read_text(alias_file), f"{route_id} alias no longer redirects to canonical target")
@@ -171,10 +232,12 @@ def main() -> int:
         require(matrix_entry.get("retirement_action") == "executed_workspace_redirect", f"{route_id} matrix must record workspace redirect retirement")
         matrix_evidence = set(matrix_entry.get("evidence_commands") or [])
         require("python3 scripts/ui_route_retirement_packet_smoke.py" in matrix_evidence, f"{route_id} matrix must include packet smoke")
+        if not expected["next_alias_route"]:
+            require("python3 scripts/ui_admin_operations_route_retirement_smoke.py" in matrix_evidence, f"{route_id} matrix must include admin operations smoke")
         gate = str(matrix_entry.get("retirement_gate") or "").lower()
         require("explicit route retirement executed" in gate and "redirect" in gate, f"{route_id} retirement gate must record executed redirect retirement")
 
-    require("LegacyTaskDetailRedirect" in vite_app_text and "LegacyRunDetailRedirect" in vite_app_text, "Vite legacy task/run deep links must be redirect components")
+    require("LegacyTaskDetailRedirect" in vite_app_text and "LegacyRunDetailRedirect" in vite_app_text and "LegacyAgentDetailRedirect" in vite_app_text, "Vite legacy deep links must be redirect components")
     require('<Route path="/admin/runs" element={<Navigate to="/workspace/runs" replace />} />' in vite_app_text, "Vite legacy run ledger must redirect to workspace runs")
 
     human_doc = read_text(ROOT / "docs" / "UI_ROUTE_RETIREMENT_PACKET.md")
@@ -187,6 +250,7 @@ def main() -> int:
     require(CONTRACT_ID in route_doc, "route naming doc must reference the packet contract")
     require(CONTRACT_ID in matrix_doc, "matrix doc must reference the packet contract")
     require("scripts/ui_route_retirement_packet_smoke.py" in closed_loop, "closed-loop doc must include packet smoke")
+    require("scripts/ui_admin_operations_route_retirement_smoke.py" in closed_loop, "closed-loop doc must include admin operations packet smoke")
     require(CONTRACT_ID in readiness, "readiness checker must require the packet contract")
 
     print(json.dumps({
