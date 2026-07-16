@@ -65,6 +65,7 @@ jobs:
           timeout 120s python3 scripts/human_session_management_smoke.py
           timeout 120s python3 scripts/human_console_pairing_smoke.py
           timeout 120s python3 scripts/human_console_pairing_ui_smoke.py
+          timeout 120s python3 scripts/bounded_json_request_smoke.py
           timeout 120s python3 scripts/private_host_owner_browser_handoff_smoke.py
           timeout 120s python3 scripts/private_host_auth_workspace_ui_smoke.py
           timeout 120s python3 scripts/private_host_service_worker_presence_smoke.py

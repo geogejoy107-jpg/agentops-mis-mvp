@@ -95,18 +95,19 @@ Verified behavior:
 
 ## Known Limitations
 
-- First-Owner bootstrap, login/logout, and current-account Session revocation
-  are exposed. Invitation, additional account creation, disable, and role
-  change UI are pending.
+- First-Owner bootstrap, login/logout, current-account Session revocation and
+  one-time non-Owner pairing/device revocation are exposed. General account
+  creation, disable and role-change UI remain pending.
 - State-changing requests, bootstrap, login and logout enforce the configured
   Origin allowlist; missing or untrusted origins fail closed when configured.
 - Host-sensitive routes currently require Owner but still need a stricter
   direct-host/proxy policy before broad remote use.
 - Login throttling remains pending and blocks internet-facing Relay acceptance;
   local password reset/recovery is implemented separately.
-- Browser-only Relay pairing, device binding/revocation, proxy hardening and
-  physical second-computer acceptance are not yet complete. Tailscale Serve is
-  an advanced profile, not the ordinary onboarding gate.
+- Browser-only Relay transport, proxy hardening and physical second-computer
+  acceptance are not yet complete. Local pairing and device binding/revocation
+  are implemented. Tailscale Serve is an advanced profile, not the ordinary
+  onboarding gate.
 - This is not public internet or multi-tenant SaaS authentication.
 
 ## Next Slice

@@ -887,17 +887,55 @@ def row_unchanged(before, row: dict, ignore=None) -> bool:
     return True
 
 
+DEFAULT_MAX_JSON_BODY_BYTES = 256 * 1024
+
+
+class JsonRequestError(ValueError):
+    def __init__(self, error: str, message: str, status: int):
+        super().__init__(message)
+        self.error = error
+        self.message = message
+        self.status = status
+
+
+def max_json_body_bytes() -> int:
+    raw = str(os.environ.get("AGENTOPS_MAX_JSON_BODY_BYTES") or DEFAULT_MAX_JSON_BODY_BYTES).strip()
+    try:
+        configured = int(raw)
+    except (TypeError, ValueError):
+        configured = DEFAULT_MAX_JSON_BODY_BYTES
+    return min(max(configured, 1024), 1024 * 1024)
+
+
 def parse_json_body(handler: BaseHTTPRequestHandler) -> dict:
-    length = int(handler.headers.get("Content-Length", "0"))
+    transfer_encoding = str(handler.headers.get("Transfer-Encoding") or "").strip().lower()
+    if transfer_encoding and transfer_encoding != "identity":
+        raise JsonRequestError(
+            "unsupported_transfer_encoding",
+            "JSON requests must use a bounded Content-Length body.",
+            400,
+        )
+    raw_length = str(handler.headers.get("Content-Length") or "0").strip()
+    try:
+        length = int(raw_length)
+    except (TypeError, ValueError) as exc:
+        raise JsonRequestError("invalid_content_length", "Content-Length must be a non-negative integer.", 400) from exc
+    if length < 0:
+        raise JsonRequestError("invalid_content_length", "Content-Length must be a non-negative integer.", 400)
+    if length > max_json_body_bytes():
+        raise JsonRequestError("request_body_too_large", "The JSON request body exceeds the configured limit.", 413)
     if length <= 0:
         return {}
     body = handler.rfile.read(length)
-    if not body:
-        return {}
+    if len(body) != length:
+        raise JsonRequestError("incomplete_request_body", "The JSON request body was incomplete.", 400)
     try:
-        return json.loads(body.decode("utf-8"))
-    except json.JSONDecodeError:
-        return {}
+        parsed = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise JsonRequestError("invalid_json_body", "The request body must be valid UTF-8 JSON.", 400) from exc
+    if not isinstance(parsed, dict):
+        raise JsonRequestError("invalid_json_object", "The request body must be a JSON object.", 400)
+    return parsed
 
 
 def notion_config() -> dict:
@@ -30511,17 +30549,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        body = parse_json_body(self)
         try:
+            body = parse_json_body(self)
             return self.handle_post_api(self.api_path(parsed.path), body)
+        except JsonRequestError as e:
+            self.close_connection = True
+            self.send_json({"error": e.error, "message": e.message, "body_omitted": True}, status=e.status)
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
 
     def do_PATCH(self):
         parsed = urlparse(self.path)
-        body = parse_json_body(self)
         try:
+            body = parse_json_body(self)
             return self.handle_patch_api(self.api_path(parsed.path), body)
+        except JsonRequestError as e:
+            self.close_connection = True
+            self.send_json({"error": e.error, "message": e.message, "body_omitted": True}, status=e.status)
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
 
