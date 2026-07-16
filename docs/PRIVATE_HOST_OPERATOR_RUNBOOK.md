@@ -1,7 +1,12 @@
 # AgentOps MIS 私有 Host 与远程操控台运行手册
 
 状态：目标运行手册，命令是否可用以当前实现验收为准
-适用范围：一台受信任电脑运行 AgentOps MIS 与 AI Runtime，另一台电脑仅通过 Tailscale 和浏览器操控
+适用范围：一台受信任电脑运行 AgentOps MIS 与 AI Runtime，另一台电脑只用浏览器操控
+
+2026-07-17 产品路径修正：普通用户默认通过 AgentOps Relay 与一次性配对使用
+远程 Console，不安装或理解 Tailscale。本文第 5、6 节现有 Tailscale 步骤
+保留为高级私网模式，不再代表默认 onboarding，也不能关闭浏览器零安装验收。
+默认 Relay 尚未部署完成前，只能称为目标流程，不能用 Tailscale 证据代替。
 
 ## 1. 使用边界
 
@@ -12,7 +17,9 @@
 
 操控端不需要 Git、Python、Node、仓库副本、Hermes 或 OpenClaw。模型密钥、Agent 凭据、数据库、知识库原文、raw prompt/response 和运行日志不应传到操控端，也不得进入 Git 仓库。
 
-本版本只规划 **Tailscale Serve 私网预览**：Host 应继续监听 loopback，由 Tailscale 提供设备私网和 HTTPS 入口。不得自动执行 Tailscale 配置，不得自动开放路由器端口，不得绑定公网，也不得把该模式宣传为公开 SaaS。
+默认模式由 Host 主动建立经过认证的 Relay 隧道，第二台电脑访问稳定的每 Host
+HTTPS 地址；Relay 只做 L4/SNI 透传，应用 TLS 在 Host 终止。不得自动开放
+路由器端口、直接绑定公网或把 Relay 误称为 MIS 权威 SaaS。
 
 > 下文 `agentops host ...` 是产品目标命令。只有对应实现、smoke、第二电脑验收和 Release 证据通过后，才可视为已发布能力。若当前安装返回 unknown command，应回到仓库当前验收文档，不要用手工公网暴露绕过缺失功能。
 
@@ -21,17 +28,15 @@
 Host 主机应满足：
 
 - 使用受支持的 AgentOps MIS 版本化安装资产或明确标注的开发预览；
-- Tailscale 已由用户手动安装并登录到受信任的 tailnet；
+- 如使用高级私网模式，Tailscale 已由用户手动安装并登录；默认 Relay 模式不要求它；
 - 本地磁盘有足够空间保存账本、知识索引和批准产物；
 - Hermes/OpenClaw 如需真实运行，已由主机管理员单独安装并通过本地健康检查；
 - 没有把 token、`.env`、SQLite DB、raw prompt/response、私聊或完整 transcript 放进仓库；
 - 确认本轮不会自动安装或启用 Hermes/OpenClaw，Runtime 自动安装留待后续版本。
 
-Console 电脑只需要：
-
-- Tailscale 客户端，并加入与 Host 相同的受信任 tailnet；
-- 现代浏览器；
-- Host 管理员提供的 HTTPS Console URL 和一次性设置/邀请信息。
+Console 电脑只需要现代浏览器、稳定的每 Host HTTPS Console URL 和一次性配对
+邀请。不得要求 Tailscale/VPN、AgentOps MIS、Git、Python、Node、Hermes 或
+OpenClaw。身份或关键审批仍需用户本人确认，不能把密码交给 Codex。
 
 ## 3. 安装版本化 Host 预览
 
@@ -153,8 +158,7 @@ agentops host version
 不安装 Node、Git、Hermes、OpenClaw 或 Tailscale。安装器会再次按
 `manifest.json` 校验每个文件，拒绝篡改、遗漏、未声明文件和路径穿越。
 默认程序位于 `~/.local/share/agentops-mis`，数据位于
-`~/.agentops/host`。操控端电脑不执行本节，它仍然只需要 Tailscale 和
-浏览器。
+`~/.agentops/host`。操控端电脑不执行本节，它只需要浏览器。
 
 ## 4. 目标初始化流程
 
@@ -298,7 +302,7 @@ agentops host logs
 
 日志输出必须经过脱敏。不得显示 setup code、密码、Session、CSRF、Agent token、模型密钥、完整 prompt/response 或任意数据库内容。需要持续观察时，以实现支持的参数为准，不要假定 `--follow` 已发布。
 
-## 5. Tailscale Serve 预览
+## 5. 高级模式：Tailscale Serve 预览
 
 先只生成并审查预览：
 
@@ -346,7 +350,7 @@ agentops host console-url
 
 `console-url` 应只输出不含凭据的 HTTPS 地址。另一台电脑加入同一 tailnet 后，在浏览器中打开该地址，完成 Owner 初始化或登录。未认证用户不得读取 workspace 数据。
 
-## 6. 另一台电脑的操作流程
+## 6. 高级模式：Tailscale 第二电脑流程
 
 正式逐项协议与 bounded evidence 字段见
 `docs/PRIVATE_HOST_SECOND_DEVICE_ACCEPTANCE.md`。浏览器生成的 device

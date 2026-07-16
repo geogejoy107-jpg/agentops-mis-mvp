@@ -1,4 +1,4 @@
-# Private Host Second-Device Acceptance
+# Advanced Tailscale Second-Device Acceptance
 
 Status: advanced Tailscale-mode protocol; browser-only Relay protocol pending
 

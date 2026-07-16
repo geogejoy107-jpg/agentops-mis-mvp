@@ -13,11 +13,11 @@ physical evidence and cannot be closed by mock output.
 |---|---|---|---|
 | 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.31` publishes a no-repository bootstrap plus archive/checksum assets from exact commit `fed1b2410d6725a217c9727dba570db62cc46963`. Candidate, Draft and public assets were byte-equal; clean-HOME install/start/status/stop and preview.30-to-preview.31 upgrade passed. A receipt from another physical Mac remains missing. | Passed locally; external evidence required |
 | 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md`, `PRIVATE_HOST_AUTH_WORKSPACE_UI_ACCEPTANCE.md`, `PRIVATE_HOST_SERVICE_WORKER_PRESENCE_ACCEPTANCE.md` and bundle smoke cover installed CLI, production UI, browser-first Owner setup inside the existing React Workspace, init, doctor, start/status/stop, Runtime readiness and fail-closed Worker ownership. Installed preview.31 serves that integrated UI and reports the existing Owner login ready. | Passed locally |
-| 3 | Dependency-free second computer opens private HTTPS console and authenticates | preview.31 is live through private Tailscale HTTPS on port 8443, Funnel is disabled, and the Workspace is ready. A fresh Owner Human Session authenticated through that private HTTPS route and logged out after bounded review. This same-Host client receipt does not replace physical second-device browser login. | Host side passed; external evidence required |
+| 3 | Browser-only second computer opens the stable per-Host HTTPS console, pairs and authenticates | The current preview proves same-origin Host auth and advanced Tailscale HTTPS only. The amended ordinary path requires a deployed L4 Relay, Host-side TLS, one-time pairing and a physical Console with no Tailscale/VPN client. No such receipt exists yet. | Relay implementation and external evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, `private_host_owner_browser_handoff_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, setup-code authority, role/session separation and CSRF/Origin checks. | Passed locally |
 | 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | Customer dispatch and ledger views exist; Audit and Memory use live APIs; memory decisions write through the approver route; approved artifact download is Session/workspace/approval checked and audited. A real Owner Session rejected the two false-positive prepared actions and two low-value memory candidates, producing bounded audit rows. The physical second-device task/disconnect/download/logout receipt remains open. | Partial; Owner review passed |
 | 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | Installed preview.31 service Workers completed OpenClaw run `run_gw_612fb884979c` and Hermes run `run_gw_9767258929f0`. Each has a completed task/run, tool call, runtime summary event, passing evaluation, artifact, memory candidate, audit chain and verified plan-evidence manifest. Both memory candidates received explicit Owner decisions. | Passed on current package |
-| 7 | Console disconnect does not stop Host Worker or lose task | `PRIVATE_HOST_CONSOLE_DISCONNECT_ACCEPTANCE.md` proves real Hermes/OpenClaw jobs completed after their first Host-local Session clients were discarded, then were read through fresh Owner Sessions. Physical browser/tailnet loss remains missing. | Passed on Host; external evidence required |
+| 7 | Browser or Relay disconnect does not stop Host Worker or lose/duplicate task | `PRIVATE_HOST_CONSOLE_DISCONNECT_ACCEPTANCE.md` proves real Hermes/OpenClaw jobs completed after Host-local Session clients were discarded. Physical browser-only and deployed-Relay loss/reconnect evidence remains missing. | Passed on Host; Relay and external evidence required |
 | 8 | Host restart preserves ledger and knowledge state | `PRIVATE_HOST_RESTART_PERSISTENCE_ACCEPTANCE.md` covers Session, task and a 194-document local Markdown/FTS index remaining searchable after managed restart. | Passed locally |
 | 9 | Backup and restore pass on isolated database | `PRIVATE_HOST_BACKUP_RESTORE_ACCEPTANCE.md` covers strict manifest/hash/schema/integrity/foreign-key checks, atomic replacement and access revocation. | Passed locally |
 | 10 | Release/Git contain no credentials, DB, raw prompt/response or generated dependencies | Bundle forbidden-member scan, clean-clone tracked-file selection, release-consumer smoke and secret boundaries pass. Sample exports, DB, `.env`, `node_modules`, caches and temporary browser fixtures were excluded from commits and Release assets. Git does not track `dist`; the Release intentionally packages only the prebuilt production UI so a customer Host needs no Node runtime. | Passed locally; repeat at RC |
@@ -822,12 +822,21 @@ exact commit and version tag:
 - `.zip`, `.tar.gz` and `.sha256.json` are attached to a GitHub prerelease;
 - another Mac downloads, verifies and installs that exact asset without a
   repository, Node or Git;
-- Host and console are connected through private HTTPS without replacing an
-  unrelated Tailscale Serve target;
+- the Host exposes a stable per-Host HTTPS origin through an authenticated
+  outbound L4 Relay with Host-side TLS and no direct inbound listener;
+- the second computer uses only a stock browser: no Tailscale/VPN client,
+  AgentOps package, repository or developer/runtime dependency;
+- pairing expiry, single use, attempt limiting, role cap, replay denial, device
+  revocation and bound-Session invalidation pass;
 - the second computer completes login, task dispatch, observation, approval,
   evaluation/audit review and approved artifact download;
-- closing the browser or disconnecting tailnet does not stop a fresh confirmed
-  Hermes/OpenClaw task, and reconnect shows the same task/run evidence;
+- closing the browser or interrupting the Relay does not stop a fresh confirmed
+  Hermes/OpenClaw task, and reconnect shows the same task/run evidence without
+  duplication;
+- Relay inspection proves no application plaintext or authority state was
+  durably stored;
+- the advanced Tailscale profile remains fail-closed with Funnel disabled, but
+  its receipt is not substituted for browser-only acceptance;
 - backup/restore, restart/knowledge persistence, upgrade/rollback, secret scan,
   bundle scan and production UI build pass at the same commit.
 

@@ -43,14 +43,24 @@ The Relay is transport, not MIS authority.
 - The Host initiates the connection; no inbound router port or default
   non-loopback Python binding is opened.
 - Pairing binds a Console device, Host identity, workspace, and maximum role.
+- Each Host has a stable non-secret hostname. The Relay routes by SNI at layer
+  4; it does not serve Workspace JavaScript or terminate application TLS.
+- TLS terminates at the Host with a Host-generated private key and publicly
+  trusted per-Host certificate. The private key never leaves the Host.
 - Relay storage is limited to bounded connection/provisioning metadata with an
   explicit retention policy.
 - Raw prompts, model responses, knowledge content, artifact bodies, cookies,
   CSRF values, invitation secrets, runtime credentials, and Host paths are
   excluded from Relay logs and durable storage.
-- Application frames use a proven end-to-end encryption protocol/library so
-  the Relay cannot query their content.
+- Normal browser requests stay inside Host-terminated TLS so the Relay cannot
+  query their content.
 - Every state mutation is still authorized and audited by the Host.
+
+The Relay operator necessarily controls routing and coordinates DNS/certificate
+issuance. Relay compromise may deny or misroute service, and DNS/CA compromise
+may impersonate an endpoint. Certificate rotation, transparency monitoring,
+abuse controls, and a customer-hosted advanced profile mitigate but do not
+erase those residual risks.
 
 ## Failure Model
 
@@ -69,7 +79,7 @@ The Relay is transport, not MIS authority.
 
 CI may exercise a local fake Relay, but product acceptance requires all of:
 
-- a deployed TLS Relay at a stable Console origin;
+- a deployed L4 Relay at a stable per-Host Console origin with Host-side TLS;
 - a physical second computer with only a browser;
 - one-time pairing and later device revocation;
 - a fresh real Hermes or OpenClaw task controlled from that browser;

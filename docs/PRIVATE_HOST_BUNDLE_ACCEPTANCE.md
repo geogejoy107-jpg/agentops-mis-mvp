@@ -212,7 +212,9 @@ not retroactively attributed to the immutable preview.31 package.
 - Apple Developer ID signing, notarization, Gatekeeper validation and `.pkg` or
   `.dmg` UX are not complete.
 - Target Mac must already provide Python 3.10 or newer.
-- Tailscale and Hermes/OpenClaw remain explicit Host-side prerequisites.
+- Hermes/OpenClaw remain explicit Host-side prerequisites for real execution.
+  Tailscale is only an advanced private-network profile and is not required by
+  the ordinary browser-only Relay Console.
 - `.github/workflows/private-host-release.yml` manually publishes an existing
   exact-commit tag as a prerelease after rebuilding and re-running bundle and
   consumer smokes. It then downloads the published bootstrap and performs a

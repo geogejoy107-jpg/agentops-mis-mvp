@@ -48,9 +48,9 @@ stack to `0.0.0.0`.
 
 ```text
 Remote browser console
-  -> fixed HTTPS Console origin
-  -> opaque authenticated Relay
-  <- Host-initiated encrypted tunnel
+  -> stable per-Host HTTPS origin
+  -> Relay L4/SNI routing (TLS remains opaque)
+  <- Host-initiated authenticated tunnel
   -> AgentOps MIS host entrypoint
        -> human session and authorization
        -> Python control plane and Agent Gateway
@@ -106,12 +106,12 @@ The console must not:
 - The Host opens an outbound, mutually authenticated connection to an
   AgentOps-managed or customer-hosted Relay; it never opens an inbound router
   port.
-- The Console requires only a browser at a stable HTTPS origin. It does not
+- The Console requires only a browser at a stable per-Host HTTPS origin. It does not
   install Tailscale, AgentOps MIS, Git, Python, Node, Hermes, or OpenClaw.
 - First access uses a short-lived, one-time pairing invitation created by an
   authenticated Host Owner and approved by the Host. The invitation is not a
   reusable password or machine credential.
-- The Relay routes encrypted frames and bounded connection metadata. It is not
+- The Relay routes opaque TLS bytes and bounded connection metadata. It is not
   the task, run, approval, memory, knowledge, artifact, or audit authority.
 - Loss of the Relay or browser connection never stops a claimed Host task;
   reconnect resumes observation of the same task and run.
@@ -145,27 +145,38 @@ require a separate commercial security architecture.
 ### Recommended product path: outbound AgentOps Relay
 
 The Host remains on loopback and establishes an outbound tunnel to a Relay.
-The product presents a stable HTTPS Console URL and a one-time pairing flow
-without exposing credentials in the URL. A Console user must not need to learn
-network topology, copy a tailnet DNS name, or install a network client.
+Each Host receives a stable, non-secret HTTPS hostname. The Relay routes by SNI
+at layer 4 and does not serve the Workspace JavaScript or terminate the Host's
+application TLS. TLS terminates at the Host using a Host-generated private key
+and a publicly trusted per-Host certificate. Certificate provisioning and
+renewal may coordinate through AgentOps DNS/ACME infrastructure, but the Host
+private key is never uploaded. A Console user must not need to learn network
+topology, copy a tailnet DNS name, or install a network client.
 
 The transport must satisfy all of the following:
 
 - no automatic router port forwarding and no default `0.0.0.0` binding;
-- Host identity is pinned during pairing and every tunnel reconnect is
-  mutually authenticated;
+- Host identity is bound to the per-Host origin during pairing and every tunnel
+  reconnect is mutually authenticated;
 - one-time pairing invitations are hashed at rest, expire, are single-use, are
   role-scoped, and can be revoked before use;
 - paired Console devices and Human Sessions can be listed and revoked by an
   Owner;
-- application payloads are encrypted between Console and Host with a proven
-  protocol/library; the Relay cannot persist or query raw application content;
+- browser application payloads stay inside Host-terminated TLS; the Relay
+  cannot persist or query normal application plaintext;
 - Relay logs omit raw prompts, responses, knowledge text, artifact bodies,
   cookies, CSRF values, invitation secrets, and Host filesystem paths;
 - backpressure, duplicate delivery, reconnect, and replay are fail-closed and
   preserve the Host ledger as the only authority;
 - a Relay outage degrades remote access without corrupting or cancelling Host
   work.
+
+Relay control of routing, DNS, and certificate coordination is an explicit
+availability and endpoint-identity trust boundary. A compromised Relay may
+deny or misroute traffic, while DNS/CA compromise may impersonate an endpoint;
+these residual risks require monitoring, certificate transparency/rotation,
+and a customer-hosted advanced profile. They must not be hidden behind an
+"opaque Relay" claim.
 
 CI may use a local fake Relay for deterministic protocol tests, but a product
 claim requires a deployed HTTPS Relay and a physical browser-only Console
@@ -297,7 +308,9 @@ Target flow:
 
 1. On the Host, open the literal-loopback Console and establish the first Owner.
 2. On the Host, choose **Enable remote Console** and create a one-time pairing
-   invitation for an operator or approver.
+   invitation for a non-Owner role. Pairing may provision that invited account
+   or bind an existing account, but it never bootstraps an Owner or reuses an
+   Agent Gateway credential.
 3. On the second computer, open the stable HTTPS Console URL in a browser. No
    Tailscale or other VPN installation is part of this flow.
 4. Complete pairing and sign in; consequential approval remains a human action.

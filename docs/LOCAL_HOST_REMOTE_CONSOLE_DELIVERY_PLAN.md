@@ -98,6 +98,8 @@ Deliverables:
 - implement one-time setup code and password/passkey-ready account storage;
 - use password hashing from a proven library, not custom cryptography;
 - implement expiring/revocable server-side browser sessions;
+- add non-enumerating login/pairing errors, attempt limits, cooldowns, bounded
+  request bodies, exact Host/Origin validation, and proxy-header rejection;
 - add CSRF and allowed-origin checks for state-changing browser requests;
 - enforce owner/operator/approver/viewer permissions server-side;
 - audit authentication, dispatch, approval, download, and admin actions;
@@ -129,10 +131,11 @@ Deliverables:
 - add one-time, expiring, single-use Owner-created Console pairing invitations;
 - add paired-device inventory, role binding, last-seen evidence, revocation,
   and immediate Session invalidation;
-- add a transport-neutral Host tunnel client and deterministic local fake Relay
-  for protocol tests;
+- add a transport-neutral Host tunnel client, Host-generated TLS identity, and
+  deterministic local L4 fake Relay for protocol tests;
 - add a deployed HTTPS Relay profile with a stable Console URL, Host-initiated
-  connection, bounded connection metadata, and no authority data store;
+  connection, per-Host SNI routing, Host-side TLS termination, bounded
+  connection metadata, and no authority data store;
 - add replay protection, idempotent request correlation, reconnect/resume,
   backpressure, and Relay-unavailable behavior;
 - add connection/setup page with host version, workspace, ledger, knowledge,
@@ -155,7 +158,8 @@ Verification:
 - pairing codes are single-use, expire, are role-scoped, are omitted from
   logs/audit/URLs, and cannot be replayed;
 - revoking a paired device invalidates its Human Sessions and blocks reconnect;
-- Relay process/storage inspection finds no raw prompt/response, knowledge
+- Relay process/storage inspection finds no application plaintext, raw
+  prompt/response, knowledge
   body, artifact body, cookie, CSRF value, invitation secret, credential, or
   Host path;
 - task dispatch, run observation, approval, evaluation, audit, memory review,
@@ -169,10 +173,10 @@ Implementation slices:
 
 1. `3A Pairing`: schema, local Owner creation, one-time redemption, role scope,
    device/session revocation, audit, and UI.
-2. `3B Transport contract`: Host connector interface, envelope IDs, replay and
-   idempotency rules, local fake Relay, reconnect tests.
-3. `3C Deployed Relay`: HTTPS/WSS endpoint, Host provisioning, stable Console
-   origin, bounded operations metadata, deployment and rollback.
+2. `3B Transport contract`: Host connector interface, per-Host TLS/SNI identity,
+   request IDs, replay and idempotency rules, local L4 fake Relay, reconnect tests.
+3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host
+   Console origin, bounded operations metadata, deployment and rollback.
 4. `3D Physical acceptance`: fresh browser-only device, real Hermes/OpenClaw
    run, disconnect/reconnect, approval, memory, artifact and logout receipt.
 

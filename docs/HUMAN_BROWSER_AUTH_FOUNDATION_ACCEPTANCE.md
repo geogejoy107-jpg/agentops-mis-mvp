@@ -102,9 +102,11 @@ Verified behavior:
   Origin allowlist; missing or untrusted origins fail closed when configured.
 - Host-sensitive routes currently require Owner but still need a stricter
   direct-host/proxy policy before broad remote use.
-- Login throttling and password reset/recovery are pending.
-- Tailscale Serve configuration and second-computer acceptance are not yet
-  complete.
+- Login throttling remains pending and blocks internet-facing Relay acceptance;
+  local password reset/recovery is implemented separately.
+- Browser-only Relay pairing, device binding/revocation, proxy hardening and
+  physical second-computer acceptance are not yet complete. Tailscale Serve is
+  an advanced profile, not the ordinary onboarding gate.
 - This is not public internet or multi-tenant SaaS authentication.
 
 ## Next Slice

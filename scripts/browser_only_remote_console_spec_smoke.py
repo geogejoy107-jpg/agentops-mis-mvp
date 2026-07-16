@@ -11,6 +11,9 @@ SPEC = ROOT / "docs" / "LOCAL_HOST_REMOTE_CONSOLE_SPEC.md"
 PLAN = ROOT / "docs" / "LOCAL_HOST_REMOTE_CONSOLE_DELIVERY_PLAN.md"
 DECISION = ROOT / "docs" / "BROWSER_ONLY_REMOTE_CONSOLE_TRANSPORT_DECISION.md"
 TAILSCALE_ACCEPTANCE = ROOT / "docs" / "PRIVATE_HOST_SECOND_DEVICE_ACCEPTANCE.md"
+BROWSER_RELAY_ACCEPTANCE = ROOT / "docs" / "PRIVATE_HOST_BROWSER_RELAY_ACCEPTANCE.md"
+RC = ROOT / "docs" / "PRIVATE_HOST_RC_ACCEPTANCE.md"
+RUNBOOK = ROOT / "docs" / "PRIVATE_HOST_OPERATOR_RUNBOOK.md"
 
 
 def require(condition: bool, message: str, failures: list[str]) -> None:
@@ -24,7 +27,10 @@ def main() -> int:
     plan = PLAN.read_text(encoding="utf-8")
     decision = DECISION.read_text(encoding="utf-8")
     tailscale = TAILSCALE_ACCEPTANCE.read_text(encoding="utf-8")
-    combined = " ".join((spec + plan + decision).split()).lower()
+    browser_acceptance = BROWSER_RELAY_ACCEPTANCE.read_text(encoding="utf-8")
+    rc = RC.read_text(encoding="utf-8")
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+    combined = " ".join((spec + plan + decision + browser_acceptance).split()).lower()
     normalized_tailscale = " ".join(tailscale.split())
 
     require(
@@ -63,8 +69,14 @@ def main() -> int:
         failures,
     )
     require(
-        "application frames use a proven end-to-end encryption protocol/library" in combined,
-        "Relay content-confidentiality requirement is missing",
+        "host-side tls" in combined and "l4" in combined and "sni" in combined,
+        "Host-terminated TLS/L4 Relay content-confidentiality requirement is missing",
+        failures,
+    )
+    require(
+        "does not serve Workspace JavaScript" in decision
+        and "private key never leaves the Host" in decision,
+        "Relay executable-content or Host-key boundary is missing",
         failures,
     )
     require(
@@ -80,6 +92,23 @@ def main() -> int:
     require(
         "public quick tunnel" in combined and "cannot substitute" in combined,
         "unsafe shortcut anti-substitution boundary is missing",
+        failures,
+    )
+    require(
+        "no Tailscale/VPN client" in browser_acceptance,
+        "mandatory physical protocol does not prove a browser-only Console",
+        failures,
+    )
+    require(
+        "Relay implementation and external evidence required" in rc
+        and "advanced Tailscale profile" in rc,
+        "RC gates still treat Tailscale as the ordinary transport",
+        failures,
+    )
+    require(
+        "普通用户默认通过 AgentOps Relay" in runbook
+        and "高级模式：Tailscale Serve" in runbook,
+        "operator runbook still presents Tailscale as ordinary onboarding",
         failures,
     )
 
