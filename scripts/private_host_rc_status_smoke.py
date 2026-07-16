@@ -76,8 +76,13 @@ def main() -> int:
     require("A fresh Owner Human Session over the private HTTPS route rejected" in normalized_second,
             "second-device document must record Host-side Owner review without claiming physical evidence", failures)
     require(
-        "Status: execution protocol; physical second-device evidence pending" in second,
-        "second-device protocol must remain pending until physical evidence exists",
+        "Status: advanced Tailscale-mode protocol; browser-only Relay protocol pending" in second,
+        "second-device document must identify Tailscale as an advanced fallback and keep browser-only Relay pending",
+        failures,
+    )
+    require(
+        "cannot close the browser-only Console gate" in normalized_second,
+        "advanced Tailscale receipt must not substitute for browser-only Console acceptance",
         failures,
     )
     require("Automated browser runtimes outside the Host tailnet are not accepted as a substitute." in normalized_second,

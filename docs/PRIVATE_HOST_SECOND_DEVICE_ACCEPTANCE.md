@@ -1,6 +1,12 @@
 # Private Host Second-Device Acceptance
 
-Status: execution protocol; physical second-device evidence pending
+Status: advanced Tailscale-mode protocol; browser-only Relay protocol pending
+
+This document now covers the advanced private-network fallback only. It no
+longer defines the ordinary customer onboarding path and cannot close the
+browser-only Console gate in `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. Ordinary
+acceptance must use a second computer with only a browser through the deployed
+Relay, without installing or configuring Tailscale.
 
 This protocol proves that a computer without the AgentOps MIS repository,
 Python, Node, Git, Hermes, OpenClaw, or an Agent Gateway token can operate the

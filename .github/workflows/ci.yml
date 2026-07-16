@@ -80,6 +80,7 @@ jobs:
           timeout 120s python3 scripts/private_host_acceptance_receipt_smoke.py
           timeout 120s python3 scripts/private_host_audit_memory_ui_smoke.py
           timeout 120s python3 scripts/private_host_second_device_ui_smoke.py
+          timeout 120s python3 scripts/browser_only_remote_console_spec_smoke.py
           timeout 120s python3 scripts/private_host_rc_status_smoke.py
           timeout 120s python3 scripts/release_branch_control_smoke.py
           timeout 120s python3 scripts/release_freeze_protocol_smoke.py

@@ -4,6 +4,11 @@ This plan implements `docs/LOCAL_HOST_REMOTE_CONSOLE_SPEC.md` as small,
 verifiable slices. It preserves loopback local mode while adding a separate,
 fail-closed private-host mode.
 
+The 2026-07-17 transport amendment makes an outbound Relay plus browser pairing
+the ordinary Console path. Tailscale Serve remains an advanced fallback and
+must not be counted as proof that a non-technical Console user has a zero-install
+experience.
+
 ## Delivery Rules
 
 - Keep `main` usable after every slice.
@@ -25,13 +30,15 @@ fail-closed private-host mode.
 |---|---|---|
 | A. Host runtime | Production UI serving, lifecycle, health | same-origin host process |
 | B. Human access | Login, session, CSRF, roles, audit | fail-closed browser auth |
-| C. Console UX | Connection/setup/readiness and remote-safe UI | zero-install browser path |
+| C. Console UX | Pairing, connection/setup/readiness and remote-safe UI | browser-only Relay path |
+| G. Relay transport | Outbound Host tunnel, routing, replay safety and privacy | local fake Relay then deployed HTTPS Relay |
 | D. Packaging | Bundle, checksums, installer, upgrade/rollback | versioned release asset |
 | E. Runtime dogfood | Hermes/OpenClaw host execution and evidence | fresh real task receipt |
 | F. Verification | clean-machine, remote-device, security, backup | acceptance packet |
 
-Lanes A and B define the critical path. C can begin against stable API contracts;
-D can prepare reproducible packaging in parallel; E and F integrate each usable
+Lanes A and B define the Host security boundary. C and G define the ordinary
+remote critical path and can advance against stable API contracts; D can
+prepare reproducible packaging in parallel; E and F integrate each usable
 slice as it lands.
 
 ## Phase 0: Baseline and Contract Freeze
@@ -43,6 +50,8 @@ Deliverables:
 - add API/route inventory for the human console and Agent Gateway;
 - classify routes as public health, human-session, machine-token, or local-only;
 - add a threat-boundary checklist for private host mode;
+- freeze the browser/Relay/Host envelope, pairing, replay, reconnect, and
+  metadata-retention contracts;
 - preserve current loopback one-command acceptance as a regression gate.
 
 Verification:
@@ -113,11 +122,19 @@ Verification:
 Exit gate: a remote browser cannot read workspace data without a valid human
 session and cannot perform actions outside its role.
 
-## Phase 3: Private-Network Console
+## Phase 3: Browser-Only Remote Console
 
 Deliverables:
 
-- add Tailscale Serve setup/status guidance and a copyable console URL;
+- add one-time, expiring, single-use Owner-created Console pairing invitations;
+- add paired-device inventory, role binding, last-seen evidence, revocation,
+  and immediate Session invalidation;
+- add a transport-neutral Host tunnel client and deterministic local fake Relay
+  for protocol tests;
+- add a deployed HTTPS Relay profile with a stable Console URL, Host-initiated
+  connection, bounded connection metadata, and no authority data store;
+- add replay protection, idempotent request correlation, reconnect/resume,
+  backpressure, and Relay-unavailable behavior;
 - add connection/setup page with host version, workspace, ledger, knowledge,
   worker, and adapter readiness;
 - make normal API calls same-origin and remove hard-coded loopback assumptions
@@ -126,17 +143,38 @@ Deliverables:
   consistently;
 - add session/device revocation and logout;
 - ensure reconnecting the browser resumes observation without restarting work.
+- retain Tailscale Serve as a separately labeled advanced private-network
+  profile with Funnel disabled; do not show it in ordinary onboarding.
 
 Verification:
 
-- second-computer browser acceptance over the private network;
-- no Python, Node, Git, repository, Hermes, or OpenClaw is installed on the
-  console computer;
+- second-computer browser acceptance over the deployed Relay using only a
+  modern browser;
+- no Tailscale, VPN, Python, Node, Git, repository, Hermes, OpenClaw, or
+  AgentOps package is installed on the Console computer;
+- pairing codes are single-use, expire, are role-scoped, are omitted from
+  logs/audit/URLs, and cannot be replayed;
+- revoking a paired device invalidates its Human Sessions and blocks reconnect;
+- Relay process/storage inspection finds no raw prompt/response, knowledge
+  body, artifact body, cookie, CSRF value, invitation secret, credential, or
+  Host path;
 - task dispatch, run observation, approval, evaluation, audit, memory review,
   and approved artifact download work remotely;
 - browser disconnect/reconnect does not interrupt the worker.
 
-Exit gate: the second computer is a useful zero-install control console.
+Exit gate: the second computer is a useful browser-only control console and the
+operator never configures or learns a private network.
+
+Implementation slices:
+
+1. `3A Pairing`: schema, local Owner creation, one-time redemption, role scope,
+   device/session revocation, audit, and UI.
+2. `3B Transport contract`: Host connector interface, envelope IDs, replay and
+   idempotency rules, local fake Relay, reconnect tests.
+3. `3C Deployed Relay`: HTTPS/WSS endpoint, Host provisioning, stable Console
+   origin, bounded operations metadata, deployment and rollback.
+4. `3D Physical acceptance`: fresh browser-only device, real Hermes/OpenClaw
+   run, disconnect/reconnect, approval, memory, artifact and logout receipt.
 
 ## Phase 4: Packaging and Lifecycle
 
@@ -147,6 +185,9 @@ Deliverables:
   browser Workspace and never starts live workers implicitly;
 - include production UI assets and Python application without local project
   data;
+- include the disabled-by-default Relay connector and make **Enable remote
+  Console** an explicit Owner action; do not require a separately installed
+  network client;
 - provide checksums, provenance, SBOM, third-party notices, uninstall, backup,
   restore, and upgrade instructions;
 - add preview-first background service installation;
@@ -203,7 +244,8 @@ Run the complete acceptance matrix:
 - local workstation regression;
 - private host startup and shutdown;
 - human auth/session/role/CSRF/origin tests;
-- private-network second-device workflow;
+- browser-only Relay second-device workflow;
+- Tailscale advanced-mode regression with Funnel disabled;
 - worker persistence during console disconnect;
 - real Hermes and OpenClaw receipts when authorized;
 - backup, restore, migration, rollback, and clean uninstall;
@@ -221,7 +263,8 @@ The goal is complete only when:
 
 1. The host installs from a real versioned asset and starts through a product
    command rather than repository-specific manual steps.
-2. A second computer requires only a browser and private-network access.
+2. A second computer requires only a modern browser; ordinary onboarding does
+   not install or explain Tailscale, a VPN client, or development dependencies.
 3. Human authentication and role enforcement protect all workspace data and
    state-changing actions.
 4. Ledger, knowledge, project files, secrets, and Agent execution remain on the
@@ -235,7 +278,7 @@ The goal is complete only when:
 ## Deferred Work
 
 - automatic Hermes/OpenClaw/model installation;
-- public hosted SaaS and multi-tenancy;
+- full hosted MIS authority storage, SaaS multi-tenancy, and billing;
 - enterprise SSO and complete enterprise RBAC;
 - mobile/native desktop console;
 - Notion/Dify live synchronization;

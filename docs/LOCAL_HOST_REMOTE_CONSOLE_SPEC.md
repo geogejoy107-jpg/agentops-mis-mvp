@@ -1,8 +1,14 @@
 # AgentOps MIS Local Host + Remote Console Product Spec
 
-Status: proposed implementation baseline  
+Status: implementation baseline; browser-only transport amendment accepted
 Target: v1.6 local private host  
 Scope: single-owner or trusted small-team deployment
+
+Transport amendment (2026-07-17): ordinary Console users must not install,
+join, or understand Tailscale. The default product path is a browser-only
+Console reached through an AgentOps-managed or customer-hosted outbound Relay.
+Tailscale Serve remains a supported advanced private-network profile and a
+release fallback, but it is no longer the target first-run experience.
 
 ## 1. Product Goal
 
@@ -10,7 +16,8 @@ Turn AgentOps MIS into a two-surface local product:
 
 - one trusted computer runs the MIS control plane, SQLite ledger, knowledge
   index, project files, Hermes/OpenClaw adapters, and worker daemons;
-- another computer uses a zero-install browser console to create tasks,
+- another computer uses only a modern browser, with no VPN client or AgentOps
+  installation, to create tasks,
   supervise work, approve actions, review evidence, and download approved
   deliverables.
 
@@ -41,7 +48,9 @@ stack to `0.0.0.0`.
 
 ```text
 Remote browser console
-  -> private encrypted network / HTTPS
+  -> fixed HTTPS Console origin
+  -> opaque authenticated Relay
+  <- Host-initiated encrypted tunnel
   -> AgentOps MIS host entrypoint
        -> human session and authorization
        -> Python control plane and Agent Gateway
@@ -91,12 +100,29 @@ The console must not:
 - Preserves the current safe mock/live-confirmation behavior.
 - Does not require remote access configuration.
 
-### Private host mode
+### Easy remote console mode
+
+- Recommended product path for an ordinary second computer.
+- The Host opens an outbound, mutually authenticated connection to an
+  AgentOps-managed or customer-hosted Relay; it never opens an inbound router
+  port.
+- The Console requires only a browser at a stable HTTPS origin. It does not
+  install Tailscale, AgentOps MIS, Git, Python, Node, Hermes, or OpenClaw.
+- First access uses a short-lived, one-time pairing invitation created by an
+  authenticated Host Owner and approved by the Host. The invitation is not a
+  reusable password or machine credential.
+- The Relay routes encrypted frames and bounded connection metadata. It is not
+  the task, run, approval, memory, knowledge, artifact, or audit authority.
+- Loss of the Relay or browser connection never stops a claimed Host task;
+  reconnect resumes observation of the same task and run.
+
+### Advanced private-network mode
 
 - Explicit opt-in through a separate `agentops host` command or equivalent
   launcher profile.
 - Serves the production-built React console and APIs from one origin.
-- Remains loopback behind a recommended private-network proxy when possible.
+- Remains loopback behind a user-managed private-network proxy such as
+  Tailscale Serve.
 - Requires human authentication before any workspace data is returned.
 - Requires explicit confirmation before enabling live Hermes/OpenClaw workers.
 - A Host-owned Worker start must first prove that no same-adapter local Worker
@@ -106,23 +132,52 @@ The console must not:
   start the Host with `--no-workers`. The Host never kills or unloads an
   existing Worker automatically.
 
-### Hosted/public mode
+### Full hosted/public mode
 
-Out of scope for this version. Public internet exposure, multi-tenant SaaS,
-billing, tenant provisioning, enterprise SSO, and anonymous enrollment require
-a separate commercial security architecture and must not be inferred from
-private host mode.
+Out of scope for this version. The narrow Relay transport in Easy remote
+console mode does not make the Relay an authority database or general SaaS.
+Multi-tenant MIS storage, billing, tenant provisioning, enterprise SSO,
+anonymous enrollment, hosted model execution, and hosted knowledge storage
+require a separate commercial security architecture.
 
 ## 5. Network Strategy
 
-### Recommended v1 path: Tailscale Serve
+### Recommended product path: outbound AgentOps Relay
 
-The host application remains on loopback. Tailscale provides the encrypted
-device network and HTTPS entrypoint. The product must print the exact local and
-private-console URLs after startup without exposing credentials in either URL.
+The Host remains on loopback and establishes an outbound tunnel to a Relay.
+The product presents a stable HTTPS Console URL and a one-time pairing flow
+without exposing credentials in the URL. A Console user must not need to learn
+network topology, copy a tailnet DNS name, or install a network client.
 
-This is preferred over opening LAN router ports or directly binding the Python
-server to every interface.
+The transport must satisfy all of the following:
+
+- no automatic router port forwarding and no default `0.0.0.0` binding;
+- Host identity is pinned during pairing and every tunnel reconnect is
+  mutually authenticated;
+- one-time pairing invitations are hashed at rest, expire, are single-use, are
+  role-scoped, and can be revoked before use;
+- paired Console devices and Human Sessions can be listed and revoked by an
+  Owner;
+- application payloads are encrypted between Console and Host with a proven
+  protocol/library; the Relay cannot persist or query raw application content;
+- Relay logs omit raw prompts, responses, knowledge text, artifact bodies,
+  cookies, CSRF values, invitation secrets, and Host filesystem paths;
+- backpressure, duplicate delivery, reconnect, and replay are fail-closed and
+  preserve the Host ledger as the only authority;
+- a Relay outage degrades remote access without corrupting or cancelling Host
+  work.
+
+CI may use a local fake Relay for deterministic protocol tests, but a product
+claim requires a deployed HTTPS Relay and a physical browser-only Console
+receipt.
+
+### Advanced path: Tailscale Serve
+
+The Host may remain on loopback behind Tailscale Serve for customers who prefer
+a user-managed private network or require a no-vendor-relay deployment. This
+mode keeps Funnel disabled. It is an advanced setup profile, not the ordinary
+Console onboarding path, and its client installation cannot satisfy the
+browser-only acceptance gate.
 
 ### Optional trusted-LAN path
 
@@ -241,10 +296,13 @@ headless/recovery path.
 Target flow:
 
 1. On the Host, open the literal-loopback Console and establish the first Owner.
-2. On the second computer, open the private HTTPS URL in a browser.
-3. Sign in with the owner/operator account or use an explicit invitation flow.
-4. See host, ledger, knowledge index, and worker readiness.
-5. Dispatch a safe task or explicitly confirm a live runtime task.
+2. On the Host, choose **Enable remote Console** and create a one-time pairing
+   invitation for an operator or approver.
+3. On the second computer, open the stable HTTPS Console URL in a browser. No
+   Tailscale or other VPN installation is part of this flow.
+4. Complete pairing and sign in; consequential approval remains a human action.
+5. See host, ledger, knowledge index, and worker readiness.
+6. Dispatch a safe task or explicitly confirm a live runtime task.
 
 No Git, Python, Node, repository clone, or Agent runtime is required on the
 console computer.
@@ -313,8 +371,9 @@ The private-host slice is accepted only when all items pass:
    repository manually.
 2. `agentops host start` starts the production UI, API, ledger, knowledge index,
    and selected workers or reports an actionable failure.
-3. A second computer with no project dependencies can open the console through
-   the private-network URL and authenticate.
+3. A second computer with no project dependencies or private-network client can
+   open the stable HTTPS Console URL, pair, and authenticate using only a
+   browser.
 4. Unauthenticated API and UI data requests fail closed.
 5. The remote console can create a task, observe claim/execution, approve a
    prepared action, review evaluation/audit evidence, and download an approved
@@ -330,7 +389,7 @@ The private-host slice is accepted only when all items pass:
 ## 13. Non-Goals
 
 - automatic Hermes/OpenClaw/model installation in the first slice;
-- public SaaS or direct internet exposure;
+- full hosted MIS/SaaS authority storage or direct inbound Host exposure;
 - multi-tenant billing and customer provisioning;
 - complete enterprise RBAC or external identity provider integration;
 - moving the knowledge corpus or model execution to the console computer;
@@ -348,7 +407,7 @@ After private-host acceptance:
 - signed/notarized macOS installer and background service;
 - Windows/Linux host installers;
 - PWA installation for the console;
-- invitation and device management UI;
+- richer enterprise invitation policy and fleet-wide device administration;
 - secret manager integration;
 - multiple workspaces with stronger isolation;
 - customer-hosted and vendor-hosted deployment profiles.
