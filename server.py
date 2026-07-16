@@ -30438,7 +30438,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         for name, value in (headers or {}).items():
-            self.send_header(name, value)
+            values = value if isinstance(value, (list, tuple)) else [value]
+            for item in values:
+                self.send_header(name, item)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
@@ -30582,6 +30584,14 @@ class Handler(BaseHTTPRequestHandler):
                 if not human_auth.required():
                     return self.send_json({"error": "human_auth_disabled", "message": "Human authentication is not enabled."}, 409)
                 payload, status = human_auth.list_sessions(conn, self._human_auth_context)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/human-auth/pairing-invitations":
+                payload, status = human_auth.list_pairing_invitations(conn, self._human_auth_context)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/human-auth/devices":
+                payload, status = human_auth.list_devices(conn, self._human_auth_context)
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agent-gateway/status":
@@ -31637,11 +31647,44 @@ class Handler(BaseHTTPRequestHandler):
                 if origin_error:
                     payload, status = origin_error
                     return self.send_json(payload, status)
-                payload, status, token, event = human_auth.login(conn, body)
+                payload, status, token, event = human_auth.login(conn, body, self.headers)
                 session_ref = human_auth.session_reference(event["session_id"]) if event.get("session_id") else "login"
                 audit(conn, "user", event.get("account_id"), f"human_auth.{event['event']}", "human_sessions", session_ref, None, {"status": status}, {"credentials_omitted": True, "session_id_omitted": True, "token_omitted": True, "username_hash": event.get("username_hash")})
                 conn.commit()
                 response_headers = {"Set-Cookie": human_auth.session_cookie(token, secure=human_auth.cookie_secure_for_request(self.headers))} if token else None
+                return self.send_json(payload, status, headers=response_headers)
+            if path == "/api/human-auth/pair":
+                origin_error = human_auth.origin_error(self.headers)
+                if origin_error:
+                    payload, status = origin_error
+                    return self.send_json(payload, status)
+                payload, status, session_token, device_token, event = human_auth.redeem_pairing_invitation(conn, body)
+                audit(
+                    conn,
+                    "user",
+                    event.get("account_id"),
+                    f"human_auth.{event['event']}",
+                    "human_pairing_invitations",
+                    event.get("invitation_ref") or "pairing",
+                    None,
+                    {"status": status, "device_ref": event.get("device_ref")},
+                    {
+                        "credentials_omitted": True,
+                        "pairing_secret_omitted": True,
+                        "password_omitted": True,
+                        "device_secret_omitted": True,
+                        "session_id_omitted": True,
+                        "token_omitted": True,
+                    },
+                )
+                conn.commit()
+                response_headers = None
+                if session_token and device_token:
+                    secure = human_auth.cookie_secure_for_request(self.headers)
+                    response_headers = {"Set-Cookie": [
+                        human_auth.session_cookie(session_token, secure=secure),
+                        human_auth.device_cookie(device_token, secure=secure),
+                    ]}
                 return self.send_json(payload, status, headers=response_headers)
             if path == "/api/human-auth/password-recovery/start":
                 origin_error = human_auth.local_recovery_origin_error(self.headers)
@@ -31868,6 +31911,58 @@ class Handler(BaseHTTPRequestHandler):
                         "session_hashes_omitted": True,
                         "tokens_omitted": True,
                         "revoked_session_refs": event.get("revoked_session_refs") or [],
+                    },
+                )
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/human-auth/pairing-invitations":
+                payload, status, event = human_auth.create_pairing_invitation(conn, human_context, body)
+                audit(
+                    conn,
+                    "user",
+                    human_context.get("account_id") if human_context else None,
+                    f"human_auth.{event['event']}",
+                    "human_pairing_invitations",
+                    event.get("invitation_ref") or "pairing_invitation",
+                    None,
+                    {"status": status, "role": event.get("role"), "expires_at": event.get("expires_at")},
+                    {"pairing_secret_omitted": True, "credentials_omitted": True, "token_omitted": True},
+                )
+                conn.commit()
+                return self.send_json(payload, status)
+            if path.startswith("/api/human-auth/pairing-invitations/") and path.endswith("/revoke"):
+                invitation_ref = path_segment(path, -2)
+                payload, status, event = human_auth.revoke_pairing_invitation(conn, human_context, invitation_ref)
+                audit(
+                    conn,
+                    "user",
+                    human_context.get("account_id") if human_context else None,
+                    f"human_auth.{event['event']}",
+                    "human_pairing_invitations",
+                    event.get("invitation_ref") or invitation_ref,
+                    None,
+                    {"status": status},
+                    {"pairing_secret_omitted": True, "credentials_omitted": True, "token_omitted": True},
+                )
+                conn.commit()
+                return self.send_json(payload, status)
+            if path.startswith("/api/human-auth/devices/") and path.endswith("/revoke"):
+                device_ref = path_segment(path, -2)
+                payload, status, event = human_auth.revoke_device(conn, human_context, device_ref)
+                audit(
+                    conn,
+                    "user",
+                    human_context.get("account_id") if human_context else None,
+                    f"human_auth.{event['event']}",
+                    "human_devices",
+                    event.get("device_ref") or device_ref,
+                    None,
+                    {"status": status, "revoked_session_count": int(event.get("revoked_session_count") or 0)},
+                    {
+                        "device_secret_omitted": True,
+                        "session_ids_omitted": True,
+                        "credentials_omitted": True,
+                        "token_omitted": True,
                     },
                 )
                 conn.commit()

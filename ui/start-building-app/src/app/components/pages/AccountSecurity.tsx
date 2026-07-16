@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Ban, CheckCircle2, LoaderCircle, LogOut, Monitor, RefreshCw, ShieldCheck } from "lucide-react";
+import { Ban, CheckCircle2, Copy, KeyRound, LoaderCircle, LogOut, Monitor, RefreshCw, ShieldCheck, Smartphone, UserPlus, X } from "lucide-react";
 import {
+  createHumanPairingInvitation,
   loadHumanBrowserSessions,
+  loadHumanPairedDevices,
+  loadHumanPairingInvitations,
   revokeHumanBrowserSession,
+  revokeHumanPairedDevice,
+  revokeHumanPairingInvitation,
   type HumanBrowserSession,
   type HumanBrowserSessionsPayload,
+  type HumanPairedDevicesPayload,
+  type HumanPairingInvitationCreated,
+  type HumanPairingInvitationsPayload,
+  type HumanPairingRole,
 } from "../../data/liveApi";
 import { useHumanAuth } from "../../context/HumanAuthContext";
 import { pick, usePreferences } from "../../context/PreferencesContext";
@@ -22,13 +31,32 @@ function statusColor(status: HumanBrowserSession["status"]) {
   return "var(--mis-muted)";
 }
 
+function boundedRef(value: string) {
+  return value.length <= 72 ? value : `${value.slice(0, 48)}...${value.slice(-12)}`;
+}
+
+function pairingErrorMessage(locale: "zh" | "en") {
+  return pick(locale, {
+    zh: "配对请求未完成。请刷新后重试。",
+    en: "The pairing request did not complete. Refresh and try again.",
+  });
+}
+
 export function AccountSecurity() {
   const { locale } = usePreferences();
   const { required, user, logout } = useHumanAuth();
   const [payload, setPayload] = useState<HumanBrowserSessionsPayload | null>(null);
+  const [invitations, setInvitations] = useState<HumanPairingInvitationsPayload | null>(null);
+  const [devices, setDevices] = useState<HumanPairedDevicesPayload | null>(null);
+  const [createdInvitation, setCreatedInvitation] = useState<HumanPairingInvitationCreated | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [pairingError, setPairingError] = useState("");
+  const [pairingRole, setPairingRole] = useState<HumanPairingRole>("operator");
+  const [pairingExpiry, setPairingExpiry] = useState(3600);
+  const [pairingLabel, setPairingLabel] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const copy = pick(locale, {
     zh: {
@@ -42,6 +70,35 @@ export function AccountSecurity() {
       workspace: "工作区",
       sessions: "浏览器会话",
       sessionsHint: "查看并撤销其他已登录浏览器。系统不采集 IP 或 User-Agent。",
+      pairing: "成员与设备配对",
+      pairingHint: "创建一次性邀请，为非 Owner 成员设置账户并绑定当前设备。",
+      createInvitation: "创建邀请",
+      roleOperator: "操作员",
+      roleApprover: "审批员",
+      roleViewer: "只读成员",
+      invitationLabel: "邀请备注",
+      invitationLabelPlaceholder: "例如：小王的 MacBook",
+      validFor: "有效期",
+      tenMinutes: "10 分钟",
+      oneHour: "1 小时",
+      thirtyMinutes: "30 分钟",
+      oneTimeLink: "一次性配对链接",
+      oneTimeLinkHint: "密钥仅在本次创建响应中出现，并只保留在当前页面内存中。",
+      copyLink: "复制配对链接",
+      copied: "已复制",
+      dismiss: "清除",
+      invitations: "配对邀请",
+      devices: "已配对设备",
+      noInvitations: "暂无配对邀请。",
+      noDevices: "暂无已配对设备。",
+      invitation: "邀请",
+      device: "设备",
+      label: "备注",
+      redeemed: "已使用",
+      locked: "已锁定",
+      confirmInvitation: "确定撤销这个配对邀请吗？",
+      confirmDevice: "确定撤销这个设备吗？该设备需要重新配对或登录。",
+      pairingBoundary: "页面仅显示有界引用。配对密钥不会进入浏览器存储、日志或错误信息。",
       active: "有效",
       total: "总计",
       revoked: "已撤销",
@@ -74,6 +131,35 @@ export function AccountSecurity() {
       workspace: "Workspace",
       sessions: "Browser sessions",
       sessionsHint: "Review and revoke other signed-in browsers. IP and User-Agent data are not collected.",
+      pairing: "Members and paired devices",
+      pairingHint: "Create a one-time invitation that provisions a non-Owner account and binds the current device.",
+      createInvitation: "Create invitation",
+      roleOperator: "Operator",
+      roleApprover: "Approver",
+      roleViewer: "Viewer",
+      invitationLabel: "Invitation label",
+      invitationLabelPlaceholder: "For example: Casey's MacBook",
+      validFor: "Valid for",
+      tenMinutes: "10 minutes",
+      oneHour: "1 hour",
+      thirtyMinutes: "30 minutes",
+      oneTimeLink: "One-time pairing link",
+      oneTimeLinkHint: "The secret appears only in this create response and remains only in this page's memory.",
+      copyLink: "Copy pairing link",
+      copied: "Copied",
+      dismiss: "Clear",
+      invitations: "Pairing invitations",
+      devices: "Paired devices",
+      noInvitations: "No pairing invitations.",
+      noDevices: "No paired devices.",
+      invitation: "Invitation",
+      device: "Device",
+      label: "Label",
+      redeemed: "Used",
+      locked: "Locked",
+      confirmInvitation: "Revoke this pairing invitation?",
+      confirmDevice: "Revoke this device? It will need to pair or sign in again.",
+      pairingBoundary: "Only bounded references are shown. Pairing secrets never enter browser storage, logs, or error messages.",
       active: "Active",
       total: "total",
       revoked: "Revoked",
@@ -107,7 +193,14 @@ export function AccountSecurity() {
     setLoading(true);
     setError("");
     try {
-      setPayload(await loadHumanBrowserSessions());
+      const [nextSessions, nextInvitations, nextDevices] = await Promise.all([
+        loadHumanBrowserSessions(),
+        loadHumanPairingInvitations(),
+        loadHumanPairedDevices(),
+      ]);
+      setPayload(nextSessions);
+      setInvitations(nextInvitations);
+      setDevices(nextDevices);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
@@ -137,6 +230,77 @@ export function AccountSecurity() {
     }
   };
 
+  const createInvitation = async () => {
+    setBusy("create_invitation");
+    setPairingError("");
+    setCopied(false);
+    try {
+      const created = await createHumanPairingInvitation({
+        role: pairingRole,
+        expires_in_seconds: pairingExpiry,
+        label: pairingLabel.trim() || undefined,
+      });
+      if (!created.pairing_secret || (created.secret_omitted !== false && created.pairing_secret_omitted !== false)) {
+        throw new Error("pairing_secret_missing");
+      }
+      setCreatedInvitation(created);
+      setPairingLabel("");
+      await refresh();
+    } catch {
+      setPairingError(pairingErrorMessage(locale));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const copyPairingLink = async () => {
+    if (!createdInvitation?.pairing_secret) return;
+    setPairingError("");
+    try {
+      const target = new URL(window.location.href);
+      target.hash = "";
+      await navigator.clipboard.writeText(`${target.toString()}#pair=${encodeURIComponent(createdInvitation.pairing_secret)}`);
+      setCopied(true);
+    } catch {
+      setPairingError(pairingErrorMessage(locale));
+    }
+  };
+
+  const revokeInvitation = async (invitationRef: string) => {
+    if (!window.confirm(copy.confirmInvitation)) return;
+    setBusy(`invitation:${invitationRef}`);
+    setPairingError("");
+    try {
+      await revokeHumanPairingInvitation(invitationRef);
+      if (createdInvitation?.invitation_ref === invitationRef) setCreatedInvitation(null);
+      await refresh();
+    } catch {
+      setPairingError(pairingErrorMessage(locale));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const revokeDevice = async (deviceRef: string) => {
+    if (!window.confirm(copy.confirmDevice)) return;
+    setBusy(`device:${deviceRef}`);
+    setPairingError("");
+    try {
+      await revokeHumanPairedDevice(deviceRef);
+      await refresh();
+    } catch {
+      setPairingError(pairingErrorMessage(locale));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const roleLabel = (role: HumanPairingRole) => ({
+    operator: copy.roleOperator,
+    approver: copy.roleApprover,
+    viewer: copy.roleViewer,
+  })[role];
+
   return (
     <WorkspaceSettingsPage title={copy.title} subtitle={copy.subtitle} testId="account-security-page">
       <WorkspaceSettingsSection title={copy.account} description={copy.accountHint} testId="account-profile-section">
@@ -153,6 +317,178 @@ export function AccountSecurity() {
             </div>
           ))}
         </dl>
+      </WorkspaceSettingsSection>
+
+      <WorkspaceSettingsSection
+        title={copy.pairing}
+        description={copy.pairingHint}
+        testId="human-pairing-section"
+        meta={canManageSessions && (
+          <p className="mt-2 text-[11px]" style={{ color: "var(--mis-muted)" }}>
+            {invitations?.active_count ?? invitations?.invitations.filter((item) => item.status === "active").length ?? 0} {copy.active} · {devices?.active_count ?? devices?.devices.filter((item) => item.status === "active").length ?? 0} {copy.devices}
+          </p>
+        )}
+      >
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 border-b pb-3 text-xs" style={{ borderColor: "var(--mis-border)", color: "var(--mis-dim)" }}>
+            <KeyRound size={15} style={{ color: canManageSessions ? "var(--mis-success)" : "var(--mis-muted)" }} />
+            {canManageSessions ? copy.pairingHint : required ? copy.ownerOnly : copy.authDisabled}
+          </div>
+
+          {canManageSessions && (
+            <form
+              onSubmit={(event) => { event.preventDefault(); void createInvitation(); }}
+              className="grid gap-3 border-b py-4 sm:grid-cols-2 lg:grid-cols-[minmax(120px,0.8fr)_minmax(140px,0.8fr)_minmax(180px,1.5fr)_auto] lg:items-end"
+              style={{ borderColor: "var(--mis-border)" }}
+              data-testid="pairing-invitation-form"
+            >
+              <label className="min-w-0 text-[11px]" style={{ color: "var(--mis-muted)" }}>
+                {copy.role}
+                <select
+                  value={pairingRole}
+                  onChange={(event) => setPairingRole(event.target.value as HumanPairingRole)}
+                  className="mt-1 h-9 w-full rounded border px-2.5 text-xs outline-none"
+                  style={{ borderColor: "var(--mis-border)", background: "var(--mis-surface)", color: "var(--mis-text)" }}
+                >
+                  <option value="operator">{copy.roleOperator}</option>
+                  <option value="approver">{copy.roleApprover}</option>
+                  <option value="viewer">{copy.roleViewer}</option>
+                </select>
+              </label>
+              <label className="min-w-0 text-[11px]" style={{ color: "var(--mis-muted)" }}>
+                {copy.validFor}
+                <select
+                  value={pairingExpiry}
+                  onChange={(event) => setPairingExpiry(Number(event.target.value))}
+                  className="mt-1 h-9 w-full rounded border px-2.5 text-xs outline-none"
+                  style={{ borderColor: "var(--mis-border)", background: "var(--mis-surface)", color: "var(--mis-text)" }}
+                >
+                  <option value={600}>{copy.tenMinutes}</option>
+                  <option value={1800}>{copy.thirtyMinutes}</option>
+                  <option value={3600}>{copy.oneHour}</option>
+                </select>
+              </label>
+              <label className="min-w-0 text-[11px]" style={{ color: "var(--mis-muted)" }}>
+                {copy.invitationLabel}
+                <input
+                  value={pairingLabel}
+                  onChange={(event) => setPairingLabel(event.target.value)}
+                  maxLength={80}
+                  placeholder={copy.invitationLabelPlaceholder}
+                  className="mt-1 h-9 w-full rounded border px-3 text-xs outline-none"
+                  style={{ borderColor: "var(--mis-border)", background: "var(--mis-surface)", color: "var(--mis-text)" }}
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={Boolean(busy) || loading}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded px-3 text-xs font-semibold disabled:opacity-50"
+                style={{ background: "var(--mis-primary)", color: "#fff" }}
+              >
+                {busy === "create_invitation" ? <LoaderCircle size={15} className="animate-spin" /> : <UserPlus size={15} />}
+                {copy.createInvitation}
+              </button>
+            </form>
+          )}
+
+          {createdInvitation && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b py-4" style={{ borderColor: "var(--mis-border)" }} data-testid="pairing-secret-ready">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>{copy.oneTimeLink}</p>
+                <p className="mt-1 text-[11px] leading-5" style={{ color: "var(--mis-muted)" }}>{copy.oneTimeLinkHint}</p>
+                <p className="mt-1 break-all text-[11px]" style={{ color: "var(--mis-dim)" }}>{copy.safeRef}: <code>{boundedRef(createdInvitation.invitation_ref)}</code></p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void copyPairingLink()}
+                  className="inline-flex h-8 items-center gap-1.5 rounded border px-2.5 text-xs"
+                  style={{ borderColor: "var(--mis-border)", color: "var(--mis-primary)", background: "var(--mis-surface)" }}
+                >
+                  <Copy size={14} /> {copied ? copy.copied : copy.copyLink}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setCreatedInvitation(null); setCopied(false); }}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded border"
+                  style={{ borderColor: "var(--mis-border)", color: "var(--mis-dim)", background: "var(--mis-surface)" }}
+                  title={copy.dismiss}
+                  aria-label={copy.dismiss}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {pairingError && <div role="alert" className="border-b py-3 text-xs" style={{ borderColor: "var(--mis-border)", color: "var(--mis-warning)" }}>{pairingError}</div>}
+
+          {canManageSessions && (
+            <div className="grid gap-x-6 lg:grid-cols-2">
+              <div className="min-w-0">
+                <h3 className="flex items-center gap-2 border-b py-3 text-xs font-semibold" style={{ borderColor: "var(--mis-border)", color: "var(--mis-text)" }}>
+                  <KeyRound size={14} /> {copy.invitations}
+                </h3>
+                {invitations?.invitations.length ? invitations.invitations.map((invitation) => (
+                  <article key={invitation.invitation_ref} className="border-b py-3" style={{ borderColor: "var(--mis-border)" }} data-testid="pairing-invitation-row">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 text-[11px]">
+                        <p className="font-semibold" style={{ color: "var(--mis-text)" }}>{invitation.label || copy.invitation}</p>
+                        <p className="mt-1 break-all" style={{ color: "var(--mis-muted)" }}><code>{boundedRef(invitation.invitation_ref)}</code></p>
+                        <p className="mt-1" style={{ color: "var(--mis-dim)" }}>{roleLabel(invitation.role)} · {copy[invitation.status]} · {copy.expires} {formatDate(invitation.expires_at, locale)}</p>
+                      </div>
+                      {invitation.status === "active" && (
+                        <button
+                          type="button"
+                          onClick={() => void revokeInvitation(invitation.invitation_ref)}
+                          disabled={Boolean(busy)}
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border disabled:opacity-50"
+                          style={{ borderColor: "var(--mis-border)", color: "var(--mis-warning)", background: "var(--mis-surface)" }}
+                          title={copy.revoke}
+                          aria-label={copy.revoke}
+                        >
+                          {busy === `invitation:${invitation.invitation_ref}` ? <LoaderCircle size={14} className="animate-spin" /> : <Ban size={14} />}
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                )) : <p className="border-b py-4 text-xs" style={{ borderColor: "var(--mis-border)", color: "var(--mis-dim)" }}>{copy.noInvitations}</p>}
+              </div>
+
+              <div className="min-w-0">
+                <h3 className="flex items-center gap-2 border-b py-3 text-xs font-semibold" style={{ borderColor: "var(--mis-border)", color: "var(--mis-text)" }}>
+                  <Smartphone size={14} /> {copy.devices}
+                </h3>
+                {devices?.devices.length ? devices.devices.map((device) => (
+                  <article key={device.device_ref} className="border-b py-3" style={{ borderColor: "var(--mis-border)" }} data-testid="paired-device-row">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 text-[11px]">
+                        <p className="font-semibold" style={{ color: "var(--mis-text)" }}>{device.label || device.display_name || device.username || copy.device}</p>
+                        <p className="mt-1 break-all" style={{ color: "var(--mis-muted)" }}><code>{boundedRef(device.device_ref)}</code></p>
+                        <p className="mt-1" style={{ color: "var(--mis-dim)" }}>{roleLabel(device.role)} · {copy[device.status]} · {copy.lastSeen} {formatDate(device.last_seen_at, locale)}</p>
+                      </div>
+                      {device.status === "active" && (
+                        <button
+                          type="button"
+                          onClick={() => void revokeDevice(device.device_ref)}
+                          disabled={Boolean(busy)}
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border disabled:opacity-50"
+                          style={{ borderColor: "var(--mis-border)", color: "var(--mis-warning)", background: "var(--mis-surface)" }}
+                          title={copy.revoke}
+                          aria-label={copy.revoke}
+                        >
+                          {busy === `device:${device.device_ref}` ? <LoaderCircle size={14} className="animate-spin" /> : <Ban size={14} />}
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                )) : <p className="border-b py-4 text-xs" style={{ borderColor: "var(--mis-border)", color: "var(--mis-dim)" }}>{copy.noDevices}</p>}
+              </div>
+            </div>
+          )}
+
+          <p className="pt-4 text-[11px] leading-5" style={{ color: "var(--mis-muted)" }}>{copy.pairingBoundary}</p>
+        </div>
       </WorkspaceSettingsSection>
 
       <WorkspaceSettingsSection

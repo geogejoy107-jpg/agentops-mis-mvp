@@ -125,6 +125,12 @@ agentops host tailscale-apply --confirm
 Workspace 设置组件；账户入口也位于原有侧栏中。全新浏览器默认使用企业浅色
 主题，用户已经选择的深色控制面或员工 OS 主题不会被覆盖。
 
+Owner 还可以在“账户与访问”创建一次性成员邀请。另一台电脑的普通用户只需
+用系统浏览器打开邀请链接，设置自己的成员账户与设备名称；邀请密钥只保留在
+URL fragment 和页面内存中，页面启动后立即从地址栏擦除。当前这一配对能力已在
+本地 Host 可用；面向互联网的稳定 HTTPS Relay 仍是独立发布门，完成前不能把
+Tailscale 或临时公网隧道描述成默认零安装方案。
+
 `host init` 仍生成一次性 Owner 设置码，并把它、机器 API key 与 Admin key
 存到仓库外的 `~/.agentops/host/`，文件权限为 `0600`。`host start` 默认后台
 启动安全 mock worker；真实 Hermes/OpenClaw 仍必须显式指定并确认：

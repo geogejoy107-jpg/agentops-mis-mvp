@@ -448,18 +448,18 @@ agentops host start
 建议录制 4 至 6 分钟的连续闭环，而不是逐页浏览 Dashboard：
 
 1. **Host 终端**：展示 `agentops host status`、`doctor` 和 `console-url`；遮挡用户名、设备名及任何敏感信息。
-2. **网络边界**：展示 `agentops host tailscale-preview` 明确写着 preview/no changes，并说明没有公网暴露。
-3. **第二电脑登录**：只展示 Tailscale 已连接和浏览器登录页，强调该电脑没有项目依赖或 Agent Runtime。
+2. **网络边界**：展示 Host 仍只监听 loopback，并说明远程入口由 AgentOps Relay 的 Host 端 TLS 隧道提供；Relay 未部署时必须明确标为待验收，不能用临时公网隧道替代。
+3. **第二电脑配对**：Owner 在“账户与访问”创建一次性邀请，第二台电脑只用系统浏览器打开 HTTPS Console 地址并完成配对；该电脑不安装 AgentOps、Tailscale、项目依赖或 Agent Runtime。
 4. **远程派发**：创建一条具体客户任务，选择 Host 上已就绪的 Hermes 或 OpenClaw，并进行显式确认。
 5. **断线证明**：关闭第二电脑页面片刻，在 Host 或重新连接后的 Worker 页面展示任务仍在运行。
 6. **证据闭环**：展示最新任务的 Run、Runtime Events、Tool Calls、Evaluation、Artifact、Approval 和 Audit；不要展示 raw prompt/response。
 7. **知识边界**：展示有界检索引用或已批准记忆，说明完整知识库仍留在 Host。
-8. **收尾撤销**：展示退出登录、停止 Host 和撤销 Tailscale Serve 的步骤。
+8. **收尾撤销**：展示 Owner 撤销配对设备、远程浏览器立即失效，以及停止 Host/远程 Console 的步骤。
 
 最有说服力的三张截图：
 
 - Host 状态页或终端：生产 Host、账本、知识索引与 Hermes/OpenClaw readiness 同时可见；
-- 第二电脑浏览器：远程任务与 Worker 状态同屏，地址栏是 tailnet HTTPS 地址且不含 token；
+- 第二电脑浏览器：远程任务与 Worker 状态同屏，地址栏是稳定的 AgentOps HTTPS Console 地址且不含 token；
 - 新鲜 Run 详情：任务、事件、评估、批准产物和审计链路同屏。
 
 录制前关闭系统通知，使用 16:9 画面，并检查画面中没有 `.env`、token、DB 路径、private message、完整 transcript、raw prompt/response 或未经批准的产物。
@@ -484,11 +484,12 @@ agentops host logs
 
 ### 第二电脑无法打开 Console
 
-- 确认两台电脑位于同一 tailnet；
 - 确认 Host 本地服务仍为 loopback ready；
-- 重新运行 `tailscale-preview`，比较当前 Serve 状态与预期；
-- 确认使用 `console-url` 的 HTTPS 地址，而非 Host 的 `127.0.0.1`；
-- 检查 Tailscale ACL/DNS，不要改用公网端口转发。
+- 确认 Host 已显式启用远程 Console，并且 AgentOps Relay 隧道健康；
+- 确认使用 `console-url` 的稳定 HTTPS 地址，而非 Host 的 `127.0.0.1`；
+- 检查 Host 端 TLS 证书、DNS/SNI 路由和隧道状态，不要改用公网端口转发或临时 quick tunnel。
+
+如果管理员显式选择第 5、6 节的高级 Tailscale 模式，再检查同一 tailnet、Serve 状态、ACL 和 MagicDNS；这些步骤不属于普通用户默认流程。
 
 ### 页面能打开但无法登录或写入
 
@@ -515,7 +516,9 @@ agentops host stop
 agentops host status
 ```
 
-然后显式撤销 Tailscale Serve 并重启 Host：
+默认 Relay 模式下，先从“账户与访问”撤销对应设备，再关闭远程 Console 隧道；精确 CLI/UI 以 Relay 实现验收为准。Host 应继续保持 loopback，不删除本地账本、知识库或 Runtime 状态。
+
+只有在显式使用高级 Tailscale 模式时，才撤销 Tailscale Serve 并重启 Host：
 
 ```bash
 agentops host tailscale-revoke --confirm
@@ -538,11 +541,13 @@ agentops host restart
 - 版本化 Host 安装资产及 SHA-256；
 - `init/start/status/doctor/logs/stop/restart/console-url/tailscale-preview` 的命令 smoke；
 - 生产 UI 同源服务，不依赖运行时 Node/Vite；
-- 第二电脑仅凭 Tailscale 和浏览器完成认证与客户任务闭环；
+- 第二电脑仅凭系统浏览器和一次性配对完成认证与客户任务闭环，不安装 Tailscale/VPN；
 - 未认证读取、错误角色、CSRF、错误 Origin 和撤销 Session 均 fail closed；
 - Console 断线不影响 Host Worker，Host 重启不丢账本和知识状态；
 - 新鲜、显式确认的 Hermes/OpenClaw 运行证据；
-- 停止和撤销 Tailscale Serve 验收；
+- 停止远程 Console、撤销配对设备并验证现有会话失效；
 - exact-head CI、secret scan、干净安装、备份恢复和 Release provenance 通过。
 
 在上述验收完成前，本文件是产品操作契约和录屏准备依据，不是“功能已经全部发布”的声明。
+
+高级 Tailscale 模式另需保留 `tailscale-preview/apply/revoke` 的独立验收，但它不能关闭默认浏览器零安装路径的发布门。

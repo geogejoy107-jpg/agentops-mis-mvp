@@ -88,6 +88,70 @@ export interface HumanBrowserSessionRevokePayload {
   token_omitted: boolean;
 }
 
+export type HumanPairingRole = "operator" | "approver" | "viewer";
+
+export interface HumanPairingInvitation {
+  invitation_ref: string;
+  role: HumanPairingRole;
+  label?: string | null;
+  status: "active" | "redeemed" | "revoked" | "expired" | "locked";
+  created_at: string;
+  expires_at: string;
+  redeemed_at?: string | null;
+  revoked_at?: string | null;
+  attempt_count?: number;
+  max_attempts?: number;
+}
+
+export interface HumanPairingInvitationsPayload {
+  invitations: HumanPairingInvitation[];
+  active_count?: number;
+  invitation_count?: number;
+  secret_omitted?: true;
+  pairing_secret_omitted?: true;
+}
+
+export interface HumanPairingInvitationCreated {
+  invitation_ref: string;
+  pairing_secret: string;
+  secret_omitted?: false;
+  pairing_secret_omitted?: false;
+  pairing_secret_ephemeral?: true;
+  role: HumanPairingRole;
+  label?: string | null;
+  expires_at: string;
+}
+
+export interface HumanPairedDevice {
+  device_ref: string;
+  username?: string;
+  display_name?: string | null;
+  role: HumanPairingRole;
+  label?: string | null;
+  status: "active" | "revoked";
+  paired_at?: string;
+  created_at?: string;
+  last_seen_at?: string | null;
+  revoked_at?: string | null;
+}
+
+export interface HumanPairedDevicesPayload {
+  devices: HumanPairedDevice[];
+  active_count?: number;
+  device_count?: number;
+  device_secret_omitted?: true;
+}
+
+export class HumanAuthRequestError extends Error {
+  readonly code: string;
+
+  constructor(code: string) {
+    super(code);
+    this.name = "HumanAuthRequestError";
+    this.code = code;
+  }
+}
+
 export type PrivateHostAcceptanceCheckId =
   | "human_session"
   | "local_readiness"
@@ -261,6 +325,74 @@ export async function revokeHumanBrowserSession(input: { session_ref: string } |
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+function boundedHumanAuthErrorCode(value: unknown): string {
+  const code = typeof value === "string" ? value : "";
+  return /^[a-z0-9_]{1,64}$/.test(code) ? code : "human_auth_request_failed";
+}
+
+async function safeHumanAuthJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await humanAwareFetch(path, init);
+  if (!response.ok) {
+    let code = "human_auth_request_failed";
+    try {
+      const payload = await response.json() as { error?: unknown };
+      code = boundedHumanAuthErrorCode(payload.error);
+    } catch {
+      // Pairing errors intentionally omit response bodies from the client error.
+    }
+    throw new HumanAuthRequestError(code);
+  }
+  return response.json() as Promise<T>;
+}
+
+export async function loadHumanPairingInvitations(): Promise<HumanPairingInvitationsPayload> {
+  return safeHumanAuthJson<HumanPairingInvitationsPayload>("/human-auth/pairing-invitations");
+}
+
+export async function createHumanPairingInvitation(input: {
+  role: HumanPairingRole;
+  expires_in_seconds: number;
+  label?: string;
+}): Promise<HumanPairingInvitationCreated> {
+  return safeHumanAuthJson<HumanPairingInvitationCreated>("/human-auth/pairing-invitations", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function revokeHumanPairingInvitation(invitationRef: string): Promise<Record<string, unknown>> {
+  return safeHumanAuthJson<Record<string, unknown>>(`/human-auth/pairing-invitations/${encodeURIComponent(invitationRef)}/revoke`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+export async function loadHumanPairedDevices(): Promise<HumanPairedDevicesPayload> {
+  return safeHumanAuthJson<HumanPairedDevicesPayload>("/human-auth/devices");
+}
+
+export async function revokeHumanPairedDevice(deviceRef: string): Promise<Record<string, unknown>> {
+  return safeHumanAuthJson<Record<string, unknown>>(`/human-auth/devices/${encodeURIComponent(deviceRef)}/revoke`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+export async function pairHuman(input: {
+  pairing_secret: string;
+  username: string;
+  password: string;
+  display_name?: string;
+  device_label?: string;
+}): Promise<HumanAuthSession> {
+  const session = await safeHumanAuthJson<HumanAuthSession>("/human-auth/pair", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  setHumanAuthCsrf(session.csrf_token);
+  return session;
 }
 
 export interface DashboardMetrics {

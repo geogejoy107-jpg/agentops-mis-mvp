@@ -169,8 +169,8 @@ def main() -> int:
         all(
             marker in auth_gate
             for marker in (
-                'isRecovery ? "\u91cd\u8bbe\u5bc6\u7801" : "\u767b\u5f55"',
-                'isRecovery ? "Reset password" : "Sign in"',
+                'isPairing ? "\u8bbe\u7f6e\u6210\u5458\u8d26\u6237" : "\u767b\u5f55"',
+                'isPairing ? "Set up member account" : "Sign in"',
                 '"\u8f93\u5165\u8d26\u6237\u4fe1\u606f\u7ee7\u7eed\u3002"',
                 '"Enter your account details to continue."',
             )
@@ -219,7 +219,7 @@ def main() -> int:
     record(
         checks,
         "bootstrap_and_recovery_password_min_length_12",
-        "minLength={isBootstrap || isRecovery ? 12 : undefined}" in auth_gate,
+        "minLength={isBootstrap || isRecovery || isPairing ? 12 : undefined}" in auth_gate,
     )
     record(
         checks,
@@ -232,7 +232,8 @@ def main() -> int:
                 "const passwordsMatch = confirmPassword.length > 0 && password === confirmPassword;",
                 "const bootstrapFormReady = Boolean(setupCode.trim()) && usernameReady && passwordReady && passwordsMatch;",
                 "const recoveryFormReady = Boolean(recoveryAuthority) && usernameReady && passwordReady && passwordsMatch;",
-                "disabled={submitting || (isBootstrap && !bootstrapFormReady) || (isRecovery && !recoveryFormReady)}",
+                "const pairingFormReady = Boolean(pairingSecret) && usernameReady && passwordReady && passwordsMatch;",
+                "disabled={submitting || (isBootstrap && !bootstrapFormReady) || (isRecovery && !recoveryFormReady) || (isPairing && !pairingFormReady)}",
             )
         ),
     )
