@@ -352,6 +352,16 @@ def main() -> int:
     )
     record(
         checks,
+        "non_human_401_does_not_expire_browser_session",
+        'const HUMAN_SESSION_UNAUTHORIZED_ERRORS = new Set([' in live_api
+        and '"human_auth_required"' in live_api
+        and '"human_session_invalid"' in live_api
+        and '"human_session_expired"' in live_api
+        and "await isHumanSessionUnauthorized(response)" in live_api
+        and 'response.status === 401 && !path.startsWith("/human-auth/")' not in live_api,
+    )
+    record(
+        checks,
         "recovery_authority_stays_in_component_memory",
         'const [recoveryAuthority, setRecoveryAuthority] = useState("");' in auth_gate
         and "setRecoveryAuthority(recovery.recovery_authority);" in auth_gate

@@ -14,6 +14,11 @@ import type {
 const API_BASE = import.meta.env.VITE_AGENTOPS_API_BASE || "/mis-api";
 const HUMAN_AUTH_CSRF_KEY = "agentops-human-auth-csrf";
 export const HUMAN_AUTH_UNAUTHORIZED_EVENT = "agentops:human-auth-unauthorized";
+const HUMAN_SESSION_UNAUTHORIZED_ERRORS = new Set([
+  "human_auth_required",
+  "human_session_invalid",
+  "human_session_expired",
+]);
 
 export interface HumanAuthUser {
   account_id?: string;
@@ -168,13 +173,23 @@ function humanAuthHeaders(init?: RequestInit): Headers {
   return headers;
 }
 
+async function isHumanSessionUnauthorized(response: Response): Promise<boolean> {
+  if (response.status !== 401) return false;
+  try {
+    const payload = await response.clone().json() as { error?: unknown };
+    return HUMAN_SESSION_UNAUTHORIZED_ERRORS.has(String(payload.error || ""));
+  } catch {
+    return false;
+  }
+}
+
 async function humanAwareFetch(path: string, init?: RequestInit): Promise<Response> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     credentials: "include",
     headers: humanAuthHeaders(init),
   });
-  if (response.status === 401 && !path.startsWith("/human-auth/")) {
+  if (!path.startsWith("/human-auth/") && await isHumanSessionUnauthorized(response)) {
     setHumanAuthCsrf(null);
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent(HUMAN_AUTH_UNAUTHORIZED_EVENT));
