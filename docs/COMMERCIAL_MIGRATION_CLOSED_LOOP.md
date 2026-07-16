@@ -777,7 +777,7 @@ Must be true:
   without deleting rows, mutating the ledger, or claiming production retention
   enforcement. `delete`, `apply`, and cleanup-style query parameters fail
   closed while preserving `rows_deleted=0`. Verify with
-  `python3 scripts/audit_retention_policy_smoke.py`.
+  `python3 scripts/audit_retention_policy_smoke.py --isolated-fixture`.
 - `audit_retention_controls_v1` exposes read-only retention control readiness
   through `GET /api/audit/retention-controls` and
   `agentops audit retention-controls`. It proves cleanup approval is required,

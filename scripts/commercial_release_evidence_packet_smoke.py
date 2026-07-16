@@ -40,7 +40,7 @@ REQUIRED_HANDOFF_COMMANDS = {
 }
 
 GATE5_REQUIRED_COMMANDS = {
-    "python3 scripts/audit_retention_policy_smoke.py",
+    "python3 scripts/audit_retention_policy_smoke.py --isolated-fixture",
     "python3 scripts/audit_retention_controls_smoke.py --configured-fixture",
     "python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture",
     "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",

@@ -207,7 +207,7 @@ with the row payload must fail verification.
 
 ```bash
 python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py
-python3 scripts/audit_retention_policy_smoke.py
+python3 scripts/audit_retention_policy_smoke.py --isolated-fixture
 python3 scripts/audit_retention_controls_smoke.py --configured-fixture
 python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture
 python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture

@@ -6,10 +6,12 @@ import argparse
 import hashlib
 import json
 import os
+import socket
 import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -39,6 +41,78 @@ def db_dump_hash(path: str | None) -> str | None:
     with sqlite3.connect(uri, uri=True) as conn:
         dumped = "\n".join(conn.iterdump())
     return hashlib.sha256(dumped.encode("utf-8")).hexdigest()
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def wait_ready(base_url: str, proc: subprocess.Popen[str], timeout_sec: int = 25) -> None:
+    deadline = time.time() + timeout_sec
+    last_error = ""
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            out, err = proc.communicate(timeout=1)
+            raise RuntimeError(f"server exited early: rc={proc.returncode} stdout={out} stderr={err}")
+        try:
+            status, payload = http_json(base_url)
+            if status == 200 and payload.get("contract_id") == "audit_retention_policy_v1":
+                return
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(0.25)
+    raise RuntimeError(f"server did not become ready: {last_error}")
+
+
+def prepare_minimal_sqlite_db(path: Path) -> None:
+    sys.path.insert(0, str(ROOT))
+    import server  # noqa: PLC0415
+
+    with sqlite3.connect(path) as conn:
+        conn.executescript(server.SCHEMA_SQL)
+        now = "2026-06-23T00:00:00+00:00"
+        conn.execute(
+            "INSERT INTO users(user_id,name,email,role,created_at) VALUES(?,?,?,?,?)",
+            ("usr_retention_policy", "Retention Policy", "retention-policy@example.local", "admin", now),
+        )
+        conn.execute(
+            """INSERT INTO agents(agent_id,name,role,description,runtime_type,model_provider,model_name,status,permission_level,allowed_tools,budget_limit_usd,owner_user_id,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "agt_retention_policy",
+                "Retention Policy Agent",
+                "Auditor",
+                "Prevents server seed/export drift during retention policy smoke.",
+                "mock",
+                "mock",
+                "mock-model",
+                "idle",
+                "standard",
+                "[]",
+                0,
+                "usr_retention_policy",
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+
+
+def start_isolated_server(db_path: Path, port: int) -> subprocess.Popen[str]:
+    env = os.environ.copy()
+    env["AGENTOPS_DB_PATH"] = str(db_path)
+    env["AGENTOPS_SKIP_SEED_EXPORTS"] = "1"
+    env.pop("AGENTOPS_API_KEY", None)
+    return subprocess.Popen(
+        [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port)],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
 
 
 def http_json(base_url: str, query: str = "") -> tuple[int, dict]:
@@ -137,52 +211,117 @@ def validate(payload: dict, label: str) -> None:
     require(safety.get("token_omitted") is True, f"{label} safety token omission missing")
 
 
+def run_isolated_fixture() -> dict:
+    proc: subprocess.Popen[str] | None = None
+    with tempfile.TemporaryDirectory(prefix="agentops-retention-policy-isolated-") as tmp:
+        db_path = Path(tmp) / "agentops.db"
+        prepare_minimal_sqlite_db(db_path)
+        port = free_port()
+        base_url = f"http://127.0.0.1:{port}"
+        proc = start_isolated_server(db_path, port)
+        try:
+            wait_ready(base_url, proc)
+            before_hash = db_dump_hash(str(db_path))
+            status, api_payload = http_json(base_url)
+            require(status == 200, f"isolated audit retention policy API failed: {status} {api_payload}")
+            validate(api_payload, "isolated-api")
+            gated_status, gated_payload = http_json(base_url, "retention_days=365")
+            require(gated_status == 200, f"isolated longer policy probe failed: {gated_status} {gated_payload}")
+            validate(gated_payload, "isolated-longer-retention")
+            require(gated_payload.get("status") == "gated", f"isolated longer retention must be gated: {gated_payload}")
+            dangerous_status, dangerous_payload = http_json(base_url, "delete=true")
+            require(dangerous_status == 200, f"isolated dangerous probe failed: {dangerous_status} {dangerous_payload}")
+            validate(dangerous_payload, "dangerous-param")
+            require(dangerous_payload.get("status") == "blocked", f"isolated delete parameter must fail closed: {dangerous_payload}")
+            proc_cli = run_cli(base_url)
+            require(proc_cli.returncode == 0, f"isolated audit retention policy CLI failed: {proc_cli.stderr or proc_cli.stdout}")
+            cli_payload = json.loads(proc_cli.stdout)
+            validate(cli_payload, "isolated-cli")
+            after_hash = db_dump_hash(str(db_path))
+            require(before_hash == after_hash, "isolated audit retention policy mutated the SQLite ledger")
+            output_text = "\n".join([
+                json.dumps(api_payload, ensure_ascii=False, sort_keys=True),
+                json.dumps(gated_payload, ensure_ascii=False, sort_keys=True),
+                json.dumps(dangerous_payload, ensure_ascii=False, sort_keys=True),
+                proc_cli.stdout,
+                proc_cli.stderr,
+            ])
+            require(not leaked_secret(output_text), "isolated audit retention policy leaked token-like material")
+            return {
+                "status": api_payload.get("status"),
+                "longer_retention_status": gated_payload.get("status"),
+                "dangerous_status": dangerous_payload.get("status"),
+                "retention_days": (api_payload.get("policy") or {}).get("retention_days"),
+                "expired_candidates": (api_payload.get("counts") or {}).get("expired_candidates"),
+                "rows_deleted": api_payload.get("rows_deleted"),
+                "read_only_hash_checked": True,
+            }
+        finally:
+            if proc and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify read-only audit retention policy API and CLI.")
-    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
+    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL"))
     parser.add_argument("--db-path", default=os.environ.get("AGENTOPS_DB_PATH"), help="Optional SQLite DB path used to assert read-only behavior.")
+    parser.add_argument("--isolated-fixture", action="store_true", help="Also start an isolated Free Local server for API/CLI policy verification.")
     args = parser.parse_args()
     outputs: list[str] = []
     try:
-        before_hash = db_dump_hash(args.db_path)
-        status, api_payload = http_json(args.base_url)
-        outputs.append(json.dumps(api_payload, ensure_ascii=False, sort_keys=True))
-        require(status == 200, f"audit retention policy API failed: {status} {api_payload}")
-        validate(api_payload, "api")
+        base_url = args.base_url or (None if args.isolated_fixture else "http://127.0.0.1:8787")
+        api_payload: dict = {}
+        cli_payload: dict = {}
+        read_only_hash_checked = False
+        if base_url:
+            before_hash = db_dump_hash(args.db_path)
+            status, api_payload = http_json(base_url)
+            outputs.append(json.dumps(api_payload, ensure_ascii=False, sort_keys=True))
+            require(status == 200, f"audit retention policy API failed: {status} {api_payload}")
+            validate(api_payload, "api")
 
-        gated_status, gated_payload = http_json(args.base_url, "retention_days=365")
-        outputs.append(json.dumps(gated_payload, ensure_ascii=False, sort_keys=True))
-        require(gated_status == 200, f"audit retention longer policy probe failed: {gated_status} {gated_payload}")
-        validate(gated_payload, "longer-retention")
-        require(gated_payload.get("status") == "gated", f"free local longer retention must be gated: {gated_payload}")
+            gated_status, gated_payload = http_json(base_url, "retention_days=365")
+            outputs.append(json.dumps(gated_payload, ensure_ascii=False, sort_keys=True))
+            require(gated_status == 200, f"audit retention longer policy probe failed: {gated_status} {gated_payload}")
+            validate(gated_payload, "longer-retention")
+            require(gated_payload.get("status") == "gated", f"free local longer retention must be gated: {gated_payload}")
 
-        dangerous_status, dangerous_payload = http_json(args.base_url, "delete=true")
-        outputs.append(json.dumps(dangerous_payload, ensure_ascii=False, sort_keys=True))
-        require(dangerous_status == 200, f"audit retention dangerous probe failed: {dangerous_status} {dangerous_payload}")
-        validate(dangerous_payload, "dangerous-param")
-        require(dangerous_payload.get("status") == "blocked", f"delete parameter must fail closed: {dangerous_payload}")
-        require("dangerous_cleanup_parameter_rejected" in (dangerous_payload.get("blocked_reasons") or []), f"dangerous rejection reason missing: {dangerous_payload}")
+            dangerous_status, dangerous_payload = http_json(base_url, "delete=true")
+            outputs.append(json.dumps(dangerous_payload, ensure_ascii=False, sort_keys=True))
+            require(dangerous_status == 200, f"audit retention dangerous probe failed: {dangerous_status} {dangerous_payload}")
+            validate(dangerous_payload, "dangerous-param")
+            require(dangerous_payload.get("status") == "blocked", f"delete parameter must fail closed: {dangerous_payload}")
+            require("dangerous_cleanup_parameter_rejected" in (dangerous_payload.get("blocked_reasons") or []), f"dangerous rejection reason missing: {dangerous_payload}")
 
-        proc = run_cli(args.base_url)
-        outputs.extend([proc.stdout, proc.stderr])
-        require(proc.returncode == 0, f"audit retention policy CLI failed: {proc.stderr or proc.stdout}")
-        cli_payload = json.loads(proc.stdout)
-        validate(cli_payload, "cli")
+            proc = run_cli(base_url)
+            outputs.extend([proc.stdout, proc.stderr])
+            require(proc.returncode == 0, f"audit retention policy CLI failed: {proc.stderr or proc.stdout}")
+            cli_payload = json.loads(proc.stdout)
+            validate(cli_payload, "cli")
 
-        after_hash = db_dump_hash(args.db_path)
-        if before_hash and after_hash:
-            require(before_hash == after_hash, "audit retention policy mutated the SQLite ledger")
+            after_hash = db_dump_hash(args.db_path)
+            if before_hash and after_hash:
+                require(before_hash == after_hash, "audit retention policy mutated the SQLite ledger")
+                read_only_hash_checked = True
+
+        isolated = run_isolated_fixture() if args.isolated_fixture else None
 
         require(not leaked_secret("\n".join(outputs)), "audit retention policy leaked token-like material")
         print(json.dumps({
             "ok": True,
-            "api_status": api_payload.get("status"),
-            "cli_status": cli_payload.get("status"),
-            "contract_id": api_payload.get("contract_id"),
-            "retention_days": (api_payload.get("policy") or {}).get("retention_days"),
-            "expired_candidates": (api_payload.get("counts") or {}).get("expired_candidates"),
-            "rows_deleted": api_payload.get("rows_deleted"),
-            "read_only_hash_checked": bool(before_hash and after_hash),
+            "api_status": api_payload.get("status") if api_payload else None,
+            "cli_status": cli_payload.get("status") if cli_payload else None,
+            "contract_id": (api_payload.get("contract_id") if api_payload else "audit_retention_policy_v1"),
+            "isolated_fixture": isolated,
+            "retention_days": (api_payload.get("policy") or {}).get("retention_days") if api_payload else None,
+            "expired_candidates": (api_payload.get("counts") or {}).get("expired_candidates") if api_payload else None,
+            "rows_deleted": api_payload.get("rows_deleted") if api_payload else None,
+            "read_only_hash_checked": read_only_hash_checked or bool(isolated and isolated.get("read_only_hash_checked")),
             "secret_leaked": False,
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0

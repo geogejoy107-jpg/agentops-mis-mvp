@@ -94,7 +94,7 @@ cd ui/next-app && npm run build
 Gate 5 `gate_5_byoc_enterprise_deployment` has local receipts for:
 
 ```bash
-python3 scripts/audit_retention_policy_smoke.py
+python3 scripts/audit_retention_policy_smoke.py --isolated-fixture
 python3 scripts/audit_retention_controls_smoke.py --configured-fixture
 python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture
 python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture

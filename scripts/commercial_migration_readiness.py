@@ -1524,7 +1524,7 @@ def main() -> int:
                 "python3 scripts/commercial_release_evidence_packet_smoke.py",
                 "python3 scripts/release_freeze_protocol_smoke.py",
                 "python3 scripts/merge_readiness_status_smoke.py",
-                "python3 scripts/audit_retention_policy_smoke.py",
+                "python3 scripts/audit_retention_policy_smoke.py --isolated-fixture",
                 "python3 scripts/audit_retention_controls_smoke.py --configured-fixture",
                 "python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture",
                 "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",

@@ -333,7 +333,7 @@
       "evidence_level": "local_current_not_release_grade",
       "commands": [
         {
-          "command": "python3 scripts/audit_retention_policy_smoke.py",
+          "command": "python3 scripts/audit_retention_policy_smoke.py --isolated-fixture",
           "status": "passed",
           "contract": "audit_retention_policy_v1"
         },
