@@ -104,6 +104,7 @@ def psql(
         "PGPASSWORD",
         container,
         "psql",
+        "-X",
         "-h",
         "127.0.0.1",
         "-U",
@@ -129,25 +130,41 @@ class CountQueryError(RuntimeError):
 
 def table_counts(container: str, password: str, database: str) -> dict[str, int]:
     tables = ["tasks", "runs", "tool_calls", "approvals", "prepared_actions", "agent_plans", "plan_evidence_manifests"]
-    pairs = ", ".join(f"'{table}', (SELECT COUNT(*) FROM {table})" for table in tables)
-    sql = f"SELECT json_build_object({pairs});\n"
+    rows = ", ".join(f"('{table}', (SELECT COUNT(*) FROM {table}))" for table in tables)
+    sql = (
+        "SELECT table_name || E'\\t' || row_count::text "
+        f"FROM (VALUES {rows}) AS counts(table_name,row_count) ORDER BY table_name;\n"
+    )
     last_result: subprocess.CompletedProcess[str] | None = None
-    for attempt in range(3):
+    output_invalid = False
+    for attempt in range(5):
         result = psql(container, password, database, sql=sql, tuples_only=True)
         last_result = result
         if result.returncode == 0:
             try:
-                payload = json.loads(result.stdout.strip())
-                return {table: int(payload[table]) for table in tables}
-            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-                pass
-        if attempt < 2:
+                parsed: dict[str, int] = {}
+                for line in result.stdout.splitlines():
+                    table, separator, raw_count = line.partition("\t")
+                    if separator and table in tables:
+                        parsed[table] = int(raw_count)
+                if set(parsed) == set(tables):
+                    return {table: parsed[table] for table in tables}
+                output_invalid = True
+            except ValueError:
+                output_invalid = True
+        if attempt < 4:
             time.sleep(0.5 * (attempt + 1))
 
     assert last_result is not None
     stderr = last_result.stderr or ""
     missing_table = next((table for table in tables if f'relation "{table}" does not exist' in stderr), "")
-    safe_code = f"count_table_{missing_table}_missing" if missing_table else "count_query_failed"
+    safe_code = (
+        f"count_table_{missing_table}_missing"
+        if missing_table
+        else "count_query_output_invalid"
+        if last_result.returncode == 0 and output_invalid
+        else "count_query_failed"
+    )
     raise CountQueryError(
         safe_code,
         exit_code=last_result.returncode,
