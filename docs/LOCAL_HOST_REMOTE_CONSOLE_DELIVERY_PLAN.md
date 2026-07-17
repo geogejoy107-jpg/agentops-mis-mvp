@@ -179,9 +179,11 @@ Implementation slices:
 2. `3B Transport contract`: Host connector interface, per-Host TLS/SNI identity,
    request IDs, replay and idempotency rules, local L4 fake Relay, reconnect tests.
    The bounded frame/replay primitive and a separate raw-proxy Host-only TLS
-   fixture are executable in `LOCAL_L4_RELAY_TRANSPORT_ACCEPTANCE.md`; composed
-   TLS-over-tunnel, SNI routing, tunnel authentication, and the reconnecting
-   fake Relay daemon remain open.
+   fixture are executable in `LOCAL_L4_RELAY_TRANSPORT_ACCEPTANCE.md`. The
+   Host-initiated TLS-over-tunnel composition and a disabled-by-default,
+   in-process reconnect supervisor are also executable. Persistent connector
+   lifecycle, SNI routing, production tunnel authentication, and the deployed
+   Relay remain open.
 3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host
    Console origin, bounded operations metadata, deployment and rollback.
 4. `3D Physical acceptance`: fresh browser-only device, real Hermes/OpenClaw

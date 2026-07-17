@@ -781,7 +781,8 @@ class HostTunnelConnector:
     def error(self) -> str:
         return self._error
 
-    def stop(self) -> None:
+    def stop(self, timeout_seconds: float = 3.0) -> None:
+        deadline = time.monotonic() + max(0.0, min(float(timeout_seconds), 10.0))
         self._stop.set()
         with self._lock:
             control = self._control
@@ -791,7 +792,6 @@ class HostTunnelConnector:
         for stream_socket in active_sockets:
             _close_socket(stream_socket)
         if self._thread is not None:
-            self._thread.join(1.0)
-        deadline = time.monotonic() + 2.0
+            self._thread.join(max(0.0, deadline - time.monotonic()))
         for stream in streams:
             stream.join(max(0.0, deadline - time.monotonic()))

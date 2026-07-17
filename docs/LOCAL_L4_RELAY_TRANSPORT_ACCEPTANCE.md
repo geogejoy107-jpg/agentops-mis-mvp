@@ -26,6 +26,8 @@ Run:
 ```bash
 python3 scripts/local_l4_relay_transport_smoke.py
 python3 scripts/private_host_relay_tls_smoke.py
+python3 scripts/local_fake_relay_tunnel_smoke.py
+python3 scripts/local_relay_connector_supervisor_smoke.py
 ```
 
 The smoke proves:
@@ -75,6 +77,14 @@ request/response bytes and the Host certificate fingerprint. Relay evidence
 remains limited to allowlisted status, direction and byte-count fields;
 forwarding failure cannot be recorded as successful forwarding.
 
+`scripts/local_relay_connector_supervisor_smoke.py` adds a disabled-by-default,
+in-process supervisor around the Host connector. It proves deterministic
+bounded backoff, strictly increasing process-lifetime epochs, recovery after a
+forced control-connection loss, a second real Host-terminated TLS round trip,
+bounded allowlisted status history, and bounded permanent stop. The supervisor
+accepts only literal loopback test endpoints and owns no listener, OS service,
+network configuration, persistent credential, or Tailscale state.
+
 ## Boundaries
 
 The frame smoke itself sends TLS-looking bytes and does not prove TLS; the
@@ -87,6 +97,11 @@ short test deadlines and an in-memory temporary tunnel key. It does not prove a
 deployed service, internet routing, long-lived browser sessions, TLS half-close
 or transport exactly-once delivery.
 
+The reconnect supervisor is not wired into Host startup or the installer. Its
+epoch is not crash-persistent, and its backoff/status state is process-local.
+It proves the reconnect control behavior needed by a later Host connector
+daemon, not the daemon or deployed Relay itself.
+
 This slice does not yet implement SNI parsing, production Host-generated
 certificates,
 mutual tunnel authentication, DNS/ACME coordination, a deployed Relay daemon,
@@ -98,7 +113,8 @@ advanced private-network profile and is intentionally untouched.
 
 ## Next Slice
 
-Turn the loopback composition into a disabled-by-default Host connector daemon,
-add bounded reconnect/backoff and certificate lifecycle controls, then deploy
-the same authority-free routing boundary behind a stable domain for 3C physical
-browser acceptance.
+Turn the accepted in-process supervisor into a disabled-by-default Host
+connector service with crash-safe epoch identity, certificate lifecycle and
+operator enable/disable controls. Then add SNI/multi-Host routing and deploy the
+same authority-free boundary behind a stable domain for 3C physical browser
+acceptance.
