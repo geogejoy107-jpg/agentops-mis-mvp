@@ -1,6 +1,6 @@
 # MacBook Remote Console Dogfood Acceptance
 
-Status: real second-device transport and direct-browser rendering verified;
+Status: real second-device transport and one-click Console rendering verified;
 normal Chrome proxy path and authenticated workflow remain open
 
 Date: 2026-07-18 (Asia/Shanghai)
@@ -30,6 +30,9 @@ From the MacBook:
   and HTTP/2.
 - A fresh temporary Chrome profile with `--no-proxy-server` rendered the real
   AgentOps MIS Chinese account-and-access login surface at `1280x720`.
+- `~/Applications/AgentOps MIS Console.app` now opens a separate Chrome app-mode
+  profile with `--no-proxy-server`. Its isolated History contains only the
+  expected Host `/workspace` URL with page title `AgentOps MIS`.
 - No username, password, cookie, setup code or form submission was used.
 
 The first normal-Chrome screenshot truthfully showed
@@ -45,9 +48,13 @@ therefore the normal Chrome/proxy integration, not Tailscale Serve or MIS.
 All screenshots and receipts remain temporary local evidence under `/tmp` and
 are not committed.
 
+The Console app contains only the non-secret Host URL and browser launch flags.
+It does not install AgentOps, Python, Node, Hermes, OpenClaw or another model on
+the MacBook; all authority and execution remain on the Mini.
+
 ## Not Yet Accepted
 
-- a fresh normal-Chrome screenshot after the exact bypass update;
+- direct rendering in the user's ordinary proxy-managed Chrome profile;
 - member pairing or Owner login from the MacBook;
 - customer task creation, approval, evaluation, audit and artifact download;
 - browser/Tailscale disconnect while a real Hermes/OpenClaw task continues;
