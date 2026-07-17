@@ -178,20 +178,20 @@ def run_postgres_readiness_fixture(args: argparse.Namespace, failures: list[str]
 
     code, payload, text = run(command, timeout=300)
     fixture = payload.get("postgres_write_fixture") or {}
-    require(code == 0 and payload.get("ok") is True, f"Postgres readiness fixture failed: {payload}", failures)
-    require(fixture.get("skipped") is not True, f"Postgres readiness fixture was skipped: {fixture}", failures)
+    require(code == 0 and payload.get("ok") is True, "postgres_readiness_fixture_failed", failures)
+    require(fixture.get("skipped") is not True, "postgres_readiness_fixture_skipped", failures)
     require(
         fixture.get("contract") == "deployment_readiness_postgres_runtime_write_fixture_v1",
-        f"Postgres readiness fixture contract missing: {fixture}",
+        "postgres_readiness_contract_missing",
         failures,
     )
-    require(fixture.get("storage_mode") == "experimental_write_http", f"Postgres storage mode mismatch: {fixture}", failures)
-    require(fixture.get("storage_status") == "active", f"Postgres storage status mismatch: {fixture}", failures)
-    require(fixture.get("runtime_write_gate_status") == "active", f"runtime_write_gate not active: {fixture}", failures)
-    require(fixture.get("non_allowlisted_write_status") == 503, f"non-allowlisted write was not blocked: {fixture}", failures)
-    require(fixture.get("non_allowlisted_write_error") == "postgres_read_only_backend", f"non-allowlisted block reason mismatch: {fixture}", failures)
-    require(fixture.get("postgres_counts_unchanged") is True, f"Postgres ledger counts changed: {fixture}", failures)
-    require(payload.get("secret_leaked") is False, f"Postgres readiness leaked secret-like text: {payload}", failures)
+    require(fixture.get("storage_mode") == "experimental_write_http", "postgres_storage_mode_mismatch", failures)
+    require(fixture.get("storage_status") == "active", "postgres_storage_status_mismatch", failures)
+    require(fixture.get("runtime_write_gate_status") == "active", "postgres_runtime_write_gate_inactive", failures)
+    require(fixture.get("non_allowlisted_write_status") == 503, "postgres_non_allowlisted_write_not_blocked", failures)
+    require(fixture.get("non_allowlisted_write_error") == "postgres_read_only_backend", "postgres_non_allowlisted_block_reason_mismatch", failures)
+    require(fixture.get("postgres_counts_unchanged") is True, "postgres_ledger_counts_changed", failures)
+    require(payload.get("secret_leaked") is False, "postgres_readiness_secret_leak", failures)
 
     recovery_command = [
         sys.executable,
@@ -204,26 +204,26 @@ def run_postgres_readiness_fixture(args: argparse.Namespace, failures: list[str]
     recovery_code, recovery, recovery_text = run(recovery_command, timeout=300)
     require(
         recovery_code == 0 and recovery.get("ok") is True,
-        f"Postgres backup/restore fixture failed: {recovery}",
+        "postgres_backup_restore_fixture_failed",
         failures,
     )
-    require(recovery.get("skipped") is not True, f"Postgres backup/restore fixture was skipped: {recovery}", failures)
+    require(recovery.get("skipped") is not True, "postgres_backup_restore_fixture_skipped", failures)
     require(
         recovery.get("contract") == "postgres_backup_restore_v1",
-        f"Postgres backup/restore contract missing: {recovery}",
+        "postgres_backup_restore_contract_missing",
         failures,
     )
     require(
         recovery.get("manifest_contract") == "postgres_backup_manifest_v1",
-        f"Postgres backup manifest contract missing: {recovery}",
+        "postgres_backup_manifest_contract_missing",
         failures,
     )
     require(
         recovery.get("source_counts") == recovery.get("restored_counts"),
-        f"Postgres restored counts differ from source: {recovery}",
+        "postgres_restored_counts_mismatch",
         failures,
     )
-    require(recovery.get("secret_leaked") is False, f"Postgres backup/restore leaked secret-like text: {recovery}", failures)
+    require(recovery.get("secret_leaked") is False, "postgres_backup_restore_secret_leak", failures)
 
     return {
         "included": True,
@@ -237,6 +237,7 @@ def run_postgres_readiness_fixture(args: argparse.Namespace, failures: list[str]
         "non_allowlisted_write_error": fixture.get("non_allowlisted_write_error"),
         "postgres_counts_unchanged": fixture.get("postgres_counts_unchanged"),
         "recovery": {
+            "ok": recovery.get("ok") is True,
             "contract": recovery.get("contract"),
             "manifest_contract": recovery.get("manifest_contract"),
             "backup_create": recovery.get("backup_create"),
@@ -244,6 +245,8 @@ def run_postgres_readiness_fixture(args: argparse.Namespace, failures: list[str]
             "empty_target_restore": recovery.get("empty_target_restore"),
             "overwrite_pre_restore_backup": recovery.get("overwrite_pre_restore_backup"),
             "tamper_detection": recovery.get("tamper_detection"),
+            "error_type": recovery.get("error_type"),
+            "failure_count": int(recovery.get("failure_count") or 0),
             "source_counts": recovery.get("source_counts") or {},
             "restored_counts": recovery.get("restored_counts") or {},
             "skipped": bool(recovery.get("skipped")),

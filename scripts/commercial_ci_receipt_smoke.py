@@ -33,6 +33,7 @@ def main() -> int:
         tmp_path = Path(tmp)
         receipts = tmp_path / "commands"
         good_path = receipts / "good.json"
+        failed_path = receipts / "failed.json"
         skipped_path = receipts / "skipped.json"
         scope_path = tmp_path / "scope.json"
         aggregate_path = tmp_path / "aggregate.json"
@@ -57,6 +58,36 @@ def main() -> int:
         require(code == 0 and good.get("evidence_complete") is True, f"good command receipt failed: {good}", failures)
         require(good.get("raw_output_stored") is False, f"raw output policy missing: {good}", failures)
         require(len(str(good.get("subject_sha") or "")) == 40, f"subject SHA missing: {good}", failures)
+
+        sensitive_failure = "customer token agtok_should_not_escape"
+        failure_fixture = tmp_path / "emit_failure.py"
+        failure_fixture.write_text(
+            "import json, sys\n"
+            f"print(json.dumps({{'ok': False, 'error_type': 'RuntimeError', "
+            f"'failure_count': 2, 'failures': ['fixture_failed', {sensitive_failure!r}]}}))\n"
+            "sys.exit(1)\n",
+            encoding="utf-8",
+        )
+        code, failed = run([
+            sys.executable,
+            str(RECEIPT),
+            "command",
+            "--gate-id",
+            "gate_test",
+            "--command-id",
+            "failed",
+            "--output",
+            str(failed_path),
+            "--",
+            sys.executable,
+            str(failure_fixture),
+        ])
+        diagnostics = failed.get("payload_diagnostics") or {}
+        require(code == 1 and failed.get("evidence_complete") is False, f"failed command receipt accepted: {failed}", failures)
+        require(diagnostics.get("error_codes") == ["RuntimeError", "fixture_failed"], f"safe diagnostics missing: {failed}", failures)
+        require(len(diagnostics.get("failure_hashes") or []) == 2, f"failure hashes missing: {failed}", failures)
+        require(diagnostics.get("failure_text_stored") is False, f"failure text policy missing: {failed}", failures)
+        require(sensitive_failure not in failed_path.read_text(encoding="utf-8"), "failure receipt stored raw sensitive text", failures)
 
         code, skipped = run([
             sys.executable,

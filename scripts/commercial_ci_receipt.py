@@ -17,6 +17,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SENSITIVE_ASSIGNMENT_RE = re.compile(r"(?i)^([^=]*(?:token|secret|password|key|dsn)[^=]*)=(.*)$")
+SAFE_CODE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,120}$")
 
 
 def utc_now() -> str:
@@ -81,6 +82,34 @@ def any_skipped(value: Any) -> bool:
     if isinstance(value, list):
         return any(any_skipped(child) for child in value)
     return False
+
+
+def payload_diagnostics(payload: dict[str, Any]) -> dict[str, Any]:
+    error_codes: set[str] = set()
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in {"error", "error_type"} and isinstance(child, str) and SAFE_CODE_RE.fullmatch(child):
+                    error_codes.add(child)
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(payload)
+    failures = payload.get("failures") if isinstance(payload.get("failures"), list) else []
+    for failure in failures:
+        if isinstance(failure, str) and SAFE_CODE_RE.fullmatch(failure):
+            error_codes.add(failure)
+    raw_failure_count = payload.get("failure_count")
+    failure_count = raw_failure_count if isinstance(raw_failure_count, int) and raw_failure_count >= 0 else len(failures)
+    return {
+        "error_codes": sorted(error_codes),
+        "failure_count": failure_count,
+        "failure_hashes": [sha256_bytes(str(item).encode("utf-8", errors="replace")) for item in failures],
+        "failure_text_stored": False,
+    }
 
 
 def safe_command(command: list[str]) -> list[str]:
@@ -216,6 +245,7 @@ def command_receipt(args: argparse.Namespace) -> int:
         "skipped_evidence": any_skipped(payload),
         "expected_contracts": sorted(set(args.expected_contract)),
         "missing_contracts": missing_contracts,
+        "payload_diagnostics": payload_diagnostics(payload),
         "stdout_sha256": sha256_bytes(stdout),
         "stdout_size_bytes": len(stdout),
         "stderr_sha256": sha256_bytes(stderr),
@@ -269,6 +299,8 @@ def scope_receipt(args: argparse.Namespace) -> int:
                 "skipped_evidence": receipt.get("skipped_evidence") is True,
                 "expected_contracts": receipt.get("expected_contracts") or [],
                 "missing_contracts": receipt.get("missing_contracts") or [],
+                "failures": receipt.get("failures") or [],
+                "payload_diagnostics": receipt.get("payload_diagnostics") or {},
                 "container_image": receipt.get("container_image") or {},
                 "dependency_inputs": receipt.get("dependency_inputs") or {},
             })
