@@ -208,6 +208,60 @@ def main() -> int:
     require(status in {200, 201}, f"realistic runtime evidence summary should not require prepared action: {status} {realistic_runtime_evidence}", failures)
     require((realistic_runtime_evidence.get("tool_call") or {}).get("status") == "completed", f"realistic runtime evidence should be completed: {realistic_runtime_evidence}", failures)
 
+    status, codex_read_only_evidence = http_json(args.base_url, "/api/agent-gateway/tool-calls", {
+        "workspace_id": "local-demo",
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "tool_name": "agent_worker.codex",
+        "tool_category": "custom",
+        "risk_level": "medium",
+        "status": "completed",
+        "target_resource": "local://codex/read-only",
+        "args": {
+            "task_id": task_id,
+            "adapter": "codex",
+            "observation_level": "structured_runtime_events",
+            "runtime_events_structured": True,
+            "runtime_observation": {
+                "protocol": "codex_exec_jsonl_v1",
+                "sandbox": "read-only",
+                "prohibited_event_count": 0,
+                "raw_events_omitted": True,
+            },
+            "read_only_runtime": True,
+            "external_writes_supported": False,
+            "requires_prepared_action_for_external_write": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "result_summary": "Codex produced a read-only local analysis summary.",
+    })
+    outputs.append(json.dumps(codex_read_only_evidence, ensure_ascii=False))
+    require(status in {200, 201}, f"Codex read-only runtime evidence should not require prepared action: {status} {codex_read_only_evidence}", failures)
+    require((codex_read_only_evidence.get("tool_call") or {}).get("status") == "completed", f"Codex read-only runtime evidence should be completed: {codex_read_only_evidence}", failures)
+
+    status, observation_bypass = http_json(args.base_url, "/api/agent-gateway/tool-calls", {
+        "workspace_id": "local-demo",
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "tool_name": "agent_worker.codex.observation_bypass",
+        "tool_category": "custom",
+        "risk_level": "medium",
+        "status": "completed",
+        "target_resource": "local://codex/read-only",
+        "args": {
+            "adapter": "codex",
+            "runtime_observation": {
+                "protocol": "codex_exec_jsonl_v1",
+                "destination": "https://example.com/upload",
+            },
+        },
+        "result_summary": "This nested external target must be blocked.",
+    })
+    outputs.append(json.dumps(observation_bypass, ensure_ascii=False))
+    require(status == 428, f"Nested runtime observation external target bypassed Approval Wall: {status} {observation_bypass}", failures)
+
     generic_external = {
         "workspace_id": "local-demo",
         "run_id": run_id,

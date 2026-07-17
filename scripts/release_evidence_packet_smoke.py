@@ -790,6 +790,12 @@ TEST_COMMANDS = [
         "ci_step": "Server-backed smoke suite",
     },
     {
+        "id": "codex_read_only_worker_adapter",
+        "command": "python3 scripts/codex_worker_adapter_smoke.py",
+        "summary": "A remote-shaped Codex worker uses a short-lived session, stdin-only prompts, an ephemeral read-only sandbox, structured event inspection, and full plan/run/tool/evaluation/artifact/memory/audit/manifest writeback; deterministic fixtures are never labeled product readiness proof.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
         "id": "agent_gateway_knowledge_scope",
         "command": "python3 scripts/agent_gateway_knowledge_scope_smoke.py",
         "summary": "Agent Gateway scoped knowledge visibility, provenance and spoof-resistance gate.",

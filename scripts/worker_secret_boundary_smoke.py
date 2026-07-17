@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agentops_mis_cli.worker import WORKER_SECRET_BOUNDARY_VERSION, build_task_prompt
+from agentops_mis_cli.worker import WORKER_SECRET_BOUNDARY_VERSION, build_task_prompt, openclaw_subprocess_env
 
 
 def stamp() -> str:
@@ -78,6 +78,21 @@ def main() -> int:
     env_secret = "sk-workerboundary-env-secret-1234567890"
     url_secret = "sk-workerboundary-url-secret-1234567890"
     failures: list[str] = []
+
+    prior_values = {key: os.environ.get(key) for key in ("AGENTOPS_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")}
+    try:
+        os.environ["AGENTOPS_API_KEY"] = "fixture-gateway-token"
+        os.environ["OPENAI_API_KEY"] = "fixture-openai-token"
+        os.environ["ANTHROPIC_API_KEY"] = "fixture-anthropic-token"
+        child_env = openclaw_subprocess_env()
+    finally:
+        for key, value in prior_values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    for key in ("AGENTOPS_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CODEX_HOME"):
+        require(key not in child_env, f"OpenClaw child environment inherited {key}", failures)
 
     prompt = build_task_prompt({
         "title": f"Secret boundary prompt smoke {task_secret}",

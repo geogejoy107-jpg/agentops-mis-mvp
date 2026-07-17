@@ -56,10 +56,20 @@ def smoke() -> dict:
         for secret in ["sk-worker-secret", "ntn_worker_secret", "sk-url-secret", "agtsess_should_hide_123456789"]:
             require(secret not in redacted, f"{label} secret leaked: {secret} in {redacted}")
 
+    extended = (
+        "aws=AKIA1234567890ABCDEF "
+        "google=AIza1234567890abcdefghijklmnopqrstuvwxyz "
+        "jwt=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.signature12345 "
+        "-----BEGIN " + "PRIVATE KEY-----"
+    )
+    extended_redacted = shared_redact_text(extended, 1000)
+    for secret in ["AKIA1234567890ABCDEF", "AIza1234567890abcdefghijklmnopqrstuvwxyz", "eyJhbGciOiJIUzI1NiJ9", "BEGIN PRIVATE KEY"]:
+        require(secret not in extended_redacted, f"extended secret leaked: {secret} in {extended_redacted}")
+
     return {
         "ok": True,
         "safe_preserved": ["127.0.0.1:8642", "tsk_worker_hermes_live_20260618065503", "run_gw_6f995c9de929"],
-        "sensitive_redacted": ["email", "phone", "bearer", "token", "api_key", "password", "agent_session"],
+        "sensitive_redacted": ["email", "phone", "bearer", "token", "api_key", "password", "agent_session", "aws", "google", "jwt", "private_key"],
     }
 
 
