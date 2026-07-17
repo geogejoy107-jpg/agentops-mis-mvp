@@ -90,7 +90,7 @@ def payload_diagnostics(payload: dict[str, Any]) -> dict[str, Any]:
     def visit(value: Any) -> None:
         if isinstance(value, dict):
             for key, child in value.items():
-                if key in {"error", "error_type"} and isinstance(child, str) and SAFE_CODE_RE.fullmatch(child):
+                if key in {"error", "error_type", "error_stage"} and isinstance(child, str) and SAFE_CODE_RE.fullmatch(child):
                     error_codes.add(child)
                 visit(child)
         elif isinstance(value, list):

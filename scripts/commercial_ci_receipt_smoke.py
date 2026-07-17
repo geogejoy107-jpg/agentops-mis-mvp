@@ -63,7 +63,7 @@ def main() -> int:
         failure_fixture = tmp_path / "emit_failure.py"
         failure_fixture.write_text(
             "import json, sys\n"
-            f"print(json.dumps({{'ok': False, 'error_type': 'RuntimeError', "
+            f"print(json.dumps({{'ok': False, 'error_type': 'RuntimeError', 'error_stage': 'fixture_verify', "
             f"'failure_count': 3, 'failures': ['fixture_failed', 'sk-secretish', {sensitive_failure!r}]}}))\n"
             "sys.exit(1)\n",
             encoding="utf-8",
@@ -84,7 +84,7 @@ def main() -> int:
         ])
         diagnostics = failed.get("payload_diagnostics") or {}
         require(code == 1 and failed.get("evidence_complete") is False, f"failed command receipt accepted: {failed}", failures)
-        require(diagnostics.get("error_codes") == ["RuntimeError", "fixture_failed"], f"safe diagnostics missing: {failed}", failures)
+        require(diagnostics.get("error_codes") == ["RuntimeError", "fixture_failed", "fixture_verify"], f"safe diagnostics missing: {failed}", failures)
         require(len(diagnostics.get("failure_hashes") or []) == 3, f"failure hashes missing: {failed}", failures)
         require("sk-secretish" not in diagnostics.get("error_codes", []), f"token-shaped value exposed as code: {failed}", failures)
         require(diagnostics.get("failure_text_stored") is False, f"failure text policy missing: {failed}", failures)

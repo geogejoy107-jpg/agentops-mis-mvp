@@ -246,6 +246,7 @@ def run_postgres_readiness_fixture(args: argparse.Namespace, failures: list[str]
             "overwrite_pre_restore_backup": recovery.get("overwrite_pre_restore_backup"),
             "tamper_detection": recovery.get("tamper_detection"),
             "error_type": recovery.get("error_type"),
+            "error_stage": recovery.get("error_stage"),
             "failure_count": int(recovery.get("failure_count") or 0),
             "source_counts": recovery.get("source_counts") or {},
             "restored_counts": recovery.get("restored_counts") or {},
