@@ -2382,10 +2382,11 @@ def cmd_tailscale_preview(args) -> int:
 def cmd_relay_preflight(_args) -> int:
     config, _secret_values = require_initialized()
     p = paths()
+    active_relay = relay_connector_projection(p)
     base = {
         "operation": "host_relay_preflight",
         "prepared_config_present": p["relay_prepared"].is_file(),
-        "active_relay_enabled": relay_connector_projection(p)["enabled"],
+        "active_relay_enabled": active_relay["enabled"],
         "confirmation_required": True,
         "deployed_relay": False,
         "certificate_lifecycle": False,
@@ -2409,6 +2410,13 @@ def cmd_relay_preflight(_args) -> int:
             **base,
             "ok": False,
             "error": "network_publication_profile_active",
+        })
+        return 1
+    if active_relay.get("state") != "disabled":
+        emit({
+            **base,
+            "ok": False,
+            "error": "active_relay_not_disabled",
         })
         return 1
     try:

@@ -41,6 +41,7 @@ _SAFE_FAILURE_CODES = {
     "private_json_shape_invalid",
     "private_json_unreadable",
     "ready_signal_failed",
+    "relay_ca_invalid",
     "secrets_shape_invalid",
     "service_stop_failed",
     "status_target_invalid",
@@ -397,7 +398,10 @@ def validate_connector_material(
         config["host_private_key_path"],
         private_key=True,
     )
-    relay_context = ssl.create_default_context(cafile=str(relay_ca_path))
+    try:
+        relay_context = ssl.create_default_context(cafile=str(relay_ca_path))
+    except (OSError, ssl.SSLError, ValueError) as exc:
+        raise RelayConnectorServiceError("relay_ca_invalid") from exc
     relay_context.minimum_version = ssl.TLSVersion.TLSv1_2
     _validate_certificate_hostname(
         host_certificate_path,

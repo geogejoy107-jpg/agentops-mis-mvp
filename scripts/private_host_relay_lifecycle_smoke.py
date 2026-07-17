@@ -46,6 +46,15 @@ def free_port() -> int:
         return int(stream.getsockname()[1])
 
 
+def loopback_port_available(port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as stream:
+            stream.bind(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+
+
 def run_host(env: dict[str, str], *args: str, expected: tuple[int, ...] = (0,)) -> tuple[int, dict]:
     process = subprocess.run(
         [sys.executable, "-m", "agentops_mis_cli.cli", "host", *args],
@@ -151,6 +160,7 @@ def main() -> int:
     foreign_connector_preserved = False
     epoch_startup_failed_closed = False
     prepared_material_preflight = False
+    active_relay_preflight_rejected = False
     bounded_shutdown = PROCESS_SHUTDOWN_GRACE_SECONDS + PROCESS_KILL_GRACE_SECONDS < 10
     if not bounded_shutdown:
         failures.append("Stack cleanup bound exceeds the Host stop grace period")
@@ -274,6 +284,8 @@ def main() -> int:
                 and preflight.get("exact_material_validated") is True
                 and preflight.get("active_relay_enabled") is False
                 and preflight.get("network_used") is False
+                and relay_tls_listener.accepted_versions() == []
+                and loopback_port_available(host_tls_port)
                 and json.loads((relay_home / "config.json").read_text(encoding="utf-8"))
                 == {"enabled": False, "schema_version": 1}
                 and not (relay_home / "status.json").exists()
@@ -282,6 +294,19 @@ def main() -> int:
             if not prepared_material_preflight:
                 failures.append("prepared Relay material preflight mutated or used the network")
             write_private_json(relay_home / "config.json", relay_config)
+            active_preflight_code, active_preflight = run_host(
+                env,
+                "relay-preflight",
+                expected=(1,),
+            )
+            active_relay_preflight_rejected = bool(
+                active_preflight_code == 1
+                and active_preflight.get("ok") is False
+                and active_preflight.get("error") == "active_relay_not_disabled"
+                and relay_tls_listener.accepted_versions() == []
+            )
+            if not active_relay_preflight_rejected:
+                failures.append("preflight accepted an already-enabled active Relay config")
 
             foreign_epoch = relay_home / "foreign-epoch.json"
             foreign_connector = subprocess.Popen(
@@ -414,6 +439,7 @@ def main() -> int:
                 foreign.wait(timeout=5)
 
     result = {
+        "active_relay_preflight_rejected": active_relay_preflight_rejected,
         "deployed_relay": False,
         "bounded_shutdown": bounded_shutdown,
         "disabled_no_connector_process": disabled_no_process,

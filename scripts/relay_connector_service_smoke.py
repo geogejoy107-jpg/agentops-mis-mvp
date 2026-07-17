@@ -433,6 +433,40 @@ def main() -> int:
         ):
             failures.append("mismatched Host certificate key did not fail before network")
 
+        invalid_ca = service_home / "invalid-ca.pem"
+        invalid_ca.write_text("not a certificate\n", encoding="utf-8")
+        invalid_ca.chmod(0o600)
+        invalid_ca_config = dict(enabled_config_payload)
+        invalid_ca_config["relay_ca_path"] = str(invalid_ca)
+        invalid_ca_config_path = service_home / "invalid-ca-config.json"
+        invalid_ca_status = service_home / "invalid-ca-status.json"
+        write_private_json(invalid_ca_config_path, invalid_ca_config)
+        invalid_ca_service = subprocess.run(
+            service_command(
+                invalid_ca_config_path,
+                secrets_path,
+                service_home / "invalid-ca-epoch.json",
+                invalid_ca_status,
+            ),
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        invalid_ca_payload = read_status(invalid_ca_status)
+        invalid_ca_rendered = (
+            invalid_ca_service.stdout
+            + invalid_ca_service.stderr
+            + json.dumps(invalid_ca_payload, sort_keys=True)
+        )
+        if (
+            invalid_ca_service.returncode == 0
+            or invalid_ca_payload.get("failure_code") != "relay_ca_invalid"
+            or str(invalid_ca) in invalid_ca_rendered
+        ):
+            failures.append("invalid Relay CA did not fail with a path-free bounded code")
+
         broad_tls_directory = temporary_path / "broad-tls"
         broad_tls_directory.mkdir(mode=0o755)
         broad_tls_directory.chmod(0o755)
