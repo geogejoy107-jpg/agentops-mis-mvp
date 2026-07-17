@@ -23,6 +23,7 @@ from agentops_mis_storage.postgres import PostgresAdapter, PostgresAdapterUnavai
 
 
 BUNDLED_PYTHON = Path("/Users/wuji/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3")
+PSYCOPG_INSTALL_SPEC = os.environ.get("AGENTOPS_PSYCOPG_INSTALL_SPEC", "psycopg[binary]==3.3.4")
 
 
 def run(args: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess[str]:
@@ -71,7 +72,7 @@ def ensure_psycopg(temp_root: Path, *, install: bool) -> tuple[bool, str]:
             "--quiet",
             "--target",
             str(target),
-            "psycopg[binary]>=3.2,<4",
+            PSYCOPG_INSTALL_SPEC,
         ],
         timeout=240,
     )
@@ -279,6 +280,7 @@ def main() -> int:
                 "skipped": False,
                 "contract": "postgres_optional_psycopg_adapter_v1",
                 "driver_status": driver_status,
+                "driver_install_spec": PSYCOPG_INSTALL_SPEC,
                 "image": args.image,
                 "free_local_dependencies": [],
                 "row_shape": sorted(task.keys()),

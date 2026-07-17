@@ -152,7 +152,7 @@ agentops agent heartbeat --status idle --summary "remote worker ready"
 agentops-worker --once --adapter mock --use-session --session-ttl-sec 900
 ```
 
-## Backup And Restore
+## SQLite Backup And Restore
 
 Create a local SQLite backup:
 
@@ -180,6 +180,51 @@ If overwriting a target, pass `--overwrite`; the tool creates a
 
 The backup utility prints counts, hashes, and integrity status only. It does not
 print table rows, prompts, raw responses, or token material.
+
+## Postgres BYOC Backup And Restore
+
+Postgres deployments use `postgres_backup_restore_v1` with a required
+`postgres_backup_manifest_v1` sidecar. Prefer environment variables so database
+credentials do not enter shell history:
+
+```bash
+export AGENTOPS_POSTGRES_DSN="<customer-managed-source-dsn>"
+python3 scripts/agentops_postgres_backup.py create \
+  --backup-dir .agentops_runtime/postgres_backups
+
+python3 scripts/agentops_postgres_backup.py verify \
+  --backup .agentops_runtime/postgres_backups/agentops-postgres-YYYYMMDDTHHMMSSZ-ID.dump
+```
+
+Restore requires explicit write confirmation and a target-state acknowledgement:
+
+```bash
+export AGENTOPS_POSTGRES_TARGET_DSN="<customer-managed-empty-target-dsn>"
+python3 scripts/agentops_postgres_backup.py restore \
+  --backup .agentops_runtime/postgres_backups/agentops-postgres-YYYYMMDDTHHMMSSZ-ID.dump \
+  --confirm-restore \
+  --target-empty-confirmed
+```
+
+An overwrite additionally requires `--overwrite`; the utility first creates a
+guarded Postgres pre-restore archive. The manifest, archive hash, and
+`pg_restore --list` table of contents must verify before restore. Output omits
+DSNs, credential values, raw rows, prompts, responses, transcripts, and tokens.
+
+Installed utility and smoke files prove availability only. Gate 5 recovery
+acceptance requires this Docker-backed command to pass with `skipped=false`
+and be recorded against the current commit:
+
+```bash
+python3 scripts/agentops_postgres_backup_smoke.py
+```
+
+Packaged deployments without a `.git` directory must set
+`AGENTOPS_BUILD_SHA` to the immutable 40-character commit SHA used to build the
+image; stale or missing build identity keeps Postgres recovery blocked.
+
+`--skip-if-unavailable` is diagnostic only while Docker is unavailable. Its
+`skipped=true` result must never be recorded as BYOC handoff evidence.
 
 ## Signed Audit Export
 
@@ -212,6 +257,7 @@ python3 scripts/audit_retention_controls_smoke.py --configured-fixture
 python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture
 python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture
 python3 scripts/agentops_local_backup_smoke.py
+python3 scripts/agentops_postgres_backup_smoke.py
 python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture
 python3 scripts/enrollment_policy_preview_smoke.py
 python3 scripts/agentops_worker_restart_smoke.py
@@ -225,6 +271,9 @@ Expected state:
 - `demo_ready=true`.
 - Local product acceptance passes without live execution.
 - Backup smoke creates and restores an isolated temp DB only.
+- Postgres recovery acceptance reports `postgres_backup_restore_v1`,
+  `postgres_backup_manifest_v1`, matching source/restored fixture counts, and
+  `skipped=false`; installed files alone do not satisfy this evidence.
 - BYOC deployment smoke verifies restore confirmation, overwrite safety copy,
   signed audit export, tamper detection, and the Postgres runtime write gate in
   isolated temp stores only.

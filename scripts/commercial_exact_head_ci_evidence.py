@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +18,12 @@ WORKFLOW_NAME = "Commercial Migration CI"
 REQUIRED_JOB_NAMES = [
     "Commercial core gates",
     "Storage and Postgres parity",
-    "UI, deployment, and BYOC evidence",
+    "UI parity and build evidence",
+    "Independent Postgres and BYOC evidence",
+    "Assemble immutable commercial CI receipt",
 ]
+RECEIPT_ARTIFACT_NAME = "commercial-migration-ci-receipt"
+RECEIPT_CONTRACT_ID = "commercial_migration_ci_receipt_v1"
 
 
 def require(condition: bool, message: str) -> None:
@@ -124,6 +130,61 @@ def successful_required_jobs(run: dict[str, Any]) -> tuple[bool, list[dict[str, 
     return not missing and not failed, selected, missing + failed
 
 
+def load_receipt_artifact(run_id: str, repo: str | None) -> tuple[dict[str, Any] | None, str | None, str | None]:
+    with tempfile.TemporaryDirectory(prefix="agentops-commercial-ci-receipt-") as tmp:
+        args = ["run", "download", str(run_id), "--name", RECEIPT_ARTIFACT_NAME, "--dir", tmp]
+        if repo:
+            args.extend(["--repo", repo])
+        proc = subprocess.run(
+            ["gh", *args],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=90,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return None, None, (proc.stderr or proc.stdout or "receipt artifact download failed").strip()
+        paths = sorted(Path(tmp).rglob("commercial-migration-ci-receipt.json"))
+        if len(paths) != 1:
+            return None, None, f"expected one aggregate receipt file, found {len(paths)}"
+        raw = paths[0].read_bytes()
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            return None, None, f"aggregate receipt JSON invalid: {exc}"
+        if not isinstance(payload, dict):
+            return None, None, "aggregate receipt must be a JSON object"
+        return payload, hashlib.sha256(raw).hexdigest(), None
+
+
+def validate_receipt_artifact(receipt: dict[str, Any], *, head: str, run_id: str) -> tuple[bool, list[str]]:
+    failures: list[str] = []
+    if receipt.get("contract_id") != RECEIPT_CONTRACT_ID:
+        failures.append("receipt_contract_mismatch")
+    if receipt.get("subject_sha") != head or receipt.get("builder_sha") != head:
+        failures.append("receipt_head_mismatch")
+    github_run = receipt.get("github_run") or {}
+    if str(github_run.get("run_id") or "") != str(run_id):
+        failures.append("receipt_run_id_mismatch")
+    required_scopes = set(receipt.get("required_scopes") or [])
+    if required_scopes != {
+        "gate_3_storage_boundary_before_postgres",
+        "gate_5_byoc_enterprise_deployment_ci",
+    }:
+        failures.append("receipt_scope_mismatch")
+    if receipt.get("scope_evidence_complete") is not True or receipt.get("ci_run_complete") is not True:
+        failures.append("receipt_evidence_incomplete")
+    if receipt.get("release_complete") is not False:
+        failures.append("receipt_release_state_invalid")
+    if receipt.get("commercial_handoff_allowed") is not False or receipt.get("ready_to_merge") is not False:
+        failures.append("receipt_handoff_state_invalid")
+    if receipt.get("raw_output_stored") is not False or receipt.get("credentials_stored") is not False:
+        failures.append("receipt_sensitive_output_policy_invalid")
+    return not failures, failures
+
+
 def build_payload(from_gh: bool, require_current_head: bool, run_id: str | None, repo: str | None) -> dict[str, Any]:
     head = git_output("rev-parse", "HEAD")
     branch = current_branch()
@@ -167,7 +228,15 @@ def build_payload(from_gh: bool, require_current_head: bool, run_id: str | None,
     workflow_name = run.get("workflowName") or run.get("name")
     workflow_matches = workflow_name == WORKFLOW_NAME
     run_success = run.get("status") == "completed" and run.get("conclusion") == "success"
-    verified = bool(head_matches and workflow_matches and run_success and jobs_ok)
+    run_id_value = str(run.get("databaseId"))
+    receipt, receipt_sha256, receipt_error = load_receipt_artifact(run_id_value, repo)
+    receipt_ok = False
+    receipt_failures: list[str] = []
+    if receipt_error:
+        receipt_failures.append("receipt_artifact_unavailable")
+    elif receipt is not None:
+        receipt_ok, receipt_failures = validate_receipt_artifact(receipt, head=head, run_id=run_id_value)
+    verified = bool(head_matches and workflow_matches and run_success and jobs_ok and receipt_ok)
     payload.update({
         "status": "exact_head_ci_verified" if verified else "exact_head_ci_not_verified",
         "exact_head_ci_verified": verified,
@@ -185,6 +254,17 @@ def build_payload(from_gh: bool, require_current_head: bool, run_id: str | None,
             "required_jobs_success": jobs_ok,
             "required_jobs": jobs,
             "job_gaps": job_gaps,
+            "aggregate_receipt": {
+                "artifact_name": RECEIPT_ARTIFACT_NAME,
+                "contract_id": receipt.get("contract_id") if receipt else None,
+                "subject_sha": receipt.get("subject_sha") if receipt else None,
+                "run_id": (receipt.get("github_run") or {}).get("run_id") if receipt else None,
+                "sha256": receipt_sha256,
+                "verified": receipt_ok,
+                "failures": receipt_failures,
+                "error": "receipt_artifact_unavailable" if receipt_error else None,
+                "raw_output_stored": False,
+            },
         },
     })
     if require_current_head:

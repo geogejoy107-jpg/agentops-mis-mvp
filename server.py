@@ -13085,6 +13085,82 @@ def recent_closed_loop_run_count(conn: sqlite3.Connection, limit: int = 250) -> 
     return count
 
 
+def postgres_backup_restore_receipt() -> dict:
+    command = "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture"
+    required_contracts = {"postgres_backup_restore_v1", "postgres_backup_manifest_v1"}
+    receipts = read_json_file(ROOT / "docs" / "COMMERCIAL_EVIDENCE_RECEIPTS.json", {})
+    gate_receipt = next(
+        (
+            item
+            for item in receipts.get("phase_gate_receipts") or []
+            if isinstance(item, dict) and item.get("gate_id") == "gate_5_byoc_enterprise_deployment"
+        ),
+        {},
+    )
+    command_receipt = next(
+        (
+            item
+            for item in gate_receipt.get("commands") or []
+            if isinstance(item, dict) and item.get("command") == command
+        ),
+        {},
+    )
+    recorded_contracts = {
+        str(value)
+        for value in [
+            command_receipt.get("contract"),
+            command_receipt.get("manifest_contract"),
+            command_receipt.get("postgres_recovery_contract"),
+            command_receipt.get("postgres_manifest_contract"),
+            *(command_receipt.get("contracts") or []),
+        ]
+        if value
+    }
+    command_passed = command_receipt.get("status") == "passed"
+    non_skipped = command_receipt.get("skipped") is False
+    contracts_recorded = required_contracts <= recorded_contracts
+    configured_head = str(os.environ.get("AGENTOPS_BUILD_SHA") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{7,40}", configured_head):
+        configured_head = ""
+    current_head = configured_head or str(commercial_release_git_state().get("head") or "")
+    if not re.fullmatch(r"[0-9a-f]{7,40}", current_head):
+        current_head = ""
+    verified_head = str(gate_receipt.get("verified_head") or "")
+    head_current = bool(
+        current_head
+        and verified_head
+        and (current_head.startswith(verified_head) or verified_head.startswith(current_head))
+    )
+    accepted = command_passed and non_skipped and contracts_recorded and head_current
+    status = (
+        "passed_non_skipped"
+        if accepted
+        else "receipt_stale"
+        if command_passed and non_skipped and contracts_recorded and not head_current
+        else "skipped_not_accepted"
+        if command_receipt.get("skipped") is True
+        else "receipt_incomplete"
+        if command_receipt
+        else "not_recorded"
+    )
+    return {
+        "status": status,
+        "accepted": accepted,
+        "receipt_present": bool(command_receipt),
+        "command_passed": command_passed,
+        "non_skipped": non_skipped,
+        "contracts_recorded": contracts_recorded,
+        "head_current": head_current,
+        "current_head": current_head,
+        "required_command": command,
+        "restore_contract": "postgres_backup_restore_v1",
+        "manifest_contract": "postgres_backup_manifest_v1",
+        "verified_at": gate_receipt.get("verified_at"),
+        "verified_head": verified_head,
+        "receipt_contract": receipts.get("contract_id") or "commercial_evidence_receipts_v1",
+    }
+
+
 def local_readiness(conn: sqlite3.Connection, headers) -> dict:
     gateway, gateway_status_code = agent_gateway_status(conn, headers)
     security = security_production_readiness(conn, headers)
@@ -13101,6 +13177,8 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
         ("worker_adapter_readiness_smoke", ROOT / "scripts" / "worker_adapter_readiness_smoke.py"),
         ("local_backup_utility", ROOT / "scripts" / "agentops_local_backup.py"),
         ("local_backup_smoke", ROOT / "scripts" / "agentops_local_backup_smoke.py"),
+        ("postgres_backup_utility", ROOT / "scripts" / "agentops_postgres_backup.py"),
+        ("postgres_backup_smoke", ROOT / "scripts" / "agentops_postgres_backup_smoke.py"),
         ("signed_audit_export_utility", ROOT / "scripts" / "agentops_signed_audit_export.py"),
         ("byoc_deployment_acceptance_smoke", ROOT / "scripts" / "byoc_deployment_acceptance_smoke.py"),
     ]
@@ -13110,6 +13188,12 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
         "backup_restore_utility": doc_exists.get("local_backup_utility", False),
         "backup_restore_smoke": doc_exists.get("local_backup_smoke", False),
         "byoc_deployment_acceptance_smoke": doc_exists.get("byoc_deployment_acceptance_smoke", False),
+        "postgres_backup_utility": doc_exists.get("postgres_backup_utility", False),
+        "postgres_backup_smoke": doc_exists.get("postgres_backup_smoke", False),
+        "postgres_backup_restore_contract": doc_exists.get("postgres_backup_utility", False),
+        "postgres_backup_manifest_contract": doc_exists.get("postgres_backup_utility", False),
+        "postgres_backup_file_presence_is_acceptance": False,
+        "postgres_backup_acceptance_requires_non_skipped": True,
         "signed_audit_export_utility": doc_exists.get("signed_audit_export_utility", False),
         "signed_audit_export_contract": doc_exists.get("byoc_deployment_acceptance_smoke", False),
         "restore_requires_cli_confirmation": True,
@@ -13636,6 +13720,7 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
     retention_controls = audit_retention_controls(conn, headers)
     enterprise_controls = enterprise_byoc_controls(headers)
     deployment_checks = local.get("deployment_checks") or {}
+    postgres_recovery_receipt = postgres_backup_restore_receipt()
     capabilities = entitlements.get("capabilities") or {}
 
     def capability_gate(capability: str) -> dict:
@@ -13692,6 +13777,20 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
         if postgres_selected
         else "SQLite is active; Postgres remains enterprise_byoc gated until selected and proven."
     )
+    postgres_backup_available = all(deployment_checks.get(key) is True for key in [
+        "postgres_backup_utility",
+        "postgres_backup_smoke",
+        "postgres_backup_restore_contract",
+        "postgres_backup_manifest_contract",
+    ])
+    postgres_backup_accepted = postgres_recovery_receipt.get("accepted") is True
+    postgres_backup_status = (
+        "ready"
+        if postgres_backup_accepted
+        else "blocked"
+        if postgres_selected
+        else "gated"
+    )
 
     signed_status = "ready" if signed_gate.get("enabled") and signed_export_proof_ok else "gated" if signed_export_proof_ok else "blocked"
     retention_status = retention_policy.get("status") if retention_policy.get("status") != "ready" else "ready" if retention_gate.get("enabled") else "gated"
@@ -13738,6 +13837,18 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
             "ready" if backup_ok else "blocked",
             "CLI-confirmed restore, overwrite safety copy, isolated smoke, and no browser restore write.",
             "python3 scripts/byoc_deployment_acceptance_smoke.py",
+        ),
+        gate(
+            "postgres_backup_restore",
+            "Postgres backup and restore acceptance",
+            postgres_backup_accepted or not postgres_selected,
+            postgres_backup_status,
+            (
+                f"utility_available={postgres_backup_available}; "
+                f"receipt_status={postgres_recovery_receipt.get('status')}; "
+                "file presence alone is not recovery acceptance."
+            ),
+            str(postgres_recovery_receipt.get("required_command")),
         ),
         gate(
             "signed_audit_export",
@@ -13821,13 +13932,31 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
             "writes_allowed": storage.get("writes_allowed"),
         },
         "backup_restore": {
-            "status": "ready" if backup_ok else "blocked",
+            "status": postgres_backup_status if postgres_selected else "ready" if backup_ok else "blocked",
             "utility_ready": deployment_checks.get("backup_restore_utility") is True,
             "smoke_ready": deployment_checks.get("backup_restore_smoke") is True,
             "recovery_drill_ready": deployment_checks.get("byoc_deployment_acceptance_smoke") is True,
             "restore_requires_cli_confirmation": deployment_checks.get("restore_requires_cli_confirmation") is True,
             "overwrite_creates_pre_restore_copy": deployment_checks.get("overwrite_creates_pre_restore_copy") is True,
             "browser_restore_write_exposed": deployment_checks.get("browser_restore_write_exposed") is True,
+            "postgres_utility_available": deployment_checks.get("postgres_backup_utility") is True,
+            "postgres_smoke_available": deployment_checks.get("postgres_backup_smoke") is True,
+            "postgres_contracts_available": postgres_backup_available,
+            "postgres_file_presence_is_acceptance": False,
+            "postgres_acceptance_requires_non_skipped": True,
+            "postgres_acceptance_recorded": postgres_backup_accepted,
+            "postgres_acceptance_receipt_present": postgres_recovery_receipt.get("receipt_present") is True,
+            "postgres_acceptance_command_passed": postgres_recovery_receipt.get("command_passed") is True,
+            "postgres_acceptance_contracts_recorded": postgres_recovery_receipt.get("contracts_recorded") is True,
+            "postgres_acceptance_non_skipped": postgres_recovery_receipt.get("non_skipped") is True,
+            "postgres_acceptance_head_current": postgres_recovery_receipt.get("head_current") is True,
+            "postgres_acceptance_status": postgres_recovery_receipt.get("status"),
+            "postgres_required_command": postgres_recovery_receipt.get("required_command"),
+            "postgres_restore_contract": postgres_recovery_receipt.get("restore_contract"),
+            "postgres_manifest_contract": postgres_recovery_receipt.get("manifest_contract"),
+            "postgres_receipt_contract": postgres_recovery_receipt.get("receipt_contract"),
+            "postgres_verified_at": postgres_recovery_receipt.get("verified_at"),
+            "postgres_verified_head": postgres_recovery_receipt.get("verified_head"),
         },
         "signed_audit_export": {
             "status": signed_status,
@@ -13890,6 +14019,8 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
             "deployment_readiness_v1",
             "enterprise_byoc_controls_v1",
             "byoc_deployment_acceptance_v1",
+            "postgres_backup_restore_v1",
+            "postgres_backup_manifest_v1",
             "signed_audit_export_v1",
             "audit_retention_policy_v1",
             "audit_retention_controls_v1",

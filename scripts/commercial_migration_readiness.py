@@ -981,6 +981,25 @@ def main() -> int:
             "Commercial current evidence status makes per-gate evidence freshness gaps machine-readable without executing heavy/live checks",
         ),
         check(
+            "commercial_ci_receipt_surface_exists",
+            (ROOT / "scripts" / "commercial_ci_receipt.py").exists()
+            and (ROOT / "scripts" / "commercial_ci_receipt_smoke.py").exists()
+            and file_contains("scripts/commercial_ci_receipt.py", "commercial_ci_command_receipt_v1")
+            and file_contains("scripts/commercial_ci_receipt.py", "commercial_postgres_byoc_ci_receipt_v1")
+            and file_contains("scripts/commercial_ci_receipt.py", "commercial_migration_ci_receipt_v1")
+            and file_contains("scripts/commercial_ci_receipt.py", "payload_contains_skipped_evidence")
+            and file_contains("scripts/commercial_ci_receipt.py", "stdout_sha256")
+            and file_contains("scripts/commercial_ci_receipt.py", "repo_digests")
+            and file_contains("scripts/commercial_ci_receipt.py", '"release_complete": False')
+            and file_contains("scripts/commercial_ci_receipt_smoke.py", "commercial_ci_receipt_smoke_v1")
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "byoc-postgres:")
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "receipt-assemble:")
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "commercial-gate-5-ci-receipt")
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "commercial-migration-ci-receipt")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "commercial_ci_command_receipt_v1"),
+            "Gate 3 and Gate 5 run independently and publish exact-head hash-only command, scope, and aggregate CI receipts without self-promoting release state",
+        ),
+        check(
             "commercial_exact_head_ci_evidence_surface_exists",
             file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", "commercial_exact_head_ci_evidence_v1")
             and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.md", "commercial_exact_head_ci_evidence.py --from-gh --require-current-head")
@@ -989,6 +1008,9 @@ def main() -> int:
             and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "commercial_exact_head_ci_evidence_v1")
             and file_contains("docs/MERGE_READINESS_STATUS.json", "commercial_exact_head_ci_evidence_v1")
             and file_contains("scripts/commercial_exact_head_ci_evidence.py", "commercial_exact_head_ci_evidence_v1")
+            and file_contains("scripts/commercial_exact_head_ci_evidence.py", "commercial-migration-ci-receipt")
+            and file_contains("scripts/commercial_exact_head_ci_evidence.py", "commercial_migration_ci_receipt_v1")
+            and file_contains("scripts/commercial_exact_head_ci_evidence.py", "receipt_head_mismatch")
             and file_contains("scripts/commercial_exact_head_ci_evidence.py", "--require-current-head")
             and file_contains("scripts/commercial_exact_head_ci_evidence_smoke.py", "commercial_exact_head_ci_evidence_v1")
             and (ROOT / "scripts" / "commercial_exact_head_ci_evidence.py").exists()
@@ -1321,6 +1343,41 @@ def main() -> int:
             and (ROOT / "scripts" / "agentops_signed_audit_export.py").exists()
             and (ROOT / "scripts" / "byoc_deployment_acceptance_smoke.py").exists(),
             "Gate 5 BYOC deployment acceptance covers backup/restore confirmation, pre-restore safety copy, signed audit export key requirement, tamper detection, raw metadata omission, Postgres runtime write-gate readiness, and Next.js deployment readiness",
+        ),
+        check(
+            "postgres_backup_restore_surface_exists",
+            (ROOT / "scripts" / "agentops_postgres_backup.py").exists()
+            and (ROOT / "scripts" / "agentops_postgres_backup_smoke.py").exists()
+            and file_contains("scripts/agentops_postgres_backup.py", "postgres_backup_restore_v1")
+            and file_contains("scripts/agentops_postgres_backup.py", "postgres_backup_manifest_v1")
+            and file_contains("scripts/agentops_postgres_backup.py", "backup_manifest_not_found")
+            and file_contains("scripts/agentops_postgres_backup.py", "target_state_confirmation_required")
+            and file_contains("scripts/agentops_postgres_backup_smoke.py", '"skipped": False')
+            and file_contains("scripts/agentops_postgres_backup_smoke.py", '"contract": "postgres_backup_restore_v1"')
+            and file_contains("scripts/agentops_postgres_backup_smoke.py", '"manifest_contract": "postgres_backup_manifest_v1"')
+            and file_contains("scripts/agentops_postgres_backup_smoke.py", "source_counts")
+            and file_contains("scripts/agentops_postgres_backup_smoke.py", "restored_counts")
+            and file_contains("scripts/byoc_deployment_acceptance_smoke.py", "POSTGRES_BACKUP_SMOKE")
+            and file_contains("scripts/byoc_deployment_acceptance_smoke.py", 'recovery.get("skipped") is not True')
+            and file_contains("scripts/byoc_deployment_acceptance_smoke.py", "postgres_backup_restore_v1")
+            and file_contains("scripts/byoc_deployment_acceptance_smoke.py", "postgres_backup_manifest_v1")
+            and file_contains("server.py", "def postgres_backup_restore_receipt")
+            and file_contains("server.py", '"postgres_file_presence_is_acceptance": False')
+            and file_contains("server.py", '"postgres_acceptance_requires_non_skipped": True')
+            and file_contains("server.py", '"postgres_acceptance_head_current"')
+            and file_contains("server.py", "AGENTOPS_BUILD_SHA")
+            and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "pg recovery")
+            and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "pg non-skipped")
+            and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "pg current head")
+            and file_contains("docs/CUSTOMER_LOCAL_DEPLOYMENT_RUNBOOK.md", "python3 scripts/agentops_postgres_backup_smoke.py")
+            and file_contains("docs/CUSTOMER_LOCAL_DEPLOYMENT_RUNBOOK.md", "AGENTOPS_BUILD_SHA")
+            and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_backup_restore_v1")
+            and file_contains("docs/STORAGE_BOUNDARY_MAP.md", "Postgres BYOC backup/restore")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "skipped=true")
+            and file_contains("docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json", "postgres_backup_restore_requires_non_skipped_evidence")
+            and file_contains("docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json", "postgres_backup_manifest_v1")
+            and file_contains("scripts/commercial_release_evidence_packet_smoke.py", "Postgres recovery non-skipped evidence policy missing"),
+            "Gate 5 exposes Postgres archive/manifest recovery contracts, requires a non-skipped container receipt, and keeps utility file presence separate from real acceptance in API and Next.js",
         ),
         check(
             "deployment_readiness_surface_exists",

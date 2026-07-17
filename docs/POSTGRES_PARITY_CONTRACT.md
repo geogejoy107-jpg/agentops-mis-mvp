@@ -67,6 +67,13 @@ commands persist task, claim, run-start, agent/run heartbeat, run completion
 heartbeat, tool/evaluation/artifact evidence, Agent Plan, verified
 plan-evidence, memory, approval, audit, runtime-event, and token heartbeat
 evidence in Postgres without falling back to SQLite.
+The thirteenth layer is the BYOC recovery contract,
+`postgres_backup_restore_v1`, backed by the mandatory
+`postgres_backup_manifest_v1` sidecar. It creates a custom-format `pg_dump`,
+verifies its SHA-256 and `pg_restore` table of contents, requires explicit
+restore and target-state confirmation, restores into a fresh database, compares
+source/restored fixture counts, creates a pre-restore archive before overwrite,
+and rejects tampered archives without printing credentials or raw rows.
 
 All layers are intentionally derived from `server.SCHEMA_SQL`, because
 `server.py` is still the executable schema authority for the dependency-free
@@ -129,6 +136,7 @@ python3 scripts/storage_postgres_cli_read_parity_smoke.py
 python3 scripts/storage_postgres_write_helper_parity_smoke.py
 python3 scripts/storage_postgres_http_write_task_smoke.py
 python3 scripts/storage_postgres_cli_write_parity_smoke.py
+python3 scripts/agentops_postgres_backup_smoke.py
 python3 scripts/storage_boundary_sqlite_smoke.py
 ```
 
@@ -181,6 +189,11 @@ heartbeat, run completion heartbeat, tool/evaluation/artifact evidence, Agent
 Plan, verified plan-evidence manifest, memory proposal, approval request, and
 audit emit through the CLI. The final command proves the broader current SQLite
 helper behavior that Postgres must match.
+The Postgres backup command is the Gate 5 data-plane recovery proof. Merely
+installing `agentops_postgres_backup.py` or its smoke does not prove that a dump
+was restored. Authoritative evidence requires `ok=true`, `skipped=false`,
+`contract=postgres_backup_restore_v1`, and
+`manifest_contract=postgres_backup_manifest_v1` from the Docker-backed smoke.
 
 When Docker is unavailable on a local machine, use the non-authoritative
 diagnostic mode only to keep wider readiness checks moving:
@@ -196,9 +209,14 @@ python3 scripts/storage_postgres_cli_read_parity_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_write_helper_parity_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_http_write_task_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_cli_write_parity_smoke.py --skip-if-unavailable
+python3 scripts/agentops_postgres_backup_smoke.py --skip-if-unavailable
 ```
 
 This mode reports `skipped: true`; it is not final BYOC/Postgres evidence.
+
+The Postgres recovery utility and its two contracts are implemented, but a
+current non-skipped smoke receipt is still required before deployment readiness
+or commercial handoff may call recovery accepted.
 
 Current local evidence on `codex/commercial-migration-closed-loop`:
 

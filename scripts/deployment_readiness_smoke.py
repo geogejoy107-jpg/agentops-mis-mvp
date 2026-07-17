@@ -359,6 +359,18 @@ def validate(payload: dict, label: str) -> None:
         require(gate_id in gate_ids, f"{label} missing gate {gate_id}: {payload}")
     require((payload.get("backup_restore") or {}).get("restore_requires_cli_confirmation") is True, f"{label} restore confirmation missing")
     require((payload.get("backup_restore") or {}).get("browser_restore_write_exposed") is False, f"{label} browser restore must remain closed")
+    backup = payload.get("backup_restore") or {}
+    require(backup.get("postgres_utility_available") is True, f"{label} Postgres backup utility missing: {backup}")
+    require(backup.get("postgres_smoke_available") is True, f"{label} Postgres backup smoke missing: {backup}")
+    require(backup.get("postgres_contracts_available") is True, f"{label} Postgres recovery contracts missing: {backup}")
+    require(backup.get("postgres_file_presence_is_acceptance") is False, f"{label} file presence must not satisfy recovery: {backup}")
+    require(backup.get("postgres_acceptance_requires_non_skipped") is True, f"{label} non-skipped recovery policy missing: {backup}")
+    if backup.get("postgres_acceptance_recorded") is True:
+        require(backup.get("postgres_acceptance_receipt_present") is True, f"{label} accepted recovery receipt missing: {backup}")
+        require(backup.get("postgres_acceptance_command_passed") is True, f"{label} accepted recovery command did not pass: {backup}")
+        require(backup.get("postgres_acceptance_contracts_recorded") is True, f"{label} accepted recovery contracts missing: {backup}")
+        require(backup.get("postgres_acceptance_non_skipped") is True, f"{label} accepted recovery was skipped: {backup}")
+        require(backup.get("postgres_acceptance_head_current") is True, f"{label} accepted recovery receipt is stale: {backup}")
     signed = payload.get("signed_audit_export") or {}
     require(signed.get("utility_ready") is True and signed.get("contract_ready") is True, f"{label} signed audit export proof missing: {signed}")
     require(signed.get("customer_key_required") is True, f"{label} signed export key gate missing: {signed}")
@@ -515,6 +527,9 @@ def validate_postgres_write_readiness(payload: dict, label: str) -> None:
     require(enterprise.get("postgres_adapter") is True, f"{label} Postgres entitlement missing: {enterprise}")
     local = payload.get("local") or {}
     require(isinstance(local.get("closed_loop_runs"), int), f"{label} local readiness count should be typed: {local}")
+    backup = payload.get("backup_restore") or {}
+    if backup.get("postgres_acceptance_recorded") is not True:
+        require(backup.get("status") == "blocked", f"{label} Postgres recovery without current receipt must block: {backup}")
 
 
 def validate_enterprise_controls(payload: dict, label: str) -> None:
@@ -926,8 +941,15 @@ def main() -> int:
             install_driver=not args.no_install_postgres_driver,
         ) if args.postgres_write_fixture else None
         require(not leaked_secret("\n".join(outputs)), "deployment readiness leaked token-like material")
+        verified_contracts = ["deployment_readiness_v1"]
+        if enterprise:
+            verified_contracts.append("enterprise_byoc_controls_v1")
+        if postgres:
+            verified_contracts.append("deployment_readiness_postgres_runtime_write_fixture_v1")
         print(json.dumps({
             "ok": True,
+            "contract_id": "deployment_readiness_smoke_v1",
+            "verified_contracts": verified_contracts,
             "api_status": api_payload.get("status"),
             "cli_status": cli_payload.get("status"),
             "gate_count": len(api_payload.get("gates") or []),

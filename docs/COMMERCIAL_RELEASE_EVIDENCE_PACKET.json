@@ -1,7 +1,7 @@
 {
   "contract_id": "commercial_release_evidence_packet_v1",
   "status": "gate_enforced_not_release_complete",
-  "updated_at": "2026-06-24",
+  "updated_at": "2026-07-17",
   "scope": {
     "product": "AgentOps MIS commercial local-first/BYOC control plane",
     "branch": "codex/commercial-migration-closed-loop",
@@ -13,6 +13,7 @@
     "python_sqlite_vite_remain_canonical_until_parity": true,
     "nextjs_replaces_routes_only_after_explicit_retirement": true,
     "postgres_requires_storage_boundary_and_byoc_evidence": true,
+    "postgres_backup_restore_requires_non_skipped_evidence": true,
     "live_runtime_product_claims_require_real_hermes_openclaw": true,
     "mock_evidence_is_ci_or_offline_only": true,
     "forbidden_committed_material": [
@@ -143,12 +144,15 @@
         "deployment_readiness_postgres_runtime_write_fixture_v1",
         "nextjs_deployment_postgres_runtime_write_fixture_v1",
         "byoc_deployment_acceptance_v1",
+        "postgres_backup_restore_v1",
+        "postgres_backup_manifest_v1",
         "postgres_http_runtime_prepared_action_write_v1",
         "postgres_http_runtime_approval_decision_write_v1",
         "real_hermes_openclaw_acceptance"
       ],
       "must_not_use": [
         "--skip-postgres-if-unavailable",
+        "--skip-if-unavailable",
         "mock_only_product_claim"
       ]
     }

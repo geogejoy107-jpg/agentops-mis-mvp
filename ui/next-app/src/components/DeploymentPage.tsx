@@ -87,10 +87,18 @@ export function DeploymentParityPage({
   const docs = local.docs || [];
   const deploymentChecks = local.deployment_checks || {};
   const deploymentSafety = deployment.safety || {};
+  const backupRestore = deployment.backup_restore || {};
   const docIds = new Set(docs.filter((doc) => doc.exists).map((doc) => doc.id));
   const backupDocsReady = ["customer_local_deployment_runbook", "local_backup_utility", "local_backup_smoke", "byoc_deployment_acceptance_smoke"].every((id) => docIds.has(id));
   const signedAuditExportReady = deploymentChecks.signed_audit_export_utility === true && deploymentChecks.signed_audit_export_contract === true;
   const recoveryDrillReady = deploymentChecks.byoc_deployment_acceptance_smoke === true && deploymentChecks.signed_export_tamper_detection === true;
+  const postgresBackupUtilityAvailable = backupRestore.postgres_utility_available === true;
+  const postgresBackupSmokeAvailable = backupRestore.postgres_smoke_available === true;
+  const postgresBackupContractsAvailable = backupRestore.postgres_contracts_available === true;
+  const postgresRecoveryAccepted = backupRestore.postgres_acceptance_recorded === true && backupRestore.postgres_acceptance_non_skipped === true;
+  const postgresRecoveryStatus = String(backupRestore.postgres_acceptance_status || "not_recorded");
+  const postgresSelected = storage.selected_backend === "postgres";
+  const backupPanelStatus = postgresSelected ? (postgresRecoveryAccepted ? "ready" : "blocked") : (backupDocsReady ? "ready" : "attention");
   const byocCapabilities = ["postgres_adapter", "sso_hooks", "signed_audit_exports", "custom_connector_sdk"];
   const byocEnabled = byocCapabilities.filter((capability) => entitlements.capabilities?.[capability]).length;
   const retentionGate = gateFor(entitlements, "longer_audit_retention");
@@ -148,6 +156,7 @@ export function DeploymentParityPage({
           ["Storage", `${storage.active_backend || "unknown"} / ${storage.selected_backend || "unknown"}`],
           ["BYOC caps", `${byocEnabled}/${byocCapabilities.length}`],
           ["Recovery drill", recoveryDrillReady ? "ready" : "attention"],
+          ["PG recovery", postgresRecoveryAccepted ? "ready" : postgresRecoveryStatus],
           ["Signed export", signedAuditExportReady ? "ready" : "attention"],
           ["Token omitted", boolText(local.token_omitted !== false && security.token_omitted !== false)],
         ].map(([label, value]) => (
@@ -193,7 +202,7 @@ export function DeploymentParityPage({
         <div className="panel">
           <div className="panelHeader">
             <h2><Archive size={14} /> Backup and restore evidence</h2>
-            <span className={statusClass(backupDocsReady ? "ready" : "attention")}>{backupDocsReady ? "ready" : "attention"}</span>
+            <span className={statusClass(backupPanelStatus)}>{backupPanelStatus}</span>
           </div>
           <div className="proofStrip">
             <span>runbook {boolText(docIds.has("customer_local_deployment_runbook"))}</span>
@@ -203,10 +212,16 @@ export function DeploymentParityPage({
             <span>pre-restore copy {boolText(deploymentChecks.overwrite_creates_pre_restore_copy)}</span>
             <span>signed export {boolText(signedAuditExportReady)}</span>
             <span>tamper check {boolText(deploymentChecks.signed_export_tamper_detection)}</span>
+            <span>pg utility {boolText(postgresBackupUtilityAvailable)}</span>
+            <span>pg smoke {boolText(postgresBackupSmokeAvailable)}</span>
+            <span>pg contracts {boolText(postgresBackupContractsAvailable)}</span>
+            <span>pg recovery {postgresRecoveryStatus}</span>
+            <span>pg non-skipped {boolText(backupRestore.postgres_acceptance_non_skipped)}</span>
+            <span>pg current head {boolText(backupRestore.postgres_acceptance_head_current)}</span>
             <span>raw rows printed false</span>
           </div>
           <p className="subtle">
-            Backup restore remains CLI-confirmed; signed audit export requires a customer key and keeps raw metadata omitted.
+            Backup restore remains CLI-confirmed. Postgres utility files prove availability only; BYOC recovery requires a recorded, non-skipped container acceptance; signed audit export requires a customer key and keeps raw metadata omitted.
           </p>
         </div>
       </section>

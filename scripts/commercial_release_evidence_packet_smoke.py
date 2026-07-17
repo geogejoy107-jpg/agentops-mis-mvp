@@ -57,6 +57,8 @@ GATE5_REQUIRED_CONTRACTS = {
     "deployment_readiness_postgres_runtime_write_fixture_v1",
     "nextjs_deployment_postgres_runtime_write_fixture_v1",
     "byoc_deployment_acceptance_v1",
+    "postgres_backup_restore_v1",
+    "postgres_backup_manifest_v1",
     "postgres_http_runtime_prepared_action_write_v1",
     "postgres_http_runtime_approval_decision_write_v1",
     "real_hermes_openclaw_acceptance",
@@ -75,17 +77,20 @@ REQUIRED_SOURCES = {
         "commercial_handoff_status_smoke.py",
         "commercial_current_evidence_status_smoke.py",
         "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
+        "agentops_postgres_backup_smoke.py",
         "deployment_readiness_smoke.py --postgres-write-fixture",
         "nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
         "local_runtime_acceptance.py --live-openclaw --live-hermes",
     ],
     "docs/CUSTOMER_LOCAL_DEPLOYMENT_RUNBOOK.md": [
         "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
+        "agentops_postgres_backup_smoke.py",
         "deployment_readiness_smoke.py --postgres-write-fixture",
     ],
     "docs/POSTGRES_PARITY_CONTRACT.md": [
         "deployment_readiness_postgres_runtime_write_fixture_v1",
         "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
+        "agentops_postgres_backup_smoke.py",
     ],
     "docs/UI_API_PARITY_MATRIX.json": [
         "nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
@@ -98,8 +103,25 @@ REQUIRED_SOURCES = {
     "scripts/byoc_deployment_acceptance_smoke.py": [
         "--postgres-readiness-fixture",
         "deployment_readiness_postgres_runtime_write_fixture_v1",
+        "POSTGRES_BACKUP_SMOKE",
+        'recovery.get("skipped") is not True',
+        "postgres_backup_restore_v1",
+        "postgres_backup_manifest_v1",
         "postgres_read_only_backend",
         "postgres_counts_unchanged",
+    ],
+    "scripts/agentops_postgres_backup.py": [
+        "postgres_backup_restore_v1",
+        "postgres_backup_manifest_v1",
+        "backup_manifest_not_found",
+        "target_state_confirmation_required",
+    ],
+    "scripts/agentops_postgres_backup_smoke.py": [
+        '"skipped": False',
+        '"contract": "postgres_backup_restore_v1"',
+        '"manifest_contract": "postgres_backup_manifest_v1"',
+        "source_counts",
+        "restored_counts",
     ],
     "scripts/deployment_readiness_smoke.py": [
         "--postgres-write-fixture",
@@ -360,6 +382,7 @@ def main() -> int:
     require(policy.get("python_sqlite_vite_remain_canonical_until_parity") is True, "Python/SQLite/Vite canonical policy missing")
     require(policy.get("nextjs_replaces_routes_only_after_explicit_retirement") is True, "Next.js route-retirement guard missing")
     require(policy.get("postgres_requires_storage_boundary_and_byoc_evidence") is True, "Postgres BYOC evidence policy missing")
+    require(policy.get("postgres_backup_restore_requires_non_skipped_evidence") is True, "Postgres recovery non-skipped evidence policy missing")
     require(policy.get("live_runtime_product_claims_require_real_hermes_openclaw") is True, "real runtime evidence policy missing")
     require(policy.get("mock_evidence_is_ci_or_offline_only") is True, "mock evidence policy missing")
     require(policy.get("verification_command") == "python3 scripts/commercial_release_evidence_packet_smoke.py", "verification command mismatch")
@@ -381,13 +404,17 @@ def main() -> int:
     require(GATE5_REQUIRED_CONTRACTS <= contracts_for(gate5), f"Gate 5 missing contracts: {sorted(GATE5_REQUIRED_CONTRACTS - contracts_for(gate5))}")
     gate5_commands = "\n".join(commands_for(gate5))
     require("--skip-postgres-if-unavailable" not in gate5_commands, "release handoff must not allow skipped Postgres proof")
+    require("--skip-if-unavailable" not in gate5_commands, "release handoff must not allow skipped Postgres recovery proof")
     require("--live-openclaw" in gate5_commands and "--live-hermes" in gate5_commands, "Gate 5 must require real Hermes/OpenClaw acceptance")
     require("HERMES_ALLOW_REAL_RUN=true" in gate5_commands, "real Hermes acceptance must be explicit")
     require("mock_only_product_claim" in set(gate5.get("must_not_use") or []), "Gate 5 must reject mock-only product claims")
+    require("--skip-postgres-if-unavailable" in set(gate5.get("must_not_use") or []), "Gate 5 must explicitly reject skipped Postgres BYOC evidence")
+    require("--skip-if-unavailable" in set(gate5.get("must_not_use") or []), "Gate 5 must explicitly reject skipped Postgres recovery evidence")
 
     handoff_commands = {str(item) for item in packet.get("handoff_required_commands") or []}
     require(REQUIRED_HANDOFF_COMMANDS <= handoff_commands, f"handoff commands missing: {sorted(REQUIRED_HANDOFF_COMMANDS - handoff_commands)}")
     require(not any("--skip-postgres-if-unavailable" in item for item in handoff_commands), "handoff commands must not skip Postgres")
+    require(not any("--skip-if-unavailable" in item for item in handoff_commands), "handoff commands must not skip Postgres recovery")
 
     output_policy = packet.get("sensitive_output_policy") or {}
     require(output_policy.get("raw_prompts_allowed") is False, "raw prompts must be forbidden")

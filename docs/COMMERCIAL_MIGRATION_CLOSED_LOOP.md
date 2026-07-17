@@ -612,6 +612,10 @@ Must be true:
 - Deployment mode, backup/restore, retention, signed export, SSO/RBAC hooks, and
   private connector policy are documented and smoke-tested where local
   simulation is possible.
+- Customer-owned Postgres recovery must produce a non-skipped
+  `postgres_backup_restore_v1` receipt with a verified
+  `postgres_backup_manifest_v1` for the current commit; utility or smoke file
+  presence alone is not recovery acceptance.
 - `release_evidence_packet_v1` and `commercial_release_evidence_packet_v1`
   make the release/handoff gate machine-checkable: the packet must require the
   backend Postgres readiness fixture, the Next.js Postgres browser fixture, the
@@ -629,6 +633,16 @@ Must be true:
   release-grade until exact-head CI, remote sync, clean worktree, and all phase
   gates are current. Verify it with
   `python3 scripts/commercial_evidence_receipts_smoke.py`.
+- `commercial_ci_command_receipt_v1` wraps each Gate 3/Postgres and Gate 5/BYOC
+  CI command, rejects nonzero, non-JSON, `ok!=true`, skipped, or missing-contract
+  output, and records only the exact commit, command, output hashes, dependency
+  input hashes, and resolved container image identity. Independent
+  `storage-postgres` and `byoc-postgres` jobs assemble
+  `commercial_postgres_byoc_ci_receipt_v1` artifacts so UI failures cannot skip
+  BYOC. A final `commercial_migration_ci_receipt_v1` artifact binds both scopes
+  to `needs.*.result`; it never self-promotes release, handoff, or merge state.
+  Verify the local receipt contract with
+  `python3 scripts/commercial_ci_receipt_smoke.py`.
 - `commercial_current_evidence_status_v1` is the evidence coverage layer under
   the handoff aggregate. It reports per-gate `evidence_current`,
   `local_receipt_current`, `gates_requiring_current_evidence`, heavy/live
@@ -642,6 +656,9 @@ Must be true:
   Verify with `python3 scripts/commercial_release_promotion_preflight_smoke.py`;
   strict promotion first reads external GitHub Actions state with
   `python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head`,
+  which now requires all five CI jobs plus the downloaded
+  `commercial-migration-ci-receipt` artifact to bind the full commit SHA, run
+  ID, Gate 3/5 scopes, and non-promoted release state,
   then uses
   `python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence --require-promotion-ready`.
 - `commercial_release_promotion_packet_v1` is the operator-facing promotion
@@ -748,6 +765,15 @@ Must be true:
   blocking for non-allowlisted writes, and unchanged Postgres ledger counts.
   Verify with
   `python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture`.
+- `postgres_backup_restore_v1` is the real Postgres data-plane recovery drill.
+  `agentops_postgres_backup.py` creates/verifies a custom archive and mandatory
+  `postgres_backup_manifest_v1`, requires explicit restore and target-state
+  confirmation, and creates a pre-restore archive before overwrite. The
+  Docker-backed smoke restores into a fresh database, compares source/restored
+  fixture counts, and checks tamper rejection and credential omission. Run
+  `python3 scripts/agentops_postgres_backup_smoke.py` without
+  `--skip-if-unavailable`; `skipped=true` is diagnostic only and cannot satisfy
+  Gate 5.
 - `enterprise_byoc_controls_v1` exposes a read-only, metadata-only Enterprise
   controls proof through `GET /api/deployment/enterprise-controls` and
   `agentops deployment enterprise-controls`. It summarizes configured SSO
@@ -760,8 +786,11 @@ Must be true:
   production security, storage backend, backup/restore, signed audit export,
   retention, SSO/private connector gates, and omission contracts without
   executing live work, restoring a database, or printing secrets. Verify with
-  `python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture`;
-  the configured retention mode proves the deployment verdict sees ready
+  `python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture`.
+  Postgres backup utility/smoke availability is reported separately from the
+  latest non-skipped commercial receipt, so installed files cannot turn the
+  recovery gate ready. The configured retention mode proves the deployment
+  verdict sees ready
   retention controls from a temporary legal-hold registry, and the configured
   Enterprise mode proves API and CLI readback show `enterprise_byoc_controls_v1`
   and the SSO/private connector policy gate ready under `enterprise_byoc`

@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BACKUP = ROOT / "scripts" / "agentops_local_backup.py"
 SIGNED_EXPORT = ROOT / "scripts" / "agentops_signed_audit_export.py"
 DEPLOYMENT_READINESS = ROOT / "scripts" / "deployment_readiness_smoke.py"
+POSTGRES_BACKUP_SMOKE = ROOT / "scripts" / "agentops_postgres_backup_smoke.py"
 TOKEN_PREFIX = "agt" + "ok_"
 SESSION_PREFIX = "agt" + "sess_"
 SMOKE_SIGNING_KEY = "byoc-smoke-" + "signing-key"
@@ -192,6 +193,38 @@ def run_postgres_readiness_fixture(args: argparse.Namespace, failures: list[str]
     require(fixture.get("postgres_counts_unchanged") is True, f"Postgres ledger counts changed: {fixture}", failures)
     require(payload.get("secret_leaked") is False, f"Postgres readiness leaked secret-like text: {payload}", failures)
 
+    recovery_command = [
+        sys.executable,
+        str(POSTGRES_BACKUP_SMOKE),
+        "--image",
+        args.postgres_image,
+    ]
+    if args.skip_postgres_if_unavailable:
+        recovery_command.append("--skip-if-unavailable")
+    recovery_code, recovery, recovery_text = run(recovery_command, timeout=300)
+    require(
+        recovery_code == 0 and recovery.get("ok") is True,
+        f"Postgres backup/restore fixture failed: {recovery}",
+        failures,
+    )
+    require(recovery.get("skipped") is not True, f"Postgres backup/restore fixture was skipped: {recovery}", failures)
+    require(
+        recovery.get("contract") == "postgres_backup_restore_v1",
+        f"Postgres backup/restore contract missing: {recovery}",
+        failures,
+    )
+    require(
+        recovery.get("manifest_contract") == "postgres_backup_manifest_v1",
+        f"Postgres backup manifest contract missing: {recovery}",
+        failures,
+    )
+    require(
+        recovery.get("source_counts") == recovery.get("restored_counts"),
+        f"Postgres restored counts differ from source: {recovery}",
+        failures,
+    )
+    require(recovery.get("secret_leaked") is False, f"Postgres backup/restore leaked secret-like text: {recovery}", failures)
+
     return {
         "included": True,
         "contract": fixture.get("contract"),
@@ -203,8 +236,20 @@ def run_postgres_readiness_fixture(args: argparse.Namespace, failures: list[str]
         "non_allowlisted_write_status": fixture.get("non_allowlisted_write_status"),
         "non_allowlisted_write_error": fixture.get("non_allowlisted_write_error"),
         "postgres_counts_unchanged": fixture.get("postgres_counts_unchanged"),
+        "recovery": {
+            "contract": recovery.get("contract"),
+            "manifest_contract": recovery.get("manifest_contract"),
+            "backup_create": recovery.get("backup_create"),
+            "hash_and_toc_verify": recovery.get("hash_and_toc_verify"),
+            "empty_target_restore": recovery.get("empty_target_restore"),
+            "overwrite_pre_restore_backup": recovery.get("overwrite_pre_restore_backup"),
+            "tamper_detection": recovery.get("tamper_detection"),
+            "source_counts": recovery.get("source_counts") or {},
+            "restored_counts": recovery.get("restored_counts") or {},
+            "skipped": bool(recovery.get("skipped")),
+        },
         "skipped": bool(fixture.get("skipped")),
-    }, text
+    }, text + recovery_text
 
 
 def main() -> int:
@@ -212,7 +257,7 @@ def main() -> int:
     parser.add_argument(
         "--postgres-readiness-fixture",
         action="store_true",
-        help="Also run the backend Postgres deployment readiness runtime write-gate fixture.",
+        help="Also run Postgres runtime write-gate and real pg_dump/pg_restore recovery fixtures.",
     )
     parser.add_argument(
         "--postgres-image",
@@ -380,6 +425,12 @@ def main() -> int:
     print(json.dumps({
         "ok": not failures,
         "contract_id": "byoc_deployment_acceptance_v1",
+        "contracts": [
+            "byoc_deployment_acceptance_v1",
+            "deployment_readiness_postgres_runtime_write_fixture_v1",
+            "postgres_backup_restore_v1",
+            "postgres_backup_manifest_v1",
+        ] if args.postgres_readiness_fixture else ["byoc_deployment_acceptance_v1"],
         "backup_restore": {
             "create_verify_restore": "passed" if not failures else "checked",
             "overwrite_requires_flag": True,

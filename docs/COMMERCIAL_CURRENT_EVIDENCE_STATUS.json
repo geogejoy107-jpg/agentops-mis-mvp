@@ -200,6 +200,7 @@
       ],
       "must_not_use": [
         "--skip-postgres-if-unavailable",
+        "--skip-if-unavailable",
         "mock_only_product_claim"
       ]
     }
@@ -236,6 +237,7 @@
   ],
   "must_not_use": [
     "--skip-postgres-if-unavailable",
+    "--skip-if-unavailable",
     "mock_only_product_claim",
     "release_complete_true",
     "raw_prompts",

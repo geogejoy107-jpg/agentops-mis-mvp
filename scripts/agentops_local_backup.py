@@ -123,29 +123,68 @@ def verify_backup(args: argparse.Namespace) -> tuple[dict, int]:
     if not backup_path or not backup_path.exists():
         return {"ok": False, "error": "backup_not_found"}, 1
     manifest_path = backup_path.with_suffix(".manifest.json")
-    manifest = {}
-    if manifest_path.exists():
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except Exception:
-            manifest = {"error": "manifest_unreadable"}
-    with connect_readonly(backup_path) as conn:
-        counts = count_rows(conn)
+    if not manifest_path.exists():
+        return {
+            "ok": False,
+            "error": "backup_manifest_not_found",
+            "backup_path": str(backup_path),
+            "manifest_path": str(manifest_path),
+        }, 1
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {
+            "ok": False,
+            "error": "backup_manifest_unreadable",
+            "backup_path": str(backup_path),
+            "manifest_path": str(manifest_path),
+        }, 1
+    expected_hash = manifest.get("backup_sha256") if isinstance(manifest, dict) else None
+    expected_size = manifest.get("backup_size_bytes") if isinstance(manifest, dict) else None
+    manifest_ok = (
+        isinstance(manifest, dict)
+        and manifest.get("provider") == "agentops-local-backup"
+        and manifest.get("operation") == "backup_create"
+        and isinstance(expected_hash, str)
+        and len(expected_hash) == 64
+        and isinstance(expected_size, int)
+        and expected_size >= 0
+    )
+    if not manifest_ok:
+        return {
+            "ok": False,
+            "error": "backup_manifest_invalid",
+            "backup_path": str(backup_path),
+            "manifest_path": str(manifest_path),
+        }, 1
+    try:
+        with connect_readonly(backup_path) as conn:
+            counts = count_rows(conn)
+        integrity = integrity_check(backup_path)
+    except sqlite3.DatabaseError:
+        return {
+            "ok": False,
+            "error": "backup_sqlite_invalid",
+            "backup_path": str(backup_path),
+            "manifest_path": str(manifest_path),
+        }, 1
     actual_hash = sha256_file(backup_path)
-    expected_hash = manifest.get("backup_sha256")
-    hash_ok = not expected_hash or expected_hash == actual_hash
-    integrity = integrity_check(backup_path)
+    actual_size = backup_path.stat().st_size
+    hash_ok = expected_hash == actual_hash
+    size_ok = expected_size == actual_size
     return {
-        "ok": integrity == "ok" and hash_ok,
+        "ok": integrity == "ok" and hash_ok and size_ok,
         "backup_path": str(backup_path),
-        "manifest_path": str(manifest_path) if manifest_path.exists() else None,
+        "manifest_path": str(manifest_path),
         "integrity_check": integrity,
         "hash_ok": hash_ok,
+        "size_ok": size_ok,
         "backup_sha256": actual_hash,
+        "backup_size_bytes": actual_size,
         "counts": counts,
         "raw_rows_printed": False,
         "token_omitted": True,
-    }, 0 if integrity == "ok" and hash_ok else 1
+    }, 0 if integrity == "ok" and hash_ok and size_ok else 1
 
 
 def restore_backup(args: argparse.Namespace) -> tuple[dict, int]:

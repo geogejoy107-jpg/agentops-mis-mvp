@@ -24,6 +24,7 @@ env:
   NOTION_TOKEN: ""
   NOTION_PARENT_PAGE_ID: ""
   NOTION_DATABASE_ID: ""
+  AGENTOPS_POSTGRES_IMAGE: "postgres:16-alpine"
 
 jobs:
   commercial-core:
@@ -44,6 +45,7 @@ jobs:
           set -euo pipefail
           python3 -m py_compile server.py
           python3 -m compileall -q scripts agentops_mis_cli agentops_mis_storage
+          python3 scripts/commercial_ci_receipt_smoke.py
           git diff --check
 
       - name: Commercial evidence and governance gates
@@ -89,25 +91,63 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Storage boundary and Postgres parity gates
+      - name: Storage boundary and Postgres parity receipts
         run: |
-          set -euo pipefail
-          python3 scripts/storage_boundary_sqlite_smoke.py
-          python3 scripts/storage_postgres_contract_smoke.py
-          python3 scripts/storage_postgres_container_smoke.py
-          python3 scripts/storage_postgres_adapter_contract_smoke.py
-          python3 scripts/storage_postgres_optional_adapter_smoke.py
-          python3 scripts/storage_postgres_boundary_parity_smoke.py
-          python3 scripts/storage_postgres_route_read_model_smoke.py
-          python3 scripts/storage_backend_selection_smoke.py
-          python3 scripts/storage_postgres_http_read_parity_smoke.py
-          python3 scripts/storage_postgres_cli_read_parity_smoke.py
-          python3 scripts/storage_postgres_write_helper_parity_smoke.py
-          python3 scripts/storage_postgres_http_write_task_smoke.py
-          python3 scripts/storage_postgres_cli_write_parity_smoke.py
+          set -uo pipefail
+          mkdir -p receipts/gate3
+          status=0
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_boundary_sqlite --output receipts/gate3/storage_boundary_sqlite.json -- python3 scripts/storage_boundary_sqlite_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_contract --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_contract.json -- python3 scripts/storage_postgres_contract_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_container --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_container.json -- python3 scripts/storage_postgres_container_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_adapter_contract --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_adapter_contract.json -- python3 scripts/storage_postgres_adapter_contract_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_optional_adapter --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_optional_adapter.json -- python3 scripts/storage_postgres_optional_adapter_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_boundary_parity --expected-contract postgres_boundary_fixture_parity_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_boundary_parity.json -- python3 scripts/storage_postgres_boundary_parity_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_route_read_model --expected-contract postgres_route_read_model_parity_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_route_read_model.json -- python3 scripts/storage_postgres_route_read_model_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_backend_selection --expected-contract storage_backend_selection_fail_closed_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_backend_selection.json -- python3 scripts/storage_backend_selection_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_http_read_parity --expected-contract postgres_http_read_parity_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_http_read_parity.json -- python3 scripts/storage_postgres_http_read_parity_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_cli_read_parity --expected-contract postgres_cli_read_parity_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_cli_read_parity.json -- python3 scripts/storage_postgres_cli_read_parity_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_write_helper_parity --expected-contract postgres_write_helper_parity_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_write_helper_parity.json -- python3 scripts/storage_postgres_write_helper_parity_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_http_write_task --expected-contract postgres_http_write_task_parity_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_http_write_task.json -- python3 scripts/storage_postgres_http_write_task_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_cli_write_parity --expected-contract postgres_cli_write_parity_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_cli_write_parity.json -- python3 scripts/storage_postgres_cli_write_parity_smoke.py || status=1
+          exit "$status"
 
-  ui-and-deployment:
-    name: UI, deployment, and BYOC evidence
+      - name: Assemble Gate 3 receipt
+        id: gate3_receipt
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 scripts/commercial_ci_receipt.py scope \
+            --gate-id gate_3_storage_boundary_before_postgres \
+            --receipts-dir receipts/gate3 \
+            --required-command-id storage_boundary_sqlite \
+            --required-command-id storage_postgres_contract \
+            --required-command-id storage_postgres_container \
+            --required-command-id storage_postgres_adapter_contract \
+            --required-command-id storage_postgres_optional_adapter \
+            --required-command-id storage_postgres_boundary_parity \
+            --required-command-id storage_postgres_route_read_model \
+            --required-command-id storage_backend_selection \
+            --required-command-id storage_postgres_http_read_parity \
+            --required-command-id storage_postgres_cli_read_parity \
+            --required-command-id storage_postgres_write_helper_parity \
+            --required-command-id storage_postgres_http_write_task \
+            --required-command-id storage_postgres_cli_write_parity \
+            --output receipts/gate3-scope.json
+
+      - name: Upload Gate 3 receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: commercial-gate-3-receipt
+          path: receipts/gate3-scope.json
+          if-no-files-found: error
+
+      - name: Enforce Gate 3 receipt completeness
+        if: always() && steps.gate3_receipt.outcome != 'success'
+        run: exit 1
+
+  ui-parity:
+    name: UI parity and build evidence
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -175,10 +215,132 @@ jobs:
           (cd ui/start-building-app && npm run build)
           (cd ui/next-app && npm run build)
 
-      - name: Deployment and BYOC gates
+  byoc-postgres:
+    name: Independent Postgres and BYOC evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Next and Playwright wrapper
         run: |
           set -euo pipefail
-          python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture
-          python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture
-          python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture
-          python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture
+          mkdir -p "$HOME/.codex/skills/playwright/scripts"
+          cat > "$HOME/.codex/skills/playwright/scripts/playwright_cli.sh" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cmd=(npx --yes --package @playwright/cli playwright-cli)
+          if [[ -n "${PLAYWRIGHT_CLI_SESSION:-}" ]]; then
+            cmd+=(--session "${PLAYWRIGHT_CLI_SESSION}")
+          fi
+          cmd+=("$@")
+          exec "${cmd[@]}"
+          EOF
+          chmod +x "$HOME/.codex/skills/playwright/scripts/playwright_cli.sh"
+          (cd ui/next-app && npm ci)
+
+      - name: Postgres and BYOC command receipts
+        run: |
+          set -uo pipefail
+          mkdir -p receipts/gate5
+          status=0
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id audit_retention_policy --expected-contract audit_retention_policy_v1 --output receipts/gate5/audit_retention_policy.json -- python3 scripts/audit_retention_policy_smoke.py --isolated-fixture || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id audit_retention_controls --expected-contract audit_retention_controls_v1 --output receipts/gate5/audit_retention_controls.json -- python3 scripts/audit_retention_controls_smoke.py --configured-fixture || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id deployment_enterprise --expected-contract deployment_readiness_v1 --expected-contract enterprise_byoc_controls_v1 --output receipts/gate5/deployment_enterprise.json -- python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id deployment_postgres_write --expected-contract deployment_readiness_postgres_runtime_write_fixture_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate5/deployment_postgres_write.json -- python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id nextjs_postgres_write --expected-contract nextjs_deployment_postgres_runtime_write_fixture_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate5/nextjs_postgres_write.json -- python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id byoc_acceptance --expected-contract byoc_deployment_acceptance_v1 --expected-contract postgres_backup_restore_v1 --expected-contract postgres_backup_manifest_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate5/byoc_acceptance.json -- python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture || status=1
+          exit "$status"
+
+      - name: Assemble Gate 5 CI-scope receipt
+        id: gate5_receipt
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 scripts/commercial_ci_receipt.py scope \
+            --gate-id gate_5_byoc_enterprise_deployment_ci \
+            --receipts-dir receipts/gate5 \
+            --required-command-id audit_retention_policy \
+            --required-command-id audit_retention_controls \
+            --required-command-id deployment_enterprise \
+            --required-command-id deployment_postgres_write \
+            --required-command-id nextjs_postgres_write \
+            --required-command-id byoc_acceptance \
+            --output receipts/gate5-scope.json
+
+      - name: Upload Gate 5 CI-scope receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: commercial-gate-5-ci-receipt
+          path: receipts/gate5-scope.json
+          if-no-files-found: error
+
+      - name: Enforce Gate 5 receipt completeness
+        if: always() && steps.gate5_receipt.outcome != 'success'
+        run: exit 1
+
+  receipt-assemble:
+    name: Assemble immutable commercial CI receipt
+    if: always()
+    needs:
+      - commercial-core
+      - storage-postgres
+      - ui-parity
+      - byoc-postgres
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Gate 3 receipt
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: commercial-gate-3-receipt
+          path: ci-receipts/gate3
+
+      - name: Download Gate 5 receipt
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: commercial-gate-5-ci-receipt
+          path: ci-receipts/gate5
+
+      - name: Assemble exact-head run receipt
+        id: aggregate_receipt
+        continue-on-error: true
+        run: |
+          python3 scripts/commercial_ci_receipt.py aggregate \
+            --scope-receipt ci-receipts/gate3/gate3-scope.json \
+            --scope-receipt ci-receipts/gate5/gate5-scope.json \
+            --required-scope gate_3_storage_boundary_before_postgres \
+            --required-scope gate_5_byoc_enterprise_deployment_ci \
+            --job-result commercial-core=${{ needs['commercial-core'].result }} \
+            --job-result storage-postgres=${{ needs['storage-postgres'].result }} \
+            --job-result ui-parity=${{ needs['ui-parity'].result }} \
+            --job-result byoc-postgres=${{ needs['byoc-postgres'].result }} \
+            --output commercial-migration-ci-receipt.json
+
+      - name: Upload aggregate receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: commercial-migration-ci-receipt
+          path: commercial-migration-ci-receipt.json
+          if-no-files-found: error
+
+      - name: Enforce aggregate receipt completeness
+        if: always() && steps.aggregate_receipt.outcome != 'success'
+        run: exit 1

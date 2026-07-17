@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -77,6 +78,56 @@ def main() -> int:
         ])
         require(code == 0 and verified.get("ok") is True, f"backup verify failed: {verified}", failures)
         require(verified.get("integrity_check") == "ok", f"integrity failed: {verified}", failures)
+        require(verified.get("hash_ok") is True and verified.get("size_ok") is True, f"manifest binding failed: {verified}", failures)
+
+        missing_manifest_backup = tmp_path / "missing-manifest.sqlite"
+        shutil.copy2(backup_path, missing_manifest_backup)
+        code, missing_manifest, missing_manifest_text = run([
+            sys.executable,
+            str(BACKUP),
+            "verify",
+            "--backup",
+            str(missing_manifest_backup),
+        ])
+        require(
+            code == 1 and missing_manifest.get("error") == "backup_manifest_not_found",
+            f"missing manifest must fail closed: {missing_manifest}",
+            failures,
+        )
+
+        unreadable_manifest_backup = tmp_path / "unreadable-manifest.sqlite"
+        shutil.copy2(backup_path, unreadable_manifest_backup)
+        unreadable_manifest_backup.with_suffix(".manifest.json").write_text("{not-json", encoding="utf-8")
+        code, unreadable_manifest, unreadable_manifest_text = run([
+            sys.executable,
+            str(BACKUP),
+            "verify",
+            "--backup",
+            str(unreadable_manifest_backup),
+        ])
+        require(
+            code == 1 and unreadable_manifest.get("error") == "backup_manifest_unreadable",
+            f"unreadable manifest must fail closed: {unreadable_manifest}",
+            failures,
+        )
+
+        tampered_backup = tmp_path / "tampered.sqlite"
+        shutil.copy2(backup_path, tampered_backup)
+        shutil.copy2(backup_path.with_suffix(".manifest.json"), tampered_backup.with_suffix(".manifest.json"))
+        with tampered_backup.open("ab") as fh:
+            fh.write(b"tampered")
+        code, tampered, tampered_text = run([
+            sys.executable,
+            str(BACKUP),
+            "verify",
+            "--backup",
+            str(tampered_backup),
+        ])
+        require(
+            code == 1 and (tampered.get("hash_ok") is False or tampered.get("size_ok") is False),
+            f"tampered backup must fail closed: {tampered}",
+            failures,
+        )
 
         code, dry_restore, dry_text = run([
             sys.executable,
@@ -105,7 +156,19 @@ def main() -> int:
         with sqlite3.connect(restore_target) as conn:
             count = conn.execute("SELECT COUNT(*) FROM agents").fetchone()[0]
         require(count == 1, f"restored DB count mismatch: {count}", failures)
-        require(not leaked_secret(create_text + verify_text + dry_text + restore_text), "backup smoke leaked secret-like text", failures)
+        require(
+            not leaked_secret(
+                create_text
+                + verify_text
+                + missing_manifest_text
+                + unreadable_manifest_text
+                + tampered_text
+                + dry_text
+                + restore_text
+            ),
+            "backup smoke leaked secret-like text",
+            failures,
+        )
 
     print(json.dumps({
         "ok": not failures,
