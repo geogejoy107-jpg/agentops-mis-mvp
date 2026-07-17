@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import shlex
 import signal
 import socket
+import ssl
 import stat
 import subprocess
 import sys
@@ -20,7 +22,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.relay_connector_service_smoke import (  # noqa: E402
+    ROUTE,
     service_command,
+    start_relay,
     wait_status,
     write_private_json,
 )
@@ -96,6 +100,23 @@ def relay_children(parent_pid: int) -> list[int]:
     return children
 
 
+def process_environment_keys(pid: int) -> set[str]:
+    process = subprocess.run(
+        ["/bin/ps", "eww", "-p", str(pid), "-o", "command="],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    if process.returncode != 0:
+        return set()
+    return {
+        token.split("=", 1)[0]
+        for token in process.stdout.split()
+        if "=" in token and token.split("=", 1)[0].replace("_", "").isalnum()
+    }
+
+
 def wait_for(predicate, timeout: float = 12.0):
     deadline = time.monotonic() + timeout
     value = predicate()
@@ -128,6 +149,7 @@ def main() -> int:
     tailscale_unchanged = False
     relay_environment_minimal = False
     foreign_connector_preserved = False
+    epoch_startup_failed_closed = False
     bounded_shutdown = PROCESS_SHUTDOWN_GRACE_SECONDS + PROCESS_KILL_GRACE_SECONDS < 10
     if not bounded_shutdown:
         failures.append("Stack cleanup bound exceeds the Host stop grace period")
@@ -145,7 +167,9 @@ def main() -> int:
         tailscale_log = temporary_path / "tailscale.log"
         fake_tailscale = fake_bin / "tailscale"
         fake_tailscale.write_text(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$AGENTOPS_TEST_TAILSCALE_LOG\"\nexit 1\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> "
+            + shlex.quote(str(tailscale_log))
+            + "\nexit 1\n",
             encoding="utf-8",
         )
         fake_tailscale.chmod(0o700)
@@ -154,30 +178,16 @@ def main() -> int:
         env.update(
             {
                 "AGENTOPS_HOST_HOME": str(host_home),
-                "AGENTOPS_TEST_TAILSCALE_LOG": str(tailscale_log),
+                "AGENTOPS_API_KEY": "synthetic-api-key",
+                "AGENTOPS_ADMIN_KEY": "synthetic-admin-key",
+                "AGENTOPS_OWNER_SETUP_CODE": "synthetic-owner-code",
+                "AGENTOPS_HUMAN_SESSION": "synthetic-human-session",
                 "PATH": str(fake_bin) + os.pathsep + env.get("PATH", ""),
             }
         )
         backend_port = free_port()
         host_tls_port = free_port()
         unused_relay_port = free_port()
-        sentinel_env = {
-            "HOME": str(temporary_path),
-            "PATH": env["PATH"],
-            "AGENTOPS_API_KEY": "omit-api-key",
-            "AGENTOPS_ADMIN_KEY": "omit-admin-key",
-            "AGENTOPS_OWNER_SETUP_CODE": "omit-owner-code",
-            "AGENTOPS_HUMAN_SESSION": "omit-human-session",
-        }
-        projected = projected_environment(sentinel_env)
-        relay_environment_minimal = bool(
-            projected.get("HOME") == str(temporary_path)
-            and projected.get("PATH") == env["PATH"]
-            and not any(key.startswith("AGENTOPS_") for key in projected)
-        )
-        if not relay_environment_minimal:
-            failures.append("Relay connector inherited Host authority environment")
-
         foreign = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         try:
             run_host(
@@ -212,7 +222,7 @@ def main() -> int:
             if not invalid_failed_closed:
                 failures.append("invalid Relay config did not fail Host startup closed")
 
-            relay_certificate, _relay_key = generate_certificate(
+            relay_certificate, relay_key = generate_certificate(
                 openssl,
                 relay_home,
                 prefix="relay",
@@ -225,6 +235,16 @@ def main() -> int:
                 hostname=HOST_HOSTNAME,
             )
             host_key.chmod(0o600)
+            relay_server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            relay_server_context.minimum_version = ssl.TLSVersion.TLSv1_2
+            relay_server_context.load_cert_chain(str(relay_certificate), str(relay_key))
+            tunnel_key = os.urandom(32)
+            relay_fixture, relay_tls_listener, _browser_address = start_relay(
+                browser_port=free_port(),
+                connector_port=unused_relay_port,
+                context=relay_server_context,
+                tunnel_key=tunnel_key,
+            )
             relay_config = {
                 "enabled": True,
                 "host_certificate_path": str(host_certificate),
@@ -236,23 +256,22 @@ def main() -> int:
                 "relay_host": "127.0.0.1",
                 "relay_port": unused_relay_port,
                 "relay_server_hostname": RELAY_HOSTNAME,
-                "route": "host-lifecycle-smoke",
+                "route": ROUTE,
                 "schema_version": 1,
             }
             write_private_json(relay_home / "config.json", relay_config)
             write_private_json(
                 relay_home / "secrets.json",
-                {"schema_version": 1, "tunnel_key_hex": os.urandom(32).hex()},
+                {"schema_version": 1, "tunnel_key_hex": tunnel_key.hex()},
             )
 
-            foreign_status = relay_home / "foreign-status.json"
             foreign_epoch = relay_home / "foreign-epoch.json"
             foreign_connector = subprocess.Popen(
                 service_command(
                     relay_home / "config.json",
                     relay_home / "secrets.json",
                     foreign_epoch,
-                    foreign_status,
+                    relay_home / "status.json",
                 ),
                 cwd=ROOT,
                 env=projected_environment(env),
@@ -261,9 +280,12 @@ def main() -> int:
             )
             try:
                 foreign_ready = wait_status(
-                    foreign_status,
-                    lambda payload: payload.get("host_tls_ready") is True,
+                    relay_home / "status.json",
+                    lambda payload: payload.get("state") == "connected",
                 )
+                foreign_status_path = relay_home / "status.json"
+                foreign_status_metadata = foreign_status_path.stat()
+                foreign_status_bytes = foreign_status_path.read_bytes()
                 conflict_code, conflict_payload = run_host(
                     env,
                     "start",
@@ -276,6 +298,9 @@ def main() -> int:
                     and conflict_payload.get("ok") is False
                     and foreign_connector.poll() is None
                     and not (host_home / "run" / "host.pid.json").exists()
+                    and foreign_status_path.stat().st_ino == foreign_status_metadata.st_ino
+                    and foreign_status_path.read_bytes() == foreign_status_bytes
+                    and read_json(foreign_status_path).get("host_lifecycle_integrated") is False
                 )
                 if not foreign_connector_preserved:
                     failures.append("Host adopted or terminated a separately owned Relay connector")
@@ -283,6 +308,24 @@ def main() -> int:
                 if foreign_connector.poll() is None:
                     foreign_connector.send_signal(signal.SIGTERM)
                     foreign_connector.wait(timeout=10)
+                relay_fixture.stop()
+                relay_tls_listener.close()
+
+            corrupt_epoch = relay_home / "epoch.json"
+            corrupt_epoch.write_text("{not-json\n", encoding="utf-8")
+            corrupt_epoch.chmod(0o600)
+            epoch_code, epoch_payload = run_host(env, "start", "--no-workers", expected=(1,))
+            epoch_status = read_json(relay_home / "status.json")
+            epoch_startup_failed_closed = bool(
+                epoch_code == 1
+                and epoch_payload.get("ok") is False
+                and epoch_status.get("state") == "failed"
+                and epoch_status.get("current_epoch") is None
+                and not (host_home / "run" / "host.pid.json").exists()
+            )
+            if not epoch_startup_failed_closed:
+                failures.append("Host accepted Relay readiness before durable epoch initialization")
+            corrupt_epoch.unlink(missing_ok=True)
 
             run_host(env, "start", "--no-workers")
             first_stack_pid = int(read_json(host_home / "run" / "host.pid.json").get("pid") or 0)
@@ -298,12 +341,21 @@ def main() -> int:
                 len(first_children) == 1
                 and first_status.get("enabled") is True
                 and first_status.get("host_lifecycle_integrated") is True
-                and first_status.get("state") in {"starting", "connecting", "connected", "backoff"}
+                and int(first_status.get("current_epoch") or 0) > 0
+                and first_status.get("state") in {"connecting", "connected", "backoff"}
             )
             if not enabled_owned:
                 failures.append("enabled Relay connector was not owned by the Host stack")
 
             first_connector_pid = first_children[0] if first_children else 0
+            relay_environment_keys = process_environment_keys(first_connector_pid)
+            relay_environment_minimal = bool(
+                {"HOME", "PATH"}.issubset(relay_environment_keys)
+                and not any(key.startswith("AGENTOPS_") for key in relay_environment_keys)
+            )
+            if not relay_environment_minimal:
+                failures.append("Relay connector inherited Host authority environment")
+
             run_host(env, "restart", "--no-workers")
             second_stack_pid = int(read_json(host_home / "run" / "host.pid.json").get("pid") or 0)
             second_children = wait_for(lambda: relay_children(second_stack_pid)) or []
@@ -348,6 +400,7 @@ def main() -> int:
         "bounded_shutdown": bounded_shutdown,
         "disabled_no_connector_process": disabled_no_process,
         "enabled_connector_host_owned": enabled_owned,
+        "epoch_startup_failed_closed": epoch_startup_failed_closed,
         "failures": failures,
         "foreign_connector_preserved": foreign_connector_preserved,
         "invalid_config_failed_closed": invalid_failed_closed,

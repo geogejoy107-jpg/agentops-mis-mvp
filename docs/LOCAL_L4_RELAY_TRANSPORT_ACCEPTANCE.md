@@ -179,9 +179,12 @@ receives a minimal environment without Host API, admin, Owner or Human Session
 credentials. Invalid configuration fails Host startup closed. Host
 restart reaps the old connector and starts a new child; Host stop reaps the
 owned tree within an 8-second stack bound while preserving an unrelated
-process. A separately started connector holding the instance lock is neither
-adopted nor terminated; it blocks Host startup, and the Host accepts backend
-health only after the complete stack sends its own inherited readiness signal.
+process. A separately started, connected connector holding the exact managed
+instance lock is neither adopted nor terminated; it blocks Host startup without
+rewriting its status. The Host accepts backend health only after the connector
+has allocated its first durable epoch and the complete stack sends its own
+inherited readiness signal. The lifecycle smoke observes the real child process
+environment rather than only testing the projection helper.
 The fixture observes no
 Tailscale invocation and uses an unavailable loopback fake Relay, so it proves
 lifecycle/backoff ownership rather than a deployed remote endpoint.

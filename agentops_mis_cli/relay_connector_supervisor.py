@@ -102,6 +102,7 @@ class RelayConnectorSupervisor:
 
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        self._startup_complete = threading.Event()
         self._thread: threading.Thread | None = None
         self._connector: HostTunnelConnector | None = None
         self._state = "disabled"
@@ -171,6 +172,7 @@ class RelayConnectorSupervisor:
                 with self._lock:
                     self._failure_code = "epoch_allocation_failed"
                     self._record_locked("failed")
+                    self._startup_complete.set()
                 return
             if (
                 not isinstance(epoch, int)
@@ -180,6 +182,7 @@ class RelayConnectorSupervisor:
                 with self._lock:
                     self._failure_code = "invalid_allocated_epoch"
                     self._record_locked("failed")
+                    self._startup_complete.set()
                 return
             with self._lock:
                 if self._stop.is_set():
@@ -187,22 +190,31 @@ class RelayConnectorSupervisor:
                 self._epoch = epoch
                 self._record_locked("connecting")
 
-            connector = HostTunnelConnector(
-                relay_address=self._relay_address,
-                host_tls_target=self._host_tls_target,
-                route=self._route,
-                epoch=epoch,
-                key=self._key,
-                relay_ssl_context=self._relay_ssl_context,
-                relay_server_hostname=self._relay_server_hostname,
-            )
-            with self._lock:
-                if self._stop.is_set():
-                    break
-                self._connector = connector
-                # Publish and start atomically with respect to stop(), so a
-                # stop cannot land between ownership publication and startup.
-                connector.start()
+            try:
+                connector = HostTunnelConnector(
+                    relay_address=self._relay_address,
+                    host_tls_target=self._host_tls_target,
+                    route=self._route,
+                    epoch=epoch,
+                    key=self._key,
+                    relay_ssl_context=self._relay_ssl_context,
+                    relay_server_hostname=self._relay_server_hostname,
+                )
+                with self._lock:
+                    if self._stop.is_set():
+                        break
+                    self._connector = connector
+                    # Publish and start atomically with respect to stop(), so a
+                    # stop cannot land between ownership publication and startup.
+                    connector.start()
+                    self._startup_complete.set()
+            except Exception:
+                with self._lock:
+                    self._connector = None
+                    self._failure_code = "connector_start_failed"
+                    self._record_locked("failed")
+                    self._startup_complete.set()
+                return
             connected = connector.wait_until_ready(self._connect_timeout_seconds)
 
             if connected and not self._stop.is_set():
@@ -230,6 +242,19 @@ class RelayConnectorSupervisor:
         with self._lock:
             self._connector = None
             self._record_locked("stopped")
+            self._startup_complete.set()
+
+    def wait_until_started(self, timeout_seconds: float = 3.0) -> bool:
+        """Wait until the first durable epoch exists or startup fails closed."""
+        timeout = max(0.0, min(float(timeout_seconds), 10.0))
+        if not self._startup_complete.wait(timeout):
+            return False
+        with self._lock:
+            return self._epoch > 0 and self._state in {
+                "connecting",
+                "connected",
+                "backoff",
+            }
 
     def wait_for_connections(self, minimum: int, timeout_seconds: float = 5.0) -> bool:
         """Wait for a bounded count without exposing connector identities."""
@@ -275,6 +300,7 @@ class RelayConnectorSupervisor:
         """Permanently stop this instance and bound shutdown latency."""
         deadline = time.monotonic() + max(0.0, min(float(timeout_seconds), 10.0))
         self._stop.set()
+        self._startup_complete.set()
         with self._lock:
             connector = self._connector
             thread = self._thread

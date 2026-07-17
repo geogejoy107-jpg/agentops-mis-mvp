@@ -291,7 +291,9 @@ def wait_relay_connector_started(
                 status.get("enabled") is True
                 and status.get("host_lifecycle_integrated") is True
                 and status.get("host_tls_ready") is True
-                and status.get("state") in {"starting", "connecting", "connected", "backoff"}
+                and isinstance(status.get("current_epoch"), int)
+                and status["current_epoch"] > 0
+                and status.get("state") in {"connecting", "connected", "backoff"}
             ):
                 return
             raise RuntimeError("Relay connector published invalid startup status")

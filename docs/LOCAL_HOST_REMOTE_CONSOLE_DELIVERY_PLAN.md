@@ -193,7 +193,10 @@ Implementation slices:
    reading secrets. The source Host stack now starts exactly one connector child
    only for an explicitly enabled, valid private configuration; disabled or
    unconfigured state starts none, and stop/restart own its cleanup without
-   changing Tailscale. Owner enable/disable controls, fresh runtime-status
+   changing Tailscale. Its readiness handshake now requires the first durable
+   connector epoch, the lifecycle smoke exercises the exact managed instance
+   lock, and real child environment inspection proves Host authority values are
+   excluded. Owner enable/disable controls, fresh runtime-status
    projection, certificate lifecycle, Relay-side SNI routing, credential
    provisioning, installation into the current preview, and the deployed Relay
    remain open.

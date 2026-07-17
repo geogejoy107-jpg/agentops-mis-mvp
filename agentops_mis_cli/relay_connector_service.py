@@ -273,7 +273,6 @@ def _service_status(
             "tailscale_changed": False,
         },
         "ok": status["state"] in {
-            "starting",
             "connecting",
             "connected",
             "backoff",
@@ -484,6 +483,8 @@ def _run_service_locked(
             relay_server_hostname=config["relay_server_hostname"],
         )
         if not supervisor.start():
+            raise RelayConnectorServiceError("supervisor_start_failed")
+        if not supervisor.wait_until_started():
             raise RelayConnectorServiceError("supervisor_start_failed")
 
         status = _service_status(
