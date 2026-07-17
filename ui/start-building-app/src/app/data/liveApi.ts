@@ -88,6 +88,22 @@ export interface HumanBrowserSessionRevokePayload {
   token_omitted: boolean;
 }
 
+export type HostRelayAction = "enable" | "disable";
+export type HostRelayDisplayState = "disabled" | "prepared" | "pending" | "restart_required" | "unavailable";
+
+export interface HostRelayStatusPayload {
+  state: HostRelayDisplayState;
+  active_enabled: boolean;
+  control_available: boolean;
+  transition_pending: boolean;
+  restart_required: boolean;
+}
+
+export interface HostRelayTransitionPayload extends HostRelayStatusPayload {
+  action: HostRelayAction;
+  transition_ref: string;
+}
+
 export type HumanPairingRole = "operator" | "approver" | "viewer";
 
 export interface HumanPairingInvitation {
@@ -325,6 +341,118 @@ export async function revokeHumanBrowserSession(input: { session_ref: string } |
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+function hostRelayRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function hostRelayBoolean(value: unknown): boolean {
+  return value === true || value === 1 || value === "1" || value === "true";
+}
+
+function hostRelayOptionalBoolean(value: unknown): boolean | undefined {
+  if (value === true || value === 1 || value === "1" || value === "true") return true;
+  if (value === false || value === 0 || value === "0" || value === "false") return false;
+  return undefined;
+}
+
+function normalizeHostRelayState(value: unknown): HostRelayStatusPayload {
+  const root = hostRelayRecord(value);
+  const relay = hostRelayRecord(root.relay);
+  const status = hostRelayRecord(root.status);
+  const transition = hostRelayRecord(root.transition);
+  const source = Object.keys(relay).length
+    ? relay
+    : Object.keys(status).length
+      ? status
+      : Object.keys(transition).length
+        ? transition
+        : root;
+  const rawState = String(
+    source.state
+      || source.relay_state
+      || source.lifecycle_state
+      || root.state
+      || root.relay_state
+      || "",
+  ).toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
+  const activeEnabled = hostRelayBoolean(source.active_enabled ?? source.enabled ?? root.active_enabled ?? root.enabled);
+  const transitionPending = hostRelayBoolean(
+    source.transition_pending ?? source.pending ?? root.transition_pending ?? root.pending,
+  );
+  const restartRequired = hostRelayBoolean(
+    source.restart_required ?? source.requires_restart ?? root.restart_required ?? root.requires_restart,
+  );
+  const controlAvailable = hostRelayOptionalBoolean(
+    source.control_available ?? source.available ?? root.control_available ?? root.available,
+  ) !== false;
+  const configured = hostRelayOptionalBoolean(source.configured ?? root.configured);
+  const explicitlyPrepared = hostRelayBoolean(source.prepared ?? root.prepared) || rawState === "prepared";
+  const explicitlyDisabled = rawState === "disabled" || (!activeEnabled && configured === false);
+
+  let state: HostRelayDisplayState = "unavailable";
+  if (restartRequired || rawState === "restart_required") state = "restart_required";
+  else if (
+    transitionPending
+    || rawState === "pending"
+    || rawState === "connecting"
+    || rawState === "connected"
+    || rawState === "backoff"
+    || rawState.startsWith("enabled")
+  ) state = "pending";
+  else if (explicitlyPrepared) state = "prepared";
+  else if (explicitlyDisabled) state = "disabled";
+
+  return {
+    state,
+    active_enabled: activeEnabled,
+    control_available: controlAvailable,
+    transition_pending: transitionPending,
+    restart_required: restartRequired,
+  };
+}
+
+function normalizeHostRelayTransition(value: unknown, action: HostRelayAction): HostRelayTransitionPayload {
+  const root = hostRelayRecord(value);
+  const transition = hostRelayRecord(root.transition);
+  const transitionRef = String(
+    transition.transition_ref || transition.ref || root.transition_ref || root.ref || "",
+  );
+  if (!/^[A-Za-z0-9._:-]{1,160}$/.test(transitionRef)) {
+    throw new Error("relay_transition_unavailable");
+  }
+  return {
+    ...normalizeHostRelayState(value),
+    action,
+    transition_ref: transitionRef,
+  };
+}
+
+export async function loadHostRelay(): Promise<HostRelayStatusPayload> {
+  const payload = await apiJson<unknown>("/host/relay");
+  return normalizeHostRelayState(payload);
+}
+
+export async function prepareHostRelayTransition(action: HostRelayAction): Promise<HostRelayTransitionPayload> {
+  const payload = await apiJson<unknown>("/host/relay/transitions", {
+    method: "POST",
+    body: JSON.stringify({ action }),
+  });
+  return normalizeHostRelayTransition(payload, action);
+}
+
+export async function confirmHostRelayTransition(transitionRef: string, action: HostRelayAction): Promise<HostRelayStatusPayload> {
+  if (!/^[A-Za-z0-9._:-]{1,160}$/.test(transitionRef)) {
+    throw new Error("relay_transition_unavailable");
+  }
+  const payload = await apiJson<unknown>(`/host/relay/transitions/${encodeURIComponent(transitionRef)}/confirm`, {
+    method: "POST",
+    body: JSON.stringify({ action }),
+  });
+  return normalizeHostRelayState(payload);
 }
 
 function boundedHumanAuthErrorCode(value: unknown): string {

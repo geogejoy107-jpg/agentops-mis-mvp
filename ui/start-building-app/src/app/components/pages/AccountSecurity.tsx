@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Ban, CheckCircle2, Copy, KeyRound, LoaderCircle, LogOut, Monitor, RefreshCw, ShieldCheck, Smartphone, UserPlus, X } from "lucide-react";
+import { Ban, CheckCircle2, Copy, KeyRound, LoaderCircle, LogOut, Monitor, Power, RefreshCw, ShieldCheck, Smartphone, UserPlus, X } from "lucide-react";
 import {
+  confirmHostRelayTransition,
   createHumanPairingInvitation,
+  loadHostRelay,
   loadHumanBrowserSessions,
   loadHumanPairedDevices,
   loadHumanPairingInvitations,
+  prepareHostRelayTransition,
   revokeHumanBrowserSession,
   revokeHumanPairedDevice,
   revokeHumanPairingInvitation,
+  type HostRelayAction,
+  type HostRelayDisplayState,
+  type HostRelayStatusPayload,
   type HumanBrowserSession,
   type HumanBrowserSessionsPayload,
   type HumanPairedDevicesPayload,
@@ -42,6 +48,19 @@ function pairingErrorMessage(locale: "zh" | "en") {
   });
 }
 
+function relayErrorMessage(locale: "zh" | "en") {
+  return pick(locale, {
+    zh: "远程操控台请求未完成。请刷新状态后重试。",
+    en: "The Remote Console request did not complete. Refresh the status and try again.",
+  });
+}
+
+function relayStatusColor(state: HostRelayDisplayState) {
+  if (state === "prepared") return "var(--mis-primary)";
+  if (state === "pending" || state === "restart_required") return "var(--mis-warning)";
+  return "var(--mis-muted)";
+}
+
 export function AccountSecurity() {
   const { locale } = usePreferences();
   const { required, user, logout } = useHumanAuth();
@@ -57,6 +76,11 @@ export function AccountSecurity() {
   const [pairingExpiry, setPairingExpiry] = useState(3600);
   const [pairingLabel, setPairingLabel] = useState("");
   const [copied, setCopied] = useState(false);
+  const [relayStatus, setRelayStatus] = useState<HostRelayStatusPayload | null>(null);
+  const [relayTransition, setRelayTransition] = useState<{ action: HostRelayAction; ref: string } | null>(null);
+  const [relayLoading, setRelayLoading] = useState(true);
+  const [relayBusy, setRelayBusy] = useState(false);
+  const [relayError, setRelayError] = useState("");
 
   const copy = pick(locale, {
     zh: {
@@ -119,6 +143,21 @@ export function AccountSecurity() {
       empty: "没有可显示的浏览器会话。",
       safeRef: "安全引用",
       boundary: "Cookie、原始 Session ID、Session Hash 和 Token 不会显示在此页面或写入审计元数据。",
+      relayTitle: "远程操控台",
+      relayHint: "由 Owner 分两步准备并确认 Relay 配置变更。当前界面不代表 Relay 已部署或远程地址已可用。",
+      relayStatus: "状态",
+      relayDisabled: "已关闭",
+      relayPrepared: "等待明确确认",
+      relayPending: "正在处理",
+      relayRestartRequired: "需要重启主机服务",
+      relayUnavailable: "暂不可用",
+      relayEnable: "准备启用",
+      relayDisable: "准备停用",
+      relayConfirmEnable: "确认启用",
+      relayConfirmDisable: "确认停用",
+      relayPreparedHint: "准备步骤已完成。请再次明确确认本次变更。",
+      relayOwnerOnly: "只有 Owner 可以更改远程操控台状态。",
+      relayBoundary: "页面不会显示或保存连接配置、加密材料或机器凭据。确认引用仅保存在当前页面内存中。",
     },
     en: {
       title: "Account and access",
@@ -180,10 +219,45 @@ export function AccountSecurity() {
       empty: "No browser sessions to display.",
       safeRef: "Safe reference",
       boundary: "Cookies, raw Session IDs, Session hashes, and tokens are never displayed here or written to audit metadata.",
+      relayTitle: "Remote Console",
+      relayHint: "An Owner prepares and explicitly confirms Relay configuration changes in two steps. This screen does not mean a Relay is deployed or a remote address is available.",
+      relayStatus: "Status",
+      relayDisabled: "Disabled",
+      relayPrepared: "Awaiting explicit confirmation",
+      relayPending: "Pending",
+      relayRestartRequired: "Host service restart required",
+      relayUnavailable: "Unavailable",
+      relayEnable: "Prepare enable",
+      relayDisable: "Prepare disable",
+      relayConfirmEnable: "Confirm enable",
+      relayConfirmDisable: "Confirm disable",
+      relayPreparedHint: "The preparation step is complete. Explicitly confirm this change once more.",
+      relayOwnerOnly: "Only an Owner can change Remote Console state.",
+      relayBoundary: "Connection configuration, cryptographic material, and machine credentials are never displayed or stored here. The confirmation reference stays only in this page's memory.",
     },
   });
 
   const canManageSessions = required && user?.role === "owner";
+  const canManageRelay = required && user?.role === "owner";
+
+  const refreshRelay = useCallback(async () => {
+    if (!canManageRelay) {
+      setRelayStatus(null);
+      setRelayTransition(null);
+      setRelayLoading(false);
+      return;
+    }
+    setRelayLoading(true);
+    setRelayError("");
+    try {
+      setRelayStatus(await loadHostRelay());
+    } catch {
+      setRelayStatus({ state: "unavailable", active_enabled: false, control_available: false, transition_pending: false, restart_required: false });
+      setRelayError(relayErrorMessage(locale));
+    } finally {
+      setRelayLoading(false);
+    }
+  }, [canManageRelay, locale]);
 
   const refresh = useCallback(async () => {
     if (!canManageSessions) {
@@ -209,6 +283,7 @@ export function AccountSecurity() {
   }, [canManageSessions]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refreshRelay(); }, [refreshRelay]);
 
   const activeOtherCount = useMemo(
     () => payload?.sessions.filter((session) => session.status === "active" && !session.current).length || 0,
@@ -301,6 +376,59 @@ export function AccountSecurity() {
     viewer: copy.roleViewer,
   })[role];
 
+  const relayState = relayBusy
+    ? "pending"
+    : relayTransition
+      ? "prepared"
+      : relayStatus?.state || "unavailable";
+  const relayAction: HostRelayAction = relayStatus?.active_enabled ? "disable" : "enable";
+  const relayStatusLabel = ({
+    disabled: copy.relayDisabled,
+    prepared: copy.relayPrepared,
+    pending: copy.relayPending,
+    restart_required: copy.relayRestartRequired,
+    unavailable: copy.relayUnavailable,
+  } as const)[relayState];
+  const relayControlsBlocked = !canManageRelay
+    || relayLoading
+    || relayBusy
+    || relayStatus?.control_available === false
+    || relayStatus?.transition_pending === true
+    || relayStatus?.restart_required === true
+    || relayStatus?.state === "unavailable";
+
+  const prepareRelay = async () => {
+    if (relayControlsBlocked || relayTransition) return;
+    setRelayBusy(true);
+    setRelayError("");
+    try {
+      const transition = await prepareHostRelayTransition(relayAction);
+      setRelayTransition({ action: relayAction, ref: transition.transition_ref });
+      setRelayStatus(transition);
+    } catch {
+      await refreshRelay();
+      setRelayError(relayErrorMessage(locale));
+    } finally {
+      setRelayBusy(false);
+    }
+  };
+
+  const confirmRelay = async () => {
+    if (!canManageRelay || relayBusy || !relayTransition) return;
+    setRelayBusy(true);
+    setRelayError("");
+    try {
+      const nextStatus = await confirmHostRelayTransition(relayTransition.ref, relayTransition.action);
+      setRelayTransition(null);
+      setRelayStatus(nextStatus);
+      await refreshRelay();
+    } catch {
+      setRelayError(relayErrorMessage(locale));
+    } finally {
+      setRelayBusy(false);
+    }
+  };
+
   return (
     <WorkspaceSettingsPage title={copy.title} subtitle={copy.subtitle} testId="account-security-page">
       <WorkspaceSettingsSection title={copy.account} description={copy.accountHint} testId="account-profile-section">
@@ -317,6 +445,71 @@ export function AccountSecurity() {
             </div>
           ))}
         </dl>
+      </WorkspaceSettingsSection>
+
+      <WorkspaceSettingsSection
+        title={copy.relayTitle}
+        description={copy.relayHint}
+        testId="host-relay-section"
+        meta={(
+          <p className="mt-2 text-[11px] font-medium" style={{ color: relayStatusColor(relayState) }} data-testid="host-relay-status">
+            {copy.relayStatus}: {relayStatusLabel}
+          </p>
+        )}
+      >
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4" style={{ borderColor: "var(--mis-border)" }}>
+            <div className="flex min-w-0 items-start gap-2 text-xs" style={{ color: "var(--mis-dim)" }}>
+              <Monitor size={15} className="mt-0.5 shrink-0" style={{ color: relayStatusColor(relayState) }} />
+              <div>
+                <p className="font-semibold" style={{ color: "var(--mis-text)" }}>{relayStatusLabel}</p>
+                <p className="mt-1 text-[11px] leading-5" style={{ color: "var(--mis-muted)" }}>
+                  {canManageRelay ? (relayTransition ? copy.relayPreparedHint : copy.relayHint) : copy.relayOwnerOnly}
+                </p>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void refreshRelay()}
+                disabled={!canManageRelay || relayLoading || relayBusy}
+                className="inline-flex h-8 w-8 items-center justify-center rounded border disabled:opacity-50"
+                style={{ borderColor: "var(--mis-border)", color: "var(--mis-dim)", background: "var(--mis-surface)" }}
+                title={copy.refresh}
+                aria-label={copy.refresh}
+              >
+                <RefreshCw size={14} className={relayLoading ? "animate-spin" : ""} />
+              </button>
+              {relayTransition ? (
+                <button
+                  type="button"
+                  onClick={() => void confirmRelay()}
+                  disabled={!canManageRelay || relayBusy}
+                  className="inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-xs font-semibold disabled:opacity-50"
+                  style={{ background: "var(--mis-primary)", color: "#fff" }}
+                  data-testid="host-relay-confirm"
+                >
+                  {relayBusy ? <LoaderCircle size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                  {relayTransition.action === "enable" ? copy.relayConfirmEnable : copy.relayConfirmDisable}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void prepareRelay()}
+                  disabled={relayControlsBlocked}
+                  className="inline-flex h-8 items-center gap-1.5 rounded border px-2.5 text-xs font-semibold disabled:opacity-50"
+                  style={{ borderColor: "var(--mis-border)", color: "var(--mis-primary)", background: "var(--mis-surface)" }}
+                  data-testid="host-relay-prepare"
+                >
+                  {relayBusy ? <LoaderCircle size={14} className="animate-spin" /> : <Power size={14} />}
+                  {relayAction === "enable" ? copy.relayEnable : copy.relayDisable}
+                </button>
+              )}
+            </div>
+          </div>
+          {relayError && <div role="alert" className="border-b py-3 text-xs" style={{ borderColor: "var(--mis-border)", color: "var(--mis-warning)" }}>{relayError}</div>}
+          <p className="pt-4 text-[11px] leading-5" style={{ color: "var(--mis-muted)" }}>{copy.relayBoundary}</p>
+        </div>
       </WorkspaceSettingsSection>
 
       <WorkspaceSettingsSection
