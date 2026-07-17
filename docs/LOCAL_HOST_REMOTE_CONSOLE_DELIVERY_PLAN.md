@@ -133,6 +133,9 @@ Deliverables:
   and immediate Session invalidation;
 - add a transport-neutral Host tunnel client, Host-generated TLS identity, and
   deterministic local L4 fake Relay for protocol tests;
+- compose that fake Relay with a Host-initiated control connection, one
+  Host-initiated data connection per browser session, and real Host-terminated
+  TLS before any deployed endpoint work;
 - add a deployed HTTPS Relay profile with a stable Console URL, Host-initiated
   connection, per-Host SNI routing, Host-side TLS termination, bounded
   connection metadata, and no authority data store;

@@ -1,6 +1,6 @@
 # Local L4 Relay Transport Acceptance
 
-Status: 3B transport primitive accepted locally; deployed Relay remains pending
+Status: 3B transport primitive and loopback composition accepted locally; deployed Relay remains pending
 
 ## Scope
 
@@ -60,12 +60,32 @@ plaintext, payload hashes, certificate fingerprints, key material, or paths.
 It does not yet compose TLS with the framed tunnel primitive or prove an
 outbound Host-initiated connector.
 
+`scripts/local_fake_relay_tunnel_smoke.py` then composes the boundary with a
+Host-initiated control connection and one Host-initiated data connection per
+browser connection. The fake Relay authenticates bounded control frames,
+rejects unknown routes, bad MACs, stale epochs, registration replay and data
+connection replay. A replacement control epoch cannot claim a pending browser
+created by the previous epoch. A Host data connection is marked authenticated
+only after a bounded Relay acknowledgement. Unauthenticated connector
+handshakes are capped and are actively closed during Relay shutdown. The
+browser completes a real TLS handshake with
+the Host endpoint through the opaque data connection. Two successive connector
+epochs reuse the same Host TLS process and preserve exact binary
+request/response bytes and the Host certificate fingerprint. Relay evidence
+remains limited to allowlisted status, direction and byte-count fields;
+forwarding failure cannot be recorded as successful forwarding.
+
 ## Boundaries
 
 The frame smoke itself sends TLS-looking bytes and does not prove TLS; the
 separate fixture proves only its own Host-side termination boundary. Unilateral
 TLS half-close is explicitly not claimed because the stdlib `SSLSocket`
 shutdown path used by this fixture would discard TLS wrapper state.
+
+The composed connector remains a loopback fake Relay with a single route,
+short test deadlines and an in-memory temporary tunnel key. It does not prove a
+deployed service, internet routing, long-lived browser sessions, TLS half-close
+or transport exactly-once delivery.
 
 This slice does not yet implement SNI parsing, production Host-generated
 certificates,
@@ -78,8 +98,7 @@ advanced private-network profile and is intentionally untouched.
 
 ## Next Slice
 
-Add a loopback-only Host connector and fake Relay daemon around this envelope,
-including authenticated Host registration, bounded reconnect state, explicit
-shutdown, and a real TLS echo endpoint whose private key remains on the Host.
-Then deploy the same authority-free routing boundary behind a stable domain for
-3C physical browser acceptance.
+Turn the loopback composition into a disabled-by-default Host connector daemon,
+add bounded reconnect/backoff and certificate lifecycle controls, then deploy
+the same authority-free routing boundary behind a stable domain for 3C physical
+browser acceptance.

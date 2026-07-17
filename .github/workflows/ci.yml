@@ -88,6 +88,7 @@ jobs:
           timeout 120s python3 scripts/browser_only_remote_console_spec_smoke.py
           timeout 120s python3 scripts/local_l4_relay_transport_smoke.py
           timeout 120s python3 scripts/private_host_relay_tls_smoke.py
+          timeout 120s python3 scripts/local_fake_relay_tunnel_smoke.py
           timeout 120s python3 scripts/private_host_rc_status_smoke.py
           timeout 120s python3 scripts/release_branch_control_smoke.py
           timeout 120s python3 scripts/release_freeze_protocol_smoke.py

@@ -48,6 +48,16 @@ therefore the normal Chrome/proxy integration, not Tailscale Serve or MIS.
 All screenshots and receipts remain temporary local evidence under `/tmp` and
 are not committed.
 
+A fresh bounded read-only receipt repeated the installed-app path after the
+Mini Worker recovery. It confirmed the app launch, dedicated Chrome profile,
+`--no-proxy-server` process flag, `/workspace` path and `AgentOps MIS` title.
+The MacBook `codex-resume` channel independently produced the same bounded
+successful receipt without returning terminal scrollback.
+The check copied only that dedicated profile's History database to a temporary
+file, reduced the result to booleans, and omitted the private hostname and full
+URL. It did not inspect the normal Chrome profile, credentials, cookies or
+terminal scrollback, and it changed no network or repository state.
+
 The Console app contains only the non-secret Host URL and browser launch flags.
 It does not install AgentOps, Python, Node, Hermes, OpenClaw or another model on
 the MacBook; all authority and execution remain on the Mini.
