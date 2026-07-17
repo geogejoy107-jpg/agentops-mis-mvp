@@ -128,7 +128,7 @@ def main() -> int:
     tailscale_unchanged = False
     relay_environment_minimal = False
     foreign_connector_preserved = False
-    bounded_shutdown = PROCESS_SHUTDOWN_GRACE_SECONDS + PROCESS_KILL_GRACE_SECONDS < 20
+    bounded_shutdown = PROCESS_SHUTDOWN_GRACE_SECONDS + PROCESS_KILL_GRACE_SECONDS < 10
     if not bounded_shutdown:
         failures.append("Stack cleanup bound exceeds the Host stop grace period")
 

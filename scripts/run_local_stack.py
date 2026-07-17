@@ -29,8 +29,8 @@ from agentops_mis_cli.relay_connector_service import (  # noqa: E402
 UI_DIR = ROOT / "ui" / "start-building-app"
 CLI = ROOT / "scripts" / "agentops"
 LIVE_ADAPTERS = {"hermes", "openclaw"}
-PROCESS_SHUTDOWN_GRACE_SECONDS = 15.0
-PROCESS_KILL_GRACE_SECONDS = 3.0
+PROCESS_SHUTDOWN_GRACE_SECONDS = 6.0
+PROCESS_KILL_GRACE_SECONDS = 2.0
 WORKER_DENIED_HUMAN_CONTROL_ENV = frozenset({
     "AGENTOPS_ADMIN_KEY",
     "AGENTOPS_ACCEPTANCE_PASSWORD",

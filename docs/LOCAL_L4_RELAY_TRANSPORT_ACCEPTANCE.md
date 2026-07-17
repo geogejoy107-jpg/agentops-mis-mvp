@@ -178,7 +178,7 @@ sent only after Host TLS, epoch and supervisor initialization. The connector
 receives a minimal environment without Host API, admin, Owner or Human Session
 credentials. Invalid configuration fails Host startup closed. Host
 restart reaps the old connector and starts a new child; Host stop reaps the
-owned tree within an 18-second stack bound while preserving an unrelated
+owned tree within an 8-second stack bound while preserving an unrelated
 process. A separately started connector holding the instance lock is neither
 adopted nor terminated; it blocks Host startup, and the Host accepts backend
 health only after the complete stack sends its own inherited readiness signal.
