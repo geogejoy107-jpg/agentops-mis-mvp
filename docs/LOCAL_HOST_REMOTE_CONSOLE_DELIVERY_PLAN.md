@@ -175,6 +175,9 @@ Implementation slices:
    device/session revocation, audit, and UI.
 2. `3B Transport contract`: Host connector interface, per-Host TLS/SNI identity,
    request IDs, replay and idempotency rules, local L4 fake Relay, reconnect tests.
+   The bounded frame/replay primitive is executable and accepted in
+   `LOCAL_L4_RELAY_TRANSPORT_ACCEPTANCE.md`; Host-only TLS termination, SNI
+   routing, tunnel authentication, and the fake Relay daemon remain open.
 3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host
    Console origin, bounded operations metadata, deployment and rollback.
 4. `3D Physical acceptance`: fresh browser-only device, real Hermes/OpenClaw
