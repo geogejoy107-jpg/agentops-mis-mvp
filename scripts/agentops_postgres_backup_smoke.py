@@ -157,13 +157,18 @@ def table_counts(container: str, password: str, database: str) -> dict[str, int]
 
     assert last_result is not None
     stderr = last_result.stderr or ""
+    stderr_lower = stderr.lower()
     missing_table = next((table for table in tables if f'relation "{table}" does not exist' in stderr), "")
     safe_code = (
         f"count_table_{missing_table}_missing"
         if missing_table
         else "count_query_output_invalid"
         if last_result.returncode == 0 and output_invalid
-        else "count_query_failed"
+        else "count_query_container_missing"
+        if "no such container" in stderr_lower
+        else "count_query_connection_failed"
+        if "connection to server" in stderr_lower or "server closed the connection" in stderr_lower
+        else f"count_query_failed_exit_{last_result.returncode}"
     )
     raise CountQueryError(
         safe_code,

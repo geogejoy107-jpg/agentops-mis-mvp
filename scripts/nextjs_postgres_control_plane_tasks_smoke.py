@@ -28,7 +28,7 @@ import server  # noqa: E402
 import storage_postgres_container_smoke as container_smoke  # noqa: E402
 import storage_postgres_contract_smoke as contract  # noqa: E402
 from agentops_mis_storage.postgres import PostgresAdapter  # noqa: E402
-from nextjs_playwright_snapshot_smoke import free_port, require, run, start_process  # noqa: E402
+from nextjs_playwright_snapshot_smoke import free_port, require, run, start_process, stop_process  # noqa: E402
 from storage_postgres_http_read_parity_smoke import connect_postgres_when_ready  # noqa: E402
 from storage_postgres_optional_adapter_smoke import BUNDLED_PYTHON, ensure_psycopg, mapped_port  # noqa: E402
 
@@ -2087,12 +2087,8 @@ def main() -> int:
             transcript = json.dumps(payloads, ensure_ascii=False, sort_keys=True)
             if any(secret in transcript for secret in secrets):
                 failures.append("raw_secret_leaked_in_http_payload")
-            next_proc.terminate()
-            try:
-                stdout, stderr = next_proc.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                next_proc.kill()
-                stdout, stderr = next_proc.communicate(timeout=5)
+            stop_process(next_proc)
+            stdout, stderr = next_proc.communicate()
             next_proc = None
             if any(secret in f"{stdout}\n{stderr}" for secret in secrets):
                 failures.append("raw_secret_leaked_in_next_logs")
@@ -2218,12 +2214,8 @@ def main() -> int:
             return unavailable(message, skip=args.skip_if_unavailable)
         finally:
             if next_proc is not None:
-                next_proc.terminate()
-                try:
-                    next_proc.communicate(timeout=5)
-                except subprocess.TimeoutExpired:
-                    next_proc.kill()
-                    next_proc.communicate(timeout=5)
+                stop_process(next_proc)
+                next_proc.communicate()
             if adapter is not None:
                 adapter.close()
             container_smoke.run(["docker", "rm", "-f", container], timeout=30)
