@@ -960,12 +960,17 @@ def redact_text(text: str | None, limit=200) -> str:
 def redact_full_text(text: str | None) -> str:
     value = str(text or "")
     replacements = [
+        (r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----", "[PRIVATE_KEY_REDACTED]"),
         (r"(?i)(bearer\s+)[a-z0-9._\-]+", r"\1[REDACTED]"),
         (r"(?i)(token|secret|password|api[_-]?key)\s*[:=]\s*['\"]?[^'\"\s,;]+", r"\1=[REDACTED]"),
+        (r"(?<![A-Za-z0-9])(?:sk|gh[pousr])[-_][A-Za-z0-9_-]{16,}", "[SECRET_REDACTED]"),
+        (r"github_pat_[A-Za-z0-9_]{20,}", "[SECRET_REDACTED]"),
+        (r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", "[JWT_REDACTED]"),
         (r"(?i)\b(?:sk-[a-z0-9._\-]+|ntn_[a-z0-9._\-]+)\b", "[SECRET_REDACTED]"),
         (r"\b(?:agtok|agtsess)_[A-Za-z0-9_-]+\b", "[AGENT_TOKEN_REF_REDACTED]"),
         (r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "[EMAIL_REDACTED]"),
         (r"(?<![\w])(?:\+\d{1,3}[\s.-]*)?(?:\(?\d{2,4}\)?[\s.-]+){2,4}\d{2,4}(?![\w])", "[PHONE_REDACTED]"),
+        (r"(?<![\w])\+?\d{10,15}(?![\w])", "[PHONE_REDACTED]"),
     ]
     for pattern, repl in replacements:
         value = re.sub(pattern, repl, value)
@@ -7117,14 +7122,25 @@ def agent_gateway_request_approval(conn, body) -> tuple[dict, int]:
     return {"approval": row, "outcome": approval_outcome}, 201 if approval_outcome == "created" else 200
 
 
+def agent_gateway_memory_candidate_id(workspace_id: str, agent_id: str, task_id: str | None, run_id: str | None, canonical_text: str) -> str:
+    return "mem_gw_" + stable_hash([
+        workspace_id,
+        agent_id,
+        task_id or "project",
+        run_id or "no-run",
+        canonical_text,
+    ])[:16]
+
+
 def agent_gateway_memory_propose(conn, body) -> tuple[dict, int]:
     agent_id = body.get("agent_id")
     task_id = body.get("task_id")
     run_id = body.get("run_id")
-    text = body.get("canonical_text") or body.get("text")
-    if not agent_id or not text:
+    raw_text = body.get("canonical_text") or body.get("text")
+    if not agent_id or not raw_text:
         return {"error": "agent_id and canonical_text are required"}, 400
     ident = agent_gateway_identity({}, body)
+    task = None
     if run_id:
         run, access_error = ensure_run_access(conn, run_id, ident)
         if access_error:
@@ -7132,55 +7148,135 @@ def agent_gateway_memory_propose(conn, body) -> tuple[dict, int]:
         if task_id and task_id != run["task_id"]:
             return {"error": "forbidden", "message": "Memory task_id must match the target run."}, 403
         task_id = task_id or run["task_id"]
-    elif task_id:
+    if task_id:
         task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
         if not task:
             return {"error": "task not found"}, 404
         if row_workspace(task) != ident["workspace_id"]:
             return workspace_forbidden("task", task_id, ident["workspace_id"], row_workspace(task))
-        if ident.get("agent_id") and task["owner_agent_id"] != ident["agent_id"]:
-            return {"error": "forbidden", "message": "Agent token cannot write another agent's task memory."}, 403
+        if task["owner_agent_id"] != agent_id and agent_id not in task_collaborators(task):
+            return {"error": "forbidden", "message": "Task is not assigned to this agent."}, 403
+    if body.get("owner_user_id") is not None and body.get("owner_user_id") != "":
+        return {"error": "memory_owner_human_assignment_required", "message": "Agent credentials cannot assign a human memory owner."}, 403
+    if body.get("review_status") is not None and str(body.get("review_status")).strip().lower() != "candidate":
+        return {"error": "memory_review_human_required", "message": "Agent credentials can only propose candidate memories."}, 403
+
+    canonical_text = redact_text(raw_text, 360)
+    scope = str(body.get("scope") or ("task" if task_id else "project")).strip().lower()
+    if scope not in {"task", "project", "org"}:
+        return {"error": "memory_scope_invalid", "message": "scope must be task, project, or org."}, 400
+    if scope == "task" and not task_id:
+        return {"error": "memory_task_id_required", "message": "Task-scoped memory candidates require a task_id or a bound run_id."}, 400
+
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
-    memory_id = body.get("memory_id") or stable_id("mem_gw", agent_id, task_id or "project", stable_hash(text)[:12])
+    memory_id = agent_gateway_memory_candidate_id(
+        ident["workspace_id"],
+        agent_id,
+        task_id,
+        run_id,
+        canonical_text,
+    )
+    if body.get("memory_id") and body.get("memory_id") != memory_id:
+        return {"error": "memory_id_unavailable", "message": "memory_id is unavailable for this proposal."}, 409
     existing = conn.execute("SELECT * FROM memories WHERE memory_id=?", (memory_id,)).fetchone()
     if existing:
         existing_workspace = row_workspace(existing)
         if existing_workspace != ident["workspace_id"]:
-            return workspace_forbidden("memory", memory_id, ident["workspace_id"], existing_workspace)
+            return {"error": "memory_id_unavailable", "message": "memory_id is unavailable for this proposal."}, 409
         if existing["review_status"] != "candidate":
-            return {"error": "forbidden", "message": "Agent token can only update candidate memories."}, 403
+            return {"error": "memory_review_human_required", "message": "Agent credentials cannot modify a reviewed memory."}, 403
         if existing["agent_id"] and existing["agent_id"] != agent_id:
             return {"error": "forbidden", "message": "Agent token cannot update another agent's memory."}, 403
         if (existing["task_id"] or None) != (task_id or None):
             return {"error": "forbidden", "message": "Memory task_id must match the existing candidate."}, 403
+
     try:
-        confidence = float(body.get("confidence") if body.get("confidence") is not None else 0.72)
+        confidence = float(
+            body.get("confidence")
+            if body.get("confidence") is not None
+            else (existing["confidence"] if existing else 0.72)
+        )
     except (TypeError, ValueError):
         return {"error": "invalid confidence"}, 400
-    confidence = max(0.0, min(confidence, 1.0))
+    if confidence < 0 or confidence > 1:
+        return {"error": "invalid confidence"}, 400
+
+    ttl_value = body.get("ttl_review_due_at")
+    if ttl_value is None and existing:
+        ttl_review_due_at = existing["ttl_review_due_at"]
+    elif ttl_value is None:
+        ttl_review_due_at = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=30)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    else:
+        try:
+            parsed_ttl = dt.datetime.fromisoformat(str(ttl_value).replace("Z", "+00:00"))
+            if parsed_ttl.tzinfo is None:
+                parsed_ttl = parsed_ttl.replace(tzinfo=dt.timezone.utc)
+            parsed_ttl = parsed_ttl.astimezone(dt.timezone.utc)
+        except (TypeError, ValueError):
+            return {"error": "ttl_review_due_at_invalid", "message": "ttl_review_due_at must be a future ISO-8601 timestamp."}, 400
+        if parsed_ttl <= dt.datetime.now(dt.timezone.utc):
+            return {"error": "ttl_review_due_at_invalid", "message": "ttl_review_due_at must be a future ISO-8601 timestamp."}, 400
+        ttl_review_due_at = parsed_ttl.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+    access_tag_value = body.get("access_tags")
+    if access_tag_value is None and existing:
+        access_tags = existing["access_tags"]
+    elif access_tag_value is None:
+        access_tags = json.dumps(["agent-gateway", "review"], ensure_ascii=False, separators=(",", ":"))
+    elif not isinstance(access_tag_value, list):
+        return {"error": "access_tags_invalid", "message": "access_tags must be a list."}, 400
+    else:
+        access_tags = json.dumps(list(dict.fromkeys(
+            redact_text(item, 80) for item in access_tag_value[:24] if redact_text(item, 80)
+        )), ensure_ascii=False, separators=(",", ":"))
+
+    supersedes_memory_id = body.get("supersedes_memory_id") or None
+    if supersedes_memory_id == memory_id:
+        return {"error": "supersedes_memory_id_invalid", "message": "A memory cannot supersede itself."}, 400
+    if supersedes_memory_id:
+        superseded = conn.execute(
+            "SELECT 1 FROM memories WHERE memory_id=? AND COALESCE(workspace_id,'local-demo')=?",
+            (supersedes_memory_id, ident["workspace_id"]),
+        ).fetchone()
+        if not superseded:
+            return {"error": "superseded_memory_not_found", "message": "Superseded memory was not found in the credential workspace."}, 404
+
+    now = now_iso()
     row = {
         "memory_id": memory_id,
         "workspace_id": ident["workspace_id"],
-        "scope": coerce_choice(body.get("scope"), {"task", "project", "org"}, "project"),
-        "memory_type": coerce_choice(body.get("memory_type"), {"policy", "sop", "decision", "commitment", "risk", "failure_case", "project_context", "customer_preference", "agent_lesson", "artifact_summary"}, "artifact_summary"),
-        "canonical_text": redact_text(text, 360),
-        "source_type": coerce_choice(body.get("source_type"), {"chat", "email", "meeting", "github", "notion", "run_log", "manual"}, "run_log"),
-        "source_ref": redact_text(body.get("source_ref") or run_id or "agent-gateway", 200),
-        "project_id": body.get("project_id") or "proj_mvp",
+        "scope": existing["scope"] if existing and "scope" not in body else scope,
+        "memory_type": existing["memory_type"] if existing and "memory_type" not in body else coerce_choice(body.get("memory_type"), {"policy", "sop", "decision", "commitment", "risk", "failure_case", "project_context", "customer_preference", "agent_lesson", "artifact_summary"}, "artifact_summary"),
+        "canonical_text": canonical_text,
+        "source_type": existing["source_type"] if existing and "source_type" not in body else coerce_choice(body.get("source_type"), {"chat", "email", "meeting", "github", "notion", "run_log", "manual"}, "run_log"),
+        "source_ref": existing["source_ref"] if existing and "source_ref" not in body else (redact_text(body.get("source_ref") or run_id or "agent-gateway", 200) or None),
+        "project_id": existing["project_id"] if existing and "project_id" not in body else (body.get("project_id") or None),
         "task_id": task_id,
         "agent_id": agent_id,
         "confidence": confidence,
         "review_status": "candidate",
-        "owner_user_id": body.get("owner_user_id") or "usr_founder",
-        "ttl_review_due_at": body.get("ttl_review_due_at") or (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=30)).isoformat(),
-        "supersedes_memory_id": body.get("supersedes_memory_id"),
-        "access_tags": json.dumps([redact_text(item, 80) for item in (body.get("access_tags") or ["agent-gateway", "review"])], ensure_ascii=False),
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
+        "owner_user_id": None,
+        "ttl_review_due_at": ttl_review_due_at,
+        "supersedes_memory_id": supersedes_memory_id,
+        "access_tags": access_tags,
+        "created_at": existing["created_at"] if existing else now,
+        "updated_at": existing["updated_at"] if existing else now,
     }
+    if existing:
+        immutable_fields = [
+            "workspace_id", "scope", "memory_type", "canonical_text", "source_type", "source_ref", "project_id",
+            "task_id", "agent_id", "review_status", "owner_user_id", "ttl_review_due_at", "supersedes_memory_id",
+            "access_tags",
+        ]
+        unchanged = all(str(existing[field] or "") == str(row[field] or "") for field in immutable_fields)
+        unchanged = unchanged and float(existing["confidence"] or 0) == float(row["confidence"] or 0)
+        if not unchanged:
+            return {"error": "memory_immutable_conflict", "message": "memory_id is immutable; create a new candidate."}, 409
+        return {"memory": dict(existing), "outcome": "unchanged"}, 200
+
     outcome = upsert_memory_candidate(conn, row, "agent-gateway", {"workspace_id": ident["workspace_id"], "run_id": run_id, "task_id": task_id, "raw_omitted": True})
     runtime_event(conn, "rtc_agent_gateway_local", "memory.propose", "completed", run_id=run_id, task_id=task_id, agent_id=agent_id, output_summary=row["canonical_text"])
-    return {"memory": row, "outcome": outcome}, 201 if outcome == "created" else 200
+    return {"memory": row, "outcome": outcome}, 201
 
 
 def agent_gateway_eval_submit(conn, body) -> tuple[dict, int]:

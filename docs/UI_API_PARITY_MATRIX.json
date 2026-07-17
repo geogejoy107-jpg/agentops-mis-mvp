@@ -979,7 +979,7 @@
     },
     {
       "id": "next_typescript_postgres_agent_gateway_control_plane",
-      "capability": "TypeScript-owned Postgres Agent Gateway task, plan, run lifecycle, and execution-evidence control plane.",
+      "capability": "TypeScript-owned Postgres Agent Gateway task, plan, run lifecycle, execution-evidence, and candidate-memory control plane.",
       "status": "next_only",
       "gate4_required": true,
       "vite_routes": [],
@@ -991,7 +991,8 @@
         "/api/mis/agent-gateway/tool-calls",
         "/api/mis/agent-gateway/evaluations/submit",
         "/api/mis/agent-gateway/artifacts",
-        "/api/mis/agent-gateway/plan-evidence-manifests"
+        "/api/mis/agent-gateway/plan-evidence-manifests",
+        "/api/mis/agent-gateway/memories/propose"
       ],
       "api_contracts": [
         "GET /agent-gateway/tasks",
@@ -1002,7 +1003,8 @@
         "POST /agent-gateway/tool-calls",
         "POST /agent-gateway/evaluations/submit",
         "POST /agent-gateway/artifacts",
-        "POST /agent-gateway/plan-evidence-manifests"
+        "POST /agent-gateway/plan-evidence-manifests",
+        "POST /agent-gateway/memories/propose"
       ],
       "vite_files": [],
       "next_files": [
@@ -1021,11 +1023,14 @@
         "ui/next-app/src/server/controlPlane/auth.ts",
         "ui/next-app/src/server/controlPlane/config.ts",
         "ui/next-app/src/server/controlPlane/db.ts",
-        "ui/next-app/src/server/controlPlane/ledger.ts"
+        "ui/next-app/src/server/controlPlane/ledger.ts",
+        "ui/next-app/app/api/mis/agent-gateway/memories/propose/route.ts",
+        "ui/next-app/src/server/controlPlane/agentGatewayMemories.ts"
       ],
       "evidence_commands": [
         "python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py",
-        "cd ui/next-app && npm run build"
+        "cd ui/next-app && npm run build",
+        "python3 scripts/nextjs_postgres_memory_propose_smoke.py"
       ],
       "retirement_allowed": false,
       "retirement_gate": "These exact routes are a commercial control-plane migration addition. Python remains Free Local and the explicit per-route rollback until broader API parity is proven."

@@ -93,20 +93,48 @@ def stable_hash(value) -> str:
 
 def redact_text(value, limit: int = 200) -> str:
     text = "" if value is None else str(value)
-    text = " ".join(text.replace("\r", " ").replace("\n", " ").split())
-    secrets = [
-        "sk-",
-        "ntn_",
-        "Bearer ",
-        "Authorization:",
-        "api_key",
-        "password",
-        "token",
+    replacements = [
+        (r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----", "[PRIVATE_KEY_REDACTED]", 0),
+        (r"(bearer\s+)[a-z0-9._-]+", r"\1[REDACTED]", re.IGNORECASE),
+        (r"(authorization|token|secret|password|api[_-]?key)\s*[:=]\s*['\"]?[^'\"\s,;]+", r"\1=[REDACTED]", re.IGNORECASE),
+        (r"(?<![A-Za-z0-9])(?:sk|gh[pousr])[-_][A-Za-z0-9_-]{16,}", "[SECRET_REDACTED]", 0),
+        (r"github_pat_[A-Za-z0-9_]{20,}", "[SECRET_REDACTED]", 0),
+        (r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", "[JWT_REDACTED]", 0),
+        (r"\b(?:sk-[a-z0-9._-]+|ntn_[a-z0-9._-]+)\b", "[SECRET_REDACTED]", re.IGNORECASE),
+        (r"\b(?:agtok|agtsess)_[A-Za-z0-9_-]+\b", "[AGENT_TOKEN_REF_REDACTED]", 0),
+        (r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "[EMAIL_REDACTED]", 0),
+        (r"(?<![\w])(?:\+\d{1,3}[\s.-]*)?(?:\(?\d{2,4}\)?[\s.-]+){2,4}\d{2,4}(?![\w])", "[PHONE_REDACTED]", 0),
+        (r"(?<![\w])\+?\d{10,15}(?![\w])", "[PHONE_REDACTED]", 0),
     ]
-    for marker in secrets:
-        if marker.lower() in text.lower():
-            text = text.replace(marker, f"{marker[:2]}[REDACTED]")
+    for pattern, replacement, flags in replacements:
+        text = re.sub(pattern, replacement, text, flags=flags)
+    text = " ".join(text.replace("\r", " ").replace("\n", " ").split())
     return text[:limit]
+
+
+def build_worker_memory_candidate_payload(
+    *,
+    workspace_id: str,
+    agent_id: str,
+    task_id: str,
+    run_id: str,
+    task_title: str,
+    adapter: str,
+) -> dict:
+    return {
+        "workspace_id": workspace_id,
+        "agent_id": agent_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "scope": "task",
+        "memory_type": "artifact_summary",
+        "canonical_text": (
+            f"Worker {agent_id} completed task '{redact_text(task_title, 80)}' via {adapter}."
+        ),
+        "source_ref": run_id,
+        "access_tags": ["worker-loop", adapter, "review"],
+        "confidence": 0.72,
+    }
 
 
 def json_dumps(data) -> str:
@@ -700,18 +728,17 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     })
     artifact_id = (artifact_payload.get("artifact") or {}).get("artifact_id")
     if result.ok:
-        client.post("/api/agent-gateway/memories/propose", {
-            "workspace_id": client.workspace_id,
-            "agent_id": client.agent_id,
-            "task_id": task_id,
-            "run_id": run_id,
-            "scope": "workspace",
-            "memory_type": "artifact_summary",
-            "canonical_text": f"Worker {client.agent_id} completed task '{redact_text(task.get('title'), 80)}' via {args.adapter}.",
-            "source_ref": run_id,
-            "access_tags": ["worker-loop", args.adapter, "review"],
-            "confidence": 0.72,
-        })
+        client.post(
+            "/api/agent-gateway/memories/propose",
+            build_worker_memory_candidate_payload(
+                workspace_id=client.workspace_id,
+                agent_id=client.agent_id,
+                task_id=task_id,
+                run_id=run_id,
+                task_title=task.get("title") or task_id,
+                adapter=args.adapter,
+            ),
+        )
     client.post("/api/agent-gateway/audit", {
         "workspace_id": client.workspace_id,
         "agent_id": client.agent_id,

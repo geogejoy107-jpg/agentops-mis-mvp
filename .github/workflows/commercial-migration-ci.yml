@@ -266,6 +266,7 @@ jobs:
           python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id nextjs_postgres_write --expected-contract nextjs_deployment_postgres_runtime_write_fixture_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate5/nextjs_postgres_write.json -- python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture || status=1
           python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id byoc_acceptance --expected-contract byoc_deployment_acceptance_v1 --expected-contract postgres_backup_restore_v1 --expected-contract postgres_backup_manifest_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate5/byoc_acceptance.json -- python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture || status=1
           python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id nextjs_postgres_control_plane_tasks --expected-contract nextjs_postgres_control_plane_tasks_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate5/nextjs_postgres_control_plane_tasks.json -- python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id nextjs_postgres_memory_propose --expected-contract nextjs_postgres_memory_propose_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate5/nextjs_postgres_memory_propose.json -- python3 scripts/nextjs_postgres_memory_propose_smoke.py || status=1
           exit "$status"
 
       - name: Assemble Gate 5 CI-scope receipt
@@ -283,6 +284,7 @@ jobs:
             --required-command-id nextjs_postgres_write \
             --required-command-id byoc_acceptance \
             --required-command-id nextjs_postgres_control_plane_tasks \
+            --required-command-id nextjs_postgres_memory_propose \
             --output receipts/gate5-scope.json
 
       - name: Upload Gate 5 CI-scope receipt
