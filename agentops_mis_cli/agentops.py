@@ -4968,7 +4968,7 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
         })
     except RuntimeError as exc:
         register_error = str(exc)
-    if args.adapter in {"hermes", "openclaw"} and not args.confirm_run:
+    if args.adapter in {"hermes", "openclaw", "codex"} and not args.confirm_run:
         created = client.post("/api/agent-gateway/tasks", {
             "workspace_id": client.workspace_id,
             "task_id": args.task_id,
@@ -5052,6 +5052,10 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
         worker_argv.extend(["--openclaw-bin", args.openclaw_bin])
     if args.openclaw_timeout is not None:
         worker_argv.extend(["--openclaw-timeout", str(args.openclaw_timeout)])
+    if args.codex_bin:
+        worker_argv.extend(["--codex-bin", args.codex_bin])
+    if args.codex_timeout is not None:
+        worker_argv.extend(["--codex-timeout", str(args.codex_timeout)])
 
     stdout = io.StringIO()
     with contextlib.redirect_stdout(stdout):
@@ -5168,6 +5172,7 @@ def cmd_worker_preflight(args, client: AgentOpsClient) -> dict:
         timeout=args.timeout,
         hermes_gateway_url=args.hermes_gateway_url,
         openclaw_bin=args.openclaw_bin,
+        codex_bin=args.codex_bin,
     )
     gateway = worker_mod.check_gateway_preflight(check_args)
     adapter = worker_mod.check_adapter_preflight(check_args)
@@ -6421,8 +6426,8 @@ def build_parser() -> argparse.ArgumentParser:
     customer_worker.set_defaults(handler="workflow_customer_worker_task")
 
     run_task = workflow_sub.add_parser("run-task", help="Create a normal MIS task and execute one local worker iteration.")
-    run_task.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
-    run_task.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw live execution.")
+    run_task.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
+    run_task.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw/Codex live model execution.")
     run_task.add_argument("--task-id", default=None)
     run_task.add_argument("--title", required=True)
     run_task.add_argument("--description", required=True)
@@ -6442,6 +6447,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_task.add_argument("--hermes-max-tokens", type=int, default=int(os.environ.get("HERMES_MAX_TOKENS", "512")))
     run_task.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", "/opt/homebrew/bin/openclaw"))
     run_task.add_argument("--openclaw-timeout", type=int, default=180)
+    run_task.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", ""))
+    run_task.add_argument("--codex-timeout", type=int, default=300)
     run_task.set_defaults(handler="workflow_run_task")
 
     worker = sub.add_parser("worker", help="Worker fleet recovery commands.")
@@ -6456,16 +6463,17 @@ def build_parser() -> argparse.ArgumentParser:
     worker_logs.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     worker_logs.set_defaults(handler="worker_logs")
     worker_preflight = worker_sub.add_parser("preflight", help="Run read-only Gateway and adapter readiness checks.")
-    worker_preflight.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_preflight.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
     worker_preflight.add_argument("--agent-id", default=None)
     worker_preflight.add_argument("--timeout", type=int, default=5)
     worker_preflight.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642"))
     worker_preflight.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", "/opt/homebrew/bin/openclaw"))
+    worker_preflight.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", ""))
     worker_preflight.set_defaults(handler="worker_preflight")
     worker_service_check = worker_sub.add_parser("service-check", help="Read-only check for a launchd/systemd worker service file.")
     worker_service_check.add_argument("--manager", choices=["launchd", "systemd"], required=True)
     worker_service_check.add_argument("--agent-id", default=None)
-    worker_service_check.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_service_check.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
     worker_service_check.add_argument("--label", default="")
     worker_service_check.add_argument("--service-path", default="")
     worker_service_check.add_argument("--api-key-placeholder", default="<paste one-time token here>")
@@ -6474,7 +6482,7 @@ def build_parser() -> argparse.ArgumentParser:
     worker_service_install = worker_sub.add_parser("service-install", help="Dry-run or write a safe launchd/systemd worker service file.")
     worker_service_install.add_argument("--manager", choices=["launchd", "systemd"], required=True)
     worker_service_install.add_argument("--agent-id", default=None)
-    worker_service_install.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_service_install.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
     worker_service_install.add_argument("--confirm-run", action="store_true")
     worker_service_install.add_argument("--use-session", action="store_true", help="Render a session-minting worker command for remote/scoped tokens. Local loopback services omit this by default.")
     worker_service_install.add_argument("--session-ttl-sec", type=int, default=900)
@@ -6495,7 +6503,7 @@ def build_parser() -> argparse.ArgumentParser:
     worker_service_control.add_argument("--manager", choices=["launchd", "systemd"], required=True)
     worker_service_control.add_argument("--action", dest="service_action", choices=["load", "unload", "restart"], required=True)
     worker_service_control.add_argument("--agent-id", default=None)
-    worker_service_control.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_service_control.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
     worker_service_control.add_argument("--label", default="")
     worker_service_control.add_argument("--service-path", default="")
     worker_service_control.add_argument("--api-key-placeholder", default="<paste one-time token here>")

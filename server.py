@@ -1260,16 +1260,18 @@ def audit(conn: sqlite3.Connection, actor_type: str, actor_id: str | None, actio
         "previous": previous_hash,
     }
     chain = stable_hash(payload)
+    audit_id = new_id("aud")
     conn.execute(
         """
         INSERT INTO audit_logs(audit_id, actor_type, actor_id, action, entity_type, entity_id, before_hash, after_hash, metadata_json, tamper_chain_hash, created_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
-            new_id("aud"), actor_type, actor_id, action, entity_type, entity_id,
+            audit_id, actor_type, actor_id, action, entity_type, entity_id,
             payload["before_hash"], payload["after_hash"], json.dumps(metadata or {}, ensure_ascii=False), chain, now_iso()
         ),
     )
+    return audit_id
 
 
 def init_schema():
@@ -3080,14 +3082,14 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
     base_url = redact_text(base_url or "http://127.0.0.1:8787", 180)
     safe_agent_id = redact_text(agent_id, 120)
     safe_workspace_id = normalize_workspace_id(workspace_id)
-    adapter = coerce_choice(runtime_type, {"mock", "hermes", "openclaw"}, "mock")
+    adapter = coerce_choice(runtime_type, {"mock", "hermes", "openclaw", "codex"}, "mock")
     env = [
         f"export AGENTOPS_BASE_URL={shlex.quote(base_url)}",
         f"export AGENTOPS_WORKSPACE_ID={shlex.quote(safe_workspace_id)}",
         f"export AGENTOPS_AGENT_ID={shlex.quote(safe_agent_id)}",
         "export AGENTOPS_API_KEY='<paste one-time token here>'",
     ]
-    confirm_flag = " --confirm-run" if adapter in {"hermes", "openclaw"} else ""
+    confirm_flag = " --confirm-run" if adapter in {"hermes", "openclaw", "codex"} else ""
     run_once = f"agentops-worker --once --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900"
     worker_loop_flags = "--use-session --session-ttl-sec 900 --session-refresh-margin-sec 60 --poll-interval 5 --idle-backoff-max 30 --error-backoff-max 30 --backoff-factor 2 --adapter-max-attempts 1 --adapter-retry-delay-sec 1 --max-tasks 0 --continue-on-error --max-errors 5 --write-state --jsonl-log"
     run_loop = f"agentops-worker --adapter {adapter}{confirm_flag} {worker_loop_flags}"
@@ -3122,7 +3124,8 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
         "safety": {
             "copy_only": True,
             "server_executes_shell": False,
-            "live_execution_requires_confirm_run": adapter in {"hermes", "openclaw"},
+            "live_execution_requires_confirm_run": adapter in {"hermes", "openclaw", "codex"},
+            "read_only_worker": adapter == "codex",
             "token_omitted": True,
         },
         "token_omitted": True,
@@ -3178,7 +3181,8 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
             "Run service-check after writing a service file and before manually loading launchd/systemd.",
             "Service-control commands are preview-only by default; add --confirm-control only on the agent machine after local review.",
             "Repo-local scripts/agent_worker.py commands are included only as development fallbacks.",
-            "Hermes/OpenClaw launch commands include --confirm-run because the selected runtime is intended to execute.",
+            "Hermes/OpenClaw/Codex launch commands include --confirm-run because the selected runtime is intended to execute.",
+            "The Codex worker remains read-only even when --confirm-run allows model execution.",
         ],
         "token_omitted": True,
     }
@@ -4114,6 +4118,29 @@ def run_detail_payload(conn: sqlite3.Connection, run_id: str) -> dict | None:
     run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
     if not run:
         return None
+    audit_logs = rows_to_dicts(conn.execute(
+        """SELECT a.audit_id, a.action, a.entity_type, a.entity_id, a.created_at
+        FROM audit_logs a
+        JOIN runs bound_run
+          ON bound_run.run_id=a.entity_id
+         AND a.entity_type='runs'
+         AND bound_run.agent_id=a.actor_id
+        WHERE bound_run.run_id=? AND bound_run.task_id=? AND bound_run.agent_id=?
+        ORDER BY a.created_at""",
+        (run_id, run["task_id"], run["agent_id"]),
+    ).fetchall())
+    memories = rows_to_dicts(conn.execute(
+        """SELECT m.memory_id, m.memory_type, m.review_status, m.source_ref,
+                  m.task_id, m.agent_id, m.created_at
+        FROM memories m
+        JOIN runs bound_run
+          ON bound_run.run_id=m.source_ref
+         AND bound_run.task_id=m.task_id
+         AND bound_run.agent_id=m.agent_id
+        WHERE bound_run.run_id=? AND bound_run.task_id=? AND bound_run.agent_id=?
+        ORDER BY m.created_at""",
+        (run_id, run["task_id"], run["agent_id"]),
+    ).fetchall())
     return {
         "run": dict(run),
         "tool_calls": rows_to_dicts(conn.execute("SELECT * FROM tool_calls WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
@@ -4121,6 +4148,8 @@ def run_detail_payload(conn: sqlite3.Connection, run_id: str) -> dict | None:
         "evaluations": rows_to_dicts(conn.execute("SELECT * FROM evaluations WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
         "artifacts": rows_to_dicts(conn.execute("SELECT * FROM artifacts WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
         "runtime_events": rows_to_dicts(conn.execute("SELECT * FROM runtime_events WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
+        "audit_logs": audit_logs,
+        "memories": memories,
     }
 
 
@@ -9806,9 +9835,9 @@ def agent_gateway_emit_audit(conn, body) -> tuple[dict, int]:
     entity_id = body.get("entity_id") or body.get("run_id") or agent_id
     action = body.get("action") or "agent_gateway.audit_emit"
     metadata = safe_json_metadata(body.get("metadata") or {})
-    audit(conn, "agent", agent_id, redact_text(action, 160), redact_text(entity_type, 80), redact_text(entity_id, 160), None, safe_json_metadata(body.get("after") or {"status": "emitted"}), metadata)
+    audit_id = audit(conn, "agent", agent_id, redact_text(action, 160), redact_text(entity_type, 80), redact_text(entity_id, 160), None, safe_json_metadata(body.get("after") or {"status": "emitted"}), metadata)
     runtime_event(conn, "rtc_agent_gateway_local", "audit.emit", "completed", run_id=body.get("run_id"), task_id=body.get("task_id"), agent_id=agent_id, output_summary=f"Audit emitted: {redact_text(action, 120)}")
-    return {"emitted": True, "entity_type": entity_type, "entity_id": entity_id}, 201
+    return {"emitted": True, "audit_id": audit_id, "entity_type": entity_type, "entity_id": entity_id}, 201
 
 
 def runtime_probe_action_args(provider: str, mode: str, connector_id: str, prompt_hash: str, target_resource: str) -> dict:

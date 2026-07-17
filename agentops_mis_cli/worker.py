@@ -31,6 +31,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
+from agentops_mis_cli.codex_runtime import codex_preflight, codex_subprocess_env, execute_codex_read_only
 from agentops_mis_cli.redaction import redact_text
 
 
@@ -339,6 +340,7 @@ class AdapterResult:
     attempt_count: int = 1
     max_attempts: int = 1
     retry_history: list[dict] | None = None
+    runtime_observation: dict | None = None
 
 
 PROMPT_PROFILE_VERSION = "worker_prompt_profiles_v1"
@@ -621,6 +623,15 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
         )
 
 
+def openclaw_subprocess_env() -> dict[str, str]:
+    env = codex_subprocess_env()
+    env.pop("CODEX_HOME", None)
+    for key in ("OPENCLAW_HOME", "OPENCLAW_STATE_DIR", "OPENCLAW_CONFIG_PATH", "XDG_CONFIG_HOME", "XDG_DATA_HOME"):
+        if os.environ.get(key):
+            env[key] = os.environ[key]
+    return env
+
+
 def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int, confirm_run: bool) -> AdapterResult:
     prompt, profile = build_task_prompt_bundle(task, adapter="openclaw")
     if not confirm_run:
@@ -639,6 +650,7 @@ def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int
         proc = subprocess.run(
             [binary_path, "agent", "--agent", agent_name, "-m", prompt, "--timeout", str(timeout), "--json"],
             cwd=DEFAULT_WORKER_CWD,
+            env=openclaw_subprocess_env(),
             capture_output=True,
             text=True,
             timeout=timeout + 30,
@@ -675,6 +687,41 @@ def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int
         )
 
 
+def execute_codex(task: dict, binary_path: str, timeout: int, confirm_run: bool) -> AdapterResult:
+    prompt, profile = build_task_prompt_bundle(task, adapter="codex")
+    if not confirm_run:
+        return AdapterResult(
+            ok=False,
+            output_summary="Codex adapter dry-run: pass --confirm-run to execute.",
+            prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
+            error_type="ConfirmRunRequired",
+            error_message="Codex live model execution requires --confirm-run.",
+            target_resource="local://codex/read-only",
+            retryable=False,
+        )
+    runtime_result = execute_codex_read_only(
+        binary_path=binary_path,
+        prompt=prompt,
+        cwd=DEFAULT_WORKER_CWD.resolve(),
+        timeout=timeout,
+    )
+    return AdapterResult(
+        ok=runtime_result.ok,
+        output_summary=runtime_result.output_summary,
+        prompt_hash=stable_hash(prompt),
+        **adapter_result_profile_fields(profile),
+        raw_payload_hash=runtime_result.raw_payload_hash,
+        error_type=runtime_result.error_type,
+        error_message=runtime_result.error_message,
+        duration_ms=runtime_result.duration_ms,
+        output_tokens=runtime_result.output_tokens,
+        target_resource=runtime_result.target_resource,
+        retryable=runtime_result.retryable,
+        runtime_observation=runtime_result.observation,
+    )
+
+
 def execute_adapter_once(task: dict, args, attempt: int) -> AdapterResult:
     if args.adapter == "mock":
         return execute_mock(task, attempt=attempt, fail_before_success=args.mock_failures_before_success)
@@ -682,6 +729,8 @@ def execute_adapter_once(task: dict, args, attempt: int) -> AdapterResult:
         return execute_hermes(task, args.hermes_gateway_url, args.hermes_model, args.hermes_timeout, args.confirm_run, args.hermes_max_tokens)
     if args.adapter == "openclaw":
         return execute_openclaw(task, args.openclaw_bin, args.openclaw_agent, args.openclaw_timeout, args.confirm_run)
+    if args.adapter == "codex":
+        return execute_codex(task, args.codex_bin, args.codex_timeout, args.confirm_run)
     raise RuntimeError(f"unknown adapter: {args.adapter}")
 
 
@@ -748,6 +797,15 @@ def adapter_capability_profile(adapter: str) -> dict:
             "commercial_readiness": "restricted_until_runtime_tool_events",
             "requires_prepared_action_for_external_write": True,
         }
+    if adapter == "codex":
+        return {
+            "observation_level": "structured_runtime_events",
+            "risk_floor": "medium",
+            "commercial_readiness": "read_only_governed_worker",
+            "requires_prepared_action_for_external_write": True,
+            "read_only_runtime": True,
+            "external_writes_supported": False,
+        }
     return {
         "observation_level": "ledger_summary_only",
         "risk_floor": "medium",
@@ -781,7 +839,7 @@ EXTERNAL_WRITE_INTENT_KEYWORDS = {
 
 
 def worker_external_write_intent(task: dict, args, capability: dict) -> bool:
-    if args.adapter not in {"hermes", "openclaw"}:
+    if args.adapter not in {"hermes", "openclaw", "codex"}:
         return False
     if not args.confirm_run:
         return False
@@ -928,12 +986,13 @@ def backoff_sleep(base_interval: float, cap: float, streak: int, factor: float) 
 
 
 def register_worker(client: AgentOpsClient, adapter: str):
+    runtime_type = adapter if adapter in {"mock", "hermes", "openclaw", "codex"} else "mock"
     return client.post("/api/agent-gateway/register", {
         "workspace_id": client.workspace_id,
         "agent_id": client.agent_id,
         "name": "Local Agent Worker",
         "role": f"Local {adapter} Adapter Worker",
-        "runtime_type": "hermes" if adapter == "hermes" else "openclaw" if adapter == "openclaw" else "mock",
+        "runtime_type": runtime_type,
         "model_provider": adapter,
         "model_name": adapter,
         "permission_level": "standard",
@@ -1470,7 +1529,15 @@ def verified_intake_plan_for_task(client: AgentOpsClient, task: dict) -> tuple[s
     return None, verified_plan
 
 
-def create_worker_plan_manifest(client: AgentOpsClient, plan_id: str, run_id: str, tool_call_id: str | None, evaluation_id: str | None, artifact_id: str | None) -> dict:
+def create_worker_plan_manifest(
+    client: AgentOpsClient,
+    plan_id: str,
+    run_id: str,
+    tool_call_id: str | None,
+    evaluation_id: str | None,
+    artifact_id: str | None,
+    audit_id: str | None,
+) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
         "agent_id": client.agent_id,
@@ -1481,6 +1548,7 @@ def create_worker_plan_manifest(client: AgentOpsClient, plan_id: str, run_id: st
         "tool_call_ids": [tool_call_id] if tool_call_id else [],
         "evaluation_ids": [evaluation_id] if evaluation_id else [],
         "artifact_ids": [artifact_id] if artifact_id else [],
+        "audit_ids": [audit_id] if audit_id else [],
     }
     return client.post("/api/agent-gateway/plan-evidence-manifests", payload)
 
@@ -1490,6 +1558,8 @@ def adapter_model_name(args) -> str:
         return args.hermes_model
     if args.adapter == "openclaw":
         return args.openclaw_agent
+    if args.adapter == "codex":
+        return "codex-cli"
     return "agentops-mock-worker"
 
 
@@ -1540,6 +1610,10 @@ def record_worker_runtime_event(
             "commercial_readiness": capability.get("commercial_readiness"),
             "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
             "runtime_internal_tools_remain_opaque": capability.get("observation_level") == "ledger_summary_only",
+            "runtime_observation": result.runtime_observation or {},
+            "runtime_events_structured": capability.get("observation_level") == "structured_runtime_events",
+            "read_only_runtime": capability.get("read_only_runtime") is True,
+            "external_writes_supported": capability.get("external_writes_supported"),
             "event_is_worker_summary_not_raw_trace": True,
             "raw_prompt_omitted": True,
             "raw_response_omitted": True,
@@ -1637,7 +1711,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
 
     capability = adapter_capability_profile(args.adapter)
     secret_boundary = worker_secret_boundary_metadata()
-    loop_supervision_gate = fetch_worker_loop_supervision_gate(client, task, args) if args.confirm_run else None
+    loop_supervision_gate = fetch_worker_loop_supervision_gate(client, task, args) if args.confirm_run and args.adapter in {"hermes", "openclaw"} else None
     if args.adapter in {"hermes", "openclaw"} and args.confirm_run and (loop_supervision_gate or {}).get("ok") is not True:
         output_summary = redact_text(
             (loop_supervision_gate or {}).get("recommended_next")
@@ -1734,6 +1808,10 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "worker_runtime_event_id": worker_runtime_event_id,
             "worker_runtime_event_summary_recorded": bool(worker_runtime_event_id),
             "runtime_internal_tools_remain_opaque": capability.get("observation_level") == "ledger_summary_only",
+            "runtime_observation": result.runtime_observation or {},
+            "runtime_events_structured": capability.get("observation_level") == "structured_runtime_events",
+            "read_only_runtime": capability.get("read_only_runtime") is True,
+            "external_writes_supported": capability.get("external_writes_supported"),
             "hermes_max_tokens": args.hermes_max_tokens if args.adapter == "hermes" else None,
             "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
             "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
@@ -1815,6 +1893,10 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "worker_runtime_event_id": worker_runtime_event_id,
             "worker_runtime_event_summary_recorded": bool(worker_runtime_event_id),
             "runtime_internal_tools_remain_opaque": capability.get("observation_level") == "ledger_summary_only",
+            "runtime_observation": result.runtime_observation or {},
+            "runtime_events_structured": capability.get("observation_level") == "structured_runtime_events",
+            "read_only_runtime": capability.get("read_only_runtime") is True,
+            "external_writes_supported": capability.get("external_writes_supported"),
             "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
             "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
             "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
@@ -1854,20 +1936,22 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         }),
     })
     artifact_id = (artifact_payload.get("artifact") or {}).get("artifact_id")
+    memory_payload = {}
     if result.ok:
-        client.post("/api/agent-gateway/memories/propose", {
+        memory_payload = client.post("/api/agent-gateway/memories/propose", {
             "workspace_id": client.workspace_id,
             "agent_id": client.agent_id,
             "task_id": task_id,
             "run_id": run_id,
-            "scope": "workspace",
+            "scope": "project",
             "memory_type": "artifact_summary",
             "canonical_text": f"Worker {client.agent_id} completed task '{redact_text(task.get('title'), 80)}' via {args.adapter}.",
             "source_ref": run_id,
             "access_tags": ["worker-loop", args.adapter, "review"],
             "confidence": 0.72,
         })
-    client.post("/api/agent-gateway/audit", {
+    memory_id = (memory_payload.get("memory") or {}).get("memory_id")
+    audit_payload = client.post("/api/agent-gateway/audit", {
         "workspace_id": client.workspace_id,
         "agent_id": client.agent_id,
         "action": "agent_worker.task_processed",
@@ -1886,6 +1970,10 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "attempt_count": result.attempt_count,
             "max_attempts": result.max_attempts,
             "retryable_final": result.retryable,
+            "runtime_observation": result.runtime_observation or {},
+            "runtime_events_structured": capability.get("observation_level") == "structured_runtime_events",
+            "read_only_runtime": capability.get("read_only_runtime") is True,
+            "external_writes_supported": capability.get("external_writes_supported"),
             "observation_level": capability.get("observation_level"),
             "risk_floor": capability.get("risk_floor"),
             "effective_risk_level": tool_risk,
@@ -1914,7 +2002,16 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             **secret_boundary,
         },
     })
-    manifest_payload = create_worker_plan_manifest(client, plan_id, run_id, tool_call_id, evaluation_id, artifact_id)
+    audit_id = audit_payload.get("audit_id")
+    manifest_payload = create_worker_plan_manifest(
+        client,
+        plan_id,
+        run_id,
+        tool_call_id,
+        evaluation_id,
+        artifact_id,
+        audit_id,
+    )
     manifest = manifest_payload.get("manifest") or {}
     manifest_verification = manifest_payload.get("verification") or {}
     client.post("/api/agent-gateway/heartbeat", {
@@ -1947,6 +2044,14 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "output_summary": result.output_summary,
         "error_type": result.error_type,
         "worker_runtime_event_id": worker_runtime_event_id,
+        "record_receipts": {
+            "memory_candidate_recorded": bool(memory_id),
+            "memory_candidate_id": memory_id,
+            "audit_recorded": bool(audit_payload.get("emitted") and audit_id),
+            "audit_id": audit_id,
+            "token_omitted": True,
+        },
+        "runtime_observation": result.runtime_observation or {},
         "knowledge_retrieval_evidence": {
             "consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
             "packet_hash": knowledge_evidence.get("packet_hash"),
@@ -1980,7 +2085,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--session-ttl-sec", type=int, default=int(os.environ.get("AGENTOPS_SESSION_TTL_SEC", "900")), help="Session TTL when --use-session is set.")
     parser.add_argument("--session-refresh-margin-sec", type=float, default=float(os.environ.get("AGENTOPS_SESSION_REFRESH_MARGIN_SEC", "60")), help="Refresh the short-lived session when it has this many seconds or less remaining.")
     parser.add_argument("--session-scopes", default=os.environ.get("AGENTOPS_SESSION_SCOPES", ""), help="Optional comma-separated subset for the worker session. Defaults to parent token scopes.")
-    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
     parser.add_argument("--task-id", default=os.environ.get("AGENTOPS_TASK_ID", ""), help="Optional exact task id to pull and process.")
     parser.add_argument("--status", action="append", default=["planned"], help="Task status to pull. Repeatable.")
     parser.add_argument("--enforce-intake", action=argparse.BooleanOptionalAction, default=True, help="Require Agent Plan / knowledge / base-reference / risk intake gates before pulling tasks.")
@@ -2003,6 +2108,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", DEFAULT_OPENCLAW_BIN))
     parser.add_argument("--openclaw-agent", default=os.environ.get("OPENCLAW_AGENT", "main"))
     parser.add_argument("--openclaw-timeout", type=int, default=int(os.environ.get("OPENCLAW_TIMEOUT", "180")))
+    parser.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", ""))
+    parser.add_argument("--codex-timeout", type=int, default=int(os.environ.get("CODEX_TIMEOUT", "300")))
     parser.add_argument("--continue-on-error", action="store_true", help="Keep polling after a loop/API/adapter error.")
     parser.add_argument("--max-errors", type=int, default=5, help="Stop after this many consecutive errors when continuing.")
     parser.add_argument("--state-path", default=os.environ.get("AGENTOPS_WORKER_STATE_PATH", ""))
@@ -2362,7 +2469,7 @@ def build_service_check_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manager", choices=["launchd", "systemd"], required=True)
     parser.add_argument("--workspace-id", default=os.environ.get("AGENTOPS_WORKSPACE_ID", DEFAULT_WORKSPACE_ID))
     parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
-    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
     parser.add_argument("--label", default="")
     parser.add_argument("--service-path", default="")
     parser.add_argument("--api-key-placeholder", default=DEFAULT_API_KEY_PLACEHOLDER)
@@ -2463,7 +2570,7 @@ def build_service_install_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--workspace-id", default=os.environ.get("AGENTOPS_WORKSPACE_ID", DEFAULT_WORKSPACE_ID))
     parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
-    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
     parser.add_argument("--confirm-run", action="store_true")
     parser.add_argument("--use-session", action="store_true", help="Render a session-minting worker command for remote/scoped tokens. Local loopback services omit this by default.")
     parser.add_argument("--session-ttl-sec", type=int, default=900)
@@ -2565,7 +2672,7 @@ def control_service(args) -> dict:
         setup_hints.append("Service is already loaded; confirmed load is treated as an idempotent no-op.")
     if token_like_detected:
         setup_hints.append("Move secrets out of the service file before load/restart; raw token-like content is never printed.")
-    if args.adapter in {"hermes", "openclaw"} and not confirm_gate_ok:
+    if args.adapter in {"hermes", "openclaw", "codex"} and not confirm_gate_ok:
         setup_hints.append("Live adapter services must include --confirm-run in the rendered worker command.")
     return {
         "ok": not failures,
@@ -2588,7 +2695,7 @@ def control_service(args) -> dict:
         "command_results": command_results,
         "failures": failures,
         "setup_hints": setup_hints,
-        "live_execution_performed": bool(args.confirm_control and args.action in {"load", "restart"} and args.adapter in {"hermes", "openclaw"} and not failures and not loaded_noop),
+        "live_execution_performed": bool(args.confirm_control and args.action in {"load", "restart"} and args.adapter in {"hermes", "openclaw", "codex"} and not failures and not loaded_noop),
         "raw_content_omitted": True,
         "token_omitted": True,
     }
@@ -2600,7 +2707,7 @@ def build_service_control_parser() -> argparse.ArgumentParser:
     parser.add_argument("--action", choices=["load", "unload", "restart"], required=True)
     parser.add_argument("--workspace-id", default=os.environ.get("AGENTOPS_WORKSPACE_ID", DEFAULT_WORKSPACE_ID))
     parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
-    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
     parser.add_argument("--label", default="")
     parser.add_argument("--service-path", default="")
     parser.add_argument("--api-key-placeholder", default=DEFAULT_API_KEY_PLACEHOLDER)
@@ -2678,6 +2785,12 @@ def check_adapter_preflight(args) -> dict:
             "models": {"ok": models_ok, "status": models_status, "summary": redact_text(models_payload, 200)},
             "live_execution_performed": False,
         }
+    if args.adapter == "codex":
+        return codex_preflight(
+            binary_path=args.codex_bin,
+            cwd=DEFAULT_WORKER_CWD.resolve(),
+            timeout=args.timeout,
+        )
     binary = Path(args.openclaw_bin).expanduser()
     exists = binary.exists()
     executable = os.access(binary, os.X_OK) if exists else False
@@ -2716,9 +2829,10 @@ def build_preflight_parser() -> argparse.ArgumentParser:
     parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
     parser.add_argument("--api-key", default=os.environ.get("AGENTOPS_API_KEY", ""))
     parser.add_argument("--api-key-source", choices=["flag", "env", "config", "default", "missing"], default="env" if os.environ.get("AGENTOPS_API_KEY") else "missing")
-    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
     parser.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", DEFAULT_HERMES_GATEWAY_URL))
     parser.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", DEFAULT_OPENCLAW_BIN))
+    parser.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", ""))
     parser.add_argument("--timeout", type=int, default=5)
     return parser
 
@@ -2759,7 +2873,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     signal.signal(signal.SIGTERM, handle_stop_signal)
     signal.signal(signal.SIGINT, handle_stop_signal)
-    client = AgentOpsClient(args.base_url, args.workspace_id, args.agent_id, args.api_key)
+    client = AgentOpsClient(args.base_url, args.workspace_id, args.agent_id, args.api_key, args.api_key_source)
     state = WorkerState(args)
     processed = 0
     results = []
