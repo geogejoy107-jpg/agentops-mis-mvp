@@ -31,7 +31,17 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
-from agentops_mis_cli.codex_runtime import codex_preflight, codex_subprocess_env, execute_codex_read_only
+from agentops_mis_cli.codex_runtime import (
+    codex_preflight,
+    codex_binary_attestation,
+    codex_repository_preflight,
+    codex_subprocess_env,
+    execute_codex_read_only,
+    execute_codex_workspace_write,
+    managed_codex_worktree_path,
+    normalize_allowed_paths,
+    remove_managed_codex_worktree,
+)
 from agentops_mis_cli.redaction import redact_text
 
 
@@ -782,7 +792,7 @@ def max_risk(*values: str | None) -> str:
     return selected
 
 
-def adapter_capability_profile(adapter: str) -> dict:
+def adapter_capability_profile(adapter: str, codex_mode: str = "read-only") -> dict:
     if adapter == "mock":
         return {
             "observation_level": "structured_ledger",
@@ -798,13 +808,16 @@ def adapter_capability_profile(adapter: str) -> dict:
             "requires_prepared_action_for_external_write": True,
         }
     if adapter == "codex":
+        workspace_write = codex_mode == "workspace-write"
         return {
             "observation_level": "structured_runtime_events",
-            "risk_floor": "medium",
-            "commercial_readiness": "read_only_governed_worker",
+            "risk_floor": "high" if workspace_write else "medium",
+            "commercial_readiness": "governed_workspace_write" if workspace_write else "read_only_governed_worker",
             "requires_prepared_action_for_external_write": True,
-            "read_only_runtime": True,
-            "external_writes_supported": False,
+            "read_only_runtime": not workspace_write,
+            "workspace_write_runtime": workspace_write,
+            "external_writes_supported": workspace_write,
+            "workspace_isolation": "managed_detached_git_worktree" if workspace_write else None,
         }
     return {
         "observation_level": "ledger_summary_only",
@@ -855,10 +868,28 @@ def worker_external_write_intent(task: dict, args, capability: dict) -> bool:
     return any(keyword.lower() in combined for keyword in EXTERNAL_WRITE_INTENT_KEYWORDS)
 
 
-def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, plan_id: str, run_id: str, capability: dict, loop_supervision_gate: dict | None = None) -> dict:
+def codex_workspace_write_requested(args) -> bool:
+    return args.adapter == "codex" and getattr(args, "codex_mode", "read-only") == "workspace-write"
+
+
+def create_worker_external_write_gate(
+    client: AgentOpsClient,
+    task: dict,
+    args,
+    plan_id: str,
+    run_id: str,
+    capability: dict,
+    loop_supervision_gate: dict | None = None,
+    workspace_preflight: dict | None = None,
+) -> dict:
     task_id = task["task_id"]
-    action_type = f"agent_worker.{args.adapter}.external_write"
-    target_resource = f"{args.adapter}://external-write/{task_id}"
+    workspace_write = codex_workspace_write_requested(args)
+    action_type = "agent_worker.codex.workspace_write" if workspace_write else f"agent_worker.{args.adapter}.external_write"
+    target_resource = (
+        f"git+local://sha256/{(workspace_preflight or {}).get('source_repo_hash')}@{(workspace_preflight or {}).get('baseline_head')}"
+        if workspace_write
+        else f"{args.adapter}://external-write/{task_id}"
+    )
     tool_risk = max_risk(task.get("risk_level"), "high", capability.get("risk_floor"))
     prompt_profile = select_task_prompt_profile(task, adapter=args.adapter)
     normalized_args = {
@@ -869,12 +900,29 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
         "prompt_profile_hash": prompt_profile.get("profile_hash"),
         "title": redact_text(task.get("title"), 140),
         "external_write_intent": True,
+        "execution_mode": "workspace-write" if workspace_write else "external-write",
         "target_resource": target_resource,
         "observation_level": capability.get("observation_level"),
         "commercial_readiness": capability.get("commercial_readiness"),
         "requires_prepared_action_for_external_write": True,
         **worker_secret_boundary_metadata(),
     }
+    if workspace_write:
+        normalized_args.update({
+            "agent_plan_id": plan_id,
+            "agent_plan_hash": (workspace_preflight or {}).get("agent_plan_hash"),
+            "agent_plan_verification_result_hash": (workspace_preflight or {}).get("agent_plan_verification_result_hash"),
+            "run_id": run_id,
+            "source_repo_hash": workspace_preflight.get("source_repo_hash"),
+            "baseline_head": workspace_preflight.get("baseline_head"),
+            "allowed_paths": workspace_preflight.get("allowed_paths") or [],
+            "source_repo_clean": workspace_preflight.get("clean") is True,
+            "workspace_isolation": "managed_detached_git_worktree",
+            "rollback_strategy": "remove_managed_worktree_before_promotion",
+            "runtime_attestation": (workspace_preflight or {}).get("runtime_attestation") or {},
+            "raw_diff_omitted": True,
+            "raw_content_omitted": True,
+        })
     tool_payload = client.post("/api/agent-gateway/tool-calls", {
         "workspace_id": client.workspace_id,
         "run_id": run_id,
@@ -888,11 +936,16 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
         "result_summary": "Live worker runtime paused before external write; prepared action approval is required.",
         "prepare_action": True,
         "action_type": action_type,
+        "policy_version": "approval-wall-codex-workspace-write-v2" if workspace_write else "approval-wall-v1",
         "checkpoint": {
-            "checkpoint": "before_agent_worker_external_write_runtime_execution",
+            "checkpoint": "before_codex_workspace_write_execution" if workspace_write else "before_agent_worker_external_write_runtime_execution",
             "task_id": task_id,
             "run_id": run_id,
             "adapter": args.adapter,
+            "agent_plan_id": plan_id,
+            "baseline_head": (workspace_preflight or {}).get("baseline_head"),
+            "allowed_paths": (workspace_preflight or {}).get("allowed_paths") or [],
+            "runtime_attestation": (workspace_preflight or {}).get("runtime_attestation") or {},
         },
         "idempotency_key": stable_hash({
             "task_id": task_id,
@@ -901,7 +954,11 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
             "action_type": action_type,
             "target_resource": target_resource,
         })[:32],
-        "approval_reason": f"{args.adapter} is an opaque live worker runtime and this task appears to request external write/upload/publish. Approve exact prepared action before execution resumes.",
+        "approval_reason": (
+            "Codex requests bounded workspace-write in a managed detached Git worktree. Approve the exact task, plan, run, HEAD and allowed paths before execution resumes."
+            if workspace_write
+            else f"{args.adapter} is an opaque live worker runtime and this task appears to request external write/upload/publish. Approve exact prepared action before execution resumes."
+        ),
     })
     wall = tool_payload.get("approval_wall") or {}
     approval = wall.get("approval") or {}
@@ -926,6 +983,11 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
             "prompt_profile_version": prompt_profile.get("version"),
             "prompt_profile_hash": prompt_profile.get("profile_hash"),
             "live_execution_performed": False,
+            "workspace_write": workspace_write,
+            "source_repo_hash": (workspace_preflight or {}).get("source_repo_hash"),
+            "baseline_head": (workspace_preflight or {}).get("baseline_head"),
+            "allowed_paths": (workspace_preflight or {}).get("allowed_paths") or [],
+            "runtime_attested": ((workspace_preflight or {}).get("runtime_attestation") or {}).get("attested") is True,
             **worker_secret_boundary_metadata(),
         },
     })
@@ -936,12 +998,20 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
         "run_id": run_id,
         "plan_id": plan_id,
         "adapter": args.adapter,
-        "reason": "external_write_prepared_action_required",
+        "reason": "codex_workspace_write_prepared_action_required" if workspace_write else "external_write_prepared_action_required",
         "live_execution_performed": False,
         "tool_call_id": tool_call.get("tool_call_id"),
         "approval_id": approval.get("approval_id"),
         "prepared_action_id": prepared_action.get("action_id"),
         "prepared_action_hash": prepared_action.get("action_hash"),
+        "workspace_write": workspace_write,
+        "workspace_preflight": {
+            "clean": (workspace_preflight or {}).get("clean"),
+            "source_repo_hash": (workspace_preflight or {}).get("source_repo_hash"),
+            "baseline_head": (workspace_preflight or {}).get("baseline_head"),
+            "allowed_paths": (workspace_preflight or {}).get("allowed_paths") or [],
+            "raw_status_omitted": True,
+        } if workspace_write else None,
         "loop_supervision_gate": loop_supervision_gate,
         "prompt_profile": {
             "profile_id": prompt_profile.get("profile_id"),
@@ -951,8 +1021,18 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
             "raw_response_omitted": True,
             "token_omitted": True,
         },
-        "next_action": tool_payload.get("next_action"),
-        "output_summary": "Worker paused before live runtime execution because the task appears to request an external write.",
+        "next_action": (
+            f"agentops approval approve --approval-id {approval.get('approval_id')}; then rerun "
+            f"agentops workflow codex-workspace-write --prepared-action-id {prepared_action.get('action_id')} "
+            "with the same --source-repo/--allow-path values plus --confirm-run --confirm-workspace-write --allow-high-risk"
+            if workspace_write
+            else tool_payload.get("next_action")
+        ),
+        "output_summary": (
+            "Codex workspace-write is ready for human approval; no model or file write has run."
+            if workspace_write
+            else "Worker paused before live runtime execution because the task appears to request an external write."
+        ),
         "secret_boundary": worker_secret_boundary_metadata(),
         "token_omitted": True,
     }
@@ -1330,7 +1410,9 @@ def fetch_worker_loop_supervision_gate(client: AgentOpsClient, task: dict, args)
 
 
 def create_worker_agent_plan(client: AgentOpsClient, task: dict, args, knowledge_evidence: dict | None = None) -> dict:
-    risk = task.get("risk_level") or "medium"
+    workspace_write = codex_workspace_write_requested(args)
+    capability = adapter_capability_profile(args.adapter, getattr(args, "codex_mode", "read-only"))
+    risk = max_risk(task.get("risk_level") or "medium", capability.get("risk_floor"))
     knowledge_evidence = knowledge_evidence or {}
     retrieved_paths = [path for path in (knowledge_evidence.get("paths") or []) if isinstance(path, str)]
     referenced_specs = unique_values([
@@ -1343,6 +1425,9 @@ def create_worker_agent_plan(client: AgentOpsClient, task: dict, args, knowledge
         "knowledge/shared/common_failures.md",
         *retrieved_paths,
     ])[:8]
+    proposed_files = ["agentops-worker-runtime", f"adapter:{args.adapter}"]
+    if workspace_write:
+        proposed_files = normalize_allowed_paths(getattr(args, "codex_allowed_path", []) or [])
     payload = {
         "workspace_id": client.workspace_id,
         "agent_id": client.agent_id,
@@ -1354,15 +1439,19 @@ def create_worker_agent_plan(client: AgentOpsClient, task: dict, args, knowledge
         "referenced_specs": referenced_specs,
         "referenced_memories": referenced_memories,
         "referenced_bases": ["base_local_tasks", "base_local_memory"],
-        "proposed_files_to_change": ["agentops-worker-runtime", f"adapter:{args.adapter}"],
+        "proposed_files_to_change": proposed_files,
         "risk_level": risk,
-        "approval_required": risk in {"high", "critical"},
+        "approval_required": workspace_write or risk in {"high", "critical"},
         "execution_steps": ["READ", "PLAN", "RETRIEVE", "COMPARE", "EXECUTE", "VERIFY", "RECORD"],
         "verification_plan": (
             "Agent worker must consume knowledge retrieval evidence before execution and submit tool, "
             "evaluation, artifact, audit and plan_evidence_manifest evidence."
         ),
-        "rollback_plan": "Mark the run failed/blocked and leave the manifest blocked if execution evidence is incomplete.",
+        "rollback_plan": (
+            "Run only in a managed detached Git worktree; remove that worktree on any protocol, scope, diff or runtime failure before promotion."
+            if workspace_write
+            else "Mark the run failed/blocked and leave the manifest blocked if execution evidence is incomplete."
+        ),
         "status": "submitted",
     }
     return client.post("/api/agent-gateway/agent-plans", payload)
@@ -1529,6 +1618,23 @@ def verified_intake_plan_for_task(client: AgentOpsClient, task: dict) -> tuple[s
     return None, verified_plan
 
 
+def latest_worker_plan_for_task(client: AgentOpsClient, task_id: str) -> tuple[str | None, dict | None]:
+    payload = client.get("/api/agent-gateway/agent-plans", {
+        "task_id": task_id,
+        "agent_id": client.agent_id,
+        "limit": 5,
+    })
+    for plan in payload.get("agent_plans") or []:
+        if plan.get("agent_id") != client.agent_id or plan.get("task_id") != task_id:
+            continue
+        if plan.get("status") not in {"submitted", "approved"}:
+            continue
+        verified = client.get(f"/api/agent-gateway/agent-plans/{plan['plan_id']}/verify")
+        if (verified.get("verification") or {}).get("pass"):
+            return plan["plan_id"], verified
+    return None, None
+
+
 def create_worker_plan_manifest(
     client: AgentOpsClient,
     plan_id: str,
@@ -1624,7 +1730,547 @@ def record_worker_runtime_event(
     return client.post("/api/agent-gateway/runtime-events", event_payload)
 
 
+def build_codex_workspace_write_prompt(task: dict, plan_id: str, allowed_paths: list[str], knowledge_evidence: dict) -> tuple[str, dict]:
+    profile = select_task_prompt_profile(task, adapter="codex")
+    prompt = (
+        "你是 AgentOps MIS 中受治理的本地 Codex 编码 Worker。请在当前隔离 Git worktree 中完成任务。\n"
+        f"任务标题：{redact_text(task.get('title'), 140)}\n"
+        f"任务描述：{redact_text(task.get('description'), 900)}\n"
+        f"验收标准：{redact_text(task.get('acceptance_criteria'), 500)}\n"
+        f"Agent Plan：{redact_text(plan_id, 100)}\n"
+        f"允许修改：{', '.join(allowed_paths)}\n"
+        f"知识检索证据：packet_hash={redact_text(knowledge_evidence.get('packet_hash'), 80)}; "
+        f"paths={', '.join(knowledge_evidence.get('paths') or [])}; raw content omitted.\n"
+        "遵循 READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD。"
+        "不要读取或输出凭证，不要访问网络，不要修改允许范围以外的路径，不要提交 Git。"
+    )
+    return prompt, profile
+
+
+def record_codex_workspace_write_failure(
+    client: AgentOpsClient,
+    *,
+    task_id: str,
+    run_id: str,
+    plan_id: str,
+    action_id: str,
+    lease_id: str,
+    result: AdapterResult,
+) -> dict:
+    lease_failure = client.post(f"/api/agent-gateway/prepared-actions/{action_id}/fail-execution", {
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "lease_id": lease_id,
+        "failure_reason": result.error_message or result.output_summary,
+        "rollback_performed": bool((result.runtime_observation or {}).get("rollback_performed")),
+    })
+    audit_payload = client.post("/api/agent-gateway/audit", {
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "action": "agent_worker.codex_workspace_write_rejected",
+        "entity_type": "prepared_actions",
+        "entity_id": action_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "metadata": {
+            "agent_plan_id": plan_id,
+            "error_type": result.error_type,
+            "runtime_observation": result.runtime_observation or {},
+            "prepared_action_consumed": False,
+            "execution_lease_id": lease_id,
+            "live_execution_performed": True,
+            **worker_secret_boundary_metadata(),
+        },
+    })
+    return {
+        "processed": False,
+        "ok": False,
+        "task_id": task_id,
+        "run_id": run_id,
+        "plan_id": plan_id,
+        "adapter": "codex",
+        "reason": "codex_workspace_write_rejected",
+        "prepared_action_id": action_id,
+        "prepared_action_consumed": False,
+        "execution_lease": lease_failure.get("execution_lease") or {},
+        "live_execution_performed": True,
+        "output_summary": result.output_summary,
+        "error_type": result.error_type,
+        "error_message": result.error_message,
+        "runtime_observation": result.runtime_observation or {},
+        "audit_id": audit_payload.get("audit_id"),
+        "token_omitted": True,
+    }
+
+
+def finalize_codex_workspace_write(
+    client: AgentOpsClient,
+    args,
+    *,
+    task: dict,
+    run_id: str,
+    plan_id: str,
+    action: dict,
+    lease_id: str,
+    result: AdapterResult,
+    knowledge_evidence: dict,
+) -> dict:
+    task_id = task["task_id"]
+    action_id = action["action_id"]
+    diff_evidence = ((result.runtime_observation or {}).get("diff_evidence") or {})
+    evidence_hash = diff_evidence.get("evidence_hash")
+    side_effect_id = f"codex-diff-{str(evidence_hash or '')[:24]}"
+    capability = adapter_capability_profile("codex", "workspace-write")
+    runtime_event_payload = record_worker_runtime_event(
+        client,
+        args,
+        run_id=run_id,
+        task_id=task_id,
+        result=result,
+        capability=capability,
+    )
+    worker_runtime_event_id = (runtime_event_payload.get("runtime_event") or {}).get("runtime_event_id")
+    verification_tool_payload = client.post("/api/agent-gateway/tool-calls", {
+        "workspace_id": client.workspace_id,
+        "run_id": run_id,
+        "agent_id": client.agent_id,
+        "tool_name": "agent_worker.codex.workspace_diff_verify",
+        "tool_category": "custom",
+        "risk_level": "medium",
+        "status": "completed",
+        "target_resource": f"worktree://{action_id}/diff-evidence",
+        "args": {
+            "task_id": task_id,
+            "agent_plan_id": plan_id,
+            "prepared_action_id": action_id,
+            "execution_lease_id": lease_id,
+            "diff_evidence_hash": evidence_hash,
+            "changed_paths": diff_evidence.get("changed_paths") or [],
+            "allowed_paths": diff_evidence.get("allowed_paths") or [],
+            "head_unchanged": diff_evidence.get("head_unchanged") is True,
+            "raw_diff_omitted": True,
+            "raw_content_omitted": True,
+            **worker_secret_boundary_metadata(),
+        },
+        "result_summary": "Independent Git verification passed for the bounded Codex workspace diff; raw diff omitted.",
+    })
+    verification_tool_id = (verification_tool_payload.get("tool_call") or {}).get("tool_call_id")
+    knowledge_gate_pass = bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed"))
+    quality_pass = bool(result.ok and knowledge_gate_pass and evidence_hash and diff_evidence.get("changed_path_count"))
+    eval_payload = client.post("/api/agent-gateway/evaluations/submit", {
+        "workspace_id": client.workspace_id,
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": client.agent_id,
+        "evaluator_type": "rule",
+        "score": 1.0 if quality_pass else 0.0,
+        "pass_fail": "pass" if quality_pass else "fail",
+        "rubric": {
+            "gate": "codex_governed_workspace_write",
+            "requires_approved_prepared_action": True,
+            "prepared_action_id": action_id,
+            "prepared_action_consumed_after_manifest": True,
+            "exclusive_execution_lease": True,
+            "execution_lease_id": lease_id,
+            "workspace_isolation": "managed_detached_git_worktree",
+            "source_repo_clean": True,
+            "head_unchanged": diff_evidence.get("head_unchanged") is True,
+            "changed_paths_within_approved_scope": True,
+            "diff_evidence_hash": evidence_hash,
+            "raw_diff_omitted": True,
+            "requires_knowledge_retrieval_evidence": True,
+            "knowledge_retrieval_gate_pass": knowledge_gate_pass,
+            "quality_gate_pass": quality_pass,
+            **worker_secret_boundary_metadata(),
+        },
+        "notes": "Codex workspace-write completed with approval, managed-worktree isolation, bounded paths and hashed diff evidence.",
+    })
+    evaluation_id = (eval_payload.get("evaluation") or {}).get("evaluation_id")
+    artifact_payload = client.post("/api/agent-gateway/artifacts", {
+        "workspace_id": client.workspace_id,
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": client.agent_id,
+        "artifact_type": "codex_workspace_diff_evidence",
+        "title": f"Codex workspace diff: {redact_text(task.get('title'), 120)}",
+        "uri": f"worktree://{action_id}",
+        "summary": (
+            f"Managed worktree retained for review; changed_paths={diff_evidence.get('changed_path_count')}; "
+            f"evidence_hash={str(evidence_hash or '')[:16]}; raw diff omitted."
+        ),
+        "content_hash": evidence_hash,
+    })
+    artifact_id = (artifact_payload.get("artifact") or {}).get("artifact_id")
+    memory_payload = client.post("/api/agent-gateway/memories/propose", {
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "scope": "project",
+        "memory_type": "artifact_summary",
+        "canonical_text": (
+            f"Codex produced a governed workspace diff for task '{redact_text(task.get('title'), 80)}'; "
+            f"evidence hash {str(evidence_hash or '')[:16]}. Human review is still required before promotion."
+        ),
+        "source_ref": run_id,
+        "access_tags": ["worker-loop", "codex", "workspace-write", "review"],
+        "confidence": 0.78,
+    })
+    memory_id = (memory_payload.get("memory") or {}).get("memory_id")
+    audit_payload = client.post("/api/agent-gateway/audit", {
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "action": "agent_worker.codex_workspace_write_completed",
+        "entity_type": "runs",
+        "entity_id": run_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "metadata": {
+            "agent_plan_id": plan_id,
+            "prepared_action_id": action_id,
+            "approval_id": action.get("approval_id"),
+            "prepared_action_consumed": False,
+            "execution_lease_id": lease_id,
+            "provider_side_effect_id": side_effect_id,
+            "worker_runtime_event_id": worker_runtime_event_id,
+            "diff_evidence": diff_evidence,
+            "managed_worktree_retained_for_review": True,
+            "promotion_performed": False,
+            **worker_secret_boundary_metadata(),
+        },
+    })
+    audit_id = audit_payload.get("audit_id")
+    manifest_payload = create_worker_plan_manifest(
+        client,
+        plan_id,
+        run_id,
+        verification_tool_id,
+        evaluation_id,
+        artifact_id,
+        audit_id,
+    )
+    manifest = manifest_payload.get("manifest") or {}
+    verification = manifest_payload.get("verification") or {}
+    if verification.get("pass") is not True:
+        raise RuntimeError("Codex workspace-write plan evidence manifest did not verify")
+    resume_payload = client.post(f"/api/agent-gateway/prepared-actions/{action_id}/resume", {
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "lease_id": lease_id,
+        "plan_evidence_manifest_id": manifest.get("manifest_id"),
+        "provider_side_effect_id": side_effect_id,
+        "output_summary": result.output_summary,
+        "duration_ms": result.duration_ms,
+        "output_tokens": result.output_tokens,
+        "result_summary": (
+            f"Codex workspace-write completed after verified evidence closure; "
+            f"changed_paths={diff_evidence.get('changed_path_count')}; diff_hash={str(diff_evidence.get('diff_hash') or '')[:16]}."
+        ),
+    })
+    consumed = resume_payload.get("prepared_action") or {}
+    if consumed.get("status") != "consumed" or (resume_payload.get("hash_verification") or {}).get("match") is not True:
+        raise RuntimeError("prepared action did not reach hash-verified consumed state after Codex workspace-write")
+    return {
+        "processed": True,
+        "ok": quality_pass,
+        "task_id": task_id,
+        "run_id": run_id,
+        "plan_id": plan_id,
+        "adapter": "codex",
+        "codex_mode": "workspace-write",
+        "prepared_action_id": action_id,
+        "approval_id": action.get("approval_id"),
+        "prepared_action_consumed": True,
+        "execution_lease": resume_payload.get("execution_lease") or {},
+        "provider_side_effect_id": side_effect_id,
+        "worker_runtime_event_id": worker_runtime_event_id,
+        "evaluation_id": evaluation_id,
+        "artifact_id": artifact_id,
+        "memory_candidate_id": memory_id,
+        "audit_id": audit_id,
+        "plan_evidence_manifest_id": manifest.get("manifest_id"),
+        "plan_evidence_status": manifest.get("status"),
+        "plan_evidence_pass": verification.get("pass"),
+        "diff_evidence": diff_evidence,
+        "runtime_observation": result.runtime_observation or {},
+        "managed_worktree_retained_for_review": True,
+        "promotion_performed": False,
+        "raw_diff_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def resume_codex_workspace_write(client: AgentOpsClient, args) -> dict:
+    action_id = str(getattr(args, "codex_prepared_action_id", "") or "").strip()
+    missing = []
+    if args.adapter != "codex" or getattr(args, "codex_mode", "read-only") != "workspace-write":
+        missing.append("--adapter codex --codex-mode workspace-write")
+    if not args.confirm_run:
+        missing.append("--confirm-run")
+    if not getattr(args, "confirm_workspace_write", False):
+        missing.append("--confirm-workspace-write")
+    if not args.allow_high_risk:
+        missing.append("--allow-high-risk")
+    if not getattr(args, "codex_source_repo", ""):
+        missing.append("--codex-source-repo")
+    if not getattr(args, "codex_allowed_path", None):
+        missing.append("--codex-allowed-path")
+    if missing:
+        return {
+            "processed": False,
+            "ok": False,
+            "adapter": "codex",
+            "reason": "codex_workspace_write_confirmation_required",
+            "prepared_action_id": action_id,
+            "requires": missing,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        }
+
+    action_payload = client.get(f"/api/agent-gateway/prepared-actions/{action_id}")
+    action = action_payload.get("prepared_action") or {}
+    approval = action_payload.get("approval") or {}
+    stored_args = action.get("normalized_args") or {}
+    task_id = str(action.get("task_id") or "")
+    run_id = str(action.get("run_id") or "")
+    plan_id = str(stored_args.get("agent_plan_id") or "")
+    allowed_paths = normalize_allowed_paths(args.codex_allowed_path)
+    preflight = codex_repository_preflight(
+        source_repo=Path(args.codex_source_repo),
+        allowed_paths=allowed_paths,
+    )
+    runtime_attestation = codex_binary_attestation(args.codex_bin, timeout=min(args.codex_timeout, 20))
+    stored_attestation = stored_args.get("runtime_attestation") or {}
+    failures = []
+    if action_payload.get("status") != "ready" or (action_payload.get("hash_verification") or {}).get("match") is not True:
+        failures.append("prepared_action_hash_invalid")
+    if approval.get("decision") != "approved" or action.get("status") != "approved":
+        failures.append("prepared_action_not_approved")
+    if action.get("action_type") != "agent_worker.codex.workspace_write":
+        failures.append("prepared_action_type_mismatch")
+    if action.get("requested_by_agent_id") != client.agent_id:
+        failures.append("prepared_action_agent_mismatch")
+    if args.task_id and args.task_id != task_id:
+        failures.append("prepared_action_task_mismatch")
+    if stored_args.get("task_id") != task_id or stored_args.get("run_id") != run_id:
+        failures.append("prepared_action_binding_mismatch")
+    if stored_args.get("source_repo_hash") != preflight.get("source_repo_hash"):
+        failures.append("source_repo_mismatch")
+    if stored_args.get("baseline_head") != preflight.get("baseline_head"):
+        failures.append("baseline_head_mismatch")
+    if sorted(stored_args.get("allowed_paths") or []) != allowed_paths:
+        failures.append("allowed_paths_mismatch")
+    if not preflight.get("clean"):
+        failures.append("source_repo_dirty")
+    if runtime_attestation.get("attested") is not True:
+        failures.append("codex_runtime_unattested")
+    if stored_attestation.get("binary_sha256") != runtime_attestation.get("binary_sha256"):
+        failures.append("codex_runtime_binary_mismatch")
+    if stored_attestation.get("version_summary") != runtime_attestation.get("version_summary"):
+        failures.append("codex_runtime_version_mismatch")
+    if failures:
+        return {
+            "processed": False,
+            "ok": False,
+            "task_id": task_id,
+            "run_id": run_id,
+            "plan_id": plan_id,
+            "adapter": "codex",
+            "reason": "codex_workspace_write_authorization_rejected",
+            "failed_checks": failures,
+            "prepared_action_id": action_id,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        }
+
+    plan_verify = client.get(f"/api/agent-gateway/agent-plans/{plan_id}/verify")
+    verified_plan_row = plan_verify.get("agent_plan") or {}
+    plan_binding_ok = bool(
+        (plan_verify.get("verification") or {}).get("pass") is True
+        and verified_plan_row.get("status") == "approved"
+        and verified_plan_row.get("plan_hash") == stored_args.get("agent_plan_hash")
+        and (verified_plan_row.get("verification_result_hash") or plan_verify.get("verification_result_hash"))
+        == stored_args.get("agent_plan_verification_result_hash")
+    )
+    if not plan_binding_ok:
+        return {
+            "processed": False,
+            "ok": False,
+            "task_id": task_id,
+            "run_id": run_id,
+            "plan_id": plan_id,
+            "reason": "codex_workspace_write_plan_binding_failed",
+            "prepared_action_id": action_id,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        }
+    task_payload = client.get(f"/api/agent-gateway/tasks/{task_id}")
+    task = task_payload.get("task") or {}
+    knowledge_evidence = fetch_worker_knowledge_evidence(client, task, adapter="codex")
+    task["_knowledge_retrieval_evidence"] = knowledge_evidence
+    task["_intake_plan_evidence"] = {
+        "plan_id": plan_id,
+        "plan_verified": True,
+        "plan_reused_from_intake": True,
+        "source": "prepared_action.workspace_write_resume",
+        "verification_source": f"/api/agent-gateway/agent-plans/{plan_id}/verify",
+        "raw_plan_body_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+    prompt, profile = build_codex_workspace_write_prompt(task, plan_id, allowed_paths, knowledge_evidence)
+    claim_payload = client.post(f"/api/agent-gateway/prepared-actions/{action_id}/claim-execution", {
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "lease_ttl_seconds": min(max(int(args.codex_timeout or 300) + 120, 60), 7200),
+    })
+    lease = claim_payload.get("execution_lease") or {}
+    lease_id = str(lease.get("lease_id") or "")
+    if not lease_id or lease.get("status") != "executing":
+        raise RuntimeError("Codex workspace-write did not acquire an exclusive prepared-action execution lease")
+    runtime_result = execute_codex_workspace_write(
+        binary_path=args.codex_bin,
+        prompt=prompt,
+        source_repo=Path(args.codex_source_repo),
+        action_id=action_id,
+        baseline_head=preflight["baseline_head"],
+        allowed_paths=allowed_paths,
+        timeout=args.codex_timeout,
+        worktree_root=Path(args.codex_worktree_root) if args.codex_worktree_root else None,
+    )
+    result = AdapterResult(
+        ok=runtime_result.ok,
+        output_summary=runtime_result.output_summary,
+        prompt_hash=stable_hash(prompt),
+        **adapter_result_profile_fields(profile),
+        raw_payload_hash=runtime_result.raw_payload_hash,
+        error_type=runtime_result.error_type,
+        error_message=runtime_result.error_message,
+        duration_ms=runtime_result.duration_ms,
+        output_tokens=runtime_result.output_tokens,
+        target_resource=runtime_result.target_resource,
+        retryable=runtime_result.retryable,
+        runtime_observation=runtime_result.observation,
+    )
+    if not result.ok:
+        return record_codex_workspace_write_failure(
+            client,
+            task_id=task_id,
+            run_id=run_id,
+            plan_id=plan_id,
+            action_id=action_id,
+            lease_id=lease_id,
+            result=result,
+        )
+    try:
+        return finalize_codex_workspace_write(
+            client,
+            args,
+            task=task,
+            run_id=run_id,
+            plan_id=plan_id,
+            action=action,
+            lease_id=lease_id,
+            result=result,
+            knowledge_evidence=knowledge_evidence,
+        )
+    except Exception as exc:
+        closure_state = None
+        try:
+            closure_state = client.get(f"/api/agent-gateway/prepared-actions/{action_id}")
+        except Exception:
+            closure_state = None
+        closure_action = (closure_state or {}).get("prepared_action") or {}
+        closure_lease = (closure_state or {}).get("execution_lease") or {}
+        terminal_closure = closure_action.get("status") == "consumed" or closure_lease.get("status") == "completed"
+        if terminal_closure:
+            try:
+                run_state = (client.get(f"/api/runs/{run_id}").get("run") or {})
+            except Exception:
+                run_state = {}
+            reconciled = bool(
+                closure_action.get("status") == "consumed"
+                and closure_lease.get("status") == "completed"
+                and run_state.get("status") == "completed"
+            )
+            return {
+                "processed": reconciled,
+                "ok": reconciled,
+                "task_id": task_id,
+                "run_id": run_id,
+                "plan_id": plan_id,
+                "adapter": "codex",
+                "reason": "codex_workspace_write_reconciled" if reconciled else "codex_workspace_write_manual_reconciliation_required",
+                "prepared_action_id": action_id,
+                "prepared_action_consumed": closure_action.get("status") == "consumed",
+                "execution_lease": closure_lease,
+                "managed_worktree_retained_for_review": True,
+                "rollback_performed": False,
+                "error_type": None if reconciled else "CodexWorkspaceWriteClosureStateAmbiguous",
+                "error_message": None if reconciled else redact_text(str(exc), 220),
+                "token_omitted": True,
+            }
+        if closure_state is None:
+            return {
+                "processed": False,
+                "ok": False,
+                "task_id": task_id,
+                "run_id": run_id,
+                "plan_id": plan_id,
+                "adapter": "codex",
+                "reason": "codex_workspace_write_closure_state_unknown",
+                "prepared_action_id": action_id,
+                "managed_worktree_retained_for_review": True,
+                "rollback_performed": False,
+                "error_type": "CodexWorkspaceWriteClosureStateUnknown",
+                "error_message": redact_text(str(exc), 220),
+                "token_omitted": True,
+            }
+        worktree = managed_codex_worktree_path(
+            action_id,
+            Path(args.codex_worktree_root) if args.codex_worktree_root else None,
+        )
+        rollback_performed = remove_managed_codex_worktree(
+            source_repo=Path(args.codex_source_repo).resolve(),
+            worktree=worktree,
+        )
+        failed_result = AdapterResult(
+            ok=False,
+            output_summary="Codex workspace-write evidence closure failed and the managed worktree was rolled back.",
+            prompt_hash=result.prompt_hash,
+            prompt_profile_id=result.prompt_profile_id,
+            prompt_profile_version=result.prompt_profile_version,
+            prompt_profile_hash=result.prompt_profile_hash,
+            raw_payload_hash=stable_hash({"error_type": type(exc).__name__, "action_id": action_id}),
+            error_type="CodexWorkspaceWriteEvidenceClosureFailed",
+            error_message=redact_text(str(exc), 220),
+            target_resource=result.target_resource,
+            retryable=False,
+            runtime_observation={
+                **(result.runtime_observation or {}),
+                "rollback_required": True,
+                "rollback_performed": rollback_performed,
+                "evidence_closure_failed": True,
+                "product_readiness_proof": False,
+            },
+        )
+        return record_codex_workspace_write_failure(
+            client,
+            task_id=task_id,
+            run_id=run_id,
+            plan_id=plan_id,
+            action_id=action_id,
+            lease_id=lease_id,
+            result=failed_result,
+        )
+
+
 def process_one_task(client: AgentOpsClient, args) -> dict:
+    if getattr(args, "codex_prepared_action_id", ""):
+        return resume_codex_workspace_write(client, args)
     pull_query = {
         "agent_id": client.agent_id,
         "workspace_id": client.workspace_id,
@@ -1671,19 +2317,65 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
 
     task = tasks[0]
     task_id = task["task_id"]
-    if not risk_allowed(task, args.allow_high_risk):
+    capability = adapter_capability_profile(args.adapter, getattr(args, "codex_mode", "read-only"))
+    workspace_preflight = None
+    if codex_workspace_write_requested(args):
+        try:
+            if not args.codex_source_repo:
+                raise ValueError("--codex-source-repo is required for Codex workspace-write")
+            workspace_preflight = codex_repository_preflight(
+                source_repo=Path(args.codex_source_repo),
+                allowed_paths=args.codex_allowed_path,
+            )
+            runtime_attestation = codex_binary_attestation(args.codex_bin, timeout=min(args.codex_timeout, 20))
+            if runtime_attestation.get("attested") is not True:
+                raise ValueError("Codex workspace-write requires the attested ChatGPT-bundled Codex runtime")
+            workspace_preflight["runtime_attestation"] = runtime_attestation
+        except Exception as exc:
+            return {
+                "processed": False,
+                "ok": False,
+                "task_id": task_id,
+                "adapter": "codex",
+                "reason": "codex_workspace_write_preflight_failed",
+                **safe_error(exc),
+                "live_execution_performed": False,
+                "run_start_attempted": False,
+                "token_omitted": True,
+            }
+        if not workspace_preflight.get("clean"):
+            return {
+                "processed": False,
+                "ok": False,
+                "task_id": task_id,
+                "adapter": "codex",
+                "reason": "codex_workspace_write_dirty_source_repo",
+                "workspace_preflight": {
+                    "clean": False,
+                    "dirty_entry_count": workspace_preflight.get("dirty_entry_count"),
+                    "status_hash": workspace_preflight.get("status_hash"),
+                    "raw_status_omitted": True,
+                },
+                "live_execution_performed": False,
+                "run_start_attempted": False,
+                "token_omitted": True,
+            }
+    if not codex_workspace_write_requested(args) and not risk_allowed(task, args.allow_high_risk):
         return {"processed": False, "task_id": task_id, "reason": "risk_not_allowed", "risk_level": task.get("risk_level")}
 
-    client.post(f"/api/agent-gateway/tasks/{task_id}/claim", {
-        "workspace_id": client.workspace_id,
-        "agent_id": client.agent_id,
-        "runtime_type": args.adapter,
-    })
+    if not codex_workspace_write_requested(args):
+        client.post(f"/api/agent-gateway/tasks/{task_id}/claim", {
+            "workspace_id": client.workspace_id,
+            "agent_id": client.agent_id,
+            "runtime_type": args.adapter,
+        })
     knowledge_evidence = fetch_worker_knowledge_evidence(client, task, adapter=args.adapter)
     task = dict(task)
     task["_knowledge_retrieval_evidence"] = knowledge_evidence
     plan_reused = False
     plan_id, verified_plan = verified_intake_plan_for_task(client, task)
+    if not plan_id and codex_workspace_write_requested(args):
+        plan_id, verified_plan = latest_worker_plan_for_task(client, task_id)
     if plan_id:
         plan_reused = True
     else:
@@ -1696,6 +2388,30 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         verified_plan = client.get(f"/api/agent-gateway/agent-plans/{plan_id}/verify")
     if not (verified_plan.get("verification") or {}).get("pass"):
         raise RuntimeError(f"agent plan verification failed before run_start: {json_dumps(verified_plan.get('verification') or {})}")
+    verified_plan_row = verified_plan.get("agent_plan") or {}
+    if codex_workspace_write_requested(args) and verified_plan_row.get("status") != "approved":
+        return {
+            "processed": False,
+            "ok": True,
+            "task_id": task_id,
+            "run_id": None,
+            "plan_id": plan_id,
+            "adapter": "codex",
+            "reason": "codex_workspace_write_plan_approval_required",
+            "approval_id": verified_plan_row.get("approval_id"),
+            "live_execution_performed": False,
+            "run_start_attempted": False,
+            "next_action": f"agentops approval approve --approval-id {verified_plan_row.get('approval_id')}",
+            "token_omitted": True,
+        }
+    if codex_workspace_write_requested(args):
+        workspace_preflight["agent_plan_hash"] = verified_plan_row.get("plan_hash")
+        workspace_preflight["agent_plan_verification_result_hash"] = verified_plan_row.get("verification_result_hash") or verified_plan.get("verification_result_hash")
+        client.post(f"/api/agent-gateway/tasks/{task_id}/claim", {
+            "workspace_id": client.workspace_id,
+            "agent_id": client.agent_id,
+            "runtime_type": args.adapter,
+        })
     task["_intake_plan_evidence"] = {
         "plan_id": plan_id,
         "plan_verified": True,
@@ -1709,7 +2425,6 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "token_omitted": True,
     }
 
-    capability = adapter_capability_profile(args.adapter)
     secret_boundary = worker_secret_boundary_metadata()
     loop_supervision_gate = fetch_worker_loop_supervision_gate(client, task, args) if args.confirm_run and args.adapter in {"hermes", "openclaw"} else None
     if args.adapter in {"hermes", "openclaw"} and args.confirm_run and (loop_supervision_gate or {}).get("ok") is not True:
@@ -1765,6 +2480,17 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     run = run_payload["run"]
     run_id = run["run_id"]
 
+    if codex_workspace_write_requested(args):
+        return create_worker_external_write_gate(
+            client,
+            task,
+            args,
+            plan_id,
+            run_id,
+            capability,
+            loop_supervision_gate,
+            workspace_preflight,
+        )
     if worker_external_write_intent(task, args, capability):
         return create_worker_external_write_gate(client, task, args, plan_id, run_id, capability, loop_supervision_gate)
 
@@ -2110,6 +2836,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--openclaw-timeout", type=int, default=int(os.environ.get("OPENCLAW_TIMEOUT", "180")))
     parser.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", ""))
     parser.add_argument("--codex-timeout", type=int, default=int(os.environ.get("CODEX_TIMEOUT", "300")))
+    parser.add_argument("--codex-mode", choices=["read-only", "workspace-write"], default="read-only", help="Codex execution mode. Read-only remains the default.")
+    parser.add_argument("--codex-source-repo", default="", help="Exact clean Git root used as the source for a managed Codex workspace-write worktree.")
+    parser.add_argument("--codex-allowed-path", action="append", default=[], help="Approved repository-relative file or directory prefix for Codex workspace-write. Repeatable.")
+    parser.add_argument("--codex-prepared-action-id", default="", help="Resume one approved, task-bound Codex workspace-write prepared action.")
+    parser.add_argument("--codex-worktree-root", default="", help="Optional managed worktree parent; intended for isolated acceptance tests and advanced operators.")
+    parser.add_argument("--confirm-workspace-write", action="store_true", help="Second explicit confirmation required to execute an approved Codex workspace-write action.")
     parser.add_argument("--continue-on-error", action="store_true", help="Keep polling after a loop/API/adapter error.")
     parser.add_argument("--max-errors", type=int, default=5, help="Stop after this many consecutive errors when continuing.")
     parser.add_argument("--state-path", default=os.environ.get("AGENTOPS_WORKER_STATE_PATH", ""))

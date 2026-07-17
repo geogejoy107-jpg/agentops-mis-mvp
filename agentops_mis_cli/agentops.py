@@ -5139,6 +5139,152 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
     }
 
 
+def cmd_workflow_codex_workspace_write(args, client: AgentOpsClient) -> dict:
+    from . import worker as worker_mod
+
+    if not args.confirm_run:
+        return {
+            "ok": False,
+            "dry_run": True,
+            "workflow": "codex_workspace_write",
+            "reason": "confirm_run_required",
+            "requires": ["--confirm-run"],
+            "live_execution_performed": False,
+            "token_omitted": True,
+        }
+    if not args.allow_path:
+        raise RuntimeError("codex workspace-write requires at least one --allow-path")
+
+    action = None
+    task = None
+    task_id = args.task_id
+    worker_agent_id = args.worker_agent_id
+    if args.prepared_action_id:
+        action_payload = client.get(f"/api/agent-gateway/prepared-actions/{args.prepared_action_id}")
+        action = action_payload.get("prepared_action") or {}
+        task_id = action.get("task_id")
+        worker_agent_id = action.get("requested_by_agent_id")
+        if action.get("action_type") != "agent_worker.codex.workspace_write":
+            raise RuntimeError("prepared action is not a Codex workspace-write authorization")
+    elif task_id:
+        try:
+            task = (client.get(f"/api/agent-gateway/tasks/{task_id}").get("task") or {})
+            worker_agent_id = worker_agent_id or task.get("owner_agent_id")
+        except RuntimeError:
+            task = None
+
+    worker_agent_id = worker_agent_id or client.agent_id or f"agt_codex_write_{now_stamp()}_{uuid.uuid4().hex[:6]}"
+    register_result = client.post("/api/agent-gateway/register", {
+        "workspace_id": client.workspace_id,
+        "agent_id": worker_agent_id,
+        "name": args.worker_name or "Codex Workspace Write Worker",
+        "role": "Governed Coding Worker",
+        "runtime_type": "codex",
+        "model_provider": "codex",
+        "model_name": "codex-cli",
+        "description": "Approval-gated Codex worker using managed detached Git worktrees.",
+    })
+    if not task_id:
+        if not args.title or not args.description:
+            raise RuntimeError("--title and --description are required when creating a Codex workspace-write task")
+        created = client.post("/api/agent-gateway/tasks", {
+            "workspace_id": client.workspace_id,
+            "title": args.title,
+            "description": args.description,
+            "requester_id": args.requester_id,
+            "owner_agent_id": worker_agent_id,
+            "status": "planned",
+            "priority": args.priority,
+            "acceptance_criteria": args.acceptance,
+            "risk_level": args.risk,
+            "budget_limit_usd": args.budget,
+        })
+        task_id = created.get("task_id")
+        task = created
+    elif task is None and not action:
+        if not args.title or not args.description:
+            raise RuntimeError("task_id was not found; provide --title and --description to create it")
+        created = client.post("/api/agent-gateway/tasks", {
+            "workspace_id": client.workspace_id,
+            "task_id": task_id,
+            "title": args.title,
+            "description": args.description,
+            "requester_id": args.requester_id,
+            "owner_agent_id": worker_agent_id,
+            "status": "planned",
+            "priority": args.priority,
+            "acceptance_criteria": args.acceptance,
+            "risk_level": args.risk,
+            "budget_limit_usd": args.budget,
+        })
+        task = created
+
+    worker_api_key = "" if client.stale_config_token_ignored and client.sources.get("api_key") == "config" else client.api_key
+    worker_argv = [
+        "--base-url", client.base_url,
+        "--workspace-id", client.workspace_id,
+        "--agent-id", worker_agent_id,
+        "--task-id", task_id,
+        "--api-key", worker_api_key,
+        "--api-key-source", "missing" if not worker_api_key else client.sources.get("api_key") or "env",
+        "--adapter", "codex",
+        "--codex-mode", "workspace-write",
+        "--codex-source-repo", str(Path(args.source_repo).expanduser().resolve()),
+        "--codex-timeout", str(args.codex_timeout),
+        "--once",
+        "--no-enforce-intake",
+        "--status", "planned",
+        "--confirm-run",
+    ]
+    for path in args.allow_path:
+        worker_argv.extend(["--codex-allowed-path", path])
+    if args.codex_bin:
+        worker_argv.extend(["--codex-bin", args.codex_bin])
+    if args.worktree_root:
+        worker_argv.extend(["--codex-worktree-root", args.worktree_root])
+    if args.prepared_action_id:
+        worker_argv.extend(["--codex-prepared-action-id", args.prepared_action_id])
+    if args.confirm_workspace_write:
+        worker_argv.append("--confirm-workspace-write")
+    if args.allow_high_risk:
+        worker_argv.append("--allow-high-risk")
+
+    stdout = io.StringIO()
+    with contextlib.redirect_stdout(stdout):
+        exit_code = worker_mod.main(worker_argv)
+    raw_worker_output = stdout.getvalue().strip()
+    try:
+        worker_result = json.loads(raw_worker_output) if raw_worker_output else {}
+    except json.JSONDecodeError:
+        worker_result = {"ok": False, "raw_output_omitted": True}
+    first_result = ((worker_result.get("results") or [{}])[0] or {})
+    return {
+        "ok": bool(exit_code == 0 and worker_result.get("ok") is True),
+        "dry_run": False,
+        "workflow": "codex_workspace_write",
+        "phase": (
+            "completed" if first_result.get("processed") and first_result.get("ok")
+            else "workspace_write_approval" if first_result.get("prepared_action_id")
+            else "agent_plan_approval" if first_result.get("approval_id")
+            else "blocked"
+        ),
+        "task_id": task_id,
+        "agent_id": worker_agent_id,
+        "run_id": first_result.get("run_id"),
+        "plan_id": first_result.get("plan_id"),
+        "approval_id": first_result.get("approval_id"),
+        "prepared_action_id": first_result.get("prepared_action_id"),
+        "worker_exit_code": exit_code,
+        "worker_result": worker_result,
+        "agent_register": register_result,
+        "source_repo_path_hash": hashlib.sha256(str(Path(args.source_repo).expanduser().resolve()).encode("utf-8")).hexdigest(),
+        "allowed_paths": args.allow_path,
+        "main_worktree_mutated": False,
+        "raw_worker_output_omitted": True,
+        "token_omitted": True,
+    }
+
+
 def cmd_worker_stuck(args, client: AgentOpsClient) -> dict:
     return client.get("/api/workers/stuck-tasks", query={"threshold_sec": args.threshold_sec, "limit": args.limit})
 
@@ -6451,6 +6597,28 @@ def build_parser() -> argparse.ArgumentParser:
     run_task.add_argument("--codex-timeout", type=int, default=300)
     run_task.set_defaults(handler="workflow_run_task")
 
+    codex_write = workflow_sub.add_parser("codex-workspace-write", help="Prepare or resume an approval-gated Codex write in a managed detached Git worktree.")
+    codex_write.add_argument("--task-id", default=None, help="Reuse the same task after Agent Plan approval. Omit only when creating a new task.")
+    codex_write.add_argument("--title", default=None)
+    codex_write.add_argument("--description", default=None)
+    codex_write.add_argument("--acceptance", default="Approved Codex worktree diff must pass bounded path, Git, secret, evaluation, audit and manifest gates.")
+    codex_write.add_argument("--requester-id", default="usr_customer_demo")
+    codex_write.add_argument("--worker-agent-id", default=None)
+    codex_write.add_argument("--worker-name", default=None)
+    codex_write.add_argument("--priority", choices=["low", "medium", "high", "critical"], default="high")
+    codex_write.add_argument("--risk", choices=["low", "medium", "high", "critical"], default="high")
+    codex_write.add_argument("--budget", type=float, default=5.0)
+    codex_write.add_argument("--source-repo", required=True, help="Exact clean Git root. Codex writes only in a managed detached worktree derived from this HEAD.")
+    codex_write.add_argument("--allow-path", action="append", default=[], help="Approved repository-relative path prefix. Repeatable.")
+    codex_write.add_argument("--prepared-action-id", default=None, help="Resume the exact approved workspace-write action after approval.")
+    codex_write.add_argument("--confirm-run", action="store_true", help="Confirm creation or resumption of the governed Codex workflow.")
+    codex_write.add_argument("--confirm-workspace-write", action="store_true", help="Second confirmation required when executing an approved prepared action.")
+    codex_write.add_argument("--allow-high-risk", action="store_true", help="Required with --confirm-workspace-write because workspace-write has a high risk floor.")
+    codex_write.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", ""))
+    codex_write.add_argument("--codex-timeout", type=int, default=600)
+    codex_write.add_argument("--worktree-root", default=None, help="Optional managed worktree parent for advanced operators and isolated acceptance.")
+    codex_write.set_defaults(handler="workflow_codex_workspace_write")
+
     worker = sub.add_parser("worker", help="Worker fleet recovery commands.")
     worker_sub = worker.add_subparsers(dest="action", required=True)
     worker_status = worker_sub.add_parser("status", help="Show worker fleet, daemon, pending task and stuck-task status.")
@@ -6742,6 +6910,7 @@ HANDLERS = {
     "workflow_recover_job": cmd_workflow_recover_job,
     "workflow_customer_worker_task": cmd_workflow_customer_worker_task,
     "workflow_run_task": cmd_workflow_run_task,
+    "workflow_codex_workspace_write": cmd_workflow_codex_workspace_write,
     "worker_status": cmd_worker_status,
     "worker_fleet": cmd_worker_fleet,
     "worker_readiness": cmd_worker_readiness,
