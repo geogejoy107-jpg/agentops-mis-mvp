@@ -101,6 +101,8 @@ def main(argv: list[str] | None = None) -> int:
         stale_config_payload = load_json(stale_config_doctor)
         stale_config_readback = run([str(CLI), "operator", "local-harness-proof", "--limit", "1"], env=env)
         stale_config_readback_payload = load_json(stale_config_readback)
+        stale_config_local_readiness = run([str(CLI), "local", "readiness", "--require-current-code"], env=env)
+        stale_config_local_readiness_payload = load_json(stale_config_local_readiness)
 
         ok = (
             local_doctor.returncode == 0
@@ -132,10 +134,15 @@ def main(argv: list[str] | None = None) -> int:
             )
             and stale_config_readback.returncode == 0
             and stale_config_readback_payload.get("operation") == "local_harness_proof_readiness"
+            and stale_config_local_readiness.returncode == 0
+            and stale_config_local_readiness_payload.get("operation") == "local_readiness"
+            and stale_config_local_readiness_payload.get("gateway", {}).get("status") == "ready"
             and stale_token not in stale_config_doctor.stdout
             and stale_token not in stale_config_doctor.stderr
             and stale_token not in stale_config_readback.stdout
             and stale_token not in stale_config_readback.stderr
+            and stale_token not in stale_config_local_readiness.stdout
+            and stale_token not in stale_config_local_readiness.stderr
         )
         print(json.dumps({
             "ok": ok,
@@ -155,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
             "revoked": revoke_payload.get("revoked"),
             "stale_config_doctor_returncode": stale_config_doctor.returncode,
             "stale_config_readback_returncode": stale_config_readback.returncode,
+            "stale_config_local_readiness_returncode": stale_config_local_readiness.returncode,
             "stale_config_token_ignored": stale_config_payload.get("stale_config_token_ignored_for_local_loopback"),
         }, ensure_ascii=False, indent=2, sort_keys=True))
         if not ok:
@@ -166,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
                 print("revoke stderr:", revoke.stderr[-1200:], file=sys.stderr)
             print("stale config stderr:", stale_config_doctor.stderr[-1200:], file=sys.stderr)
             print("stale config readback stderr:", stale_config_readback.stderr[-1200:], file=sys.stderr)
+            print("stale config local readiness stderr:", stale_config_local_readiness.stderr[-1200:], file=sys.stderr)
         return 0 if ok else 1
 
 

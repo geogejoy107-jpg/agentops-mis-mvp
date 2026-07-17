@@ -338,6 +338,15 @@ class AgentOpsClient:
             and "token is not recognized" in detail
         )
 
+    def _payload_has_stale_config_token_diagnostic(self, payload: dict) -> bool:
+        gateway = payload.get("gateway") if isinstance(payload, dict) else None
+        if isinstance(gateway, dict) and "token is not recognized" in json.dumps(gateway, ensure_ascii=False):
+            return True
+        for gate in payload.get("gates") or []:
+            if isinstance(gate, dict) and gate.get("status") == "unauthorized" and "token is not recognized" in json.dumps(gate, ensure_ascii=False):
+                return True
+        return False
+
     def request(self, method: str, path: str, payload: dict | None = None, query: dict | None = None):
         url = self.base_url + path
         if query:
@@ -359,7 +368,17 @@ class AgentOpsClient:
         try:
             with urlopen(make_request(self.api_key), timeout=self.request_timeout) as res:
                 raw = res.read().decode("utf-8")
-                return json.loads(raw) if raw else {}
+                parsed = json.loads(raw) if raw else {}
+                if (
+                    isinstance(parsed, dict)
+                    and self._can_retry_without_stale_config_token(json.dumps(parsed, ensure_ascii=False), 401)
+                    and self._payload_has_stale_config_token_diagnostic(parsed)
+                ):
+                    with urlopen(make_request(""), timeout=self.request_timeout) as retry_res:
+                        self.stale_config_token_ignored = True
+                        retry_raw = retry_res.read().decode("utf-8")
+                        return json.loads(retry_raw) if retry_raw else {}
+                return parsed
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             if self._can_retry_without_stale_config_token(detail, exc.code):
@@ -4993,6 +5012,8 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
         "budget_limit_usd": args.budget,
     })
     task_id = created.get("task_id")
+    worker_api_key = "" if client.stale_config_token_ignored and client.sources.get("api_key") == "config" else client.api_key
+    worker_api_key_source = "missing" if not worker_api_key else client.sources.get("api_key") or "env"
     worker_argv = [
         "--base-url",
         client.base_url,
@@ -5003,7 +5024,9 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
         "--task-id",
         task_id,
         "--api-key",
-        client.api_key,
+        worker_api_key,
+        "--api-key-source",
+        worker_api_key_source,
         "--adapter",
         args.adapter,
         "--once",
@@ -5140,6 +5163,7 @@ def cmd_worker_preflight(args, client: AgentOpsClient) -> dict:
         workspace_id=client.workspace_id,
         agent_id=args.agent_id or client.agent_id or worker_mod.DEFAULT_AGENT_ID,
         api_key=client.api_key,
+        api_key_source=client.sources.get("api_key") or ("env" if client.api_key else "missing"),
         adapter=args.adapter,
         timeout=args.timeout,
         hermes_gateway_url=args.hermes_gateway_url,

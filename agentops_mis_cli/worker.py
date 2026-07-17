@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from agentops_mis_cli.redaction import redact_text
@@ -98,6 +98,23 @@ def stable_hash(value) -> str:
 
 def json_dumps(data) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def worker_truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def worker_deployment_mode() -> str:
+    return os.environ.get("AGENTOPS_DEPLOYMENT_MODE", "local").strip().lower() or "local"
+
+
+def worker_host_is_loopback(url: str) -> bool:
+    host = (urlparse(url).hostname or "").strip().lower()
+    if host in {"", "localhost", "127.0.0.1", "::1"}:
+        return True
+    if host in {"0.0.0.0", "::"}:
+        return False
+    return host.endswith(".localhost")
 
 
 def safe_error(exc: Exception | str) -> dict:
@@ -186,32 +203,53 @@ class WorkerState:
 
 
 class AgentOpsClient:
-    def __init__(self, base_url: str, workspace_id: str, agent_id: str, api_key: str = ""):
+    def __init__(self, base_url: str, workspace_id: str, agent_id: str, api_key: str = "", api_key_source: str = ""):
         self.base_url = base_url.rstrip("/")
         self.workspace_id = workspace_id
         self.agent_id = agent_id
         self.api_key = api_key
+        self.api_key_source = api_key_source or ("env" if api_key else "missing")
+        self.stale_config_token_ignored = False
+
+    def _can_retry_without_stale_config_token(self, detail: str, status_code: int) -> bool:
+        production_requested = worker_deployment_mode() in {"production", "prod", "shared", "hosted"} or worker_truthy_env("AGENTOPS_REQUIRE_PRODUCTION_SECURITY")
+        return bool(
+            status_code == 401
+            and self.api_key
+            and self.api_key_source == "config"
+            and worker_host_is_loopback(self.base_url)
+            and not production_requested
+            and "token is not recognized" in detail
+        )
 
     def request(self, method: str, path: str, payload: dict | None = None, query: dict | None = None, timeout: int = 180):
         url = self.base_url + path
         if query:
             url += "?" + urlencode({k: v for k, v in query.items() if v is not None}, doseq=True)
-        headers = {
-            "Content-Type": "application/json",
-            "X-AgentOps-Workspace-Id": self.workspace_id,
-            "X-AgentOps-Agent-Id": self.agent_id,
-        }
-        if self.api_key:
-            headers["X-AgentOps-Api-Key"] = self.api_key
-            headers["Authorization"] = f"Bearer {self.api_key}"
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
-        req = Request(url, data=data, headers=headers, method=method)
+
+        def make_request(api_key: str) -> Request:
+            headers = {
+                "Content-Type": "application/json",
+                "X-AgentOps-Workspace-Id": self.workspace_id,
+                "X-AgentOps-Agent-Id": self.agent_id,
+            }
+            if api_key:
+                headers["X-AgentOps-Api-Key"] = api_key
+                headers["Authorization"] = f"Bearer {api_key}"
+            return Request(url, data=data, headers=headers, method=method)
+
         try:
-            with urlopen(req, timeout=timeout) as res:
+            with urlopen(make_request(self.api_key), timeout=timeout) as res:
                 raw = res.read().decode("utf-8")
                 return json.loads(raw) if raw else {}
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
+            if self._can_retry_without_stale_config_token(detail, exc.code):
+                with urlopen(make_request(""), timeout=timeout) as res:
+                    self.stale_config_token_ignored = True
+                    raw = res.read().decode("utf-8")
+                    return json.loads(raw) if raw else {}
             raise RuntimeError(f"{method} {path} failed: {exc.code} {detail}") from exc
         except URLError as exc:
             raise RuntimeError(f"Cannot reach {url}: {exc.reason}") from exc
@@ -1937,6 +1975,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace-id", default=os.environ.get("AGENTOPS_WORKSPACE_ID", DEFAULT_WORKSPACE_ID))
     parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
     parser.add_argument("--api-key", default=os.environ.get("AGENTOPS_API_KEY", ""))
+    parser.add_argument("--api-key-source", choices=["flag", "env", "config", "default", "missing"], default="env" if os.environ.get("AGENTOPS_API_KEY") else "missing")
     parser.add_argument("--use-session", action="store_true", help="Mint a short-lived Agent Gateway session before running the worker.")
     parser.add_argument("--session-ttl-sec", type=int, default=int(os.environ.get("AGENTOPS_SESSION_TTL_SEC", "900")), help="Session TTL when --use-session is set.")
     parser.add_argument("--session-refresh-margin-sec", type=float, default=float(os.environ.get("AGENTOPS_SESSION_REFRESH_MARGIN_SEC", "60")), help="Refresh the short-lived session when it has this many seconds or less remaining.")
@@ -2604,7 +2643,7 @@ def preflight_http_json(url: str, timeout: int = 5) -> tuple[bool, int | None, d
 
 
 def check_gateway_preflight(args) -> dict:
-    client = AgentOpsClient(args.base_url, args.workspace_id, args.agent_id, args.api_key)
+    client = AgentOpsClient(args.base_url, args.workspace_id, args.agent_id, args.api_key, args.api_key_source)
     try:
         status = client.get("/api/agent-gateway/status")
         return {
@@ -2676,6 +2715,7 @@ def build_preflight_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace-id", default=os.environ.get("AGENTOPS_WORKSPACE_ID", DEFAULT_WORKSPACE_ID))
     parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
     parser.add_argument("--api-key", default=os.environ.get("AGENTOPS_API_KEY", ""))
+    parser.add_argument("--api-key-source", choices=["flag", "env", "config", "default", "missing"], default="env" if os.environ.get("AGENTOPS_API_KEY") else "missing")
     parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     parser.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", DEFAULT_HERMES_GATEWAY_URL))
     parser.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", DEFAULT_OPENCLAW_BIN))
