@@ -429,7 +429,11 @@ def main() -> int:
         try:
             result = fn()
             evidence[name] = result
-            checks.append(check(True, name, summarize(result)))
+            result_ok = True
+            if isinstance(result, dict) and (result.get("runtime_failure_evidence") is True or result.get("ok") is False):
+                result_ok = False
+                ok = False
+            checks.append(check(result_ok, name, summarize(result)))
         except Exception as exc:
             ok = False
             checks.append(fail(f"{name}: {exc}"))
@@ -500,7 +504,32 @@ def main() -> int:
 def summarize(value):
     if isinstance(value, dict):
         if "run_id" in value:
-            return {"run_id": value.get("run_id"), "ok": value.get("ok"), "dry_run": value.get("dry_run")}
+            summary = {
+                "run_id": value.get("run_id"),
+                "ok": value.get("ok"),
+                "dry_run": value.get("dry_run"),
+            }
+            for key in [
+                "provider_call_performed",
+                "runtime_failure_evidence",
+                "acceptance_failure",
+                "request_timeout",
+                "raw_prompt_omitted",
+                "raw_response_omitted",
+                "token_omitted",
+            ]:
+                if key in value:
+                    summary[key] = value.get(key)
+            run_readback = value.get("run_readback") if isinstance(value.get("run_readback"), dict) else None
+            if run_readback:
+                summary["run_readback"] = {
+                    "status": run_readback.get("status"),
+                    "approval_required": run_readback.get("approval_required"),
+                    "error_type": run_readback.get("error_type"),
+                    "error_message": run_readback.get("error_message"),
+                    "duration_ms": run_readback.get("duration_ms"),
+                }
+            return summary
         if "gateway_url" in value and "models" in value:
             models = value.get("models") or []
             model_ids = [item.get("id") for item in models if isinstance(item, dict)]

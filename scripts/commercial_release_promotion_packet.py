@@ -51,9 +51,13 @@ def has_forbidden_payload_text(raw: str) -> bool:
     lowered = raw.lower()
     forbidden = [
         '"raw_prompt"',
+        '"raw_prompts"',
         '"raw_response"',
+        '"raw_responses"',
         '"private_transcript"',
+        '"private_transcripts"',
         '"token_value"',
+        '"token_values"',
         "openai_api_key",
         "anthropic_api_key",
         "notion_token",

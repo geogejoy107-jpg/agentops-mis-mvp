@@ -154,6 +154,14 @@ def main() -> int:
         failed = run_packet("--runtime-acceptance-json", str(failed_runtime_path), "--require-current-runtime-evidence")
         require(failed.returncode != 0, "failed runtime evidence must not verify promotion packet")
         require("runtime acceptance JSON did not pass" in (failed.stderr or failed.stdout), "failed runtime rejection reason missing")
+        plural_forbidden_path = Path(tmp) / "plural_forbidden_runtime_acceptance.json"
+        plural_forbidden = json.loads(runtime_path.read_text(encoding="utf-8"))
+        plural_forbidden["raw_prompts"] = ["must not be accepted"]
+        plural_forbidden["token_values"] = ["must not be accepted"]
+        plural_forbidden_path.write_text(json.dumps(plural_forbidden), encoding="utf-8")
+        plural_failed = run_packet("--runtime-acceptance-json", str(plural_forbidden_path), "--require-current-runtime-evidence")
+        require(plural_failed.returncode != 0, "plural forbidden runtime evidence must not verify promotion packet")
+        require("forbidden raw/token material" in (plural_failed.stderr or plural_failed.stdout), "plural forbidden rejection reason missing")
 
     print(json.dumps({
         "ok": True,
@@ -161,6 +169,7 @@ def main() -> int:
         "status": default_payload.get("status"),
         "runtime_fixture_verified": True,
         "failed_runtime_fixture_rejected": True,
+        "plural_forbidden_fixture_rejected": True,
         "strict_packet_still_blocked": True,
     }, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

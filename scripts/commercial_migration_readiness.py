@@ -280,8 +280,10 @@ def main() -> int:
             and file_contains("scripts/local_runtime_acceptance.py", "runtime_failure_evidence")
             and file_contains("scripts/local_runtime_acceptance.py", "run_readback")
             and (ROOT / "scripts" / "local_runtime_acceptance_failure_readback_smoke.py").exists()
+            and (ROOT / "scripts" / "local_runtime_acceptance_diagnostics.py").exists()
+            and (ROOT / "scripts" / "local_runtime_acceptance_diagnostics_smoke.py").exists()
             and (ROOT / "scripts" / "local_runtime_acceptance.py").exists(),
-            "Real Hermes/OpenClaw runtime acceptance requires Agent Plan-gated run start, verified plan-evidence, unique prepared actions, and consumed prepared actions",
+            "Real Hermes/OpenClaw runtime acceptance requires Agent Plan-gated run start, verified plan-evidence, unique prepared actions, consumed prepared actions, and CI-safe failed-run diagnostics",
         ),
         check(
             "entitlement_direction_recorded",

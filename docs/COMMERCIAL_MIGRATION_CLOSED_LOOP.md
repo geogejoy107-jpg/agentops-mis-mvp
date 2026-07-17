@@ -651,6 +651,9 @@ Must be true:
   JSON file without mutating receipt JSON or flipping handoff/merge. Failed live
   provider attempts keep structured `run_readback` / `runtime_failure_evidence`
   for diagnosis, but they do not satisfy promotion or release-grade evidence.
+  Build a CI-safe failure packet with
+  `python3 scripts/local_runtime_acceptance_diagnostics.py --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json`;
+  `--require-runtime-ready` must fail until both live runtimes pass.
   Verify with
   `python3 scripts/commercial_release_promotion_packet_smoke.py`; strict packet
   readiness uses
