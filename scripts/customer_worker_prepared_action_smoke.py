@@ -9,6 +9,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE_A = "ws_customer_worker_a"
+WORKSPACE_B = "ws_customer_worker_b"
 sys.path.insert(0, str(ROOT))
 
 import server  # noqa: E402
@@ -147,6 +149,7 @@ def fake_worker_result(conn, body: dict, calls: list[dict]) -> dict:
 
 def exercise_sync(conn, calls: list[dict], failures: list[str]) -> dict:
     path_body = {
+        "workspace_id": WORKSPACE_A,
         "adapter": "openclaw",
         "confirm_run": True,
         "title": "Prepared customer worker sync smoke",
@@ -160,6 +163,10 @@ def exercise_sync(conn, calls: list[dict], failures: list[str]) -> dict:
     require(prepare_status == 202, f"sync prepare should be 202: {prepare_status} {prepare}", failures)
     require(prepare.get("provider_call_performed") is False, f"sync prepare called provider: {prepare}", failures)
     require(calls == [], f"sync provider called before approval: {calls}", failures)
+    other_prepare, other_prepare_status = server.run_customer_worker_task_workflow(conn, {**path_body, "workspace_id": WORKSPACE_B})
+    require(other_prepare_status == 202, f"sync other-workspace prepare should be 202: {other_prepare_status} {other_prepare}", failures)
+    require(other_prepare.get("task_id") != prepare.get("task_id"), f"sync default task id was shared across workspaces: {prepare} {other_prepare}", failures)
+    require(other_prepare.get("prepared_action_id") != prepare.get("prepared_action_id"), f"sync prepared action id was shared across workspaces: {prepare} {other_prepare}", failures)
     premature, premature_status = server.run_customer_worker_task_workflow(conn, {**path_body, "prepared_action_id": prepare.get("prepared_action_id"), "request_hash": prepare.get("request_hash")})
     require(premature_status == 428 and premature.get("error") == "approval_required", f"sync premature should require approval: {premature_status} {premature}", failures)
     require(calls == [], "sync provider called during premature resume", failures)
@@ -168,6 +175,14 @@ def exercise_sync(conn, calls: list[dict], failures: list[str]) -> dict:
     mismatch, mismatch_status = server.run_customer_worker_task_workflow(conn, {**path_body, "title": "Changed title", "prepared_action_id": prepare.get("prepared_action_id"), "request_hash": prepare.get("request_hash")})
     require(mismatch_status == 409 and mismatch.get("error") == "prepared_action_request_hash_mismatch", f"sync mismatch should block: {mismatch_status} {mismatch}", failures)
     require(calls == [], "sync provider called during mismatch", failures)
+    cross_workspace, cross_workspace_status = server.run_customer_worker_task_workflow(conn, {
+        **path_body,
+        "workspace_id": WORKSPACE_B,
+        "prepared_action_id": prepare.get("prepared_action_id"),
+        "request_hash": prepare.get("request_hash"),
+    })
+    require(cross_workspace_status == 404 and cross_workspace.get("error") == "prepared_action_not_found", f"sync cross-workspace resume was not hidden: {cross_workspace_status} {cross_workspace}", failures)
+    require(calls == [], "sync provider called during cross-workspace resume", failures)
     resumed, resumed_status = server.run_customer_worker_task_workflow(conn, {**path_body, "prepared_action_id": prepare.get("prepared_action_id"), "request_hash": prepare.get("request_hash")})
     require(resumed_status == 201 and resumed.get("ok") is True, f"sync resume failed: {resumed_status} {resumed}", failures)
     require(resumed.get("prepared_action_status") == "consumed", f"sync action not consumed: {resumed}", failures)
@@ -175,11 +190,14 @@ def exercise_sync(conn, calls: list[dict], failures: list[str]) -> dict:
     replay, replay_status = server.run_customer_worker_task_workflow(conn, {**path_body, "prepared_action_id": prepare.get("prepared_action_id"), "request_hash": prepare.get("request_hash")})
     require(replay_status == 409 and replay.get("error") == "prepared_action_already_consumed", f"sync replay should block: {replay_status} {replay}", failures)
     require(len(calls) == 1, "sync provider called during replay", failures)
+    resumed["cross_workspace_resume_hidden"] = cross_workspace_status == 404
+    resumed["workspace_default_task_ids_isolated"] = other_prepare.get("task_id") != prepare.get("task_id")
     return resumed
 
 
 def exercise_async(conn, calls: list[dict], failures: list[str]) -> dict:
     body = {
+        "workspace_id": WORKSPACE_A,
         "adapter": "hermes",
         "confirm_run": True,
         "title": "Prepared customer worker async smoke",
@@ -244,13 +262,15 @@ def main() -> int:
                 async_result = exercise_async(conn, calls, failures)
                 prepared_count = conn.execute("SELECT COUNT(*) c FROM prepared_actions WHERE provider='agentops-worker'").fetchone()["c"]
                 consumed_count = conn.execute("SELECT COUNT(*) c FROM prepared_actions WHERE provider='agentops-worker' AND status='consumed'").fetchone()["c"]
-                require(prepared_count == 2 and consumed_count == 2, f"prepared actions not consumed: prepared={prepared_count} consumed={consumed_count}", failures)
+                require(prepared_count == 3 and consumed_count == 2, f"prepared actions not consumed: prepared={prepared_count} consumed={consumed_count}", failures)
             serialized = json.dumps({"sync": sync_result, "async": async_result}, ensure_ascii=False)
             require(not leaked_secret(serialized), "prepared customer worker payload leaked token-like material", failures)
             print(json.dumps({
                 "ok": not failures,
                 "failures": failures,
                 "provider_call_count": len(calls),
+                "cross_workspace_resume_hidden": sync_result.get("cross_workspace_resume_hidden") is True,
+                "workspace_default_task_ids_isolated": sync_result.get("workspace_default_task_ids_isolated") is True,
                 "sync_prepared_action": sync_result.get("prepared_action_id"),
                 "async_prepared_action": async_result.get("prepared_action_id"),
                 "sync_run_id": sync_result.get("run_id"),

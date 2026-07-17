@@ -37,7 +37,7 @@ REQUIRED_STRINGS = {
     "current_evidence_status",
     "gates_with_local_receipts",
     "gates_with_release_grade_receipts",
-    "local_receipts_complete_exact_head_required",
+    "local_receipts_incomplete_new_control_plane_requirement",
     "phase_gate_statuses",
     "python3 scripts/commercial_exact_head_ci_evidence_smoke.py",
     "python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head",
@@ -53,6 +53,8 @@ REQUIRED_STRINGS = {
     "python3 scripts/commercial_current_evidence_status_smoke.py",
     "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
     "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
+    "python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py",
+    "nextjs_postgres_control_plane_tasks_v1",
     "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
     "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api --openclaw-timeout 300 --hermes-timeout 600 --request-timeout 720",
     "--skip-postgres-if-unavailable",
@@ -216,7 +218,6 @@ EXPECTED_LOCAL_RECEIPT_GATES = [
     "gate_2_production_safety_baseline",
     "gate_3_storage_boundary_before_postgres",
     "gate_4_ui_api_parity_before_nextjs",
-    "gate_5_byoc_enterprise_deployment",
 ]
 
 
@@ -293,10 +294,10 @@ def main() -> int:
     evidence = payload.get("current_evidence_status") or {}
     require(evidence.get("contract") == "commercial_current_evidence_status_v1", "current evidence contract missing from handoff payload")
     require(evidence.get("status") == "current_evidence_required", "current evidence status mismatch")
-    require(set(evidence.get("gates_requiring_current_evidence") or []) == set(EXPECTED_LOCAL_RECEIPT_GATES), "current evidence gaps mismatch")
+    require(set(evidence.get("gates_requiring_current_evidence") or []) == set(EXPECTED_LOCAL_RECEIPT_GATES) | {"gate_5_byoc_enterprise_deployment"}, "current evidence gaps mismatch")
     require(evidence.get("gates_with_local_receipts") == EXPECTED_LOCAL_RECEIPT_GATES, "handoff local receipt summary mismatch")
     require(evidence.get("gates_with_release_grade_receipts") == [], "handoff release-grade receipt summary mismatch")
-    require(evidence.get("gates_missing_local_receipts") == [], "handoff local receipt gaps should be empty")
+    require(evidence.get("gates_missing_local_receipts") == ["gate_5_byoc_enterprise_deployment"], "handoff Gate 5 receipt gap missing")
     require(evidence.get("exact_head_ci_verified") is False, "handoff exact-head CI should remain blocked for the current HEAD")
     require(evidence.get("remote_sync_verified") is True, "handoff remote sync should be verified")
     require(evidence.get("clean_worktree_verified") is False, "handoff clean worktree must remain false")

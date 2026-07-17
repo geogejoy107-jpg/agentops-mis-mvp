@@ -12,8 +12,23 @@ npm install
 AGENTOPS_API_BASE=http://127.0.0.1:8765/api npm run dev
 ```
 
-The Next.js API route `/api/mis/*` proxies to the current MIS API provider. The
-default provider is `http://127.0.0.1:8765/api`.
+Most Next.js `/api/mis/*` routes still proxy to the current MIS API provider;
+the default provider is `http://127.0.0.1:8765/api`. The first backend migration
+slice owns exact routes `/api/mis/agent-gateway/tasks`,
+`/api/mis/agent-gateway/runs/start`, and
+`/api/mis/agent-gateway/runs/[runId]/heartbeat` plus Agent Plan,
+plan-evidence-manifest, tool-call, evaluation, and artifact evidence routes:
+local development defaults to proxy mode,
+while `AGENTOPS_DEPLOYMENT_MODE=production` defaults those routes to the
+TypeScript Postgres control plane and fails closed when
+`AGENTOPS_POSTGRES_DSN` is absent. `AGENTOPS_TS_CONTROL_PLANE_MODE=proxy` is the
+explicit rollback switch during the migration window.
+
+```bash
+AGENTOPS_DEPLOYMENT_MODE=production \
+AGENTOPS_POSTGRES_DSN=postgresql://... \
+npm run dev
+```
 
 ## Verify
 
@@ -21,6 +36,7 @@ default provider is `http://127.0.0.1:8765/api`.
 python3 scripts/nextjs_parity_smoke.py
 cd ui/next-app && npm run build
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
+python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_pixel_office_floor_smoke.py
@@ -69,9 +85,36 @@ memory review actions through the Next.js UI, verifies the state change through
 - App Router route: `/workspace/reports`
 - App Router route: `/workspace/customer-projects/[projectId]/report`
 - Runtime API proxy: `/api/mis/[...path]`
-- Agent Gateway task proxy contract: scoped `POST /api/mis/agent-gateway/tasks`
-  preserves no-token, missing-scope, workspace, and agent-binding failures
-  before allowing task creation through the configured MIS provider
+- Agent Gateway task migration contract: scoped
+  `GET|POST /api/mis/agent-gateway/tasks` preserves no-token, missing-scope,
+  workspace, agent-binding, and short-session behavior. Production defaults to
+  a TypeScript-owned Postgres transaction that writes task, runtime event, and
+  compatible tamper-chain audit evidence without starting the Python API; local
+  proxy mode remains the bounded rollback path. The legacy Python run-start
+  rollback does not enforce the TypeScript non-mock verified-plan gate and is
+  not equivalent commercial security evidence.
+- Agent Gateway run-start migration contract: scoped
+  `POST /api/mis/agent-gateway/runs/start` authenticates before workspace-scoped
+  task lookup, prevents run-id rebinding, makes repeated/concurrent starts
+  idempotent with one run/runtime/audit winner, redacts summaries before
+  persistence, and audits the linked task transition to `running`.
+- Agent Gateway run-heartbeat migration contract: scoped
+  `POST /api/mis/agent-gateway/runs/[runId]/heartbeat` authenticates before
+  workspace-scoped lookup, takes task-before-run locks, redacts persisted output,
+  suppresses duplicate runtime/audit evidence for identical heartbeats, gives
+  conflicting terminal heartbeats one winner, syncs terminal task/agent state,
+  and rejects terminal revival.
+- Agent Gateway execution-evidence migration contract: scoped tool-call,
+  evaluation-submit, and artifact routes bind evidence to the authenticated
+  workspace/run/agent, redact structured and summary data, serialize same-ID
+  writes, reject evidence rewrites and tool terminal resets, and force risky
+  tool calls plus their run/task into audited `waiting_approval` state.
+- Agent Plan and closure migration contract: scoped agent-plan and
+  plan-evidence-manifest routes authenticate before scoped lookups, serialize
+  same-ID writes, keep submitted plans and manifest bindings immutable, reserve
+  approval status for human control-plane decisions, require a verified plan for
+  non-mock run start, and persist verified or blocked manifest outcomes with
+  compatible runtime/audit evidence.
 - Agent Gateway CLI worker dogfood contract: a scoped task created through
   Next `/api/mis/agent-gateway/tasks` is claimed and completed by the worker
   CLI entrypoint, then run/tool/evaluation/plan-evidence proof is read back

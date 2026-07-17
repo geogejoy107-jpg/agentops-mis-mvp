@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import datetime as dt
@@ -23,6 +24,229 @@ def ids(rows, key: str) -> set[str]:
     return {str(row[key]) for row in rows if row[key]}
 
 
+def verify_legacy_prepared_action_status_migration(server) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.executescript(
+            """PRAGMA foreign_keys=ON;
+            CREATE TABLE tasks(task_id TEXT PRIMARY KEY);
+            CREATE TABLE runs(run_id TEXT PRIMARY KEY);
+            CREATE TABLE tool_calls(tool_call_id TEXT PRIMARY KEY);
+            CREATE TABLE approvals(approval_id TEXT PRIMARY KEY);
+            CREATE TABLE agents(agent_id TEXT PRIMARY KEY);
+            INSERT INTO tasks VALUES('tsk_legacy_upgrade');
+            INSERT INTO runs VALUES('run_legacy_upgrade');
+            INSERT INTO tool_calls VALUES('tc_legacy_upgrade');
+            INSERT INTO approvals VALUES('ap_legacy_upgrade');
+            INSERT INTO agents VALUES('agt_legacy_upgrade');
+            CREATE TABLE prepared_actions (
+            prepared_action_id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+            task_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            tool_call_id TEXT NOT NULL,
+            approval_id TEXT,
+            requested_by_agent_id TEXT,
+            action_type TEXT NOT NULL,
+            provider TEXT,
+            target_resource TEXT,
+            normalized_args_json TEXT NOT NULL DEFAULT '{}',
+            args_hash TEXT NOT NULL,
+            snapshot_ref TEXT,
+            snapshot_hash TEXT,
+            status TEXT NOT NULL CHECK(status IN ('prepared','waiting_approval','approved','rejected','consumed','expired','canceled')),
+            result_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            approved_at TEXT,
+            consumed_at TEXT,
+            FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+            FOREIGN KEY(run_id) REFERENCES runs(run_id),
+            FOREIGN KEY(tool_call_id) REFERENCES tool_calls(tool_call_id),
+            FOREIGN KEY(approval_id) REFERENCES approvals(approval_id),
+            FOREIGN KEY(requested_by_agent_id) REFERENCES agents(agent_id)
+            );
+            INSERT INTO prepared_actions(
+                prepared_action_id,workspace_id,task_id,run_id,tool_call_id,approval_id,requested_by_agent_id,
+                action_type,provider,target_resource,normalized_args_json,args_hash,snapshot_ref,snapshot_hash,status,
+                result_json,created_at,updated_at,approved_at,consumed_at
+            ) VALUES(
+                'pact_legacy_upgrade','ws_legacy_upgrade','tsk_legacy_upgrade','run_legacy_upgrade','tc_legacy_upgrade',
+                'ap_legacy_upgrade','agt_legacy_upgrade','runtime.legacy_upgrade','legacy',NULL,'{}','legacy_hash',
+                NULL,NULL,'approved','{}','2026-01-01T00:00:00+00:00','2026-01-01T00:00:00+00:00',
+                '2026-01-01T00:00:00+00:00',NULL
+            );"""
+        )
+        require(server.ensure_sqlite_prepared_action_lifecycle_schema(conn), "legacy prepared-action schema was not migrated")
+        migrated_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='prepared_actions'",
+        ).fetchone()["sql"]
+        require("'executing'" in migrated_sql and "'failed'" in migrated_sql, "prepared-action lifecycle CHECK was not widened")
+        conn.execute("UPDATE prepared_actions SET status='executing' WHERE prepared_action_id='pact_legacy_upgrade'")
+        conn.execute("UPDATE prepared_actions SET status='failed' WHERE prepared_action_id='pact_legacy_upgrade'")
+        row = conn.execute(
+            "SELECT workspace_id,status,args_hash,approved_at FROM prepared_actions WHERE prepared_action_id='pact_legacy_upgrade'",
+        ).fetchone()
+        require(
+            row
+            and row["workspace_id"] == "ws_legacy_upgrade"
+            and row["status"] == "failed"
+            and row["args_hash"] == "legacy_hash"
+            and row["approved_at"] == "2026-01-01T00:00:00+00:00",
+            "legacy prepared-action row was not preserved across schema migration",
+        )
+    finally:
+        conn.close()
+
+
+def seed_legacy_prepared_action_database(server, path: Path, *, duplicate_approval: bool) -> None:
+    legacy_schema = server.SCHEMA_SQL.replace(
+        "CHECK(status IN ('prepared','waiting_approval','approved','executing','rejected','consumed','failed','expired','canceled'))",
+        "CHECK(status IN ('prepared','waiting_approval','approved','rejected','consumed','expired','canceled'))",
+    ).replace(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_prepared_actions_approval_unique ON prepared_actions(approval_id);\n",
+        "",
+    )
+    original_db_path = server.DB_PATH
+    server.DB_PATH = path
+    try:
+        with server.db() as conn:
+            conn.executescript(legacy_schema)
+            server.ensure_default_user(conn, "usr_founder")
+            server.ensure_gateway_agent(conn, "agt_legacy_init", runtime_type="mock")
+            now = "2026-01-01T00:00:00+00:00"
+            server.repo_upsert_task(conn, {
+                "task_id": "tsk_legacy_init",
+                "workspace_id": "ws_legacy_init",
+                "title": "Legacy init migration",
+                "description": "Legacy prepared-action schema fixture.",
+                "requester_id": "usr_founder",
+                "owner_agent_id": "agt_legacy_init",
+                "collaborator_agent_ids": "[]",
+                "status": "waiting_approval",
+                "priority": "high",
+                "due_date": None,
+                "acceptance_criteria": "Upgrade without losing the prepared action.",
+                "risk_level": "high",
+                "budget_limit_usd": 1.0,
+                "created_at": now,
+                "updated_at": now,
+            })
+            server.repo_upsert_run(conn, {
+                "run_id": "run_legacy_init",
+                "workspace_id": "ws_legacy_init",
+                "task_id": "tsk_legacy_init",
+                "agent_id": "agt_legacy_init",
+                "runtime_type": "mock",
+                "status": "waiting_approval",
+                "started_at": now,
+                "ended_at": None,
+                "duration_ms": None,
+                "input_summary": "Legacy migration fixture.",
+                "output_summary": None,
+                "model_provider": "legacy",
+                "model_name": "legacy",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "reasoning_tokens": 0,
+                "cost_usd": 0.0,
+                "error_type": None,
+                "error_message": None,
+                "trace_id": None,
+                "parent_run_id": None,
+                "delegation_id": None,
+                "approval_required": 1,
+                "created_at": now,
+            })
+            server.repo_upsert_tool_call(conn, {
+                "tool_call_id": "tc_legacy_init",
+                "run_id": "run_legacy_init",
+                "agent_id": "agt_legacy_init",
+                "tool_name": "legacy.external_write",
+                "tool_version": "v1",
+                "tool_category": "custom",
+                "normalized_args_json": "{}",
+                "target_resource": "legacy://migration",
+                "risk_level": "high",
+                "status": "waiting_approval",
+                "result_summary": "Legacy migration fixture.",
+                "side_effect_id": None,
+                "started_at": now,
+                "ended_at": None,
+                "created_at": now,
+            })
+            server.repo_upsert_approval(conn, {
+                "approval_id": "ap_legacy_init",
+                "task_id": "tsk_legacy_init",
+                "run_id": "run_legacy_init",
+                "tool_call_id": "tc_legacy_init",
+                "requested_by_agent_id": "agt_legacy_init",
+                "approver_user_id": "usr_founder",
+                "decision": "pending",
+                "reason": "Legacy migration fixture.",
+                "expires_at": None,
+                "created_at": now,
+                "decided_at": None,
+            })
+            action_ids = ["pact_legacy_init_a", "pact_legacy_init_b"] if duplicate_approval else ["pact_legacy_init_a"]
+            for action_id in action_ids:
+                conn.execute(
+                    """INSERT INTO prepared_actions(
+                    prepared_action_id,workspace_id,task_id,run_id,tool_call_id,approval_id,requested_by_agent_id,
+                    action_type,provider,target_resource,normalized_args_json,args_hash,snapshot_ref,snapshot_hash,status,
+                    result_json,created_at,updated_at,approved_at,consumed_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        action_id, "ws_legacy_init", "tsk_legacy_init", "run_legacy_init", "tc_legacy_init",
+                        "ap_legacy_init", "agt_legacy_init", "legacy.external_write", "legacy", "legacy://migration",
+                        "{}", server.prepared_action_args_hash("{}"), None, "legacy_snapshot", "waiting_approval",
+                        "{}", now, now, None, None,
+                    ),
+                )
+            conn.commit()
+    finally:
+        server.DB_PATH = original_db_path
+
+
+def verify_init_schema_legacy_upgrade_and_duplicate_fail_closed(server) -> None:
+    original_db_path = server.DB_PATH
+    with tempfile.TemporaryDirectory(prefix="agentops-sqlite-legacy-init-") as tmp:
+        upgraded_path = Path(tmp) / "upgraded.sqlite"
+        duplicate_path = Path(tmp) / "duplicate.sqlite"
+        seed_legacy_prepared_action_database(server, upgraded_path, duplicate_approval=False)
+        seed_legacy_prepared_action_database(server, duplicate_path, duplicate_approval=True)
+        try:
+            server.DB_PATH = upgraded_path
+            server.init_schema()
+            with server.db() as conn:
+                table_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='prepared_actions'").fetchone()["sql"]
+                unique_index = conn.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_prepared_actions_approval_unique'").fetchone()
+                preserved = conn.execute("SELECT status FROM prepared_actions WHERE prepared_action_id='pact_legacy_init_a'").fetchone()
+                require("'executing'" in table_sql and "'failed'" in table_sql, "init_schema did not widen legacy prepared-action CHECK")
+                require(bool(unique_index), "init_schema did not create approval unique index after migration")
+                require(preserved and preserved["status"] == "waiting_approval", "init_schema did not preserve legacy prepared action")
+
+            server.DB_PATH = duplicate_path
+            try:
+                server.init_schema()
+            except RuntimeError as exc:
+                duplicate_error = str(exc)
+            else:
+                duplicate_error = ""
+            require(
+                duplicate_error.startswith("prepared_action_approval_binding_duplicates_detected:groups=1:fingerprint="),
+                f"legacy duplicate approval binding did not fail closed deterministically: {duplicate_error}",
+            )
+            with sqlite3.connect(duplicate_path) as conn:
+                duplicate_count = conn.execute("SELECT COUNT(*) FROM prepared_actions WHERE approval_id='ap_legacy_init'").fetchone()[0]
+                unique_index = conn.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_prepared_actions_approval_unique'").fetchone()
+                require(duplicate_count == 2, "duplicate fail-closed path lost historical prepared actions")
+                require(not unique_index, "duplicate fail-closed path created an invalid unique index")
+        finally:
+            server.DB_PATH = original_db_path
+
+
 def main() -> int:
     owned_db = "AGENTOPS_DB_PATH" not in os.environ
     db_path = ""
@@ -33,6 +257,17 @@ def main() -> int:
         os.environ["AGENTOPS_DB_PATH"] = db_path
 
     import server  # noqa: PLC0415
+
+    verify_legacy_prepared_action_status_migration(server)
+    verify_init_schema_legacy_upgrade_and_duplicate_fail_closed(server)
+    require(
+        server.workspace_compatible_default_id("local-demo", "tsk_legacy_default", "tsk_scoped", "operation") == "tsk_legacy_default",
+        "local-demo default task id migration compatibility was not preserved",
+    )
+    require(
+        server.workspace_compatible_default_id("ws_scoped", "tsk_legacy_default", "tsk_scoped", "operation") != "tsk_legacy_default",
+        "non-default workspace task id was not workspace scoped",
+    )
 
     workspace_a = "ws_storage_a"
     workspace_b = "ws_storage_b"
@@ -45,6 +280,7 @@ def main() -> int:
     write_tool_call = "tc_storage_write"
     write_prepared_tool_b = "tc_storage_prepared_b"
     write_prepared_action = "pact_storage_write"
+    write_prepared_action_approval_conflict = "pact_storage_approval_conflict"
     write_prepared_action_b = "pact_storage_b"
     write_runtime_event = "rte_storage_write"
     write_audit = "aud_storage_write"
@@ -509,6 +745,18 @@ def main() -> int:
             }
             before_prepared_action, prepared_action_outcome = server.repo_upsert_prepared_action(conn, dict(write_prepared_action_row))
             require(before_prepared_action is None and prepared_action_outcome == "created", f"prepared action write helper create failed: {prepared_action_outcome}")
+            approval_conflict_row = dict(write_prepared_action_row)
+            approval_conflict_row["prepared_action_id"] = write_prepared_action_approval_conflict
+            try:
+                server.repo_upsert_prepared_action(conn, approval_conflict_row)
+            except server.PreparedActionImmutableConflict as exc:
+                approval_conflict_outcome = str(exc)
+            else:
+                approval_conflict_outcome = "created"
+            require(
+                approval_conflict_outcome == "prepared_action_approval_binding_conflict",
+                f"prepared action approval reuse was not rejected: {approval_conflict_outcome}",
+            )
             prepared_action_created = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (write_prepared_action,)).fetchone()
             require(
                 prepared_action_created
@@ -517,8 +765,14 @@ def main() -> int:
             )
             write_prepared_action_row["snapshot_hash"] = "snapshot_hash_storage_a_updated"
             write_prepared_action_row["updated_at"] = server.now_iso()
-            before_prepared_action, prepared_action_outcome = server.repo_upsert_prepared_action(conn, dict(write_prepared_action_row))
-            require(before_prepared_action and prepared_action_outcome == "updated", f"prepared action write helper update failed: {prepared_action_outcome}")
+            try:
+                server.repo_upsert_prepared_action(conn, dict(write_prepared_action_row))
+            except server.PreparedActionImmutableConflict as exc:
+                prepared_action_outcome = str(exc)
+            require(
+                prepared_action_outcome == "prepared_action_immutable_binding_conflict",
+                f"prepared action immutable binding update was not rejected: {prepared_action_outcome}",
+            )
             _before_prepared_approved, after_prepared_approved, prepared_approved_outcome = server.repo_update_prepared_action_status(conn, write_prepared_action, "approved")
             require(
                 after_prepared_approved
@@ -565,6 +819,80 @@ def main() -> int:
             })
             before_prepared_action_b, prepared_action_b_outcome = server.repo_upsert_prepared_action(conn, dict(prepared_action_b_row))
             require(before_prepared_action_b is None and prepared_action_b_outcome == "created", f"prepared action B helper create failed: {prepared_action_b_outcome}")
+            approval_b_id = approval_b["approval"]["approval_id"]
+            _approval_b_before, approval_b_after, approval_b_outcome = server.repo_update_approval_decision(
+                conn,
+                approval_b_id,
+                "approved",
+                "Storage boundary stale execution recovery approval.",
+            )
+            require(
+                approval_b_after and approval_b_after["decision"] == "approved" and approval_b_outcome == "updated",
+                f"prepared action B approval failed: {approval_b_outcome}",
+            )
+            _prepared_b_before, prepared_b_after, prepared_b_approved_outcome = server.repo_update_prepared_action_status(
+                conn,
+                write_prepared_action_b,
+                "approved",
+                approval_id=approval_b_id,
+            )
+            require(
+                prepared_b_after and prepared_b_after["status"] == "approved" and prepared_b_approved_outcome == "updated",
+                f"prepared action B approve failed: {prepared_b_approved_outcome}",
+            )
+            _prepared_b_before, prepared_b_after, prepared_b_executing_outcome = server.repo_update_prepared_action_status(
+                conn,
+                write_prepared_action_b,
+                "executing",
+                approval_id=approval_b_id,
+            )
+            require(
+                prepared_b_after and prepared_b_after["status"] == "executing" and prepared_b_executing_outcome == "updated",
+                f"prepared action B executing transition failed: {prepared_b_executing_outcome}",
+            )
+            conn.execute(
+                "UPDATE prepared_actions SET updated_at=? WHERE prepared_action_id=?",
+                ((dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)).isoformat(), write_prepared_action_b),
+            )
+            stale_action = server.repo_get_workspace_prepared_action(conn, workspace_b, write_prepared_action_b)
+            require(server.prepared_action_execution_stale(stale_action), "prepared action B was not recognized as stale")
+            read_side_rows = server.repo_list_workspace_prepared_actions(conn, workspace_b)
+            stale_failed = next((row for row in read_side_rows if row["prepared_action_id"] == write_prepared_action_b), None)
+            stale_result = json.loads(stale_failed["result_json"] or "{}") if stale_failed else {}
+            require(
+                stale_failed
+                and stale_failed["status"] == "failed"
+                and stale_result.get("outcome") == "unknown"
+                and stale_result.get("terminal") is True
+                and stale_result.get("automatic_retry_performed") is False,
+                f"read-side stale executing prepared action did not fail closed: {stale_result}",
+            )
+            stale_tool = conn.execute("SELECT status FROM tool_calls WHERE tool_call_id=?", (write_prepared_tool_b,)).fetchone()
+            require(stale_tool and stale_tool["status"] == "waiting_approval", "read-side stale reconciliation mutated provider tool state")
+
+            startup_action_id = "pact_storage_startup_stale"
+            startup_action_row = dict(prepared_action_b_row)
+            startup_action_row.update({
+                "prepared_action_id": startup_action_id,
+                "approval_id": None,
+                "status": "executing",
+                "result_json": "{}",
+                "updated_at": (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)).isoformat(),
+            })
+            before_startup_action, startup_action_outcome = server.repo_upsert_prepared_action(conn, startup_action_row)
+            require(before_startup_action is None and startup_action_outcome == "created", f"startup stale action create failed: {startup_action_outcome}")
+            conn.commit()
+            startup_lifecycle = server.run_prepared_action_startup_lifecycle()
+            startup_failed = server.repo_get_workspace_prepared_action(conn, workspace_b, startup_action_id)
+            startup_result = json.loads(startup_failed["result_json"] or "{}") if startup_failed else {}
+            require(
+                startup_lifecycle.get("stale_executing_reconciled") == 1
+                and startup_failed
+                and startup_failed["status"] == "failed"
+                and startup_result.get("outcome") == "unknown"
+                and startup_result.get("automatic_retry_performed") is False,
+                f"startup stale executing reconciliation failed: {startup_lifecycle} {startup_result}",
+            )
             prepared_action_ids = ids(server.repo_list_workspace_prepared_actions(conn, workspace_a), "prepared_action_id")
             require(write_prepared_action in prepared_action_ids and write_prepared_action_b not in prepared_action_ids, f"prepared action helper leaked workspace rows: {prepared_action_ids}")
             consumed_prepared_action_ids = ids(server.repo_list_workspace_prepared_actions(conn, workspace_a, statuses=["consumed"]), "prepared_action_id")
@@ -815,6 +1143,7 @@ def main() -> int:
                 "repo_update_approval_decision",
                 "repo_upsert_prepared_action",
                 "repo_update_prepared_action_status",
+                "claim_prepared_action_execution",
                 "repo_list_workspace_prepared_actions",
                 "repo_get_workspace_prepared_action",
                 "repo_upsert_evaluation",
@@ -832,6 +1161,12 @@ def main() -> int:
             "write_run": write_run,
             "write_tool_call": write_tool_call,
             "write_prepared_action": write_prepared_action,
+            "prepared_action_approval_binding_unique": True,
+            "legacy_prepared_action_lifecycle_migrated": True,
+            "legacy_duplicate_approval_fail_closed_preserved": True,
+            "workspace_default_id_migration_compatible": True,
+            "stale_executing_failed_unknown_outcome": True,
+            "stale_startup_and_read_reconciled": True,
             "write_runtime_event": write_runtime_event,
             "write_audit": write_audit,
             "write_agent_plan": write_plan,

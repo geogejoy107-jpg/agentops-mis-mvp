@@ -23,11 +23,16 @@ import uuid
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 
 ROOT = Path(__file__).resolve().parents[1]
-AGENTOPS = ROOT / "scripts" / "agentops"
+DIRECT_OPENER = build_opener(ProxyHandler({}))
+CLI_BOOTSTRAP = (
+    "import runpy,sys;"
+    "sys.path.insert(0,sys.argv.pop(1));"
+    "runpy.run_module('agentops_mis_cli',run_name='__main__',alter_sys=True)"
+)
 
 
 def stamp() -> str:
@@ -51,7 +56,7 @@ def request_json(method: str, base_url: str, path: str, payload=None, query=None
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
     req = Request(url, data=data, method=method, headers={"Content-Type": "application/json"})
     try:
-        with urlopen(req, timeout=timeout) as res:
+        with DIRECT_OPENER.open(req, timeout=timeout) as res:
             raw = res.read().decode("utf-8")
             return json.loads(raw) if raw else {}
     except HTTPError as exc:
@@ -100,15 +105,7 @@ def prepared_runtime_attempted(payload: dict) -> bool:
 
 
 def prepared_runtime_prepare_payload(path: str, openclaw_timeout: int | None = None, hermes_timeout: int | None = None) -> dict:
-    prefix = path.strip("/").replace("/", "_").replace("-", "_") or "runtime_probe"
-    run_stamp = stamp()
-    payload = {
-        "confirm_run": True,
-        "task_id": f"tsk_{prefix}_{run_stamp}",
-        "run_id": f"run_{prefix}_{run_stamp}",
-        "tool_call_id": f"tc_{prefix}_{run_stamp}",
-        "approval_id": f"ap_{prefix}_{run_stamp}",
-    }
+    payload = {"confirm_run": True}
     if "openclaw" in path and openclaw_timeout is not None:
         payload["openclaw_timeout"] = int(openclaw_timeout)
     if "hermes" in path and hermes_timeout is not None:
@@ -218,7 +215,14 @@ def with_prepared_runtime_readback(base_url: str, payload: dict, require_complet
 
 
 def run_cli(args: list[str], env: dict) -> dict:
-    proc = subprocess.run([str(AGENTOPS), *args], cwd=ROOT, env=env, text=True, capture_output=True, timeout=60)
+    proc = subprocess.run(
+        [sys.executable, "-I", "-B", "-S", "-c", CLI_BOOTSTRAP, str(ROOT), *args],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
     if proc.returncode != 0:
         raise RuntimeError(f"agentops {' '.join(args)} failed: {proc.stderr.strip() or proc.stdout.strip()}")
     return json.loads(proc.stdout)
@@ -262,7 +266,7 @@ def request_absolute_json(method: str, url: str, payload=None):
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
     req = Request(url, data=data, method=method, headers={"Content-Type": "application/json"})
     try:
-        with urlopen(req, timeout=60) as res:
+        with DIRECT_OPENER.open(req, timeout=60) as res:
             raw = res.read().decode("utf-8")
             return json.loads(raw) if raw else {}
     except HTTPError as exc:

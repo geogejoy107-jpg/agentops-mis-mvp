@@ -8,8 +8,10 @@ This is a hash/ref-only receipt ledger for commercial migration evidence. It
 records local isolated evidence that has been run, but it does not execute those
 commands and does not claim release completion. Local receipts are useful for
 handoff triage; release-grade evidence still requires a clean worktree and all
-phase gates current. Gates 1-5 now have local receipt state
-`local_receipts_complete_exact_head_required`.
+phase gates current. Gates 1-4 retain local receipt state
+`local_receipts_complete_exact_head_required`; Gate 5 is deliberately marked
+`local_receipts_incomplete_new_control_plane_requirement` until an exact-head
+receipt includes the TypeScript/Postgres control-plane smoke.
 
 PR #22 records latest exact-head CI and real-runtime promotion evidence for head
 `1195c9b`: GitHub Actions run `28107647712` passed `Commercial core gates`,
@@ -76,6 +78,7 @@ python3 scripts/storage_postgres_http_read_parity_smoke.py
 python3 scripts/storage_postgres_cli_read_parity_smoke.py
 python3 scripts/storage_postgres_write_helper_parity_smoke.py
 python3 scripts/storage_postgres_http_write_task_smoke.py
+python3 scripts/storage_postgres_gateway_lifecycle_smoke.py
 python3 scripts/storage_postgres_cli_write_parity_smoke.py
 ```
 
@@ -91,7 +94,14 @@ cd ui/start-building-app && npm run build
 cd ui/next-app && npm run build
 ```
 
-Gate 5 `gate_5_byoc_enterprise_deployment` has local receipts for:
+Gate 5 `gate_5_byoc_enterprise_deployment` has stale local receipts for the
+commands below, but remains incomplete because it is missing:
+
+```bash
+python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py
+```
+
+The prior local receipts are:
 
 ```bash
 python3 scripts/audit_retention_policy_smoke.py --isolated-fixture

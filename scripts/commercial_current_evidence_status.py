@@ -126,10 +126,18 @@ def build_payload() -> dict[str, Any]:
 
     source_packets = source_payloads()
     receipt_summary = receipts.get("receipt_summary") or {}
+    source_integrity_verified = bool(
+        receipt_summary.get("clean_worktree_verified") is True
+        or (
+            receipt_summary.get("clean_worktree_verified") is False
+            and receipt_summary.get("clean_source_head_verified") is True
+            and receipt_summary.get("canonical_receipt_transaction_dirty") is True
+        )
+    )
     release_grade_invariants_ready = (
         receipt_summary.get("exact_head_ci_verified") is True
         and receipt_summary.get("remote_sync_verified") is True
-        and receipt_summary.get("clean_worktree_verified") is True
+        and source_integrity_verified
     )
     current_head = git_output("rev-parse", "--short", "HEAD")
     receipt_map = {
@@ -230,6 +238,8 @@ def build_payload() -> dict[str, Any]:
         "exact_head_ci_verified": (receipts.get("receipt_summary") or {}).get("exact_head_ci_verified"),
         "remote_sync_verified": (receipts.get("receipt_summary") or {}).get("remote_sync_verified"),
         "clean_worktree_verified": (receipts.get("receipt_summary") or {}).get("clean_worktree_verified"),
+        "clean_source_head_verified": (receipts.get("receipt_summary") or {}).get("clean_source_head_verified"),
+        "canonical_receipt_transaction_dirty": (receipts.get("receipt_summary") or {}).get("canonical_receipt_transaction_dirty"),
     }
 
     payload = {
@@ -265,6 +275,8 @@ def build_payload() -> dict[str, Any]:
         "exact_head_ci_verified",
         "remote_sync_verified",
         "clean_worktree_verified",
+        "clean_source_head_verified",
+        "canonical_receipt_transaction_dirty",
     ]:
         require(static_summary.get(key) == summary.get(key), f"static evidence summary mismatch for {key}")
     static_gates = {

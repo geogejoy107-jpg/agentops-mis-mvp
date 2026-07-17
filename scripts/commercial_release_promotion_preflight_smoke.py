@@ -66,11 +66,13 @@ REQUIRED_SCRIPT_STRINGS = {
     "--require-promotion-ready",
 }
 
-REQUIRED_LOCAL_RECEIPT_GATES = [
+CURRENT_LOCAL_RECEIPT_GATES = [
     "gate_1_product_packaging_and_entitlement",
     "gate_2_production_safety_baseline",
     "gate_3_storage_boundary_before_postgres",
     "gate_4_ui_api_parity_before_nextjs",
+]
+MISSING_LOCAL_RECEIPT_GATES = [
     "gate_5_byoc_enterprise_deployment",
 ]
 
@@ -159,8 +161,10 @@ def main() -> int:
     else:
         require("worktree_not_clean" in set(payload.get("blockers") or []), "dirty local worktree blocker missing")
     receipt_state = payload.get("receipt_state") or {}
-    require(receipt_state.get("all_local_receipts_complete") is True, "local receipts should now be complete")
-    require(receipt_state.get("gates_with_local_receipts") == REQUIRED_LOCAL_RECEIPT_GATES, "local receipt gate summary mismatch")
+    require(receipt_state.get("all_local_receipts_complete") is False, "stale Gate 5 receipt was accepted as complete")
+    require("local_receipts_incomplete" in set(payload.get("blockers") or []), "local receipt blocker missing")
+    require(receipt_state.get("gates_with_local_receipts") == CURRENT_LOCAL_RECEIPT_GATES, "local receipt gate summary mismatch")
+    require(receipt_state.get("gates_missing_local_receipts") == MISSING_LOCAL_RECEIPT_GATES, "missing local receipt gate summary mismatch")
     require(receipt_state.get("gates_with_release_grade_receipts") == [], "release-grade receipt gate summary mismatch")
 
     if args.require_promotion_ready:

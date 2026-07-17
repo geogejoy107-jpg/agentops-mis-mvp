@@ -120,11 +120,13 @@ def exercise_prepared_probe(
     call_count,
     failures: list[str],
 ) -> dict:
-    dry, dry_status = http_json("POST", base_url, path, {"confirm_run": False})
+    workspace_a = f"ws_agnes_{label}_a"
+    workspace_b = f"ws_agnes_{label}_b"
+    dry, dry_status = http_json("POST", base_url, path, {"workspace_id": workspace_a, "confirm_run": False})
     require(dry_status == 201 and dry.get("dry_run") is True, f"{label} dry run should remain preview-only: {dry_status} {dry}", failures)
     require(call_count() == 0, f"{label} provider called during dry-run", failures)
 
-    prepare, prepare_status = http_json("POST", base_url, path, {"confirm_run": True})
+    prepare, prepare_status = http_json("POST", base_url, path, {"workspace_id": workspace_a, "confirm_run": True})
     require(prepare_status == 202, f"{label} prepare should be 202: {prepare_status} {prepare}", failures)
     prepared_action_id = prepare.get("prepared_action_id")
     approval_id = prepare.get("approval_id")
@@ -134,7 +136,13 @@ def exercise_prepared_probe(
     require(prepare.get("raw_prompt_omitted") is True, f"{label} prepare did not omit raw prompt: {prepare}", failures)
     require(call_count() == 0, f"{label} provider called before approval", failures)
 
+    other_prepare, other_prepare_status = http_json("POST", base_url, path, {"workspace_id": workspace_b, "confirm_run": True})
+    require(other_prepare_status == 202, f"{label} other-workspace prepare should be 202: {other_prepare_status} {other_prepare}", failures)
+    require(other_prepare.get("task_id") != prepare.get("task_id"), f"{label} default task id was shared across workspaces: {prepare} {other_prepare}", failures)
+    require(other_prepare.get("prepared_action_id") != prepared_action_id, f"{label} prepared action id was shared across workspaces: {prepare} {other_prepare}", failures)
+
     premature, premature_status = http_json("POST", base_url, path, {
+        "workspace_id": workspace_a,
         "confirm_run": True,
         "prepared_action_id": prepared_action_id,
         "prompt_hash": prompt_hash,
@@ -142,11 +150,12 @@ def exercise_prepared_probe(
     require(premature_status == 428 and premature.get("error") == "approval_required", f"{label} premature resume should require approval: {premature_status} {premature}", failures)
     require(call_count() == 0, f"{label} provider called during premature resume", failures)
 
-    approved, approved_status = http_json("POST", base_url, f"/api/approvals/{approval_id}/approve", {})
+    approved, approved_status = http_json("POST", base_url, f"/api/approvals/{approval_id}/approve", {"workspace_id": workspace_a})
     require(approved_status == 200 and approved.get("decision") == "approved", f"{label} approval failed: {approved_status} {approved}", failures)
     require(call_count() == 0, f"{label} provider called during approval", failures)
 
     mismatch, mismatch_status = http_json("POST", base_url, path, {
+        "workspace_id": workspace_a,
         "confirm_run": True,
         "prepared_action_id": prepared_action_id,
         "prompt_hash": "bad-prompt-hash",
@@ -154,7 +163,17 @@ def exercise_prepared_probe(
     require(mismatch_status == 409 and mismatch.get("error") == "prepared_action_prompt_hash_mismatch", f"{label} mismatch should be blocked: {mismatch_status} {mismatch}", failures)
     require(call_count() == 0, f"{label} provider called during hash mismatch", failures)
 
+    cross_workspace, cross_workspace_status = http_json("POST", base_url, path, {
+        "workspace_id": workspace_b,
+        "confirm_run": True,
+        "prepared_action_id": prepared_action_id,
+        "prompt_hash": prompt_hash,
+    })
+    require(cross_workspace_status == 404 and cross_workspace.get("error") == "prepared_action_not_found", f"{label} cross-workspace resume was not hidden: {cross_workspace_status} {cross_workspace}", failures)
+    require(call_count() == 0, f"{label} provider called during cross-workspace resume", failures)
+
     resumed, resumed_status = http_json("POST", base_url, path, {
+        "workspace_id": workspace_a,
         "confirm_run": True,
         "prepared_action_id": prepared_action_id,
         "prompt_hash": prompt_hash,
@@ -164,6 +183,7 @@ def exercise_prepared_probe(
     require(call_count() == 1, f"{label} provider should be called exactly once", failures)
 
     replay, replay_status = http_json("POST", base_url, path, {
+        "workspace_id": workspace_a,
         "confirm_run": True,
         "prepared_action_id": prepared_action_id,
         "prompt_hash": prompt_hash,
@@ -174,6 +194,8 @@ def exercise_prepared_probe(
         "prepared_action_id": prepared_action_id,
         "approval_id": approval_id,
         "provider_call_count": call_count(),
+        "cross_workspace_resume_hidden": cross_workspace_status == 404,
+        "workspace_default_task_ids_isolated": other_prepare.get("task_id") != prepare.get("task_id"),
     }
 
 

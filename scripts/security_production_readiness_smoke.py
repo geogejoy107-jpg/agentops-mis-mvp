@@ -59,6 +59,57 @@ def prepare_minimal_sqlite_db(path: Path) -> None:
         conn.commit()
 
 
+def validate_workspace_admin_key_config_contract() -> None:
+    sys.path.insert(0, str(ROOT))
+    import server  # noqa: PLC0415
+
+    env_name = "AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON"
+    original = os.environ.get(env_name)
+    original_deployment_mode = os.environ.get("AGENTOPS_DEPLOYMENT_MODE")
+    original_global_admin_key = os.environ.get("AGENTOPS_ADMIN_KEY")
+    shared_key = "workspace-admin-shared-fixture-key"
+    fixtures = [
+        {},
+        {"workspace-a": shared_key, "workspace-b": shared_key},
+        {"workspace-a": "short"},
+        {"workspace-a": {"not": "a string"}},
+        {"workspace a": "workspace-admin-a-fixture-key", "workspace_a": "workspace-admin-b-fixture-key"},
+    ]
+    try:
+        for fixture in fixtures:
+            os.environ[env_name] = json.dumps(fixture, sort_keys=True)
+            keys, error = server.configured_workspace_admin_keys()
+            require(not keys and bool(error), f"invalid workspace admin key map passed: {fixture.keys()}")
+        os.environ[env_name] = json.dumps({
+            "workspace-a": "workspace-admin-a-valid-fixture-key",
+            "workspace-b": "workspace-admin-b-valid-fixture-key",
+        }, sort_keys=True)
+        keys, error = server.configured_workspace_admin_keys()
+        require(error is None and set(keys) == {"workspace-a", "workspace-b"}, "valid workspace admin key map failed")
+
+        os.environ.pop(env_name, None)
+        os.environ["AGENTOPS_DEPLOYMENT_MODE"] = "production"
+        os.environ["AGENTOPS_ADMIN_KEY"] = "global-admin-local-compatibility-key"
+        context, auth_error = server.agent_gateway_admin_auth_context(
+            {"X-AgentOps-Admin-Key": "global-admin-local-compatibility-key"},
+            "workspace-a",
+        )
+        require(context is None and (auth_error or {}).get("error") == "unauthorized", "production global-only admin key did not fail closed")
+    finally:
+        if original is None:
+            os.environ.pop(env_name, None)
+        else:
+            os.environ[env_name] = original
+        if original_deployment_mode is None:
+            os.environ.pop("AGENTOPS_DEPLOYMENT_MODE", None)
+        else:
+            os.environ["AGENTOPS_DEPLOYMENT_MODE"] = original_deployment_mode
+        if original_global_admin_key is None:
+            os.environ.pop("AGENTOPS_ADMIN_KEY", None)
+        else:
+            os.environ["AGENTOPS_ADMIN_KEY"] = original_global_admin_key
+
+
 def http_json(base_url: str, headers: dict[str, str] | None = None, path: str = "/api/security/production-readiness") -> tuple[int, dict]:
     req = urllib.request.Request(base_url.rstrip("/") + path, headers={"Accept": "application/json", **(headers or {})}, method="GET")
     try:
@@ -89,7 +140,8 @@ def start_configured_production_server(db_path: Path, port: int, api_key: str, a
     env["AGENTOPS_DB_PATH"] = str(db_path)
     env["AGENTOPS_DEPLOYMENT_MODE"] = "production"
     env["AGENTOPS_API_KEY"] = api_key
-    env["AGENTOPS_ADMIN_KEY"] = admin_key
+    env.pop("AGENTOPS_ADMIN_KEY", None)
+    env["AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON"] = json.dumps({"local-demo": admin_key}, sort_keys=True)
     env.pop("AGENTOPS_REQUIRE_PRODUCTION_SECURITY", None)
     return subprocess.Popen(
         [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port)],
@@ -126,7 +178,7 @@ def validate(payload: dict, label: str) -> None:
     require(payload.get("live_execution_performed") is False, f"{label} must not execute live work")
     gates = payload.get("gates") or []
     gate_ids = {gate.get("id") for gate in gates if isinstance(gate, dict)}
-    for gate_id in {"agent_gateway_auth", "admin_key", "scoped_agent_tokens", "local_dev_boundary"}:
+    for gate_id in {"agent_gateway_auth", "admin_key", "workspace_admin_scope", "scoped_agent_tokens", "local_dev_boundary"}:
         require(gate_id in gate_ids, f"{label} missing gate {gate_id}: {payload}")
     require(isinstance(payload.get("next_actions"), list) and payload.get("next_actions"), f"{label} next_actions missing")
     safety = payload.get("safety") or {}
@@ -155,7 +207,7 @@ def validate_configured_ready(payload: dict, label: str) -> None:
         for gate in (payload.get("gates") or [])
         if isinstance(gate, dict) and gate.get("id")
     }
-    for gate_id in {"agent_gateway_auth", "admin_key", "scoped_agent_tokens", "local_dev_boundary"}:
+    for gate_id in {"agent_gateway_auth", "admin_key", "workspace_admin_scope", "scoped_agent_tokens", "local_dev_boundary"}:
         gate = gates.get(gate_id) or {}
         require(gate.get("status") == "pass", f"{label} gate {gate_id} should pass: {gates}")
         require(gate.get("ok") is True, f"{label} gate {gate_id} should be ok: {gates}")
@@ -197,7 +249,11 @@ def run_configured_production_fixture() -> dict:
             cli_payload = json.loads(proc_cli.stdout)
             validate_configured_ready(cli_payload, "configured-production-cli")
 
-            admin_status, admin_payload = http_json(base_url, {"X-AgentOps-Admin-Key": admin_key}, "/api/agent-gateway/enrollments")
+            admin_status, admin_payload = http_json(
+                base_url,
+                {"X-AgentOps-Admin-Key": admin_key, "X-AgentOps-Workspace-Id": "local-demo"},
+                "/api/agent-gateway/enrollments?workspace_id=local-demo",
+            )
             require(admin_status == 200, f"configured admin-key enrollment list failed: {admin_status} {admin_payload}")
             require(admin_payload.get("token_omitted") is True, f"configured admin list should omit tokens: {admin_payload}")
             require(isinstance(admin_payload.get("valid_scopes"), list) and admin_payload.get("valid_scopes"), f"configured admin list should expose valid scopes: {admin_payload}")
@@ -237,6 +293,7 @@ def main() -> int:
     args = parser.parse_args()
     outputs: list[str] = []
     try:
+        validate_workspace_admin_key_config_contract()
         base_url = args.base_url if not args.configured_production_fixture else (os.environ.get("AGENTOPS_BASE_URL") or "")
         payload: dict = {}
         if base_url:
@@ -267,6 +324,7 @@ def main() -> int:
             "configured_production_fixture": configured,
             "gate_count": len(payload.get("gates") or []),
             "secret_leaked": False,
+            "workspace_admin_config_validation_checked": True,
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     except Exception as exc:

@@ -70,7 +70,7 @@ Before shared or hosted deployment:
 
 ```bash
 export AGENTOPS_API_KEY="<local gateway key>"
-export AGENTOPS_ADMIN_KEY="<admin enrollment key>"
+export AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON='{"local-demo":"<workspace admin key>"}'
 export AGENTOPS_DEPLOYMENT_MODE=production
 agentops security production-readiness
 ```
@@ -79,6 +79,10 @@ Rules:
 
 - Never commit `.env`, `agentops_mis.db`, `.agentops_runtime`, service files
   with real tokens, or worker logs.
+- Shared/production deployments require `AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON` as
+  a JSON object mapping each workspace id to a distinct admin key of at least 24
+  characters. Keys must be strings and cannot be reused across workspaces; a key
+  cannot administer another workspace, and invalid configuration fails closed.
 - Enrollment tokens are shown once; MIS stores hashes only.
 - Use `agentops enrollment policy-preview` before issuing a token.
 - Prefer approval-gated enrollment for Hermes/OpenClaw or worker write scopes.

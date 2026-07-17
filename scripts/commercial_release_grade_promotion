@@ -1,0 +1,41 @@
+#!/bin/sh
+set -eu
+
+PATH=/usr/bin:/bin
+export PATH
+
+unset PYTHONHOME PYTHONPATH PYTHONSTARTUP PYTHONUSERBASE PYTHONINSPECT PYTHONWARNINGS PYTHONCASEOK PYTHONEXECUTABLE PYTHONSAFEPATH
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM
+GIT_NO_REPLACE_OBJECTS=1
+export GIT_NO_REPLACE_OBJECTS
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(/usr/bin/dirname -- "$0")" && pwd -P)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)
+GIT=/usr/bin/git
+PYTHON=/usr/bin/python3
+
+reject() {
+  printf '%s\n' "{\"ok\":false,\"contract\":\"commercial_release_grade_promotion_v1\",\"status\":\"promotion_rejected\",\"error_code\":\"$1\",\"applied\":false,\"safety\":{\"receipts_written\":false,\"raw_payload_echoed\":false}}"
+  exit 2
+}
+
+[ -x "$GIT" ] || reject trusted_git_executable_unavailable
+[ -x "$PYTHON" ] || reject trusted_python_executable_unavailable
+"$PYTHON" -I -B -S -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1 || reject trusted_python_executable_unavailable
+
+[ -z "$("$GIT" --no-replace-objects -C "$REPO_ROOT" for-each-ref --format='%(refname)' refs/replace/)" ] || reject git_replace_refs_present
+GIT_COMMON_DIR=$("$GIT" --no-replace-objects -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null) || reject git_state_unavailable
+case "$GIT_COMMON_DIR" in
+  /*) ;;
+  *) GIT_COMMON_DIR="$REPO_ROOT/$GIT_COMMON_DIR" ;;
+esac
+[ ! -s "$GIT_COMMON_DIR/info/grafts" ] || reject git_grafts_present
+
+for RELATIVE_PATH in scripts/commercial_release_grade_promotion scripts/commercial_release_grade_promotion.py; do
+  "$GIT" --no-replace-objects -C "$REPO_ROOT" ls-files --error-unmatch -- "$RELATIVE_PATH" >/dev/null 2>&1 || reject promotion_entrypoint_not_tracked
+  HEAD_BLOB=$("$GIT" --no-replace-objects -C "$REPO_ROOT" rev-parse "HEAD:$RELATIVE_PATH" 2>/dev/null) || reject promotion_entrypoint_head_unavailable
+  WORKTREE_BLOB=$("$GIT" --no-replace-objects -C "$REPO_ROOT" hash-object --no-filters "$REPO_ROOT/$RELATIVE_PATH" 2>/dev/null) || reject promotion_entrypoint_hash_unavailable
+  [ "$HEAD_BLOB" = "$WORKTREE_BLOB" ] || reject promotion_entrypoint_head_mismatch
+done
+
+exec "$PYTHON" -I -B -S "$SCRIPT_DIR/commercial_release_grade_promotion.py" "$@"

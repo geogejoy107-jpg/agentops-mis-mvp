@@ -35,7 +35,8 @@ python3 scripts/merge_readiness_status_smoke.py
   replacement path.
 - Postgres/BYOC handoff requires backend and browser evidence, not only docs:
   `deployment_readiness_smoke.py --postgres-write-fixture`,
-  `nextjs_playwright_snapshot_smoke.py --postgres-write-fixture`, and
+  `nextjs_playwright_snapshot_smoke.py --postgres-write-fixture`,
+  `nextjs_postgres_control_plane_tasks_smoke.py`, and
   `byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture`.
 - Product-readiness or customer-usefulness claims require real Hermes/OpenClaw
   evidence with `local_runtime_acceptance.py --live-openclaw --live-hermes`;
@@ -54,6 +55,11 @@ The BYOC handoff path must prove:
   `runtime_write_gate=active`;
 - fixed OpenClaw/Hermes prepared-action write contracts plus row-gated approval
   write contract;
+- Postgres-backed Agent Gateway registration, workspace-scoped enrollment
+  approval/issue/rotation/revocation, and short-session lifecycle, including
+  concurrent single-winner token mutation evidence;
+- a production-default TypeScript/Postgres Agent Gateway task route that runs
+  without a Python API process and emits a Python-compatible audit chain;
 - non-allowlisted writes blocked with `postgres_read_only_backend`;
 - unchanged Postgres ledger counts while rendering backend and Next deployment
   readiness evidence;

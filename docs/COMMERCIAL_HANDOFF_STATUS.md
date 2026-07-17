@@ -101,6 +101,7 @@ python3 scripts/storage_postgres_http_read_parity_smoke.py
 python3 scripts/storage_postgres_cli_read_parity_smoke.py
 python3 scripts/storage_postgres_write_helper_parity_smoke.py
 python3 scripts/storage_postgres_http_write_task_smoke.py
+python3 scripts/storage_postgres_gateway_lifecycle_smoke.py
 python3 scripts/storage_postgres_cli_write_parity_smoke.py
 python3 scripts/nextjs_parity_smoke.py
 python3 scripts/ui_api_parity_matrix_smoke.py
@@ -111,6 +112,7 @@ cd ui/start-building-app && npm run build
 cd ui/next-app && npm run build
 python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture
 python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture
+python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py
 python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture
 HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api --openclaw-timeout 300 --hermes-timeout 600 --request-timeout 720
 ```
@@ -119,3 +121,6 @@ Invalid evidence includes `--skip-postgres-if-unavailable`,
 `mock_only_product_claim`, `release_complete_true`, raw prompts, raw responses,
 private transcripts, token values, and SQLite fallback presented as Postgres
 proof.
+
+Gate 5 remains `local_receipts_incomplete_new_control_plane_requirement` until
+an exact-head receipt includes `nextjs_postgres_control_plane_tasks_v1`.

@@ -30,6 +30,7 @@ REQUIRED_COMMANDS = {
     "python3 scripts/commercial_migration_readiness.py",
     "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
     "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
+    "python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py",
     "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
     "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api --openclaw-timeout 300 --hermes-timeout 600 --request-timeout 720",
 }
@@ -44,6 +45,7 @@ REQUIRED_CONTRACTS = {
     "commercial_release_evidence_packet_v1",
     "deployment_readiness_postgres_runtime_write_fixture_v1",
     "nextjs_deployment_postgres_runtime_write_fixture_v1",
+    "nextjs_postgres_control_plane_tasks_v1",
     "byoc_deployment_acceptance_v1",
     "real_hermes_openclaw_acceptance",
 }

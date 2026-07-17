@@ -26,9 +26,10 @@ python3 scripts/release_freeze_protocol_smoke.py --require-clean
 ```
 
 The freeze requires the release packet, commercial release packet, backend
-Postgres readiness fixture, Next Postgres browser fixture, BYOC Postgres handoff
-fixture, and real Hermes/OpenClaw acceptance. `--skip-postgres-if-unavailable`
-and mock-only product claims are not valid release evidence.
+Postgres readiness fixture, Next Postgres browser fixture, direct TypeScript
+control-plane fixture, BYOC Postgres handoff fixture, and real Hermes/OpenClaw
+acceptance. `--skip-postgres-if-unavailable` and mock-only product claims are not
+valid release evidence.
 
 Required freeze evidence commands:
 
@@ -46,6 +47,7 @@ python3 scripts/commercial_release_evidence_packet_smoke.py
 python3 scripts/commercial_migration_readiness.py
 python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture
 python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture
+python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py
 python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture
 HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api --openclaw-timeout 300 --hermes-timeout 600 --request-timeout 720
 ```

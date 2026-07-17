@@ -70,6 +70,7 @@ def isolated_server(prefix: str):
         env["AGENTOPS_STORAGE_BACKEND"] = "sqlite"
         env.pop("AGENTOPS_API_KEY", None)
         env.pop("AGENTOPS_ADMIN_KEY", None)
+        env.pop("AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON", None)
         proc = subprocess.Popen(
             [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port)],
             cwd=ROOT,

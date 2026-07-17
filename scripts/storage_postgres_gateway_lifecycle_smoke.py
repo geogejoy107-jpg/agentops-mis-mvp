@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -36,8 +38,10 @@ WORKSPACE_ID = "ws_pg_gateway_lifecycle"
 OTHER_WORKSPACE_ID = "ws_pg_gateway_lifecycle_other"
 AGENT_ID = "agt_pg_gateway_lifecycle"
 REQUEST_AGENT_ID = "agt_pg_gateway_lifecycle_request"
+RACE_AGENT_ID = "agt_pg_gateway_lifecycle_race"
 API_KEY = "postgres_gateway_lifecycle_api_key"
 ADMIN_KEY = "postgres_gateway_lifecycle_admin_key"
+OTHER_ADMIN_KEY = "postgres_gateway_lifecycle_other_admin_key"
 
 
 def reexec_self_with_bundled_python_if_needed() -> None:
@@ -102,6 +106,7 @@ def request_json(
     body: dict | None = None,
     token: str | None = None,
     admin_key: str | None = None,
+    workspace_id: str | None = None,
     query: dict | None = None,
 ) -> tuple[int, dict]:
     url = base_url.rstrip("/") + path
@@ -112,6 +117,8 @@ def request_json(
         headers["Authorization"] = f"Bearer {token}"
     if admin_key:
         headers["X-AgentOps-Admin-Key"] = admin_key
+    if workspace_id:
+        headers["X-AgentOps-Workspace-Id"] = workspace_id
     data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
     req = Request(url, data=data, headers=headers, method=method)
     try:
@@ -139,6 +146,10 @@ def server_env(dsn: str, pythonpath: str) -> dict[str, str]:
             "AGENTOPS_POSTGRES_WRITE_HTTP": "1",
             "AGENTOPS_API_KEY": API_KEY,
             "AGENTOPS_ADMIN_KEY": ADMIN_KEY,
+            "AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON": json.dumps(
+                {WORKSPACE_ID: ADMIN_KEY, OTHER_WORKSPACE_ID: OTHER_ADMIN_KEY},
+                sort_keys=True,
+            ),
             "PYTHONPATH": pythonpath,
             "PYTHONDONTWRITEBYTECODE": "1",
         }
@@ -212,8 +223,12 @@ def assert_secret_absent(label: str, haystack, *secrets: str) -> None:
             raise AssertionError(f"{label} leaked a one-time token")
 
 
-def run_lifecycle(base_url: str, adapter: PostgresAdapter, observed_secrets: list[str]) -> dict:
+def run_lifecycle(base_url: str, peer_base_url: str, adapter: PostgresAdapter, observed_secrets: list[str]) -> dict:
     failures: list[str] = []
+
+    def audit_action_count(action: str) -> int:
+        row = adapter.fetchone("SELECT COUNT(*) AS count FROM audit_logs WHERE action=?", [action])
+        return int((row or {}).get("count") or 0)
 
     backend_status, backend = request_json(base_url, "/api/storage/backend-status")
     require(backend_status == 200 and backend.get("writes_allowed") is True, f"backend not writable: {safe_json(backend)}")
@@ -246,8 +261,9 @@ def run_lifecycle(base_url: str, adapter: PostgresAdapter, observed_secrets: lis
         method="POST",
         body={"agent_id": f"{AGENT_ID}_blocked", "workspace_id": WORKSPACE_ID, "scopes": ["agents:heartbeat"]},
         admin_key="wrong-admin-key",
+        workspace_id=WORKSPACE_ID,
     )
-    require(blocked_status == 401, f"wrong admin key was not rejected: {blocked_status} {safe_json(blocked)}")
+    require(blocked_status == 403, f"wrong workspace admin key was not rejected: {blocked_status} {safe_json(blocked)}")
 
     register_status, registered = request_json(
         base_url,
@@ -264,6 +280,34 @@ def run_lifecycle(base_url: str, adapter: PostgresAdapter, observed_secrets: lis
     )
     require(register_status == 201 and (registered.get("agent") or {}).get("agent_id") == AGENT_ID, f"register failed: {register_status} {safe_json(registered)}")
 
+    anonymous_request_status, anonymous_request = request_json(
+        base_url,
+        "/api/agent-gateway/enrollment/request",
+        method="POST",
+        body={
+            "agent_id": f"{REQUEST_AGENT_ID}_anonymous",
+            "workspace_id": WORKSPACE_ID,
+            "scopes": ["agents:heartbeat"],
+        },
+        workspace_id=WORKSPACE_ID,
+    )
+    require(anonymous_request_status == 403, f"anonymous enrollment request was not rejected: {anonymous_request_status} {safe_json(anonymous_request)}")
+
+    caller_id_status, caller_id_payload = request_json(
+        base_url,
+        "/api/agent-gateway/enrollment/request",
+        method="POST",
+        body={
+            "request_id": "enroll_req_caller_controlled",
+            "agent_id": f"{REQUEST_AGENT_ID}_caller_id",
+            "workspace_id": WORKSPACE_ID,
+            "scopes": ["agents:heartbeat"],
+        },
+        admin_key=ADMIN_KEY,
+        workspace_id=WORKSPACE_ID,
+    )
+    require(caller_id_status == 400 and caller_id_payload.get("error") == "request_id_server_generated", f"caller-controlled request id was not rejected: {caller_id_status} {safe_json(caller_id_payload)}")
+
     request_status, requested = request_json(
         base_url,
         "/api/agent-gateway/enrollment/request",
@@ -276,6 +320,8 @@ def run_lifecycle(base_url: str, adapter: PostgresAdapter, observed_secrets: lis
             "scopes": ["agents:heartbeat", "tasks:read"],
             "reason": "Postgres lifecycle smoke request.",
         },
+        admin_key=ADMIN_KEY,
+        workspace_id=WORKSPACE_ID,
     )
     require(request_status == 201 and requested.get("token_issued") is False, f"enrollment request failed: {request_status} {safe_json(requested)}")
     request = requested.get("request") or {}
@@ -291,30 +337,74 @@ def run_lifecycle(base_url: str, adapter: PostgresAdapter, observed_secrets: lis
         method="POST",
         body={"request_id": request_id},
         admin_key=ADMIN_KEY,
+        workspace_id=WORKSPACE_ID,
     )
     require(issue_block_status == 409 and issue_block.get("error") == "approval_required", f"unapproved issue was not business-blocked: {issue_block_status} {safe_json(issue_block)}")
+
+    anonymous_approve_status, anonymous_approve = request_json(
+        base_url,
+        f"/api/approvals/{approval_id}/approve",
+        method="POST",
+        body={},
+        workspace_id=WORKSPACE_ID,
+    )
+    require(anonymous_approve_status == 403, f"anonymous approval was not rejected: {anonymous_approve_status} {safe_json(anonymous_approve)}")
 
     approve_status, approved = request_json(
         base_url,
         f"/api/approvals/{approval_id}/approve",
         method="POST",
         body={},
+        admin_key=ADMIN_KEY,
+        workspace_id=WORKSPACE_ID,
     )
     require(approve_status == 200 and approved.get("decision") == "approved", f"enrollment approval failed: {approve_status} {safe_json(approved)}")
     approved_request_row = adapter.fetchone("SELECT status,token_id FROM agent_gateway_enrollment_requests WHERE request_id=?", [request_id])
     require(approved_request_row and approved_request_row.get("status") == "approved", f"approved request row mismatch: {approved_request_row}")
-
-    issue_status, issued = request_json(
-        base_url,
-        "/api/agent-gateway/enrollment/issue-approved",
+    repeat_approve_status, repeat_approved = request_json(
+        peer_base_url,
+        f"/api/approvals/{approval_id}/approve",
         method="POST",
-        body={"approval_id": approval_id, "ttl_days": 1, "heartbeat_timeout_sec": 60},
+        body={},
         admin_key=ADMIN_KEY,
+        workspace_id=WORKSPACE_ID,
     )
-    require(issue_status == 201 and issued.get("issued_from_request_id") == request_id, f"approved issue failed: {issue_status} {safe_json(issued)}")
+    require(
+        repeat_approve_status == 200 and repeat_approved.get("decision") == "approved",
+        f"Postgres repeated approval was not idempotent: {repeat_approve_status} {safe_json(repeat_approved)}",
+    )
+
+    issue_barrier = threading.Barrier(2)
+
+    def issue_once(target_base_url: str) -> tuple[int, dict]:
+        issue_barrier.wait(timeout=5)
+        return request_json(
+            target_base_url,
+            "/api/agent-gateway/enrollment/issue-approved",
+            method="POST",
+            body={"approval_id": approval_id, "ttl_days": 1, "heartbeat_timeout_sec": 60},
+            admin_key=ADMIN_KEY,
+            workspace_id=WORKSPACE_ID,
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        issue_results = [
+            future.result()
+            for future in [pool.submit(issue_once, base_url), pool.submit(issue_once, peer_base_url)]
+        ]
+    require(sorted(status for status, _payload in issue_results) == [200, 201], f"concurrent issue was not idempotent: {safe_json(issue_results)}")
+    issued = next(payload for status, payload in issue_results if status == 201)
+    omitted_issue = next(payload for status, payload in issue_results if status == 200)
+    require(issued.get("issued_from_request_id") == request_id, f"approved issue request mismatch: {safe_json(issued)}")
+    require("token" not in omitted_issue and omitted_issue.get("token_omitted") is True, f"idempotent issue replay exposed a token: {safe_json(omitted_issue)}")
     approved_token = issued.get("token")
     approved_token_id = issued.get("token_id")
     require(approved_token and approved_token_id, "approved issue did not return one-time token and token id")
+    approved_active_count_row = adapter.fetchone(
+        "SELECT COUNT(*) AS count FROM agent_gateway_tokens WHERE workspace_id=? AND agent_id=? AND status='active'",
+        [WORKSPACE_ID, REQUEST_AGENT_ID],
+    )
+    require(approved_active_count_row and int(approved_active_count_row.get("count") or 0) == 1, f"concurrent issue created duplicate active tokens: {approved_active_count_row}")
     observed_secrets.append(approved_token)
     approved_heartbeat_status, approved_heartbeat = request_json(
         base_url,
@@ -330,8 +420,161 @@ def run_lifecycle(base_url: str, adapter: PostgresAdapter, observed_secrets: lis
         method="POST",
         body={"token_id": approved_token_id},
         admin_key=ADMIN_KEY,
+        workspace_id=WORKSPACE_ID,
     )
     require(approved_revoke_status == 200 and approved_revoke.get("revoked") == 1, f"approved token revoke failed: {approved_revoke_status} {safe_json(approved_revoke)}")
+    approved_revoke_audit_count = audit_action_count("agent_gateway.enrollment_revoke")
+    approved_repeat_revoke_status, approved_repeat_revoke = request_json(
+        peer_base_url,
+        "/api/agent-gateway/enrollment/revoke",
+        method="POST",
+        body={"token_id": approved_token_id},
+        admin_key=ADMIN_KEY,
+        workspace_id=WORKSPACE_ID,
+    )
+    require(approved_repeat_revoke_status == 200 and approved_repeat_revoke.get("revoked") == 0, f"repeated approved-token revoke was not idempotent: {approved_repeat_revoke_status} {safe_json(approved_repeat_revoke)}")
+    require(audit_action_count("agent_gateway.enrollment_revoke") == approved_revoke_audit_count, "repeated approved-token revoke wrote duplicate audit evidence")
+
+    race_request_status, race_requested = request_json(
+        base_url,
+        "/api/agent-gateway/enrollment/request",
+        method="POST",
+        body={
+            "agent_id": RACE_AGENT_ID,
+            "name": "Postgres Approval Issue Race",
+            "runtime_type": "mock",
+            "workspace_id": WORKSPACE_ID,
+            "scopes": ["agents:heartbeat"],
+            "reason": "Prove approval and issue use one database lock order.",
+        },
+        admin_key=ADMIN_KEY,
+        workspace_id=WORKSPACE_ID,
+    )
+    require(race_request_status == 201, f"race enrollment request failed: {race_request_status} {safe_json(race_requested)}")
+    race_request = race_requested.get("request") or {}
+    race_request_id = race_request.get("request_id")
+    race_approval_id = race_request.get("approval_id")
+    require(race_request_id and race_approval_id, f"race enrollment ids missing: {safe_json(race_requested)}")
+    race_barrier = threading.Barrier(2)
+
+    def approve_race() -> tuple[int, dict]:
+        race_barrier.wait(timeout=5)
+        return request_json(
+            base_url,
+            f"/api/approvals/{race_approval_id}/approve",
+            method="POST",
+            body={"workspace_id": WORKSPACE_ID},
+            admin_key=ADMIN_KEY,
+            workspace_id=WORKSPACE_ID,
+        )
+
+    def issue_race() -> tuple[int, dict]:
+        race_barrier.wait(timeout=5)
+        return request_json(
+            peer_base_url,
+            "/api/agent-gateway/enrollment/issue-approved",
+            method="POST",
+            body={"request_id": race_request_id, "ttl_days": 1},
+            admin_key=ADMIN_KEY,
+            workspace_id=WORKSPACE_ID,
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        approve_future = pool.submit(approve_race)
+        issue_future = pool.submit(issue_race)
+        race_approve_status, race_approved = approve_future.result()
+        race_issue_status, race_issued = issue_future.result()
+    require(race_approve_status == 200 and race_approved.get("decision") == "approved", f"concurrent race approval failed: {race_approve_status} {safe_json(race_approved)}")
+    require(race_issue_status in {201, 409}, f"concurrent race issue deadlocked or failed: {race_issue_status} {safe_json(race_issued)}")
+    if race_issue_status == 409:
+        race_issue_status, race_issued = request_json(
+            peer_base_url,
+            "/api/agent-gateway/enrollment/issue-approved",
+            method="POST",
+            body={"request_id": race_request_id, "ttl_days": 1},
+            admin_key=ADMIN_KEY,
+            workspace_id=WORKSPACE_ID,
+        )
+    require(race_issue_status == 201, f"approved race request could not issue after concurrency: {race_issue_status} {safe_json(race_issued)}")
+    race_token = race_issued.get("token")
+    race_token_id = race_issued.get("token_id")
+    require(race_token and race_token_id, f"race issue omitted one-time token: {safe_json(race_issued)}")
+    observed_secrets.append(race_token)
+    race_active = adapter.fetchone(
+        "SELECT COUNT(*) AS count FROM agent_gateway_tokens WHERE workspace_id=? AND agent_id=? AND status='active'",
+        [WORKSPACE_ID, RACE_AGENT_ID],
+    )
+    require(race_active and int(race_active.get("count") or 0) == 1, f"approval/issue race did not produce one active token: {race_active}")
+    revoke_race_session_status, revoke_race_session = request_json(
+        base_url,
+        "/api/agent-gateway/session/create",
+        method="POST",
+        body={"ttl_sec": 120, "scopes": ["agents:heartbeat"]},
+        token=race_token,
+    )
+    require(revoke_race_session_status == 201, f"revoke-race session create failed: {revoke_race_session_status} {safe_json(revoke_race_session)}")
+    revoke_race_session_id = revoke_race_session.get("session_id")
+    revoke_race_session_token = revoke_race_session.get("session_token")
+    require(revoke_race_session_id and revoke_race_session_token, f"revoke-race session ids missing: {safe_json(revoke_race_session)}")
+    observed_secrets.append(revoke_race_session_token)
+    revoke_race_audit_before = (
+        audit_action_count("agent_gateway.session_revoke")
+        + audit_action_count("agent_gateway.session_revoke_cascade")
+    )
+    revoke_race_token_audit_before = audit_action_count("agent_gateway.enrollment_revoke")
+    revoke_barrier = threading.Barrier(2)
+
+    def revoke_race_token_call() -> tuple[int, dict]:
+        revoke_barrier.wait(timeout=5)
+        return request_json(
+            base_url,
+            "/api/agent-gateway/enrollment/revoke",
+            method="POST",
+            body={"token_id": race_token_id},
+            admin_key=ADMIN_KEY,
+            workspace_id=WORKSPACE_ID,
+        )
+
+    def revoke_race_session_call() -> tuple[int, dict]:
+        revoke_barrier.wait(timeout=5)
+        return request_json(
+            peer_base_url,
+            "/api/agent-gateway/session/revoke",
+            method="POST",
+            body={"session_id": revoke_race_session_id},
+            admin_key=ADMIN_KEY,
+            workspace_id=WORKSPACE_ID,
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        revoke_token_future = pool.submit(revoke_race_token_call)
+        revoke_session_future = pool.submit(revoke_race_session_call)
+        race_revoke_status, race_revoke = revoke_token_future.result()
+        race_session_revoke_status, race_session_revoke = revoke_session_future.result()
+    require(
+        race_revoke_status == race_session_revoke_status == 200,
+        f"concurrent token/session revoke failed: token={race_revoke_status} {safe_json(race_revoke)} session={race_session_revoke_status} {safe_json(race_session_revoke)}",
+    )
+    require(race_revoke.get("revoked") == 1, f"concurrent token revoke lost token transition: {safe_json(race_revoke)}")
+    require(
+        int(race_revoke.get("sessions_revoked") or 0) + int(race_session_revoke.get("revoked") or 0) == 1,
+        f"concurrent token/session revoke was not single-winner: token={safe_json(race_revoke)} session={safe_json(race_session_revoke)}",
+    )
+    revoke_race_session_row = adapter.fetchone(
+        "SELECT status FROM agent_gateway_sessions WHERE session_id=?",
+        [revoke_race_session_id],
+    )
+    require(revoke_race_session_row and revoke_race_session_row.get("status") == "revoked", f"concurrent revoke left session active: {revoke_race_session_row}")
+    require(
+        audit_action_count("agent_gateway.session_revoke")
+        + audit_action_count("agent_gateway.session_revoke_cascade")
+        == revoke_race_audit_before + 1,
+        "concurrent token/session revoke wrote duplicate session audit evidence",
+    )
+    require(
+        audit_action_count("agent_gateway.enrollment_revoke") == revoke_race_token_audit_before + 1,
+        "concurrent token/session revoke wrote duplicate token audit evidence",
+    )
 
     create_status, created = request_json(
         base_url,
@@ -347,6 +590,7 @@ def run_lifecycle(base_url: str, adapter: PostgresAdapter, observed_secrets: lis
             "heartbeat_timeout_sec": 60,
         },
         admin_key=ADMIN_KEY,
+        workspace_id=WORKSPACE_ID,
     )
     require(create_status == 201, f"enrollment create failed: {create_status} {safe_json(created)}")
     enrollment_token = created.get("token")
@@ -359,6 +603,31 @@ def run_lifecycle(base_url: str, adapter: PostgresAdapter, observed_secrets: lis
     )
     require(token_row and token_row.get("token_hash") == server.token_hash(enrollment_token), f"token hash row mismatch: {token_row}")
     assert_secret_absent("token row", token_row, enrollment_token)
+
+    cross_admin_status, cross_admin = request_json(
+        base_url,
+        "/api/agent-gateway/enrollment/revoke",
+        method="POST",
+        body={"token_id": token_id, "workspace_id": OTHER_WORKSPACE_ID},
+        admin_key=OTHER_ADMIN_KEY,
+        workspace_id=OTHER_WORKSPACE_ID,
+    )
+    missing_admin_status, missing_admin = request_json(
+        peer_base_url,
+        "/api/agent-gateway/enrollment/revoke",
+        method="POST",
+        body={"token_id": "agtok_nonexistent_hidden", "workspace_id": OTHER_WORKSPACE_ID},
+        admin_key=OTHER_ADMIN_KEY,
+        workspace_id=OTHER_WORKSPACE_ID,
+    )
+    require(
+        cross_admin_status == missing_admin_status == 200
+        and cross_admin.get("revoked") == missing_admin.get("revoked") == 0
+        and cross_admin.get("tokens") == missing_admin.get("tokens") == [],
+        f"cross-workspace admin resource was not hidden: cross={cross_admin_status} {safe_json(cross_admin)} missing={missing_admin_status} {safe_json(missing_admin)}",
+    )
+    cross_admin_token_row = adapter.fetchone("SELECT status FROM agent_gateway_tokens WHERE token_id=?", [token_id])
+    require(cross_admin_token_row and cross_admin_token_row.get("status") == "active", f"cross-workspace admin changed token: {cross_admin_token_row}")
 
     cross_status, cross = request_json(
         base_url,
@@ -416,6 +685,7 @@ def run_lifecycle(base_url: str, adapter: PostgresAdapter, observed_secrets: lis
         base_url,
         "/api/agent-gateway/sessions",
         admin_key=ADMIN_KEY,
+        workspace_id=WORKSPACE_ID,
         query={"workspace_id": WORKSPACE_ID},
     )
     require(listed_status == 200, f"session list failed: {listed_status} {safe_json(listed)}")
@@ -430,8 +700,20 @@ def run_lifecycle(base_url: str, adapter: PostgresAdapter, observed_secrets: lis
         method="POST",
         body={"session_id": session_id},
         admin_key=ADMIN_KEY,
+        workspace_id=WORKSPACE_ID,
     )
     require(revoke_session_status == 200 and revoked_session.get("revoked") == 1, f"session revoke failed: {revoke_session_status} {safe_json(revoked_session)}")
+    session_revoke_audit_count = audit_action_count("agent_gateway.session_revoke")
+    repeat_session_status, repeat_session = request_json(
+        peer_base_url,
+        "/api/agent-gateway/session/revoke",
+        method="POST",
+        body={"session_id": session_id},
+        admin_key=ADMIN_KEY,
+        workspace_id=WORKSPACE_ID,
+    )
+    require(repeat_session_status == 200 and repeat_session.get("revoked") == 0, f"repeated session revoke was not idempotent: {repeat_session_status} {safe_json(repeat_session)}")
+    require(audit_action_count("agent_gateway.session_revoke") == session_revoke_audit_count, "repeated session revoke wrote duplicate audit evidence")
     revoked_heartbeat_status, revoked_heartbeat = request_json(
         base_url,
         "/api/agent-gateway/heartbeat",
@@ -441,14 +723,28 @@ def run_lifecycle(base_url: str, adapter: PostgresAdapter, observed_secrets: lis
     )
     require(revoked_heartbeat_status == 401, f"revoked session still authenticated: {revoked_heartbeat_status} {safe_json(revoked_heartbeat)}")
 
-    rotate_status, rotated = request_json(
-        base_url,
-        "/api/agent-gateway/enrollment/rotate",
-        method="POST",
-        body={"token_id": token_id, "ttl_days": 1},
-        admin_key=ADMIN_KEY,
-    )
-    require(rotate_status == 201, f"enrollment rotate failed: {rotate_status} {safe_json(rotated)}")
+    rotate_barrier = threading.Barrier(2)
+
+    def rotate_once(target_base_url: str) -> tuple[int, dict]:
+        rotate_barrier.wait(timeout=5)
+        return request_json(
+            target_base_url,
+            "/api/agent-gateway/enrollment/rotate",
+            method="POST",
+            body={"token_id": token_id, "ttl_days": 1},
+            admin_key=ADMIN_KEY,
+            workspace_id=WORKSPACE_ID,
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        rotate_results = [
+            future.result()
+            for future in [pool.submit(rotate_once, base_url), pool.submit(rotate_once, peer_base_url)]
+        ]
+    require(sorted(status for status, _payload in rotate_results) == [201, 409], f"concurrent rotation was not single-winner: {safe_json(rotate_results)}")
+    rotated = next(payload for status, payload in rotate_results if status == 201)
+    rotation_conflict = next(payload for status, payload in rotate_results if status == 409)
+    require(rotation_conflict.get("error") in {"not active", "rotation_conflict"}, f"wrong rotation conflict: {safe_json(rotation_conflict)}")
     rotated_token = rotated.get("token")
     rotated_token_id = rotated.get("token_id")
     require(rotated_token and rotated_token_id and rotated_token_id != token_id, "rotate did not return replacement token")
@@ -457,6 +753,11 @@ def run_lifecycle(base_url: str, adapter: PostgresAdapter, observed_secrets: lis
     new_row = adapter.fetchone("SELECT token_hash,status FROM agent_gateway_tokens WHERE token_id=?", [rotated_token_id])
     require(old_row and old_row.get("status") == "revoked" and old_row.get("revoked_at"), f"old token not revoked: {old_row}")
     require(new_row and new_row.get("status") == "active" and new_row.get("token_hash") == server.token_hash(rotated_token), f"new token row mismatch: {new_row}")
+    active_rotation_count_row = adapter.fetchone(
+        "SELECT COUNT(*) AS count FROM agent_gateway_tokens WHERE workspace_id=? AND agent_id=? AND status='active'",
+        [WORKSPACE_ID, AGENT_ID],
+    )
+    require(active_rotation_count_row and int(active_rotation_count_row.get("count") or 0) == 1, f"concurrent rotation created duplicate active tokens: {active_rotation_count_row}")
     assert_secret_absent("rotated token row", new_row, rotated_token)
 
     old_token_status, old_token_payload = request_json(
@@ -487,9 +788,21 @@ def run_lifecycle(base_url: str, adapter: PostgresAdapter, observed_secrets: lis
         method="POST",
         body={"token_id": rotated_token_id},
         admin_key=ADMIN_KEY,
+        workspace_id=WORKSPACE_ID,
     )
     require(revoke_enrollment_status == 200 and revoked_enrollment.get("revoked") == 1, f"enrollment revoke failed: {revoke_enrollment_status} {safe_json(revoked_enrollment)}")
     require(revoked_enrollment.get("sessions_revoked", 0) >= 1, f"enrollment revoke did not cascade sessions: {safe_json(revoked_enrollment)}")
+    enrollment_revoke_audit_count = audit_action_count("agent_gateway.enrollment_revoke")
+    repeat_enrollment_status, repeat_enrollment = request_json(
+        peer_base_url,
+        "/api/agent-gateway/enrollment/revoke",
+        method="POST",
+        body={"token_id": rotated_token_id},
+        admin_key=ADMIN_KEY,
+        workspace_id=WORKSPACE_ID,
+    )
+    require(repeat_enrollment_status == 200 and repeat_enrollment.get("revoked") == 0, f"repeated enrollment revoke was not idempotent: {repeat_enrollment_status} {safe_json(repeat_enrollment)}")
+    require(audit_action_count("agent_gateway.enrollment_revoke") == enrollment_revoke_audit_count, "repeated enrollment revoke wrote duplicate audit evidence")
     revoked_token_status, revoked_token_payload = request_json(
         base_url,
         "/api/agent-gateway/heartbeat",
@@ -513,8 +826,28 @@ def run_lifecycle(base_url: str, adapter: PostgresAdapter, observed_secrets: lis
     runtime_rows = adapter.fetchall(
         "SELECT input_summary,output_summary,error_message,raw_payload_hash FROM runtime_events WHERE event_type LIKE 'agent.%' ORDER BY created_at DESC LIMIT 50",
     )
-    assert_secret_absent("audit rows", audit_rows, approved_token, enrollment_token, session_token, rotated_token, rotated_session_token)
-    assert_secret_absent("runtime rows", runtime_rows, approved_token, enrollment_token, session_token, rotated_token, rotated_session_token)
+    assert_secret_absent(
+        "audit rows",
+        audit_rows,
+        approved_token,
+        enrollment_token,
+        session_token,
+        rotated_token,
+        rotated_session_token,
+        race_token,
+        revoke_race_session_token,
+    )
+    assert_secret_absent(
+        "runtime rows",
+        runtime_rows,
+        approved_token,
+        enrollment_token,
+        session_token,
+        rotated_token,
+        rotated_session_token,
+        race_token,
+        revoke_race_session_token,
+    )
 
     if failures:
         raise AssertionError("; ".join(failures))
@@ -531,8 +864,21 @@ def run_lifecycle(base_url: str, adapter: PostgresAdapter, observed_secrets: lis
         "session_ref": safe_ref("session_ref", session_id),
         "rotated_session_ref": safe_ref("session_ref", rotated_session_id),
         "rbac_checks": {
-            "wrong_admin_rejected": blocked_status == 401,
+            "wrong_admin_rejected": blocked_status == 403,
+            "anonymous_request_rejected": anonymous_request_status == 403,
+            "anonymous_approval_rejected": anonymous_approve_status == 403,
+            "caller_request_id_rejected": caller_id_status == 400,
+            "cross_workspace_admin_hidden": cross_admin_status == missing_admin_status == 200 and cross_admin.get("revoked") == 0,
             "cross_workspace_rejected": cross_status == 403,
+            "concurrent_issue_single_winner": sorted(status for status, _payload in issue_results) == [200, 201],
+            "concurrent_rotation_single_winner": sorted(status for status, _payload in rotate_results) == [201, 409],
+            "concurrent_approve_issue_deadlock_free": race_approve_status == 200 and race_issue_status == 201,
+            "postgres_repeated_approval_idempotent": repeat_approve_status == 200,
+            "concurrent_token_session_revoke_single_winner": (
+                int(race_revoke.get("sessions_revoked") or 0) + int(race_session_revoke.get("revoked") or 0) == 1
+            ),
+            "database_concurrency_servers": 2,
+            "repeated_revoke_idempotent": approved_repeat_revoke.get("revoked") == repeat_session.get("revoked") == repeat_enrollment.get("revoked") == 0,
             "nested_session_rejected": nested_status == 401,
             "revoked_session_rejected": revoked_heartbeat_status == 401,
             "old_token_rejected_after_rotate": old_token_status == 401,
@@ -616,6 +962,7 @@ def main() -> int:
 
         adapter: PostgresAdapter | None = None
         proc: subprocess.Popen[str] | None = None
+        peer_proc: subprocess.Popen[str] | None = None
         secret_values: list[str] = []
         try:
             if not container_smoke.wait_for_postgres(container):
@@ -629,7 +976,11 @@ def main() -> int:
             proc = start_server(server_env(dsn, pythonpath), http_port)
             base_url = f"http://127.0.0.1:{http_port}"
             wait_json(f"{base_url}/api/storage/backend-status", proc, secret=pg_auth)
-            payload = run_lifecycle(base_url, adapter, secret_values)
+            peer_http_port = free_port()
+            peer_proc = start_server(server_env(dsn, pythonpath), peer_http_port)
+            peer_base_url = f"http://127.0.0.1:{peer_http_port}"
+            wait_json(f"{peer_base_url}/api/storage/backend-status", peer_proc, secret=pg_auth)
+            payload = run_lifecycle(base_url, peer_base_url, adapter, secret_values)
             secret_values.extend(
                 value
                 for row in adapter.fetchall("SELECT token_hash FROM agent_gateway_tokens")
@@ -638,14 +989,18 @@ def main() -> int:
             )
             stdout, stderr = stop_server(proc)
             proc = None
-            assert_secret_absent("server stdout/stderr", stdout + stderr, *secret_values)
+            peer_stdout, peer_stderr = stop_server(peer_proc)
+            peer_proc = None
+            assert_secret_absent("server stdout/stderr", stdout + stderr + peer_stdout + peer_stderr, ADMIN_KEY, OTHER_ADMIN_KEY, *secret_values)
             print(json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2, sort_keys=True))
             return 0
         except Exception as exc:
             stdout, stderr = stop_server(proc)
             proc = None
-            detail = redact(str(exc), pg_auth, API_KEY, ADMIN_KEY, *secret_values)
-            logs = redact((stdout or "") + (stderr or ""), pg_auth, API_KEY, ADMIN_KEY, *secret_values)
+            peer_stdout, peer_stderr = stop_server(peer_proc)
+            peer_proc = None
+            detail = redact(str(exc), pg_auth, API_KEY, ADMIN_KEY, OTHER_ADMIN_KEY, *secret_values)
+            logs = redact((stdout or "") + (stderr or "") + (peer_stdout or "") + (peer_stderr or ""), pg_auth, API_KEY, ADMIN_KEY, OTHER_ADMIN_KEY, *secret_values)
             print(
                 json.dumps(
                     {
@@ -666,6 +1021,7 @@ def main() -> int:
             return 1
         finally:
             stop_server(proc)
+            stop_server(peer_proc)
             if adapter is not None:
                 adapter.close()
             container_smoke.run(["docker", "rm", "-f", container], timeout=30)

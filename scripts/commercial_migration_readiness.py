@@ -7,6 +7,7 @@ isolation, and no obvious generated/runtime artifacts in the pending change set.
 """
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 from pathlib import Path
@@ -51,6 +52,31 @@ def file_contains(path: str, needle: str) -> bool:
     if not target.exists():
         return False
     return needle in target.read_text(encoding="utf-8", errors="replace")
+
+
+def python_functions_call(path: str, function_names: tuple[str, ...], callee: str) -> bool:
+    target = ROOT / path
+    if not target.exists():
+        return False
+    try:
+        tree = ast.parse(target.read_text(encoding="utf-8", errors="replace"))
+    except SyntaxError:
+        return False
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    return all(
+        name in functions
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == callee
+            for node in ast.walk(functions[name])
+        )
+        for name in function_names
+    )
 
 
 def read_json(path: str) -> dict:
@@ -230,8 +256,9 @@ def main() -> int:
         ),
         check(
             "no_big_bang_decision_recorded",
-            file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "There is no big-bang rewrite"),
-            "commercial migration doc keeps current Python/SQLite/Vite line valid until parity gates pass",
+            file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "no big-bang rewrite")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "bounded migration rollback"),
+            "commercial migration advances route by route with explicit rollback instead of a big-bang rewrite",
         ),
         check(
             "production_readiness_surface_exists",
@@ -274,6 +301,8 @@ def main() -> int:
             and file_contains("scripts/local_runtime_acceptance.py", "Agent Plan verification did not pass")
             and file_contains("scripts/local_runtime_acceptance.py", "Plan evidence manifest did not verify")
             and file_contains("scripts/local_runtime_acceptance.py", "prepared_runtime_prepare_payload")
+            and file_contains("scripts/local_runtime_acceptance.py", 'payload = {"confirm_run": True}')
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "server-generated task/run/tool-call/approval/prepared-action IDs")
             and file_contains("scripts/local_runtime_acceptance.py", "prepared_action_status")
             and file_contains("scripts/local_runtime_acceptance.py", '"prepared_action_id"')
             and file_contains("scripts/local_runtime_acceptance.py", "Prepared runtime probe did not consume")
@@ -1000,6 +1029,19 @@ def main() -> int:
             "Gate 3 and Gate 5 run independently and publish exact-head hash-only command, scope, and aggregate CI receipts without self-promoting release state",
         ),
         check(
+            "commercial_ci_supply_chain_pins_exist",
+            (ROOT / "scripts" / "commercial_ci_supply_chain_smoke.py").exists()
+            and file_contains("scripts/commercial_ci_supply_chain_smoke.py", "commercial_ci_supply_chain_pins_v1")
+            and file_contains("scripts/commercial_ci_supply_chain_smoke.py", "Postgres image is not tag-and-digest pinned")
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "python3 scripts/commercial_ci_supply_chain_smoke.py")
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "runs-on: ubuntu-24.04")
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "@playwright/cli@0.1.17")
+            and not file_contains(".github/workflows/commercial-migration-ci.yml", "ubuntu-latest")
+            and not file_contains(".github/workflows/commercial-migration-ci.yml", "actions/checkout@v4"),
+            "Commercial CI pins runner, first-party actions, language patch versions, Playwright CLI, and the Postgres tag plus digest",
+            "python3 scripts/commercial_ci_supply_chain_smoke.py",
+        ),
+        check(
             "commercial_exact_head_ci_evidence_surface_exists",
             file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", "commercial_exact_head_ci_evidence_v1")
             and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.md", "commercial_exact_head_ci_evidence.py --from-gh --require-current-head")
@@ -1037,6 +1079,24 @@ def main() -> int:
             and (ROOT / "scripts" / "commercial_release_promotion_preflight.py").exists()
             and (ROOT / "scripts" / "commercial_release_promotion_preflight_smoke.py").exists(),
             "Commercial release promotion preflight makes exact-head CI, remote sync, clean worktree, and release-grade receipt blockers machine-readable",
+        ),
+        check(
+            "commercial_release_grade_promotion_static_surface_exists",
+            file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "commercial_release_grade_promotion_v1")
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "commercial_release_grade_promotion_smoke.py")
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "python3 -I -B -S scripts/commercial_release_grade_promotion_smoke.py")
+            and (ROOT / "scripts" / "commercial_release_grade_promotion").exists()
+            and (ROOT / "scripts" / "commercial_release_grade_promotion.py").exists()
+            and (ROOT / "scripts" / "commercial_release_grade_promotion_smoke.py").exists()
+            and file_contains("scripts/commercial_release_grade_promotion", "/usr/bin/python3")
+            and file_contains("scripts/commercial_release_grade_promotion", "-I -B")
+            and file_contains("scripts/commercial_release_grade_promotion.py", "runtime_acceptance_script_head_mismatch")
+            and file_contains("scripts/commercial_release_grade_promotion.py", "independent_remote_branch_head_mismatch")
+            and file_contains("scripts/commercial_release_grade_promotion_smoke.py", "global_sitecustomize_disabled")
+            and file_contains("scripts/commercial_release_grade_promotion_smoke.py", "recording_receipt_derivation_verified")
+            and file_contains("scripts/commercial_release_grade_promotion_smoke.py", "critical_execution_closure_matches_head_bytes")
+            and file_contains("scripts/commercial_release_grade_promotion_smoke.py", "post_replace_fsync_warning_truthful"),
+            "Static promotion implementation, documentation, smoke, and CI wiring are present; only CI execution of the smoke is the dynamic behavior gate",
         ),
         check(
             "release_freeze_protocol_surface_exists",
@@ -1153,11 +1213,18 @@ def main() -> int:
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime_openclaw_prepare_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime_openclaw_approve_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime_openclaw_resume_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime_openclaw_concurrent_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime_openclaw_cross_workspace_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime_openclaw_replay_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime_hermes_prepare_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime_hermes_approve_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime_hermes_resume_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime_hermes_concurrent_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime_hermes_cross_workspace_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime_hermes_replay_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime_cross_process_single_winner")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime.openclaw_probe.execution_claimed")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime.run_task.execution_claimed")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime_non_prepared_approval_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_missing_scope_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_missing_claim_scope_status")
@@ -1294,11 +1361,177 @@ def main() -> int:
             and file_contains("scripts/storage_boundary_sqlite_smoke.py", "repo_upsert_gateway_enrollment_request")
             and file_contains("server.py", "/api/agent-gateway/enrollment/rotate")
             and file_contains("server.py", "/api/agent-gateway/session/revoke")
+            and file_contains("server.py", "AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON")
+            and file_contains("server.py", "must use a distinct key for every workspace")
+            and file_contains("server.py", "is required for workspace-scoped Agent Gateway administration in production mode")
+            and file_contains("server.py", "request_id_server_generated")
+            and file_contains("scripts/security_production_readiness_smoke.py", "production global-only admin key did not fail closed")
+            and file_contains("scripts/security_production_readiness_smoke.py", "invalid workspace admin key map passed")
             and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", "postgres_http_gateway_lifecycle_write_v1")
+            and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", "anonymous_approval_rejected")
+            and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", "caller_request_id_rejected")
+            and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", "concurrent_issue_single_winner")
+            and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", "concurrent_rotation_single_winner")
+            and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", "concurrent_approve_issue_deadlock_free")
+            and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", '"database_concurrency_servers": 2')
+            and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", "cross_workspace_admin_hidden")
             and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", "cross_workspace_rejected")
+            and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", "repeated_revoke_idempotent")
+            and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", "postgres_repeated_approval_idempotent")
+            and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", "concurrent_token_session_revoke_single_winner")
+            and file_contains("scripts/enrollment_approval_workflow_smoke.py", "reverse_decision_rejected")
+            and file_contains("scripts/openclaw_probe_prepared_action_smoke.py", "approval_rebind_rejected")
+            and file_contains("server.py", "PreparedActionImmutableConflict")
+            and file_contains("server.py", "repo_claim_workspace_prepared_action")
+            and file_contains("scripts/openclaw_probe_prepared_action_smoke.py", "prepared_action_rebind_rejected")
+            and file_contains("scripts/openclaw_probe_prepared_action_smoke.py", "cross_workspace_prepared_action_hidden")
+            and file_contains("scripts/openclaw_probe_prepared_action_smoke.py", "cross_workspace_prepare_ids_isolated")
+            and file_contains("scripts/openclaw_probe_prepared_action_smoke.py", "cross_workspace_task_rebind_rejected")
+            and file_contains("scripts/openclaw_probe_prepared_action_smoke.py", "concurrent_resume_single_winner")
+            and file_contains("scripts/hermes_run_task_prepared_action_smoke.py", "cross_workspace_prepared_action_hidden")
+            and file_contains("scripts/hermes_run_task_prepared_action_smoke.py", "cross_workspace_prepare_ids_isolated")
+            and file_contains("scripts/hermes_run_task_prepared_action_smoke.py", "cross_workspace_task_rebind_rejected")
+            and file_contains("scripts/hermes_run_task_prepared_action_smoke.py", "concurrent_resume_single_winner")
+            and file_contains("server.py", "approval_immutable_binding_conflict")
+            and file_contains("server.py", "approval_decision_transition_requires_decision_api")
+            and file_contains("server.py", "approval_decision_conflict")
+            and file_contains("server.py", "postgres_locking_rows")
             and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", "token_values_omitted_from_evidence")
             and (ROOT / "scripts" / "storage_postgres_gateway_lifecycle_smoke.py").exists(),
-            "Postgres-backed Agent Gateway registration, enrollment approval/rotation/revocation, and short-session lifecycle are allowlisted, isolated, and token-omission tested",
+            "Static Gateway lifecycle and prepared-action claim/immutability smoke surfaces are present; CI execution remains the dynamic behavior gate",
+        ),
+        check(
+            "prepared_action_side_effect_resume_contract_exists",
+            all(
+                file_contains(path, marker)
+                for path in (
+                    "docs/AGENT_GATEWAY_CLI_SPEC.md",
+                    "docs/STORAGE_BOUNDARY_MAP.md",
+                    "docs/POSTGRES_PARITY_CONTRACT.md",
+                )
+                for marker in (
+                    "prepared_action_approval_single_binding_v1",
+                    "prepared_action_cas_claim_v1",
+                    "prepared_action_stale_unknown_outcome_v1",
+                    "fixed_runtime_server_generated_identifiers_v1",
+                    "legacy_prepared_action_lifecycle_migration_v1",
+                )
+            )
+            and file_contains("server.py", "idx_prepared_actions_approval_unique")
+            and file_contains("server.py", "prepared_action_approval_binding_conflict")
+            and file_contains("server.py", "def claim_prepared_action_execution(")
+            and file_contains("server.py", "WHERE workspace_id=? AND prepared_action_id=? AND status='approved'")
+            and file_contains("server.py", "AGENTOPS_PREPARED_ACTION_STALE_SECONDS")
+            and file_contains("server.py", "execution_outcome_unknown_after_stale_claim")
+            and file_contains("server.py", '"provider_call_may_have_completed": True')
+            and file_contains("server.py", "server_generated_runtime_identifiers_required")
+            and file_contains("server.py", "def ensure_sqlite_prepared_action_lifecycle_schema(")
+            and python_functions_call(
+                "server.py",
+                (
+                    "openclaw_resume_probe",
+                    "dify_resume_upload_text",
+                    "agnesfallback_resume_probe",
+                    "resume_local_ai_brief",
+                    "resume_customer_worker_external_write",
+                    "hermes_resume_run_task",
+                    "notion_resume_prepared_export",
+                ),
+                "claim_prepared_action_execution",
+            )
+            and file_contains("scripts/storage_boundary_sqlite_smoke.py", "prepared_action_approval_binding_unique")
+            and file_contains("scripts/storage_boundary_sqlite_smoke.py", "stale_executing_failed_unknown_outcome")
+            and file_contains("scripts/storage_boundary_sqlite_smoke.py", "legacy_prepared_action_lifecycle_migrated")
+            and file_contains("scripts/storage_postgres_write_helper_parity_smoke.py", "repo_upsert_prepared_action_approval_conflict")
+            and file_contains("scripts/openclaw_probe_prepared_action_smoke.py", "caller_runtime_identifiers_rejected")
+            and file_contains("scripts/openclaw_probe_prepared_action_smoke.py", "concurrent_resume_single_winner")
+            and file_contains("scripts/hermes_run_task_prepared_action_smoke.py", "caller_runtime_identifiers_rejected")
+            and file_contains("scripts/hermes_run_task_prepared_action_smoke.py", "concurrent_resume_single_winner")
+            and file_contains("scripts/dify_upload_prepared_action_smoke.py", "concurrent_resume_single_winner")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "runtime_cross_process_single_winner"),
+            "Prepared-action approval uniqueness, shared CAS claim-before-provider, stale unknown-outcome terminal failure, legacy SQLite lifecycle migration, and server-generated fixed-runtime identifiers are statically guarded; smoke execution remains the dynamic gate",
+        ),
+        check(
+            "nextjs_postgres_control_plane_tasks_surface_exists",
+            file_contains("ui/next-app/package.json", '"pg"')
+            and file_contains("ui/next-app/src/server/controlPlane/config.ts", "AGENTOPS_TS_CONTROL_PLANE_MODE")
+            and file_contains("ui/next-app/src/server/controlPlane/config.ts", 'AGENTOPS_DEPLOYMENT_MODE) === "production" ? "postgres"')
+            and file_contains("ui/next-app/src/server/controlPlane/auth.ts", "authenticateAgentGateway")
+            and file_contains("ui/next-app/src/server/controlPlane/auth.ts", "FROM agent_gateway_tokens WHERE token_id=$1 FOR UPDATE")
+            and file_contains("ui/next-app/src/server/controlPlane/auth.ts", "WHERE session_id=$1 AND session_hash=$2 FOR UPDATE")
+            and file_contains("ui/next-app/src/server/controlPlane/db.ts", "error.commitTransaction")
+            and file_contains("ui/next-app/src/server/controlPlane/ledger.ts", "pg_advisory_xact_lock(1095779668)")
+            and file_contains("server.py", "pg_advisory_xact_lock(?)")
+            and file_contains("server.py", "1095779668")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayTasks.ts", "typescript_postgres")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayTasks.ts", "task_immutable_binding_conflict")
+            and file_contains("ui/next-app/app/api/mis/agent-gateway/tasks/route.ts", "controlPlaneMode")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayRuns.ts", "run_immutable_binding_conflict")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayRuns.ts", "agent_gateway.task_run_start")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayRuns.ts", "heartbeatAgentGatewayRun")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayRuns.ts", "agent_gateway.task_run_heartbeat")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayRuns.ts", "run_terminal_conflict")
+            and file_contains("ui/next-app/app/api/mis/agent-gateway/runs/start/route.ts", "startAgentGatewayRun")
+            and file_contains("ui/next-app/app/api/mis/agent-gateway/runs/[runId]/heartbeat/route.ts", "heartbeatAgentGatewayRun")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayEvidence.ts", "recordAgentGatewayToolCall")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayEvidence.ts", "submitAgentGatewayEvaluation")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayEvidence.ts", "recordAgentGatewayArtifact")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayEvidence.ts", "tool_call_approval_required")
+            and file_contains("ui/next-app/app/api/mis/agent-gateway/tool-calls/route.ts", "recordAgentGatewayToolCall")
+            and file_contains("ui/next-app/app/api/mis/agent-gateway/evaluations/submit/route.ts", "submitAgentGatewayEvaluation")
+            and file_contains("ui/next-app/app/api/mis/agent-gateway/artifacts/route.ts", "recordAgentGatewayArtifact")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayPlans.ts", "createAgentGatewayPlan")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayPlans.ts", "createAgentGatewayPlanEvidenceManifest")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayPlans.ts", "run.workspace_id=$2")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayRuns.ts", "verified_agent_plan_required")
+            and file_contains("ui/next-app/app/api/mis/agent-gateway/agent-plans/route.ts", "createAgentGatewayPlan")
+            and file_contains("ui/next-app/app/api/mis/agent-gateway/plan-evidence-manifests/route.ts", "createAgentGatewayPlanEvidenceManifest")
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", "nextjs_postgres_control_plane_tasks_v1")
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", "/api/mis/agent-gateway/agent-plans")
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", "/api/mis/agent-gateway/plan-evidence-manifests")
+            and file_contains(
+                "scripts/nextjs_postgres_control_plane_tasks_smoke.py",
+                '"python_api_unreachable_before_and_after"',
+            )
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"audit_chain_valid"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"cross_language_audit_chain_valid"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"typescript_audit_lock_waited"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"python_audit_lock_waited"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"expired_token_state_committed"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"orphan_session_state_committed"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"session_request_waited_for_parent_lock"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"session_parent_revoke_lock_order_consistent"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"session_rejected_after_parent_revoke"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"typescript_run_start_owned"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"run_repeat_idempotent"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"concurrent_run_start_single_winner"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"run_immutable_binding_enforced"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"typescript_run_heartbeat_owned"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"run_heartbeat_repeat_idempotent"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"concurrent_terminal_heartbeat_single_winner"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"conflicting_terminal_heartbeat_single_winner"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"typescript_agent_plan_owned"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"concurrent_agent_plan_single_winner"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"agent_plan_immutable"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"agent_plan_human_status_protected"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"non_mock_run_requires_agent_plan"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"approval_required_agent_plan_blocks_run"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"concurrent_tool_call_single_winner"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"concurrent_evaluation_single_winner"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"concurrent_artifact_single_winner"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"typescript_plan_evidence_owned"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"concurrent_manifest_single_winner"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"manifest_verification_passed"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"manifest_immutable"')
+            and file_contains(
+                "scripts/nextjs_postgres_control_plane_tasks_smoke.py",
+                '"manifest_cross_workspace_evidence_blocked"',
+            )
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"high_risk_tool_forced_waiting_approval"')
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "nextjs_postgres_control_plane_tasks")
+            and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "nextjs_postgres_control_plane_tasks_v1")
+            and (ROOT / "scripts" / "nextjs_postgres_control_plane_tasks_smoke.py").exists(),
+            "The TypeScript-owned Agent Gateway task/run lifecycle, Agent Plan, verified plan-evidence manifest, and immutable execution-evidence routes default to Postgres in production, retain local proxy rollback, use workspace-scoped evidence queries plus consistent task/run, evidence-ID, and parent-token/session locking, force risky tools to approval, require verified plans for non-mock run start, and have a no-Python dynamic CI receipt",
         ),
         check(
             "postgres_cli_write_parity_surface_exists",
@@ -1620,6 +1853,7 @@ def main() -> int:
                 "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py --configured-retention-fixture",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
+                "python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py",
                 "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
                 "backup/restore and signed export checks",
             ],
@@ -1633,9 +1867,9 @@ def main() -> int:
         "worktree": str(ROOT),
         "strategy": {
             "rewrite_policy": "no_big_bang",
-            "backend": "keep_python_control_plane_until_api_parity_and_production_safety_pass",
-            "database": "sqlite_first_postgres_after_storage_boundary",
-            "frontend": "vite_react_canonical_nextjs_parallel_parity_started",
+            "backend": "typescript_postgres_strangler_active_python_rollback_until_full_api_parity",
+            "database": "postgres_default_for_commercial_control_plane_sqlite_free_local_only",
+            "frontend": "nextjs_canonical_migration_track_with_vite_rollback_until_route_retirement",
             "agent_contract": "agent_gateway_cli_api_mcp_remains_durable",
         },
         "checks": checks,

@@ -63,6 +63,7 @@ def start_production_fail_closed_server(db_path: Path, port: int) -> subprocess.
     env["AGENTOPS_DEPLOYMENT_MODE"] = "production"
     env.pop("AGENTOPS_API_KEY", None)
     env.pop("AGENTOPS_ADMIN_KEY", None)
+    env.pop("AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON", None)
     env.pop("AGENTOPS_REQUIRE_PRODUCTION_SECURITY", None)
     return subprocess.Popen(
         [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port)],

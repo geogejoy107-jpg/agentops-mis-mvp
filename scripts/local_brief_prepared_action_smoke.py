@@ -18,6 +18,8 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_ID = "local_brief_prepared_action_v1"
+WORKSPACE_A = "ws_local_brief_a"
+WORKSPACE_B = "ws_local_brief_b"
 
 
 def free_port() -> int:
@@ -119,12 +121,12 @@ def main() -> int:
     base_url = f"http://127.0.0.1:{app_port}"
     try:
         wait_for_server(base_url)
-        dry, dry_status = http_json("POST", base_url, "/api/workflows/local-brief", {"confirm_run": False})
+        dry, dry_status = http_json("POST", base_url, "/api/workflows/local-brief", {"workspace_id": WORKSPACE_A, "confirm_run": False})
         require(dry_status == 201 and dry.get("dry_run") is True, f"dry-run should remain preview-only: {dry_status} {dry}", failures)
         require(cli_call_count(fake_cli_log) == 0, "fake CLI called during dry-run", failures)
         require(not leaked_prompt(dry), f"dry-run leaked prompt body: {dry}", failures)
 
-        prepare, prepare_status = http_json("POST", base_url, "/api/workflows/local-brief", {"confirm_run": True})
+        prepare, prepare_status = http_json("POST", base_url, "/api/workflows/local-brief", {"workspace_id": WORKSPACE_A, "confirm_run": True})
         prepared_action_id = prepare.get("prepared_action_id")
         approval_id = prepare.get("approval_id")
         prompt_hash = prepare.get("prompt_hash")
@@ -136,7 +138,13 @@ def main() -> int:
         require(not leaked_prompt(prepare), f"prepare leaked prompt body: {prepare}", failures)
         require(cli_call_count(fake_cli_log) == 0, "fake CLI called during prepare", failures)
 
+        other_prepare, other_prepare_status = http_json("POST", base_url, "/api/workflows/local-brief", {"workspace_id": WORKSPACE_B, "confirm_run": True})
+        require(other_prepare_status == 202, f"other-workspace prepare should be 202: {other_prepare_status} {other_prepare}", failures)
+        require(other_prepare.get("task_id") != prepare.get("task_id"), f"default task id was shared across workspaces: {prepare} {other_prepare}", failures)
+        require(other_prepare.get("prepared_action_id") != prepared_action_id, f"prepared action id was shared across workspaces: {prepare} {other_prepare}", failures)
+
         premature, premature_status = http_json("POST", base_url, "/api/workflows/local-brief", {
+            "workspace_id": WORKSPACE_A,
             "confirm_run": True,
             "prepared_action_id": prepared_action_id,
             "prompt_hash": prompt_hash,
@@ -145,11 +153,12 @@ def main() -> int:
         require(premature_status == 428 and premature.get("error") == "approval_required", f"premature resume should require approval: {premature_status} {premature}", failures)
         require(cli_call_count(fake_cli_log) == 0, "fake CLI called during premature resume", failures)
 
-        approved, approved_status = http_json("POST", base_url, f"/api/approvals/{approval_id}/approve", {})
+        approved, approved_status = http_json("POST", base_url, f"/api/approvals/{approval_id}/approve", {"workspace_id": WORKSPACE_A})
         require(approved_status == 200 and approved.get("decision") == "approved", f"approval failed: {approved_status} {approved}", failures)
         require(cli_call_count(fake_cli_log) == 0, "fake CLI called during approval", failures)
 
         mismatch, mismatch_status = http_json("POST", base_url, "/api/workflows/local-brief", {
+            "workspace_id": WORKSPACE_A,
             "confirm_run": True,
             "prepared_action_id": prepared_action_id,
             "prompt_hash": "bad-prompt-hash",
@@ -158,7 +167,18 @@ def main() -> int:
         require(mismatch_status == 409 and mismatch.get("error") == "prepared_action_prompt_hash_mismatch", f"mismatch should be blocked: {mismatch_status} {mismatch}", failures)
         require(cli_call_count(fake_cli_log) == 0, "fake CLI called during hash mismatch", failures)
 
+        cross_workspace, cross_workspace_status = http_json("POST", base_url, "/api/workflows/local-brief", {
+            "workspace_id": WORKSPACE_B,
+            "confirm_run": True,
+            "prepared_action_id": prepared_action_id,
+            "prompt_hash": prompt_hash,
+            "state_hash": state_hash,
+        })
+        require(cross_workspace_status == 404 and cross_workspace.get("error") == "prepared_action_not_found", f"cross-workspace resume was not hidden: {cross_workspace_status} {cross_workspace}", failures)
+        require(cli_call_count(fake_cli_log) == 0, "fake CLI called during cross-workspace resume", failures)
+
         resumed, resumed_status = http_json("POST", base_url, "/api/workflows/local-brief", {
+            "workspace_id": WORKSPACE_A,
             "confirm_run": True,
             "prepared_action_id": prepared_action_id,
             "prompt_hash": prompt_hash,
@@ -171,6 +191,7 @@ def main() -> int:
         require(not leaked_prompt(resumed), f"resume leaked prompt body: {resumed}", failures)
 
         replay, replay_status = http_json("POST", base_url, "/api/workflows/local-brief", {
+            "workspace_id": WORKSPACE_A,
             "confirm_run": True,
             "prepared_action_id": prepared_action_id,
             "prompt_hash": prompt_hash,
@@ -188,6 +209,8 @@ def main() -> int:
             "run_id": resumed.get("run_id"),
             "artifact_id": resumed.get("artifact_id"),
             "provider_call_count": cli_call_count(fake_cli_log),
+            "cross_workspace_resume_hidden": cross_workspace_status == 404,
+            "workspace_default_task_ids_isolated": other_prepare.get("task_id") != prepare.get("task_id"),
             "token_omitted": True,
             "raw_prompt_omitted": True,
             "raw_response_omitted": True,

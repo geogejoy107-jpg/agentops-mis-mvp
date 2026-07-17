@@ -38,6 +38,7 @@ RUN_A = "run_pg_write_a"
 TOOL_CALL_A = "tc_pg_write_a"
 APPROVAL_A = "ap_pg_write_a"
 PREPARED_A = "pact_pg_write_a"
+PREPARED_APPROVAL_CONFLICT = "pact_pg_write_approval_conflict"
 EVAL_A = "eval_pg_write_a"
 ARTIFACT_A = "art_pg_write_a"
 MEMORY_A = "mem_pg_write_a"
@@ -371,10 +372,26 @@ def run_write_helpers(conn) -> dict[str, str]:
         }
         before, outcomes["repo_upsert_prepared_action_create"] = server.repo_upsert_prepared_action(conn, dict(prepared_a))
         require(before is None and outcomes["repo_upsert_prepared_action_create"] == "created", "prepared create outcome mismatch")
+        approval_conflict = dict(prepared_a)
+        approval_conflict["prepared_action_id"] = PREPARED_APPROVAL_CONFLICT
+        try:
+            server.repo_upsert_prepared_action(conn, approval_conflict)
+        except server.PreparedActionImmutableConflict as exc:
+            outcomes["repo_upsert_prepared_action_approval_conflict"] = str(exc)
+        require(
+            outcomes.get("repo_upsert_prepared_action_approval_conflict") == "prepared_action_approval_binding_conflict",
+            "prepared approval reuse was not rejected",
+        )
         prepared_a["snapshot_hash"] = "snapshot_hash_pg_write_updated"
         prepared_a["updated_at"] = server.now_iso()
-        before, outcomes["repo_upsert_prepared_action_update"] = server.repo_upsert_prepared_action(conn, dict(prepared_a))
-        require(before and outcomes["repo_upsert_prepared_action_update"] == "updated", "prepared update outcome mismatch")
+        try:
+            server.repo_upsert_prepared_action(conn, dict(prepared_a))
+        except server.PreparedActionImmutableConflict as exc:
+            outcomes["repo_upsert_prepared_action_immutable_conflict"] = str(exc)
+        require(
+            outcomes.get("repo_upsert_prepared_action_immutable_conflict") == "prepared_action_immutable_binding_conflict",
+            "prepared immutable binding update was not rejected",
+        )
         _before, after, outcomes["repo_update_prepared_action_approved"] = server.repo_update_prepared_action_status(conn, PREPARED_A, "approved")
         require(after and after["status"] == "approved", "prepared approve update mismatch")
         _before, after, outcomes["repo_update_prepared_action_consumed"] = server.repo_update_prepared_action_status(
@@ -599,6 +616,137 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def verify_postgres_legacy_prepared_action_migration(conn) -> dict:
+    status_constraints = conn.execute(
+        """SELECT con.conname, pg_get_constraintdef(con.oid) AS definition
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid=con.conrelid
+        WHERE rel.oid=to_regclass('prepared_actions')
+          AND con.contype='c'
+        ORDER BY con.conname"""
+    ).fetchall()
+    for row in status_constraints:
+        if "status" not in str(row["definition"] or "").lower():
+            continue
+        name = str(row["conname"]).replace('"', '""')
+        conn.execute(f'ALTER TABLE prepared_actions DROP CONSTRAINT "{name}"')
+    conn.execute(
+        """ALTER TABLE prepared_actions
+        ADD CONSTRAINT prepared_actions_status_legacy_check
+        CHECK(status IN ('prepared','waiting_approval','approved','rejected','consumed','expired','canceled'))"""
+    )
+    conn.execute("DROP INDEX IF EXISTS idx_prepared_actions_approval_unique")
+    conn.commit()
+
+    first = server.ensure_postgres_prepared_action_lifecycle_schema(conn)
+    conn.commit()
+    second = server.ensure_postgres_prepared_action_lifecycle_schema(conn)
+    conn.commit()
+    migrated = conn.execute(
+        """SELECT pg_get_constraintdef(con.oid) AS definition
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid=con.conrelid
+        WHERE rel.oid=to_regclass('prepared_actions')
+          AND con.contype='c'
+          AND pg_get_constraintdef(con.oid) LIKE '%status%'"""
+    ).fetchall()
+    unique_index = conn.execute(
+        """SELECT 1
+        FROM pg_indexes
+        WHERE tablename='prepared_actions'
+          AND indexname='idx_prepared_actions_approval_unique'"""
+    ).fetchone()
+    definitions = [str(row["definition"] or "").lower() for row in migrated]
+    require(first.get("check_migrated") is True, f"legacy Postgres CHECK was not migrated: {first}")
+    require(second.get("check_migrated") is False, f"Postgres lifecycle migration was not idempotent: {second}")
+    require(definitions and all("executing" in item and "failed" in item for item in definitions), f"Postgres lifecycle CHECK is incomplete: {definitions}")
+    require(bool(unique_index), "Postgres approval unique index was not recreated after lifecycle migration")
+    return {
+        "legacy_check_migrated": True,
+        "idempotent": True,
+        "approval_index_ensured": True,
+    }
+
+
+def verify_postgres_stale_prepared_action_reconciliation(conn, dsn: str) -> dict:
+    old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)).isoformat()
+
+    def insert_stale(action_id: str) -> None:
+        conn.execute(
+            """INSERT INTO prepared_actions(
+            prepared_action_id,workspace_id,task_id,run_id,tool_call_id,approval_id,requested_by_agent_id,
+            action_type,provider,target_resource,normalized_args_json,args_hash,snapshot_ref,snapshot_hash,status,
+            result_json,created_at,updated_at,approved_at,consumed_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                action_id, WORKSPACE_A, TASK_A, RUN_A, TOOL_CALL_A, None, AGENT_A,
+                "postgres.stale_reconciliation", "postgres-smoke", "postgres://stale-reconciliation",
+                "{}", server.prepared_action_args_hash("{}"), None, "stale_snapshot", "executing",
+                "{}", old, old, old, None,
+            ),
+        )
+
+    runtime_events_before = conn.execute("SELECT COUNT(*) AS count FROM runtime_events").fetchone()["count"]
+    read_action_id = "pact_pg_stale_read_side"
+    insert_stale(read_action_id)
+    conn.commit()
+    rows = server.repo_list_workspace_prepared_actions(conn, WORKSPACE_A)
+    read_failed = next((row for row in rows if row["prepared_action_id"] == read_action_id), None)
+    read_result = json.loads(read_failed["result_json"] or "{}") if read_failed else {}
+    require(
+        read_failed
+        and read_failed["status"] == "failed"
+        and read_result.get("outcome") == "unknown"
+        and read_result.get("automatic_retry_performed") is False,
+        f"Postgres read-side stale reconciliation failed: {read_result}",
+    )
+    conn.commit()
+
+    startup_action_id = "pact_pg_stale_startup"
+    insert_stale(startup_action_id)
+    conn.commit()
+    original_backend = server.STORAGE_BACKEND
+    startup_env = {
+        "AGENTOPS_STORAGE_BACKEND": "postgres",
+        "AGENTOPS_POSTGRES_DSN": dsn,
+        "AGENTOPS_ENABLE_POSTGRES_STORAGE": "1",
+        "AGENTOPS_POSTGRES_READ_ONLY_HTTP": "1",
+        "AGENTOPS_EDITION": "enterprise_byoc",
+    }
+    original_env = {key: os.environ.get(key) for key in startup_env}
+    try:
+        server.STORAGE_BACKEND = "postgres"
+        os.environ.update(startup_env)
+        startup = server.run_prepared_action_startup_lifecycle()
+    finally:
+        server.STORAGE_BACKEND = original_backend
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    startup_failed = conn.execute(
+        "SELECT status,result_json FROM prepared_actions WHERE prepared_action_id=?",
+        (startup_action_id,),
+    ).fetchone()
+    startup_result = json.loads(startup_failed["result_json"] or "{}") if startup_failed else {}
+    runtime_events_after = conn.execute("SELECT COUNT(*) AS count FROM runtime_events").fetchone()["count"]
+    require(
+        startup.get("stale_executing_reconciled") == 1
+        and startup_failed
+        and startup_failed["status"] == "failed"
+        and startup_result.get("outcome") == "unknown"
+        and startup_result.get("automatic_retry_performed") is False,
+        f"Postgres startup stale reconciliation failed: {startup} {startup_result}",
+    )
+    require(runtime_events_after == runtime_events_before, "Postgres stale reconciliation emitted provider runtime events")
+    return {
+        "read_side_failed_outcome_unknown": True,
+        "startup_failed_outcome_unknown": True,
+        "automatic_provider_retry_performed": False,
+    }
+
+
 def run_sqlite() -> tuple[dict[str, str], dict[str, Any]]:
     handle = tempfile.NamedTemporaryFile(prefix="agentops-write-helper-sqlite-", delete=False)
     db_path = handle.name
@@ -667,11 +815,21 @@ def run_postgres(*, image: str, skip: bool, install_driver: bool) -> tuple[int |
             dsn = f"postgresql://agentops:{pg_auth}@127.0.0.1:{port}/agentops"
             adapter = wait_for_adapter_connect(dsn)
             adapter.executescript(contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
+            lifecycle_migration = verify_postgres_legacy_prepared_action_migration(adapter)
             seed_reference_rows(adapter)
             outcomes = run_write_helpers(adapter)
             adapter.commit()
             rollback_sentinel = run_rollback_sentinel(adapter)
-            return None, {"driver_status": driver_status, "outcomes": outcomes, "snapshot": snapshot(adapter), "rollback_sentinel": rollback_sentinel}
+            postgres_snapshot = snapshot(adapter)
+            stale_reconciliation = verify_postgres_stale_prepared_action_reconciliation(adapter, dsn)
+            return None, {
+                "driver_status": driver_status,
+                "outcomes": outcomes,
+                "snapshot": postgres_snapshot,
+                "rollback_sentinel": rollback_sentinel,
+                "lifecycle_migration": lifecycle_migration,
+                "stale_reconciliation": stale_reconciliation,
+            }
         except (AssertionError, PostgresAdapterUnavailable, RuntimeError, ValueError, KeyError) as exc:
             if adapter is not None:
                 adapter.rollback()
@@ -718,6 +876,8 @@ def main() -> int:
         "helpers": sorted(sqlite_outcomes.keys()),
         "snapshot_sections": list(sqlite_snapshot.keys()),
         "rollback_sentinel": rollback_sentinel,
+        "postgres_legacy_lifecycle_migration": postgres_result["lifecycle_migration"],
+        "postgres_stale_reconciliation": postgres_result["stale_reconciliation"],
         "sqlite_write_helper_hash": sqlite_digest,
         "postgres_write_helper_hash": postgres_digest,
         "free_local_dependencies": [],

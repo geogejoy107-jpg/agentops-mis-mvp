@@ -18,6 +18,8 @@ from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE_A = "ws_notion_export_a"
+WORKSPACE_B = "ws_notion_export_b"
 
 
 class FakeNotionHandler(BaseHTTPRequestHandler):
@@ -123,6 +125,7 @@ def main() -> int:
     try:
         wait_for_server(base_url)
         prepare, prepare_status = http_json("POST", base_url, "/api/integrations/notion/export-confirmed", {
+            "workspace_id": WORKSPACE_A,
             "confirm_export": True,
             "title": "Prepared Action Smoke",
         })
@@ -133,7 +136,17 @@ def main() -> int:
         require(prepare.get("provider_call_performed") is False, f"prepare performed provider call: {prepare}", failures)
         require(len(FakeNotionHandler.calls) == 0, f"fake Notion called before approval: {FakeNotionHandler.calls}", failures)
 
+        other_prepare, other_prepare_status = http_json("POST", base_url, "/api/integrations/notion/export-confirmed", {
+            "workspace_id": WORKSPACE_B,
+            "confirm_export": True,
+            "title": "Prepared Action Smoke",
+        })
+        require(other_prepare_status == 202, f"other-workspace prepare should be 202: {other_prepare_status} {other_prepare}", failures)
+        require(other_prepare.get("task_id") != prepare.get("task_id"), f"default task id was shared across workspaces: {prepare} {other_prepare}", failures)
+        require(other_prepare.get("prepared_action_id") != prepared_action_id, f"prepared action id was shared across workspaces: {prepare} {other_prepare}", failures)
+
         premature, premature_status = http_json("POST", base_url, "/api/integrations/notion/export-confirmed", {
+            "workspace_id": WORKSPACE_A,
             "confirm_export": True,
             "title": "Prepared Action Smoke",
             "prepared_action_id": prepared_action_id,
@@ -141,11 +154,21 @@ def main() -> int:
         require(premature_status == 428 and premature.get("error") == "approval_required", f"premature resume should require approval: {premature_status} {premature}", failures)
         require(len(FakeNotionHandler.calls) == 0, "fake Notion called during premature resume", failures)
 
-        approved, approved_status = http_json("POST", base_url, f"/api/approvals/{approval_id}/approve", {})
+        approved, approved_status = http_json("POST", base_url, f"/api/approvals/{approval_id}/approve", {"workspace_id": WORKSPACE_A})
         require(approved_status == 200 and approved.get("decision") == "approved", f"approval failed: {approved_status} {approved}", failures)
         require(len(FakeNotionHandler.calls) == 0, "fake Notion called during approval", failures)
 
+        cross_workspace, cross_workspace_status = http_json("POST", base_url, "/api/integrations/notion/export-confirmed", {
+            "workspace_id": WORKSPACE_B,
+            "confirm_export": True,
+            "title": "Prepared Action Smoke",
+            "prepared_action_id": prepared_action_id,
+        })
+        require(cross_workspace_status == 404 and cross_workspace.get("error") == "prepared_action_not_found", f"cross-workspace resume was not hidden: {cross_workspace_status} {cross_workspace}", failures)
+        require(len(FakeNotionHandler.calls) == 0, "fake Notion called during cross-workspace resume", failures)
+
         resumed, resumed_status = http_json("POST", base_url, "/api/integrations/notion/export-confirmed", {
+            "workspace_id": WORKSPACE_A,
             "confirm_export": True,
             "title": "Prepared Action Smoke",
             "prepared_action_id": prepared_action_id,
@@ -155,6 +178,7 @@ def main() -> int:
         require(len(FakeNotionHandler.calls) == 1, f"fake Notion should be called exactly once: {FakeNotionHandler.calls}", failures)
 
         replay, replay_status = http_json("POST", base_url, "/api/integrations/notion/export-confirmed", {
+            "workspace_id": WORKSPACE_A,
             "confirm_export": True,
             "title": "Prepared Action Smoke",
             "prepared_action_id": prepared_action_id,
@@ -168,6 +192,8 @@ def main() -> int:
             "prepared_action_id": prepared_action_id,
             "approval_id": approval_id,
             "provider_call_count": len(FakeNotionHandler.calls),
+            "cross_workspace_resume_hidden": cross_workspace_status == 404,
+            "workspace_default_task_ids_isolated": other_prepare.get("task_id") != prepare.get("task_id"),
             "token_omitted": True,
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if not failures else 1

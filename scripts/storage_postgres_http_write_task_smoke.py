@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import stat
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
@@ -95,7 +97,9 @@ GATEWAY_AUDIT_MISMATCH_TASK_ID = "tsk_pg_gateway_audit_wrong_task"
 GATEWAY_TERMINAL_HEARTBEAT_TASK_ID = "tsk_pg_gateway_terminal_heartbeat"
 GATEWAY_TERMINAL_HEARTBEAT_RUN_ID = "run_pg_gateway_terminal_heartbeat"
 SMOKE_API_KEY = "postgres_write_smoke_required_api_key"
+GATEWAY_ADMIN_KEY = "postgres_gateway_write_admin_key_2026"
 RUNTIME_WORKSPACE_ID = "ws_pg_runtime_prepared_action"
+RUNTIME_ADMIN_KEY = "postgres_runtime_write_admin_key_2026"
 RUNTIME_OPENCLAW_TASK_ID = "tsk_pg_runtime_openclaw_probe"
 RUNTIME_OPENCLAW_RUN_ID = "run_pg_runtime_openclaw_probe"
 RUNTIME_OPENCLAW_TOOL_ID = "tc_pg_runtime_openclaw_probe"
@@ -129,6 +133,7 @@ class FakeHermesHandler(BaseHTTPRequestHandler):
             "model": payload.get("model"),
             "prompt_present": bool(prompt),
         })
+        time.sleep(0.35)
         body = json.dumps({
             "id": "fake-postgres-hermes-run-task",
             "choices": [{"message": {"content": "HERMES_DEFAULT_RUN_OK"}}],
@@ -487,10 +492,12 @@ def write_fake_openclaw(path: Path) -> None:
         """#!/usr/bin/env python3
 import json
 import os
+import time
 from pathlib import Path
 log_path = Path(os.environ["OPENCLAW_FAKE_LOG"])
 with log_path.open("a", encoding="utf-8") as handle:
     handle.write("called\\n")
+time.sleep(0.35)
 print(json.dumps({
     "runId": "fake-postgres-openclaw-probe",
     "result": {
@@ -543,6 +550,13 @@ def server_env(dsn: str, pythonpath: str, *, write_enabled: bool, extra_env: dic
             "AGENTOPS_ENABLE_POSTGRES_STORAGE": "1",
             "AGENTOPS_POSTGRES_READ_ONLY_HTTP": "1",
             "AGENTOPS_API_KEY": SMOKE_API_KEY,
+            "AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON": json.dumps(
+                {
+                    GATEWAY_WORKSPACE_ID: GATEWAY_ADMIN_KEY,
+                    RUNTIME_WORKSPACE_ID: RUNTIME_ADMIN_KEY,
+                },
+                sort_keys=True,
+            ),
             "PYTHONPATH": pythonpath,
             "PYTHONDONTWRITEBYTECODE": "1",
         }
@@ -697,6 +711,44 @@ def request_json_with_token(url: str, *, token: str, method: str = "POST", body:
         return int(exc.code), json.loads(exc.read().decode("utf-8"))
 
 
+def request_json_with_admin(
+    url: str,
+    *,
+    workspace_id: str,
+    admin_key: str,
+    body: dict | None = None,
+) -> tuple[int, dict]:
+    return request_json_with_token(
+        url,
+        token=admin_key,
+        body=body,
+        extra_headers={"X-AgentOps-Workspace-Id": workspace_id},
+    )
+
+
+def concurrent_admin_requests(
+    base_urls: list[str],
+    *,
+    path: str,
+    workspace_id: str,
+    admin_key: str,
+    body: dict,
+) -> list[tuple[int, dict]]:
+    barrier = threading.Barrier(len(base_urls))
+
+    def send(base_url: str) -> tuple[int, dict]:
+        barrier.wait(timeout=5)
+        return request_json_with_admin(
+            f"{base_url}{path}",
+            workspace_id=workspace_id,
+            admin_key=admin_key,
+            body=dict(body),
+        )
+
+    with ThreadPoolExecutor(max_workers=len(base_urls)) as executor:
+        return list(executor.map(send, base_urls))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a Postgres-backed HTTP task write smoke.")
     parser.add_argument("--image", default=container_smoke.DEFAULT_IMAGE, help="Postgres Docker image to use.")
@@ -772,6 +824,7 @@ def main() -> int:
 
         adapter: PostgresAdapter | None = None
         proc: subprocess.Popen[str] | None = None
+        peer_proc: subprocess.Popen[str] | None = None
         try:
             if not container_smoke.wait_for_postgres(container):
                 return unavailable("Postgres container did not become ready before timeout.", skip=args.skip_if_unavailable)
@@ -957,19 +1010,22 @@ def main() -> int:
                 token=gateway_token,
                 body=gateway_audit_body(GATEWAY_READ_ONLY_AUDIT_ACTION, run_id=GATEWAY_READ_ONLY_RUN_ID, task_id=GATEWAY_READ_ONLY_CLAIM_TASK_ID),
             )
-            runtime_openclaw_read_only_status, runtime_openclaw_read_only_payload = request_json(
+            runtime_openclaw_read_only_status, runtime_openclaw_read_only_payload = request_json_with_admin(
                 f"{read_only_base}/api/integrations/openclaw/probe",
-                method="POST",
+                workspace_id=RUNTIME_WORKSPACE_ID,
+                admin_key=RUNTIME_ADMIN_KEY,
                 body={"confirm_run": True, "task_id": RUNTIME_OPENCLAW_TASK_ID, "workspace_id": RUNTIME_WORKSPACE_ID},
             )
-            runtime_hermes_read_only_status, runtime_hermes_read_only_payload = request_json(
+            runtime_hermes_read_only_status, runtime_hermes_read_only_payload = request_json_with_admin(
                 f"{read_only_base}/api/integrations/hermes/run-task",
-                method="POST",
+                workspace_id=RUNTIME_WORKSPACE_ID,
+                admin_key=RUNTIME_ADMIN_KEY,
                 body={"confirm_run": True, "task_id": RUNTIME_HERMES_TASK_ID, "workspace_id": RUNTIME_WORKSPACE_ID},
             )
-            runtime_approval_read_only_status, runtime_approval_read_only_payload = request_json(
+            runtime_approval_read_only_status, runtime_approval_read_only_payload = request_json_with_admin(
                 f"{read_only_base}/api/approvals/{RUNTIME_READ_ONLY_APPROVAL_ID}/approve",
-                method="POST",
+                workspace_id=RUNTIME_WORKSPACE_ID,
+                admin_key=RUNTIME_ADMIN_KEY,
                 body={},
             )
             stop_server(proc)
@@ -979,6 +1035,10 @@ def main() -> int:
             proc = start_server(server_env(dsn, pythonpath, write_enabled=True, extra_env=runtime_env), write_port)
             write_base = f"http://127.0.0.1:{write_port}"
             write_status_code, write_backend = wait_json(f"{write_base}/api/storage/backend-status", proc, secret=pg_auth)
+            peer_port = free_port()
+            peer_proc = start_server(server_env(dsn, pythonpath, write_enabled=True, extra_env=runtime_env), peer_port)
+            peer_base = f"http://127.0.0.1:{peer_port}"
+            peer_status_code, peer_backend = wait_json(f"{peer_base}/api/storage/backend-status", peer_proc, secret=pg_auth)
             create_status, create_payload = request_json(f"{write_base}/api/tasks", method="POST", body=task_body(TASK_ID))
             readback_status, readback_payload = request_json(f"{write_base}/api/tasks/{TASK_ID}?workspace_id={WORKSPACE_ID}")
             gateway_missing_heartbeat_scope_status, gateway_missing_heartbeat_scope_payload = request_json_with_token(
@@ -1400,9 +1460,10 @@ def main() -> int:
                 token=gateway_token,
                 body=gateway_approval_body(GATEWAY_APPROVAL_ID),
             )
-            runtime_non_prepared_approval_status, runtime_non_prepared_approval_payload = request_json(
+            runtime_non_prepared_approval_status, runtime_non_prepared_approval_payload = request_json_with_admin(
                 f"{write_base}/api/approvals/{GATEWAY_APPROVAL_ID}/approve",
-                method="POST",
+                workspace_id=GATEWAY_WORKSPACE_ID,
+                admin_key=GATEWAY_ADMIN_KEY,
                 body={},
             )
             gateway_missing_audit_scope_status, gateway_missing_audit_scope_payload = request_json_with_token(
@@ -1510,110 +1571,160 @@ def main() -> int:
                 token=gateway_token,
                 body={"rebuild": False},
             )
-            runtime_openclaw_prepare_status, runtime_openclaw_prepare_payload = request_json(
+            runtime_openclaw_prepare_status, runtime_openclaw_prepare_payload = request_json_with_admin(
                 f"{write_base}/api/integrations/openclaw/probe",
-                method="POST",
+                workspace_id=RUNTIME_WORKSPACE_ID,
+                admin_key=RUNTIME_ADMIN_KEY,
                 body={
                     "confirm_run": True,
                     "workspace_id": RUNTIME_WORKSPACE_ID,
-                    "task_id": RUNTIME_OPENCLAW_TASK_ID,
-                    "run_id": RUNTIME_OPENCLAW_RUN_ID,
-                    "tool_call_id": RUNTIME_OPENCLAW_TOOL_ID,
-                    "approval_id": RUNTIME_OPENCLAW_APPROVAL_ID,
                 },
             )
             runtime_openclaw_prepared_action_id = runtime_openclaw_prepare_payload.get("prepared_action_id") or RUNTIME_OPENCLAW_PREPARED_ACTION_ID
+            runtime_openclaw_task_id = runtime_openclaw_prepare_payload.get("task_id")
+            runtime_openclaw_run_id = runtime_openclaw_prepare_payload.get("run_id")
+            runtime_openclaw_tool_id = runtime_openclaw_prepare_payload.get("tool_call_id")
+            runtime_openclaw_approval_id = runtime_openclaw_prepare_payload.get("approval_id")
             runtime_openclaw_prompt_hash = runtime_openclaw_prepare_payload.get("prompt_hash")
-            runtime_openclaw_premature_status, runtime_openclaw_premature_payload = request_json(
+            runtime_openclaw_premature_status, runtime_openclaw_premature_payload = request_json_with_admin(
                 f"{write_base}/api/integrations/openclaw/probe",
-                method="POST",
+                workspace_id=RUNTIME_WORKSPACE_ID,
+                admin_key=RUNTIME_ADMIN_KEY,
                 body={
                     "confirm_run": True,
                     "prepared_action_id": runtime_openclaw_prepared_action_id,
                     "prompt_hash": runtime_openclaw_prompt_hash,
                 },
             )
-            runtime_openclaw_approve_status, runtime_openclaw_approve_payload = request_json(
-                f"{write_base}/api/approvals/{RUNTIME_OPENCLAW_APPROVAL_ID}/approve",
-                method="POST",
+            runtime_openclaw_approve_status, runtime_openclaw_approve_payload = request_json_with_admin(
+                f"{write_base}/api/approvals/{runtime_openclaw_approval_id}/approve",
+                workspace_id=RUNTIME_WORKSPACE_ID,
+                admin_key=RUNTIME_ADMIN_KEY,
                 body={},
             )
-            runtime_openclaw_mismatch_status, runtime_openclaw_mismatch_payload = request_json(
+            runtime_openclaw_mismatch_status, runtime_openclaw_mismatch_payload = request_json_with_admin(
                 f"{write_base}/api/integrations/openclaw/probe",
-                method="POST",
+                workspace_id=RUNTIME_WORKSPACE_ID,
+                admin_key=RUNTIME_ADMIN_KEY,
                 body={
                     "confirm_run": True,
                     "prepared_action_id": runtime_openclaw_prepared_action_id,
                     "prompt_hash": "bad-prompt-hash",
                 },
             )
-            runtime_openclaw_resume_status, runtime_openclaw_resume_payload = request_json(
-                f"{write_base}/api/integrations/openclaw/probe",
-                method="POST",
+            runtime_openclaw_cross_workspace_status, runtime_openclaw_cross_workspace_payload = request_json_with_admin(
+                f"{peer_base}/api/integrations/openclaw/probe",
+                workspace_id=GATEWAY_WORKSPACE_ID,
+                admin_key=GATEWAY_ADMIN_KEY,
                 body={
                     "confirm_run": True,
                     "prepared_action_id": runtime_openclaw_prepared_action_id,
                     "prompt_hash": runtime_openclaw_prompt_hash,
                 },
             )
-            runtime_openclaw_replay_status, runtime_openclaw_replay_payload = request_json(
-                f"{write_base}/api/integrations/openclaw/probe",
-                method="POST",
+            runtime_openclaw_race_results = concurrent_admin_requests(
+                [write_base, peer_base],
+                path="/api/integrations/openclaw/probe",
+                workspace_id=RUNTIME_WORKSPACE_ID,
+                admin_key=RUNTIME_ADMIN_KEY,
                 body={
                     "confirm_run": True,
                     "prepared_action_id": runtime_openclaw_prepared_action_id,
                     "prompt_hash": runtime_openclaw_prompt_hash,
                 },
             )
-            runtime_hermes_prepare_status, runtime_hermes_prepare_payload = request_json(
+            runtime_openclaw_resume_status, runtime_openclaw_resume_payload = next(
+                ((status, payload) for status, payload in runtime_openclaw_race_results if status == 201),
+                (None, {}),
+            )
+            runtime_openclaw_concurrent_status, runtime_openclaw_concurrent_payload = next(
+                ((status, payload) for status, payload in runtime_openclaw_race_results if status != 201),
+                (None, {}),
+            )
+            runtime_openclaw_replay_status, runtime_openclaw_replay_payload = request_json_with_admin(
+                f"{write_base}/api/integrations/openclaw/probe",
+                workspace_id=RUNTIME_WORKSPACE_ID,
+                admin_key=RUNTIME_ADMIN_KEY,
+                body={
+                    "confirm_run": True,
+                    "prepared_action_id": runtime_openclaw_prepared_action_id,
+                    "prompt_hash": runtime_openclaw_prompt_hash,
+                },
+            )
+            runtime_hermes_prepare_status, runtime_hermes_prepare_payload = request_json_with_admin(
                 f"{write_base}/api/integrations/hermes/run-task",
-                method="POST",
+                workspace_id=RUNTIME_WORKSPACE_ID,
+                admin_key=RUNTIME_ADMIN_KEY,
                 body={
                     "confirm_run": True,
                     "workspace_id": RUNTIME_WORKSPACE_ID,
-                    "task_id": RUNTIME_HERMES_TASK_ID,
-                    "run_id": RUNTIME_HERMES_RUN_ID,
-                    "tool_call_id": RUNTIME_HERMES_TOOL_ID,
-                    "approval_id": RUNTIME_HERMES_APPROVAL_ID,
                 },
             )
             runtime_hermes_prepared_action_id = runtime_hermes_prepare_payload.get("prepared_action_id") or RUNTIME_HERMES_PREPARED_ACTION_ID
+            runtime_hermes_task_id = runtime_hermes_prepare_payload.get("task_id")
+            runtime_hermes_run_id = runtime_hermes_prepare_payload.get("run_id")
+            runtime_hermes_tool_id = runtime_hermes_prepare_payload.get("tool_call_id")
+            runtime_hermes_approval_id = runtime_hermes_prepare_payload.get("approval_id")
             runtime_hermes_prompt_hash = runtime_hermes_prepare_payload.get("prompt_hash")
-            runtime_hermes_premature_status, runtime_hermes_premature_payload = request_json(
+            runtime_hermes_premature_status, runtime_hermes_premature_payload = request_json_with_admin(
                 f"{write_base}/api/integrations/hermes/run-task",
-                method="POST",
+                workspace_id=RUNTIME_WORKSPACE_ID,
+                admin_key=RUNTIME_ADMIN_KEY,
                 body={
                     "confirm_run": True,
                     "prepared_action_id": runtime_hermes_prepared_action_id,
                     "prompt_hash": runtime_hermes_prompt_hash,
                 },
             )
-            runtime_hermes_approve_status, runtime_hermes_approve_payload = request_json(
-                f"{write_base}/api/approvals/{RUNTIME_HERMES_APPROVAL_ID}/approve",
-                method="POST",
+            runtime_hermes_approve_status, runtime_hermes_approve_payload = request_json_with_admin(
+                f"{write_base}/api/approvals/{runtime_hermes_approval_id}/approve",
+                workspace_id=RUNTIME_WORKSPACE_ID,
+                admin_key=RUNTIME_ADMIN_KEY,
                 body={},
             )
-            runtime_hermes_mismatch_status, runtime_hermes_mismatch_payload = request_json(
+            runtime_hermes_mismatch_status, runtime_hermes_mismatch_payload = request_json_with_admin(
                 f"{write_base}/api/integrations/hermes/run-task",
-                method="POST",
+                workspace_id=RUNTIME_WORKSPACE_ID,
+                admin_key=RUNTIME_ADMIN_KEY,
                 body={
                     "confirm_run": True,
                     "prepared_action_id": runtime_hermes_prepared_action_id,
                     "prompt_hash": "bad-prompt-hash",
                 },
             )
-            runtime_hermes_resume_status, runtime_hermes_resume_payload = request_json(
-                f"{write_base}/api/integrations/hermes/run-task",
-                method="POST",
+            runtime_hermes_cross_workspace_status, runtime_hermes_cross_workspace_payload = request_json_with_admin(
+                f"{peer_base}/api/integrations/hermes/run-task",
+                workspace_id=GATEWAY_WORKSPACE_ID,
+                admin_key=GATEWAY_ADMIN_KEY,
                 body={
                     "confirm_run": True,
                     "prepared_action_id": runtime_hermes_prepared_action_id,
                     "prompt_hash": runtime_hermes_prompt_hash,
                 },
             )
-            runtime_hermes_replay_status, runtime_hermes_replay_payload = request_json(
+            runtime_hermes_race_results = concurrent_admin_requests(
+                [write_base, peer_base],
+                path="/api/integrations/hermes/run-task",
+                workspace_id=RUNTIME_WORKSPACE_ID,
+                admin_key=RUNTIME_ADMIN_KEY,
+                body={
+                    "confirm_run": True,
+                    "prepared_action_id": runtime_hermes_prepared_action_id,
+                    "prompt_hash": runtime_hermes_prompt_hash,
+                },
+            )
+            runtime_hermes_resume_status, runtime_hermes_resume_payload = next(
+                ((status, payload) for status, payload in runtime_hermes_race_results if status == 201),
+                (None, {}),
+            )
+            runtime_hermes_concurrent_status, runtime_hermes_concurrent_payload = next(
+                ((status, payload) for status, payload in runtime_hermes_race_results if status != 201),
+                (None, {}),
+            )
+            runtime_hermes_replay_status, runtime_hermes_replay_payload = request_json_with_admin(
                 f"{write_base}/api/integrations/hermes/run-task",
-                method="POST",
+                workspace_id=RUNTIME_WORKSPACE_ID,
+                admin_key=RUNTIME_ADMIN_KEY,
                 body={
                     "confirm_run": True,
                     "prepared_action_id": runtime_hermes_prepared_action_id,
@@ -1622,6 +1733,8 @@ def main() -> int:
             )
             stop_server(proc)
             proc = None
+            stop_server(peer_proc)
+            peer_proc = None
 
             adapter = connect_postgres_when_ready(dsn, secret=pg_auth)
             task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [TASK_ID])
@@ -1727,21 +1840,23 @@ def main() -> int:
             gateway_audit_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "audit.emit"])["c"]
             gateway_token_last_used = adapter.fetchone("SELECT last_used_at,last_heartbeat_at FROM agent_gateway_tokens WHERE token_id=?", [GATEWAY_TOKEN_ID])
             runtime_openclaw_action_row = adapter.fetchone("SELECT * FROM prepared_actions WHERE prepared_action_id=?", [runtime_openclaw_prepared_action_id])
-            runtime_openclaw_approval_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [RUNTIME_OPENCLAW_APPROVAL_ID])
-            runtime_openclaw_run_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [RUNTIME_OPENCLAW_RUN_ID])
-            runtime_openclaw_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [RUNTIME_OPENCLAW_TASK_ID])
-            runtime_openclaw_tool_row = adapter.fetchone("SELECT * FROM tool_calls WHERE tool_call_id=?", [RUNTIME_OPENCLAW_TOOL_ID])
-            runtime_openclaw_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=?", [RUNTIME_OPENCLAW_RUN_ID])["c"]
-            runtime_openclaw_run_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["runs", RUNTIME_OPENCLAW_RUN_ID])["c"]
+            runtime_openclaw_approval_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [runtime_openclaw_approval_id])
+            runtime_openclaw_run_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [runtime_openclaw_run_id])
+            runtime_openclaw_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [runtime_openclaw_task_id])
+            runtime_openclaw_tool_row = adapter.fetchone("SELECT * FROM tool_calls WHERE tool_call_id=?", [runtime_openclaw_tool_id])
+            runtime_openclaw_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=?", [runtime_openclaw_run_id])["c"]
+            runtime_openclaw_run_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["runs", runtime_openclaw_run_id])["c"]
             runtime_openclaw_action_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["prepared_actions", runtime_openclaw_prepared_action_id])["c"]
+            runtime_openclaw_claim_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=? AND action=?", ["prepared_actions", runtime_openclaw_prepared_action_id, "runtime.openclaw_probe.execution_claimed"])["c"]
             runtime_hermes_action_row = adapter.fetchone("SELECT * FROM prepared_actions WHERE prepared_action_id=?", [runtime_hermes_prepared_action_id])
-            runtime_hermes_approval_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [RUNTIME_HERMES_APPROVAL_ID])
-            runtime_hermes_run_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [RUNTIME_HERMES_RUN_ID])
-            runtime_hermes_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [RUNTIME_HERMES_TASK_ID])
-            runtime_hermes_tool_row = adapter.fetchone("SELECT * FROM tool_calls WHERE tool_call_id=?", [RUNTIME_HERMES_TOOL_ID])
-            runtime_hermes_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=?", [RUNTIME_HERMES_RUN_ID])["c"]
-            runtime_hermes_run_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["runs", RUNTIME_HERMES_RUN_ID])["c"]
+            runtime_hermes_approval_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [runtime_hermes_approval_id])
+            runtime_hermes_run_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [runtime_hermes_run_id])
+            runtime_hermes_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [runtime_hermes_task_id])
+            runtime_hermes_tool_row = adapter.fetchone("SELECT * FROM tool_calls WHERE tool_call_id=?", [runtime_hermes_tool_id])
+            runtime_hermes_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=?", [runtime_hermes_run_id])["c"]
+            runtime_hermes_run_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["runs", runtime_hermes_run_id])["c"]
             runtime_hermes_action_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["prepared_actions", runtime_hermes_prepared_action_id])["c"]
+            runtime_hermes_claim_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=? AND action=?", ["prepared_actions", runtime_hermes_prepared_action_id, "runtime.run_task.execution_claimed"])["c"]
             runtime_openclaw_provider_call_count = openclaw_call_count(fake_openclaw_log)
             runtime_hermes_provider_call_count = len(FakeHermesHandler.calls)
 
@@ -1804,6 +1919,8 @@ def main() -> int:
                 failures.append("read_only_audit_write_created_row")
             if write_status_code != 200 or write_backend.get("mode") != "experimental_write_http" or write_backend.get("writes_allowed") is not True:
                 failures.append(f"write_backend_mismatch:{write_backend}")
+            if peer_status_code != 200 or peer_backend.get("mode") != "experimental_write_http" or peer_backend.get("writes_allowed") is not True:
+                failures.append(f"peer_write_backend_mismatch:{peer_backend}")
             read_only_runtime_gate = read_only_backend.get("runtime_write_gate") or {}
             if read_only_runtime_gate.get("status") != "read_only" or read_only_runtime_gate.get("allowlisted_routes"):
                 failures.append(f"read_only_runtime_write_gate_mismatch:{read_only_runtime_gate}")
@@ -2007,8 +2124,12 @@ def main() -> int:
                 failures.append(f"runtime_openclaw_approve_mismatch:{runtime_openclaw_approve_status}:{runtime_openclaw_approve_payload}")
             if runtime_openclaw_mismatch_status != 409 or runtime_openclaw_mismatch_payload.get("error") != "prepared_action_prompt_hash_mismatch":
                 failures.append(f"runtime_openclaw_hash_mismatch_not_blocked:{runtime_openclaw_mismatch_status}:{runtime_openclaw_mismatch_payload}")
+            if runtime_openclaw_cross_workspace_status != 404 or runtime_openclaw_cross_workspace_payload.get("error") != "prepared_action_not_found":
+                failures.append(f"runtime_openclaw_cross_workspace_not_hidden:{runtime_openclaw_cross_workspace_status}:{runtime_openclaw_cross_workspace_payload}")
             if runtime_openclaw_resume_status != 201 or runtime_openclaw_resume_payload.get("ok") is not True or runtime_openclaw_resume_payload.get("created") is not True or runtime_openclaw_resume_payload.get("prepared_action_status") != "consumed" or runtime_openclaw_resume_payload.get("provider_call_performed") is not True:
                 failures.append(f"runtime_openclaw_resume_mismatch:{runtime_openclaw_resume_status}:{runtime_openclaw_resume_payload}")
+            if runtime_openclaw_concurrent_status != 409 or runtime_openclaw_concurrent_payload.get("error") not in {"prepared_action_execution_in_progress", "prepared_action_already_consumed"}:
+                failures.append(f"runtime_openclaw_concurrent_loser_mismatch:{runtime_openclaw_concurrent_status}:{runtime_openclaw_concurrent_payload}")
             if runtime_openclaw_replay_status != 409 or runtime_openclaw_replay_payload.get("error") != "prepared_action_already_consumed":
                 failures.append(f"runtime_openclaw_replay_not_blocked:{runtime_openclaw_replay_status}:{runtime_openclaw_replay_payload}")
             if runtime_hermes_prepare_status != 202 or not runtime_hermes_prepare_payload.get("prepared_action_id") or runtime_hermes_prepare_payload.get("provider_call_performed") is not False or runtime_hermes_prepare_payload.get("raw_prompt_omitted") is not True:
@@ -2019,14 +2140,22 @@ def main() -> int:
                 failures.append(f"runtime_hermes_approve_mismatch:{runtime_hermes_approve_status}:{runtime_hermes_approve_payload}")
             if runtime_hermes_mismatch_status != 409 or runtime_hermes_mismatch_payload.get("error") != "prepared_action_prompt_hash_mismatch":
                 failures.append(f"runtime_hermes_hash_mismatch_not_blocked:{runtime_hermes_mismatch_status}:{runtime_hermes_mismatch_payload}")
+            if runtime_hermes_cross_workspace_status != 404 or runtime_hermes_cross_workspace_payload.get("error") != "prepared_action_not_found":
+                failures.append(f"runtime_hermes_cross_workspace_not_hidden:{runtime_hermes_cross_workspace_status}:{runtime_hermes_cross_workspace_payload}")
             if runtime_hermes_resume_status != 201 or runtime_hermes_resume_payload.get("ok") is not True or runtime_hermes_resume_payload.get("created") is not True or runtime_hermes_resume_payload.get("prepared_action_status") != "consumed" or runtime_hermes_resume_payload.get("provider_call_performed") is not True:
                 failures.append(f"runtime_hermes_resume_mismatch:{runtime_hermes_resume_status}:{runtime_hermes_resume_payload}")
+            if runtime_hermes_concurrent_status != 409 or runtime_hermes_concurrent_payload.get("error") not in {"prepared_action_execution_in_progress", "prepared_action_already_consumed"}:
+                failures.append(f"runtime_hermes_concurrent_loser_mismatch:{runtime_hermes_concurrent_status}:{runtime_hermes_concurrent_payload}")
             if runtime_hermes_replay_status != 409 or runtime_hermes_replay_payload.get("error") != "prepared_action_already_consumed":
                 failures.append(f"runtime_hermes_replay_not_blocked:{runtime_hermes_replay_status}:{runtime_hermes_replay_payload}")
             if runtime_openclaw_provider_call_count != 1:
                 failures.append(f"runtime_openclaw_provider_call_count_mismatch:{runtime_openclaw_provider_call_count}")
             if runtime_hermes_provider_call_count != 1:
                 failures.append(f"runtime_hermes_provider_call_count_mismatch:{runtime_hermes_provider_call_count}")
+            if int(runtime_openclaw_claim_audit_count or 0) != 1:
+                failures.append(f"runtime_openclaw_claim_audit_count_mismatch:{runtime_openclaw_claim_audit_count}")
+            if int(runtime_hermes_claim_audit_count or 0) != 1:
+                failures.append(f"runtime_hermes_claim_audit_count_mismatch:{runtime_hermes_claim_audit_count}")
             if blocked_agent_row:
                 failures.append("non_allowlisted_agent_write_created_row")
             if not task_row or task_row.get("workspace_id") != WORKSPACE_ID or task_row.get("owner_agent_id") != AGENT_ID:
@@ -2442,13 +2571,17 @@ def main() -> int:
                 "runtime_openclaw_premature_status": runtime_openclaw_premature_status,
                 "runtime_openclaw_approve_status": runtime_openclaw_approve_status,
                 "runtime_openclaw_mismatch_status": runtime_openclaw_mismatch_status,
+                "runtime_openclaw_cross_workspace_status": runtime_openclaw_cross_workspace_status,
                 "runtime_openclaw_resume_status": runtime_openclaw_resume_status,
+                "runtime_openclaw_concurrent_status": runtime_openclaw_concurrent_status,
                 "runtime_openclaw_replay_status": runtime_openclaw_replay_status,
                 "runtime_hermes_prepare_status": runtime_hermes_prepare_status,
                 "runtime_hermes_premature_status": runtime_hermes_premature_status,
                 "runtime_hermes_approve_status": runtime_hermes_approve_status,
                 "runtime_hermes_mismatch_status": runtime_hermes_mismatch_status,
+                "runtime_hermes_cross_workspace_status": runtime_hermes_cross_workspace_status,
                 "runtime_hermes_resume_status": runtime_hermes_resume_status,
+                "runtime_hermes_concurrent_status": runtime_hermes_concurrent_status,
                 "runtime_hermes_replay_status": runtime_hermes_replay_status,
                 "task_id": TASK_ID,
                 "gateway_task_id": GATEWAY_TASK_ID,
@@ -2496,9 +2629,19 @@ def main() -> int:
                 "runtime_openclaw_event_count": int(runtime_openclaw_event_count or 0),
                 "runtime_openclaw_run_audit_count": int(runtime_openclaw_run_audit_count or 0),
                 "runtime_openclaw_action_audit_count": int(runtime_openclaw_action_audit_count or 0),
+                "runtime_openclaw_claim_audit_count": int(runtime_openclaw_claim_audit_count or 0),
                 "runtime_hermes_event_count": int(runtime_hermes_event_count or 0),
                 "runtime_hermes_run_audit_count": int(runtime_hermes_run_audit_count or 0),
                 "runtime_hermes_action_audit_count": int(runtime_hermes_action_audit_count or 0),
+                "runtime_hermes_claim_audit_count": int(runtime_hermes_claim_audit_count or 0),
+                "runtime_cross_process_single_winner": (
+                    sorted(status for status, _ in runtime_openclaw_race_results) == [201, 409]
+                    and sorted(status for status, _ in runtime_hermes_race_results) == [201, 409]
+                    and runtime_openclaw_provider_call_count == 1
+                    and runtime_hermes_provider_call_count == 1
+                    and int(runtime_openclaw_claim_audit_count or 0) == 1
+                    and int(runtime_hermes_claim_audit_count or 0) == 1
+                ),
                 "gateway_tool_runtime_event_count": int(gateway_tool_runtime_event_count or 0),
                 "gateway_eval_runtime_event_count": int(gateway_eval_runtime_event_count or 0),
                 "gateway_artifact_runtime_event_count": int(gateway_artifact_runtime_event_count or 0),
@@ -2530,6 +2673,7 @@ def main() -> int:
             return unavailable(redact(str(exc), pg_auth), skip=args.skip_if_unavailable)
         finally:
             stop_server(proc)
+            stop_server(peer_proc)
             stop_fake_hermes(fake_hermes)
             if adapter is not None:
                 adapter.close()

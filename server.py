@@ -50,6 +50,7 @@ DEFAULT_ENTITLEMENTS_PATH = ROOT / "config" / "entitlements.local.json"
 DEFAULT_RETENTION_CONTROLS_PATH = ROOT / "config" / "retention-controls.local.json"
 DEFAULT_ENTERPRISE_CONTROLS_PATH = ROOT / "config" / "enterprise-controls.local.json"
 STORAGE_BACKEND = os.environ.get("AGENTOPS_STORAGE_BACKEND", "sqlite").strip().lower() or "sqlite"
+AGENT_GATEWAY_LIFECYCLE_LOCK = threading.RLock()
 POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {
     ("POST", "/api/approvals/:approval_id/approve"),
     ("POST", "/api/agent-gateway/register"),
@@ -881,7 +882,15 @@ def postgres_prepared_action_decision_allowed(conn, approval_id: str) -> bool:
 
 def postgres_gateway_enrollment_approval_allowed(conn, approval_id: str) -> bool:
     return bool(conn.execute(
-        "SELECT 1 FROM agent_gateway_enrollment_requests WHERE approval_id=? LIMIT 1",
+        """SELECT 1
+        FROM agent_gateway_enrollment_requests req
+        JOIN approvals ap ON ap.approval_id=req.approval_id
+        WHERE req.approval_id=?
+          AND (
+            (req.status='pending' AND ap.decision='pending')
+            OR (req.status IN ('approved','issued') AND ap.decision='approved')
+          )
+        LIMIT 1""",
         (approval_id,),
     ).fetchone())
 
@@ -1265,7 +1274,7 @@ CREATE TABLE IF NOT EXISTS prepared_actions (
     args_hash TEXT NOT NULL,
     snapshot_ref TEXT,
     snapshot_hash TEXT,
-    status TEXT NOT NULL CHECK(status IN ('prepared','waiting_approval','approved','rejected','consumed','expired','canceled')),
+    status TEXT NOT NULL CHECK(status IN ('prepared','waiting_approval','approved','executing','rejected','consumed','failed','expired','canceled')),
     result_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -1687,6 +1696,7 @@ CREATE INDEX IF NOT EXISTS idx_approvals_decision ON approvals(decision);
 CREATE INDEX IF NOT EXISTS idx_prepared_actions_workspace ON prepared_actions(workspace_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_prepared_actions_status ON prepared_actions(status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_prepared_actions_tool ON prepared_actions(tool_call_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_prepared_actions_approval_unique ON prepared_actions(approval_id);
 CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(review_status);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
 CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id, updated_at);
@@ -1708,7 +1718,9 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_documents_category ON knowledge_documen
 
 
 def repo_insert_audit_log(conn: sqlite3.Connection, row: dict, metadata: dict | None = None) -> dict:
-    previous = conn.execute("SELECT tamper_chain_hash FROM audit_logs ORDER BY created_at DESC LIMIT 1").fetchone()
+    if STORAGE_BACKEND == "postgres":
+        conn.execute("SELECT pg_advisory_xact_lock(?)", (1095779668,))
+    previous = conn.execute("SELECT tamper_chain_hash FROM audit_logs ORDER BY created_at DESC, audit_id DESC LIMIT 1").fetchone()
     if previous and isinstance(previous, dict):
         previous_hash = previous["tamper_chain_hash"]
     elif previous:
@@ -1757,7 +1769,13 @@ def audit(conn: sqlite3.Connection, actor_type: str, actor_id: str | None, actio
 
 def init_schema():
     with db() as conn:
-        conn.executescript(SCHEMA_SQL)
+        schema_sql = SCHEMA_SQL
+        if isinstance(conn, sqlite3.Connection):
+            schema_sql = schema_sql.replace(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_prepared_actions_approval_unique ON prepared_actions(approval_id);\n",
+                "",
+            )
+        conn.executescript(schema_sql)
         ensure_schema_migrations(conn)
         ensure_v121_reference_data(conn)
         conn.commit()
@@ -1767,6 +1785,132 @@ def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str):
     existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     if column not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+
+def ensure_sqlite_prepared_action_lifecycle_schema(conn) -> bool:
+    if not isinstance(conn, sqlite3.Connection):
+        return False
+    schema = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='prepared_actions'",
+    ).fetchone()
+    table_sql = str(schema["sql"] if schema else "")
+    if "'executing'" in table_sql and "'failed'" in table_sql:
+        return False
+    conn.execute("ALTER TABLE prepared_actions RENAME TO prepared_actions_legacy_lifecycle")
+    conn.execute(
+        """CREATE TABLE prepared_actions (
+        prepared_action_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+        task_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        tool_call_id TEXT NOT NULL,
+        approval_id TEXT,
+        requested_by_agent_id TEXT,
+        action_type TEXT NOT NULL,
+        provider TEXT,
+        target_resource TEXT,
+        normalized_args_json TEXT NOT NULL DEFAULT '{}',
+        args_hash TEXT NOT NULL,
+        snapshot_ref TEXT,
+        snapshot_hash TEXT,
+        status TEXT NOT NULL CHECK(status IN ('prepared','waiting_approval','approved','executing','rejected','consumed','failed','expired','canceled')),
+        result_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        approved_at TEXT,
+        consumed_at TEXT,
+        FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+        FOREIGN KEY(run_id) REFERENCES runs(run_id),
+        FOREIGN KEY(tool_call_id) REFERENCES tool_calls(tool_call_id),
+        FOREIGN KEY(approval_id) REFERENCES approvals(approval_id),
+        FOREIGN KEY(requested_by_agent_id) REFERENCES agents(agent_id)
+        )"""
+    )
+    conn.execute(
+        """INSERT INTO prepared_actions(
+        prepared_action_id,workspace_id,task_id,run_id,tool_call_id,approval_id,requested_by_agent_id,
+        action_type,provider,target_resource,normalized_args_json,args_hash,snapshot_ref,snapshot_hash,status,
+        result_json,created_at,updated_at,approved_at,consumed_at
+        ) SELECT
+        prepared_action_id,workspace_id,task_id,run_id,tool_call_id,approval_id,requested_by_agent_id,
+        action_type,provider,target_resource,normalized_args_json,args_hash,snapshot_ref,snapshot_hash,status,
+        result_json,created_at,updated_at,approved_at,consumed_at
+        FROM prepared_actions_legacy_lifecycle"""
+    )
+    conn.execute("DROP TABLE prepared_actions_legacy_lifecycle")
+    return True
+
+
+def prepared_action_duplicate_approval_bindings(conn, limit: int = 20) -> list[dict]:
+    rows = conn.execute(
+        """SELECT approval_id, COUNT(*) AS binding_count
+        FROM prepared_actions
+        WHERE approval_id IS NOT NULL
+        GROUP BY approval_id
+        HAVING COUNT(*) > 1
+        ORDER BY approval_id
+        LIMIT ?""",
+        (max(1, min(int(limit or 20), 100)),),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def require_no_prepared_action_duplicate_approval_bindings(conn) -> None:
+    duplicates = prepared_action_duplicate_approval_bindings(conn)
+    if duplicates:
+        duplicate_fingerprint = stable_hash(duplicates)[:16]
+        raise RuntimeError(
+            "prepared_action_approval_binding_duplicates_detected:"
+            f"groups={len(duplicates)}:fingerprint={duplicate_fingerprint}"
+        )
+
+
+def ensure_prepared_action_approval_unique_index(conn) -> bool:
+    require_no_prepared_action_duplicate_approval_bindings(conn)
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_prepared_actions_approval_unique "
+        "ON prepared_actions(approval_id)"
+    )
+    return True
+
+
+def ensure_postgres_prepared_action_lifecycle_schema(conn) -> dict:
+    if isinstance(conn, sqlite3.Connection):
+        return {"table_present": False, "check_migrated": False, "approval_index_ensured": False}
+    conn.execute("SELECT pg_advisory_xact_lock(?)", (1095779671,))
+    table = conn.execute("SELECT to_regclass('prepared_actions') AS table_name").fetchone()
+    if not table or not table["table_name"]:
+        return {"table_present": False, "check_migrated": False, "approval_index_ensured": False}
+    constraints = conn.execute(
+        """SELECT con.conname, pg_get_constraintdef(con.oid) AS definition
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid=con.conrelid
+        WHERE rel.oid=to_regclass('prepared_actions')
+          AND con.contype='c'
+        ORDER BY con.conname"""
+    ).fetchall()
+    status_constraints = [
+        row for row in constraints
+        if "status" in str(row["definition"] or "").lower()
+    ]
+    lifecycle_current = bool(status_constraints) and all(
+        "executing" in str(row["definition"] or "").lower()
+        and "failed" in str(row["definition"] or "").lower()
+        for row in status_constraints
+    )
+    check_migrated = False
+    if not lifecycle_current:
+        for row in status_constraints:
+            constraint_name = str(row["conname"]).replace('"', '""')
+            conn.execute(f'ALTER TABLE prepared_actions DROP CONSTRAINT "{constraint_name}"')
+        conn.execute(
+            """ALTER TABLE prepared_actions
+            ADD CONSTRAINT prepared_actions_status_lifecycle_check
+            CHECK(status IN ('prepared','waiting_approval','approved','executing','rejected','consumed','failed','expired','canceled'))"""
+        )
+        check_migrated = True
+    ensure_prepared_action_approval_unique_index(conn)
+    return {"table_present": True, "check_migrated": check_migrated, "approval_index_ensured": True}
 
 
 def ensure_schema_migrations(conn: sqlite3.Connection):
@@ -1779,9 +1923,12 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id, updated_at)")
+    require_no_prepared_action_duplicate_approval_bindings(conn)
+    ensure_sqlite_prepared_action_lifecycle_schema(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_actions_workspace ON prepared_actions(workspace_id, updated_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_actions_status ON prepared_actions(status, updated_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_actions_tool ON prepared_actions(tool_call_id)")
+    ensure_prepared_action_approval_unique_index(conn)
     conn.execute(
         """UPDATE memories
         SET workspace_id=(
@@ -2579,10 +2726,31 @@ def repo_update_tool_call_status(conn: sqlite3.Connection, tool_call_id: str, st
     return before, after, outcome
 
 
+class ApprovalImmutableConflict(ValueError):
+    pass
+
+
+class PreparedActionImmutableConflict(ValueError):
+    pass
+
+
 def repo_upsert_approval(conn: sqlite3.Connection, row: dict, allow_update: bool = True) -> tuple[sqlite3.Row | None, str]:
     ensure_default_user(conn, row.get("approver_user_id"))
     before = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
     if before:
+        immutable_fields = (
+            "task_id",
+            "run_id",
+            "tool_call_id",
+            "requested_by_agent_id",
+            "approver_user_id",
+        )
+        if any((before[field] or None) != (row.get(field) or None) for field in immutable_fields):
+            raise ApprovalImmutableConflict("approval_immutable_binding_conflict")
+        if str(before["decision"] or "pending") != str(row.get("decision") or "pending"):
+            raise ApprovalImmutableConflict("approval_decision_transition_requires_decision_api")
+        if str(before["decision"] or "pending") != "pending":
+            return before, "unchanged"
         if not allow_update or row_unchanged(before, row, {"created_at"}):
             return before, "unchanged"
         conn.execute(
@@ -2608,17 +2776,28 @@ def repo_update_approval_decision(
     reason: str | None = None,
     decided_at: str | None = None,
 ) -> tuple[sqlite3.Row | None, sqlite3.Row | None, str]:
-    before = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+    before = postgres_locking_select(
+        conn,
+        "SELECT * FROM approvals WHERE approval_id=?",
+        (approval_id,),
+    )
     if not before:
         return None, None, "missing"
-    row = dict(before)
-    row["decision"] = decision
-    row["decided_at"] = decided_at or now_iso()
-    if reason is not None:
-        row["reason"] = reason
-    before, outcome = repo_upsert_approval(conn, row)
+    current_decision = str(before["decision"] or "pending")
+    if current_decision != "pending":
+        return before, before, "unchanged" if current_decision == decision else "decision_conflict"
+    cursor = conn.execute(
+        """UPDATE approvals
+        SET decision=?, reason=?, decided_at=?
+        WHERE approval_id=? AND decision='pending'""",
+        (decision, reason if reason is not None else before["reason"], decided_at or now_iso(), approval_id),
+    )
     after = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
-    return before, after, outcome
+    if cursor.rowcount == 1:
+        return before, after, "updated"
+    if after and str(after["decision"] or "pending") == decision:
+        return before, after, "unchanged"
+    return before, after, "decision_conflict"
 
 
 def prepared_action_args_hash(normalized_args_json: str | None) -> str:
@@ -2636,6 +2815,7 @@ def repo_list_workspace_prepared_actions(
     limit: int = 100,
 ) -> list[sqlite3.Row]:
     workspace_id = normalize_workspace_id(workspace_id)
+    reconcile_stale_prepared_actions(conn, workspace_id=workspace_id)
     limit = max(1, min(int(limit or 100), 500))
     params: list = [workspace_id]
     where = ["workspace_id=?"]
@@ -2659,6 +2839,7 @@ def repo_list_workspace_customer_worker_prepared_actions(
     limit: int = 100,
 ) -> list[sqlite3.Row]:
     workspace_id = normalize_workspace_id(workspace_id)
+    reconcile_stale_prepared_actions(conn, workspace_id=workspace_id)
     limit = max(1, min(int(limit or 100), 200))
     params: list = [workspace_id, CUSTOMER_WORKER_PREPARED_ACTION_PROVIDER, CUSTOMER_WORKER_PREPARED_ACTION_TYPE]
     where = ["workspace_id=?", "provider=?", "action_type=?"]
@@ -2704,29 +2885,62 @@ def repo_upsert_prepared_action(conn: sqlite3.Connection, row: dict, allow_updat
     row.setdefault("snapshot_hash", None)
     row.setdefault("approved_at", None)
     row.setdefault("consumed_at", None)
+    if row.get("approval_id"):
+        postgres_locking_select(
+            conn,
+            "SELECT approval_id FROM approvals WHERE approval_id=?",
+            (row["approval_id"],),
+        )
     before = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (row["prepared_action_id"],)).fetchone()
+    approval_binding = conn.execute(
+        "SELECT prepared_action_id FROM prepared_actions WHERE approval_id=? AND prepared_action_id<>?",
+        (row.get("approval_id"), row["prepared_action_id"]),
+    ).fetchone() if row.get("approval_id") else None
+    if approval_binding:
+        raise PreparedActionImmutableConflict("prepared_action_approval_binding_conflict")
     if before:
+        immutable_fields = (
+            "workspace_id",
+            "task_id",
+            "run_id",
+            "tool_call_id",
+            "approval_id",
+            "requested_by_agent_id",
+            "action_type",
+            "provider",
+            "target_resource",
+            "normalized_args_json",
+            "args_hash",
+            "snapshot_ref",
+            "snapshot_hash",
+            "created_at",
+        )
+        if any((before[field] or None) != (row.get(field) or None) for field in immutable_fields):
+            raise PreparedActionImmutableConflict("prepared_action_immutable_binding_conflict")
+        lifecycle_fields = ("status", "result_json", "approved_at", "consumed_at")
+        if any((before[field] or None) != (row.get(field) or None) for field in lifecycle_fields):
+            raise PreparedActionImmutableConflict("prepared_action_state_transition_requires_status_api")
         if not allow_update or row_unchanged(before, row, {"created_at", "updated_at"}):
             return before, "unchanged"
+        return before, "unchanged"
+    try:
         conn.execute(
-            """UPDATE prepared_actions SET workspace_id=:workspace_id, task_id=:task_id, run_id=:run_id,
-            tool_call_id=:tool_call_id, approval_id=:approval_id, requested_by_agent_id=:requested_by_agent_id,
-            action_type=:action_type, provider=:provider, target_resource=:target_resource,
-            normalized_args_json=:normalized_args_json, args_hash=:args_hash, snapshot_ref=:snapshot_ref,
-            snapshot_hash=:snapshot_hash, status=:status, result_json=:result_json, updated_at=:updated_at,
-            approved_at=:approved_at, consumed_at=:consumed_at WHERE prepared_action_id=:prepared_action_id""",
+            """INSERT INTO prepared_actions(prepared_action_id,workspace_id,task_id,run_id,tool_call_id,approval_id,
+            requested_by_agent_id,action_type,provider,target_resource,normalized_args_json,args_hash,snapshot_ref,
+            snapshot_hash,status,result_json,created_at,updated_at,approved_at,consumed_at)
+            VALUES(:prepared_action_id,:workspace_id,:task_id,:run_id,:tool_call_id,:approval_id,
+            :requested_by_agent_id,:action_type,:provider,:target_resource,:normalized_args_json,:args_hash,:snapshot_ref,
+            :snapshot_hash,:status,:result_json,:created_at,:updated_at,:approved_at,:consumed_at)""",
             row,
         )
-        return before, "updated"
-    conn.execute(
-        """INSERT INTO prepared_actions(prepared_action_id,workspace_id,task_id,run_id,tool_call_id,approval_id,
-        requested_by_agent_id,action_type,provider,target_resource,normalized_args_json,args_hash,snapshot_ref,
-        snapshot_hash,status,result_json,created_at,updated_at,approved_at,consumed_at)
-        VALUES(:prepared_action_id,:workspace_id,:task_id,:run_id,:tool_call_id,:approval_id,
-        :requested_by_agent_id,:action_type,:provider,:target_resource,:normalized_args_json,:args_hash,:snapshot_ref,
-        :snapshot_hash,:status,:result_json,:created_at,:updated_at,:approved_at,:consumed_at)""",
-        row,
-    )
+    except Exception as exc:
+        detail = str(exc).lower()
+        if row.get("approval_id") and (
+            "idx_prepared_actions_approval_unique" in detail
+            or ("prepared_actions.approval_id" in detail and "unique" in detail)
+        ):
+            raise PreparedActionImmutableConflict("prepared_action_approval_binding_conflict") from exc
+        raise
     return before, "created"
 
 
@@ -2737,23 +2951,295 @@ def repo_update_prepared_action_status(
     approval_id: str | None = None,
     result_json=None,
 ) -> tuple[sqlite3.Row | None, sqlite3.Row | None, str]:
-    before = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
+    before = postgres_locking_select(
+        conn,
+        "SELECT * FROM prepared_actions WHERE prepared_action_id=?",
+        (prepared_action_id,),
+    )
     if not before:
         return None, None, "missing"
-    row = dict(before)
-    row["status"] = status
-    row["updated_at"] = now_iso()
-    if approval_id is not None:
-        row["approval_id"] = approval_id
-    if status == "approved" and not row.get("approved_at"):
-        row["approved_at"] = row["updated_at"]
-    if status == "consumed" and not row.get("consumed_at"):
-        row["consumed_at"] = row["updated_at"]
-    if result_json is not None:
-        row["result_json"] = json.dumps(result_json, ensure_ascii=False, sort_keys=True) if isinstance(result_json, (dict, list)) else str(result_json)
-    before, outcome = repo_upsert_prepared_action(conn, row)
+    if approval_id is not None and approval_id != before["approval_id"]:
+        raise PreparedActionImmutableConflict("prepared_action_immutable_binding_conflict")
+    current_status = str(before["status"] or "waiting_approval")
+    result_value = (
+        json.dumps(result_json, ensure_ascii=False, sort_keys=True)
+        if isinstance(result_json, (dict, list))
+        else str(result_json)
+        if result_json is not None
+        else before["result_json"]
+    )
+    if current_status == status:
+        if result_json is None or result_value == before["result_json"]:
+            return before, before, "unchanged"
+        return before, before, "state_conflict"
+    allowed_transitions = {
+        "prepared": {"waiting_approval", "approved", "rejected", "expired", "canceled"},
+        "waiting_approval": {"approved", "rejected", "expired", "canceled"},
+        "approved": {"executing", "consumed"},
+        "executing": {"consumed", "failed"},
+    }
+    if status not in allowed_transitions.get(current_status, set()):
+        return before, before, "state_conflict"
+    updated_at = now_iso()
+    approved_at = before["approved_at"] or (updated_at if status == "approved" else None)
+    consumed_at = before["consumed_at"] or (updated_at if status == "consumed" else None)
+    cursor = conn.execute(
+        """UPDATE prepared_actions
+        SET status=?, result_json=?, updated_at=?, approved_at=?, consumed_at=?
+        WHERE prepared_action_id=? AND status=?""",
+        (status, result_value, updated_at, approved_at, consumed_at, prepared_action_id, current_status),
+    )
     after = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
-    return before, after, outcome
+    if cursor.rowcount == 1:
+        return before, after, "updated"
+    return before, after, "state_conflict"
+
+
+def repo_claim_workspace_prepared_action(
+    conn,
+    workspace_id: str,
+    prepared_action_id: str,
+    provider: str,
+    action_type: str,
+) -> tuple[sqlite3.Row | None, str]:
+    workspace_id = normalize_workspace_id(workspace_id)
+    before = postgres_locking_select(
+        conn,
+        """SELECT * FROM prepared_actions
+        WHERE workspace_id=? AND prepared_action_id=? AND provider=? AND action_type=?""",
+        (workspace_id, prepared_action_id, provider, action_type),
+    )
+    if not before:
+        return None, "missing"
+    current_status = str(before["status"] or "waiting_approval")
+    if current_status != "approved":
+        return before, current_status
+    updated_at = now_iso()
+    cursor = conn.execute(
+        """UPDATE prepared_actions SET status='executing', updated_at=?
+        WHERE workspace_id=? AND prepared_action_id=? AND status='approved'""",
+        (updated_at, workspace_id, prepared_action_id),
+    )
+    after = conn.execute(
+        "SELECT * FROM prepared_actions WHERE workspace_id=? AND prepared_action_id=?",
+        (workspace_id, prepared_action_id),
+    ).fetchone()
+    if cursor.rowcount == 1:
+        return after, "claimed"
+    return after, str(after["status"] if after else "state_conflict")
+
+
+def prepared_action_execution_stale(action) -> bool:
+    if not action or str(action["status"] or "") != "executing":
+        return False
+    try:
+        threshold = max(30, int(os.environ.get("AGENTOPS_PREPARED_ACTION_STALE_SECONDS") or 1800))
+    except (TypeError, ValueError):
+        threshold = 1800
+    try:
+        updated_at = dt.datetime.fromisoformat(str(action["updated_at"]).replace("Z", "+00:00"))
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=dt.timezone.utc)
+    except (TypeError, ValueError):
+        return False
+    return (dt.datetime.now(dt.timezone.utc) - updated_at.astimezone(dt.timezone.utc)).total_seconds() >= threshold
+
+
+def stale_prepared_action_result() -> dict:
+    return {
+        "error": "execution_outcome_unknown_after_stale_claim",
+        "outcome": "unknown",
+        "terminal": True,
+        "provider_call_may_have_completed": True,
+        "automatic_retry_performed": False,
+        "raw_response_omitted": True,
+    }
+
+
+def reconcile_stale_prepared_action(
+    conn,
+    action,
+    *,
+    actor_id: str,
+    audit_action: str,
+) -> tuple[sqlite3.Row | None, str]:
+    if not action:
+        return None, "missing"
+    workspace_id = row_workspace(action)
+    prepared_action_id = action["prepared_action_id"]
+    fresh = repo_get_workspace_prepared_action(conn, workspace_id, prepared_action_id)
+    if not fresh:
+        return None, "missing"
+    if not prepared_action_execution_stale(fresh):
+        return fresh, "unchanged"
+    before, failed, outcome = repo_update_prepared_action_status(
+        conn,
+        prepared_action_id,
+        "failed",
+        result_json=stale_prepared_action_result(),
+    )
+    if outcome == "updated":
+        audit(
+            conn,
+            "system",
+            actor_id,
+            audit_action,
+            "prepared_actions",
+            prepared_action_id,
+            dict(before) if before else None,
+            dict(failed) if failed else None,
+            {
+                "provider_call_may_have_completed": True,
+                "automatic_retry_performed": False,
+                "raw_response_omitted": True,
+            },
+        )
+        return failed, "reconciled"
+    current = repo_get_workspace_prepared_action(conn, workspace_id, prepared_action_id)
+    return current, str(current["status"] if current else outcome)
+
+
+def reconcile_stale_prepared_actions(
+    conn,
+    *,
+    workspace_id: str | None = None,
+    limit: int = 500,
+) -> int:
+    params: list = []
+    where = ["status='executing'"]
+    if workspace_id:
+        where.append("workspace_id=?")
+        params.append(normalize_workspace_id(workspace_id))
+    params.append(max(1, min(int(limit or 500), 2000)))
+    candidates = conn.execute(
+        f"""SELECT * FROM prepared_actions
+        WHERE {' AND '.join(where)}
+        ORDER BY updated_at, prepared_action_id
+        LIMIT ?""",
+        params,
+    ).fetchall()
+    reconciled = 0
+    with AGENT_GATEWAY_LIFECYCLE_LOCK:
+        for candidate in candidates:
+            _row, outcome = reconcile_stale_prepared_action(
+                conn,
+                candidate,
+                actor_id="prepared-action-reconciler",
+                audit_action="prepared_action.execution_stale_reconciled",
+            )
+            if outcome == "reconciled":
+                reconciled += 1
+    return reconciled
+
+
+def claim_prepared_action_execution(
+    conn,
+    action,
+    *,
+    provider: str,
+    action_type: str,
+    actor_id: str,
+    audit_action: str,
+    omission_metadata: dict | None = None,
+) -> tuple[sqlite3.Row | None, str]:
+    workspace_id = row_workspace(action)
+    prepared_action_id = action["prepared_action_id"]
+    with AGENT_GATEWAY_LIFECYCLE_LOCK:
+        fresh = repo_get_workspace_prepared_action(conn, workspace_id, prepared_action_id)
+        if not fresh or fresh["provider"] != provider or fresh["action_type"] != action_type:
+            return None, "missing"
+        if prepared_action_execution_stale(fresh):
+            failed, outcome = reconcile_stale_prepared_action(
+                conn,
+                fresh,
+                actor_id=actor_id,
+                audit_action=f"{audit_action}.stale_claim_failed",
+            )
+            if outcome == "reconciled":
+                conn.commit()
+                return failed or fresh, "failed"
+            current = failed or fresh
+            return current, str(current["status"] if current else outcome)
+        if fresh["status"] != "approved":
+            if fresh["status"] in {"prepared", "waiting_approval"} and approval_is_approved(conn, fresh["approval_id"]):
+                _before, fresh, approval_outcome = repo_update_prepared_action_status(
+                    conn,
+                    prepared_action_id,
+                    "approved",
+                    approval_id=fresh["approval_id"],
+                )
+                if approval_outcome not in {"updated", "unchanged"}:
+                    return fresh, str(fresh["status"] if fresh else "state_conflict")
+            else:
+                return fresh, str(fresh["status"] or "state_conflict")
+        claimed, claim_outcome = repo_claim_workspace_prepared_action(
+            conn,
+            workspace_id,
+            prepared_action_id,
+            provider,
+            action_type,
+        )
+        if claim_outcome != "claimed" or not claimed:
+            return claimed, claim_outcome
+        audit(
+            conn,
+            "system",
+            actor_id,
+            audit_action,
+            "prepared_actions",
+            prepared_action_id,
+            {"status": "approved"},
+            {"status": "executing"},
+            {"provider_call_performed": False, **(omission_metadata or {})},
+        )
+        conn.commit()
+        return claimed, "claimed"
+
+
+def require_runtime_prepare_identifiers_available(
+    conn,
+    *,
+    workspace_id: str,
+    task_id: str,
+    run_id: str,
+    tool_call_id: str,
+    approval_id: str,
+    prepared_action_id: str,
+) -> None:
+    workspace_id = normalize_workspace_id(workspace_id)
+    task = conn.execute("SELECT workspace_id FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    if task and row_workspace(task) != workspace_id:
+        raise PreparedActionImmutableConflict("runtime_task_workspace_binding_conflict")
+    if conn.execute(
+        "SELECT 1 FROM prepared_actions WHERE prepared_action_id=?",
+        (prepared_action_id,),
+    ).fetchone():
+        raise PreparedActionImmutableConflict("prepared_action_immutable_binding_conflict")
+    if conn.execute("SELECT 1 FROM runs WHERE run_id=?", (run_id,)).fetchone():
+        raise PreparedActionImmutableConflict("runtime_run_identifier_conflict")
+    if conn.execute("SELECT 1 FROM tool_calls WHERE tool_call_id=?", (tool_call_id,)).fetchone():
+        raise PreparedActionImmutableConflict("runtime_tool_call_identifier_conflict")
+    if conn.execute("SELECT 1 FROM approvals WHERE approval_id=?", (approval_id,)).fetchone():
+        raise ApprovalImmutableConflict("approval_immutable_binding_conflict")
+
+
+def prepared_action_claim_error(provider: str, prepared_action_id: str, outcome: str) -> tuple[dict, int]:
+    error = {
+        "consumed": "prepared_action_already_consumed",
+        "executing": "prepared_action_execution_in_progress",
+        "rejected": "prepared_action_rejected",
+        "expired": "prepared_action_expired",
+        "canceled": "prepared_action_canceled",
+        "failed": "prepared_action_failed",
+        "missing": "prepared_action_not_found",
+    }.get(outcome, "prepared_action_state_conflict")
+    return {
+        "provider": provider,
+        "created": False,
+        "error": error,
+        "prepared_action_id": prepared_action_id,
+        "token_omitted": True,
+    }, 404 if outcome == "missing" else 409
 
 
 def repo_upsert_evaluation(conn: sqlite3.Connection, row: dict, allow_update: bool = True) -> tuple[sqlite3.Row | None, str]:
@@ -3498,19 +3984,77 @@ def production_security_requested() -> bool:
     )
 
 
-def agent_gateway_admin_auth_error(headers) -> dict | None:
-    expected = os.environ.get("AGENTOPS_ADMIN_KEY", "").strip()
-    if not expected:
-        if production_security_requested():
-            return {"error": "unauthorized", "message": "AGENTOPS_ADMIN_KEY is required for Agent Gateway enrollment management in production mode."}
-        return None
+def configured_workspace_admin_keys() -> tuple[dict[str, str], str | None]:
+    raw = os.environ.get("AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON", "").strip()
+    if not raw:
+        return {}, None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}, "AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON must be a JSON object."
+    if not isinstance(payload, dict):
+        return {}, "AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON must be a JSON object."
+    if not payload:
+        return {}, "AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON must contain at least one workspace key."
+    if not all(
+        isinstance(workspace_id, str)
+        and bool(workspace_id.strip())
+        and isinstance(secret, str)
+        and len(secret.strip()) >= 24
+        for workspace_id, secret in payload.items()
+    ):
+        return {}, "AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON requires non-empty workspace ids and string keys of at least 24 characters."
+    keys = {
+        normalize_workspace_id(workspace_id): secret.strip()
+        for workspace_id, secret in payload.items()
+    }
+    if len(keys) != len(payload):
+        return {}, "AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON contains conflicting normalized workspace ids."
+    if len(set(keys.values())) != len(keys):
+        return {}, "AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON must use a distinct key for every workspace."
+    return keys, None
+
+
+def supplied_admin_key(headers) -> str:
     supplied = (headers.get("X-AgentOps-Admin-Key") or "").strip()
     auth = (headers.get("Authorization") or "").strip()
     if auth.lower().startswith("bearer "):
         supplied = auth.split(" ", 1)[1].strip()
+    return supplied
+
+
+def agent_gateway_admin_auth_context(headers, workspace_id: str | None = None) -> tuple[dict | None, dict | None]:
+    workspace_keys, config_error = configured_workspace_admin_keys()
+    if config_error:
+        return None, {"error": "workspace_admin_config_invalid", "message": config_error}
+    requested_workspace = normalize_workspace_id(workspace_id) if workspace_id else None
+    header_workspace_raw = (headers.get("X-AgentOps-Workspace-Id") or "").strip()
+    header_workspace = normalize_workspace_id(header_workspace_raw) if header_workspace_raw else None
+    if requested_workspace and header_workspace and requested_workspace != header_workspace:
+        return None, {"error": "forbidden", "message": "Admin credential cannot act in another workspace."}
+    requested_workspace = requested_workspace or header_workspace
+    supplied = supplied_admin_key(headers)
+    if workspace_keys:
+        if not requested_workspace:
+            return None, {"error": "forbidden", "message": "A workspace id is required for workspace-scoped administration."}
+        expected = workspace_keys.get(requested_workspace)
+        if expected and hmac.compare_digest(supplied, expected):
+            return {"mode": "workspace_admin_key", "workspace_id": requested_workspace}, None
+        return None, {"error": "forbidden", "message": "Workspace admin credential is not authorized for this workspace."}
+
+    expected = os.environ.get("AGENTOPS_ADMIN_KEY", "").strip()
+    if production_security_requested():
+        return None, {"error": "unauthorized", "message": "AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON is required for workspace-scoped Agent Gateway administration in production mode."}
+    if not expected:
+        return {"mode": "local_dev_admin", "workspace_id": requested_workspace or "local-demo"}, None
     if hmac.compare_digest(supplied, expected):
-        return None
-    return {"error": "unauthorized", "message": "Admin token is required for Agent Gateway enrollment management."}
+        return {"mode": "global_admin_key", "workspace_id": requested_workspace}, None
+    return None, {"error": "unauthorized", "message": "Admin credential is required for Agent Gateway administration."}
+
+
+def agent_gateway_admin_auth_error(headers, workspace_id: str | None = None) -> dict | None:
+    _context, error = agent_gateway_admin_auth_context(headers, workspace_id)
+    return error
 
 
 def agent_gateway_auth_context(conn, headers, required_scope: str | None = None, allow_session: bool = True) -> tuple[dict | None, dict | None]:
@@ -3622,6 +4166,8 @@ def agent_gateway_auth_error(headers) -> dict | None:
 
 
 def agent_gateway_error_status(error: dict | None) -> int:
+    if error and error.get("error") == "workspace_admin_config_invalid":
+        return 503
     return 403 if error and error.get("error") == "forbidden" else 401
 
 
@@ -4189,10 +4735,12 @@ def repo_upsert_gateway_enrollment_request(conn: sqlite3.Connection, row: dict) 
         (row["request_id"],),
     ).fetchone()
     if before:
+        immutable_fields = ("approval_id", "task_id", "run_id", "workspace_id", "agent_id", "created_at")
+        if any(str(before[field]) != str(row[field]) for field in immutable_fields):
+            raise ValueError("gateway_enrollment_request_binding_conflict")
         conn.execute(
             """UPDATE agent_gateway_enrollment_requests
-            SET approval_id=:approval_id, task_id=:task_id, run_id=:run_id, workspace_id=:workspace_id,
-                agent_id=:agent_id, name=:name, role=:role, runtime_type=:runtime_type,
+            SET name=:name, role=:role, runtime_type=:runtime_type,
                 scopes_json=:scopes_json, reason=:reason, status=:status, token_id=:token_id,
                 updated_at=:updated_at, decided_at=:decided_at
             WHERE request_id=:request_id""",
@@ -4211,6 +4759,88 @@ def normalize_workspace_id(value) -> str:
     raw = str(value or "local-demo").strip()[:120]
     normalized = re.sub(r"[^A-Za-z0-9_.:-]+", "_", raw).strip("_")
     return normalized or "local-demo"
+
+
+def prepared_action_request_workspace(body: dict | None) -> str:
+    body = body or {}
+    return normalize_workspace_id(
+        body.get("_admin_workspace_id") or body.get("workspace_id") or "local-demo"
+    )
+
+
+def workspace_compatible_default_id(
+    workspace_id: str,
+    legacy_id: str,
+    prefix: str,
+    *parts,
+) -> str:
+    workspace_id = normalize_workspace_id(workspace_id)
+    if workspace_id == "local-demo":
+        return legacy_id
+    return stable_id(prefix, workspace_id, *parts)
+
+
+def require_task_workspace_binding(conn, workspace_id: str, task_id: str) -> None:
+    existing = conn.execute(
+        "SELECT workspace_id FROM tasks WHERE task_id=?",
+        (task_id,),
+    ).fetchone()
+    if existing and row_workspace(existing) != normalize_workspace_id(workspace_id):
+        raise PreparedActionImmutableConflict("runtime_task_workspace_binding_conflict")
+
+
+def postgres_locking_select(conn, sql: str, params):
+    statement = f"{sql.rstrip().rstrip(';')} FOR UPDATE" if STORAGE_BACKEND == "postgres" else sql
+    return conn.execute(statement, params).fetchone()
+
+
+def postgres_locking_rows(conn, sql: str, params):
+    statement = f"{sql.rstrip().rstrip(';')} FOR UPDATE" if STORAGE_BACKEND == "postgres" else sql
+    return conn.execute(statement, params).fetchall()
+
+
+def agent_gateway_approval_belongs_to_workspace(conn, approval_id: str, workspace_id: str) -> bool:
+    workspace_id = normalize_workspace_id(workspace_id)
+    return bool(conn.execute(
+        """SELECT 1
+        FROM approvals ap
+        LEFT JOIN agent_gateway_enrollment_requests req ON req.approval_id=ap.approval_id
+        LEFT JOIN prepared_actions pact ON pact.approval_id=ap.approval_id
+        LEFT JOIN runs r ON r.run_id=ap.run_id
+        LEFT JOIN tasks t ON t.task_id=ap.task_id
+        WHERE ap.approval_id=?
+          AND COALESCE(req.workspace_id,pact.workspace_id,r.workspace_id,t.workspace_id,'local-demo')=?
+        LIMIT 1""",
+        (approval_id, workspace_id),
+    ).fetchone())
+
+
+def agent_gateway_admin_target_workspace(headers, body: dict, actual_workspace: str | None = None) -> tuple[str, dict | None]:
+    body_workspace = normalize_workspace_id(body.get("workspace_id")) if body.get("workspace_id") else None
+    header_workspace = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id")) if headers.get("X-AgentOps-Workspace-Id") else None
+    actual_workspace = normalize_workspace_id(actual_workspace) if actual_workspace else None
+    if actual_workspace and body_workspace and actual_workspace != body_workspace:
+        return actual_workspace, {"error": "forbidden", "message": "Admin request body cannot target another workspace."}
+    target = actual_workspace or body_workspace or header_workspace or "local-demo"
+    return normalize_workspace_id(target), None
+
+
+def bind_prepared_action_request_workspace(
+    headers,
+    body: dict,
+    *,
+    require_admin: bool = False,
+) -> tuple[str, dict | None, int]:
+    workspace_id, target_error = agent_gateway_admin_target_workspace(headers, body)
+    if target_error:
+        return workspace_id, target_error, 403
+    if require_admin:
+        auth_error = agent_gateway_admin_auth_error(headers, workspace_id)
+        if auth_error:
+            return workspace_id, auth_error, agent_gateway_error_status(auth_error)
+    body["workspace_id"] = workspace_id
+    body["_admin_workspace_id"] = workspace_id
+    return workspace_id, None, 200
 
 
 def workspace_forbidden(entity_type: str, entity_id: str, requested_workspace: str, actual_workspace: str) -> tuple[dict, int]:
@@ -4418,7 +5048,9 @@ def agent_gateway_create_enrollment(conn, body) -> tuple[dict, int]:
 def agent_gateway_request_enrollment(conn, body) -> tuple[dict, int]:
     if not commercial_capability_enabled("approval_policies"):
         return commercial_entitlement_block(conn, "approval_policies", "agent_gateway.enrollment.request", "agent-gateway-enrollment"), 403
-    workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    if body.get("request_id"):
+        return {"error": "request_id_server_generated", "message": "Enrollment request ids are generated by MIS."}, 400
+    workspace_id = normalize_workspace_id(body.get("_admin_workspace_id") or body.get("workspace_id") or "local-demo")
     agent_id = body.get("agent_id") or stable_id("agt_remote", body.get("name") or "remote-agent", workspace_id)
     runtime_type = coerce_choice(body.get("runtime_type") or body.get("runtime"), VALID_RUNTIME_TYPES, "mock")
     scopes = parse_scope_list(body.get("scopes") or body.get("allowed_scopes") or [
@@ -4444,7 +5076,7 @@ def agent_gateway_request_enrollment(conn, body) -> tuple[dict, int]:
     role = redact_text(body.get("role") or "Remote AI Digital Employee", 120)
     reason = redact_text(body.get("reason") or "Remote agent enrollment request.", 360)
     now = now_iso()
-    request_id = body.get("request_id") or stable_id("enroll_req", workspace_id, agent_id, now)
+    request_id = stable_id("enroll_req", workspace_id, agent_id, now, secrets.token_hex(16))
     task_id = stable_id("tsk_enroll_req", request_id)
     run_id = stable_id("run_enroll_req", request_id)
     approval_id = stable_id("ap_enroll_req", request_id)
@@ -4536,15 +5168,34 @@ def agent_gateway_request_enrollment(conn, body) -> tuple[dict, int]:
 
 
 def sync_enrollment_request_decision(conn, approval_id: str, decision: str):
-    row = conn.execute("SELECT * FROM agent_gateway_enrollment_requests WHERE approval_id=?", (approval_id,)).fetchone()
-    if not row:
-        return
-    status = "approved" if decision == "approved" else "rejected" if decision == "rejected" else row["status"]
-    conn.execute(
-        "UPDATE agent_gateway_enrollment_requests SET status=?, decided_at=?, updated_at=? WHERE request_id=?",
-        (status, now_iso(), now_iso(), row["request_id"]),
+    row = postgres_locking_select(
+        conn,
+        "SELECT * FROM agent_gateway_enrollment_requests WHERE approval_id=?",
+        (approval_id,),
     )
-    audit(conn, "user", "usr_founder", f"agent_gateway.enrollment_request_{decision}", "agent_gateway_enrollment_requests", row["request_id"], dict(row), {"status": status}, {"approval_id": approval_id, "token_omitted": True})
+    if not row:
+        return "missing"
+    status = "approved" if decision == "approved" else "rejected" if decision == "rejected" else str(row["status"])
+    current_status = str(row["status"])
+    if current_status == status:
+        return "unchanged"
+    if current_status != "pending":
+        return "decision_conflict"
+    decided_at = now_iso()
+    cursor = conn.execute(
+        """UPDATE agent_gateway_enrollment_requests
+        SET status=?, decided_at=?, updated_at=?
+        WHERE request_id=? AND status='pending'""",
+        (status, decided_at, decided_at, row["request_id"]),
+    )
+    if cursor.rowcount != 1:
+        return "decision_conflict"
+    after = conn.execute(
+        "SELECT * FROM agent_gateway_enrollment_requests WHERE request_id=?",
+        (row["request_id"],),
+    ).fetchone()
+    audit(conn, "user", "usr_founder", f"agent_gateway.enrollment_request_{decision}", "agent_gateway_enrollment_requests", row["request_id"], dict(row), dict(after) if after else {"status": status}, {"approval_id": approval_id, "token_omitted": True})
+    return "updated"
 
 
 def agent_gateway_issue_approved_enrollment(conn, body) -> tuple[dict, int]:
@@ -4552,19 +5203,32 @@ def agent_gateway_issue_approved_enrollment(conn, body) -> tuple[dict, int]:
     approval_id = body.get("approval_id")
     if not request_id and not approval_id:
         return {"error": "request_id or approval_id is required"}, 400
-    if request_id:
-        request = conn.execute("SELECT * FROM agent_gateway_enrollment_requests WHERE request_id=?", (request_id,)).fetchone()
-    else:
-        request = conn.execute("SELECT * FROM agent_gateway_enrollment_requests WHERE approval_id=?", (approval_id,)).fetchone()
-    if not request:
+    admin_workspace_id = normalize_workspace_id(body.get("_admin_workspace_id") or body.get("workspace_id") or "local-demo")
+    request_sql = (
+        "SELECT * FROM agent_gateway_enrollment_requests WHERE request_id=? AND workspace_id=?"
+        if request_id
+        else "SELECT * FROM agent_gateway_enrollment_requests WHERE approval_id=? AND workspace_id=?"
+    )
+    request_params = (request_id or approval_id, admin_workspace_id)
+    request_hint = conn.execute(request_sql, request_params).fetchone()
+    if not request_hint:
         return {"error": "not found", "message": "Enrollment request not found."}, 404
     if not commercial_capability_enabled("approval_policies"):
         return commercial_entitlement_block(conn, "approval_policies", "agent_gateway.enrollment.issue_approved", "agent-gateway-enrollment"), 403
-    approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (request["approval_id"],)).fetchone()
+    approval = postgres_locking_select(
+        conn,
+        "SELECT * FROM approvals WHERE approval_id=?",
+        (request_hint["approval_id"],),
+    )
+    request = postgres_locking_select(conn, request_sql, request_params)
+    if not request or not approval or request["approval_id"] != approval["approval_id"]:
+        return {"error": "not found", "message": "Enrollment request not found."}, 404
     if not approval or approval["decision"] != "approved":
         return {"error": "approval_required", "message": "Enrollment request must be approved before issuing a token.", "approval_id": request["approval_id"]}, 409
     if request["status"] == "issued":
         return {"issued": False, "token_id": request["token_id"], "request_id": request["request_id"], "token_omitted": True}, 200
+    if request["status"] != "approved":
+        return {"error": "approval_required", "message": "Enrollment request must be approved before issuing a token.", "approval_id": request["approval_id"]}, 409
     scopes = parse_scope_list(request["scopes_json"])
     created, status = agent_gateway_create_enrollment(conn, {
         "agent_id": request["agent_id"],
@@ -4582,10 +5246,14 @@ def agent_gateway_issue_approved_enrollment(conn, body) -> tuple[dict, int]:
         return created, status
     now = now_iso()
     before = dict(request)
-    conn.execute(
-        "UPDATE agent_gateway_enrollment_requests SET status='issued', token_id=?, updated_at=?, decided_at=? WHERE request_id=?",
-        (created["token_id"], now, now, request["request_id"]),
+    cursor = conn.execute(
+        """UPDATE agent_gateway_enrollment_requests
+        SET status='issued', token_id=?, updated_at=?, decided_at=?
+        WHERE request_id=? AND workspace_id=? AND status='approved' AND token_id IS NULL""",
+        (created["token_id"], now, now, request["request_id"], admin_workspace_id),
     )
+    if cursor.rowcount != 1:
+        raise RuntimeError("gateway_enrollment_issue_state_conflict")
     after = conn.execute("SELECT * FROM agent_gateway_enrollment_requests WHERE request_id=?", (request["request_id"],)).fetchone()
     audit(conn, "user", "usr_founder", "agent_gateway.enrollment_issue_approved", "agent_gateway_enrollment_requests", request["request_id"], before, dict(after), {"approval_id": request["approval_id"], "token_id": created["token_id"], "token_omitted": True})
     created["issued_from_request_id"] = request["request_id"]
@@ -4839,6 +5507,8 @@ def security_production_readiness(conn: sqlite3.Connection, headers) -> dict:
     auth_mode = auth.get("mode") or ("unauthorized" if gateway_status_code == 401 else "unknown")
     api_key_configured = bool(os.environ.get("AGENTOPS_API_KEY", "").strip())
     admin_key_configured = bool(os.environ.get("AGENTOPS_ADMIN_KEY", "").strip())
+    workspace_admin_keys, workspace_admin_config_error = configured_workspace_admin_keys()
+    workspace_admin_configured = bool(workspace_admin_keys) and workspace_admin_config_error is None
     production_requested = production_security_requested()
     bound_or_global_auth = auth_mode in {"global_api_key", "agent_token", "agent_session"}
     dev_no_token = auth_mode == "local_dev_no_token"
@@ -4854,10 +5524,18 @@ def security_production_readiness(conn: sqlite3.Connection, headers) -> dict:
         {
             "id": "admin_key",
             "label": "Admin enrollment key",
-            "status": "pass" if admin_key_configured else "fail" if production_requested else "warn",
-            "ok": admin_key_configured,
-            "detail": "AGENTOPS_ADMIN_KEY configured" if admin_key_configured else "Agent enrollment admin endpoints are open in local-dev mode.",
-            "next_action": "Set AGENTOPS_ADMIN_KEY before shared or hosted deployment.",
+            "status": "pass" if admin_key_configured or workspace_admin_configured else "fail" if production_requested else "warn",
+            "ok": admin_key_configured or workspace_admin_configured,
+            "detail": "Administrative credentials configured; values omitted." if admin_key_configured or workspace_admin_configured else "Agent enrollment admin endpoints are open in local-dev mode.",
+            "next_action": "Set AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON before shared deployment; AGENTOPS_ADMIN_KEY is local-mode compatibility only.",
+        },
+        {
+            "id": "workspace_admin_scope",
+            "label": "Workspace-scoped administration",
+            "status": "fail" if workspace_admin_config_error else "pass" if workspace_admin_configured else "fail" if production_requested else "warn",
+            "ok": workspace_admin_configured,
+            "detail": "Workspace-scoped admin credentials configured; workspace ids and values omitted." if workspace_admin_configured else workspace_admin_config_error or "Only local/global administration is configured.",
+            "next_action": "Configure a customer-owned admin key per workspace in AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON.",
         },
         {
             "id": "scoped_agent_tokens",
@@ -4891,7 +5569,7 @@ def security_production_readiness(conn: sqlite3.Connection, headers) -> dict:
         "next_actions": [gate["next_action"] for gate in gates if gate["status"] in {"fail", "warn"}] or [
             "Keep using scoped tokens/sessions for remote workers and rotate credentials regularly.",
         ],
-        "contract": "local_dev_no_token is acceptable for local classroom/demo use only; production/shared deployment must use authenticated Agent Gateway and admin keys",
+        "contract": "local_dev_no_token is acceptable for local classroom/demo use only; production/shared deployment must use authenticated Agent Gateway and workspace-scoped admin keys",
         "safety": {
             "read_only": True,
             "live_execution_performed": False,
@@ -4908,19 +5586,32 @@ def agent_gateway_revoke_enrollment(conn, body) -> tuple[dict, int]:
     agent_id = body.get("agent_id")
     if not token_id and not agent_id:
         return {"error": "token_id or agent_id is required"}, 400
-    where = "token_id=?" if token_id else "agent_id=? AND status='active'"
-    param = token_id or agent_id
-    before = rows_to_dicts(conn.execute(f"SELECT token_id,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at FROM agent_gateway_tokens WHERE {where}", (param,)).fetchall())
+    workspace_id = normalize_workspace_id(body.get("_admin_workspace_id") or body.get("workspace_id") or "local-demo")
+    where = "token_id=? AND workspace_id=? AND status='active'" if token_id else "agent_id=? AND workspace_id=? AND status='active'"
+    params = (token_id or agent_id, workspace_id)
+    before = rows_to_dicts(postgres_locking_rows(
+        conn,
+        f"SELECT token_id,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at FROM agent_gateway_tokens WHERE {where}",
+        params,
+    ))
     now = now_iso()
-    conn.execute(f"UPDATE agent_gateway_tokens SET status='revoked', revoked_at=? WHERE {where}", (now, param))
+    cursor = conn.execute(f"UPDATE agent_gateway_tokens SET status='revoked', revoked_at=? WHERE {where}", (now, *params))
+    if cursor.rowcount != len(before):
+        raise RuntimeError("gateway_enrollment_revoke_state_conflict")
     revoked_session_ids: list[str] = []
     for row in before:
-        sessions = rows_to_dicts(conn.execute(
+        sessions = rows_to_dicts(postgres_locking_rows(
+            conn,
             "SELECT session_id,parent_token_id,workspace_id,agent_id,scopes_json,status,created_at,expires_at,revoked_at,last_used_at FROM agent_gateway_sessions WHERE parent_token_id=? AND status='active'",
             (row["token_id"],),
-        ).fetchall())
+        ))
         if sessions:
-            conn.execute("UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE parent_token_id=? AND status='active'", (now, row["token_id"]))
+            session_cursor = conn.execute(
+                "UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE parent_token_id=? AND status='active'",
+                (now, row["token_id"]),
+            )
+            if session_cursor.rowcount != len(sessions):
+                raise RuntimeError("gateway_enrollment_session_revoke_state_conflict")
             revoked_session_ids.extend(session["session_id"] for session in sessions)
             for session in sessions:
                 audit(conn, "user", "usr_founder", "agent_gateway.session_revoke_cascade", "agent_gateway_sessions", session["session_id"], session, {"status": "revoked", "revoked_at": now}, {"parent_token_id": row["token_id"], "token_omitted": True})
@@ -4934,15 +5625,19 @@ def agent_gateway_revoke_session(conn, body) -> tuple[dict, int]:
     agent_id = body.get("agent_id")
     if not session_id and not agent_id:
         return {"error": "session_id or agent_id is required"}, 400
-    where = "session_id=?" if session_id else "agent_id=? AND status='active'"
-    param = session_id or agent_id
-    before = rows_to_dicts(conn.execute(
+    workspace_id = normalize_workspace_id(body.get("_admin_workspace_id") or body.get("workspace_id") or "local-demo")
+    where = "session_id=? AND workspace_id=? AND status='active'" if session_id else "agent_id=? AND workspace_id=? AND status='active'"
+    params = (session_id or agent_id, workspace_id)
+    before = rows_to_dicts(postgres_locking_rows(
+        conn,
         f"""SELECT session_id,parent_token_id,workspace_id,agent_id,scopes_json,status,created_at,expires_at,revoked_at,last_used_at
         FROM agent_gateway_sessions WHERE {where}""",
-        (param,),
-    ).fetchall())
+        params,
+    ))
     now = now_iso()
-    conn.execute(f"UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE {where}", (now, param))
+    cursor = conn.execute(f"UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE {where}", (now, *params))
+    if cursor.rowcount != len(before):
+        raise RuntimeError("gateway_session_revoke_state_conflict")
     for row in before:
         runtime_event(conn, "rtc_agent_gateway_local", "agent.session.revoke", "completed", agent_id=row["agent_id"], output_summary=f"Revoked short-lived session ref {stable_id('session_ref', row['session_id'])[-12:]}.")
         audit(conn, "user", "usr_founder", "agent_gateway.session_revoke", "agent_gateway_sessions", row["session_id"], row, {"status": "revoked", "revoked_at": now}, {"token_omitted": True})
@@ -4955,16 +5650,19 @@ def agent_gateway_rotate_enrollment(conn, body) -> tuple[dict, int]:
     if not token_id and not agent_id:
         return {"error": "token_id or agent_id is required"}, 400
 
+    workspace_id = normalize_workspace_id(body.get("_admin_workspace_id") or body.get("workspace_id") or "local-demo")
     if token_id:
-        row = conn.execute(
-            "SELECT * FROM agent_gateway_tokens WHERE token_id=?",
-            (token_id,),
-        ).fetchone()
+        row = postgres_locking_select(
+            conn,
+            "SELECT * FROM agent_gateway_tokens WHERE token_id=? AND workspace_id=?",
+            (token_id, workspace_id),
+        )
     else:
-        row = conn.execute(
-            "SELECT * FROM agent_gateway_tokens WHERE agent_id=? AND status='active' ORDER BY created_at DESC LIMIT 1",
-            (agent_id,),
-        ).fetchone()
+        row = postgres_locking_select(
+            conn,
+            "SELECT * FROM agent_gateway_tokens WHERE agent_id=? AND workspace_id=? AND status='active' ORDER BY created_at DESC LIMIT 1",
+            (agent_id, workspace_id),
+        )
     if not row:
         return {"error": "not found", "message": "No enrollment token matched the rotation request."}, 404
     old = dict(row)
@@ -4976,12 +5674,17 @@ def agent_gateway_rotate_enrollment(conn, body) -> tuple[dict, int]:
     if not replacement_scopes:
         return {"error": "at least one valid scope is required", "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES)}, 400
     now = now_iso()
-    conn.execute("UPDATE agent_gateway_tokens SET status='revoked', revoked_at=? WHERE token_id=?", (now, old["token_id"]))
+    cursor = conn.execute(
+        "UPDATE agent_gateway_tokens SET status='revoked', revoked_at=? WHERE token_id=? AND workspace_id=? AND status='active'",
+        (now, old["token_id"], workspace_id),
+    )
+    if cursor.rowcount != 1:
+        return {"error": "rotation_conflict", "message": "Enrollment token was already rotated or revoked."}, 409
     runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.rotate_revoke", "completed", agent_id=old["agent_id"], output_summary=f"Revoked old token ref {stable_id('token_ref', old['token_id'])[-12:]} during rotation.")
     audit(conn, "user", "usr_founder", "agent_gateway.enrollment_rotate_revoke", "agent_gateway_tokens", old["token_id"], old, {"status": "revoked", "revoked_at": now}, {"token_omitted": True})
 
     create_body = {
-        "workspace_id": body.get("workspace_id") or old.get("workspace_id") or "local-demo",
+        "workspace_id": old.get("workspace_id") or workspace_id,
         "agent_id": old["agent_id"],
         "name": body.get("name") or (agent["name"] if agent else old["agent_id"]),
         "role": body.get("role") or (agent["role"] if agent else "Remote AI Digital Employee"),
@@ -6581,6 +7284,7 @@ def openclaw_probe_prompt() -> str:
 
 def ensure_openclaw_probe_agent_task(conn, body: dict | None = None, task_status: str = "planned") -> tuple[str, str, str, str]:
     body = body or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
     for connector in runtime_connector_rows():
         if connector["runtime_connector_id"] == "rtc_openclaw_local":
             upsert_runtime_connector(conn, connector)
@@ -6607,10 +7311,13 @@ def ensure_openclaw_probe_agent_task(conn, body: dict | None = None, task_status
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }, "openclaw-probe")
-    task_id = body.get("task_id") or "tsk_openclaw_manual_probe"
+    task_id = body.get("task_id") or stable_id("tsk_openclaw_manual_probe", workspace_id)
+    existing_task = conn.execute("SELECT workspace_id FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    if existing_task and row_workspace(existing_task) != workspace_id:
+        raise PreparedActionImmutableConflict("runtime_task_workspace_binding_conflict")
     upsert_task(conn, {
         "task_id": task_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": workspace_id,
         "title": "OpenClaw manual live probe",
         "description": "Approval-gated fixed OpenClaw probe. Full prompt and raw response are not stored.",
         "requester_id": body.get("requester_id") or "usr_founder",
@@ -6649,16 +7356,37 @@ def openclaw_probe_args(prompt_hash: str, timeout_seconds=None) -> dict:
 
 
 def openclaw_prepare_probe(conn, body: dict, prompt_hash: str) -> tuple[dict, int]:
+    caller_identifiers = sorted(
+        field for field in ("task_id", "run_id", "tool_call_id", "approval_id") if body.get(field)
+    )
+    if caller_identifiers:
+        return {
+            "provider": "openclaw",
+            "created": False,
+            "error": "server_generated_runtime_identifiers_required",
+            "rejected_fields": caller_identifiers,
+            "token_omitted": True,
+        }, 400
     agent_id, task_id, provider, model_name = ensure_openclaw_probe_agent_task(conn, body, "waiting_approval")
     now = now_iso()
-    run_id = body.get("run_id") or stable_id("run_oc_probe", prompt_hash[:16], now)
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    run_id = body.get("run_id") or stable_id("run_oc_probe", workspace_id, prompt_hash[:16], now)
     tool_call_id = body.get("tool_call_id") or stable_id("tc_oc_probe", run_id)
     approval_id = body.get("approval_id") or stable_id("ap_oc_probe", run_id)
     prepared_action_id = body.get("prepared_action_id") or stable_id("pact_oc_probe", run_id, prompt_hash[:16])
     args = openclaw_probe_args(prompt_hash, body.get("openclaw_timeout") or body.get("timeout_seconds"))
+    require_runtime_prepare_identifiers_available(
+        conn,
+        workspace_id=workspace_id,
+        task_id=task_id,
+        run_id=run_id,
+        tool_call_id=tool_call_id,
+        approval_id=approval_id,
+        prepared_action_id=prepared_action_id,
+    )
     repo_upsert_run(conn, {
         "run_id": run_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": workspace_id,
         "task_id": task_id,
         "agent_id": agent_id,
         "runtime_type": "openclaw",
@@ -6714,7 +7442,7 @@ def openclaw_prepare_probe(conn, body: dict, prompt_hash: str) -> tuple[dict, in
     })
     repo_upsert_prepared_action(conn, {
         "prepared_action_id": prepared_action_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": workspace_id,
         "task_id": task_id,
         "run_id": run_id,
         "tool_call_id": tool_call_id,
@@ -6808,7 +7536,8 @@ def openclaw_execute_probe(stored_args: dict, prompt: str) -> dict:
 
 def openclaw_resume_probe(conn, body: dict, prompt: str, prompt_hash: str) -> tuple[dict, int]:
     prepared_action_id = body.get("prepared_action_id")
-    action = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
+    workspace_id = normalize_workspace_id(body.get("_admin_workspace_id") or body.get("workspace_id") or "local-demo")
+    action = repo_get_workspace_prepared_action(conn, workspace_id, prepared_action_id)
     if not action or action["provider"] != "openclaw" or action["action_type"] != "runtime.openclaw_probe":
         return {"provider": "openclaw", "created": False, "error": "prepared_action_not_found", "prepared_action_id": prepared_action_id, "token_omitted": True}, 404
     if action["status"] == "consumed":
@@ -6835,8 +7564,17 @@ def openclaw_resume_probe(conn, body: dict, prompt: str, prompt_hash: str) -> tu
         stored_args = {}
     if prepared_action_args_hash(json.dumps(stored_args, ensure_ascii=False, sort_keys=True)) != action["args_hash"]:
         return {"provider": "openclaw", "created": False, "error": "prepared_action_args_mismatch", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
-    if action["status"] != "approved":
-        _before_action, action, _outcome = repo_update_prepared_action_status(conn, prepared_action_id, "approved")
+    action, claim_outcome = claim_prepared_action_execution(
+        conn,
+        action,
+        provider="openclaw",
+        action_type="runtime.openclaw_probe",
+        actor_id="openclaw-probe",
+        audit_action="runtime.openclaw_probe.execution_claimed",
+        omission_metadata={"raw_prompt_omitted": True},
+    )
+    if claim_outcome != "claimed" or not action:
+        return prepared_action_claim_error("openclaw", prepared_action_id, claim_outcome)
     started = now_iso()
     probe = openclaw_execute_probe(stored_args, prompt)
     usage = probe.get("usage") or {}
@@ -6874,9 +7612,11 @@ def openclaw_resume_probe(conn, body: dict, prompt: str, prompt_hash: str) -> tu
     )
     conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", ("completed" if probe["ok"] else "failed", now_iso(), action["task_id"]))
     if probe["ok"]:
-        _before_action, after_action, _action_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"response_hash": probe.get("response_hash"), "raw_response_omitted": True})
+        _before_action, after_action, finish_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"response_hash": probe.get("response_hash"), "raw_response_omitted": True})
     else:
-        after_action = action
+        _before_action, after_action, finish_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "failed", result_json={"error_hash": stable_hash(probe.get("error") or "openclaw_probe_failed"), "raw_response_omitted": True})
+    if finish_outcome not in {"updated", "unchanged"}:
+        raise RuntimeError("prepared_action_finish_state_conflict")
     upsert_evaluation(conn, quality_gate_for_run(row), "openclaw-probe")
     runtime_event(conn, "rtc_openclaw_local", "agent_probe.resume", "completed" if probe["ok"] else "failed", run_id=action["run_id"], task_id=action["task_id"], agent_id=action["requested_by_agent_id"], model_name=row["model_name"], latency_ms=row["duration_ms"], output_summary=probe.get("visible"), error_message=probe.get("error"), raw_payload_hash=probe.get("response_hash") or prompt_hash)
     audit(conn, "system", "openclaw-probe", "runtime.openclaw_probe.resume", "runs", action["run_id"], None, {"status": row["status"]}, {"prompt_hash": prompt_hash, "prepared_action_id": prepared_action_id, "provider_call_performed": True, "raw_prompt_omitted": True, "raw_response_omitted": True})
@@ -7173,12 +7913,24 @@ def dify_status(conn=None) -> dict:
 
 def ensure_dify_agent_task(conn, body: dict):
     now = now_iso()
+    workspace_id = prepared_action_request_workspace(body)
     agent_id = body.get("agent_id") or "agt_gw_kb_builder"
     ensure_gateway_agent(conn, agent_id, name="Knowledge Base Builder Agent", role="Knowledge Base Builder", runtime_type="mock")
-    task_id = body.get("task_id") or stable_id("tsk_dify_upload", body.get("dataset_id") or dify_config()["dataset_id"] or "local", body.get("document_name") or "document")
+    dataset_id = body.get("dataset_id") or dify_config()["dataset_id"] or "local"
+    document_name = body.get("document_name") or "document"
+    legacy_task_id = stable_id("tsk_dify_upload", dataset_id, document_name)
+    task_id = body.get("task_id") or workspace_compatible_default_id(
+        workspace_id,
+        legacy_task_id,
+        "tsk_dify_upload",
+        dataset_id,
+        document_name,
+    )
+    require_task_workspace_binding(conn, workspace_id, task_id)
     if not conn.execute("SELECT 1 FROM tasks WHERE task_id=?", (task_id,)).fetchone():
         upsert_task(conn, {
             "task_id": task_id,
+            "workspace_id": workspace_id,
             "title": body.get("task_title") or "Dify knowledge base ingestion",
             "description": "Agent-managed Dify document ingestion. MIS stores only summary, hashes, ids and audit evidence.",
             "requester_id": body.get("requester_id") or "usr_founder",
@@ -7215,16 +7967,34 @@ def dify_upload_args(dataset_id: str, document_name: str, text_hash: str, body: 
 
 
 def dify_prepare_upload_text(conn, body: dict, cfg: dict, dataset_id: str, document_name: str, text: str, text_hash: str) -> tuple[dict, int]:
+    workspace_id = prepared_action_request_workspace(body)
     agent_id, task_id = ensure_dify_agent_task(conn, {**body, "dataset_id": dataset_id, "document_name": document_name})
     now = now_iso()
-    run_id = body.get("run_id") or stable_id("run_dify_upload", dataset_id, document_name, text_hash[:16])
+    legacy_run_id = stable_id("run_dify_upload", dataset_id, document_name, text_hash[:16])
+    run_id = body.get("run_id") or workspace_compatible_default_id(
+        workspace_id,
+        legacy_run_id,
+        "run_dify_upload",
+        dataset_id,
+        document_name,
+        text_hash[:16],
+    )
     tool_call_id = body.get("tool_call_id") or stable_id("tc_dify_upload", run_id)
     approval_id = body.get("approval_id") or stable_id("ap_dify_upload", run_id)
     prepared_action_id = body.get("prepared_action_id") or stable_id("pact_dify_upload", run_id, text_hash[:16])
+    require_runtime_prepare_identifiers_available(
+        conn,
+        workspace_id=workspace_id,
+        task_id=task_id,
+        run_id=run_id,
+        tool_call_id=tool_call_id,
+        approval_id=approval_id,
+        prepared_action_id=prepared_action_id,
+    )
     args = dify_upload_args(dataset_id, document_name, text_hash, body)
     repo_upsert_run(conn, {
         "run_id": run_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": workspace_id,
         "task_id": task_id,
         "agent_id": agent_id,
         "runtime_type": "mock",
@@ -7281,7 +8051,7 @@ def dify_prepare_upload_text(conn, body: dict, cfg: dict, dataset_id: str, docum
     })
     repo_upsert_prepared_action(conn, {
         "prepared_action_id": prepared_action_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": workspace_id,
         "task_id": task_id,
         "run_id": run_id,
         "tool_call_id": tool_call_id,
@@ -7312,6 +8082,7 @@ def dify_prepare_upload_text(conn, body: dict, cfg: dict, dataset_id: str, docum
         "created": False,
         "requires_approval": True,
         "provider_call_performed": False,
+        "workspace_id": workspace_id,
         "prepared_action_id": prepared_action_id,
         "approval_id": approval_id,
         "task_id": task_id,
@@ -7327,7 +8098,8 @@ def dify_prepare_upload_text(conn, body: dict, cfg: dict, dataset_id: str, docum
 
 def dify_resume_upload_text(conn, body: dict, cfg: dict) -> tuple[dict, int]:
     prepared_action_id = body.get("prepared_action_id")
-    action = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
+    workspace_id = prepared_action_request_workspace(body)
+    action = repo_get_workspace_prepared_action(conn, workspace_id, prepared_action_id)
     if not action or action["provider"] != "dify" or action["action_type"] != "dify.upload_text":
         return {"provider": "dify", "ok": False, "created": False, "error": "prepared_action_not_found", "prepared_action_id": prepared_action_id, "token_omitted": True}, 404
     if action["status"] == "consumed":
@@ -7375,8 +8147,17 @@ def dify_resume_upload_text(conn, body: dict, cfg: dict) -> tuple[dict, int]:
         "indexing_technique": stored_args.get("indexing_technique") or "high_quality",
         "process_rule": stored_args.get("process_rule") or {"mode": "automatic"},
     }
-    if action["status"] != "approved":
-        _before_action, action, _outcome = repo_update_prepared_action_status(conn, prepared_action_id, "approved")
+    action, claim_outcome = claim_prepared_action_execution(
+        conn,
+        action,
+        provider="dify",
+        action_type="dify.upload_text",
+        actor_id="dify-connector",
+        audit_action="dify.upload_text.execution_claimed",
+        omission_metadata={"raw_text_omitted": True},
+    )
+    if claim_outcome != "claimed" or not action:
+        return prepared_action_claim_error("dify", prepared_action_id, claim_outcome)
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
     ok = False
@@ -7433,9 +8214,11 @@ def dify_resume_upload_text(conn, body: dict, cfg: dict) -> tuple[dict, int]:
     )
     conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", ("completed" if ok else "failed", now_iso(), action["task_id"]))
     if ok:
-        _before_action, after_action, _action_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"document_id": document_id, "response_hash": response_hash, "raw_response_omitted": True})
+        _before_action, after_action, finish_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"document_id": document_id, "response_hash": response_hash, "raw_response_omitted": True})
     else:
-        after_action = action
+        _before_action, after_action, finish_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "failed", result_json={"error_hash": stable_hash(error or "dify_upload_failed"), "raw_response_omitted": True})
+    if finish_outcome not in {"updated", "unchanged"}:
+        raise RuntimeError("prepared_action_finish_state_conflict")
     upsert_evaluation(conn, quality_gate_for_run(row), "dify-connector")
     runtime_event(conn, "rtc_agent_gateway_local", "dify.upload_text.resume", "completed" if ok else "failed", run_id=action["run_id"], task_id=action["task_id"], agent_id=action["requested_by_agent_id"], latency_ms=duration, input_summary=f"Dify text upload text_hash={text_hash[:16]}", output_summary=row["output_summary"], error_message=error, raw_payload_hash=response_hash or text_hash)
     audit(conn, "agent", action["requested_by_agent_id"], "dify.upload_text", "runs", action["run_id"], None, {"status": row["status"], "document_id": document_id}, {"text_hash": text_hash, "dataset_id": redact_text(dataset_id, 80), "approval_id": action["approval_id"], "prepared_action_id": prepared_action_id, "trust_mode": cfg["trust_mode"], "raw_text_omitted": True})
@@ -7510,6 +8293,7 @@ def dify_create_document_by_text(conn, body: dict) -> tuple[dict, int]:
 def ensure_agnesfallback_agent_task(conn, mode: str, body: dict | None = None, task_status: str = "planned"):
     body = body or {}
     now = now_iso()
+    workspace_id = prepared_action_request_workspace(body)
     agent_id = "agt_agnesfallback_runtime"
     upsert_agent(conn, {
         "agent_id": agent_id,
@@ -7527,10 +8311,17 @@ def ensure_agnesfallback_agent_task(conn, mode: str, body: dict | None = None, t
         "created_at": now,
         "updated_at": now,
     }, "runtime-connector")
-    task_id = body.get("task_id") or f"tsk_agnesfallback_{mode}_probe"
+    legacy_task_id = f"tsk_agnesfallback_{mode}_probe"
+    task_id = body.get("task_id") or workspace_compatible_default_id(
+        workspace_id,
+        legacy_task_id,
+        legacy_task_id,
+        "probe",
+    )
+    require_task_workspace_binding(conn, workspace_id, task_id)
     upsert_task(conn, {
         "task_id": task_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": workspace_id,
         "title": f"Agnesfallback {mode} probe",
         "description": "Fixed low-risk runtime connector probe. Full prompt and raw response are not stored.",
         "requester_id": body.get("requester_id") or "usr_founder",
@@ -7582,17 +8373,34 @@ def agnesfallback_probe_args(mode: str, agnes: dict, prompt_hash: str) -> dict:
 
 
 def agnesfallback_prepare_probe(conn, body: dict, mode: str, agnes: dict, prompt_hash: str) -> tuple[dict, int]:
+    workspace_id = prepared_action_request_workspace(body)
     agent_id, task_id = ensure_agnesfallback_agent_task(conn, mode, body, "waiting_approval")
     now = now_iso()
-    run_id = body.get("run_id") or stable_id(f"run_agnes_{mode}_probe", prompt_hash[:16], now)
+    legacy_run_id = stable_id(f"run_agnes_{mode}_probe", prompt_hash[:16], now)
+    run_id = body.get("run_id") or workspace_compatible_default_id(
+        workspace_id,
+        legacy_run_id,
+        f"run_agnes_{mode}_probe",
+        prompt_hash[:16],
+        now,
+    )
     tool_call_id = body.get("tool_call_id") or stable_id(f"tc_agnes_{mode}_probe", run_id)
     approval_id = body.get("approval_id") or stable_id(f"ap_agnes_{mode}_probe", run_id)
     prepared_action_id = body.get("prepared_action_id") or stable_id(f"pact_agnes_{mode}_probe", run_id, prompt_hash[:16])
+    require_runtime_prepare_identifiers_available(
+        conn,
+        workspace_id=workspace_id,
+        task_id=task_id,
+        run_id=run_id,
+        tool_call_id=tool_call_id,
+        approval_id=approval_id,
+        prepared_action_id=prepared_action_id,
+    )
     args = agnesfallback_probe_args(mode, agnes, prompt_hash)
     connector_id = agnesfallback_probe_connector_id(mode)
     repo_upsert_run(conn, {
         "run_id": run_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": workspace_id,
         "task_id": task_id,
         "agent_id": agent_id,
         "runtime_type": "hermes",
@@ -7648,7 +8456,7 @@ def agnesfallback_prepare_probe(conn, body: dict, mode: str, agnes: dict, prompt
     })
     repo_upsert_prepared_action(conn, {
         "prepared_action_id": prepared_action_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": workspace_id,
         "task_id": task_id,
         "run_id": run_id,
         "tool_call_id": tool_call_id,
@@ -7678,6 +8486,7 @@ def agnesfallback_prepare_probe(conn, body: dict, mode: str, agnes: dict, prompt
         "ok": False,
         "requires_approval": True,
         "provider_call_performed": False,
+        "workspace_id": workspace_id,
         "prepared_action_id": prepared_action_id,
         "approval_id": approval_id,
         "task_id": task_id,
@@ -7691,7 +8500,8 @@ def agnesfallback_prepare_probe(conn, body: dict, mode: str, agnes: dict, prompt
 
 def agnesfallback_resume_probe(conn, body: dict, mode: str, cfg: dict, prompt: str, prompt_hash: str) -> tuple[dict, int]:
     prepared_action_id = body.get("prepared_action_id")
-    action = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
+    workspace_id = prepared_action_request_workspace(body)
+    action = repo_get_workspace_prepared_action(conn, workspace_id, prepared_action_id)
     if not action or action["provider"] != "agnesfallback" or action["action_type"] != f"runtime.agnesfallback_{mode}_probe":
         return {"provider": "agnesfallback", "created": False, "error": "prepared_action_not_found", "prepared_action_id": prepared_action_id, "token_omitted": True}, 404
     if action["status"] == "consumed":
@@ -7728,8 +8538,17 @@ def agnesfallback_resume_probe(conn, body: dict, mode: str, cfg: dict, prompt: s
             "token_omitted": True,
             "raw_prompt_omitted": True,
         }, 409
-    if action["status"] != "approved":
-        _before_action, action, _outcome = repo_update_prepared_action_status(conn, prepared_action_id, "approved")
+    action, claim_outcome = claim_prepared_action_execution(
+        conn,
+        action,
+        provider="agnesfallback",
+        action_type=f"runtime.agnesfallback_{mode}_probe",
+        actor_id=f"agnesfallback-{mode}",
+        audit_action=f"runtime.agnesfallback_{mode}_probe.execution_claimed",
+        omission_metadata={"raw_prompt_omitted": True},
+    )
+    if claim_outcome != "claimed" or not action:
+        return prepared_action_claim_error("agnesfallback", prepared_action_id, claim_outcome)
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
     ok = False
@@ -7806,9 +8625,11 @@ def agnesfallback_resume_probe(conn, body: dict, mode: str, cfg: dict, prompt: s
     )
     conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", ("completed" if ok else "failed", now_iso(), action["task_id"]))
     if ok:
-        _before_action, after_action, _action_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"response_hash": response_hash, "raw_response_omitted": True})
+        _before_action, after_action, finish_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"response_hash": response_hash, "raw_response_omitted": True})
     else:
-        after_action = action
+        _before_action, after_action, finish_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "failed", result_json={"error_hash": stable_hash(error or "agnesfallback_probe_failed"), "raw_response_omitted": True})
+    if finish_outcome not in {"updated", "unchanged"}:
+        raise RuntimeError("prepared_action_finish_state_conflict")
     upsert_evaluation(conn, quality_gate_for_run(row), f"agnesfallback-{mode}")
     connector_id = agnesfallback_probe_connector_id(mode)
     runtime_event(conn, connector_id, f"{mode}_probe.resume", "completed" if ok else "failed", run_id=action["run_id"], task_id=action["task_id"], agent_id=action["requested_by_agent_id"], model_name="agnesfallback", latency_ms=duration, prompt_hash=prompt_hash, output_summary=visible, error_message=error, raw_payload_hash=response_hash or prompt_hash)
@@ -7883,6 +8704,7 @@ def agnesfallback_chat_completion_probe(conn, body: dict) -> tuple[dict, int]:
 def ensure_local_ai_brief_agent_task(conn, body: dict | None = None, task_status: str = "planned"):
     now = now_iso()
     body = body or {}
+    workspace_id = prepared_action_request_workspace(body)
     agent_id = "agt_local_ai_brief"
     upsert_agent(conn, {
         "agent_id": agent_id,
@@ -7900,10 +8722,17 @@ def ensure_local_ai_brief_agent_task(conn, body: dict | None = None, task_status
         "created_at": now,
         "updated_at": now,
     }, "local-ai-workflow")
-    task_id = body.get("task_id") or "tsk_local_ai_daily_brief"
+    legacy_task_id = "tsk_local_ai_daily_brief"
+    task_id = body.get("task_id") or workspace_compatible_default_id(
+        workspace_id,
+        legacy_task_id,
+        legacy_task_id,
+        "daily_brief",
+    )
+    require_task_workspace_binding(conn, workspace_id, task_id)
     upsert_task(conn, {
         "task_id": task_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": workspace_id,
         "title": "Generate local AgentOps MIS work brief",
         "description": "Generate a useful local project/ops brief from structured MIS counts and recent sanitized ledger summaries.",
         "requester_id": body.get("requester_id") or "usr_founder",
@@ -8021,14 +8850,23 @@ def read_local_ai_brief_state_snapshot(action) -> tuple[dict | None, str | None]
 
 def prepare_local_ai_brief(conn, body: dict, agnes: dict, state: dict, prompt_hash: str, state_hash: str) -> tuple[dict, int]:
     now = now_iso()
+    workspace_id = prepared_action_request_workspace(body)
     agent_id, task_id = ensure_local_ai_brief_agent_task(conn, body, "waiting_approval")
     run_id = body.get("run_id") or stable_id("run_local_ai_brief_prepared", task_id, prompt_hash[:16], state_hash[:16])
     tool_call_id = body.get("tool_call_id") or stable_id("tc_local_ai_brief_prepared", run_id)
     approval_id = body.get("approval_id") or stable_id("ap_local_ai_brief_prepared", run_id)
     prepared_action_id = body.get("prepared_action_id") or stable_id("pact_local_ai_brief", run_id, prompt_hash[:16])
+    require_runtime_prepare_identifiers_available(
+        conn,
+        workspace_id=workspace_id,
+        task_id=task_id,
+        run_id=run_id,
+        tool_call_id=tool_call_id,
+        approval_id=approval_id,
+        prepared_action_id=prepared_action_id,
+    )
     snapshot_ref, snapshot_hash = write_local_ai_brief_state_snapshot(prepared_action_id, state)
     args = local_ai_brief_args(prompt_hash, state_hash, snapshot_hash, body)
-    workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
     repo_upsert_run(conn, {
         "run_id": run_id,
         "workspace_id": workspace_id,
@@ -8117,6 +8955,7 @@ def prepare_local_ai_brief(conn, body: dict, agnes: dict, state: dict, prompt_ha
         "ok": False,
         "requires_approval": True,
         "provider_call_performed": False,
+        "workspace_id": workspace_id,
         "prepared_action_id": prepared_action_id,
         "approval_id": approval_id,
         "task_id": task_id,
@@ -8139,7 +8978,8 @@ def prepare_local_ai_brief(conn, body: dict, agnes: dict, state: dict, prompt_ha
 
 def resume_local_ai_brief(conn, body: dict, cfg: dict, agnes: dict) -> tuple[dict, int]:
     prepared_action_id = body.get("prepared_action_id")
-    action = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
+    workspace_id = prepared_action_request_workspace(body)
+    action = repo_get_workspace_prepared_action(conn, workspace_id, prepared_action_id)
     if not action or action["provider"] != "agnesfallback" or action["action_type"] != "workflow.local_ai_brief":
         return {"provider": "agnesfallback", "workflow": "local_ai_brief", "ok": False, "error": "prepared_action_not_found", "prepared_action_id": prepared_action_id, "token_omitted": True}, 404
     if action["status"] == "consumed":
@@ -8221,8 +9061,17 @@ def resume_local_ai_brief(conn, body: dict, cfg: dict, agnes: dict) -> tuple[dic
             "token_omitted": True,
             "raw_prompt_omitted": True,
         }, 409
-    if action["status"] != "approved":
-        _before_action, action, _outcome = repo_update_prepared_action_status(conn, prepared_action_id, "approved")
+    action, claim_outcome = claim_prepared_action_execution(
+        conn,
+        action,
+        provider="agnesfallback",
+        action_type="workflow.local_ai_brief",
+        actor_id="local-ai-workflow",
+        audit_action="workflow.local_ai_brief.execution_claimed",
+        omission_metadata={"raw_prompt_omitted": True},
+    )
+    if claim_outcome != "claimed" or not action:
+        return prepared_action_claim_error("agnesfallback", prepared_action_id, claim_outcome)
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
     ok = False
@@ -8284,9 +9133,11 @@ def resume_local_ai_brief(conn, body: dict, cfg: dict, agnes: dict) -> tuple[dic
             "summary": visible,
             "created_at": now_iso(),
         })
-        _before_action, after_action, _action_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"artifact_id": artifact_id, "output_hash": stable_hash(visible or ""), "raw_response_omitted": True})
+        _before_action, after_action, finish_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"artifact_id": artifact_id, "output_hash": stable_hash(visible or ""), "raw_response_omitted": True})
     else:
-        after_action = action
+        _before_action, after_action, finish_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "failed", result_json={"error_hash": stable_hash(error or "local_ai_brief_failed"), "raw_response_omitted": True})
+    if finish_outcome not in {"updated", "unchanged"}:
+        raise RuntimeError("prepared_action_finish_state_conflict")
     conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", ("completed" if ok else "blocked", now_iso(), action["task_id"]))
     audit(conn, "system", "local-ai-workflow", "workflow.local_ai_brief.resume", "runs", action["run_id"], None, {"status": row["status"], "artifact_id": artifact_id if ok else None}, {"prompt_hash": prompt_hash, "state_hash": state_hash, "prepared_action_id": prepared_action_id, "provider_call_performed": True, "raw_prompt_omitted": True, "raw_response_omitted": True})
     conn.commit()
@@ -8857,7 +9708,7 @@ def customer_worker_prepared_action_public(conn: sqlite3.Connection, row: sqlite
 
 def customer_worker_prepared_actions_readback(conn: sqlite3.Connection, headers, qs: dict) -> dict:
     workspace_id = request_workspace(headers, qs)
-    allowed_statuses = {"prepared", "waiting_approval", "approved", "rejected", "consumed", "expired", "canceled"}
+    allowed_statuses = {"prepared", "waiting_approval", "approved", "executing", "rejected", "consumed", "failed", "expired", "canceled"}
     status_param = (qs.get("status") or [""])[0].strip().lower()
     if status_param == "all":
         statuses = None
@@ -9198,12 +10049,30 @@ def prepare_customer_worker_external_write(
     connector_id = runtime_connector_for_adapter(adapter)
     args = customer_worker_external_write_args(body, adapter, title, description, acceptance, async_job)
     snapshot_hash = customer_worker_external_write_snapshot_hash(args)
-    task_id = body.get("task_id") or stable_id("tsk_customer_worker_prepared", adapter, snapshot_hash[:16], now)
+    legacy_task_id = stable_id("tsk_customer_worker_prepared", adapter, snapshot_hash[:16], now)
+    task_id = body.get("task_id") or workspace_compatible_default_id(
+        workspace_id,
+        legacy_task_id,
+        "tsk_customer_worker_prepared",
+        adapter,
+        snapshot_hash[:16],
+        now,
+    )
     run_id = body.get("run_id") or stable_id("run_customer_worker_prepared", adapter, task_id, snapshot_hash[:16])
     tool_call_id = body.get("tool_call_id") or stable_id("tc_customer_worker_prepared", run_id)
     approval_id = body.get("approval_id") or stable_id("ap_customer_worker_prepared", run_id)
     prepared_action_id = body.get("prepared_action_id") or stable_id("pact_customer_worker", run_id, snapshot_hash[:16])
     ensure_gateway_agent(conn, worker_agent_id, name=f"Customer {adapter} Worker", role="Customer Task Worker", runtime_type=adapter)
+    require_task_workspace_binding(conn, workspace_id, task_id)
+    require_runtime_prepare_identifiers_available(
+        conn,
+        workspace_id=workspace_id,
+        task_id=task_id,
+        run_id=run_id,
+        tool_call_id=tool_call_id,
+        approval_id=approval_id,
+        prepared_action_id=prepared_action_id,
+    )
     repo_upsert_task(conn, {
         "task_id": task_id,
         "workspace_id": workspace_id,
@@ -9311,6 +10180,7 @@ def prepare_customer_worker_external_write(
         "async_job": bool(async_job),
         "requires_approval": True,
         "provider_call_performed": False,
+        "workspace_id": workspace_id,
         "prepared_action_id": prepared_action_id,
         "approval_id": approval_id,
         "task_id": task_id,
@@ -9333,7 +10203,8 @@ def resume_customer_worker_external_write(
     async_job: bool = False,
 ) -> tuple[dict, int]:
     prepared_action_id = body.get("prepared_action_id")
-    action = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
+    workspace_id = prepared_action_request_workspace(body)
+    action = repo_get_workspace_prepared_action(conn, workspace_id, prepared_action_id)
     if not action or action["provider"] != CUSTOMER_WORKER_PREPARED_ACTION_PROVIDER or action["action_type"] != CUSTOMER_WORKER_PREPARED_ACTION_TYPE:
         return {"provider": "agentops-worker", "workflow": "customer_worker_task", "ok": False, "error": "prepared_action_not_found", "prepared_action_id": prepared_action_id, "token_omitted": True}, 404
     if action["status"] == "consumed":
@@ -9365,15 +10236,25 @@ def resume_customer_worker_external_write(
         return {"provider": "agentops-worker", "workflow": "customer_worker_task", "ok": False, "error": "prepared_action_args_mismatch", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
     if prepared_action_args_hash(json.dumps(args, ensure_ascii=False, sort_keys=True)) != action["args_hash"]:
         return {"provider": "agentops-worker", "workflow": "customer_worker_task", "ok": False, "error": "prepared_action_args_mismatch", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
-    if action["status"] != "approved":
-        _before_action, action, _outcome = repo_update_prepared_action_status(conn, prepared_action_id, "approved")
+    action, claim_outcome = claim_prepared_action_execution(
+        conn,
+        action,
+        provider=CUSTOMER_WORKER_PREPARED_ACTION_PROVIDER,
+        action_type=CUSTOMER_WORKER_PREPARED_ACTION_TYPE,
+        actor_id="customer-worker-task",
+        audit_action="workflow.customer_worker_task.execution_claimed",
+        omission_metadata={"raw_request_omitted": True},
+    )
+    if claim_outcome != "claimed" or not action:
+        return prepared_action_claim_error("agentops-worker", prepared_action_id, claim_outcome)
     resume_body = {**body, "confirm_run": True, "prepared_action_resume": True}
     if async_job:
         payload, status = submit_customer_worker_task_job(conn, resume_body)
     else:
         payload, status = run_customer_worker_task_workflow(conn, resume_body)
     result_hash = stable_hash(payload)
-    _before_action, after_action, _action_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={
+    final_status = "consumed" if status < 400 else "failed"
+    _before_action, after_action, finish_outcome = repo_update_prepared_action_status(conn, prepared_action_id, final_status, result_json={
         "result_hash": result_hash,
         "result_status": status,
         "result_task_id": payload.get("task_id") or ((payload.get("job") or {}).get("result_task_id")),
@@ -9381,6 +10262,8 @@ def resume_customer_worker_external_write(
         "result_artifact_id": payload.get("artifact_id") or ((payload.get("job") or {}).get("result_artifact_id")),
         "raw_result_omitted": True,
     })
+    if finish_outcome not in {"updated", "unchanged"}:
+        raise RuntimeError("prepared_action_finish_state_conflict")
     conn.execute("UPDATE tool_calls SET status=?, result_summary=?, side_effect_id=?, ended_at=? WHERE tool_call_id=?", (
         "completed" if payload.get("ok", status < 400) else "failed",
         "Customer worker external write resumed from prepared action.",
@@ -10412,6 +11295,7 @@ def hermes_default_run_prompt() -> str:
 
 def ensure_hermes_run_task_agent_task(conn, body: dict, task_status: str = "planned") -> tuple[str, str]:
     now = now_iso()
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
     agent_id = "agt_hermes_gateway"
     upsert_agent(conn, {
         "agent_id": agent_id,
@@ -10429,10 +11313,13 @@ def ensure_hermes_run_task_agent_task(conn, body: dict, task_status: str = "plan
         "created_at": now,
         "updated_at": now,
     }, "hermes-run-task")
-    task_id = body.get("task_id") or "tsk_hermes_default_run_task"
+    task_id = body.get("task_id") or stable_id("tsk_hermes_default_run_task", workspace_id)
+    existing_task = conn.execute("SELECT workspace_id FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    if existing_task and row_workspace(existing_task) != workspace_id:
+        raise PreparedActionImmutableConflict("runtime_task_workspace_binding_conflict")
     upsert_task(conn, {
         "task_id": task_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": workspace_id,
         "title": "Hermes default gateway fixed runtime task",
         "description": "Confirmed low-risk Hermes default gateway run. Full prompt and raw response are not stored.",
         "requester_id": body.get("requester_id") or "usr_founder",
@@ -10464,16 +11351,37 @@ def hermes_run_task_args(status: dict, prompt_hash: str, risk: str, timeout_seco
 
 
 def hermes_prepare_run_task(conn, body: dict, cfg: dict, status: dict, prompt_hash: str, risk: str) -> tuple[dict, int]:
+    caller_identifiers = sorted(
+        field for field in ("task_id", "run_id", "tool_call_id", "approval_id") if body.get(field)
+    )
+    if caller_identifiers:
+        return {
+            "provider": "hermes",
+            "created": False,
+            "error": "server_generated_runtime_identifiers_required",
+            "rejected_fields": caller_identifiers,
+            "token_omitted": True,
+        }, 400
     agent_id, task_id = ensure_hermes_run_task_agent_task(conn, body, "waiting_approval")
     now = now_iso()
-    run_id = body.get("run_id") or stable_id("run_hermes_default_task", prompt_hash[:16])
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    run_id = body.get("run_id") or stable_id("run_hermes_default_task", workspace_id, prompt_hash[:16], now)
     tool_call_id = body.get("tool_call_id") or stable_id("tc_hermes_default_task", run_id)
     approval_id = body.get("approval_id") or stable_id("ap_hermes_default_task", run_id)
     prepared_action_id = body.get("prepared_action_id") or stable_id("pact_hermes_default_task", run_id, prompt_hash[:16])
     args = hermes_run_task_args(status, prompt_hash, risk, body.get("hermes_timeout") or body.get("timeout_seconds"))
+    require_runtime_prepare_identifiers_available(
+        conn,
+        workspace_id=workspace_id,
+        task_id=task_id,
+        run_id=run_id,
+        tool_call_id=tool_call_id,
+        approval_id=approval_id,
+        prepared_action_id=prepared_action_id,
+    )
     repo_upsert_run(conn, {
         "run_id": run_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": workspace_id,
         "task_id": task_id,
         "agent_id": agent_id,
         "runtime_type": "hermes",
@@ -10529,7 +11437,7 @@ def hermes_prepare_run_task(conn, body: dict, cfg: dict, status: dict, prompt_ha
     })
     repo_upsert_prepared_action(conn, {
         "prepared_action_id": prepared_action_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": workspace_id,
         "task_id": task_id,
         "run_id": run_id,
         "tool_call_id": tool_call_id,
@@ -10573,7 +11481,8 @@ def hermes_prepare_run_task(conn, body: dict, cfg: dict, status: dict, prompt_ha
 
 def hermes_resume_run_task(conn, body: dict, cfg: dict, status: dict, prompt: str, prompt_hash: str) -> tuple[dict, int]:
     prepared_action_id = body.get("prepared_action_id")
-    action = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
+    workspace_id = normalize_workspace_id(body.get("_admin_workspace_id") or body.get("workspace_id") or "local-demo")
+    action = repo_get_workspace_prepared_action(conn, workspace_id, prepared_action_id)
     if not action or action["provider"] != "hermes" or action["action_type"] != "runtime.hermes_run_task":
         return {"created": False, "provider": "hermes", "error": "prepared_action_not_found", "prepared_action_id": prepared_action_id, "token_omitted": True}, 404
     if action["status"] == "consumed":
@@ -10610,8 +11519,17 @@ def hermes_resume_run_task(conn, body: dict, cfg: dict, status: dict, prompt: st
             "token_omitted": True,
             "raw_prompt_omitted": True,
         }, 409
-    if action["status"] != "approved":
-        _before_action, action, _outcome = repo_update_prepared_action_status(conn, prepared_action_id, "approved")
+    action, claim_outcome = claim_prepared_action_execution(
+        conn,
+        action,
+        provider="hermes",
+        action_type="runtime.hermes_run_task",
+        actor_id="hermes-run-task",
+        audit_action="runtime.run_task.execution_claimed",
+        omission_metadata={"raw_prompt_omitted": True},
+    )
+    if claim_outcome != "claimed" or not action:
+        return prepared_action_claim_error("hermes", prepared_action_id, claim_outcome)
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
     payload = {"model": stored_args.get("model") or "hermes-agent", "messages": [{"role": "user", "content": prompt}], "temperature": 0}
@@ -10671,9 +11589,11 @@ def hermes_resume_run_task(conn, body: dict, cfg: dict, status: dict, prompt: st
     )
     conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", ("completed" if ok else "failed", now_iso(), action["task_id"]))
     if ok:
-        _before_action, after_action, _action_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"response_hash": response_hash, "raw_response_omitted": True})
+        _before_action, after_action, finish_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"response_hash": response_hash, "raw_response_omitted": True})
     else:
-        after_action = action
+        _before_action, after_action, finish_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "failed", result_json={"error_hash": stable_hash(error or "hermes_run_task_failed"), "raw_response_omitted": True})
+    if finish_outcome not in {"updated", "unchanged"}:
+        raise RuntimeError("prepared_action_finish_state_conflict")
     upsert_evaluation(conn, quality_gate_for_run(row), "hermes-run-task")
     runtime_event(conn, "rtc_hermes_default_gateway", "run_task.resume", "completed" if ok else "failed", run_id=action["run_id"], task_id=action["task_id"], agent_id=action["requested_by_agent_id"], model_name="hermes-agent", latency_ms=duration, prompt_hash=prompt_hash, output_summary=visible, error_message=error, raw_payload_hash=response_hash or prompt_hash)
     audit(conn, "system", "hermes-run-task", "runtime.run_task.resume", "runs", action["run_id"], None, {"status": row["status"]}, {"prompt_hash": prompt_hash, "prepared_action_id": prepared_action_id, "provider_call_performed": True, "raw_prompt_omitted": True, "raw_response_omitted": True})
@@ -14659,6 +15579,7 @@ def notion_export_confirmed(conn, body: dict) -> tuple[dict, int]:
 
 def ensure_notion_export_agent_task(conn, body: dict) -> tuple[str, str]:
     now = now_iso()
+    workspace_id = prepared_action_request_workspace(body)
     agent_id = "agt_notion_export"
     upsert_agent(conn, {
         "agent_id": agent_id,
@@ -14676,10 +15597,17 @@ def ensure_notion_export_agent_task(conn, body: dict) -> tuple[str, str]:
         "created_at": now,
         "updated_at": now,
     }, "notion-export")
-    task_id = body.get("task_id") or stable_id("tsk_notion_export", "project_report")
+    legacy_task_id = stable_id("tsk_notion_export", "project_report")
+    task_id = body.get("task_id") or workspace_compatible_default_id(
+        workspace_id,
+        legacy_task_id,
+        "tsk_notion_export",
+        "project_report",
+    )
+    require_task_workspace_binding(conn, workspace_id, task_id)
     upsert_task(conn, {
         "task_id": task_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": workspace_id,
         "title": "Approval-gated Notion report export",
         "description": "Prepare an exact-resume Notion report export without storing credentials, raw transcripts or provider tokens.",
         "requester_id": body.get("requester_id") or "usr_founder",
@@ -14734,6 +15662,7 @@ def read_prepared_action_snapshot(snapshot_ref: str | None, expected_hash: str |
 
 
 def notion_prepare_confirmed_export(conn, body: dict, markdown: str, cfg: dict) -> tuple[dict, int]:
+    workspace_id = prepared_action_request_workspace(body)
     agent_id, task_id = ensure_notion_export_agent_task(conn, body)
     title, markdown_hash, args = notion_prepared_export_args(body, markdown, cfg)
     now = now_iso()
@@ -14741,11 +15670,20 @@ def notion_prepare_confirmed_export(conn, body: dict, markdown: str, cfg: dict) 
     tool_call_id = body.get("tool_call_id") or stable_id("tc_notion_export", run_id)
     approval_id = body.get("approval_id") or stable_id("ap_notion_export", run_id)
     prepared_action_id = body.get("prepared_action_id") or stable_id("pact_notion_export", run_id, markdown_hash[:16])
+    require_runtime_prepare_identifiers_available(
+        conn,
+        workspace_id=workspace_id,
+        task_id=task_id,
+        run_id=run_id,
+        tool_call_id=tool_call_id,
+        approval_id=approval_id,
+        prepared_action_id=prepared_action_id,
+    )
     snapshot_ref, markdown_hash = write_prepared_action_snapshot(prepared_action_id, markdown)
     title, _markdown_hash, args = notion_prepared_export_args(body, markdown, cfg)
     repo_upsert_run(conn, {
         "run_id": run_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": workspace_id,
         "task_id": task_id,
         "agent_id": agent_id,
         "runtime_type": "mock",
@@ -14801,7 +15739,7 @@ def notion_prepare_confirmed_export(conn, body: dict, markdown: str, cfg: dict) 
     })
     repo_upsert_prepared_action(conn, {
         "prepared_action_id": prepared_action_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": workspace_id,
         "task_id": task_id,
         "run_id": run_id,
         "tool_call_id": tool_call_id,
@@ -14831,6 +15769,7 @@ def notion_prepare_confirmed_export(conn, body: dict, markdown: str, cfg: dict) 
         "created": False,
         "requires_approval": True,
         "provider_call_performed": False,
+        "workspace_id": workspace_id,
         "prepared_action_id": prepared_action_id,
         "approval_id": approval_id,
         "task_id": task_id,
@@ -14844,7 +15783,8 @@ def notion_prepare_confirmed_export(conn, body: dict, markdown: str, cfg: dict) 
 
 def notion_resume_prepared_export(conn, body: dict, markdown: str, cfg: dict) -> tuple[dict, int]:
     prepared_action_id = body.get("prepared_action_id")
-    action = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
+    workspace_id = prepared_action_request_workspace(body)
+    action = repo_get_workspace_prepared_action(conn, workspace_id, prepared_action_id)
     if not action or action["provider"] != "notion" or action["action_type"] != "notion.report_export":
         return {"provider": "notion", "created": False, "error": "prepared_action_not_found", "prepared_action_id": prepared_action_id, "token_omitted": True}, 404
     if action["status"] == "consumed":
@@ -14876,8 +15816,17 @@ def notion_resume_prepared_export(conn, body: dict, markdown: str, cfg: dict) ->
             "current_snapshot_hash": markdown_hash,
             "token_omitted": True,
         }, 409
-    if action["status"] != "approved":
-        _before_action, action, _outcome = repo_update_prepared_action_status(conn, prepared_action_id, "approved")
+    action, claim_outcome = claim_prepared_action_execution(
+        conn,
+        action,
+        provider="notion",
+        action_type="notion.report_export",
+        actor_id="notion-export",
+        audit_action="notion.report_export.execution_claimed",
+        omission_metadata={"raw_content_omitted": True},
+    )
+    if claim_outcome != "claimed" or not action:
+        return prepared_action_claim_error("notion", prepared_action_id, claim_outcome)
     started = dt.datetime.now(dt.timezone.utc)
     try:
         result = post_notion_page(snapshot_markdown, title)
@@ -14898,7 +15847,9 @@ def notion_resume_prepared_export(conn, body: dict, markdown: str, cfg: dict) ->
             (now_iso(), duration, "Notion report export created.", action["run_id"]),
         )
         conn.execute("UPDATE tasks SET status='completed', updated_at=? WHERE task_id=?", (now_iso(), action["task_id"]))
-        _before_action, after_action, _action_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"notion_page_id": result.get("notion_page_id"), "url": result.get("url"), "sync_event_id": event["sync_event_id"], "raw_response_omitted": True})
+        _before_action, after_action, finish_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"notion_page_id": result.get("notion_page_id"), "url": result.get("url"), "sync_event_id": event["sync_event_id"], "raw_response_omitted": True})
+        if finish_outcome not in {"updated", "unchanged"}:
+            raise RuntimeError("prepared_action_finish_state_conflict")
         completed_run = conn.execute("SELECT * FROM runs WHERE run_id=?", (action["run_id"],)).fetchone()
         upsert_evaluation(conn, quality_gate_for_run(dict(completed_run)), "notion-export")
         runtime_event(conn, "rtc_agent_gateway_local", "notion.export.resume", "completed", run_id=action["run_id"], task_id=action["task_id"], agent_id=action["requested_by_agent_id"], latency_ms=duration, input_summary=f"Notion export resumed markdown_hash={markdown_hash[:16]}", output_summary="Notion report export created.", raw_payload_hash=stable_hash(result))
@@ -14913,6 +15864,9 @@ def notion_resume_prepared_export(conn, body: dict, markdown: str, cfg: dict) ->
             "UPDATE runs SET status='failed', ended_at=?, error_type='NotionExportFailed', error_message=? WHERE run_id=?",
             (now_iso(), err, action["run_id"]),
         )
+        _before_action, _after_action, finish_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "failed", result_json={"error_hash": stable_hash(err), "raw_response_omitted": True})
+        if finish_outcome not in {"updated", "unchanged"}:
+            raise RuntimeError("prepared_action_finish_state_conflict")
         runtime_event(conn, "rtc_agent_gateway_local", "notion.export.resume", "failed", run_id=action["run_id"], task_id=action["task_id"], agent_id=action["requested_by_agent_id"], error_message=err, raw_payload_hash=stable_hash({"error": err}))
         audit(conn, "system", "notion-export", "notion.export_failed", "integrations", "notion", None, {"created": False}, {"error": err, "sync_event_id": event["sync_event_id"], "prepared_action_id": prepared_action_id})
         conn.commit()
@@ -15040,6 +15994,16 @@ class Handler(BaseHTTPRequestHandler):
         body = parse_json_body(self)
         try:
             return self.handle_post_api(parsed.path, body)
+        except ApprovalImmutableConflict as e:
+            self.send_json({
+                "error": str(e),
+                "message": "Approval identity and decision state are immutable after creation.",
+            }, status=409)
+        except PreparedActionImmutableConflict as e:
+            self.send_json({
+                "error": str(e),
+                "message": "Prepared-action identity, workspace binding, payload, and lifecycle are immutable outside their dedicated transition APIs.",
+            }, status=409)
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
 
@@ -15136,10 +16100,10 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/agent-gateway/enrollments":
-                auth_error = agent_gateway_admin_auth_error(self.headers)
-                if auth_error:
-                    return self.send_json(auth_error, 401)
                 workspace_id = optional_request_workspace(self.headers, qs)
+                auth_error = agent_gateway_admin_auth_error(self.headers, workspace_id)
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 return self.send_json({
                     "enrollments": agent_gateway_enrollment_rows(conn, workspace_id),
                     "workspace_id": workspace_id,
@@ -15147,10 +16111,10 @@ class Handler(BaseHTTPRequestHandler):
                     "token_omitted": True,
                 })
             if path == "/api/agent-gateway/sessions":
-                auth_error = agent_gateway_admin_auth_error(self.headers)
-                if auth_error:
-                    return self.send_json(auth_error, 401)
                 workspace_id = optional_request_workspace(self.headers, qs)
+                auth_error = agent_gateway_admin_auth_error(self.headers, workspace_id)
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 return self.send_json({
                     "sessions": agent_gateway_session_rows(conn, workspace_id),
                     "workspace_id": workspace_id,
@@ -15590,6 +16554,13 @@ class Handler(BaseHTTPRequestHandler):
                     payload, status = agent_gateway_enrollment_policy_preview(body)
                     return self.send_json(payload, status)
                 if path == "/api/agent-gateway/enrollment/request":
+                    workspace_id, target_error = agent_gateway_admin_target_workspace(self.headers, body)
+                    if target_error:
+                        return self.send_json(target_error, 403)
+                    auth_error = agent_gateway_admin_auth_error(self.headers, workspace_id)
+                    if auth_error:
+                        return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                    body["_admin_workspace_id"] = workspace_id
                     payload, status = agent_gateway_request_enrollment(conn, body)
                     conn.commit()
                     return self.send_json(payload, status)
@@ -15598,39 +16569,63 @@ class Handler(BaseHTTPRequestHandler):
                     conn.commit()
                     return self.send_json(payload, status)
                 if path == "/api/agent-gateway/session/revoke":
-                    auth_error = agent_gateway_admin_auth_error(self.headers)
+                    workspace_id, target_error = agent_gateway_admin_target_workspace(self.headers, body)
+                    if target_error:
+                        return self.send_json(target_error, 403)
+                    auth_error = agent_gateway_admin_auth_error(self.headers, workspace_id)
                     if auth_error:
-                        return self.send_json(auth_error, 401)
-                    payload, status = agent_gateway_revoke_session(conn, body)
-                    conn.commit()
+                        return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                    body["_admin_workspace_id"] = workspace_id
+                    with AGENT_GATEWAY_LIFECYCLE_LOCK:
+                        payload, status = agent_gateway_revoke_session(conn, body)
+                        conn.commit()
                     return self.send_json(payload, status)
                 if path == "/api/agent-gateway/enrollment/issue-approved":
-                    auth_error = agent_gateway_admin_auth_error(self.headers)
+                    workspace_id, target_error = agent_gateway_admin_target_workspace(self.headers, body)
+                    if target_error:
+                        return self.send_json(target_error, 403)
+                    auth_error = agent_gateway_admin_auth_error(self.headers, workspace_id)
                     if auth_error:
-                        return self.send_json(auth_error, 401)
-                    payload, status = agent_gateway_issue_approved_enrollment(conn, body)
-                    conn.commit()
+                        return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                    body["_admin_workspace_id"] = workspace_id
+                    with AGENT_GATEWAY_LIFECYCLE_LOCK:
+                        payload, status = agent_gateway_issue_approved_enrollment(conn, body)
+                        conn.commit()
                     return self.send_json(payload, status)
                 if path == "/api/agent-gateway/enrollment/create":
-                    auth_error = agent_gateway_admin_auth_error(self.headers)
+                    workspace_id, target_error = agent_gateway_admin_target_workspace(self.headers, body)
+                    if target_error:
+                        return self.send_json(target_error, 403)
+                    auth_error = agent_gateway_admin_auth_error(self.headers, workspace_id)
                     if auth_error:
-                        return self.send_json(auth_error, 401)
+                        return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                    body["workspace_id"] = workspace_id
                     payload, status = agent_gateway_create_enrollment(conn, body)
                     conn.commit()
                     return self.send_json(payload, status)
                 if path == "/api/agent-gateway/enrollment/revoke":
-                    auth_error = agent_gateway_admin_auth_error(self.headers)
+                    workspace_id, target_error = agent_gateway_admin_target_workspace(self.headers, body)
+                    if target_error:
+                        return self.send_json(target_error, 403)
+                    auth_error = agent_gateway_admin_auth_error(self.headers, workspace_id)
                     if auth_error:
-                        return self.send_json(auth_error, 401)
-                    payload, status = agent_gateway_revoke_enrollment(conn, body)
-                    conn.commit()
+                        return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                    body["_admin_workspace_id"] = workspace_id
+                    with AGENT_GATEWAY_LIFECYCLE_LOCK:
+                        payload, status = agent_gateway_revoke_enrollment(conn, body)
+                        conn.commit()
                     return self.send_json(payload, status)
                 if path == "/api/agent-gateway/enrollment/rotate":
-                    auth_error = agent_gateway_admin_auth_error(self.headers)
+                    workspace_id, target_error = agent_gateway_admin_target_workspace(self.headers, body)
+                    if target_error:
+                        return self.send_json(target_error, 403)
+                    auth_error = agent_gateway_admin_auth_error(self.headers, workspace_id)
                     if auth_error:
-                        return self.send_json(auth_error, 401)
-                    payload, status = agent_gateway_rotate_enrollment(conn, body)
-                    conn.commit()
+                        return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                    body["_admin_workspace_id"] = workspace_id
+                    with AGENT_GATEWAY_LIFECYCLE_LOCK:
+                        payload, status = agent_gateway_rotate_enrollment(conn, body)
+                        conn.commit()
                     return self.send_json(payload, status)
                 scope_by_path = {
                     "/api/agent-gateway/register": "agents:write",
@@ -15777,10 +16772,28 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"approval_id": approval_id}, 201)
             if path.startswith("/api/approvals/") and path.endswith("/approve"):
                 approval_id = path.split("/")[-2]
-                return self.decide_approval(conn, approval_id, "approved")
+                workspace_id, target_error = agent_gateway_admin_target_workspace(self.headers, body)
+                if target_error:
+                    return self.send_json(target_error, 403)
+                auth_error = agent_gateway_admin_auth_error(self.headers, workspace_id)
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if not agent_gateway_approval_belongs_to_workspace(conn, approval_id, workspace_id):
+                    return self.send_json(workspace_hidden("approval", approval_id), 404)
+                with AGENT_GATEWAY_LIFECYCLE_LOCK:
+                    return self.decide_approval(conn, approval_id, "approved")
             if path.startswith("/api/approvals/") and path.endswith("/reject"):
                 approval_id = path.split("/")[-2]
-                return self.decide_approval(conn, approval_id, "rejected")
+                workspace_id, target_error = agent_gateway_admin_target_workspace(self.headers, body)
+                if target_error:
+                    return self.send_json(target_error, 403)
+                auth_error = agent_gateway_admin_auth_error(self.headers, workspace_id)
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if not agent_gateway_approval_belongs_to_workspace(conn, approval_id, workspace_id):
+                    return self.send_json(workspace_hidden("approval", approval_id), 404)
+                with AGENT_GATEWAY_LIFECYCLE_LOCK:
+                    return self.decide_approval(conn, approval_id, "rejected")
             if path.startswith("/api/memories/") and path.endswith("/approve"):
                 memory_id = path.split("/")[-2]
                 return self.review_memory(conn, memory_id, "approved", request_workspace(self.headers, {"workspace_id": [body.get("workspace_id")]} if body.get("workspace_id") else None))
@@ -15797,14 +16810,35 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json({"created": True})
             if path == "/api/workflows/local-brief":
+                _workspace_id, bind_error, bind_status = bind_prepared_action_request_workspace(
+                    self.headers,
+                    body,
+                    require_admin=bool(body.get("prepared_action_id")),
+                )
+                if bind_error:
+                    return self.send_json(bind_error, bind_status)
                 payload, status = run_local_ai_brief(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workflows/customer-task":
                 return self.send_json(run_customer_task_workflow(conn, body), 201)
             if path == "/api/workflows/customer-worker-task":
+                _workspace_id, bind_error, bind_status = bind_prepared_action_request_workspace(
+                    self.headers,
+                    body,
+                    require_admin=bool(body.get("prepared_action_id")),
+                )
+                if bind_error:
+                    return self.send_json(bind_error, bind_status)
                 payload, status = run_customer_worker_task_workflow(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workflows/customer-worker-task/submit":
+                _workspace_id, bind_error, bind_status = bind_prepared_action_request_workspace(
+                    self.headers,
+                    body,
+                    require_admin=bool(body.get("prepared_action_id")),
+                )
+                if bind_error:
+                    return self.send_json(bind_error, bind_status)
                 payload, status = submit_customer_worker_task_job(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workflows/hermes-openclaw-loop":
@@ -15855,6 +16889,14 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(result, 201)
             if path == "/api/integrations/openclaw/probe":
+                workspace_id, target_error = agent_gateway_admin_target_workspace(self.headers, body)
+                if target_error:
+                    return self.send_json(target_error, 403)
+                auth_error = agent_gateway_admin_auth_error(self.headers, workspace_id)
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                body["workspace_id"] = workspace_id
+                body["_admin_workspace_id"] = workspace_id
                 payload, status = run_openclaw_probe(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/integrations/hermes/probe":
@@ -15862,15 +16904,44 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(result, 201)
             if path == "/api/integrations/hermes/cli-probe":
+                _workspace_id, bind_error, bind_status = bind_prepared_action_request_workspace(
+                    self.headers,
+                    body,
+                    require_admin=bool(body.get("prepared_action_id")),
+                )
+                if bind_error:
+                    return self.send_json(bind_error, bind_status)
                 payload, status = agnesfallback_cli_probe(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/integrations/hermes/chat-completion-probe":
+                _workspace_id, bind_error, bind_status = bind_prepared_action_request_workspace(
+                    self.headers,
+                    body,
+                    require_admin=bool(body.get("prepared_action_id")),
+                )
+                if bind_error:
+                    return self.send_json(bind_error, bind_status)
                 payload, status = agnesfallback_chat_completion_probe(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/integrations/hermes/run-task":
+                workspace_id, target_error = agent_gateway_admin_target_workspace(self.headers, body)
+                if target_error:
+                    return self.send_json(target_error, 403)
+                auth_error = agent_gateway_admin_auth_error(self.headers, workspace_id)
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                body["workspace_id"] = workspace_id
+                body["_admin_workspace_id"] = workspace_id
                 payload, status = hermes_run_task(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/integrations/dify/upload-text":
+                _workspace_id, bind_error, bind_status = bind_prepared_action_request_workspace(
+                    self.headers,
+                    body,
+                    require_admin=bool(body.get("prepared_action_id")),
+                )
+                if bind_error:
+                    return self.send_json(bind_error, bind_status)
                 payload, status = dify_create_document_by_text(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/integrations/notion/preview":
@@ -15878,6 +16949,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/integrations/notion/dry-run-export":
                 return self.send_json(notion_dry_run_export(conn), 201)
             if path == "/api/integrations/notion/export-confirmed":
+                _workspace_id, bind_error, bind_status = bind_prepared_action_request_workspace(
+                    self.headers,
+                    body,
+                    require_admin=bool(body.get("prepared_action_id")),
+                )
+                if bind_error:
+                    return self.send_json(bind_error, bind_status)
                 payload, status = notion_export_confirmed(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/integrations/notion/import-preview":
@@ -15889,6 +16967,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/migration/preview":
                 return self.send_json(migration_preview(conn, body), 201)
             if path == "/api/integrations/notion/export-report":
+                _workspace_id, bind_error, bind_status = bind_prepared_action_request_workspace(
+                    self.headers,
+                    body,
+                    require_admin=bool(body.get("prepared_action_id")),
+                )
+                if bind_error:
+                    return self.send_json(bind_error, bind_status)
                 markdown = build_notion_report(conn)
                 dry_run = body.get("dry_run", True) is not False
                 confirm_export = bool(body.get("confirm_export", False))
@@ -15954,6 +17039,16 @@ class Handler(BaseHTTPRequestHandler):
         before, after, approval_outcome = repo_update_approval_decision(conn, approval_id, decision)
         if approval_outcome == "missing" or not after:
             return self.send_json({"error": "not found"}, 404)
+        if approval_outcome == "decision_conflict":
+            return self.send_json({
+                "error": "approval_decision_conflict",
+                "message": "A decided approval cannot be changed. Revoke the resulting credential or action explicitly.",
+                "approval_id": approval_id,
+                "current_decision": before["decision"] if before else None,
+                "requested_decision": decision,
+            }, 409)
+        if approval_outcome == "unchanged":
+            return self.send_json(dict(after))
         prepared_action = conn.execute("SELECT * FROM prepared_actions WHERE approval_id=? ORDER BY created_at DESC LIMIT 1", (approval_id,)).fetchone()
         if prepared_action:
             _before_prepared, prepared_after, _prepared_outcome = repo_update_prepared_action_status(
@@ -15999,7 +17094,9 @@ class Handler(BaseHTTPRequestHandler):
             conn.execute("UPDATE runs SET status='blocked', error_type='ApprovalRejected', error_message='High-risk tool approval rejected.', ended_at=? WHERE run_id=?", (now_iso(), before["run_id"]))
             conn.execute("UPDATE tasks SET status='blocked', updated_at=? WHERE task_id=?", (now_iso(), before["task_id"]))
             audit(conn, "user", "usr_founder", "run.blocked", "runs", before["run_id"], dict(run), {"status": "blocked"}, {"approval_id": approval_id})
-        sync_enrollment_request_decision(conn, approval_id, decision)
+        enrollment_sync_outcome = sync_enrollment_request_decision(conn, approval_id, decision)
+        if enrollment_sync_outcome == "decision_conflict":
+            raise RuntimeError("gateway_enrollment_approval_state_conflict")
         audit(conn, "user", "usr_founder", f"approval.{decision}", "approvals", approval_id, dict(before), dict(after), {})
         conn.commit()
         return self.send_json(dict(after))
@@ -16306,6 +17403,22 @@ def post_notion_page(markdown: str, title: str = "AgentOps MIS 项目汇报工�
     return {"configured": True, "created": True, "export_mode": cfg["export_mode"], "notion_page_id": data.get("id"), "url": data.get("url")}
 
 
+def run_prepared_action_startup_lifecycle() -> dict:
+    with db() as conn:
+        migration = {
+            "table_present": True,
+            "check_migrated": False,
+            "approval_index_ensured": True,
+        }
+        if STORAGE_BACKEND == "postgres":
+            migration = ensure_postgres_prepared_action_lifecycle_schema(conn)
+            if not migration["table_present"]:
+                raise RuntimeError("postgres_prepared_actions_table_missing")
+        reconciled = reconcile_stale_prepared_actions(conn)
+        conn.commit()
+        return {"migration": migration, "stale_executing_reconciled": reconciled}
+
+
 def main():
     parser = argparse.ArgumentParser(description="AgentOps MIS MVP server")
     parser.add_argument("--host", default="127.0.0.1")
@@ -16336,6 +17449,7 @@ def main():
             return
     else:
         seed(reset=False)
+    run_prepared_action_startup_lifecycle()
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"AgentOps MIS MVP running at http://{args.host}:{args.port}/dashboard")
     try:

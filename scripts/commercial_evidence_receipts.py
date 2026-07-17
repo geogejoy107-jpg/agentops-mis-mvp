@@ -20,6 +20,13 @@ REQUIRED_RELEASE_GRADE_GATES = [
     "gate_4_ui_api_parity_before_nextjs",
     "gate_5_byoc_enterprise_deployment",
 ]
+REQUIRED_PROMOTION_CI_JOBS = {
+    "Commercial core gates",
+    "Storage and Postgres parity",
+    "UI parity and build evidence",
+    "Independent Postgres and BYOC evidence",
+    "Assemble immutable commercial CI receipt",
+}
 
 
 def require(condition: bool, message: str) -> None:
@@ -89,12 +96,18 @@ def validate_promotion_evidence(receipts: dict[str, Any], current_head: str) -> 
         require(str(ci.get("head")) == expected_ci_head, "promotion evidence CI head mismatch")
         require(str(ci.get("run_id")), "promotion evidence CI run id missing")
         require(ci.get("status") == "success", "promotion evidence CI status mismatch")
-        jobs = [job for job in ci.get("jobs") or [] if isinstance(job, dict)]
-        require({job.get("name") for job in jobs} == {
+        jobs = [job for job in (ci.get("required_jobs") or ci.get("jobs") or []) if isinstance(job, dict)]
+        job_names = {job.get("name") for job in jobs}
+        legacy_job_names = {
             "Commercial core gates",
             "Storage and Postgres parity",
             "UI, deployment, and BYOC evidence",
-        }, "promotion evidence CI jobs mismatch")
+        }
+        require(
+            job_names == REQUIRED_PROMOTION_CI_JOBS
+            or (not exact_head_ci_verified and job_names == legacy_job_names),
+            "promotion evidence CI jobs mismatch",
+        )
         require(all(job.get("status") == "success" for job in jobs), "promotion evidence CI jobs must be successful")
         runtime = evidence.get("real_runtime_acceptance") or {}
         require(runtime.get("live_openclaw") is True, "promotion evidence OpenClaw live flag missing")
@@ -106,10 +119,18 @@ def validate_promotion_evidence(receipts: dict[str, Any], current_head: str) -> 
         require(runtime.get("raw_prompt_omitted") is True, "promotion evidence raw prompt omission missing")
         require(runtime.get("raw_response_omitted") is True, "promotion evidence raw response omission missing")
         require(runtime.get("token_values_omitted") is True, "promotion evidence token omission missing")
+        if exact_head_ci_verified:
+            require(runtime.get("independent_reexecution_verified") is True, "promotion evidence independent runtime replay missing")
+            require(runtime.get("operator_run_ids_distinct") is True, "promotion evidence runtime ids were not independently refreshed")
         blockers = set(evidence.get("release_grade_blockers") or [])
         if not exact_head_ci_verified:
             require("exact_head_ci_not_verified" in blockers, "promotion evidence must keep exact-head CI blocker")
-        require("clean_worktree_not_verified" in blockers, "promotion evidence must keep clean-worktree blocker")
+            require("clean_worktree_not_verified" in blockers, "promotion evidence must keep clean-worktree blocker")
+        else:
+            require(evidence.get("clean_worktree_verified") is False, "promotion must not claim a clean worktree after receipt replacement")
+            require(evidence.get("clean_source_head_verified") is True, "promotion source HEAD integrity missing")
+            require(evidence.get("canonical_receipt_transaction_dirty") is True, "promotion receipt transaction state missing")
+            require(str(evidence.get("recording_transaction_id", "")).startswith("tx_receipt_recording_"), "recording transaction reference missing")
         require("release_complete_false" in blockers, "promotion evidence must keep release-complete blocker")
     elif exact_head_ci_verified or remote_sync_verified:
         require(False, "promotion evidence missing")
@@ -152,7 +173,15 @@ def build_payload() -> dict[str, Any]:
     if release_grade_gates:
         require(summary.get("exact_head_ci_verified") is True, "release-grade receipts require exact-head CI")
         require(summary.get("remote_sync_verified") is True, "release-grade receipts require remote sync")
-        require(summary.get("clean_worktree_verified") is True, "release-grade receipts require clean worktree")
+        source_integrity = bool(
+            summary.get("clean_worktree_verified") is True
+            or (
+                summary.get("clean_worktree_verified") is False
+                and summary.get("clean_source_head_verified") is True
+                and summary.get("canonical_receipt_transaction_dirty") is True
+            )
+        )
+        require(source_integrity, "release-grade receipts require clean source HEAD plus a bounded receipt transaction")
         for gate_id in release_grade_gates:
             receipt = receipt_map[gate_id]
             require(str(receipt.get("verified_head")) == current_head, f"{gate_id} receipt head is not current")
@@ -187,7 +216,15 @@ def main() -> int:
         require(summary.get("gates_with_release_grade_receipts") == REQUIRED_RELEASE_GRADE_GATES, "release-grade receipts are incomplete")
         require(summary.get("exact_head_ci_verified") is True, "exact-head CI is not verified")
         require(summary.get("remote_sync_verified") is True, "remote sync is not verified")
-        require(summary.get("clean_worktree_verified") is True, "clean worktree is not verified")
+        require(
+            summary.get("clean_worktree_verified") is True
+            or (
+                summary.get("clean_worktree_verified") is False
+                and summary.get("clean_source_head_verified") is True
+                and summary.get("canonical_receipt_transaction_dirty") is True
+            ),
+            "clean source HEAD plus bounded receipt transaction is not verified",
+        )
 
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

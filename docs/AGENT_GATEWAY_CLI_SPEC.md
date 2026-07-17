@@ -1147,6 +1147,11 @@ audit:write
 Current implementation:
 
 - `AGENTOPS_API_KEY` remains a global local development key.
+- Shared/production lifecycle administration uses per-workspace keys from
+  `AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON`; keys are distinct strings of at least 24
+  characters, and a key for one workspace cannot list, issue, rotate, revoke,
+  or approve lifecycle state in another workspace. `AGENTOPS_ADMIN_KEY` remains
+  local-mode compatibility only and cannot substitute for this map in production.
 - `POST /api/agent-gateway/enrollment/create` issues an agent-bound bearer token.
 - MIS stores only a token hash.
 - The token can act only as its bound `agent_id`.
@@ -1170,9 +1175,9 @@ Current implementation:
   - `POST /api/workers/tasks/release` returns a stuck task to `planned`,
   - linked running runs are marked `blocked` with `WorkerTaskReleased`.
 - `POST /api/agent-gateway/enrollment/revoke` revokes tokens.
-- `POST /api/agent-gateway/enrollment/rotate` revokes an active token and returns a one-time replacement token.
-- `POST /api/agent-gateway/enrollment/request` creates task/run/approval/request ledger rows without issuing a token.
-- `POST /api/agent-gateway/enrollment/issue-approved` issues the token only after the linked approval is approved.
+- `POST /api/agent-gateway/enrollment/rotate` atomically revokes an active token and returns a one-time replacement token; concurrent rotations have one winner.
+- `POST /api/agent-gateway/enrollment/request` creates task/run/approval/request ledger rows without issuing a token. The server generates `request_id`; callers cannot choose or overwrite it, and its task/run/workspace/agent/approval bindings are immutable. Generic approval upserts cannot rebind an existing approval or change its decision; transitions use the decision API only.
+- `POST /api/agent-gateway/enrollment/issue-approved` issues the token only after the linked approval is approved; concurrent issue attempts produce one token and an idempotent replay without the raw token.
 - `POST /api/agent-gateway/session/create` mints a short-lived session token from a valid enrollment token or local API key.
 - Session tokens inherit agent/workspace bindings and a subset of parent scopes.
 - Session tokens cannot mint replacement sessions.
@@ -1187,8 +1192,8 @@ Current endpoint scope map:
 
 | Endpoint | Required scope |
 | --- | --- |
-| `POST /api/agent-gateway/enrollment/request` | local request path; no token issued |
-| `POST /api/agent-gateway/enrollment/issue-approved` | admin/local approval authority |
+| `POST /api/agent-gateway/enrollment/request` | workspace admin/local authority; no token issued |
+| `POST /api/agent-gateway/enrollment/issue-approved` | workspace admin/local approval authority |
 | `POST /api/agent-gateway/session/create` | valid enrollment token or local API key |
 | `GET /api/agent-gateway/sessions` | admin/local authority |
 | `POST /api/agent-gateway/session/revoke` | admin/local authority |
@@ -1344,7 +1349,38 @@ The CLI worker-status helper verifies `agentops worker status` returns the worke
 The CLI worker-preflight helper verifies `agentops worker preflight` returns read-only Gateway/adapter readiness JSON with `live_execution_performed=false`.
 The Postgres CLI read parity helper verifies selected `agentops` task/run/artifact/approval/memory/workflow job and Agent Plan / plan-evidence list/get/verify read commands can read a Postgres-backed read-only server, checks write attempts fail closed as `postgres_read_only_backend`, and confirms no token-like values or SQLite fallback are used.
 The Postgres routed task/execution/heartbeat/evidence/plan/memory/approval/audit helper verifies scoped `POST /api/agent-gateway/tasks`, `POST /api/agent-gateway/tasks/:task_id/claim`, `POST /api/agent-gateway/runs/start`, `POST /api/agent-gateway/heartbeat`, `POST /api/agent-gateway/runs/:id/heartbeat`, `POST /api/agent-gateway/tool-calls`, `POST /api/agent-gateway/artifacts`, `POST /api/agent-gateway/evaluations/submit`, `POST /api/agent-gateway/agent-plans`, `POST /api/agent-gateway/plan-evidence-manifests`, `POST /api/agent-gateway/memories/propose`, `POST /api/agent-gateway/approvals/request`, and `POST /api/agent-gateway/audit` can create, claim, start work, write agent/run heartbeat state, complete a running run through heartbeat while syncing task completed plus agent idle state, write tool/evaluation/artifact evidence, submit an Agent Plan, persist a verified plan-evidence manifest, propose a candidate memory, create a pending approval that moves the run/task to `waiting_approval`, and emit run/task-bound audit evidence through the Postgres adapter only when `AGENTOPS_POSTGRES_WRITE_HTTP=1` and the token has the matching scopes; it also checks absent tokens, missing scopes, body/header cross-workspace attempts, run heartbeat task mismatch, terminal run revival, manifest binding mismatch, memory run/task mismatch, memory overwrite attempts, approval task/tool/requester mismatch, approved approval overwrite attempts, audit run/task/entity mismatch, cross-agent and same-workspace intruder attempts, while knowledge index, live-runtime heartbeat/daemon routes, and broad admin mutations remain fail-closed until separately proven.
-The Postgres Agent Gateway lifecycle helper verifies registration, enrollment policy preview/request/create/approved issue/rotate/revoke, short-lived session create/revoke, enrollment-bound human approval, cross-workspace rejection, session non-nesting, parent-token revocation cascade, Postgres readback, and token omission under the explicit Postgres write gate.
+The Postgres Agent Gateway lifecycle helper verifies registration, enrollment policy preview/request/create/approved issue/rotate/revoke, short-lived session create/revoke, workspace-scoped enrollment-bound human approval, server-generated immutable request identity, immutable approval bindings and decisions, anonymous rejection, cross-workspace id hiding, repeated same-direction approval, idempotent revoke without duplicate audit, two-process approve/issue lock ordering, concurrent issue/rotation and token/session-revoke single-winner behavior, session non-nesting, parent-token revocation cascade, Postgres readback, and token omission under the explicit Postgres write gate.
+
+Prepared actions use the same fail-closed identity rule: workspace, task, run,
+tool, approval, requester, provider, normalized arguments, and snapshot bindings
+cannot be changed after creation. `prepared_action_approval_single_binding_v1`
+requires every non-null `approval_id` to bind exactly one prepared-action row
+globally; reuse by a different action fails as
+`prepared_action_approval_binding_conflict`.
+
+`fixed_runtime_server_generated_identifiers_v1` requires fixed OpenClaw and
+Hermes preparation to reject caller-supplied `task_id`, `run_id`,
+`tool_call_id`, or `approval_id` as
+`server_generated_runtime_identifiers_required`. The server derives all four
+identifiers, including workspace-isolated task defaults, before writing the
+runtime, tool, approval, and prepared-action rows.
+
+`prepared_action_cas_claim_v1` applies to every resume path that can cause an
+external side effect: OpenClaw, Hermes, Dify, Agnes fallback, Local Brief,
+Customer Worker, and Notion all use the shared database compare-and-swap claim.
+The winning resume moves `approved -> executing`, writes claim audit evidence,
+and commits before invoking the provider; concurrent resumes therefore produce
+one provider-call winner. Under
+`prepared_action_stale_unknown_outcome_v1`, an `executing` row older than
+`AGENTOPS_PREPARED_ACTION_STALE_SECONDS` (default 1800 seconds, minimum 30)
+becomes terminal `failed` with
+`execution_outcome_unknown_after_stale_claim` and
+`provider_call_may_have_completed=true`. That unknown outcome is never replayed
+and a retry cannot reset a terminal action.
+`legacy_prepared_action_lifecycle_migration_v1` rebuilds an existing Free Local
+SQLite `prepared_actions` table whose legacy CHECK lacks `executing` and
+`failed`, copies every row and immutable binding, and recreates the indexes
+before any new lifecycle transition is accepted.
 The Postgres CLI write parity helper verifies the same scoped write lane through actual `agentops` commands: agent heartbeat, task create/claim, run start/progress heartbeat/completion heartbeat, tool/evaluation/artifact evidence, Agent Plan, verified plan-evidence manifest, memory proposal, approval request, and audit emit. It also checks read-only CLI writes, missing-scope CLI writes, and non-allowlisted CLI mutations fail closed without leaking token-like values or falling back to SQLite.
 The CLI worker-daemon helper verifies `agentops worker start/status/logs/stop` can manage a mock daemon without leaking secrets.
 The live-confirm-gate helper verifies `agentops worker start --adapter hermes|openclaw` fails closed without `--confirm-run`.

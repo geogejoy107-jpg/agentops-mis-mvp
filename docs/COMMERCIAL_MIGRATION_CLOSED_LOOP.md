@@ -10,14 +10,21 @@ The target state is:
 - Humans use the browser workspace/admin console for dispatch, supervision,
   approval, delivery review, memory review, and operations.
 - Agents use Agent Gateway CLI/API/MCP for execution and evidence writeback.
-- The Python control plane remains valid until a replacement passes parity
-  gates. There is no big-bang rewrite.
-- SQLite remains the default Free Local ledger. Postgres is introduced through a
-  storage boundary for Team Governance and Enterprise/BYOC.
-- Vite/React remains the current canonical product UI. `ui/next-app` is the
-  parallel Next.js App Router migration track; it starts with the workspace
-  cockpit and `/api/mis/*` proxy, then replaces routes only after the UI/API
-  parity gate is green.
+- The TypeScript control-plane strangler is active. Python is retained for Free
+  Local and as an explicit, bounded migration rollback. There is no big-bang rewrite,
+  and Python proxy fallback is not a commercial production target.
+- SQLite is retained for Free Local and explicit rollback only. Commercial
+  production and BYOC control-plane routes default to Postgres and fail closed
+  without a DSN.
+- `ui/next-app` owns the first direct backend routes,
+  `GET|POST /api/mis/agent-gateway/tasks` and
+  `POST /api/mis/agent-gateway/runs/start` plus scoped
+  `POST /api/mis/agent-gateway/runs/:run_id/heartbeat`, tool-call, evaluation,
+  and artifact evidence writeback, including token/session auth,
+  workspace/scope/agent binding, task/run/runtime/audit transactions, immutable
+  cross-workspace identities, idempotent concurrent run start, and single-winner
+  terminal heartbeat transitions that cannot revive completed runs. Remaining
+  routes retire from Python only after equivalent dynamic parity evidence.
 - Commercial release status is also exposed through read-only
   `/api/commercial/release-status` and rendered on Next `/workspace/commercial`
   so release promotion, exact-head CI, and current-evidence blockers are visible
@@ -29,6 +36,39 @@ The target state is:
   assets and keeps Star-Office assets out of public/commercial distribution.
 - Every migration step has a reversible branch, a named verification command,
   and a rollback path.
+
+## Current Migration Status and Claim Boundary
+
+The current branch has crossed the first backend ownership boundary, but it is
+not release complete:
+
+- Next.js/TypeScript plus Postgres directly owns Agent Gateway task create/list,
+  Agent Plan submit, run start, run heartbeat, execution evidence writeback, and
+  verified plan-evidence manifest creation. These routes authenticate and
+  authorize in the TypeScript process and execute their ledger, runtime-event,
+  and audit transactions in Postgres; they are not successful Python proxy
+  calls. Non-mock run start fails closed without a verified Agent Plan.
+- Python/SQLite is a supported Free Local line and an explicit rollback for a
+  route that has not yet passed TypeScript/Postgres parity. It is not the
+  commercial default and cannot be used as evidence that a commercial route has
+  migrated. Its Agent Plan and manifest endpoints remain proxy-compatible, but
+  legacy Python Agent Gateway run-start does not enforce the new non-mock
+  verified-plan gate; operators must not treat proxy mode as security-equivalent
+  evidence for the commercial default path.
+- Release-grade promotion has a narrower trust boundary than ordinary local
+  smoke evidence. It binds the exact GitHub repository, workflow ID
+  `301537454`, workflow path `.github/workflows/commercial-migration-ci.yml`,
+  `push` event, branch, commit, run ID, and positive `run_attempt`; rejects Git
+  replace objects and legacy grafts; and validates the downloaded aggregate
+  artifact against an exact JSON schema and sensitive-output policy.
+- Confirmed promotion reruns real Agent Gateway, OpenClaw, and Hermes acceptance
+  from the exact tracked HEAD in a fixed no-proxy environment that receives no
+  GitHub credential. After those real runtimes finish, promotion verifies the
+  Git state and GitHub CI/artifact again before any atomic receipt replacement.
+- Therefore local parity, an earlier green CI run, or the existence of the
+  promotion code does not make the branch releasable. Fresh exact-HEAD Gateway,
+  OpenClaw, and Hermes evidence plus the post-runtime GitHub CI revalidation are
+  still mandatory release gates.
 
 ## Closed Loop
 
@@ -99,10 +139,14 @@ Must be true:
   confirmation.
 - Production mode disables local-dev Agent Gateway fallback: without
   `AGENTOPS_API_KEY` or scoped agent token/session, Agent Gateway read/write
-  routes return `401`; without `AGENTOPS_ADMIN_KEY`, enrollment/session admin
-  routes return `401`.
+  routes return `401`; enrollment/session/approval lifecycle routes require the
+  workspace-specific key from `AGENTOPS_WORKSPACE_ADMIN_KEYS_JSON`. Anonymous,
+  invalid, or cross-workspace credentials are rejected, and an invalid
+  workspace-key configuration blocks production readiness and admin routes.
 - `security_production_readiness_smoke.py --configured-production-fixture`
-  starts an isolated production-mode server with temporary API/admin keys,
+  starts an isolated production-mode server with temporary API and
+  workspace-admin keys, rejects malformed, short, conflicting, or reused key
+  maps,
   proves no-auth readiness remains blocked, authenticated API and CLI readiness
   become ready with `auth_mode=global_api_key`, admin-key enrollment list is
   allowed, the SQLite ledger is not mutated, and the configured keys are omitted
@@ -126,6 +170,14 @@ python3 scripts/workspace_rbac_governance_smoke.py --isolated-fixture
 python3 scripts/workspace_memory_session_governance_smoke.py --isolated-fixture
 python3 scripts/enrollment_approval_workflow_smoke.py
 ```
+
+The Postgres Gateway lifecycle proof additionally requires server-generated
+enrollment request ids, immutable request bindings, enrollment-bound human
+approval with no reverse decision after issue, and one winner under concurrent
+approved issue or token rotation. Two independent MIS processes sharing one
+Postgres database must also prove approve/issue lock ordering without deadlock.
+It rejects anonymous calls, hides cross-workspace ids like nonexistent ids, and
+proves repeated revoke is idempotent without duplicate audit evidence.
 
 ### Gate 3: Storage Boundary Before Postgres
 
@@ -185,8 +237,10 @@ Must be true:
   run heartbeat task mismatches, terminal run revival, memory overwrite attempts,
   manifest binding mismatches, approval task/tool/requester mismatches,
   approved approval overwrite attempts, and audit entity/run/task mismatches,
-  fixed runtime routes must reject premature resume/hash mismatch/replay while
-  consuming exactly once after approval, non-prepared approval decisions must
+  fixed runtime routes must reject premature resume, hash mismatch,
+  cross-workspace id lookup, and replay. Two independent MIS processes sharing
+  Postgres must race each exact resume with one provider-call winner and one
+  claim audit before the action is consumed; non-prepared approval decisions must
   remain blocked, and broader mutation routes such as memory review decisions,
   knowledge index, non-fixed live-runtime heartbeat/daemon control, and admin mutations must
   remain blocked until each has a dedicated smoke.
@@ -241,8 +295,9 @@ Must be true:
   --require-hermes-api` green against a local MIS API with the runtimes
   available. That acceptance path must create and verify an Agent Plan before
   Agent Gateway run start, bind the run to a verified plan-evidence manifest,
-  create unique task/run/prepared-action IDs for each probe, and drive
-  prepared-action exact resume until the live action is consumed.
+  use server-generated task/run/tool-call/approval/prepared-action IDs for each
+  probe, and drive prepared-action exact resume until the live action is
+  consumed.
 - Browser verification is automated by:
 
 ```bash
@@ -447,10 +502,12 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
 
   The Next Agent Gateway task proxy smoke starts isolated MIS API and Next.js
   servers with local no-token fallback disabled, then proves
-  `POST /api/mis/agent-gateway/tasks` preserves the scoped Gateway contract:
+  `POST /api/mis/agent-gateway/tasks` and
+  `POST /api/mis/agent-gateway/runs/start` preserve the scoped Gateway contract:
   no token is `401`, missing `tasks:create`, workspace, and agent impersonation
-  are `403`, valid scoped tokens create and read back the task through the Next
-  proxy, and direct MIS readback matches without token leakage.
+  are `403`, missing `runs:write` is `403`, valid scoped tokens create/read the
+  task and start its run through the Next proxy, and direct MIS readback matches
+  without token leakage.
 
   The Next Agent Gateway CLI worker dogfood smoke starts isolated MIS API and
   Next.js servers, creates a scoped task through the Next
@@ -617,6 +674,34 @@ Must be true:
   `postgres_backup_restore_v1` receipt with a verified
   `postgres_backup_manifest_v1` for the current commit; utility or smoke file
   presence alone is not recovery acceptance.
+- `nextjs_postgres_control_plane_tasks_v1` proves the task, run-start, run-heartbeat,
+  and tool/evaluation/artifact evidence backend
+  routes are real TypeScript/Postgres owners, not Python proxies: production
+  mode starts Next.js with an unreachable Python API target, creates/lists a
+  scoped task, starts a run, and heartbeats it through completion with token and short-session credentials, rejects
+  missing scope, cross-workspace, cross-agent, and immutable-id rebind attempts,
+  and proves repeated/concurrent run-start plus repeated/concurrent heartbeat have
+  one state/runtime/audit winner. Conflicting completion/failure heartbeats produce
+  one terminal winner and one 409, and terminal runs cannot be revived.
+  Concurrent same-ID evidence writes have one create/audit/runtime winner;
+  evaluation and artifact evidence cannot be rewritten, tool-call bindings and
+  terminal state cannot be reset, and risky tools are forced to
+  `waiting_approval` while the linked run/task transition is audited.
+  The same no-Python process creates submitted Agent Plans with one concurrent
+  writer, rejects Agent self-approval and submitted-plan rewrites, blocks a
+  non-mock run with no verified plan, and blocks an approval-required plan until
+  a human decision exists. It then creates verified plan-evidence manifests
+  with one concurrent writer, immutable evidence bindings, a blocked result for
+  missing declared evidence, and current plan/manifest after-hashes.
+  Run summary secrets are redacted before persistence and the task transition
+  to `running` has a current after-hash. Python and TypeScript share
+  Postgres advisory audit lock `1095779668`; the smoke proves both append paths
+  wait on that lock and then verifies the full chain. The same smoke holds a
+  parent-token row lock and proves TypeScript session authentication waits before
+  locking the session, so Python cascade revocation keeps one token-to-session
+  lock order, commits one transition/audit per row, and resumes the request as
+  401. Verify with
+  `python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py`.
 - `release_evidence_packet_v1` and `commercial_release_evidence_packet_v1`
   make the release/handoff gate machine-checkable: the packet must require the
   backend Postgres readiness fixture, the Next.js Postgres browser fixture, the
@@ -725,6 +810,73 @@ Must be true:
   evidence are all current. The recording preview never mutates receipt JSON,
   never writes release-grade receipts, never executes rerun commands, and never
   flips release, handoff, or merge readiness.
+- `commercial_release_grade_promotion_v1` is the explicit CLI-only transaction
+  after receipt recording. It defaults to preview and requires a reviewed
+  promotion payload plus the canonical
+  `docs/COMMERCIAL_EVIDENCE_RECEIPTS.json` path in that checkout. Before any write it checks a
+  full HEAD synchronized with exactly `origin/<current-branch>`. The only
+  permitted dirty path is a canonical receipt recording transaction that must
+  be a byte-for-byte deterministic derivation of the tracked HEAD receipt; an
+  arbitrary edited receipt cannot become evidence. The promoter uses a
+  root-owned Python plus a proxy-disabled, TLS 1.2+ GitHub HTTPS API client and
+  `GITHUB_TOKEN` or `GH_TOKEN` to prove the live branch ref points to that same
+  HEAD. It accepts only repository `geogejoy107-jpg/agentops-mis-mvp`, workflow
+  ID `301537454`, workflow path
+  `.github/workflows/commercial-migration-ci.yml`, event `push`, the current
+  branch/HEAD, and the run's positive `run_attempt`; it queries that exact
+  attempt's five required CI jobs and downloads and hashes the aggregate
+  `commercial-migration-ci-receipt` artifact. The artifact ZIP must contain one
+  regular file with the canonical name, and its JSON must have the exact
+  `commercial_migration_ci_receipt_v1` key sets, scopes, job results, run
+  attempt, omission flags, and non-promoted state before it is cross-checked
+  against the operator payload. It does not trust `gh` output and never stores
+  or prints the GitHub token. Artifact redirects are host-allowlisted, bounded,
+  and ZIP structure-checked. Git replace-object routing, alternate object
+  directories, and non-empty Git grafts are rejected before evidence is trusted.
+  The CLI has no repository override: it verifies the
+  checkout containing the script, binds origin and every API path to
+  `geogejoy107-jpg/agentops-mis-mvp`, and executes Git only from the fixed
+  root-owned system path. The supported entrypoint is the fixed
+  `scripts/commercial_release_grade_promotion` launcher, which clears Python
+  and Git startup overrides, verifies both entrypoint blobs against `HEAD`, and
+  executes root-owned system Python with `-I -B -S`; direct non-isolated or
+  site-enabled execution is rejected. Rename, copy, deletion, hidden critical
+  execution changes, and any non-canonical same-name target are rejected.
+  `--confirm-promotion` then runs the fixed
+  Python isolated-mode `local_runtime_acceptance.py --live-openclaw --live-hermes
+  --require-hermes-api` command again against `http://127.0.0.1:8787`, clears
+  caller `AGENTOPS_BASE_URL`, every inherited `PYTHON*` override, Git
+  redirection variables, all proxy variables, and all GitHub credentials. The
+  runtime receives a fixed `/usr/bin:/bin` path, loopback-only `NO_PROXY`, and
+  no `GITHUB_TOKEN`/`GH_TOKEN`. The tracked runtime script must match its `HEAD` bytes
+  even when index flags hide a worktree change. The transaction requires new Gateway, OpenClaw, and
+  Hermes run ids that are distinct from the operator payload references before
+  the promoter rechecks HEAD and independently revalidates the same GitHub CI
+  run, exact attempt, jobs, and strict artifact. Only then may it perform an
+  atomic receipt replacement. Failures before replacement write nothing; if
+  the replacement commits but directory fsync cannot be verified, the command
+  returns an applied transaction with an explicit durability warning rather than
+  falsely reporting `receipts_written=false`. A dirty receipt can never self-attest an
+  already-applied transaction: every later standalone confirmation revalidates
+  Git, CI, artifact, and payload, executes fresh agents, and refreshes the stored
+  local-runtime evidence. This proves an operator-authorized run on a trusted
+  local host; it is not remote attestation against a malicious same-UID host.
+  A per-repository, per-receipt cross-process lock in the Git common directory
+  serializes concurrent confirmations; a request whose receipt changed while it
+  waited fails closed, so only one concurrent process performs real runtime
+  acceptance. The transaction may
+  update only Gate 1-5 release-grade receipt fields, summary fields, and bounded
+  evidence references; `release_complete`, commercial handoff, merge readiness,
+  local receipts, and command evidence remain unchanged. Verify the fail-closed
+  trust boundary with
+  `python3 -I -B -S scripts/commercial_release_grade_promotion_smoke.py`. The migration
+  readiness script inventories only this static source/docs/CI wiring; the
+  workflow's execution of the promotion smoke is the dynamic gate.
+- `commercial_ci_supply_chain_pins_v1` fixes the commercial workflow to
+  `ubuntu-24.04`, commit-pinned first-party actions, Python `3.11.9`, Node
+  `20.19.4`, Playwright CLI `0.1.17`, and a Postgres 16.14 Alpine tag plus image
+  index digest. `python3 scripts/commercial_ci_supply_chain_smoke.py` fails if
+  any of those execution inputs becomes movable again.
 - `release_freeze_protocol_v1` keeps commercial handoff in
   `freeze_active_not_release_complete`, and `merge_readiness_status_v1` keeps
   merge status at `blocked_release_evidence_required` until release evidence,
@@ -833,11 +985,11 @@ Must be true:
 
 | Area | Current product line | Commercial migration target | Gate |
 | --- | --- | --- | --- |
-| Backend/control plane | Python `server.py` + stdlib HTTP | Keep until API parity and production safety pass; split services later only if pressure is real | 2 |
+| Backend/control plane | Python `server.py` plus TypeScript/Postgres-owned Agent Gateway task, run lifecycle, and execution-evidence routes | Next.js TypeScript owns commercial control-plane APIs; Python is retired route by route after dynamic parity and remains only the migration rollback | 2/4/5 |
 | Agent execution | Agent Gateway CLI/API/MCP | Keep as the durable agent contract | 1 |
 | UI | Vite + React + TypeScript plus parallel `ui/next-app` | Next.js App Router replaces pages only after parity gate | 4 |
-| Database | SQLite | SQLite Free Local, Postgres Team/Enterprise adapter | 3 |
-| ORM | Direct SQLite helpers | Adapter/repository boundary first; Prisma/Drizzle only if Next.js owns backend | 3/4 |
+| Database | SQLite plus Postgres adapter/write gates | SQLite Free Local; Postgres default for commercial and BYOC control plane | 3/5 |
+| Data access | Python adapters plus Node `pg` for the first owned route | Typed TypeScript repository/schema boundary, adding Drizzle as route ownership widens | 3/4/5 |
 | Auth | Local dev/admin key/scoped agent sessions | Production auth, SSO hooks, workspace RBAC | 2/5 |
 | Billing | None | Entitlement config first, billing provider later | 1 |
 | Assets | Original Pixel Office plus demo-only Star-Office visualizer boundary | Original commercial-safe Pixel Office asset pack | 1 |
@@ -874,10 +1026,12 @@ Commercial work should merge in this order:
 
 - A commercial branch can be abandoned without touching `main` or
   `codex/agent-gateway-kb-demo`.
-- If a Next.js route fails parity, keep Vite/React as canonical and record the
-  gap.
-- If Postgres adapter behavior diverges, keep SQLite canonical and add a failing
-  adapter test before retrying.
+- If a Next.js route fails parity, select explicit
+  `AGENTOPS_TS_CONTROL_PLANE_MODE=proxy` for that migration rollback, record the
+  gap, and do not present the route as commercially migrated.
+- If Postgres behavior diverges, keep SQLite available for Free Local or an
+  explicit rollback, add a failing adapter test, and keep commercial production
+  fail closed until Postgres parity is restored.
 - If entitlement gates block local demo usage, revert the gate and keep the
   edition logic read-only until the product path is smooth.
 - If asset replacement slows core product work, keep the non-commercial visual
@@ -976,3 +1130,8 @@ The commercial migration closed loop is considered established when:
 - No local DB, runtime log, generated service file, `dist`, `node_modules`,
   `.env`, raw credential, raw prompt, raw model response, or private transcript
   is introduced by the migration lane.
+
+This definition establishes the migration mechanism; it does not assert a
+commercial release. Release completion additionally requires current exact-HEAD
+Gateway/OpenClaw/Hermes acceptance and successful post-runtime GitHub CI and
+artifact revalidation through the confirmed promotion transaction.

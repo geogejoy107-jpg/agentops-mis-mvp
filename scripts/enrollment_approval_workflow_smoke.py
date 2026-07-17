@@ -126,6 +126,11 @@ def smoke(base_url: str, run_stamp: str) -> dict:
     require(token and token_id, f"issued response missing one-time token: {issued}")
     require(issued.get("issued_from_request_id") == request_id, f"issued request id mismatch: {issued}")
 
+    status, repeated_approval = http_json("POST", base_url, f"/api/approvals/{approval_id}/approve", {})
+    require(status == 200 and repeated_approval.get("decision") == "approved", f"repeated approval was not idempotent: {status} {repeated_approval}")
+    status, reversed_decision = http_json("POST", base_url, f"/api/approvals/{approval_id}/reject", {})
+    require(status == 409 and reversed_decision.get("error") == "approval_decision_conflict", f"issued enrollment approval was reversed: {status} {reversed_decision}")
+
     status, heartbeat = http_json("POST", base_url, "/api/agent-gateway/heartbeat", {
         "status": "idle",
         "summary": "approved enrollment token online",
@@ -140,6 +145,8 @@ def smoke(base_url: str, run_stamp: str) -> dict:
         "run_id": run_id,
         "token_id": token_id,
         "premature_issue_status": premature.get("error"),
+        "repeated_approval_idempotent": repeated_approval.get("decision") == "approved",
+        "reverse_decision_rejected": reversed_decision.get("error") == "approval_decision_conflict",
         "heartbeat_status": heartbeat.get("status"),
         "token_omitted": True,
     }

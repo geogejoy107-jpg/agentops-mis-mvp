@@ -2,6 +2,7 @@
 """Verify Dify text upload uses prepared-action exact resume without storing raw text."""
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import socket
@@ -17,6 +18,8 @@ from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE_A = "ws_dify_prepared_a"
+WORKSPACE_B = "ws_dify_prepared_b"
 
 
 class FakeDifyHandler(BaseHTTPRequestHandler):
@@ -37,6 +40,7 @@ class FakeDifyHandler(BaseHTTPRequestHandler):
             "has_authorization": bool(self.headers.get("Authorization")),
             "provider_received_text": bool(payload.get("text")),
         })
+        time.sleep(0.25)
         body = json.dumps({
             "document": {
                 "id": "fake_dify_document_001",
@@ -124,6 +128,7 @@ def main() -> int:
     try:
         wait_for_server(base_url)
         prepare, prepare_status = http_json("POST", base_url, "/api/integrations/dify/upload-text", {
+            "workspace_id": WORKSPACE_A,
             "confirm_upload": True,
             "document_name": "Prepared Action Dify Smoke",
             "text": text,
@@ -136,7 +141,18 @@ def main() -> int:
         require(prepare.get("raw_text_omitted") is True, f"prepare did not mark raw text omitted: {prepare}", failures)
         require(len(FakeDifyHandler.calls) == 0, f"fake Dify called before approval: {FakeDifyHandler.calls}", failures)
 
+        other_prepare, other_prepare_status = http_json("POST", base_url, "/api/integrations/dify/upload-text", {
+            "workspace_id": WORKSPACE_B,
+            "confirm_upload": True,
+            "document_name": "Prepared Action Dify Smoke",
+            "text": text,
+        })
+        require(other_prepare_status == 202, f"other-workspace prepare should be 202: {other_prepare_status} {other_prepare}", failures)
+        require(other_prepare.get("task_id") != prepare.get("task_id"), f"default task id was shared across workspaces: {prepare} {other_prepare}", failures)
+        require(other_prepare.get("prepared_action_id") != prepared_action_id, f"prepared action id was shared across workspaces: {prepare} {other_prepare}", failures)
+
         premature, premature_status = http_json("POST", base_url, "/api/integrations/dify/upload-text", {
+            "workspace_id": WORKSPACE_A,
             "confirm_upload": True,
             "prepared_action_id": prepared_action_id,
             "text": text,
@@ -144,11 +160,12 @@ def main() -> int:
         require(premature_status == 428 and premature.get("error") == "approval_required", f"premature resume should require approval: {premature_status} {premature}", failures)
         require(len(FakeDifyHandler.calls) == 0, "fake Dify called during premature resume", failures)
 
-        approved, approved_status = http_json("POST", base_url, f"/api/approvals/{approval_id}/approve", {})
+        approved, approved_status = http_json("POST", base_url, f"/api/approvals/{approval_id}/approve", {"workspace_id": WORKSPACE_A})
         require(approved_status == 200 and approved.get("decision") == "approved", f"approval failed: {approved_status} {approved}", failures)
         require(len(FakeDifyHandler.calls) == 0, "fake Dify called during approval", failures)
 
         mismatch, mismatch_status = http_json("POST", base_url, "/api/integrations/dify/upload-text", {
+            "workspace_id": WORKSPACE_A,
             "confirm_upload": True,
             "prepared_action_id": prepared_action_id,
             "text": text + " changed",
@@ -156,16 +173,35 @@ def main() -> int:
         require(mismatch_status == 409 and mismatch.get("error") == "prepared_action_text_hash_mismatch", f"mismatch should be blocked: {mismatch_status} {mismatch}", failures)
         require(len(FakeDifyHandler.calls) == 0, "fake Dify called during hash mismatch", failures)
 
-        resumed, resumed_status = http_json("POST", base_url, "/api/integrations/dify/upload-text", {
+        cross_workspace, cross_workspace_status = http_json("POST", base_url, "/api/integrations/dify/upload-text", {
+            "workspace_id": WORKSPACE_B,
             "confirm_upload": True,
             "prepared_action_id": prepared_action_id,
             "text": text,
         })
-        require(resumed_status == 201 and resumed.get("created") is True, f"resume should upload Dify document: {resumed_status} {resumed}", failures)
+        require(cross_workspace_status == 404 and cross_workspace.get("error") == "prepared_action_not_found", f"cross-workspace resume was not hidden: {cross_workspace_status} {cross_workspace}", failures)
+        require(len(FakeDifyHandler.calls) == 0, "fake Dify called during cross-workspace resume", failures)
+
+        resume_body = {
+            "workspace_id": WORKSPACE_A,
+            "confirm_upload": True,
+            "prepared_action_id": prepared_action_id,
+            "text": text,
+        }
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            resume_results = list(pool.map(
+                lambda _index: http_json("POST", base_url, "/api/integrations/dify/upload-text", resume_body),
+                range(2),
+            ))
+        resumed, resumed_status = next((item for item in resume_results if item[1] == 201), ({}, 0))
+        loser, loser_status = next((item for item in resume_results if item[1] != 201), ({}, 0))
+        require(resumed_status == 201 and resumed.get("created") is True, f"resume should upload Dify document: {resume_results}", failures)
+        require(loser_status == 409 and loser.get("error") in {"prepared_action_execution_in_progress", "prepared_action_already_consumed"}, f"concurrent Dify loser was not blocked: {resume_results}", failures)
         require(resumed.get("prepared_action_status") == "consumed", f"prepared action not consumed: {resumed}", failures)
         require(len(FakeDifyHandler.calls) == 1, f"fake Dify should be called exactly once: {FakeDifyHandler.calls}", failures)
 
         replay, replay_status = http_json("POST", base_url, "/api/integrations/dify/upload-text", {
+            "workspace_id": WORKSPACE_A,
             "confirm_upload": True,
             "prepared_action_id": prepared_action_id,
             "text": text,
@@ -178,6 +214,9 @@ def main() -> int:
             "failures": failures,
             "prepared_action_id": prepared_action_id,
             "approval_id": approval_id,
+            "concurrent_resume_single_winner": sorted(status for _payload, status in resume_results) == [201, 409],
+            "cross_workspace_resume_hidden": cross_workspace_status == 404,
+            "workspace_default_task_ids_isolated": other_prepare.get("task_id") != prepare.get("task_id"),
             "provider_call_count": len(FakeDifyHandler.calls),
             "token_omitted": True,
             "raw_text_omitted": True,

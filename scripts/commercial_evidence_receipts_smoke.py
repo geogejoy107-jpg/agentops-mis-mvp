@@ -139,9 +139,10 @@ def main() -> int:
     require(receipts.get("ready_to_merge") is False, "receipts must not claim merge readiness")
 
     summary = receipts.get("receipt_summary") or {}
-    require(summary.get("gates_with_local_receipts") == REQUIRED_RECEIPT_GATE_IDS, "local receipt gate summary mismatch")
+    current_local_gates = REQUIRED_RECEIPT_GATE_IDS[:-1]
+    require(summary.get("gates_with_local_receipts") == current_local_gates, "local receipt gate summary mismatch")
     require(summary.get("gates_with_release_grade_receipts") == [], "release-grade receipts must be empty")
-    require(summary.get("gates_missing_local_receipts") == [], "local receipt gaps should be empty")
+    require(summary.get("gates_missing_local_receipts") == ["gate_5_byoc_enterprise_deployment"], "Gate 5 receipt gap missing")
     require(summary.get("gate_5_local_receipt_commands") == 7, "Gate 5 command count mismatch")
     require(summary.get("exact_head_ci_verified") is False, "current HEAD exact-head CI must still be verified after the evidence commit")
     require(summary.get("remote_sync_verified") is True, "remote sync should be verified for the current PR head")
@@ -168,10 +169,17 @@ def main() -> int:
     require(set(receipt_map) == set(REQUIRED_RECEIPT_GATE_IDS), f"receipt gate ids mismatch: {sorted(receipt_map)}")
     for gate_id in REQUIRED_RECEIPT_GATE_IDS:
         receipt = receipt_map[gate_id]
-        require(receipt.get("local_receipt_current") is True, f"{gate_id} local receipt must be current")
         require(receipt.get("release_grade_current") is False, f"{gate_id} must not be release-grade current")
         commands = {str(item.get("command")) for item in receipt.get("commands") or [] if isinstance(item, dict)}
-        require(required_commands[gate_id] == commands, f"{gate_id} command receipts mismatch: {sorted(required_commands[gate_id] - commands)}")
+        missing_commands = required_commands[gate_id] - commands
+        if gate_id == "gate_5_byoc_enterprise_deployment":
+            require(receipt.get("local_receipt_current") is False, "Gate 5 must be invalidated by the new control-plane requirement")
+            require(missing_commands == {"python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py"}, f"unexpected Gate 5 receipt gap: {sorted(missing_commands)}")
+            require(receipt.get("receipt_state") == "local_receipts_incomplete_new_control_plane_requirement", "Gate 5 receipt state mismatch")
+        else:
+            require(receipt.get("local_receipt_current") is True, f"{gate_id} local receipt must be current")
+            require(not missing_commands, f"{gate_id} command receipts mismatch: {sorted(missing_commands)}")
+        require(not (commands - required_commands[gate_id]), f"{gate_id} has unexpected command receipts")
         for command in receipt.get("commands") or []:
             require(command.get("status") == "passed", f"{gate_id} command did not pass: {command}")
 

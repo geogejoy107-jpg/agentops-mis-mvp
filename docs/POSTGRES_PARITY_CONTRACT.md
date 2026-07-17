@@ -70,9 +70,14 @@ evidence in Postgres without falling back to SQLite.
 The thirteenth layer is the Agent Gateway identity lifecycle contract,
 `postgres_http_gateway_lifecycle_write_v1`. Under the explicit Postgres write
 gate it proves registration, enrollment request/approval/issue/rotation/revoke,
-short-lived session create/revoke, workspace isolation, session non-nesting,
-parent-token revoke cascade, and token omission through the same HTTP contract
-used by external workers. The fourteenth layer is the BYOC recovery contract,
+short-lived session create/revoke, workspace-scoped admin authorization,
+server-generated immutable enrollment request identity, concurrent issue and
+rotation single-winner semantics across two MIS processes, approve/issue lock
+ordering without deadlock, immutable approval decisions, idempotent revoke,
+workspace-id hiding, session non-nesting, parent-token revoke cascade, and token
+omission through the same HTTP contract used by external workers. Production administration requires distinct
+per-workspace key-map credentials; a global admin key is local compatibility,
+not a production substitute. The fourteenth layer is the BYOC recovery contract,
 `postgres_backup_restore_v1`, backed by the mandatory
 `postgres_backup_manifest_v1` sidecar. It creates a custom-format `pg_dump`,
 verifies its SHA-256 and `pg_restore` table of contents, requires explicit
@@ -99,6 +104,22 @@ The first Postgres adapter must preserve these invariants:
 - Preserve approval/prepared-action exact-resume fields:
   `normalized_args_json`, `args_hash`, `snapshot_ref`, `snapshot_hash`,
   `status`, `approved_at`, `consumed_at`, and `result_json`.
+- Preserve `prepared_action_approval_single_binding_v1`: every non-null
+  `prepared_actions.approval_id` has one global binding, enforced by a unique
+  index and the helper-level `prepared_action_approval_binding_conflict`.
+- Preserve `prepared_action_cas_claim_v1`: every resume that can invoke an
+  external provider uses the shared database compare-and-swap claim, persists
+  `executing` plus claim audit evidence, and commits before the provider call.
+- Preserve `prepared_action_stale_unknown_outcome_v1`: an `executing` row older
+  than the configured threshold becomes terminal `failed` with
+  `execution_outcome_unknown_after_stale_claim`; because the provider may have
+  completed, neither SQLite nor Postgres may replay it.
+- Preserve `fixed_runtime_server_generated_identifiers_v1`: fixed OpenClaw and
+  Hermes prepare routes reject caller-supplied `task_id`, `run_id`,
+  `tool_call_id`, and `approval_id`, and generate all four on the server.
+- Preserve `legacy_prepared_action_lifecycle_migration_v1`: existing Free Local
+  SQLite rows survive the table rebuild that widens the legacy status CHECK to
+  include `executing` and `failed`, with foreign-key bindings intact.
 - Translate DB-API `?` placeholders into Postgres `$1`, `$2`, ... placeholders
   without touching literal question marks inside SQL strings.
 - Preserve SQL string literals containing `%` patterns, such as
@@ -313,9 +334,16 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   overwrite, audit task/run mismatch, and intruder audit without `run_id`
   Gateway requests at `403`, kept `POST /api/agent-gateway/knowledge/index` and
   `POST /api/agents` blocked at `503`, proved fixed OpenClaw and Hermes prepare
-  -> premature resume blocked -> row-gated approve -> hash mismatch blocked ->
-  exact resume consumed -> replay blocked with provider call count exactly one,
-  kept non-prepared approval decisions blocked at `503`, exposed the same
+  rejected caller-supplied task/run/tool/approval identifiers, generated those
+  identifiers on the server, then enforced premature resume blocked ->
+  workspace-admin-authenticated row-gated approve -> hash mismatch blocked ->
+  cross-workspace prepared-action id hidden. Two
+  independent MIS processes then raced the same exact resume through the shared
+  Postgres database: each runtime produced one `201` winner and one `409` loser,
+  one provider call, one `execution_claimed` audit row, a consumed action, and a
+  blocked replay. The fixture used distinct Gateway/runtime workspace admin
+  keys and kept non-prepared approval
+  decisions blocked at `503`, exposed the same
   contract through `storage_backend_status.runtime_write_gate` for CLI/API/Next
   deployment readback, kept `free_local_dependencies=[]`, and
   did not fall back to SQLite.
@@ -327,18 +355,64 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   `postgres:16-alpine`: registration, enrollment request and human approval,
   one-time approved/direct token issue, heartbeat, session create/revoke,
   token rotation, and parent-token revocation cascade persisted through
-  `PostgresAdapter`; wrong admin credentials, cross-workspace heartbeat,
-  nested session creation, revoked sessions, replaced tokens, and revoked
-  tokens failed closed, while HTTP/admin readback, audit rows, runtime rows,
-  stdout, and evidence omitted raw token values and token hashes.
+  `PostgresAdapter`; anonymous approval/request, caller-controlled request ids,
+  wrong or cross-workspace admin credentials, cross-workspace heartbeat, nested
+  session creation, revoked sessions, replaced tokens, and revoked tokens
+  failed closed. Two independent MIS processes sharing Postgres proved
+  approve/issue deadlock freedom; concurrent approved issue and rotation each
+  produced one winner and one idempotent/conflict response. Repeated same-direction
+  approval remained idempotent after the enrollment request became approved;
+  concurrent token revoke and direct session revoke produced one session transition
+  and one audit record. Reverse approval decisions failed, repeated revoke added no audit row, cross-workspace ids were
+  indistinguishable from missing ids, and HTTP/admin readback, audit rows,
+  runtime rows, stdout, and evidence omitted raw token values and hashes.
 - `nextjs_deployment_postgres_runtime_write_fixture_v1` passed against a
   temporary Postgres-backed MIS API in `experimental_write_http` mode and a
   Next.js server pointed at it. The browser fixture proves
   `/workspace/deployment` renders `runtime_write_gate=active`, the fixed
   OpenClaw/Hermes prepared-action contracts, exact-resume and row-gated approval
-  proofs, all three fixed write routes, and the non-fixed runtime write block;
-  it also confirms the Next proxy cannot mutate read-only ledger tables while
-  rendering the deployment page.
+  proofs, all three fixed write routes, and the non-fixed runtime write block.
+  It also confirms the Next proxy cannot mutate read-only ledger tables while
+  rendering the deployment page. Database-level concurrent-resume evidence
+  belongs to `postgres_http_write_task_parity_v1`, which runs the two MIS
+  processes rather than inferring concurrency from this browser fixture.
+- `nextjs_postgres_control_plane_tasks_v1` passed with no Python API process.
+  Production deployment mode selected the TypeScript Postgres owner by default;
+  token and short-session task create/list, run-start, and progress/completion
+  heartbeat worked, while missing
+  scope, cross-workspace, cross-agent, and task/run identity rebind attempts
+  failed closed. Repeated and concurrent same-id run-start produced one run,
+  one runtime event, and one run audit; input-summary secret material was
+  redacted before persistence. Repeated identical heartbeat emitted no duplicate
+  evidence; concurrent completion had one update and one unchanged response, and
+  conflicting completed/failed heartbeats had one terminal winner plus one 409.
+  Cross-workspace run IDs remained hidden, heartbeat summaries were redacted,
+  and terminal runs could not be revived. The first run moved the task through
+  `running` to `completed` with matching task-transition after-hashes. Expired token and invalid-parent
+  session requests returned 401 while committing their lifecycle state. A held
+  Postgres advisory lock `1095779668` then proved both the TypeScript append and
+  Python append wait on the same serialization point; the full tamper chain and
+  task after-hash were recomputed by the Python verifier, proving concurrent
+  cross-language ledger compatibility. A separately held parent-token row lock
+  proved TypeScript session authentication waits on the parent before locking the
+  session, matching Python's token-to-session cascade order; the real revoke
+  function then committed one token transition, one session transition, and one
+  audit row for each while the blocked session request resumed as 401.
+  The same no-Python fixture directly wrote tool-call, evaluation, and artifact
+  evidence through TypeScript/Postgres. Two concurrent requests per evidence ID
+  produced one create plus one unchanged response and one runtime/audit record.
+  Cross-workspace runs stayed hidden, summaries and structured metadata were
+  redacted, evaluation/artifact rewrites and tool rebind/terminal reset failed
+  closed, and a caller-declared completed `shell.exec` was raised to high risk
+  and held at `waiting_approval` with audited run/task transitions.
+  Agent Plan and plan-evidence writes now run in that same TypeScript/Postgres
+  process. Concurrent same-ID plan and manifest requests produced one create
+  plus one unchanged response and one audit/runtime write. Submitted plans and
+  manifest evidence bindings were immutable; Agent credentials could not set a
+  human approval status; missing or approval-pending plans blocked non-mock run
+  start; a complete bound manifest verified while a manifest declaring missing
+  evidence was persisted as blocked. Plan and manifest after-hashes and the full
+  cross-language audit chain were recomputed from Postgres rows.
 - `deployment_readiness_postgres_runtime_write_fixture_v1` passed against a
   temporary Postgres-backed MIS API in `experimental_write_http` mode. The
   backend fixture proves `GET /api/deployment/readiness` and

@@ -2,6 +2,7 @@
 """Verify Hermes fixed run-task uses prepared-action exact resume."""
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import socket
@@ -39,6 +40,7 @@ class FakeHermesHandler(BaseHTTPRequestHandler):
             "model": payload.get("model"),
             "prompt_present": bool(prompt),
         })
+        time.sleep(0.25)
         body = json.dumps({
             "id": "fake-hermes-run-task",
             "choices": [{"message": {"content": "HERMES_DEFAULT_RUN_OK"}}],
@@ -129,10 +131,36 @@ def main() -> int:
         prepared_action_id = prepare.get("prepared_action_id")
         approval_id = prepare.get("approval_id")
         prompt_hash = prepare.get("prompt_hash")
+        run_id = prepare.get("run_id")
+        task_id = prepare.get("task_id")
         require(bool(prepared_action_id and approval_id and prompt_hash), f"prepare missing ids/hash: {prepare}", failures)
         require(prepare.get("provider_call_performed") is False, f"prepare performed provider call: {prepare}", failures)
         require(prepare.get("raw_prompt_omitted") is True, f"prepare did not omit raw prompt: {prepare}", failures)
         require(len(FakeHermesHandler.calls) == 0, f"fake Hermes called before approval: {FakeHermesHandler.calls}", failures)
+
+        secondary_prepare, secondary_prepare_status = http_json("POST", base_url, "/api/integrations/hermes/run-task", {
+            "confirm_run": True,
+            "workspace_id": "ws_hermes_secondary",
+        })
+        require(secondary_prepare_status == 202, f"secondary workspace prepare failed: {secondary_prepare_status} {secondary_prepare}", failures)
+        require(
+            secondary_prepare.get("task_id") != task_id
+            and secondary_prepare.get("run_id") != run_id
+            and secondary_prepare.get("prepared_action_id") != prepared_action_id,
+            f"secondary workspace reused fixed-runtime identifiers: {secondary_prepare}",
+            failures,
+        )
+        task_rebind, task_rebind_status = http_json("POST", base_url, "/api/integrations/hermes/run-task", {
+            "confirm_run": True,
+            "workspace_id": "ws_hermes_secondary",
+            "task_id": task_id,
+        })
+        require(
+            task_rebind_status == 400 and task_rebind.get("error") == "server_generated_runtime_identifiers_required",
+            f"caller-controlled task id was accepted during prepare: {task_rebind_status} {task_rebind}",
+            failures,
+        )
+        require(len(FakeHermesHandler.calls) == 0, "fake Hermes called during workspace-id isolation checks", failures)
 
         premature, premature_status = http_json("POST", base_url, "/api/integrations/hermes/run-task", {
             "confirm_run": True,
@@ -146,6 +174,19 @@ def main() -> int:
         require(approved_status == 200 and approved.get("decision") == "approved", f"approval failed: {approved_status} {approved}", failures)
         require(len(FakeHermesHandler.calls) == 0, "fake Hermes called during approval", failures)
 
+        cross_workspace, cross_workspace_status = http_json("POST", base_url, "/api/integrations/hermes/run-task", {
+            "confirm_run": True,
+            "workspace_id": "ws_hermes_rebind_attack",
+            "prepared_action_id": prepared_action_id,
+            "prompt_hash": prompt_hash,
+        })
+        require(
+            cross_workspace_status == 404 and cross_workspace.get("error") == "prepared_action_not_found",
+            f"cross-workspace prepared action was visible: {cross_workspace_status} {cross_workspace}",
+            failures,
+        )
+        require(len(FakeHermesHandler.calls) == 0, "fake Hermes called during cross-workspace prepared-action lookup", failures)
+
         mismatch, mismatch_status = http_json("POST", base_url, "/api/integrations/hermes/run-task", {
             "confirm_run": True,
             "prepared_action_id": prepared_action_id,
@@ -154,13 +195,22 @@ def main() -> int:
         require(mismatch_status == 409 and mismatch.get("error") == "prepared_action_prompt_hash_mismatch", f"mismatch should be blocked: {mismatch_status} {mismatch}", failures)
         require(len(FakeHermesHandler.calls) == 0, "fake Hermes called during hash mismatch", failures)
 
-        resumed, resumed_status = http_json("POST", base_url, "/api/integrations/hermes/run-task", {
+        resume_body = {
             "confirm_run": True,
             "prepared_action_id": prepared_action_id,
             "prompt_hash": prompt_hash,
-        })
+        }
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            resume_results = list(pool.map(
+                lambda _index: http_json("POST", base_url, "/api/integrations/hermes/run-task", resume_body),
+                range(2),
+            ))
+        require(sorted(status for _payload, status in resume_results) == [201, 409], f"concurrent resumes were not single-winner: {resume_results}", failures)
+        resumed, resumed_status = next((item for item in resume_results if item[1] == 201), ({}, 0))
+        loser, loser_status = next((item for item in resume_results if item[1] == 409), ({}, 0))
         require(resumed_status == 201 and resumed.get("created") is True and resumed.get("ok") is True, f"resume should call Hermes once: {resumed_status} {resumed}", failures)
         require(resumed.get("prepared_action_status") == "consumed", f"prepared action not consumed: {resumed}", failures)
+        require(loser_status == 409 and loser.get("error") in {"prepared_action_execution_in_progress", "prepared_action_already_consumed"}, f"concurrent loser was not blocked: {loser_status} {loser}", failures)
         require(len(FakeHermesHandler.calls) == 1, f"fake Hermes should be called exactly once: {FakeHermesHandler.calls}", failures)
 
         replay, replay_status = http_json("POST", base_url, "/api/integrations/hermes/run-task", {
@@ -176,6 +226,11 @@ def main() -> int:
             "failures": failures,
             "prepared_action_id": prepared_action_id,
             "approval_id": approval_id,
+            "cross_workspace_prepared_action_hidden": cross_workspace_status == 404,
+            "cross_workspace_prepare_ids_isolated": secondary_prepare_status == 202,
+            "cross_workspace_task_rebind_rejected": task_rebind_status == 400,
+            "caller_runtime_identifiers_rejected": task_rebind_status == 400,
+            "concurrent_resume_single_winner": sorted(status for _payload, status in resume_results) == [201, 409],
             "provider_call_count": len(FakeHermesHandler.calls),
             "token_omitted": True,
             "raw_prompt_omitted": True,
