@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import secrets
@@ -117,15 +118,42 @@ def psql(
     return run(command, env={"PGPASSWORD": password}, input_text=sql, timeout=timeout)
 
 
+class CountQueryError(RuntimeError):
+    def __init__(self, safe_code: str, *, exit_code: int, stdout_hash: str, stderr_hash: str):
+        super().__init__(safe_code)
+        self.safe_code = safe_code
+        self.exit_code = exit_code
+        self.stdout_hash = stdout_hash
+        self.stderr_hash = stderr_hash
+
+
 def table_counts(container: str, password: str, database: str) -> dict[str, int]:
     tables = ["tasks", "runs", "tool_calls", "approvals", "prepared_actions", "agent_plans", "plan_evidence_manifests"]
-    counts: dict[str, int] = {}
-    for table in tables:
-        result = psql(container, password, database, sql=f"SELECT COUNT(*) FROM {table};\n", tuples_only=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"count_failed:{table}")
-        counts[table] = int(result.stdout.strip())
-    return counts
+    pairs = ", ".join(f"'{table}', (SELECT COUNT(*) FROM {table})" for table in tables)
+    sql = f"SELECT json_build_object({pairs});\n"
+    last_result: subprocess.CompletedProcess[str] | None = None
+    for attempt in range(3):
+        result = psql(container, password, database, sql=sql, tuples_only=True)
+        last_result = result
+        if result.returncode == 0:
+            try:
+                payload = json.loads(result.stdout.strip())
+                return {table: int(payload[table]) for table in tables}
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                pass
+        if attempt < 2:
+            time.sleep(0.5 * (attempt + 1))
+
+    assert last_result is not None
+    stderr = last_result.stderr or ""
+    missing_table = next((table for table in tables if f'relation "{table}" does not exist' in stderr), "")
+    safe_code = f"count_table_{missing_table}_missing" if missing_table else "count_query_failed"
+    raise CountQueryError(
+        safe_code,
+        exit_code=last_result.returncode,
+        stdout_hash=hashlib.sha256((last_result.stdout or "").encode("utf-8", errors="replace")).hexdigest(),
+        stderr_hash=hashlib.sha256(stderr.encode("utf-8", errors="replace")).hexdigest(),
+    )
 
 
 def main() -> int:
@@ -395,14 +423,19 @@ def main() -> int:
         return 0 if not failures else 1
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         exception_failures = [*failures, f"{stage}_exception"]
+        safe_error = getattr(exc, "safe_code", None)
         print(json.dumps({
             "ok": False,
             "skipped": False,
             "contract": "postgres_backup_restore_v1",
             "manifest_contract": "postgres_backup_manifest_v1",
             "error_type": type(exc).__name__,
+            "error": safe_error,
             "error_stage": stage,
             "error_detail_omitted": True,
+            "error_exit_code": getattr(exc, "exit_code", None),
+            "error_stdout_sha256": getattr(exc, "stdout_hash", None),
+            "error_stderr_sha256": getattr(exc, "stderr_hash", None),
             "credential_values_omitted": True,
             "secret_leaked": False,
             "failure_count": len(exception_failures),

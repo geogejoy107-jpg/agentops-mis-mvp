@@ -146,6 +146,8 @@ def start_process(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> subproce
         cwd=cwd,
         env=env,
         text=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
 
