@@ -83,6 +83,26 @@ def main(argv: list[str] | None = None) -> int:
 
         revoke = run([str(CLI), "enrollment", "revoke", "--token-id", str(token_id)], env=env) if token_id else None
         revoke_payload = load_json(revoke) if revoke else {}
+        stale_token = "fake_stale_config_token_should_not_print"
+        Path(env["AGENTOPS_CONFIG"]).write_text(
+            json.dumps(
+                {
+                    "base_url": args.base_url,
+                    "workspace_id": "local-demo",
+                    "agent_id": "agt_stale_config_doctor_smoke",
+                    "api_key": stale_token,
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        stale_config_doctor = run([str(CLI), "doctor"], env=env)
+        stale_config_payload = load_json(stale_config_doctor)
+        stale_config_readback = run([str(CLI), "operator", "local-harness-proof", "--limit", "1"], env=env)
+        stale_config_readback_payload = load_json(stale_config_readback)
+        stale_config_local_readiness = run([str(CLI), "local", "readiness", "--require-current-code"], env=env)
+        stale_config_local_readiness_payload = load_json(stale_config_local_readiness)
 
         ok = (
             local_doctor.returncode == 0
@@ -104,6 +124,25 @@ def main(argv: list[str] | None = None) -> int:
             and token_payload.get("gateway", {}).get("token_omitted") is True
             and token not in token_doctor.stdout
             and (revoke is not None and revoke.returncode == 0)
+            and stale_config_doctor.returncode == 0
+            and stale_config_payload.get("ok") is True
+            and stale_config_payload.get("auth", {}).get("api_key_source") == "config"
+            and stale_config_payload.get("stale_config_token_ignored_for_local_loopback") is True
+            and any(
+                item.get("stale_config_token_ignored_for_local_loopback") is True
+                for item in (stale_config_payload.get("checks") or [])
+            )
+            and stale_config_readback.returncode == 0
+            and stale_config_readback_payload.get("operation") == "local_harness_proof_readiness"
+            and stale_config_local_readiness.returncode == 0
+            and stale_config_local_readiness_payload.get("operation") == "local_readiness"
+            and stale_config_local_readiness_payload.get("gateway", {}).get("status") == "ready"
+            and stale_token not in stale_config_doctor.stdout
+            and stale_token not in stale_config_doctor.stderr
+            and stale_token not in stale_config_readback.stdout
+            and stale_token not in stale_config_readback.stderr
+            and stale_token not in stale_config_local_readiness.stdout
+            and stale_token not in stale_config_local_readiness.stderr
         )
         print(json.dumps({
             "ok": ok,
@@ -121,6 +160,10 @@ def main(argv: list[str] | None = None) -> int:
             "token_leaked": bool(token and token in token_doctor.stdout),
             "revoke_returncode": revoke.returncode if revoke else None,
             "revoked": revoke_payload.get("revoked"),
+            "stale_config_doctor_returncode": stale_config_doctor.returncode,
+            "stale_config_readback_returncode": stale_config_readback.returncode,
+            "stale_config_local_readiness_returncode": stale_config_local_readiness.returncode,
+            "stale_config_token_ignored": stale_config_payload.get("stale_config_token_ignored_for_local_loopback"),
         }, ensure_ascii=False, indent=2, sort_keys=True))
         if not ok:
             print("local stderr:", local_doctor.stderr[-1200:], file=sys.stderr)
@@ -129,6 +172,9 @@ def main(argv: list[str] | None = None) -> int:
             print("token stderr:", token_doctor.stderr[-1200:], file=sys.stderr)
             if revoke:
                 print("revoke stderr:", revoke.stderr[-1200:], file=sys.stderr)
+            print("stale config stderr:", stale_config_doctor.stderr[-1200:], file=sys.stderr)
+            print("stale config readback stderr:", stale_config_readback.stderr[-1200:], file=sys.stderr)
+            print("stale config local readiness stderr:", stale_config_local_readiness.stderr[-1200:], file=sys.stderr)
         return 0 if ok else 1
 
 

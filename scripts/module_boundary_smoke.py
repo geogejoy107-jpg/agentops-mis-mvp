@@ -829,7 +829,7 @@ def main() -> int:
         "created_at": "2026-06-22T00:00:00+00:00",
         "approved_at": None,
         "consumed_at": None,
-        "expires_at": "2026-06-24T00:00:00+00:00",
+        "expires_at": "2099-06-24T00:00:00+00:00",
     }
     require(prepared_action_hash_payload(prepared_row).get("policy_version") == "approval-wall-v1", "prepared action hash payload policy fallback failed", failures)
     prepared_row["action_hash"] = prepared_action_hash(prepared_row)

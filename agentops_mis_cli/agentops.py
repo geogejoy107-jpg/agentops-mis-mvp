@@ -327,6 +327,7 @@ class AgentOpsClient:
         self.agent_id = context["agent_id"]
         self.request_timeout = int(context.get("request_timeout") or DEFAULT_REQUEST_TIMEOUT)
         self.sources = context.get("sources") if isinstance(context.get("sources"), dict) else {}
+        self.stale_config_token_ignored = False
 
     def connection_hint(self) -> str:
         source = self.sources.get("base_url") or "unknown"
@@ -346,30 +347,74 @@ class AgentOpsClient:
             hint += "; or unset/adjust AGENTOPS_BASE_URL"
         return hint
 
+    def _can_retry_without_stale_config_token(self, detail: str, status_code: int) -> bool:
+        production_requested = cli_deployment_mode() in {"production", "prod", "shared", "hosted"} or cli_truthy_env("AGENTOPS_REQUIRE_PRODUCTION_SECURITY")
+        return bool(
+            status_code == 401
+            and self.api_key
+            and self.sources.get("api_key") == "config"
+            and cli_host_is_loopback(self.base_url)
+            and not production_requested
+            and "token is not recognized" in detail
+        )
+
+    def _payload_has_stale_config_token_diagnostic(self, payload: dict) -> bool:
+        gateway = payload.get("gateway") if isinstance(payload, dict) else None
+        if isinstance(gateway, dict) and "token is not recognized" in json.dumps(gateway, ensure_ascii=False):
+            return True
+        for gate in payload.get("gates") or []:
+            if isinstance(gate, dict) and gate.get("status") == "unauthorized" and "token is not recognized" in json.dumps(gate, ensure_ascii=False):
+                return True
+        return False
+
     def request(self, method: str, path: str, payload: dict | None = None, query: dict | None = None):
         url = self.base_url + path
         if query:
             url += "?" + urlencode({k: v for k, v in query.items() if v is not None}, doseq=True)
-        headers = {
-            "Content-Type": "application/json",
-            "X-AgentOps-Workspace-Id": self.workspace_id,
-        }
-        if self.agent_id:
-            headers["X-AgentOps-Agent-Id"] = self.agent_id
-        if self.api_key:
-            if not credential_transport_url_allowed(url):
-                raise RuntimeError("Credentialed Agent Gateway requests require HTTPS or a literal loopback HTTP target")
-            headers["X-AgentOps-Api-Key"] = self.api_key
-            headers["Authorization"] = f"Bearer {self.api_key}"
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
-        req = Request(url, data=data, headers=headers, method=method)
+
+        def make_request(api_key: str) -> Request:
+            headers = {
+                "Content-Type": "application/json",
+                "X-AgentOps-Workspace-Id": self.workspace_id,
+            }
+            if self.agent_id:
+                headers["X-AgentOps-Agent-Id"] = self.agent_id
+            if api_key:
+                if not credential_transport_url_allowed(url):
+                    raise RuntimeError(
+                        "Credentialed Agent Gateway requests require HTTPS or a literal loopback HTTP target"
+                    )
+                headers["X-AgentOps-Api-Key"] = api_key
+                headers["Authorization"] = f"Bearer {api_key}"
+            return Request(url, data=data, headers=headers, method=method)
+
+        opener = credential_opener()
         try:
-            with credential_opener().open(req, timeout=self.request_timeout) as res:
+            with opener.open(make_request(self.api_key), timeout=self.request_timeout) as res:
                 raw = res.read().decode("utf-8")
-                return json.loads(raw) if raw else {}
+                parsed = json.loads(raw) if raw else {}
+                if (
+                    isinstance(parsed, dict)
+                    and self._can_retry_without_stale_config_token(json.dumps(parsed, ensure_ascii=False), 401)
+                    and self._payload_has_stale_config_token_diagnostic(parsed)
+                ):
+                    with opener.open(make_request(""), timeout=self.request_timeout) as retry_res:
+                        self.stale_config_token_ignored = True
+                        retry_raw = retry_res.read().decode("utf-8")
+                        return json.loads(retry_raw) if retry_raw else {}
+                return parsed
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"{method} {path} failed: {exc.code} {safe_credential_error(detail, self.api_key, 1200)}") from exc
+            if self._can_retry_without_stale_config_token(detail, exc.code):
+                with opener.open(make_request(""), timeout=self.request_timeout) as res:
+                    self.stale_config_token_ignored = True
+                    raw = res.read().decode("utf-8")
+                    return json.loads(raw) if raw else {}
+            raise RuntimeError(
+                f"{method} {path} failed: {exc.code} "
+                f"{safe_credential_error(detail, self.api_key, 1200)}"
+            ) from exc
         except TimeoutError as exc:
             raise RuntimeError(f"{method} {path} timed out after {self.request_timeout}s; {self.connection_hint()}") from exc
         except URLError as exc:
@@ -429,6 +474,7 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
     production_requested = mode in {"production", "prod", "shared", "hosted"} or cli_truthy_env("AGENTOPS_REQUIRE_PRODUCTION_SECURITY")
     non_loopback_target = not cli_host_is_loopback(client.base_url)
     has_token = bool(client.api_key)
+    stale_config_token_ignored = False
 
     deployment_guard_ok = not ((non_loopback_target or production_requested) and not has_token)
     checks.append({
@@ -443,19 +489,58 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
 
     try:
         gateway = client.get("/api/agent-gateway/status")
+        stale_config_token_ignored = bool(client.stale_config_token_ignored)
         checks.append({
             "name": "agent_gateway_status",
             "ok": gateway.get("status") == "ready",
             "status": gateway.get("status"),
             "auth_mode": (gateway.get("auth") or {}).get("mode"),
+            "stale_config_token_ignored_for_local_loopback": stale_config_token_ignored,
             "token_omitted": gateway.get("token_omitted") is True,
         })
     except RuntimeError as exc:
-        checks.append({
-            "name": "agent_gateway_status",
-            "ok": False,
-            "error": str(exc),
-        })
+        error_text = str(exc)
+        can_retry_local_without_config_token = bool(
+            sources.get("api_key") == "config"
+            and client.api_key
+            and cli_host_is_loopback(client.base_url)
+            and not production_requested
+            and "401" in error_text
+            and "token is not recognized" in error_text
+        )
+        if can_retry_local_without_config_token:
+            retry_context = {
+                "base_url": client.base_url,
+                "api_key": "",
+                "workspace_id": client.workspace_id,
+                "agent_id": client.agent_id,
+                "request_timeout": client.request_timeout,
+                "sources": {**client.sources, "api_key": "ignored_config_for_local_dev"},
+            }
+            try:
+                gateway = AgentOpsClient(retry_context).get("/api/agent-gateway/status")
+                stale_config_token_ignored = True
+                checks.append({
+                    "name": "agent_gateway_status",
+                    "ok": gateway.get("status") == "ready",
+                    "status": gateway.get("status"),
+                    "auth_mode": (gateway.get("auth") or {}).get("mode"),
+                    "stale_config_token_ignored_for_local_loopback": True,
+                    "token_omitted": gateway.get("token_omitted") is True,
+                })
+            except RuntimeError as retry_exc:
+                checks.append({
+                    "name": "agent_gateway_status",
+                    "ok": False,
+                    "error": str(retry_exc),
+                    "stale_config_token_retry_failed": True,
+                })
+        else:
+            checks.append({
+                "name": "agent_gateway_status",
+                "ok": False,
+                "error": error_text,
+            })
 
     try:
         workers = client.get("/api/workers/status")
@@ -482,7 +567,10 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
     if not client.agent_id:
         setup_hints.append("No agent id resolved. Set AGENTOPS_AGENT_ID or run agentops login --agent-id ... before remote worker use.")
     if gateway and not (gateway.get("auth") or {}).get("authenticated") and has_token:
-        setup_hints.append("A token was provided but Agent Gateway did not authenticate it; rotate or re-enroll the agent.")
+        if stale_config_token_ignored:
+            setup_hints.append("Ignored a stale saved config token for loopback local-dev doctor; run agentops login --base-url ... --api-key <token> only when you intentionally want authenticated local Gateway checks.")
+        else:
+            setup_hints.append("A token was provided but Agent Gateway did not authenticate it; rotate or re-enroll the agent.")
     if workers and workers.get("stuck_worker_tasks", 0):
         setup_hints.append("Stuck worker tasks detected. Run agentops worker stuck and agentops worker release after review.")
     if not gateway and local_probe.get("ready"):
@@ -522,6 +610,7 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
         "local_demo_probe": local_probe,
         "checks": checks,
         "gateway": gateway,
+        "stale_config_token_ignored_for_local_loopback": stale_config_token_ignored,
         "worker_summary": {
             "status": workers.get("status") if workers else None,
             "worker_count": workers.get("worker_count") if workers else None,
@@ -4917,7 +5006,7 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
         })
     except RuntimeError as exc:
         register_error = str(exc)
-    if args.adapter in {"hermes", "openclaw"} and not args.confirm_run:
+    if args.adapter in {"hermes", "openclaw", "codex"} and not args.confirm_run:
         created = client.post("/api/agent-gateway/tasks", {
             "workspace_id": client.workspace_id,
             "task_id": args.task_id,
@@ -4961,6 +5050,8 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
         "budget_limit_usd": args.budget,
     })
     task_id = created.get("task_id")
+    worker_api_key = "" if client.stale_config_token_ignored and client.sources.get("api_key") == "config" else client.api_key
+    worker_api_key_source = "missing" if not worker_api_key else client.sources.get("api_key") or "env"
     worker_argv = [
         "--base-url",
         client.base_url,
@@ -4971,7 +5062,9 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
         "--task-id",
         task_id,
         "--api-key",
-        client.api_key,
+        worker_api_key,
+        "--api-key-source",
+        worker_api_key_source,
         "--adapter",
         args.adapter,
         "--once",
@@ -4997,6 +5090,10 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
         worker_argv.extend(["--openclaw-bin", args.openclaw_bin])
     if args.openclaw_timeout is not None:
         worker_argv.extend(["--openclaw-timeout", str(args.openclaw_timeout)])
+    if args.codex_bin:
+        worker_argv.extend(["--codex-bin", args.codex_bin])
+    if args.codex_timeout is not None:
+        worker_argv.extend(["--codex-timeout", str(args.codex_timeout)])
 
     stdout = io.StringIO()
     with contextlib.redirect_stdout(stdout):
@@ -5080,6 +5177,152 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
     }
 
 
+def cmd_workflow_codex_workspace_write(args, client: AgentOpsClient) -> dict:
+    from . import worker as worker_mod
+
+    if not args.confirm_run:
+        return {
+            "ok": False,
+            "dry_run": True,
+            "workflow": "codex_workspace_write",
+            "reason": "confirm_run_required",
+            "requires": ["--confirm-run"],
+            "live_execution_performed": False,
+            "token_omitted": True,
+        }
+    if not args.allow_path:
+        raise RuntimeError("codex workspace-write requires at least one --allow-path")
+
+    action = None
+    task = None
+    task_id = args.task_id
+    worker_agent_id = args.worker_agent_id
+    if args.prepared_action_id:
+        action_payload = client.get(f"/api/agent-gateway/prepared-actions/{args.prepared_action_id}")
+        action = action_payload.get("prepared_action") or {}
+        task_id = action.get("task_id")
+        worker_agent_id = action.get("requested_by_agent_id")
+        if action.get("action_type") != "agent_worker.codex.workspace_write":
+            raise RuntimeError("prepared action is not a Codex workspace-write authorization")
+    elif task_id:
+        try:
+            task = (client.get(f"/api/agent-gateway/tasks/{task_id}").get("task") or {})
+            worker_agent_id = worker_agent_id or task.get("owner_agent_id")
+        except RuntimeError:
+            task = None
+
+    worker_agent_id = worker_agent_id or client.agent_id or f"agt_codex_write_{now_stamp()}_{uuid.uuid4().hex[:6]}"
+    register_result = client.post("/api/agent-gateway/register", {
+        "workspace_id": client.workspace_id,
+        "agent_id": worker_agent_id,
+        "name": args.worker_name or "Codex Workspace Write Worker",
+        "role": "Governed Coding Worker",
+        "runtime_type": "codex",
+        "model_provider": "codex",
+        "model_name": "codex-cli",
+        "description": "Approval-gated Codex worker using managed detached Git worktrees.",
+    })
+    if not task_id:
+        if not args.title or not args.description:
+            raise RuntimeError("--title and --description are required when creating a Codex workspace-write task")
+        created = client.post("/api/agent-gateway/tasks", {
+            "workspace_id": client.workspace_id,
+            "title": args.title,
+            "description": args.description,
+            "requester_id": args.requester_id,
+            "owner_agent_id": worker_agent_id,
+            "status": "planned",
+            "priority": args.priority,
+            "acceptance_criteria": args.acceptance,
+            "risk_level": args.risk,
+            "budget_limit_usd": args.budget,
+        })
+        task_id = created.get("task_id")
+        task = created
+    elif task is None and not action:
+        if not args.title or not args.description:
+            raise RuntimeError("task_id was not found; provide --title and --description to create it")
+        created = client.post("/api/agent-gateway/tasks", {
+            "workspace_id": client.workspace_id,
+            "task_id": task_id,
+            "title": args.title,
+            "description": args.description,
+            "requester_id": args.requester_id,
+            "owner_agent_id": worker_agent_id,
+            "status": "planned",
+            "priority": args.priority,
+            "acceptance_criteria": args.acceptance,
+            "risk_level": args.risk,
+            "budget_limit_usd": args.budget,
+        })
+        task = created
+
+    worker_api_key = "" if client.stale_config_token_ignored and client.sources.get("api_key") == "config" else client.api_key
+    worker_argv = [
+        "--base-url", client.base_url,
+        "--workspace-id", client.workspace_id,
+        "--agent-id", worker_agent_id,
+        "--task-id", task_id,
+        "--api-key", worker_api_key,
+        "--api-key-source", "missing" if not worker_api_key else client.sources.get("api_key") or "env",
+        "--adapter", "codex",
+        "--codex-mode", "workspace-write",
+        "--codex-source-repo", str(Path(args.source_repo).expanduser().resolve()),
+        "--codex-timeout", str(args.codex_timeout),
+        "--once",
+        "--no-enforce-intake",
+        "--status", "planned",
+        "--confirm-run",
+    ]
+    for path in args.allow_path:
+        worker_argv.extend(["--codex-allowed-path", path])
+    if args.codex_bin:
+        worker_argv.extend(["--codex-bin", args.codex_bin])
+    if args.worktree_root:
+        worker_argv.extend(["--codex-worktree-root", args.worktree_root])
+    if args.prepared_action_id:
+        worker_argv.extend(["--codex-prepared-action-id", args.prepared_action_id])
+    if args.confirm_workspace_write:
+        worker_argv.append("--confirm-workspace-write")
+    if args.allow_high_risk:
+        worker_argv.append("--allow-high-risk")
+
+    stdout = io.StringIO()
+    with contextlib.redirect_stdout(stdout):
+        exit_code = worker_mod.main(worker_argv)
+    raw_worker_output = stdout.getvalue().strip()
+    try:
+        worker_result = json.loads(raw_worker_output) if raw_worker_output else {}
+    except json.JSONDecodeError:
+        worker_result = {"ok": False, "raw_output_omitted": True}
+    first_result = ((worker_result.get("results") or [{}])[0] or {})
+    return {
+        "ok": bool(exit_code == 0 and worker_result.get("ok") is True),
+        "dry_run": False,
+        "workflow": "codex_workspace_write",
+        "phase": (
+            "completed" if first_result.get("processed") and first_result.get("ok")
+            else "workspace_write_approval" if first_result.get("prepared_action_id")
+            else "agent_plan_approval" if first_result.get("approval_id")
+            else "blocked"
+        ),
+        "task_id": task_id,
+        "agent_id": worker_agent_id,
+        "run_id": first_result.get("run_id"),
+        "plan_id": first_result.get("plan_id"),
+        "approval_id": first_result.get("approval_id"),
+        "prepared_action_id": first_result.get("prepared_action_id"),
+        "worker_exit_code": exit_code,
+        "worker_result": worker_result,
+        "agent_register": register_result,
+        "source_repo_path_hash": hashlib.sha256(str(Path(args.source_repo).expanduser().resolve()).encode("utf-8")).hexdigest(),
+        "allowed_paths": args.allow_path,
+        "main_worktree_mutated": False,
+        "raw_worker_output_omitted": True,
+        "token_omitted": True,
+    }
+
+
 def cmd_worker_stuck(args, client: AgentOpsClient) -> dict:
     return client.get("/api/agent-gateway/host-workers/stuck-tasks", query={"threshold_sec": args.threshold_sec, "limit": args.limit})
 
@@ -5108,10 +5351,12 @@ def cmd_worker_preflight(args, client: AgentOpsClient) -> dict:
         workspace_id=client.workspace_id,
         agent_id=args.agent_id or client.agent_id or worker_mod.DEFAULT_AGENT_ID,
         api_key=client.api_key,
+        api_key_source=client.sources.get("api_key") or ("env" if client.api_key else "missing"),
         adapter=args.adapter,
         timeout=args.timeout,
         hermes_gateway_url=args.hermes_gateway_url,
         openclaw_bin=args.openclaw_bin,
+        codex_bin=args.codex_bin,
     )
     gateway = worker_mod.check_gateway_preflight(check_args)
     adapter = worker_mod.check_adapter_preflight(check_args)
@@ -6371,8 +6616,8 @@ def build_parser() -> argparse.ArgumentParser:
     customer_worker.set_defaults(handler="workflow_customer_worker_task")
 
     run_task = workflow_sub.add_parser("run-task", help="Create a normal MIS task and execute one local worker iteration.")
-    run_task.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
-    run_task.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw live execution.")
+    run_task.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
+    run_task.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw/Codex live model execution.")
     run_task.add_argument("--task-id", default=None)
     run_task.add_argument("--title", required=True)
     run_task.add_argument("--description", required=True)
@@ -6392,7 +6637,31 @@ def build_parser() -> argparse.ArgumentParser:
     run_task.add_argument("--hermes-max-tokens", type=int, default=int(os.environ.get("HERMES_MAX_TOKENS", "512")))
     run_task.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", "/opt/homebrew/bin/openclaw"))
     run_task.add_argument("--openclaw-timeout", type=int, default=180)
+    run_task.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", ""))
+    run_task.add_argument("--codex-timeout", type=int, default=300)
     run_task.set_defaults(handler="workflow_run_task")
+
+    codex_write = workflow_sub.add_parser("codex-workspace-write", help="Prepare or resume an approval-gated Codex write in a managed detached Git worktree.")
+    codex_write.add_argument("--task-id", default=None, help="Reuse the same task after Agent Plan approval. Omit only when creating a new task.")
+    codex_write.add_argument("--title", default=None)
+    codex_write.add_argument("--description", default=None)
+    codex_write.add_argument("--acceptance", default="Approved Codex worktree diff must pass bounded path, Git, secret, evaluation, audit and manifest gates.")
+    codex_write.add_argument("--requester-id", default="usr_customer_demo")
+    codex_write.add_argument("--worker-agent-id", default=None)
+    codex_write.add_argument("--worker-name", default=None)
+    codex_write.add_argument("--priority", choices=["low", "medium", "high", "critical"], default="high")
+    codex_write.add_argument("--risk", choices=["low", "medium", "high", "critical"], default="high")
+    codex_write.add_argument("--budget", type=float, default=5.0)
+    codex_write.add_argument("--source-repo", required=True, help="Exact clean Git root. Codex writes only in a managed detached worktree derived from this HEAD.")
+    codex_write.add_argument("--allow-path", action="append", default=[], help="Approved repository-relative path prefix. Repeatable.")
+    codex_write.add_argument("--prepared-action-id", default=None, help="Resume the exact approved workspace-write action after approval.")
+    codex_write.add_argument("--confirm-run", action="store_true", help="Confirm creation or resumption of the governed Codex workflow.")
+    codex_write.add_argument("--confirm-workspace-write", action="store_true", help="Second confirmation required when executing an approved prepared action.")
+    codex_write.add_argument("--allow-high-risk", action="store_true", help="Required with --confirm-workspace-write because workspace-write has a high risk floor.")
+    codex_write.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", ""))
+    codex_write.add_argument("--codex-timeout", type=int, default=600)
+    codex_write.add_argument("--worktree-root", default=None, help="Optional managed worktree parent for advanced operators and isolated acceptance.")
+    codex_write.set_defaults(handler="workflow_codex_workspace_write")
 
     worker = sub.add_parser("worker", help="Worker fleet recovery commands.")
     worker_sub = worker.add_subparsers(dest="action", required=True)
@@ -6406,16 +6675,17 @@ def build_parser() -> argparse.ArgumentParser:
     worker_logs.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     worker_logs.set_defaults(handler="worker_logs")
     worker_preflight = worker_sub.add_parser("preflight", help="Run read-only Gateway and adapter readiness checks.")
-    worker_preflight.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_preflight.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
     worker_preflight.add_argument("--agent-id", default=None)
     worker_preflight.add_argument("--timeout", type=int, default=5)
     worker_preflight.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642"))
     worker_preflight.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", "/opt/homebrew/bin/openclaw"))
+    worker_preflight.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", ""))
     worker_preflight.set_defaults(handler="worker_preflight")
     worker_service_check = worker_sub.add_parser("service-check", help="Read-only check for a launchd/systemd worker service file.")
     worker_service_check.add_argument("--manager", choices=["launchd", "systemd"], required=True)
     worker_service_check.add_argument("--agent-id", default=None)
-    worker_service_check.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_service_check.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
     worker_service_check.add_argument("--label", default="")
     worker_service_check.add_argument("--service-path", default="")
     worker_service_check.add_argument("--api-key-placeholder", default="<paste one-time token here>")
@@ -6426,7 +6696,7 @@ def build_parser() -> argparse.ArgumentParser:
     worker_service_install = worker_sub.add_parser("service-install", help="Dry-run or write a safe launchd/systemd worker service file.")
     worker_service_install.add_argument("--manager", choices=["launchd", "systemd"], required=True)
     worker_service_install.add_argument("--agent-id", default=None)
-    worker_service_install.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_service_install.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
     worker_service_install.add_argument("--confirm-run", action="store_true")
     worker_service_install.add_argument("--use-session", action="store_true", help="Render a session-minting worker command for remote/scoped tokens. Local loopback services omit this by default.")
     worker_service_install.add_argument("--session-ttl-sec", type=int, default=900)
@@ -6449,7 +6719,7 @@ def build_parser() -> argparse.ArgumentParser:
     worker_service_control.add_argument("--manager", choices=["launchd", "systemd"], required=True)
     worker_service_control.add_argument("--action", dest="service_action", choices=["load", "unload", "restart"], required=True)
     worker_service_control.add_argument("--agent-id", default=None)
-    worker_service_control.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_service_control.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
     worker_service_control.add_argument("--label", default="")
     worker_service_control.add_argument("--service-path", default="")
     worker_service_control.add_argument("--api-key-placeholder", default="<paste one-time token here>")
@@ -6690,6 +6960,7 @@ HANDLERS = {
     "workflow_recover_job": cmd_workflow_recover_job,
     "workflow_customer_worker_task": cmd_workflow_customer_worker_task,
     "workflow_run_task": cmd_workflow_run_task,
+    "workflow_codex_workspace_write": cmd_workflow_codex_workspace_write,
     "worker_status": cmd_worker_status,
     "worker_fleet": cmd_worker_fleet,
     "worker_readiness": cmd_worker_readiness,

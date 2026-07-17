@@ -1148,6 +1148,21 @@ CREATE TABLE IF NOT EXISTS prepared_actions (
     FOREIGN KEY(requested_by_agent_id) REFERENCES agents(agent_id)
 );
 
+CREATE TABLE IF NOT EXISTS prepared_action_execution_leases (
+    lease_id TEXT PRIMARY KEY,
+    action_id TEXT NOT NULL UNIQUE,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+    requested_by_agent_id TEXT NOT NULL,
+    action_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('executing','completed','failed')),
+    started_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    completed_at TEXT,
+    failure_reason TEXT,
+    FOREIGN KEY(action_id) REFERENCES prepared_actions(action_id),
+    FOREIGN KEY(requested_by_agent_id) REFERENCES agents(agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS memories (
     memory_id TEXT PRIMARY KEY,
     scope TEXT NOT NULL CHECK(scope IN ('task','project','org')),
@@ -1267,6 +1282,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
     title TEXT NOT NULL,
     uri TEXT,
     summary TEXT,
+    content_hash TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY(task_id) REFERENCES tasks(task_id),
     FOREIGN KEY(run_id) REFERENCES runs(run_id)
@@ -1716,16 +1732,18 @@ def audit(conn: sqlite3.Connection, actor_type: str, actor_id: str | None, actio
         "previous": previous_hash,
     }
     chain = stable_hash(payload)
+    audit_id = new_id("aud")
     conn.execute(
         """
         INSERT INTO audit_logs(audit_id, actor_type, actor_id, action, entity_type, entity_id, before_hash, after_hash, metadata_json, tamper_chain_hash, created_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
-            new_id("aud"), actor_type, actor_id, action, entity_type, entity_id,
+            audit_id, actor_type, actor_id, action, entity_type, entity_id,
             payload["before_hash"], payload["after_hash"], json.dumps(metadata or {}, ensure_ascii=False), chain, now_iso()
         ),
     )
+    return audit_id
 
 
 def init_schema():
@@ -1835,6 +1853,7 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "evaluation_case_runs", "reviewed_by_user_id", "reviewed_by_user_id TEXT")
     ensure_column(conn, "evaluation_case_runs", "review_note", "review_note TEXT")
     ensure_column(conn, "evaluation_case_runs", "reviewed_at", "reviewed_at TEXT")
+    ensure_column(conn, "artifacts", "content_hash", "content_hash TEXT")
     ensure_column(conn, "agent_plans", "plan_version", "plan_version INTEGER NOT NULL DEFAULT 1")
     ensure_column(conn, "agent_plans", "plan_hash", "plan_hash TEXT")
     ensure_column(conn, "agent_plans", "verified_at", "verified_at TEXT")
@@ -1880,6 +1899,24 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
             FOREIGN KEY(requested_by_agent_id) REFERENCES agents(agent_id)
         )"""
     )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS prepared_action_execution_leases (
+            lease_id TEXT PRIMARY KEY,
+            action_id TEXT NOT NULL UNIQUE,
+            workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+            requested_by_agent_id TEXT NOT NULL,
+            action_hash TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('executing','completed','failed')),
+            started_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            completed_at TEXT,
+            failure_reason TEXT,
+            FOREIGN KEY(action_id) REFERENCES prepared_actions(action_id),
+            FOREIGN KEY(requested_by_agent_id) REFERENCES agents(agent_id)
+        )"""
+    )
+    ensure_column(conn, "prepared_action_execution_leases", "expires_at", "expires_at TEXT")
+    conn.execute("UPDATE prepared_action_execution_leases SET expires_at=started_at WHERE expires_at IS NULL OR expires_at='' ")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_agent_plan ON runs(agent_plan_id)")
@@ -1890,6 +1927,7 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_actions_approval ON prepared_actions(approval_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_actions_run ON prepared_actions(run_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_actions_hash ON prepared_actions(action_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_action_leases_status ON prepared_action_execution_leases(status, started_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(review_status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_documents_workspace ON knowledge_documents(workspace_id, access_level)")
@@ -3622,14 +3660,14 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
     base_url = redact_text(base_url or "http://127.0.0.1:8787", 180)
     safe_agent_id = redact_text(agent_id, 120)
     safe_workspace_id = normalize_workspace_id(workspace_id)
-    adapter = coerce_choice(runtime_type, {"mock", "hermes", "openclaw"}, "mock")
+    adapter = coerce_choice(runtime_type, {"mock", "hermes", "openclaw", "codex"}, "mock")
     env = [
         f"export AGENTOPS_BASE_URL={shlex.quote(base_url)}",
         f"export AGENTOPS_WORKSPACE_ID={shlex.quote(safe_workspace_id)}",
         f"export AGENTOPS_AGENT_ID={shlex.quote(safe_agent_id)}",
         "export AGENTOPS_API_KEY='<paste one-time token here>'",
     ]
-    confirm_flag = " --confirm-run" if adapter in {"hermes", "openclaw"} else ""
+    confirm_flag = " --confirm-run" if adapter in {"hermes", "openclaw", "codex"} else ""
     run_once = f"agentops-worker --once --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900"
     worker_loop_flags = "--use-session --session-ttl-sec 900 --session-refresh-margin-sec 60 --poll-interval 5 --idle-backoff-max 30 --error-backoff-max 30 --backoff-factor 2 --adapter-max-attempts 1 --adapter-retry-delay-sec 1 --max-tasks 0 --continue-on-error --max-errors 5 --write-state --jsonl-log"
     run_loop = f"agentops-worker --adapter {adapter}{confirm_flag} {worker_loop_flags}"
@@ -3664,7 +3702,8 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
         "safety": {
             "copy_only": True,
             "server_executes_shell": False,
-            "live_execution_requires_confirm_run": adapter in {"hermes", "openclaw"},
+            "live_execution_requires_confirm_run": adapter in {"hermes", "openclaw", "codex"},
+            "read_only_worker": adapter == "codex",
             "token_omitted": True,
         },
         "token_omitted": True,
@@ -3720,7 +3759,8 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
             "Run service-check after writing a service file and before manually loading launchd/systemd.",
             "Service-control commands are preview-only by default; add --confirm-control only on the agent machine after local review.",
             "Repo-local scripts/agent_worker.py commands are included only as development fallbacks.",
-            "Hermes/OpenClaw launch commands include --confirm-run because the selected runtime is intended to execute.",
+            "Hermes/OpenClaw/Codex launch commands include --confirm-run because the selected runtime is intended to execute.",
+            "The Codex worker remains read-only even when --confirm-run allows model execution.",
         ],
         "token_omitted": True,
     }
@@ -4672,6 +4712,29 @@ def run_detail_payload(conn: sqlite3.Connection, run_id: str) -> dict | None:
     run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
     if not run:
         return None
+    audit_logs = rows_to_dicts(conn.execute(
+        """SELECT a.audit_id, a.action, a.entity_type, a.entity_id, a.created_at
+        FROM audit_logs a
+        JOIN runs bound_run
+          ON bound_run.run_id=a.entity_id
+         AND a.entity_type='runs'
+         AND bound_run.agent_id=a.actor_id
+        WHERE bound_run.run_id=? AND bound_run.task_id=? AND bound_run.agent_id=?
+        ORDER BY a.created_at""",
+        (run_id, run["task_id"], run["agent_id"]),
+    ).fetchall())
+    memories = rows_to_dicts(conn.execute(
+        """SELECT m.memory_id, m.memory_type, m.review_status, m.source_ref,
+                  m.task_id, m.agent_id, m.created_at
+        FROM memories m
+        JOIN runs bound_run
+          ON bound_run.run_id=m.source_ref
+         AND bound_run.task_id=m.task_id
+         AND bound_run.agent_id=m.agent_id
+        WHERE bound_run.run_id=? AND bound_run.task_id=? AND bound_run.agent_id=?
+        ORDER BY m.created_at""",
+        (run_id, run["task_id"], run["agent_id"]),
+    ).fetchall())
     return {
         "run": dict(run),
         "tool_calls": rows_to_dicts(conn.execute("SELECT * FROM tool_calls WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
@@ -4679,6 +4742,8 @@ def run_detail_payload(conn: sqlite3.Connection, run_id: str) -> dict | None:
         "evaluations": rows_to_dicts(conn.execute("SELECT * FROM evaluations WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
         "artifacts": rows_to_dicts(conn.execute("SELECT * FROM artifacts WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
         "runtime_events": rows_to_dicts(conn.execute("SELECT * FROM runtime_events WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
+        "audit_logs": audit_logs,
+        "memories": memories,
     }
 
 
@@ -6591,6 +6656,60 @@ def verify_plan_evidence_manifest_row(conn: sqlite3.Connection, manifest: sqlite
         {"id": "audit_evidence_present", "ok": len(audit_rows) >= 1, "message": "Ledger has audit evidence for the plan/run/tool/eval/artifact chain."},
         {"id": "audit_ids_found", "ok": all_supplied_found(audit_rows, "audit_ids", "audit_id"), "message": "All declared audit_ids exist."},
     ]
+    workspace_write_tools = [row for row in tool_rows if row["tool_name"] == "agent_worker.codex.workspace_diff_verify"]
+    workspace_actions = conn.execute(
+        "SELECT * FROM prepared_actions WHERE run_id=? AND action_type='agent_worker.codex.workspace_write' ORDER BY created_at",
+        (manifest["run_id"],),
+    ).fetchall()
+    if workspace_actions or workspace_write_tools:
+        workspace_action = workspace_actions[0] if len(workspace_actions) == 1 else None
+        workspace_tool = workspace_write_tools[0] if len(workspace_write_tools) == 1 else None
+        try:
+            workspace_args = json.loads(workspace_tool["normalized_args_json"] or "{}") if workspace_tool else {}
+        except (TypeError, json.JSONDecodeError):
+            workspace_args = {}
+        try:
+            action_args = json.loads(workspace_action["normalized_args_json"] or "{}") if workspace_action else {}
+        except (TypeError, json.JSONDecodeError):
+            action_args = {}
+        execution_lease_id = workspace_args.get("execution_lease_id")
+        execution_lease = conn.execute(
+            "SELECT * FROM prepared_action_execution_leases WHERE lease_id=?",
+            (execution_lease_id,),
+        ).fetchone() if execution_lease_id else None
+        evaluation_rubrics = []
+        for evaluation in eval_rows:
+            try:
+                evaluation_rubrics.append(json.loads(evaluation["rubric_json"] or "{}"))
+            except (TypeError, json.JSONDecodeError):
+                evaluation_rubrics.append({})
+        audit_metadata = []
+        for audit_row in audit_rows:
+            try:
+                audit_metadata.append(json.loads(audit_row["metadata_json"] or "{}"))
+            except (TypeError, json.JSONDecodeError):
+                audit_metadata.append({})
+        evidence_hash = workspace_args.get("diff_evidence_hash")
+        changed_paths = workspace_args.get("changed_paths") if isinstance(workspace_args.get("changed_paths"), list) else []
+        allowed_paths = workspace_args.get("allowed_paths") if isinstance(workspace_args.get("allowed_paths"), list) else []
+        planned_paths = load_json_list_field(plan, "proposed_files_to_change_json") if plan else []
+
+        def path_in_scope(path: str, scopes: list[str]) -> bool:
+            return any(path == scope or path.startswith(scope.rstrip("/") + "/") for scope in scopes)
+
+        checks.extend([
+            {"id": "workspace_write_action_unique", "ok": len(workspace_actions) == 1, "message": "Manifest run has exactly one governed workspace-write PreparedAction."},
+            {"id": "workspace_write_verifier_unique", "ok": len(workspace_write_tools) == 1, "message": "Manifest declares exactly one workspace diff verifier tool."},
+            {"id": "workspace_write_action_bound", "ok": bool(workspace_action and workspace_args.get("prepared_action_id") == workspace_action["action_id"] and action_args.get("agent_plan_id") == manifest["plan_id"]), "message": "Verifier evidence binds the exact PreparedAction and Agent Plan."},
+            {"id": "workspace_write_lease_bound", "ok": bool(execution_lease and workspace_action and execution_lease["action_id"] == workspace_action["action_id"] and execution_lease["requested_by_agent_id"] == manifest["agent_id"] and execution_lease["action_hash"] == workspace_action["action_hash"] and execution_lease["status"] in {"executing", "completed"}), "message": "Workspace-write evidence binds a real active/completed exclusive execution lease."},
+            {"id": "workspace_write_diff_hash_present", "ok": bool(evidence_hash), "message": "Workspace-write evidence includes a non-empty diff evidence hash."},
+            {"id": "workspace_write_changed_paths_present", "ok": bool(changed_paths), "message": "Workspace-write evidence includes changed paths."},
+            {"id": "workspace_write_allowed_scope_match", "ok": bool(allowed_paths) and sorted(allowed_paths) == sorted(planned_paths) == sorted(action_args.get("allowed_paths") or []), "message": "PreparedAction, verifier and Agent Plan share the exact file scope."},
+            {"id": "workspace_write_changed_paths_bounded", "ok": bool(changed_paths) and all(path_in_scope(str(path), allowed_paths) for path in changed_paths), "message": "Every changed path is inside the approved scope."},
+            {"id": "workspace_write_evaluation_hash_match", "ok": any(rubric.get("diff_evidence_hash") == evidence_hash and rubric.get("quality_gate_pass") is True for rubric in evaluation_rubrics), "message": "Passing evaluation binds the same diff evidence hash."},
+            {"id": "workspace_write_artifact_hash_match", "ok": any(row["artifact_type"] == "codex_workspace_diff_evidence" and row["content_hash"] == evidence_hash for row in artifact_rows), "message": "Diff artifact binds the same evidence hash."},
+            {"id": "workspace_write_audit_hash_match", "ok": any(((metadata.get("diff_evidence") or {}).get("evidence_hash") == evidence_hash) for metadata in audit_metadata), "message": "Audit evidence binds the same diff evidence hash."},
+        ])
     failed = [check for check in checks if not check["ok"]]
     status = "verified" if not failed else ("blocked" if manifest["mismatch_policy"] == "block" else "warning")
     return {
@@ -9076,7 +9195,147 @@ def agent_gateway_get_prepared_action(conn: sqlite3.Connection, action_id: str, 
     if access_error:
         return access_error
     approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
-    return build_prepared_action_get_response(row, approval), 200
+    payload = build_prepared_action_get_response(row, approval)
+    payload["execution_lease"] = prepared_action_execution_lease_public(
+        conn.execute("SELECT * FROM prepared_action_execution_leases WHERE action_id=?", (action_id,)).fetchone()
+    )
+    return payload, 200
+
+
+def prepared_action_execution_lease_public(row) -> dict | None:
+    if not row:
+        return None
+    data = dict(row)
+    return {
+        "lease_id": data.get("lease_id"),
+        "action_id": data.get("action_id"),
+        "workspace_id": data.get("workspace_id"),
+        "requested_by_agent_id": data.get("requested_by_agent_id"),
+        "action_hash": data.get("action_hash"),
+        "status": data.get("status"),
+        "started_at": data.get("started_at"),
+        "expires_at": data.get("expires_at"),
+        "completed_at": data.get("completed_at"),
+        "failure_reason": data.get("failure_reason"),
+        "token_omitted": True,
+    }
+
+
+def agent_gateway_claim_prepared_action_execution(conn: sqlite3.Connection, action_id: str, body) -> tuple[dict, int]:
+    row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
+    ident = agent_gateway_identity({}, body)
+    access_error = prepared_action_route_access_error(
+        action_id=action_id,
+        row=row,
+        identity=ident,
+        operation="claim_execution",
+        enforce_agent_match=True,
+    )
+    if access_error:
+        return access_error
+    approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
+    blocked = build_prepared_action_resume_blocked_response(action_id=action_id, row=row, approval=approval)
+    if blocked:
+        return blocked
+    if row["action_type"] != "agent_worker.codex.workspace_write":
+        return {"error": "prepared_action_execution_lease_unsupported", "token_omitted": True}, 409
+    try:
+        ttl_seconds = int(body.get("lease_ttl_seconds") or 900)
+    except (TypeError, ValueError):
+        ttl_seconds = 900
+    ttl_seconds = min(max(ttl_seconds, 1), 7200)
+    lease_started = dt.datetime.now(dt.timezone.utc)
+    lease_id = stable_id("pa_lease", action_id, row["action_hash"], lease_started.isoformat(), secrets.token_hex(8))
+    lease = {
+        "lease_id": lease_id,
+        "action_id": action_id,
+        "workspace_id": row_workspace(row),
+        "requested_by_agent_id": row["requested_by_agent_id"],
+        "action_hash": row["action_hash"],
+        "status": "executing",
+        "started_at": lease_started.isoformat(),
+        "expires_at": (lease_started + dt.timedelta(seconds=ttl_seconds)).isoformat(),
+        "completed_at": None,
+        "failure_reason": None,
+    }
+    try:
+        conn.execute(
+            """INSERT INTO prepared_action_execution_leases(
+                lease_id,action_id,workspace_id,requested_by_agent_id,action_hash,status,started_at,expires_at,completed_at,failure_reason
+            ) VALUES(:lease_id,:action_id,:workspace_id,:requested_by_agent_id,:action_hash,:status,:started_at,:expires_at,:completed_at,:failure_reason)""",
+            lease,
+        )
+    except sqlite3.IntegrityError:
+        existing = conn.execute("SELECT * FROM prepared_action_execution_leases WHERE action_id=?", (action_id,)).fetchone()
+        existing_expiry = parse_iso_datetime(existing["expires_at"] if existing else None)
+        if existing and existing["status"] == "executing" and existing_expiry and existing_expiry <= dt.datetime.now(dt.timezone.utc):
+            now = now_iso()
+            reason = "Execution lease expired before evidence closure; retry requires a new prepared action."
+            conn.execute("UPDATE prepared_action_execution_leases SET status='failed',completed_at=?,failure_reason=? WHERE lease_id=? AND status='executing'", (now, reason, existing["lease_id"]))
+            conn.execute("UPDATE prepared_actions SET status='expired',result_summary=? WHERE action_id=? AND status='approved'", (reason, action_id))
+            conn.execute("UPDATE runs SET status='blocked',approval_required=0,error_type='CodexWorkspaceWriteLeaseExpired',error_message=?,ended_at=? WHERE run_id=?", (reason, now, row["run_id"]))
+            conn.execute("UPDATE tasks SET status='blocked',updated_at=? WHERE task_id=?", (now, row["task_id"]))
+            return {
+                "error": "prepared_action_execution_lease_expired",
+                "execution_lease": prepared_action_execution_lease_public(conn.execute("SELECT * FROM prepared_action_execution_leases WHERE lease_id=?", (existing["lease_id"],)).fetchone()),
+                "retry_requires_new_prepared_action": True,
+                "token_omitted": True,
+            }, 409
+        return {
+            "error": "prepared_action_execution_already_claimed",
+            "execution_lease": prepared_action_execution_lease_public(existing),
+            "execute_once": True,
+            "token_omitted": True,
+        }, 409
+    runtime_event(conn, "rtc_agent_gateway_local", "prepared_action.execution_claimed", "running", run_id=row["run_id"], task_id=row["task_id"], agent_id=row["requested_by_agent_id"], input_summary=row["action_type"], output_summary="Exclusive execution lease acquired before provider execution.", raw_payload_hash=row["action_hash"])
+    audit(conn, "agent", row["requested_by_agent_id"], "approval_wall.prepared_action_execution_claimed", "prepared_actions", action_id, dict(row), dict(row), {"lease_id": lease_id, "action_hash": row["action_hash"], "execute_once": True, "token_omitted": True})
+    return {
+        "provider": "agentops-approval-wall",
+        "operation": "prepared_action_execution_claim",
+        "status": "executing",
+        "execution_lease": prepared_action_execution_lease_public(lease),
+        "prepared_action": prepared_action_public(row),
+        "hash_verification": prepared_action_hash_verification(dict(row)),
+        "execute_once": True,
+        "token_omitted": True,
+    }, 201
+
+
+def agent_gateway_fail_prepared_action_execution(conn: sqlite3.Connection, action_id: str, body) -> tuple[dict, int]:
+    row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
+    ident = agent_gateway_identity({}, body)
+    access_error = prepared_action_route_access_error(
+        action_id=action_id,
+        row=row,
+        identity=ident,
+        operation="fail_execution",
+        enforce_agent_match=True,
+    )
+    if access_error:
+        return access_error
+    lease_id = str(body.get("lease_id") or "")
+    lease = conn.execute("SELECT * FROM prepared_action_execution_leases WHERE action_id=?", (action_id,)).fetchone()
+    if not lease or lease["lease_id"] != lease_id or lease["status"] != "executing":
+        return {"error": "prepared_action_execution_lease_mismatch", "token_omitted": True}, 409
+    reason = redact_text(body.get("failure_reason") or "Codex workspace-write failed closed.", 240)
+    now = now_iso()
+    conn.execute("UPDATE prepared_action_execution_leases SET status='failed', completed_at=?, failure_reason=? WHERE lease_id=? AND status='executing'", (now, reason, lease_id))
+    conn.execute("UPDATE prepared_actions SET status='expired', result_summary=? WHERE action_id=? AND status='approved'", (reason, action_id))
+    conn.execute("UPDATE runs SET status='blocked', approval_required=0, error_type='CodexWorkspaceWriteFailed', error_message=?, ended_at=? WHERE run_id=?", (reason, now, row["run_id"]))
+    conn.execute("UPDATE tasks SET status='blocked', updated_at=? WHERE task_id=?", (now, row["task_id"]))
+    if row["tool_call_id"]:
+        conn.execute("UPDATE tool_calls SET status='blocked', result_summary=?, ended_at=? WHERE tool_call_id=?", (reason, now, row["tool_call_id"]))
+    after = conn.execute("SELECT * FROM prepared_action_execution_leases WHERE lease_id=?", (lease_id,)).fetchone()
+    runtime_event(conn, "rtc_agent_gateway_local", "prepared_action.execution_failed", "blocked", run_id=row["run_id"], task_id=row["task_id"], agent_id=row["requested_by_agent_id"], input_summary=row["action_type"], output_summary=reason, raw_payload_hash=row["action_hash"])
+    audit(conn, "agent", row["requested_by_agent_id"], "approval_wall.prepared_action_execution_failed", "prepared_actions", action_id, dict(row), dict(conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()), {"lease_id": lease_id, "rollback_performed": bool(body.get("rollback_performed")), "retry_requires_new_prepared_action": True, "token_omitted": True})
+    return {
+        "provider": "agentops-approval-wall",
+        "operation": "prepared_action_execution_fail",
+        "status": "blocked",
+        "execution_lease": prepared_action_execution_lease_public(after),
+        "retry_requires_new_prepared_action": True,
+        "token_omitted": True,
+    }, 200
 
 
 def agent_gateway_prepare_action(conn, body) -> tuple[dict, int]:
@@ -9210,12 +9469,75 @@ def agent_gateway_resume_prepared_action(conn, action_id: str, body) -> tuple[di
     if access_error:
         return access_error
     approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
+    execution_lease = None
+    if row["action_type"] == "agent_worker.codex.workspace_write":
+        execution_lease = conn.execute("SELECT * FROM prepared_action_execution_leases WHERE action_id=?", (action_id,)).fetchone()
+        requested_lease_id = str(body.get("lease_id") or "")
+        lease_expiry = parse_iso_datetime(execution_lease["expires_at"] if execution_lease else None)
+        if (
+            execution_lease
+            and execution_lease["status"] == "executing"
+            and lease_expiry
+            and lease_expiry <= dt.datetime.now(dt.timezone.utc)
+        ):
+            now = now_iso()
+            reason = "Execution lease expired before evidence closure; retry requires a new prepared action."
+            conn.execute("UPDATE prepared_action_execution_leases SET status='failed',completed_at=?,failure_reason=? WHERE lease_id=? AND status='executing'", (now, reason, execution_lease["lease_id"]))
+            conn.execute("UPDATE prepared_actions SET status='expired',result_summary=? WHERE action_id=? AND status='approved'", (reason, action_id))
+            conn.execute("UPDATE runs SET status='blocked',approval_required=0,error_type='CodexWorkspaceWriteLeaseExpired',error_message=?,ended_at=? WHERE run_id=?", (reason, now, row["run_id"]))
+            conn.execute("UPDATE tasks SET status='blocked',updated_at=? WHERE task_id=?", (now, row["task_id"]))
+            return {
+                "error": "prepared_action_execution_lease_expired",
+                "execution_lease": prepared_action_execution_lease_public(conn.execute("SELECT * FROM prepared_action_execution_leases WHERE lease_id=?", (execution_lease["lease_id"],)).fetchone()),
+                "retry_requires_new_prepared_action": True,
+                "token_omitted": True,
+            }, 409
+        if (
+            not execution_lease
+            or execution_lease["lease_id"] != requested_lease_id
+            or execution_lease["status"] != "executing"
+            or execution_lease["action_hash"] != row["action_hash"]
+        ):
+            return {
+                "error": "prepared_action_execution_lease_required",
+                "prepared_action_id": action_id,
+                "execute_once": True,
+                "token_omitted": True,
+            }, 428
     blocked_response = build_prepared_action_resume_blocked_response(action_id=action_id, row=row, approval=approval)
     if blocked_response:
         payload, status = blocked_response
         if payload.get("error") == "action_hash_mismatch":
             audit(conn, "agent", row["requested_by_agent_id"], "approval_wall.prepared_action_hash_mismatch", "prepared_actions", action_id, dict(row), dict(row), {"stored_action_hash": row["action_hash"], "current_action_hash": payload.get("current_action_hash"), "token_omitted": True})
         return payload, status
+    workspace_manifest = None
+    workspace_manifest_verification = None
+    if row["action_type"] == "agent_worker.codex.workspace_write":
+        manifest_id = str(body.get("plan_evidence_manifest_id") or "")
+        workspace_manifest = conn.execute(
+            "SELECT * FROM plan_evidence_manifests WHERE manifest_id=?",
+            (manifest_id,),
+        ).fetchone() if manifest_id else None
+        if (
+            not workspace_manifest
+            or workspace_manifest["run_id"] != row["run_id"]
+            or workspace_manifest["task_id"] != row["task_id"]
+            or workspace_manifest["agent_id"] != row["requested_by_agent_id"]
+        ):
+            return {
+                "error": "verified_plan_evidence_manifest_required",
+                "prepared_action_id": action_id,
+                "token_omitted": True,
+            }, 428
+        workspace_manifest_verification = verify_plan_evidence_manifest_row(conn, workspace_manifest)
+        if workspace_manifest_verification.get("pass") is not True:
+            return {
+                "error": "verified_plan_evidence_manifest_required",
+                "prepared_action_id": action_id,
+                "plan_evidence_manifest_id": manifest_id,
+                "failed_checks": workspace_manifest_verification.get("failed_checks") or [],
+                "token_omitted": True,
+            }, 428
     current_hash = prepared_action_hash(dict(row))
     now = now_iso()
     provider_side_effect_id = redact_text(body.get("provider_side_effect_id") or f"side_effect_{action_id}_{row['action_hash'][:12]}", 180)
@@ -9229,6 +9551,11 @@ def agent_gateway_resume_prepared_action(conn, action_id: str, body) -> tuple[di
         refreshed = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
         return build_prepared_action_resume_blocked_response(action_id=action_id, row=refreshed or row, approval=approval) or ({"error": "prepared_action_already_consumed", "token_omitted": True}, 409)
     after = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
+    if execution_lease:
+        conn.execute(
+            "UPDATE prepared_action_execution_leases SET status='completed', completed_at=? WHERE lease_id=? AND status='executing'",
+            (now, execution_lease["lease_id"]),
+        )
     if row["tool_call_id"]:
         tool_before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (row["tool_call_id"],)).fetchone()
         conn.execute(
@@ -9237,11 +9564,26 @@ def agent_gateway_resume_prepared_action(conn, action_id: str, body) -> tuple[di
         )
         tool_after = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (row["tool_call_id"],)).fetchone()
         audit(conn, "agent", row["requested_by_agent_id"], "tool_call.prepared_action_resumed", "tool_calls", row["tool_call_id"], dict(tool_before) if tool_before else None, dict(tool_after) if tool_after else None, {"prepared_action_id": action_id, "approval_id": row["approval_id"], "action_hash": row["action_hash"], "token_omitted": True})
-    conn.execute("UPDATE runs SET approval_required=0, status=CASE WHEN status='waiting_approval' THEN 'running' ELSE status END WHERE run_id=?", (row["run_id"],))
-    conn.execute("UPDATE tasks SET status=CASE WHEN status='waiting_approval' THEN 'running' ELSE status END, updated_at=? WHERE task_id=?", (now, row["task_id"]))
+    if workspace_manifest:
+        conn.execute(
+            """UPDATE runs SET approval_required=0,status='completed',ended_at=?,duration_ms=?,
+               output_summary=?,output_tokens=?,error_type=NULL,error_message=NULL WHERE run_id=?""",
+            (
+                now,
+                parse_ms(body.get("duration_ms")),
+                redact_text(body.get("output_summary") or result_summary, 260),
+                max(int(body.get("output_tokens") or 0), 0),
+                row["run_id"],
+            ),
+        )
+        conn.execute("UPDATE tasks SET status='completed', updated_at=? WHERE task_id=?", (now, row["task_id"]))
+        conn.execute("UPDATE agents SET status='idle', updated_at=? WHERE agent_id=?", (now, row["requested_by_agent_id"]))
+    else:
+        conn.execute("UPDATE runs SET approval_required=0, status=CASE WHEN status='waiting_approval' THEN 'running' ELSE status END WHERE run_id=?", (row["run_id"],))
+        conn.execute("UPDATE tasks SET status=CASE WHEN status='waiting_approval' THEN 'running' ELSE status END, updated_at=? WHERE task_id=?", (now, row["task_id"]))
     runtime_event(conn, "rtc_agent_gateway_local", "prepared_action.resume", "completed", run_id=row["run_id"], task_id=row["task_id"], agent_id=row["requested_by_agent_id"], input_summary=row["action_type"], output_summary=result_summary, raw_payload_hash=row["action_hash"])
-    audit(conn, "agent", row["requested_by_agent_id"], "approval_wall.prepared_action_resumed", "prepared_actions", action_id, before, dict(after), {"approval_id": row["approval_id"], "action_hash": row["action_hash"], "provider_side_effect_id": provider_side_effect_id, "execute_once": True, "token_omitted": True})
-    return build_prepared_action_resume_success_response(
+    audit(conn, "agent", row["requested_by_agent_id"], "approval_wall.prepared_action_resumed", "prepared_actions", action_id, before, dict(after), {"approval_id": row["approval_id"], "action_hash": row["action_hash"], "provider_side_effect_id": provider_side_effect_id, "plan_evidence_manifest_id": workspace_manifest["manifest_id"] if workspace_manifest else None, "run_completed_in_resume": bool(workspace_manifest), "execute_once": True, "token_omitted": True})
+    payload = build_prepared_action_resume_success_response(
         prepared_action=after,
         approval=approval,
         provider_side_effect_id=provider_side_effect_id,
@@ -9250,7 +9592,16 @@ def agent_gateway_resume_prepared_action(conn, action_id: str, body) -> tuple[di
             "current_action_hash": current_hash,
             "match": True,
         },
-    ), 200
+    )
+    if execution_lease:
+        payload["execution_lease"] = prepared_action_execution_lease_public(
+            conn.execute("SELECT * FROM prepared_action_execution_leases WHERE lease_id=?", (execution_lease["lease_id"],)).fetchone()
+        )
+    if workspace_manifest:
+        payload["plan_evidence_manifest_id"] = workspace_manifest["manifest_id"]
+        payload["plan_evidence_pass"] = workspace_manifest_verification.get("pass")
+        payload["run_completed_in_resume"] = True
+    return payload, 200
 
 
 def agent_gateway_request_approval(conn, body) -> tuple[dict, int]:
@@ -10270,11 +10621,12 @@ def agent_gateway_record_artifact(conn, body) -> tuple[dict, int]:
         "title": redact_text(body.get("title") or "Agent Gateway Artifact", 160),
         "uri": redact_text(body.get("uri") or f"run://{run_id}", 240),
         "summary": redact_text(body.get("summary") or body.get("content_summary") or "Artifact summary recorded through Agent Gateway.", 360),
+        "content_hash": redact_text(body.get("content_hash"), 128) or None,
         "created_at": body.get("created_at") or now_iso(),
     }
     conn.execute(
-        """INSERT OR REPLACE INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,created_at)
-        VALUES(:artifact_id,:task_id,:run_id,:artifact_type,:title,:uri,:summary,:created_at)""",
+        """INSERT OR REPLACE INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,content_hash,created_at)
+        VALUES(:artifact_id,:task_id,:run_id,:artifact_type,:title,:uri,:summary,:content_hash,:created_at)""",
         row,
     )
     metadata = safe_json_metadata({
@@ -10364,9 +10716,9 @@ def agent_gateway_emit_audit(conn, body) -> tuple[dict, int]:
     entity_id = body.get("entity_id") or body.get("run_id") or agent_id
     action = body.get("action") or "agent_gateway.audit_emit"
     metadata = safe_json_metadata(body.get("metadata") or {})
-    audit(conn, "agent", agent_id, redact_text(action, 160), redact_text(entity_type, 80), redact_text(entity_id, 160), None, safe_json_metadata(body.get("after") or {"status": "emitted"}), metadata)
+    audit_id = audit(conn, "agent", agent_id, redact_text(action, 160), redact_text(entity_type, 80), redact_text(entity_id, 160), None, safe_json_metadata(body.get("after") or {"status": "emitted"}), metadata)
     runtime_event(conn, "rtc_agent_gateway_local", "audit.emit", "completed", run_id=body.get("run_id"), task_id=body.get("task_id"), agent_id=agent_id, output_summary=f"Audit emitted: {redact_text(action, 120)}")
-    return {"emitted": True, "entity_type": entity_type, "entity_id": entity_id}, 201
+    return {"emitted": True, "audit_id": audit_id, "entity_type": entity_type, "entity_id": entity_id}, 201
 
 
 def runtime_probe_action_args(provider: str, mode: str, connector_id: str, prompt_hash: str, target_resource: str) -> dict:
@@ -31854,7 +32206,9 @@ class Handler(BaseHTTPRequestHandler):
                     required_scope = "tasks:claim"
                 elif path.startswith("/api/agent-gateway/runs/") and path.endswith("/heartbeat"):
                     required_scope = "runs:write"
-                elif path.startswith("/api/agent-gateway/prepared-actions/") and path.endswith("/resume"):
+                elif path.startswith("/api/agent-gateway/prepared-actions/") and (
+                    path.endswith("/resume") or path.endswith("/claim-execution") or path.endswith("/fail-execution")
+                ):
                     required_scope = "toolcalls:write"
                 auth_ctx, auth_error = self.route_auth_context(conn, required_scope)
                 if auth_error:
@@ -31916,6 +32270,12 @@ class Handler(BaseHTTPRequestHandler):
                 elif path.startswith("/api/agent-gateway/prepared-actions/") and path.endswith("/resume"):
                     action_id = path_segment(path, -2)
                     payload, status = agent_gateway_resume_prepared_action(conn, action_id, body)
+                elif path.startswith("/api/agent-gateway/prepared-actions/") and path.endswith("/claim-execution"):
+                    action_id = path_segment(path, -2)
+                    payload, status = agent_gateway_claim_prepared_action_execution(conn, action_id, body)
+                elif path.startswith("/api/agent-gateway/prepared-actions/") and path.endswith("/fail-execution"):
+                    action_id = path_segment(path, -2)
+                    payload, status = agent_gateway_fail_prepared_action_execution(conn, action_id, body)
                 elif path == "/api/agent-gateway/memories/propose":
                     payload, status = agent_gateway_memory_propose(conn, body)
                 elif path == "/api/agent-gateway/evaluations/submit":
@@ -32441,6 +32801,13 @@ class Handler(BaseHTTPRequestHandler):
                 }, 409)
         prepared_action = get_prepared_action_for_approval(conn, approval_id)
         if prepared_action:
+            expires_at = parse_iso_datetime(prepared_action["expires_at"] or before["expires_at"])
+            if decision == "approved" and expires_at and expires_at <= dt.datetime.now(dt.timezone.utc):
+                conn.execute("UPDATE approvals SET decision='expired', decided_at=? WHERE approval_id=?", (now_iso(), approval_id))
+                conn.execute("UPDATE prepared_actions SET status='expired' WHERE action_id=?", (prepared_action["action_id"],))
+                audit(conn, "user", "usr_founder", "approval.blocked_prepared_action_expired", "prepared_actions", prepared_action["action_id"], dict(prepared_action), dict(prepared_action), {"approval_id": approval_id, "token_omitted": True})
+                conn.commit()
+                return self.send_json({"error": "prepared_action_expired", "prepared_action_id": prepared_action["action_id"], "approval_id": approval_id, "token_omitted": True}, 409)
             current_hash = prepared_action_hash(dict(prepared_action))
             if decision == "approved" and current_hash != prepared_action["action_hash"]:
                 audit(
