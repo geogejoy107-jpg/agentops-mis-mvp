@@ -29,6 +29,7 @@ python3 scripts/private_host_relay_tls_smoke.py
 python3 scripts/local_fake_relay_tunnel_smoke.py
 python3 scripts/relay_persistent_epoch_smoke.py
 python3 scripts/relay_tls_authenticated_tunnel_smoke.py
+python3 scripts/relay_connector_service_smoke.py
 python3 scripts/local_relay_connector_supervisor_smoke.py
 ```
 
@@ -112,6 +113,16 @@ certificate and completes an exact binary round trip with TLS terminating at
 the Host endpoint. Relay evidence remains payload-, key-, certificate-, path-,
 hostname- and port-free.
 
+`scripts/relay_connector_service_smoke.py` runs the same connector as a real
+foreground subprocess suitable for later Host/LaunchAgent ownership. Its
+strict `0600` config/secret inputs and atomic `0600` status/epoch outputs live
+under `0700` directories. Disabled configuration exits without reading a
+secret or attempting a connection; invalid secrets fail before network use.
+The enabled service establishes nested TLS, survives a forced Relay restart
+with a higher persisted epoch, completes a second browser-to-Host TLS round
+trip, and writes a clean stopped state on `SIGTERM`. Status and process output
+omit endpoint, route, key, certificate path and filesystem paths.
+
 ## Boundaries
 
 The frame smoke itself sends TLS-looking bytes and does not prove TLS; the
@@ -124,11 +135,11 @@ short test deadlines and an in-memory temporary tunnel key. It does not prove a
 deployed service, internet routing, long-lived browser sessions, TLS half-close
 or transport exactly-once delivery.
 
-The reconnect supervisor is not wired into Host startup or the installer. Its
+The foreground service is not yet wired into Host startup or the installer. Its
 epoch can now be crash-persistent when the protected allocator is supplied,
 while backoff/status state remains process-local. This proves the reconnect and
-epoch identity behavior needed by a later Host connector daemon, not the daemon
-or deployed Relay itself.
+epoch identity behavior needed by a later Host-owned connector daemon, not the
+deployed Relay itself.
 
 This slice does not yet implement SNI parsing, production Host-generated
 certificates, DNS/ACME coordination, a deployed Relay daemon,
@@ -140,8 +151,7 @@ advanced private-network profile and is intentionally untouched.
 
 ## Next Slice
 
-Turn the accepted in-process supervisor and crash-safe allocator into a
-disabled-by-default Host connector service with certificate lifecycle and
-operator enable/disable controls. Then add SNI/multi-Host routing and deploy the
-same authority-free boundary behind a stable domain for 3C physical browser
-acceptance.
+Wire the accepted disabled-by-default foreground connector into the Host
+lifecycle with certificate provisioning and Owner enable/disable controls.
+Then add SNI/multi-Host routing and deploy the same authority-free boundary
+behind a stable domain for 3C physical browser acceptance.

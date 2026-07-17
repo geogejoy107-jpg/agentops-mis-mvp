@@ -41,10 +41,10 @@ REQUEST = b"\x00relay-outer-tls-host-inner-tls-request\xff"
 RESPONSE = b"\xffrelay-outer-tls-host-inner-tls-response\x00"
 
 
-def bind_listener() -> socket.socket:
+def bind_listener(port: int = 0) -> socket.socket:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listener.bind(("127.0.0.1", 0))
+    listener.bind(("127.0.0.1", port))
     listener.listen(16)
     return listener
 
