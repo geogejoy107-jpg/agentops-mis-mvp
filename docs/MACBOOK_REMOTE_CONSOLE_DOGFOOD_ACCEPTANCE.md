@@ -76,6 +76,23 @@ The Console app contains only the non-secret Host URL and browser launch flags.
 It does not install AgentOps, Python, Node, Hermes, OpenClaw or another model on
 the MacBook; all authority and execution remain on the Mini.
 
+After the Mini upgraded to exact-package preview.33 and restarted the Host, a
+new bounded MacBook Codex receipt launched the app but did not observe the path
+or title through the dedicated profile's History database. A separate direct
+read-only diagnostic showed that the app existed and launched, its dedicated
+Chrome process used `--no-proxy-server`, and the Host was reachable; the History
+database itself contained zero URL rows. The negative receipt was therefore an
+invalid observation method, not proof that the page failed to render.
+
+A fresh temporary no-account Chrome profile then used the exact URL already
+embedded in the installed app and a loopback-only DevTools endpoint. Its
+allowlisted target readback observed an HTTPS page, the `/workspace` path, and
+the exact `AgentOps MIS` title. The private hostname and full URL were omitted;
+no login, form submission, credential/cookie read, repository change, network
+setting change, screenshot of the full desktop, or terminal scrollback read
+occurred. This re-accepts the physical app entry/rendering path after the
+preview.33 Host restart, but not an authenticated human workflow.
+
 ## Not Yet Accepted
 
 - direct rendering in the user's ordinary proxy-managed Chrome profile;
