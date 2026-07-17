@@ -204,6 +204,38 @@ LAN is not equivalent to public hosted mode.
 - no unauthenticated remote dashboard;
 - no API key embedded in query strings or generated console URLs.
 
+### Owner Relay control contract
+
+Easy remote console activation is a two-stage Owner action over the existing
+Human Session boundary:
+
+```http
+GET  /api/host/relay
+POST /api/host/relay/transitions
+POST /api/host/relay/transitions/{transition_ref}/confirm
+```
+
+The first POST accepts only `{"action":"enable"}` or
+`{"action":"disable"}` and returns a short-lived, single-use transition ref.
+The confirmation POST must repeat the same action. Both POSTs require exact
+Origin/Host validation and the Human Session CSRF token. All three routes require
+the `owner` role; Agent Gateway, Host machine, admin-key and other bearer
+credentials never authorize this browser control surface.
+
+Prepare binds the exact active/prepared Relay config, tunnel secret, CA, Host
+certificate/private-key material and relevant Host config to a private digest.
+Confirm revalidates the digest, expiry and action before an atomic config
+transition. The digest, filesystem paths, hostnames, ports, route, certificate
+material and machine credential never enter the HTTP response, audit metadata or
+browser storage. A transition is replay-safe and a failed second config write
+restores the first write before reporting failure.
+
+This control does not generate certificates, register DNS, provision Relay
+credentials or prove a deployed Relay. Enabling is refused while another network
+publication profile owns the Host. Runtime status may report a healthy local
+connector, but `remote_ready` remains false until a deployed Relay and physical
+browser-only receipt exist.
+
 ## 6. Application Serving Model
 
 Private host mode must use a production UI build, not the Vite development

@@ -74,6 +74,31 @@ def run_host(env: dict[str, str], *args: str, expected: tuple[int, ...] = (0,)) 
     return process.returncode, payload
 
 
+def read_relay_projection(env: dict[str, str]) -> dict:
+    process = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json; "
+                "from agentops_mis_cli.host import relay_connector_projection; "
+                "print(json.dumps(relay_connector_projection(), sort_keys=True))"
+            ),
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    try:
+        payload = json.loads(process.stdout)
+    except ValueError:
+        return {}
+    return payload if process.returncode == 0 and isinstance(payload, dict) else {}
+
+
 def process_alive(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -161,6 +186,7 @@ def main() -> int:
     epoch_startup_failed_closed = False
     prepared_material_preflight = False
     active_relay_preflight_rejected = False
+    managed_runtime_projection = False
     bounded_shutdown = PROCESS_SHUTDOWN_GRACE_SECONDS + PROCESS_KILL_GRACE_SECONDS < 10
     if not bounded_shutdown:
         failures.append("Stack cleanup bound exceeds the Host stop grace period")
@@ -390,6 +416,18 @@ def main() -> int:
             if not enabled_owned:
                 failures.append("enabled Relay connector was not owned by the Host stack")
 
+            relay_projection = read_relay_projection(env)
+            managed_runtime_projection = bool(
+                relay_projection.get("enabled") is True
+                and relay_projection.get("host_lifecycle_integrated") is True
+                and relay_projection.get("runtime_ready") is True
+                and relay_projection.get("remote_ready") is False
+                and relay_projection.get("ready") is False
+                and relay_projection.get("state") in {"connecting", "connected", "backoff"}
+            )
+            if not managed_runtime_projection:
+                failures.append("Host status did not verify the managed Relay runtime conservatively")
+
             first_connector_pid = first_children[0] if first_children else 0
             relay_environment_keys = process_environment_keys(first_connector_pid)
             relay_environment_minimal = bool(
@@ -448,6 +486,7 @@ def main() -> int:
         "failures": failures,
         "foreign_connector_preserved": foreign_connector_preserved,
         "invalid_config_failed_closed": invalid_failed_closed,
+        "managed_runtime_projection": managed_runtime_projection,
         "ok": not failures,
         "operation": "private_host_relay_lifecycle_smoke",
         "prepared_material_preflight": prepared_material_preflight,

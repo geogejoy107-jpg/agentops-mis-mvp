@@ -188,6 +188,10 @@ environment rather than only testing the projection helper.
 `agentops host relay-preflight` separately validates pre-provisioned private
 material and the exact Host backend port while leaving the active config at the
 disabled default; it does not bind a socket, contact Relay or change Tailscale.
+The Host runtime projection additionally requires a verified Host process
+identity, one direct managed connector child and a private post-start status;
+it exposes local runtime health while keeping `remote_ready` false because this
+fixture is not a deployed Relay.
 The fixture observes no
 Tailscale invocation and uses an unavailable loopback fake Relay, so it proves
 lifecycle/backoff ownership rather than a deployed remote endpoint.

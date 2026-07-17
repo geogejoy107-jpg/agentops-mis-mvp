@@ -224,6 +224,51 @@ def relay_connector_projection(p: dict[str, Path] | None = None) -> dict:
             "state": "invalid_config",
         }
     enabled = bool(config["enabled"])
+    if enabled:
+        pid_record = _read_private_bounded_json(host_paths["pid"]) or {}
+        try:
+            parent_pid = int(pid_record.get("pid") or 0)
+        except (TypeError, ValueError):
+            parent_pid = 0
+        children = managed_relay_child_pids(parent_pid, host_paths["relay_status"])
+        status = _read_private_bounded_json(host_paths["relay_status"])
+        try:
+            status_mtime = (
+                host_paths["relay_status"].stat().st_mtime
+                if status is not None and not host_paths["relay_status"].is_symlink()
+                else 0
+            )
+            started_at = float(pid_record.get("started_at_epoch") or 0)
+        except (OSError, TypeError, ValueError):
+            status_mtime = 0
+            started_at = 0
+        runtime_state = str((status or {}).get("state") or "")
+        runtime_integrated = bool(
+            managed_process_record_matches(pid_record, parent_pid)
+            and children is not None
+            and len(children) == 1
+            and status is not None
+            and status_mtime >= started_at
+            and status.get("enabled") is True
+            and status.get("host_lifecycle_integrated") is True
+            and status.get("host_tls_ready") is True
+            and isinstance(status.get("current_epoch"), int)
+            and status["current_epoch"] > 0
+            and runtime_state in {"connecting", "connected", "backoff"}
+        )
+        if runtime_integrated:
+            return {
+                **base,
+                "configured": True,
+                "enabled": True,
+                "state": runtime_state,
+                "runtime_ready": True,
+                "remote_ready": False,
+                "host_tls_ready": True,
+                "host_lifecycle_integrated": True,
+                "ok": True,
+                "ready": False,
+            }
     return {
         **base,
         "configured": True,
@@ -324,6 +369,43 @@ def managed_process_record_matches(record: dict, pid: int) -> bool:
             identity["process_identity_hash"],
         )
     )
+
+
+def managed_relay_child_pids(parent_pid: int, status_path: Path) -> list[int] | None:
+    if parent_pid <= 0:
+        return []
+    try:
+        process = subprocess.run(
+            ["/bin/ps", "-axo", "pid=,ppid=,command="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if process.returncode != 0:
+        return None
+    expected_status = str(status_path)
+    children: list[int] = []
+    for raw in process.stdout.splitlines():
+        columns = raw.strip().split(None, 2)
+        if len(columns) != 3:
+            continue
+        try:
+            pid = int(columns[0])
+            ppid = int(columns[1])
+        except ValueError:
+            continue
+        command = columns[2]
+        if (
+            ppid == parent_pid
+            and "-m agentops_mis_cli.relay_connector_service" in command
+            and "--managed-by-host-stack" in command
+            and expected_status in command
+        ):
+            children.append(pid)
+    return children
 
 
 def managed_host_running() -> bool:

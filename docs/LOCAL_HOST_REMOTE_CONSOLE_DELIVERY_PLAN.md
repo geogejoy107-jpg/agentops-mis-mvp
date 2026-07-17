@@ -199,8 +199,12 @@ Implementation slices:
    excluded. A read-only `agentops host relay-preflight` now validates an
    operator-provisioned private config, tunnel secret, CA, Host certificate,
    private-key pairing and exact backend port without enabling Relay, binding a
-   socket or using the network. Owner enable/disable controls, fresh runtime-status
-   projection, certificate lifecycle, Relay-side SNI routing, credential
+   socket or using the network. Host status now recognizes an enabled runtime
+   only when the private PID record matches the current Host stack, exactly one
+   direct managed connector child exists, and a post-start private status proves
+   Host TLS plus a durable epoch; remote readiness remains false without a
+   deployed Relay. Owner enable/disable controls, certificate lifecycle,
+   Relay-side SNI routing, credential
    provisioning, installation into the current preview, and the deployed Relay
    remain open.
 3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host

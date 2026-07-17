@@ -540,6 +540,7 @@ def required_role(path: str, method: str) -> str:
     if method == "GET":
         if path in {
             "/api/human-auth/sessions",
+            "/api/host/relay",
             "/api/workers/local/logs",
             "/api/runs/export",
             "/api/memories/export",
@@ -547,6 +548,7 @@ def required_role(path: str, method: str) -> str:
             return "owner"
         return "viewer"
     if path == "/api/knowledge/index" or path.startswith((
+        "/api/host/relay",
         "/api/human-auth/sessions",
         "/api/human-auth/pairing-invitations",
         "/api/human-auth/devices",
