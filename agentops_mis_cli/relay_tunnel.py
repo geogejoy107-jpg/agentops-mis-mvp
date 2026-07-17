@@ -1,16 +1,18 @@
-"""Bounded local fake Relay using one control socket and per-browser data sockets.
+"""Bounded Relay tunnel using one control socket and per-browser data sockets.
 
-This module intentionally owns no listeners, certificates, TLS contexts, files, or
-database state.  The caller supplies already-bound listeners; the Host connector
-initiates every connection and may target only a literal IPv4 loopback endpoint.
+The fake Relay owns no certificate or database state. The caller supplies
+already-bound listeners. A plain Host connector may target only literal IPv4
+loopback; a remote target requires a caller-owned, hostname-verifying TLS context.
 """
 from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import secrets
 import socket
+import ssl
 import struct
 import threading
 import time
@@ -41,6 +43,28 @@ _FRAME_KEYS = {
     "seq",
     "version",
 }
+
+
+def _valid_dns_name(value: str) -> bool:
+    if not isinstance(value, str) or not value.isascii() or not (1 <= len(value) <= 253):
+        return False
+    candidate = value[:-1] if value.endswith(".") else value
+    labels = candidate.split(".")
+    return bool(labels) and all(
+        1 <= len(label) <= 63
+        and label[0].isalnum()
+        and label[-1].isalnum()
+        and all(char.isalnum() or char == "-" for char in label)
+        for label in labels
+    )
+
+
+def _valid_network_host(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return _valid_dns_name(value)
 
 
 class RelayProtocolError(Exception):
@@ -123,12 +147,16 @@ def _read_exact(stream: socket.socket, size: int, deadline: float) -> bytes:
     while remaining:
         timeout = deadline - time.monotonic()
         if timeout <= 0:
-            raise RelayProtocolError("read_timeout")
+            raise RelayProtocolError(
+                "read_timeout" if remaining == size else "partial_read_timeout"
+            )
         stream.settimeout(timeout)
         try:
             chunk = stream.recv(remaining)
         except socket.timeout as exc:
-            raise RelayProtocolError("read_timeout") from exc
+            raise RelayProtocolError(
+                "read_timeout" if remaining == size else "partial_read_timeout"
+            ) from exc
         except OSError as exc:
             raise RelayProtocolError("read_failed") from exc
         if not chunk:
@@ -151,7 +179,12 @@ def receive_frame(
     size = struct.unpack("!I", _read_exact(stream, 4, deadline))[0]
     if size < 2 or size > MAX_FRAME_BYTES:
         raise RelayProtocolError("frame_size_rejected")
-    body = _read_exact(stream, size, deadline)
+    try:
+        body = _read_exact(stream, size, deadline)
+    except RelayProtocolError as exc:
+        if exc.code == "read_timeout":
+            raise RelayProtocolError("partial_read_timeout") from exc
+        raise
     try:
         decoded = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -641,13 +674,35 @@ class HostTunnelConnector:
         route: str,
         epoch: int,
         key: bytes,
+        relay_ssl_context: ssl.SSLContext | None = None,
+        relay_server_hostname: str | None = None,
     ) -> None:
-        if relay_address[0] != "127.0.0.1":
-            raise ValueError("local fake Relay address must be literal 127.0.0.1")
+        if (
+            not isinstance(relay_address, tuple)
+            or len(relay_address) != 2
+            or not isinstance(relay_address[0], str)
+            or not _valid_network_host(relay_address[0])
+        ):
+            raise ValueError("invalid Relay address")
         if host_tls_target[0] != "127.0.0.1":
             raise ValueError("Host TLS target must be literal 127.0.0.1")
         if not (1 <= int(relay_address[1]) <= 65535 and 1 <= int(host_tls_target[1]) <= 65535):
             raise ValueError("invalid TCP port")
+        if relay_ssl_context is None:
+            if relay_address[0] != "127.0.0.1" or relay_server_hostname is not None:
+                raise ValueError("plain Relay transport is restricted to literal 127.0.0.1")
+        else:
+            if not isinstance(relay_ssl_context, ssl.SSLContext):
+                raise TypeError("Relay TLS context must be an SSLContext")
+            if relay_ssl_context.verify_mode != ssl.CERT_REQUIRED or not relay_ssl_context.check_hostname:
+                raise ValueError("Relay TLS must require certificate and hostname verification")
+            if relay_ssl_context.minimum_version < ssl.TLSVersion.TLSv1_2:
+                raise ValueError("Relay TLS minimum version must be TLS 1.2 or newer")
+            if (
+                not isinstance(relay_server_hostname, str)
+                or not _valid_dns_name(relay_server_hostname)
+            ):
+                raise ValueError("invalid Relay TLS server hostname")
         _validate_frame(RelayFrame("register", route, epoch, 1))
         if len(key) < 32:
             raise RelayProtocolError("weak_tunnel_key")
@@ -656,6 +711,8 @@ class HostTunnelConnector:
         self._route = route
         self._epoch = epoch
         self._key = bytes(key)
+        self._relay_ssl_context = relay_ssl_context
+        self._relay_server_hostname = relay_server_hostname
         self.metadata = BoundedRelayMetadata()
         self._stop = threading.Event()
         self._control: socket.socket | None = None
@@ -670,10 +727,24 @@ class HostTunnelConnector:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
+    def _connect_relay(self) -> socket.socket:
+        raw = socket.create_connection(self._relay_address, timeout=IO_TIMEOUT_SECONDS)
+        if self._relay_ssl_context is None:
+            return raw
+        try:
+            raw.settimeout(IO_TIMEOUT_SECONDS)
+            return self._relay_ssl_context.wrap_socket(
+                raw,
+                server_hostname=self._relay_server_hostname,
+            )
+        except Exception:
+            _close_socket(raw)
+            raise
+
     def _run(self) -> None:
         control: socket.socket | None = None
         try:
-            control = socket.create_connection(self._relay_address, timeout=IO_TIMEOUT_SECONDS)
+            control = self._connect_relay()
             with self._lock:
                 self._control = control
             send_frame(control, RelayFrame("register", self._route, self._epoch, 1), self._key)
@@ -685,15 +756,11 @@ class HostTunnelConnector:
             expected_seq = 2
             while not self._stop.is_set():
                 try:
-                    control.settimeout(0.5)
-                    available = control.recv(1, socket.MSG_PEEK)
-                except socket.timeout:
-                    continue
-                except OSError as exc:
-                    raise RelayProtocolError("read_failed") from exc
-                if not available:
-                    raise RelayProtocolError("unexpected_eof")
-                opened = receive_frame(control, self._key)
+                    opened = receive_frame(control, self._key, timeout_seconds=0.5)
+                except RelayProtocolError as exc:
+                    if exc.code == "read_timeout":
+                        continue
+                    raise
                 if opened.kind != "open" or opened.route != self._route or opened.epoch != self._epoch:
                     raise RelayProtocolError("invalid_open")
                 if opened.seq != expected_seq:
@@ -715,6 +782,9 @@ class HostTunnelConnector:
         except RelayProtocolError as exc:
             if exc.code not in {"read_timeout", "unexpected_eof", "read_failed"} or not self._stop.is_set():
                 self._error = exc.code
+        except ssl.SSLError:
+            if not self._stop.is_set():
+                self._error = "relay_tls_failed"
         except OSError:
             if not self._stop.is_set():
                 self._error = "connection_failed"
@@ -730,7 +800,7 @@ class HostTunnelConnector:
         data: socket.socket | None = None
         try:
             target = socket.create_connection(self._target, timeout=IO_TIMEOUT_SECONDS)
-            data = socket.create_connection(self._relay_address, timeout=IO_TIMEOUT_SECONDS)
+            data = self._connect_relay()
             with self._lock:
                 if self._stop.is_set():
                     raise RelayProtocolError("connector_stopping")

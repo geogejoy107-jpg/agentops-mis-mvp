@@ -414,6 +414,7 @@ def main() -> int:
             "events",
             "failure_code",
             "limitations",
+            "relay_tls_enabled",
             "state",
             "successful_connections",
         } or any(
@@ -421,6 +422,8 @@ def main() -> int:
             for event in reconnected_status["events"]
         ):
             failures.append("supervisor status contained a non-allowlisted field")
+        if reconnected_status["relay_tls_enabled"] is not False:
+            failures.append("plain loopback supervisor incorrectly reported Relay TLS")
         if reconnected_status["limitations"] != {
             "crash_persistent_epoch": True,
             "deployed_relay": False,

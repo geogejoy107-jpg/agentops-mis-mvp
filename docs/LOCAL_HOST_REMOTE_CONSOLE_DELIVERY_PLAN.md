@@ -183,8 +183,10 @@ Implementation slices:
    Host-initiated TLS-over-tunnel composition and a disabled-by-default,
    in-process reconnect supervisor are also executable. A protected atomic
    epoch allocator now prevents connector epoch reuse across process crashes.
-   Persistent Host connector lifecycle, certificate lifecycle, SNI routing,
-   production tunnel authentication, and the deployed Relay remain open.
+   An outer certificate-verifying Relay TLS channel plus inner Host-terminated
+   application TLS now proves the production mutual-authentication shape
+   locally. Persistent Host connector lifecycle, certificate lifecycle, SNI
+   routing, credential provisioning, and the deployed Relay remain open.
 3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host
    Console origin, bounded operations metadata, deployment and rollback.
 4. `3D Physical acceptance`: fresh browser-only device, real Hermes/OpenClaw

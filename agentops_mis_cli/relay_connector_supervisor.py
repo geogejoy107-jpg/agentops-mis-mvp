@@ -1,16 +1,22 @@
-"""Disabled-by-default in-process supervisor for the loopback fake Relay connector.
+"""Disabled-by-default in-process supervisor for an outbound Relay connector.
 
 This test-only slice owns no listener, network configuration, persistent state, or
 credentials. A caller may supply a separate crash-safe epoch allocator.
 """
 from __future__ import annotations
 
+import ssl
 import threading
 import time
 from collections import deque
 from typing import Any, Protocol
 
-from agentops_mis_cli.relay_tunnel import HostTunnelConnector, RelayProtocolError
+from agentops_mis_cli.relay_tunnel import (
+    HostTunnelConnector,
+    RelayProtocolError,
+    _valid_dns_name,
+    _valid_network_host,
+)
 
 
 MAX_STATUS_EVENTS = 32
@@ -37,12 +43,29 @@ class RelayConnectorSupervisor:
         enabled: bool = False,
         initial_epoch: int = 0,
         epoch_allocator: RelayEpochAllocator | None = None,
+        relay_ssl_context: ssl.SSLContext | None = None,
+        relay_server_hostname: str | None = None,
         connect_timeout_seconds: float = 1.0,
         backoff_initial_seconds: float = 0.05,
         backoff_cap_seconds: float = 1.0,
     ) -> None:
-        self._validate_address(relay_address, "Relay")
+        self._validate_address(
+            relay_address,
+            "Relay",
+            require_loopback=relay_ssl_context is None,
+        )
         self._validate_address(host_tls_target, "Host TLS")
+        if relay_ssl_context is None and relay_server_hostname is not None:
+            raise ValueError("plain Relay transport cannot use a TLS hostname")
+        if relay_ssl_context is not None:
+            if not isinstance(relay_ssl_context, ssl.SSLContext):
+                raise TypeError("Relay TLS context must be an SSLContext")
+            if relay_ssl_context.verify_mode != ssl.CERT_REQUIRED or not relay_ssl_context.check_hostname:
+                raise ValueError("Relay TLS must verify certificate and hostname")
+            if relay_ssl_context.minimum_version < ssl.TLSVersion.TLSv1_2:
+                raise ValueError("Relay TLS minimum version must be TLS 1.2 or newer")
+            if not isinstance(relay_server_hostname, str) or not _valid_dns_name(relay_server_hostname):
+                raise ValueError("Relay TLS server hostname is required")
         if not isinstance(key, (bytes, bytearray)) or len(key) < 32:
             raise RelayProtocolError("weak_tunnel_key")
         if not isinstance(route, str) or not (1 <= len(route) <= 96) or not all(
@@ -71,6 +94,8 @@ class RelayConnectorSupervisor:
         self._enabled = bool(enabled)
         self._epoch = initial_epoch
         self._epoch_allocator = epoch_allocator
+        self._relay_ssl_context = relay_ssl_context
+        self._relay_server_hostname = relay_server_hostname
         self._connect_timeout_seconds = float(connect_timeout_seconds)
         self._backoff_initial_seconds = float(backoff_initial_seconds)
         self._backoff_cap_seconds = float(backoff_cap_seconds)
@@ -87,11 +112,18 @@ class RelayConnectorSupervisor:
         self._record_locked("disabled")
 
     @staticmethod
-    def _validate_address(address: tuple[str, int], label: str) -> None:
+    def _validate_address(
+        address: tuple[str, int],
+        label: str,
+        *,
+        require_loopback: bool = True,
+    ) -> None:
         if (
             not isinstance(address, tuple)
             or len(address) != 2
-            or address[0] != "127.0.0.1"
+            or not isinstance(address[0], str)
+            or not _valid_network_host(address[0])
+            or (require_loopback and address[0] != "127.0.0.1")
             or not isinstance(address[1], int)
             or isinstance(address[1], bool)
             or not (1 <= address[1] <= 65535)
@@ -161,6 +193,8 @@ class RelayConnectorSupervisor:
                 route=self._route,
                 epoch=epoch,
                 key=self._key,
+                relay_ssl_context=self._relay_ssl_context,
+                relay_server_hostname=self._relay_server_hostname,
             )
             with self._lock:
                 if self._stop.is_set():
@@ -225,6 +259,7 @@ class RelayConnectorSupervisor:
                 "enabled": self._enabled,
                 "events": [dict(event) for event in self._events],
                 "failure_code": self._failure_code,
+                "relay_tls_enabled": self._relay_ssl_context is not None,
                 "limitations": {
                     "crash_persistent_epoch": self._epoch_allocator is not None,
                     "deployed_relay": False,

@@ -28,6 +28,7 @@ python3 scripts/local_l4_relay_transport_smoke.py
 python3 scripts/private_host_relay_tls_smoke.py
 python3 scripts/local_fake_relay_tunnel_smoke.py
 python3 scripts/relay_persistent_epoch_smoke.py
+python3 scripts/relay_tls_authenticated_tunnel_smoke.py
 python3 scripts/local_relay_connector_supervisor_smoke.py
 ```
 
@@ -99,6 +100,18 @@ enabled, never the state path or connector identity. Corrupt or mismatched
 state stops before network connection with only the bounded
 `epoch_allocation_failed` status code.
 
+`scripts/relay_tls_authenticated_tunnel_smoke.py` adds the production tunnel
+authentication shape without deploying an endpoint. Plain connector transport
+remains restricted to literal loopback. A non-loopback-capable connector must
+receive a caller-owned TLS context with certificate and hostname verification.
+The loopback fixture proves an untrusted Relay certificate fails before HMAC
+registration, a trusted TLS connection still rejects the wrong Host HMAC key,
+and both control and per-browser data connections use Relay-authenticated TLS.
+Inside that outer tunnel, the browser verifies a different Host application
+certificate and completes an exact binary round trip with TLS terminating at
+the Host endpoint. Relay evidence remains payload-, key-, certificate-, path-,
+hostname- and port-free.
+
 ## Boundaries
 
 The frame smoke itself sends TLS-looking bytes and does not prove TLS; the
@@ -118,8 +131,7 @@ epoch identity behavior needed by a later Host connector daemon, not the daemon
 or deployed Relay itself.
 
 This slice does not yet implement SNI parsing, production Host-generated
-certificates,
-mutual tunnel authentication, DNS/ACME coordination, a deployed Relay daemon,
+certificates, DNS/ACME coordination, a deployed Relay daemon,
 multi-Host routing, certificate rotation, or a stock-browser public endpoint.
 It also does not claim crash-proof exactly-once byte delivery; product-level
 idempotency remains at the Host ledger/action layer.

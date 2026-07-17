@@ -90,6 +90,7 @@ jobs:
           timeout 120s python3 scripts/private_host_relay_tls_smoke.py
           timeout 120s python3 scripts/local_fake_relay_tunnel_smoke.py
           timeout 120s python3 scripts/relay_persistent_epoch_smoke.py
+          timeout 120s python3 scripts/relay_tls_authenticated_tunnel_smoke.py
           timeout 120s python3 scripts/local_relay_connector_supervisor_smoke.py
           timeout 120s python3 scripts/private_host_rc_status_smoke.py
           timeout 120s python3 scripts/release_branch_control_smoke.py
