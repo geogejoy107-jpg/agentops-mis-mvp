@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 import re
+import math
 import socket
 import struct
+import threading
 from collections import deque
 from dataclasses import dataclass
 
@@ -24,6 +26,8 @@ MAX_REPLAY_STREAMS = 256
 _LENGTHS = struct.Struct("!II")
 _REFERENCE = re.compile(r"^[A-Za-z0-9_-]{8,96}$")
 _DIRECTIONS = {"console_to_host", "host_to_console"}
+_EVENT_STATUSES = {"failed", "forwarded", "rejected"}
+_ERROR_CLASS = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
 class RelayProtocolError(ValueError):
@@ -147,37 +151,104 @@ class ReplayWindow:
         self._state: dict[tuple[str, str], tuple[int, int]] = {}
         self._requests: set[tuple[str, str, str]] = set()
         self._request_order: deque[tuple[str, str, str]] = deque()
+        self._pending: dict[tuple[str, str], tuple[int, int, tuple[str, str, str]]] = {}
+        self._pending_requests: set[tuple[str, str, str]] = set()
+        self._failed_epochs: dict[tuple[str, str], int] = {}
         self._max_request_history = max_request_history
         self._max_streams = max_streams
+        self._lock = threading.Lock()
 
-    def accept(self, frame: RelayFrame) -> None:
+    def reserve(self, frame: RelayFrame) -> tuple[str, str, int, int, str]:
         frame.validate()
         key = (frame.route_ref, frame.direction)
-        previous = self._state.get(key)
-        if previous is None:
-            if len(self._state) >= self._max_streams:
-                raise RelayProtocolError("stream_capacity_exceeded")
-            if frame.message_id != 1:
-                raise RelayProtocolError("message_gap")
-        else:
-            previous_epoch, previous_message_id = previous
-            if frame.epoch < previous_epoch:
-                raise RelayProtocolError("stale_epoch")
-            if frame.epoch == previous_epoch:
-                if frame.message_id <= previous_message_id:
-                    raise RelayProtocolError("replayed_message")
-                if frame.message_id != previous_message_id + 1:
-                    raise RelayProtocolError("message_gap")
-            elif frame.message_id != 1:
-                raise RelayProtocolError("new_epoch_must_restart_sequence")
         request_key = (frame.route_ref, frame.direction, frame.request_id)
-        if request_key in self._requests:
-            raise RelayProtocolError("replayed_request")
-        self._state[key] = (frame.epoch, frame.message_id)
-        if len(self._request_order) >= self._max_request_history:
-            self._requests.discard(self._request_order.popleft())
-        self._requests.add(request_key)
-        self._request_order.append(request_key)
+        with self._lock:
+            if key in self._pending:
+                raise RelayProtocolError("stream_busy")
+            previous = self._state.get(key)
+            failed_epoch = self._failed_epochs.get(key)
+            if failed_epoch is not None and frame.epoch <= failed_epoch:
+                raise RelayProtocolError("stream_epoch_failed")
+            if previous is None:
+                if len(self._state) + len(self._pending) >= self._max_streams:
+                    raise RelayProtocolError("stream_capacity_exceeded")
+                if frame.message_id != 1:
+                    raise RelayProtocolError("message_gap")
+            else:
+                previous_epoch, previous_message_id = previous
+                if frame.epoch < previous_epoch:
+                    raise RelayProtocolError("stale_epoch")
+                if frame.epoch == previous_epoch:
+                    if frame.message_id <= previous_message_id:
+                        raise RelayProtocolError("replayed_message")
+                    if frame.message_id != previous_message_id + 1:
+                        raise RelayProtocolError("message_gap")
+                elif frame.message_id != 1:
+                    raise RelayProtocolError("new_epoch_must_restart_sequence")
+            if request_key in self._requests or request_key in self._pending_requests:
+                raise RelayProtocolError("replayed_request")
+            self._pending[key] = (frame.epoch, frame.message_id, request_key)
+            self._pending_requests.add(request_key)
+        return (frame.route_ref, frame.direction, frame.epoch, frame.message_id, frame.request_id)
+
+    def commit(self, reservation: tuple[str, str, int, int, str]) -> None:
+        route_ref, direction, epoch, message_id, request_id = reservation
+        key = (route_ref, direction)
+        request_key = (route_ref, direction, request_id)
+        with self._lock:
+            if self._pending.get(key) != (epoch, message_id, request_key):
+                raise RelayProtocolError("invalid_reservation")
+            self._pending.pop(key)
+            self._pending_requests.discard(request_key)
+            self._state[key] = (epoch, message_id)
+            if self._failed_epochs.get(key, 0) < epoch:
+                self._failed_epochs.pop(key, None)
+            if len(self._request_order) >= self._max_request_history:
+                self._requests.discard(self._request_order.popleft())
+            self._requests.add(request_key)
+            self._request_order.append(request_key)
+
+    def rollback(self, reservation: tuple[str, str, int, int, str]) -> None:
+        route_ref, direction, epoch, message_id, request_id = reservation
+        key = (route_ref, direction)
+        request_key = (route_ref, direction, request_id)
+        with self._lock:
+            if self._pending.get(key) == (epoch, message_id, request_key):
+                self._pending.pop(key)
+                self._pending_requests.discard(request_key)
+
+    def fail_epoch(self, reservation: tuple[str, str, int, int, str]) -> None:
+        route_ref, direction, epoch, message_id, request_id = reservation
+        key = (route_ref, direction)
+        request_key = (route_ref, direction, request_id)
+        with self._lock:
+            if self._pending.get(key) != (epoch, message_id, request_key):
+                raise RelayProtocolError("invalid_reservation")
+            self._pending.pop(key)
+            self._pending_requests.discard(request_key)
+            self._state[key] = (epoch, message_id)
+            self._failed_epochs[key] = epoch
+            if len(self._request_order) >= self._max_request_history:
+                self._requests.discard(self._request_order.popleft())
+            self._requests.add(request_key)
+            self._request_order.append(request_key)
+
+    def accept(self, frame: RelayFrame) -> None:
+        reservation = self.reserve(frame)
+        self.commit(reservation)
+
+    def release_route(self, route_ref: str) -> None:
+        if not isinstance(route_ref, str) or not _REFERENCE.fullmatch(route_ref):
+            raise RelayProtocolError("invalid_route_ref")
+        with self._lock:
+            if any(key[0] == route_ref for key in self._pending):
+                raise RelayProtocolError("route_busy")
+            keys = [key for key in self._state if key[0] == route_ref]
+            for key in keys:
+                self._state.pop(key, None)
+                self._failed_epochs.pop(key, None)
+            self._requests = {item for item in self._requests if item[0] != route_ref}
+            self._request_order = deque(item for item in self._request_order if item[0] != route_ref)
 
 
 class BoundedRelayEvents:
@@ -189,13 +260,15 @@ class BoundedRelayEvents:
         self._events: deque[dict[str, object]] = deque(maxlen=max_events)
 
     def record(self, frame: RelayFrame, *, status: str, error_class: str | None = None) -> None:
+        if status not in _EVENT_STATUSES:
+            raise RelayProtocolError("invalid_event_status")
+        if error_class is not None and not _ERROR_CLASS.fullmatch(error_class):
+            raise RelayProtocolError("invalid_error_class")
         event = {
             "byte_count": len(frame.payload),
             "direction": frame.direction,
             "epoch": frame.epoch,
             "message_id": frame.message_id,
-            "request_id": frame.request_id,
-            "route_ref": frame.route_ref,
             "status": status,
             "version": PROTOCOL_VERSION,
         }
@@ -213,19 +286,69 @@ def relay_one_frame(
     *,
     replay_window: ReplayWindow,
     events: BoundedRelayEvents,
+    expected_route_ref: str,
+    expected_direction: str,
+    expected_epoch: int,
+    timeout_seconds: float = 10.0,
 ) -> RelayFrame:
-    """Validate and forward exactly one opaque frame with socket backpressure."""
+    """Validate and forward one frame under a trusted connection context."""
 
-    frame = receive_frame(source)
+    if not isinstance(expected_route_ref, str) or not _REFERENCE.fullmatch(expected_route_ref):
+        raise RelayProtocolError("invalid_expected_route")
+    if not isinstance(expected_direction, str) or expected_direction not in _DIRECTIONS:
+        raise RelayProtocolError("invalid_expected_direction")
+    if not isinstance(expected_epoch, int) or isinstance(expected_epoch, bool) or expected_epoch < 1:
+        raise RelayProtocolError("invalid_expected_epoch")
+    if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool):
+        raise RelayProtocolError("invalid_timeout")
+    if not math.isfinite(float(timeout_seconds)) or timeout_seconds <= 0 or timeout_seconds > 60:
+        raise RelayProtocolError("invalid_timeout")
     try:
-        replay_window.accept(frame)
-    except RelayProtocolError as exc:
-        events.record(frame, status="rejected", error_class=exc.code)
-        raise
-    try:
-        destination.sendall(encode_frame(frame))
+        source_timeout = source.gettimeout()
+        destination_timeout = destination.gettimeout()
     except OSError:
-        events.record(frame, status="failed", error_class="destination_unavailable")
-        raise RelayProtocolError("destination_unavailable") from None
-    events.record(frame, status="forwarded")
-    return frame
+        raise RelayProtocolError("socket_unavailable") from None
+    try:
+        source.settimeout(float(timeout_seconds))
+        destination.settimeout(float(timeout_seconds))
+    except OSError:
+        try:
+            source.settimeout(source_timeout)
+        except OSError:
+            pass
+        raise RelayProtocolError("socket_unavailable") from None
+    try:
+        frame = receive_frame(source)
+        if frame.route_ref != expected_route_ref:
+            events.record(frame, status="rejected", error_class="route_mismatch")
+            raise RelayProtocolError("route_mismatch")
+        if frame.direction != expected_direction:
+            events.record(frame, status="rejected", error_class="direction_mismatch")
+            raise RelayProtocolError("direction_mismatch")
+        if frame.epoch != expected_epoch:
+            events.record(frame, status="rejected", error_class="epoch_mismatch")
+            raise RelayProtocolError("epoch_mismatch")
+        reservation = replay_window.reserve(frame)
+    except RelayProtocolError as exc:
+        if "frame" in locals() and exc.code not in {"route_mismatch", "direction_mismatch", "epoch_mismatch"}:
+            events.record(frame, status="rejected", error_class=exc.code)
+        raise
+    else:
+        try:
+            destination.sendall(encode_frame(frame))
+        except OSError:
+            replay_window.fail_epoch(reservation)
+            events.record(frame, status="failed", error_class="destination_unavailable")
+            raise RelayProtocolError("destination_unavailable") from None
+        replay_window.commit(reservation)
+        events.record(frame, status="forwarded")
+        return frame
+    finally:
+        try:
+            source.settimeout(source_timeout)
+        except OSError:
+            pass
+        try:
+            destination.settimeout(destination_timeout)
+        except OSError:
+            pass
