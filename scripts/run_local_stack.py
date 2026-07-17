@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import select
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -14,11 +16,21 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from agentops_mis_cli.relay_connector_service import (  # noqa: E402
+    RelayConnectorServiceError,
+    load_connector_config,
+)
+
+
 UI_DIR = ROOT / "ui" / "start-building-app"
 CLI = ROOT / "scripts" / "agentops"
 LIVE_ADAPTERS = {"hermes", "openclaw"}
+PROCESS_SHUTDOWN_GRACE_SECONDS = 15.0
+PROCESS_KILL_GRACE_SECONDS = 3.0
 WORKER_DENIED_HUMAN_CONTROL_ENV = frozenset({
     "AGENTOPS_ADMIN_KEY",
     "AGENTOPS_ACCEPTANCE_PASSWORD",
@@ -91,6 +103,25 @@ def request_shutdown(_signum, _frame) -> None:
     raise KeyboardInterrupt
 
 
+def close_ready_fd(ready_fd: int | None) -> None:
+    if ready_fd is None:
+        return
+    try:
+        os.close(ready_fd)
+    except OSError:
+        pass
+
+
+def signal_ready(ready_fd: int | None) -> None:
+    if ready_fd is None:
+        return
+    try:
+        if os.write(ready_fd, b"\x01") != 1:
+            raise RuntimeError("Local stack readiness signal failed")
+    finally:
+        close_ready_fd(ready_fd)
+
+
 def port_open(port: int, host: str = "127.0.0.1") -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.3)
@@ -122,14 +153,21 @@ def terminate_processes(processes: list[tuple[str, subprocess.Popen]]) -> None:
     for _label, process in reversed(processes):
         if process.poll() is None:
             process.terminate()
+    graceful_deadline = time.monotonic() + PROCESS_SHUTDOWN_GRACE_SECONDS
     for _label, process in reversed(processes):
         if process.poll() is not None:
             continue
         try:
-            process.wait(timeout=8)
+            process.wait(timeout=max(0.0, graceful_deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
+            pass
+    for _label, process in reversed(processes):
+        if process.poll() is None:
             process.kill()
-            process.wait(timeout=5)
+    kill_deadline = time.monotonic() + PROCESS_KILL_GRACE_SECONDS
+    for _label, process in reversed(processes):
+        if process.poll() is None:
+            process.wait(timeout=max(0.0, kill_deadline - time.monotonic()))
 
 
 def worker_command(adapter: str, poll_interval: float, confirm_live_workers: bool) -> list[str]:
@@ -154,6 +192,114 @@ def worker_command(adapter: str, poll_interval: float, confirm_live_workers: boo
     return command
 
 
+def relay_connector_config(args: argparse.Namespace) -> dict | None:
+    relay_paths = (
+        args.relay_config,
+        args.relay_secrets,
+        args.relay_epoch_state,
+        args.relay_status,
+    )
+    if not any(relay_paths):
+        return None
+    if not all(relay_paths):
+        raise RuntimeError("Relay connector paths must be supplied as one managed set")
+    if not args.relay_config.exists() and not args.relay_config.is_symlink():
+        return None
+    try:
+        config = load_connector_config(args.relay_config)
+    except RelayConnectorServiceError as exc:
+        raise RuntimeError("Relay connector configuration failed closed") from exc
+    if config.get("enabled") is False:
+        return None
+    if config.get("host_http_port") != args.backend_port:
+        raise RuntimeError("Relay connector Host port does not match the managed backend")
+    return config
+
+
+def relay_connector_command(args: argparse.Namespace, ready_fd: int) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "agentops_mis_cli.relay_connector_service",
+        "--config",
+        str(args.relay_config),
+        "--secrets",
+        str(args.relay_secrets),
+        "--epoch-state",
+        str(args.relay_epoch_state),
+        "--status",
+        str(args.relay_status),
+        "--managed-by-host-stack",
+        "--ready-fd",
+        str(ready_fd),
+    ]
+
+
+def private_status_snapshot(path: Path) -> tuple[dict, tuple[int, int, int] | None]:
+    descriptor = -1
+    try:
+        parent = path.parent.lstat()
+        if (
+            path.parent.is_symlink()
+            or not stat.S_ISDIR(parent.st_mode)
+            or parent.st_uid != os.getuid()
+            or stat.S_IMODE(parent.st_mode) != 0o700
+        ):
+            return {}, None
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_size <= 0
+            or metadata.st_size > 16 * 1024
+        ):
+            return {}, None
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            descriptor = -1
+            payload = json.load(handle)
+        if not isinstance(payload, dict):
+            return {}, None
+        return payload, (metadata.st_ino, metadata.st_mtime_ns, metadata.st_size)
+    except (OSError, UnicodeError, ValueError):
+        return {}, None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def wait_relay_connector_started(
+    process: subprocess.Popen,
+    ready_fd: int,
+    status_path: Path,
+    timeout: float = 8.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    try:
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError("Relay connector exited during startup")
+            readable, _writable, _exceptional = select.select([ready_fd], [], [], 0.05)
+            if not readable:
+                continue
+            marker = os.read(ready_fd, 1)
+            if marker != b"\x01":
+                raise RuntimeError("Relay connector closed its readiness channel")
+            status, _signature = private_status_snapshot(status_path)
+            if (
+                status.get("enabled") is True
+                and status.get("host_lifecycle_integrated") is True
+                and status.get("host_tls_ready") is True
+                and status.get("state") in {"starting", "connecting", "connected", "backoff"}
+            ):
+                return
+            raise RuntimeError("Relay connector published invalid startup status")
+        raise RuntimeError("Relay connector did not complete its startup handshake")
+    finally:
+        os.close(ready_fd)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Start the local AgentOps MIS backend, UI, and worker loop.")
     parser.add_argument("--install-ui", action="store_true", help="Run npm ci --prefer-offline if UI dependencies are missing.")
@@ -170,7 +316,14 @@ def main() -> int:
     parser.add_argument("--confirm-live-workers", action="store_true", help="Explicitly allow requested Hermes/OpenClaw workers to execute live tasks.")
     parser.add_argument("--worker-poll-interval", type=float, default=5.0)
     parser.add_argument("--configure-cli", action="store_true", help="Explicitly update the saved CLI base URL/workspace for this local stack.")
+    parser.add_argument("--relay-config", type=Path)
+    parser.add_argument("--relay-secrets", type=Path)
+    parser.add_argument("--relay-epoch-state", type=Path)
+    parser.add_argument("--relay-status", type=Path)
+    parser.add_argument("--stack-ready-fd", type=int)
     args = parser.parse_args()
+    if args.stack_ready_fd is not None and args.stack_ready_fd < 3:
+        parser.error("--stack-ready-fd must be an inherited private descriptor")
     if args.build_ui:
         args.production_ui = True
     if args.ui_dist:
@@ -189,6 +342,7 @@ def main() -> int:
         )
     if args.backend_host not in {"127.0.0.1", "localhost", "::1"}:
         parser.error("run_local_stack.py is local-only; keep --backend-host on loopback")
+    managed_relay_config = relay_connector_config(args)
 
     env = os.environ.copy()
     env["AGENTOPS_BASE_URL"] = backend_url
@@ -200,6 +354,7 @@ def main() -> int:
     gateway_api_key = env.get("AGENTOPS_API_KEY", "").strip()
     production_ui_dist = (args.ui_dist or (UI_DIR / "dist")).expanduser().resolve()
     processes: list[tuple[str, subprocess.Popen]] = []
+    stack_ready_fd = args.stack_ready_fd
 
     try:
         if args.production_ui:
@@ -233,6 +388,24 @@ def main() -> int:
             )
             processes.append(("backend", backend))
             wait_ready(lambda: gateway_ready(backend_url, gateway_api_key), f"backend on {backend_url}")
+
+        if managed_relay_config is not None:
+            ready_read_fd, ready_write_fd = os.pipe()
+            try:
+                try:
+                    relay_connector = subprocess.Popen(
+                        relay_connector_command(args, ready_write_fd),
+                        cwd=ROOT,
+                        env=projected_environment(env),
+                        pass_fds=(ready_write_fd,),
+                    )
+                    processes.append(("relay-connector", relay_connector))
+                except Exception:
+                    os.close(ready_read_fd)
+                    raise
+            finally:
+                os.close(ready_write_fd)
+            wait_relay_connector_started(relay_connector, ready_read_fd, args.relay_status)
 
         if args.configure_cli:
             configured = subprocess.run(
@@ -274,6 +447,12 @@ def main() -> int:
             if worker.poll() is not None:
                 raise RuntimeError(f"{adapter} worker exited during startup with code {worker.returncode}")
 
+        for label, process in processes:
+            if process.poll() is not None:
+                raise RuntimeError(f"{label} exited during stack startup with code {process.returncode}")
+        signal_ready(stack_ready_fd)
+        stack_ready_fd = None
+
         print("")
         print("AgentOps MIS local stack is running:")
         print(f"  backend: http://{args.backend_host}:{args.backend_port}/dashboard")
@@ -287,6 +466,7 @@ def main() -> int:
             print("  UI mode:   Vite development")
         print(f"  adapters:  {', '.join(workers) if workers else 'none'}")
         print(f"  live mode: {'confirmed' if live_workers else 'off'}")
+        print(f"  relay:     {'Host-managed' if managed_relay_config is not None else 'off'}")
         if not args.configure_cli:
             print(f"  CLI check: AGENTOPS_BASE_URL={backend_url} agentops doctor")
             print(f"  save URL:  agentops login --base-url {backend_url} --workspace-id {env['AGENTOPS_WORKSPACE_ID']}")
@@ -298,6 +478,8 @@ def main() -> int:
                 returncode = process.poll()
                 if returncode is None:
                     continue
+                if label == "relay-connector":
+                    raise RuntimeError(f"{label} exited with code {returncode}")
                 if returncode != 0:
                     raise RuntimeError(f"{label} exited with code {returncode}")
                 processes.remove((label, process))
@@ -305,6 +487,7 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\nStopping AgentOps MIS local stack")
     finally:
+        close_ready_fd(stack_ready_fd)
         terminate_processes(processes)
     return 0
 

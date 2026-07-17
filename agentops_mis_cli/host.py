@@ -11,6 +11,7 @@ import io
 import ipaddress
 import json
 import os
+import select
 import secrets
 import shutil
 import signal
@@ -102,6 +103,8 @@ def paths() -> dict[str, Path]:
         "lifecycle_lock": home.parent / ".agentops-mis-host-lifecycle.lock",
         "relay": home / "relay",
         "relay_config": home / "relay" / "config.json",
+        "relay_secrets": home / "relay" / "secrets.json",
+        "relay_epoch": home / "relay" / "epoch.json",
         "relay_status": home / "relay" / "status.json",
     }
 
@@ -1176,8 +1179,9 @@ def emit_host_worker_ownership_error(preflight: dict) -> int:
     return 2
 
 
-def stack_command(config: dict, args) -> list[str]:
+def stack_command(config: dict, args, *, stack_ready_fd: int | None = None) -> list[str]:
     ui_dist, _managed = effective_ui_dist(config)
+    host_paths = paths()
     command = [
         sys.executable,
         str(STACK),
@@ -1188,6 +1192,14 @@ def stack_command(config: dict, args) -> list[str]:
         "--production-ui",
         "--ui-dist",
         str(ui_dist),
+        "--relay-config",
+        str(host_paths["relay_config"]),
+        "--relay-secrets",
+        str(host_paths["relay_secrets"]),
+        "--relay-epoch-state",
+        str(host_paths["relay_epoch"]),
+        "--relay-status",
+        str(host_paths["relay_status"]),
     ]
     if args.build_ui:
         command.append("--build-ui")
@@ -1200,6 +1212,8 @@ def stack_command(config: dict, args) -> list[str]:
             command.extend(["--worker", adapter])
     if args.confirm_live_workers:
         command.append("--confirm-live-workers")
+    if stack_ready_fd is not None:
+        command.extend(["--stack-ready-fd", str(stack_ready_fd)])
     return command
 
 
@@ -1214,9 +1228,9 @@ def _cmd_start_unlocked(args) -> int:
     worker_preflight = host_worker_ownership_preflight(args)
     if not worker_preflight["ok"]:
         return emit_host_worker_ownership_error(worker_preflight)
-    command = stack_command(config, args)
     env = host_env(config, secret_values)
     if args.foreground:
+        command = stack_command(config, args)
         process = subprocess.Popen(command, cwd=ROOT, env=env)
         write_managed_pid_record(p["pid"], process, foreground=True)
         try:
@@ -1226,27 +1240,51 @@ def _cmd_start_unlocked(args) -> int:
             if int(current_record.get("pid") or 0) == process.pid:
                 p["pid"].unlink(missing_ok=True)
     p["log"].parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    stack_ready_read_fd, stack_ready_write_fd = os.pipe()
+    command = stack_command(config, args, stack_ready_fd=stack_ready_write_fd)
     with p["log"].open("a", encoding="utf-8") as log_file:
         p["log"].chmod(0o600)
-        process = subprocess.Popen(
-            command,
-            cwd=ROOT,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    write_managed_pid_record(p["pid"], process)
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=ROOT,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                pass_fds=(stack_ready_write_fd,),
+            )
+        except Exception:
+            os.close(stack_ready_read_fd)
+            raise
+        finally:
+            os.close(stack_ready_write_fd)
+    try:
+        write_managed_pid_record(p["pid"], process)
+    except Exception:
+        os.close(stack_ready_read_fd)
+        raise
     base_url = f"http://{config['host']}:{config['port']}"
     deadline = time.time() + 25
     readiness = {"reachable": False, "status": "unavailable"}
+    stack_ready = False
     while time.time() < deadline and process.poll() is None:
+        if not stack_ready:
+            readable, _writable, _exceptional = select.select(
+                [stack_ready_read_fd],
+                [],
+                [],
+                0.05,
+            )
+            if readable:
+                stack_ready = os.read(stack_ready_read_fd, 1) == b"\x01"
         readiness = health(base_url)
-        if readiness["reachable"]:
+        if stack_ready and readiness["reachable"]:
             break
         time.sleep(0.25)
-    if not readiness["reachable"]:
+    os.close(stack_ready_read_fd)
+    if not stack_ready or not readiness["reachable"]:
         try:
             os.killpg(process.pid, signal.SIGTERM)
         except OSError:

@@ -39,6 +39,7 @@ _SAFE_FAILURE_CODES = {
     "private_json_invalid",
     "private_json_shape_invalid",
     "private_json_unreadable",
+    "ready_signal_failed",
     "secrets_shape_invalid",
     "service_stop_failed",
     "status_target_invalid",
@@ -212,7 +213,7 @@ def _write_private_status(path: Path, payload: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _disabled_status() -> dict[str, Any]:
+def _disabled_status(*, managed_by_host_stack: bool = False) -> dict[str, Any]:
     return {
         "connect_attempts": 0,
         "current_epoch": None,
@@ -222,7 +223,7 @@ def _disabled_status() -> dict[str, Any]:
         "limitations": {
             "certificate_lifecycle": False,
             "deployed_relay": False,
-            "host_lifecycle_integrated": False,
+            "host_lifecycle_integrated": managed_by_host_stack,
             "sni_routing": False,
             "tailscale_changed": False,
         },
@@ -231,6 +232,7 @@ def _disabled_status() -> dict[str, Any]:
         "host_tls_failure_code": None,
         "host_tls_ready": False,
         "host_tls_state": "disabled",
+        "host_lifecycle_integrated": managed_by_host_stack,
         "relay_tls_enabled": False,
         "state": "disabled",
         "successful_connections": 0,
@@ -238,8 +240,8 @@ def _disabled_status() -> dict[str, Any]:
     }
 
 
-def _failed_status(code: str) -> dict[str, Any]:
-    payload = _disabled_status()
+def _failed_status(code: str, *, managed_by_host_stack: bool = False) -> dict[str, Any]:
+    payload = _disabled_status(managed_by_host_stack=managed_by_host_stack)
     payload.update({
         "enabled": True,
         "failure_code": code,
@@ -252,6 +254,8 @@ def _failed_status(code: str) -> dict[str, Any]:
 def _service_status(
     supervisor: RelayConnectorSupervisor,
     host_tls_proxy: HostTlsProxy,
+    *,
+    managed_by_host_stack: bool = False,
 ) -> dict[str, Any]:
     status = supervisor.status()
     host_tls_status = host_tls_proxy.status()
@@ -264,7 +268,7 @@ def _service_status(
         "limitations": {
             "certificate_lifecycle": False,
             "deployed_relay": False,
-            "host_lifecycle_integrated": False,
+            "host_lifecycle_integrated": managed_by_host_stack,
             "sni_routing": False,
             "tailscale_changed": False,
         },
@@ -286,6 +290,7 @@ def _service_status(
         "host_tls_ready": host_tls_status["ready"],
         "host_tls_rejected_connections": host_tls_status["rejected_connections"],
         "host_tls_state": host_tls_status["state"],
+        "host_lifecycle_integrated": managed_by_host_stack,
         "relay_tls_enabled": status["relay_tls_enabled"],
         "state": status["state"],
         "successful_connections": status["successful_connections"],
@@ -293,7 +298,7 @@ def _service_status(
     }
 
 
-def _load_enabled_configuration(config_path: Path, secrets_path: Path) -> tuple[dict[str, Any], bytes]:
+def load_connector_config(config_path: Path) -> dict[str, Any]:
     config = _read_private_json(config_path)
     if config.get("schema_version") != SERVICE_SCHEMA_VERSION:
         raise RelayConnectorServiceError("config_schema_invalid")
@@ -301,7 +306,7 @@ def _load_enabled_configuration(config_path: Path, secrets_path: Path) -> tuple[
     if enabled is False:
         if set(config) != {"enabled", "schema_version"}:
             raise RelayConnectorServiceError("disabled_config_shape_invalid")
-        return config, b""
+        return config
     required = {
         "enabled",
         "host_certificate_path",
@@ -354,6 +359,13 @@ def _load_enabled_configuration(config_path: Path, secrets_path: Path) -> tuple[
     ):
         if not isinstance(config[key], str) or not config[key]:
             raise RelayConnectorServiceError("config_value_invalid")
+    return config
+
+
+def _load_enabled_configuration(config_path: Path, secrets_path: Path) -> tuple[dict[str, Any], bytes]:
+    config = load_connector_config(config_path)
+    if config.get("enabled") is False:
+        return config, b""
 
     secret_payload = _read_private_json(secrets_path)
     if set(secret_payload) != {"schema_version", "tunnel_key_hex"} or secret_payload.get(
@@ -374,20 +386,45 @@ def _request_stop(_signum: int, _frame: Any) -> None:
     _stop.set()
 
 
+def _close_ready_fd(ready_fd: int | None) -> None:
+    if ready_fd is None:
+        return
+    try:
+        os.close(ready_fd)
+    except OSError:
+        pass
+
+
+def _signal_ready(ready_fd: int | None) -> None:
+    if ready_fd is None:
+        return
+    try:
+        if os.write(ready_fd, b"\x01") != 1:
+            raise RelayConnectorServiceError("ready_signal_failed")
+    except OSError as exc:
+        raise RelayConnectorServiceError("ready_signal_failed") from exc
+    finally:
+        _close_ready_fd(ready_fd)
+
+
 def _run_service_locked(
     *,
     config_path: Path,
     secrets_path: Path,
     epoch_state_path: Path,
     status_path: Path,
+    managed_by_host_stack: bool = False,
+    ready_fd: int | None = None,
 ) -> int:
     supervisor: RelayConnectorSupervisor | None = None
     host_tls_proxy: HostTlsProxy | None = None
     try:
         config, tunnel_key = _load_enabled_configuration(config_path, secrets_path)
         if config.get("enabled") is False:
-            status = _disabled_status()
+            status = _disabled_status(managed_by_host_stack=managed_by_host_stack)
             _write_private_status(status_path, status)
+            _close_ready_fd(ready_fd)
+            ready_fd = None
             print(json.dumps(status, sort_keys=True))
             return 0
 
@@ -449,9 +486,21 @@ def _run_service_locked(
         if not supervisor.start():
             raise RelayConnectorServiceError("supervisor_start_failed")
 
-        last_status = ""
+        status = _service_status(
+            supervisor,
+            host_tls_proxy,
+            managed_by_host_stack=managed_by_host_stack,
+        )
+        last_status = json.dumps(status, sort_keys=True, separators=(",", ":"))
+        _write_private_status(status_path, status)
+        _signal_ready(ready_fd)
+        ready_fd = None
         while not _stop.wait(0.1):
-            status = _service_status(supervisor, host_tls_proxy)
+            status = _service_status(
+                supervisor,
+                host_tls_proxy,
+                managed_by_host_stack=managed_by_host_stack,
+            )
             rendered = json.dumps(status, sort_keys=True, separators=(",", ":"))
             if rendered != last_status:
                 _write_private_status(status_path, status)
@@ -461,7 +510,11 @@ def _run_service_locked(
                 proxy_stopped = host_tls_proxy.stop()
                 if not supervisor_stopped or not proxy_stopped:
                     raise RelayConnectorServiceError("service_stop_failed")
-                status = _service_status(supervisor, host_tls_proxy)
+                status = _service_status(
+                    supervisor,
+                    host_tls_proxy,
+                    managed_by_host_stack=managed_by_host_stack,
+                )
                 _write_private_status(status_path, status)
                 print(json.dumps(status, sort_keys=True))
                 return 1
@@ -472,11 +525,16 @@ def _run_service_locked(
         proxy_stopped = host_tls_proxy.stop()
         if not supervisor_stopped or not proxy_stopped:
             raise RelayConnectorServiceError("service_stop_failed")
-        status = _service_status(supervisor, host_tls_proxy)
+        status = _service_status(
+            supervisor,
+            host_tls_proxy,
+            managed_by_host_stack=managed_by_host_stack,
+        )
         _write_private_status(status_path, status)
         print(json.dumps(status, sort_keys=True))
         return 0
     except Exception as exc:
+        _close_ready_fd(ready_fd)
         if supervisor is not None:
             supervisor.stop()
         if host_tls_proxy is not None:
@@ -487,7 +545,10 @@ def _run_service_locked(
             if candidate_code in _SAFE_FAILURE_CODES
             else "service_configuration_or_runtime_failed"
         )
-        status = _failed_status(failure_code)
+        status = _failed_status(
+            failure_code,
+            managed_by_host_stack=managed_by_host_stack,
+        )
         try:
             _write_private_status(status_path, status)
         except Exception:
@@ -502,11 +563,17 @@ def run_service(
     secrets_path: Path,
     epoch_state_path: Path,
     status_path: Path,
+    managed_by_host_stack: bool = False,
+    ready_fd: int | None = None,
 ) -> int:
     try:
         lock_descriptor = _acquire_service_lock(status_path)
     except RelayConnectorServiceError:
-        status = _failed_status("service_instance_lock_failed")
+        _close_ready_fd(ready_fd)
+        status = _failed_status(
+            "service_instance_lock_failed",
+            managed_by_host_stack=managed_by_host_stack,
+        )
         print(json.dumps(status, sort_keys=True))
         return 1
     try:
@@ -515,6 +582,8 @@ def run_service(
             secrets_path=secrets_path,
             epoch_state_path=epoch_state_path,
             status_path=status_path,
+            managed_by_host_stack=managed_by_host_stack,
+            ready_fd=ready_fd,
         )
     finally:
         fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
@@ -527,7 +596,11 @@ def main() -> int:
     parser.add_argument("--secrets", type=Path, required=True)
     parser.add_argument("--epoch-state", type=Path, required=True)
     parser.add_argument("--status", type=Path, required=True)
+    parser.add_argument("--managed-by-host-stack", action="store_true")
+    parser.add_argument("--ready-fd", type=int)
     args = parser.parse_args()
+    if args.ready_fd is not None and args.ready_fd < 3:
+        parser.error("--ready-fd must be an inherited private descriptor")
     signal.signal(signal.SIGTERM, _request_stop)
     signal.signal(signal.SIGINT, _request_stop)
     return run_service(
@@ -535,6 +608,8 @@ def main() -> int:
         secrets_path=args.secrets,
         epoch_state_path=args.epoch_state,
         status_path=args.status,
+        managed_by_host_stack=args.managed_by_host_stack,
+        ready_fd=args.ready_fd,
     )
 
 

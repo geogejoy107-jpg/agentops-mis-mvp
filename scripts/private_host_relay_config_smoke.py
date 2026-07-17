@@ -229,7 +229,8 @@ def main() -> int:
     result = {
         "disabled_by_default": True,
         "failures": failures,
-        "host_lifecycle_starts_relay": False,
+        "default_host_lifecycle_starts_relay": False,
+        "enabled_lifecycle_covered_separately": True,
         "legacy_host_compatible": not any("legacy" in item for item in failures),
         "ok": not failures,
         "operation": "private_host_relay_config_smoke",

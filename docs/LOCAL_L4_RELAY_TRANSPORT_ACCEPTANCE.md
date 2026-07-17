@@ -31,6 +31,7 @@ python3 scripts/relay_persistent_epoch_smoke.py
 python3 scripts/relay_tls_authenticated_tunnel_smoke.py
 python3 scripts/relay_host_tls_proxy_smoke.py
 python3 scripts/relay_connector_service_smoke.py
+python3 scripts/private_host_relay_lifecycle_smoke.py
 python3 scripts/local_relay_connector_supervisor_smoke.py
 ```
 
@@ -165,6 +166,26 @@ malformed state or any enabled connector that is not yet Host-managed. An
 enabled config remains `enabled_unmanaged`; a separately running connector or
 stale status file cannot create Host-level readiness.
 
+`scripts/private_host_relay_lifecycle_smoke.py` adds actual source-level Host
+process ownership without enabling the safe default. `agentops host start` gives
+the managed stack all four private Relay paths. An absent or exact disabled
+configuration starts no connector process, makes no network attempt and writes
+no service status. An explicitly enabled configuration is validated before
+startup, must point back to the exact managed loopback backend port, and starts
+one connector child only after the backend is ready. The stack requires a fresh
+private status plus a one-byte readiness signal inherited from that exact child,
+sent only after Host TLS, epoch and supervisor initialization. The connector
+receives a minimal environment without Host API, admin, Owner or Human Session
+credentials. Invalid configuration fails Host startup closed. Host
+restart reaps the old connector and starts a new child; Host stop reaps the
+owned tree within an 18-second stack bound while preserving an unrelated
+process. A separately started connector holding the instance lock is neither
+adopted nor terminated; it blocks Host startup, and the Host accepts backend
+health only after the complete stack sends its own inherited readiness signal.
+The fixture observes no
+Tailscale invocation and uses an unavailable loopback fake Relay, so it proves
+lifecycle/backoff ownership rather than a deployed remote endpoint.
+
 `scripts/relay_registration_publication_race_smoke.py` deterministically pauses
 the Relay immediately after writing the registration acknowledgement. It proves
 the same lock still blocks browser route lookup until control publication is
@@ -184,15 +205,17 @@ short test deadlines and an in-memory temporary tunnel key. It does not prove a
 deployed service, internet routing, long-lived browser sessions, TLS half-close
 or transport exactly-once delivery.
 
-The foreground service is not yet wired into Host startup or the installer. Its
-disabled configuration is now visible to Host initialization/status/doctor,
-but runtime status is intentionally not trusted and Host start/stop/restart does
-not own the connector process. It now owns local Host TLS termination, but it
-does not generate, renew or rotate the supplied certificate and key. Its
+The source Host stack now owns the foreground service when a strict private
+configuration is explicitly enabled; disabled and legacy-unconfigured Hosts do
+not start it. This lifecycle slice has not been installed into the current
+local preview, and Host status/doctor still conservatively refuse to turn a
+service status file into remote readiness. The service owns local Host TLS
+termination, but it does not generate, renew or rotate the supplied certificate
+and key. Its
 epoch can now be crash-persistent when the protected allocator is supplied,
 while backoff/status state remains process-local. This proves the reconnect and
-epoch identity behavior needed by a later Host-owned connector daemon, not the
-deployed Relay itself.
+epoch identity behavior needed by the Host-owned connector, not the deployed
+Relay itself.
 
 This slice validates exact Host SNI at TLS termination but does not yet
 implement Relay-side SNI parsing/routing, production Host-generated
@@ -205,7 +228,8 @@ advanced private-network profile and is intentionally untouched.
 
 ## Next Slice
 
-Wire the accepted disabled-by-default foreground connector process into the
-Host lifecycle with certificate provisioning and Owner enable/disable controls.
-Then add SNI/multi-Host routing and deploy the same authority-free boundary
-behind a stable domain for 3C physical browser acceptance.
+Add Owner confirmation-gated enable/disable controls and private certificate
+provisioning, then teach Host status to verify fresh owned-process evidence
+without treating connection status as deployed-Relay readiness. After that, add
+SNI/multi-Host routing and deploy the same authority-free boundary behind a
+stable domain for 3C physical browser acceptance.

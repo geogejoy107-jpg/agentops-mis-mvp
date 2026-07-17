@@ -190,9 +190,13 @@ Implementation slices:
    SNI rejection, HTTP forwarding and clean signal shutdown. Host
    initialization now creates an exact private disabled config, and Host
    status/doctor expose a bounded fail-closed connector projection without
-   reading secrets or starting a process. Host process ownership, certificate
-   lifecycle, Relay-side SNI routing, credential provisioning, and the deployed
-   Relay remain open.
+   reading secrets. The source Host stack now starts exactly one connector child
+   only for an explicitly enabled, valid private configuration; disabled or
+   unconfigured state starts none, and stop/restart own its cleanup without
+   changing Tailscale. Owner enable/disable controls, fresh runtime-status
+   projection, certificate lifecycle, Relay-side SNI routing, credential
+   provisioning, installation into the current preview, and the deployed Relay
+   remain open.
 3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host
    Console origin, bounded operations metadata, deployment and rollback.
 4. `3D Physical acceptance`: fresh browser-only device, real Hermes/OpenClaw
