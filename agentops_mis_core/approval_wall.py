@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import datetime as dt
 from typing import Any
 
 
@@ -133,6 +134,7 @@ def prepared_action_hash_payload(row: dict[str, Any]) -> dict[str, Any]:
         "policy_version": row.get("policy_version") or "approval-wall-v1",
         "checkpoint_json": row.get("checkpoint_json") or "{}",
         "idempotency_key": row.get("idempotency_key"),
+        "expires_at": row.get("expires_at"),
     }
 
 
@@ -214,6 +216,25 @@ def prepared_action_resume_gate_error(
             "decision": approval_data.get("decision") if approval_data else None,
             "token_omitted": True,
         }
+    expires_at = data.get("expires_at") or approval_data.get("expires_at")
+    if expires_at:
+        try:
+            parsed_expiry = dt.datetime.fromisoformat(str(expires_at))
+            if parsed_expiry.tzinfo is None:
+                parsed_expiry = parsed_expiry.replace(tzinfo=dt.timezone.utc)
+            if parsed_expiry <= dt.datetime.now(dt.timezone.utc):
+                return {
+                    "error": "prepared_action_expired",
+                    "prepared_action_id": action_id,
+                    "approval_id": data.get("approval_id"),
+                    "token_omitted": True,
+                }
+        except ValueError:
+            return {
+                "error": "prepared_action_expiry_invalid",
+                "prepared_action_id": action_id,
+                "token_omitted": True,
+            }
     if data.get("consumed_at") or data.get("status") == "consumed":
         return {
             "error": "prepared_action_already_consumed",
@@ -552,6 +573,25 @@ def build_prepared_action_resume_blocked_response(
             "decision": approval_data.get("decision") if approval_data else None,
             "token_omitted": True,
         }, 409
+    expires_at = data.get("expires_at") or approval_data.get("expires_at")
+    if expires_at:
+        try:
+            parsed_expiry = dt.datetime.fromisoformat(str(expires_at))
+            if parsed_expiry.tzinfo is None:
+                parsed_expiry = parsed_expiry.replace(tzinfo=dt.timezone.utc)
+            if parsed_expiry <= dt.datetime.now(dt.timezone.utc):
+                return {
+                    "error": "prepared_action_expired",
+                    "prepared_action_id": action_id,
+                    "approval_id": data.get("approval_id"),
+                    "token_omitted": True,
+                }, 409
+        except ValueError:
+            return {
+                "error": "prepared_action_expiry_invalid",
+                "prepared_action_id": action_id,
+                "token_omitted": True,
+            }, 409
     if data.get("consumed_at") or data.get("status") == "consumed":
         return {
             "error": "prepared_action_already_consumed",

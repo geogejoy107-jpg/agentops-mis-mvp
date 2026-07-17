@@ -796,6 +796,12 @@ TEST_COMMANDS = [
         "ci_step": "Server-backed smoke suite",
     },
     {
+        "id": "codex_workspace_write_governance",
+        "command": "python3 scripts/codex_workspace_write_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+        "summary": "Codex workspace-write remains opt-in, requires an attested bundled runtime, isolates changes in a bounded worktree, enforces exact execution leases, and fails closed on scope or protocol violations.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
         "id": "agent_gateway_knowledge_scope",
         "command": "python3 scripts/agent_gateway_knowledge_scope_smoke.py",
         "summary": "Agent Gateway scoped knowledge visibility, provenance and spoof-resistance gate.",
