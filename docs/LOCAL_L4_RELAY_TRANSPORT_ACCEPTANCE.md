@@ -153,6 +153,25 @@ second service from overwriting the active instance's status. A pre-existing
 protected epoch file continues with a strictly higher value under the new Host
 TLS composition.
 
+`scripts/private_host_relay_config_smoke.py` adds the first Host CLI ownership
+boundary without starting the connector. New Host initialization creates only
+the exact disabled schema-1 Relay config in a `0700` directory with a `0600`
+file. Existing Hosts with no Relay config remain implicitly disabled. `agentops
+host status` projects only bounded configuration state; it never reads Relay
+secrets or trusts a stale service status file, and never returns Relay endpoints,
+routes, certificate paths or configuration values. `agentops host doctor`
+passes absent/disabled Relay state and fails closed for broad permissions,
+malformed state or any enabled connector that is not yet Host-managed. An
+enabled config remains `enabled_unmanaged`; a separately running connector or
+stale status file cannot create Host-level readiness.
+
+`scripts/relay_registration_publication_race_smoke.py` deterministically pauses
+the Relay immediately after writing the registration acknowledgement. It proves
+the same lock still blocks browser route lookup until control publication is
+complete, then releases the barrier and completes an exact round trip. This
+closes the Linux CI scheduling window where the Host could report connected
+before the Relay route became usable.
+
 ## Boundaries
 
 The frame smoke itself sends TLS-looking bytes and does not prove TLS; the
@@ -165,9 +184,11 @@ short test deadlines and an in-memory temporary tunnel key. It does not prove a
 deployed service, internet routing, long-lived browser sessions, TLS half-close
 or transport exactly-once delivery.
 
-The foreground service is not yet wired into Host startup or the installer. It
-now owns local Host TLS termination, but it does not generate, renew or rotate
-the supplied certificate and key. Its
+The foreground service is not yet wired into Host startup or the installer. Its
+disabled configuration is now visible to Host initialization/status/doctor,
+but runtime status is intentionally not trusted and Host start/stop/restart does
+not own the connector process. It now owns local Host TLS termination, but it
+does not generate, renew or rotate the supplied certificate and key. Its
 epoch can now be crash-persistent when the protected allocator is supplied,
 while backoff/status state remains process-local. This proves the reconnect and
 epoch identity behavior needed by a later Host-owned connector daemon, not the
@@ -184,7 +205,7 @@ advanced private-network profile and is intentionally untouched.
 
 ## Next Slice
 
-Wire the accepted disabled-by-default foreground connector into the Host
-lifecycle with certificate provisioning and Owner enable/disable controls.
+Wire the accepted disabled-by-default foreground connector process into the
+Host lifecycle with certificate provisioning and Owner enable/disable controls.
 Then add SNI/multi-Host routing and deploy the same authority-free boundary
 behind a stable domain for 3C physical browser acceptance.

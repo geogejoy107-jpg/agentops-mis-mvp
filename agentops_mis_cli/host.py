@@ -43,6 +43,20 @@ HOST_WORKER_PROCESS_PATTERNS = (
     r"(^|[ /])agentops-worker([[:space:]]|$).*--adapter([=[:space:]]){adapter}([[:space:]]|$)",
     r"agent_worker\.py([[:space:]]|$).*--adapter([=[:space:]]){adapter}([[:space:]]|$)",
 )
+RELAY_ENABLED_CONFIG_KEYS = {
+    "enabled",
+    "host_certificate_path",
+    "host_http_port",
+    "host_private_key_path",
+    "host_server_hostname",
+    "host_tls_listen_port",
+    "relay_ca_path",
+    "relay_host",
+    "relay_port",
+    "relay_server_hostname",
+    "route",
+    "schema_version",
+}
 
 
 class HostArgumentError(ValueError):
@@ -86,6 +100,9 @@ def paths() -> dict[str, Path]:
         "pid": home / "run" / "host.pid.json",
         "ownership": home / ".agentops-host-data.json",
         "lifecycle_lock": home.parent / ".agentops-mis-host-lifecycle.lock",
+        "relay": home / "relay",
+        "relay_config": home / "relay" / "config.json",
+        "relay_status": home / "relay" / "status.json",
     }
 
 
@@ -105,6 +122,107 @@ def read_json(path: Path) -> dict:
         return payload if isinstance(payload, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def _read_private_bounded_json(path: Path, *, maximum_bytes: int = 16 * 1024) -> dict | None:
+    descriptor = -1
+    try:
+        parent_metadata = path.parent.lstat()
+        if (
+            path.parent.is_symlink()
+            or not stat.S_ISDIR(parent_metadata.st_mode)
+            or parent_metadata.st_uid != os.getuid()
+            or stat.S_IMODE(parent_metadata.st_mode) != 0o700
+        ):
+            return None
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_size <= 0
+            or metadata.st_size > maximum_bytes
+        ):
+            return None
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            descriptor = -1
+            payload = json.load(handle)
+        return payload if isinstance(payload, dict) else None
+    except (OSError, UnicodeError, ValueError):
+        return None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _relay_enabled_config_shape_valid(config: dict) -> bool:
+    if set(config) != RELAY_ENABLED_CONFIG_KEYS:
+        return False
+    ports = (config.get("host_http_port"), config.get("host_tls_listen_port"), config.get("relay_port"))
+    if any(
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or not (1 <= value <= 65535)
+        for value in ports
+    ):
+        return False
+    return all(
+        isinstance(config.get(key), str) and bool(config[key])
+        for key in RELAY_ENABLED_CONFIG_KEYS
+        - {"enabled", "host_http_port", "host_tls_listen_port", "relay_port", "schema_version"}
+    )
+
+
+def relay_connector_projection(p: dict[str, Path] | None = None) -> dict:
+    host_paths = p or paths()
+    config_path = host_paths["relay_config"]
+    base = {
+        "configured": False,
+        "config_valid": True,
+        "deployed_relay": False,
+        "enabled": False,
+        "failure_code": None,
+        "host_lifecycle_integrated": False,
+        "ok": True,
+        "ready": False,
+        "state": "unconfigured",
+        "tailscale_changed": False,
+        "token_omitted": True,
+    }
+    if not config_path.exists() and not config_path.is_symlink():
+        return base
+    config = _read_private_bounded_json(config_path)
+    if (
+        config is None
+        or config.get("schema_version") != 1
+        or not isinstance(config.get("enabled"), bool)
+        or (
+            config.get("enabled") is False
+            and set(config) != {"enabled", "schema_version"}
+        )
+        or (
+            config.get("enabled") is True
+            and not _relay_enabled_config_shape_valid(config)
+        )
+    ):
+        return {
+            **base,
+            "configured": True,
+            "config_valid": False,
+            "failure_code": "relay_connector_config_invalid",
+            "ok": False,
+            "state": "invalid_config",
+        }
+    enabled = bool(config["enabled"])
+    return {
+        **base,
+        "configured": True,
+        "enabled": enabled,
+        "state": "enabled_unmanaged" if enabled else "disabled",
+        "failure_code": "relay_connector_lifecycle_not_integrated" if enabled else None,
+        "ok": not enabled,
+    }
 
 
 def process_alive(pid: int) -> bool:
@@ -538,6 +656,25 @@ def _cmd_init_unlocked(args) -> int:
         })
         return 2
     ensure_host_data_marker()
+    if p["relay"].is_symlink() or (p["relay"].exists() and not p["relay"].is_dir()):
+        raise RuntimeError("Relay directory must be a private managed directory.")
+    if p["relay"].exists():
+        relay_metadata = p["relay"].lstat()
+        if (
+            relay_metadata.st_uid != os.getuid()
+            or stat.S_IMODE(relay_metadata.st_mode) != 0o700
+        ):
+            raise RuntimeError("Relay directory permissions are not private.")
+    else:
+        p["relay"].mkdir(parents=True, mode=0o700)
+        p["relay"].chmod(0o700)
+    if p["relay_config"].is_symlink():
+        raise RuntimeError("Relay configuration must not be a symlink.")
+    if p["relay_config"].exists():
+        if relay_connector_projection(p)["state"] != "disabled":
+            raise RuntimeError("Existing Relay configuration is not the safe default.")
+    else:
+        write_private_json(p["relay_config"], {"enabled": False, "schema_version": 1})
     for key in ("home", "data", "logs", "run"):
         p[key].mkdir(parents=True, exist_ok=True, mode=0o700)
         p[key].chmod(0o700)
@@ -593,14 +730,25 @@ def cmd_init(args) -> int:
         p = paths()
         home_preexisted = p["home"].exists()
         marker_preexisted = p["ownership"].exists()
+        relay_preexisted = p["relay"].exists() or p["relay"].is_symlink()
+        relay_config_preexisted = (
+            p["relay_config"].exists() or p["relay_config"].is_symlink()
+        )
         try:
             return _cmd_init_unlocked(args)
         except Exception:
+            if not relay_config_preexisted:
+                p["relay_config"].unlink(missing_ok=True)
             for key in ("secrets", "config"):
                 p[key].unlink(missing_ok=True)
             for key in ("run", "logs", "data"):
                 try:
                     p[key].rmdir()
+                except OSError:
+                    pass
+            if not relay_preexisted:
+                try:
+                    p["relay"].rmdir()
                 except OSError:
                     pass
             if not marker_preexisted:
@@ -1218,6 +1366,7 @@ def cmd_status(_args) -> int:
         running=running,
         reachable=bool(readiness["reachable"]),
     )
+    relay_connector = relay_connector_projection(p)
     next_actions = []
     if human_access["status"] == "bootstrap_required":
         next_actions.append(f"Open {base_url}/workspace on this Host to create the first Owner.")
@@ -1241,6 +1390,7 @@ def cmd_status(_args) -> int:
         "ui_dist": str(ui_dist),
         "ui_dist_managed": ui_dist_managed,
         "human_access": human_access,
+        "relay_connector": relay_connector,
         "next_actions": next_actions,
         "token_omitted": True,
     })
@@ -1350,12 +1500,20 @@ def cmd_doctor(_args) -> int:
     config, _secret_values = require_initialized()
     p = paths()
     ui_dist, ui_dist_managed = effective_ui_dist(config)
+    relay_connector = relay_connector_projection(p)
     gates = [
         {"id": "config_private", "ok": (p["config"].stat().st_mode & 0o077) == 0},
         {"id": "secrets_private", "ok": (p["secrets"].stat().st_mode & 0o077) == 0},
         {"id": "database_parent_private", "ok": (p["data"].stat().st_mode & 0o077) == 0},
         {"id": "production_ui", "ok": (ui_dist / "index.html").is_file()},
         {"id": "stack_entrypoint", "ok": STACK.is_file()},
+        {
+            "id": "relay_connector_safe_default",
+            "ok": bool(
+                relay_connector["config_valid"]
+                and not relay_connector["enabled"]
+            ),
+        },
     ]
     ts = tailscale_state()
     pid = int(read_json(p["pid"]).get("pid") or 0)
@@ -1385,6 +1543,7 @@ def cmd_doctor(_args) -> int:
         "tailscale": ts,
         "host_health": readiness,
         "human_access": human_access,
+        "relay_connector": relay_connector,
         "next_actions": next_actions,
         "token_omitted": True,
     })

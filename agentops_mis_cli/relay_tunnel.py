@@ -475,12 +475,15 @@ class LocalFakeRelay:
             if frame.epoch <= self._last_epoch:
                 raise RelayProtocolError("replayed_epoch")
             self._last_epoch = frame.epoch
-        send_frame(
-            connector,
-            RelayFrame("registered", self._route, frame.epoch, 1),
-            self._key,
-        )
-        with self._lock:
+            # Keep browser route lookup behind this lock until both the ACK and
+            # control publication are complete. Otherwise the Host can observe
+            # "registered" and accept a browser before the Relay exposes the
+            # matching control route.
+            send_frame(
+                connector,
+                RelayFrame("registered", self._route, frame.epoch, 1),
+                self._key,
+            )
             if self._stop.is_set() or frame.epoch != self._last_epoch:
                 raise RelayProtocolError("registration_superseded")
             old_control = self._control
