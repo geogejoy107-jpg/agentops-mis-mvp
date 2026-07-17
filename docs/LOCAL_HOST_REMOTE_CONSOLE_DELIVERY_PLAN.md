@@ -207,9 +207,12 @@ Implementation slices:
    CSRF-protected prepare/confirm transition with private material binding,
    transactional rollback and bounded audit output. The confirmed transition
    reports `restart_required` but does not yet restart the installed Host.
-   Certificate lifecycle, Relay-side SNI routing, credential
-   provisioning, installation into the current preview, and the deployed Relay
-   remain open.
+   A dependency-free, loopback-tested Relay-side ClientHello SNI selector now
+   proves exact two-Host route isolation, bounded parsing/backpressure, opaque
+   application bytes, and fail-closed unknown/malformed input. Binding its
+   opaque route refs to authenticated current Host tunnels, safe managed Host
+   restart, certificate lifecycle, credential provisioning, installation into
+   the current preview, and the deployed Relay remain open.
 3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host
    Console origin, bounded operations metadata, deployment and rollback.
 4. `3D Physical acceptance`: fresh browser-only device, real Hermes/OpenClaw

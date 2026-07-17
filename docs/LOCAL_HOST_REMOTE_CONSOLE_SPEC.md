@@ -182,6 +182,15 @@ CI may use a local fake Relay for deterministic protocol tests, but a product
 claim requires a deployed HTTPS Relay and a physical browser-only Console
 receipt.
 
+The Relay-side routing boundary now has a dependency-free local acceptance
+slice in `LOCAL_RELAY_SNI_ROUTER_ACCEPTANCE.md`. It reads only a bounded TLS
+ClientHello, maps one exact normalized SNI hostname to one opaque route
+reference, preserves the consumed preface for forwarding, and fails closed for
+unknown, missing, malformed, oversized, timed-out, or capacity-exhausted input.
+It has no wildcard/default route, route-listing API, TLS termination, HTTP
+parser, or application-payload recorder. This is parser and isolation evidence,
+not a deployed listener, DNS/certificate lifecycle, or remote-ready claim.
+
 ### Advanced path: Tailscale Serve
 
 The Host may remain on loopback behind Tailscale Serve for customers who prefer
