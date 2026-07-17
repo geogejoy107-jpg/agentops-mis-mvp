@@ -82,7 +82,9 @@ they cover surrounding Human Session, Pairing and repository-secret boundaries.
 
 ## Remaining Internet Gates
 
-- fail-closed Host/SNI/Origin and forwarded-header policy;
+- direct Host/Origin and forwarding-header policy are implemented separately in
+  `docs/PRIVATE_HOST_FORWARDED_HEADER_POLICY_ACCEPTANCE.md`; Host-side TLS/SNI
+  enforcement remains a Relay gate;
 - deployed outbound Relay with application TLS terminating on the Host;
 - physical second-computer task, disconnect and revoke acceptance at one exact
   release.

@@ -29,6 +29,14 @@ PAIRING_SUBJECT_MAX_FAILURES = 8
 PAIRING_GLOBAL_MAX_FAILURES = 60
 MIN_PASSWORD_LENGTH = 12
 ROLE_RANK = {"viewer": 10, "operator": 20, "approver": 30, "owner": 40}
+UNTRUSTED_FORWARDING_HEADERS = (
+    "Forwarded",
+    "X-Forwarded-For",
+    "X-Forwarded-Host",
+    "X-Forwarded-Port",
+    "X-Forwarded-Proto",
+    "X-Real-IP",
+)
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS human_accounts (
@@ -279,8 +287,10 @@ def required(env=None) -> bool:
 def cookie_secure(env=None) -> bool:
     env = env or os.environ
     configured = str(env.get("AGENTOPS_COOKIE_SECURE", "")).strip().lower()
-    if configured:
-        return configured in {"1", "true", "yes", "on"}
+    if configured in {"1", "true", "yes", "on"}:
+        return True
+    if configured in {"0", "false", "no", "off"}:
+        return False
     return required(env)
 
 
@@ -319,17 +329,77 @@ def allowed_origins(env=None) -> list[str]:
     })
 
 
+def canonical_request_origin(headers, env=None) -> str | None:
+    """Resolve a safe request origin without trusting HTTP proxy headers."""
+    host = (headers.get("Host") or "").strip().lower() if headers else ""
+    if not host:
+        return None
+    configured_origins = allowed_origins(env)
+    for origin in configured_origins:
+        try:
+            parsed = urllib.parse.urlsplit(origin)
+        except ValueError:
+            continue
+        if parsed.scheme in {"http", "https"} and parsed.netloc.lower() == host:
+            return origin
+    if configured_origins:
+        return None
+    try:
+        parsed_host = urllib.parse.urlsplit(f"//{host}")
+        hostname = parsed_host.hostname or ""
+        if hostname.lower() == "localhost" or (hostname and ipaddress.ip_address(hostname).is_loopback):
+            return f"http://{host}"
+    except ValueError:
+        return None
+    return None
+
+
+def forwarding_headers_ignored(headers) -> bool:
+    """Return whether untrusted proxy metadata was present and ignored."""
+    if not headers:
+        return False
+    known = {name.lower() for name in UNTRUSTED_FORWARDING_HEADERS}
+    return any(
+        str(name).lower() in known
+        or str(name).lower().startswith("x-forwarded-")
+        for name in headers.keys()
+    )
+
+
+def direct_host_allowed(headers, env=None) -> bool:
+    host = (headers.get("Host") or "").strip().lower() if headers else ""
+    if not host:
+        return False
+    authorities = set()
+    for origin in allowed_origins(env):
+        try:
+            parsed = urllib.parse.urlsplit(origin)
+        except ValueError:
+            continue
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            authorities.add(parsed.netloc.lower())
+    return host in authorities
+
+
 def origin_error(headers) -> tuple[dict, int] | None:
     allowed = allowed_origins()
     if not allowed:
+        if required():
+            return {
+                "error": "origin_configuration_required",
+                "message": "Private Host browser access requires an explicit Origin allowlist.",
+                "origin_omitted": True,
+                "host_omitted": True,
+            }, 503
         return None
     supplied = (headers.get("Origin") or "").strip().rstrip("/")
-    if supplied in allowed:
+    if supplied in allowed and direct_host_allowed(headers):
         return None
     return {
         "error": "origin_validation_failed",
-        "message": "The browser Origin is not allowed for this Host.",
+        "message": "The browser Origin or direct Host is not allowed for this Host.",
         "origin_omitted": True,
+        "host_omitted": True,
     }, 403
 
 
@@ -530,6 +600,8 @@ def status(conn, headers) -> dict:
         "password_recovery_available": is_required and account_count > 0,
         "password_recovery_local_only": True,
         "cookie_secure": cookie_secure_for_request(headers),
+        "forwarding_headers_trusted": False,
+        "forwarding_headers_ignored": forwarding_headers_ignored(headers),
         "token_omitted": True,
     }
     if context:

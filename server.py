@@ -25894,9 +25894,8 @@ def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx
     qs = qs or {}
     limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
     loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
-    scheme = str(headers.get("X-Forwarded-Proto") or "http").split(",", 1)[0].strip() or "http"
-    host = str(headers.get("Host") or "127.0.0.1:8787").strip() or "127.0.0.1:8787"
-    base_url = redact_text((qs.get("base_url") or [f"{scheme}://{host}"])[0], 240)
+    safe_origin = human_auth.canonical_request_origin(headers) or "http://127.0.0.1:8787"
+    base_url = redact_text((qs.get("base_url") or [safe_origin])[0], 240)
     effective_headers = headers
     if agent_gateway_is_bound_auth(auth_ctx):
         effective_headers = dict(headers)
@@ -28843,8 +28842,7 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
 
 
 def request_base_url(headers=None) -> str | None:
-    host = headers.get("Host") if headers else ""
-    return f"http://{host}" if host else None
+    return human_auth.canonical_request_origin(headers)
 
 
 def worker_dispatch_evidence_summary(conn: sqlite3.Connection, task_id: str, run_id: str | None, plan_id: str | None, manifest_id: str | None) -> dict:

@@ -100,15 +100,15 @@ Verified behavior:
   creation, disable and role-change UI remain pending.
 - State-changing requests, bootstrap, login and logout enforce the configured
   Origin allowlist; missing or untrusted origins fail closed when configured.
-- Host-sensitive routes currently require Owner but still need a stricter
-  direct-host/proxy policy before broad remote use.
+- Host-sensitive routes require Owner; direct Host/Origin and untrusted
+  forwarding-header hardening are implemented separately.
 - Source-independent login and pairing throttling is implemented with hashed
   SQLite buckets and bounded `429` responses; local password reset/recovery is
   implemented separately and remains loopback-only.
-- Browser-only Relay transport, proxy hardening and physical second-computer
-  acceptance are not yet complete. Local pairing and device binding/revocation
-  are implemented. Tailscale Serve is an advanced profile, not the ordinary
-  onboarding gate.
+- Browser-only Relay TLS/SNI transport and physical second-computer acceptance
+  are not yet complete. Local pairing and device binding/revocation are
+  implemented. Tailscale Serve remains a working advanced profile, not the
+  ordinary onboarding gate.
 - This is not public internet or multi-tenant SaaS authentication.
 
 ## Next Slice

@@ -1,6 +1,6 @@
 # Private Host Request Hardening Acceptance
 
-Status: bounded JSON request slice implemented; throttling and Relay proxy policy pending
+Status: bounded JSON request slice implemented; auth throttling and forwarding-header policy implemented separately
 
 ## Closed In This Slice
 
@@ -39,7 +39,9 @@ It does not call a Runtime or use a real credential.
 
 - source-independent login and pairing throttling is implemented separately in
   `docs/PRIVATE_HOST_AUTH_THROTTLE_ACCEPTANCE.md`;
-- exact Host/SNI/Origin validation and fail-closed forwarded-header policy;
+- direct Host/Origin and fail-closed forwarding-header policy are implemented
+  separately in `docs/PRIVATE_HOST_FORWARDED_HEADER_POLICY_ACCEPTANCE.md`;
+- SNI enforcement at the future Host TLS/Relay boundary;
 - deployed Host-terminated TLS Relay and physical second-computer acceptance.
 
 This receipt does not authorize a non-loopback bind, public quick tunnel,
