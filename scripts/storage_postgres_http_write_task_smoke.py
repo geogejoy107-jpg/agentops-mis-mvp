@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 import os
 import stat
@@ -58,7 +59,15 @@ GATEWAY_EVALUATION_ID = "eval_pg_gateway_write_evidence"
 GATEWAY_ARTIFACT_ID = "art_pg_gateway_write_evidence"
 GATEWAY_PLAN_ID = "plan_pg_gateway_write"
 GATEWAY_MANIFEST_ID = "pem_pg_gateway_write"
-GATEWAY_MEMORY_ID = "mem_pg_gateway_write"
+GATEWAY_MEMORY_TEXT = "Postgres Gateway memory candidate write proof with raw prompt omitted."
+GATEWAY_MEMORY_ID = "mem_gw_" + hashlib.sha256(
+    json.dumps(
+        [GATEWAY_WORKSPACE_ID, GATEWAY_AGENT_ID, GATEWAY_TASK_ID, GATEWAY_RUN_ID, GATEWAY_MEMORY_TEXT],
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    ).encode("utf-8")
+).hexdigest()[:16]
 GATEWAY_MEMORY_MISMATCH_ID = "mem_pg_gateway_mismatch"
 GATEWAY_APPROVED_MEMORY_ID = "mem_pg_gateway_approved_existing"
 GATEWAY_CROSS_WORKSPACE_MEMORY_ID = "mem_pg_gateway_cross_workspace_existing"
@@ -681,19 +690,21 @@ def gateway_audit_body(action: str = GATEWAY_AUDIT_ACTION, *, task_id: str = GAT
     }
 
 
-def gateway_memory_body(memory_id: str, *, task_id: str = GATEWAY_TASK_ID, run_id: str = GATEWAY_RUN_ID) -> dict:
-    return {
-        "memory_id": memory_id,
+def gateway_memory_body(memory_id: str | None = None, *, task_id: str = GATEWAY_TASK_ID, run_id: str = GATEWAY_RUN_ID) -> dict:
+    body = {
         "run_id": run_id,
         "task_id": task_id,
         "scope": "project",
         "memory_type": "agent_lesson",
-        "canonical_text": "Postgres Gateway memory candidate write proof with raw prompt omitted.",
+        "canonical_text": GATEWAY_MEMORY_TEXT,
         "source_type": "run_log",
         "source_ref": run_id,
         "confidence": 0.88,
         "access_tags": ["agent-gateway", "postgres-write-proof"],
     }
+    if memory_id is not None:
+        body["memory_id"] = memory_id
+    return body
 
 
 def request_json_with_token(url: str, *, token: str, method: str = "POST", body: dict | None = None, extra_headers: dict | None = None) -> tuple[int, dict]:
@@ -1402,7 +1413,7 @@ def main() -> int:
             gateway_memory_write_status, gateway_memory_write_payload = request_json_with_token(
                 f"{write_base}/api/agent-gateway/memories/propose",
                 token=gateway_token,
-                body=gateway_memory_body(GATEWAY_MEMORY_ID),
+                body=gateway_memory_body(),
             )
             gateway_missing_approval_scope_status, gateway_missing_approval_scope_payload = request_json_with_token(
                 f"{write_base}/api/agent-gateway/approvals/request",
@@ -2052,12 +2063,14 @@ def main() -> int:
                 failures.append(f"gateway_memory_no_token_mismatch:{gateway_memory_no_token_status}:{gateway_memory_no_token_payload}")
             if gateway_memory_mismatch_status != 403 or "task_id" not in json.dumps(gateway_memory_mismatch_payload, ensure_ascii=False):
                 failures.append(f"gateway_memory_mismatch_not_blocked:{gateway_memory_mismatch_status}:{gateway_memory_mismatch_payload}")
-            if gateway_memory_approved_overwrite_status != 403 or "candidate" not in json.dumps(gateway_memory_approved_overwrite_payload, ensure_ascii=False).lower():
-                failures.append(f"gateway_memory_approved_overwrite_not_blocked:{gateway_memory_approved_overwrite_status}:{gateway_memory_approved_overwrite_payload}")
-            if gateway_memory_existing_cross_workspace_status != 403 or "workspace" not in json.dumps(gateway_memory_existing_cross_workspace_payload, ensure_ascii=False).lower():
-                failures.append(f"gateway_memory_existing_cross_workspace_not_blocked:{gateway_memory_existing_cross_workspace_status}:{gateway_memory_existing_cross_workspace_payload}")
-            if gateway_memory_other_agent_overwrite_status != 403 or "another agent" not in json.dumps(gateway_memory_other_agent_overwrite_payload, ensure_ascii=False).lower():
-                failures.append(f"gateway_memory_other_agent_overwrite_not_blocked:{gateway_memory_other_agent_overwrite_status}:{gateway_memory_other_agent_overwrite_payload}")
+            memory_id_oracle_results = [
+                ("approved", gateway_memory_approved_overwrite_status, gateway_memory_approved_overwrite_payload),
+                ("cross_workspace", gateway_memory_existing_cross_workspace_status, gateway_memory_existing_cross_workspace_payload),
+                ("other_agent", gateway_memory_other_agent_overwrite_status, gateway_memory_other_agent_overwrite_payload),
+            ]
+            for label, status, payload in memory_id_oracle_results:
+                if status != 409 or payload.get("error") != "memory_id_unavailable":
+                    failures.append(f"gateway_memory_id_oracle_not_hidden:{label}:{status}:{payload}")
             if gateway_memory_write_status != 201 or (gateway_memory_write_payload.get("memory") or {}).get("memory_id") != GATEWAY_MEMORY_ID:
                 failures.append(f"gateway_memory_write_mismatch:{gateway_memory_write_status}:{gateway_memory_write_payload}")
             if gateway_missing_approval_scope_status != 403 or "approvals:request" not in json.dumps(gateway_missing_approval_scope_payload, ensure_ascii=False):
