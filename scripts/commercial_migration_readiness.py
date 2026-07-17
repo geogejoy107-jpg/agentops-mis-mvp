@@ -277,6 +277,9 @@ def main() -> int:
             and file_contains("scripts/local_runtime_acceptance.py", "prepared_action_status")
             and file_contains("scripts/local_runtime_acceptance.py", '"prepared_action_id"')
             and file_contains("scripts/local_runtime_acceptance.py", "Prepared runtime probe did not consume")
+            and file_contains("scripts/local_runtime_acceptance.py", "runtime_failure_evidence")
+            and file_contains("scripts/local_runtime_acceptance.py", "run_readback")
+            and (ROOT / "scripts" / "local_runtime_acceptance_failure_readback_smoke.py").exists()
             and (ROOT / "scripts" / "local_runtime_acceptance.py").exists(),
             "Real Hermes/OpenClaw runtime acceptance requires Agent Plan-gated run start, verified plan-evidence, unique prepared actions, and consumed prepared actions",
         ),

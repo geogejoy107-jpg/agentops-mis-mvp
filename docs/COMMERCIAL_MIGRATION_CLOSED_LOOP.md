@@ -648,7 +648,10 @@ Must be true:
   packet over the preflight. It defaults to offline/read-only aggregation, can
   explicitly read exact-head CI, and can consume a freshly generated
   `local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api --openclaw-timeout 300 --hermes-timeout 600 --request-timeout 720`
-  JSON file without mutating receipt JSON or flipping handoff/merge. Verify with
+  JSON file without mutating receipt JSON or flipping handoff/merge. Failed live
+  provider attempts keep structured `run_readback` / `runtime_failure_evidence`
+  for diagnosis, but they do not satisfy promotion or release-grade evidence.
+  Verify with
   `python3 scripts/commercial_release_promotion_packet_smoke.py`; strict packet
   readiness uses
   `python3 scripts/commercial_release_promotion_packet.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence --require-promotion-packet-ready`

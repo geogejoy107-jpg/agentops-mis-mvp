@@ -66,6 +66,37 @@ def runtime_fixture(path: Path) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def failed_runtime_fixture(path: Path) -> None:
+    payload = {
+        "ok": False,
+        "live_openclaw": True,
+        "live_hermes": True,
+        "require_hermes_api": True,
+        "checks": [
+            {"name": "Agent Gateway CLI smoke", "ok": True, "detail": {"run_id": "run_gw_failedpacketfx"}},
+            {
+                "name": "POST /api/integrations/openclaw/probe live",
+                "ok": False,
+                "detail": {
+                    "run_id": "run_api_integrations_openclaw_probe_20260625000000000000_failedfx",
+                    "runtime_failure_evidence": True,
+                    "run_readback": {"status": "failed", "error_type": "OpenClawProbeFailed"},
+                },
+            },
+            {
+                "name": "POST /api/integrations/hermes/run-task live",
+                "ok": False,
+                "detail": {
+                    "run_id": "run_api_integrations_hermes_run_task_20260625000000000000_failedfx",
+                    "runtime_failure_evidence": True,
+                    "run_readback": {"status": "failed", "error_type": "HermesDefaultRunTaskFailed"},
+                },
+            },
+        ],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def main() -> int:
     spec = read_json(PACKET_JSON)
     require(spec.get("contract_id") == CONTRACT_ID, "packet contract mismatch")
@@ -118,12 +149,18 @@ def main() -> int:
         require((fixture_payload.get("packet_checks") or {}).get("real_runtime_acceptance_verified") is True, "packet check must include runtime verification")
         strict = run_packet("--runtime-acceptance-json", str(runtime_path), "--require-current-runtime-evidence", "--require-promotion-packet-ready")
         require(strict.returncode != 0, "strict promotion packet must remain blocked")
+        failed_runtime_path = Path(tmp) / "failed_runtime_acceptance.json"
+        failed_runtime_fixture(failed_runtime_path)
+        failed = run_packet("--runtime-acceptance-json", str(failed_runtime_path), "--require-current-runtime-evidence")
+        require(failed.returncode != 0, "failed runtime evidence must not verify promotion packet")
+        require("runtime acceptance JSON did not pass" in (failed.stderr or failed.stdout), "failed runtime rejection reason missing")
 
     print(json.dumps({
         "ok": True,
         "contract": CONTRACT_ID,
         "status": default_payload.get("status"),
         "runtime_fixture_verified": True,
+        "failed_runtime_fixture_rejected": True,
         "strict_packet_still_blocked": True,
     }, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

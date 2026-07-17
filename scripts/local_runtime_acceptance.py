@@ -86,6 +86,19 @@ def prepared_runtime_completed(payload: dict) -> bool:
     return bool(ok and created and payload.get("dry_run") is False and provider_called and prepared_runtime_run_id(payload))
 
 
+def prepared_runtime_attempted(payload: dict) -> bool:
+    action = payload.get("prepared_action") or {}
+    return bool(
+        payload.get("dry_run") is False
+        and prepared_runtime_run_id(payload)
+        and (
+            payload.get("provider_call_performed") is True
+            or payload.get("live_probe_performed") is True
+            or bool(action.get("provider_side_effect_id"))
+        )
+    )
+
+
 def prepared_runtime_prepare_payload(path: str, openclaw_timeout: int | None = None, hermes_timeout: int | None = None) -> dict:
     prefix = path.strip("/").replace("/", "_").replace("-", "_") or "runtime_probe"
     run_stamp = stamp()
@@ -141,8 +154,30 @@ def run_prepared_runtime_probe(
         timeout=request_timeout,
     )
     if prepared_runtime_status(resume) != "consumed":
+        resume = with_prepared_runtime_readback(base_url, resume, require_completed=False)
+        if prepared_runtime_attempted(resume):
+            return {
+                **resume,
+                "prepared_action_id": prepared_action_id,
+                "approval_id": approval_id,
+                "prepare_provider_call_performed": prepare.get("provider_call_performed"),
+                "request_timeout": request_timeout,
+                "acceptance_failure": "prepared_action_not_consumed",
+                "runtime_failure_evidence": True,
+            }
         raise RuntimeError(f"Prepared runtime probe did not consume the prepared action: {resume}")
     if not prepared_runtime_completed(resume):
+        resume = with_prepared_runtime_readback(base_url, resume, require_completed=False)
+        if prepared_runtime_attempted(resume):
+            return {
+                **resume,
+                "prepared_action_id": prepared_action_id,
+                "approval_id": approval_id,
+                "prepare_provider_call_performed": prepare.get("provider_call_performed"),
+                "request_timeout": request_timeout,
+                "acceptance_failure": "runtime_not_completed",
+                "runtime_failure_evidence": True,
+            }
         raise RuntimeError(f"Prepared runtime probe did not complete as a real run: {resume}")
     resume = with_prepared_runtime_readback(base_url, resume)
     return {
@@ -154,25 +189,30 @@ def run_prepared_runtime_probe(
     }
 
 
-def with_prepared_runtime_readback(base_url: str, payload: dict) -> dict:
+def with_prepared_runtime_readback(base_url: str, payload: dict, require_completed: bool = True) -> dict:
     run_id = prepared_runtime_run_id(payload)
     if not run_id:
         raise RuntimeError(f"Prepared runtime probe missing run_id: {payload}")
     run_detail = request_json("GET", base_url, f"/api/runs/{run_id}")
     run = run_detail.get("run") or {}
-    if run.get("status") != "completed" or run.get("approval_required") not in (False, 0, "0"):
+    completed = run.get("status") == "completed" and run.get("approval_required") in (False, 0, "0")
+    if require_completed and not completed:
         raise RuntimeError(f"Prepared runtime probe run readback is not completed: {run_detail}")
+    provider_called = payload.get("provider_call_performed") is True or payload.get("live_probe_performed") is True
     return {
         **payload,
         "run_id": run_id,
-        "ok": True,
-        "created": True,
+        "ok": True if completed else bool(payload.get("ok") is True),
+        "created": True if completed else bool(payload.get("created") is True),
         "dry_run": False,
-        "provider_call_performed": True,
+        "provider_call_performed": True if completed else provider_called,
         "prepared_action_status": prepared_runtime_status(payload),
         "run_readback": {
             "status": run.get("status"),
             "approval_required": run.get("approval_required"),
+            "error_type": run.get("error_type"),
+            "error_message": run.get("error_message"),
+            "duration_ms": run.get("duration_ms"),
         },
     }
 
