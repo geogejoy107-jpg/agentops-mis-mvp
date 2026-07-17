@@ -56,6 +56,7 @@ function relayErrorMessage(locale: "zh" | "en") {
 }
 
 function relayStatusColor(state: HostRelayDisplayState) {
+  if (state === "enabled") return "var(--mis-success)";
   if (state === "prepared") return "var(--mis-primary)";
   if (state === "pending" || state === "restart_required") return "var(--mis-warning)";
   return "var(--mis-muted)";
@@ -147,6 +148,7 @@ export function AccountSecurity() {
       relayHint: "由 Owner 分两步准备并确认 Relay 配置变更。当前界面不代表 Relay 已部署或远程地址已可用。",
       relayStatus: "状态",
       relayDisabled: "已关闭",
+      relayEnabled: "已启用",
       relayPrepared: "等待明确确认",
       relayPending: "正在处理",
       relayRestartRequired: "需要重启主机服务",
@@ -223,6 +225,7 @@ export function AccountSecurity() {
       relayHint: "An Owner prepares and explicitly confirms Relay configuration changes in two steps. This screen does not mean a Relay is deployed or a remote address is available.",
       relayStatus: "Status",
       relayDisabled: "Disabled",
+      relayEnabled: "Enabled",
       relayPrepared: "Awaiting explicit confirmation",
       relayPending: "Pending",
       relayRestartRequired: "Host service restart required",
@@ -384,6 +387,7 @@ export function AccountSecurity() {
   const relayAction: HostRelayAction = relayStatus?.active_enabled ? "disable" : "enable";
   const relayStatusLabel = ({
     disabled: copy.relayDisabled,
+    enabled: copy.relayEnabled,
     prepared: copy.relayPrepared,
     pending: copy.relayPending,
     restart_required: copy.relayRestartRequired,
@@ -421,7 +425,7 @@ export function AccountSecurity() {
       const nextStatus = await confirmHostRelayTransition(relayTransition.ref, relayTransition.action);
       setRelayTransition(null);
       setRelayStatus(nextStatus);
-      await refreshRelay();
+      if (!nextStatus.restart_required) await refreshRelay();
     } catch {
       setRelayError(relayErrorMessage(locale));
     } finally {

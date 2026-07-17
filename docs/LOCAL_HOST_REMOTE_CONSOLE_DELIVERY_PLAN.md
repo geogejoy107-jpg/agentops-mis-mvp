@@ -203,8 +203,11 @@ Implementation slices:
    only when the private PID record matches the current Host stack, exactly one
    direct managed connector child exists, and a post-start private status proves
    Host TLS plus a durable epoch; remote readiness remains false without a
-   deployed Relay. Owner enable/disable controls, certificate lifecycle,
-   Relay-side SNI routing, credential
+   deployed Relay. Owner enable/disable now uses an Owner-only, same-origin,
+   CSRF-protected prepare/confirm transition with private material binding,
+   transactional rollback and bounded audit output. The confirmed transition
+   reports `restart_required` but does not yet restart the installed Host.
+   Certificate lifecycle, Relay-side SNI routing, credential
    provisioning, installation into the current preview, and the deployed Relay
    remain open.
 3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host

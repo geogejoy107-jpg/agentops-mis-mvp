@@ -170,6 +170,8 @@ from agentops_mis_core.workflow_jobs import (
     workflow_job_stuck_projection,
 )
 from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
+from agentops_mis_cli import host as private_host_cli
+from agentops_mis_cli import relay_control
 from agentops_mis_cli.redaction import redact_full_text as shared_redact_full_text
 from agentops_mis_cli.redaction import redact_text as shared_redact_text
 from agentops_mis_runtime.capabilities import (
@@ -543,10 +545,131 @@ def private_host_owner_error(human_context: dict | None) -> tuple[dict, int] | N
     if not human_context or human_context.get("mode") != "human_session":
         return {"error": "human_auth_required", "message": "A human browser session is required."}, 401
     if str(os.environ.get("AGENTOPS_DEPLOYMENT_MODE") or "").strip().lower() != "private_host":
-        return {"error": "private_host_required", "message": "Host acceptance receipts are available only in private_host mode."}, 403
+        return {"error": "private_host_required", "message": "This Host operation is available only in private_host mode."}, 403
     if human_context.get("role") != "owner":
         return {"error": "human_role_forbidden", "message": "This action requires the owner role.", "required_role": "owner"}, 403
     return None
+
+
+PRIVATE_HOST_RELAY_CONFLICT_ERRORS = {
+    "confirmation_already_recorded",
+    "confirmation_action_mismatch",
+    "confirmation_ref_mismatch",
+    "confirmation_required",
+    "rollback_pending",
+    "transition_expired",
+    "transition_material_changed",
+    "transition_not_found",
+    "transition_store_invalid",
+}
+PRIVATE_HOST_RELAY_UNAVAILABLE_ERRORS = {
+    "active_relay_state_invalid",
+    "host_config_invalid",
+    "relay_material_invalid",
+    "relay_origin_invalid",
+    "rollback_incomplete",
+    "transition_write_failed",
+}
+
+
+def private_host_relay_error_status(payload: dict) -> int:
+    error = str(payload.get("error") or "transition_invalid")
+    if error in PRIVATE_HOST_RELAY_CONFLICT_ERRORS:
+        return 409
+    if error in PRIVATE_HOST_RELAY_UNAVAILABLE_ERRORS:
+        return 503
+    return 400
+
+
+def private_host_relay_public_payload(payload: dict) -> dict:
+    ok = payload.get("ok") is True
+    core_state = str(payload.get("state") or "unavailable")
+    active_enabled = payload.get("relay_enabled") is True or (
+        core_state == "executed" and payload.get("action") == "enable"
+    )
+    if core_state == "idle":
+        state = "enabled" if active_enabled else "disabled"
+    elif core_state in {"prepared", "confirmed", "expired"}:
+        state = core_state
+    elif payload.get("restart_required") is True:
+        state = "restart_required"
+    else:
+        state = "unavailable"
+    result = {
+        "ok": ok,
+        "provider": "agentops-private-host",
+        "operation": str(payload.get("operation") or "relay_transition"),
+        "state": state,
+        "active_enabled": active_enabled,
+        "control_available": ok,
+        "transition_pending": core_state in {"prepared", "confirmed"},
+        "restart_required": payload.get("restart_required") is True,
+        "confirmation_required": payload.get("confirmation_required") is True,
+        "network_used": False,
+        "sensitive_values_omitted": True,
+    }
+    for field in ("action", "transition_ref", "expires_at", "error", "network_publication"):
+        if payload.get(field) is not None:
+            result[field] = payload[field]
+    return result
+
+
+def private_host_relay_status(human_context: dict | None) -> tuple[dict, int]:
+    owner_error = private_host_owner_error(human_context)
+    if owner_error:
+        return owner_error
+    paths = private_host_cli.paths()
+    with private_host_cli.lifecycle_lock():
+        payload = relay_control.public_relay_status(
+            transition_path=paths["relay_transition"],
+            active_config_path=paths["relay_config"],
+            host_config_path=paths["config"],
+        )
+    public = private_host_relay_public_payload(payload)
+    return public, 200 if public["ok"] else private_host_relay_error_status(public)
+
+
+def private_host_relay_transition(
+    body: dict,
+    human_context: dict | None,
+    *,
+    transition_ref: str | None = None,
+) -> tuple[dict, int, str]:
+    owner_error = private_host_owner_error(human_context)
+    if owner_error:
+        payload, status = owner_error
+        return payload, status, "blocked"
+    if set(body) != {"action"} or body.get("action") not in {"enable", "disable"}:
+        return {"error": "invalid_request_fields", "allowed_fields": ["action"]}, 400, "blocked"
+    action = str(body["action"])
+    paths = private_host_cli.paths()
+    common = {
+        "action": action,
+        "transition_path": paths["relay_transition"],
+        "active_config_path": paths["relay_config"],
+        "prepared_config_path": paths["relay_prepared"],
+        "secrets_path": paths["relay_secrets"],
+        "host_config_path": paths["config"],
+    }
+    with private_host_cli.lifecycle_lock():
+        if transition_ref is None:
+            payload = relay_control.prepare_relay_transition(**common)
+            event = "prepared" if payload.get("ok") is True else "prepare_failed"
+        else:
+            confirmed = relay_control.confirm_relay_transition(
+                **common,
+                transition_ref=transition_ref,
+            )
+            payload = confirmed
+            event = "confirm_failed"
+            if confirmed.get("ok") is True:
+                payload = relay_control.execute_confirmed_relay_transition(
+                    **common,
+                    transition_ref=transition_ref,
+                )
+                event = "executed" if payload.get("ok") is True else "execute_failed"
+    public = private_host_relay_public_payload(payload)
+    return public, 200 if public["ok"] else private_host_relay_error_status(public), event
 
 
 def private_host_release_identity() -> dict:
@@ -30988,6 +31111,10 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status = human_auth.list_devices(conn, self._human_auth_context)
                 conn.commit()
                 return self.send_json(payload, status)
+            if path == "/api/host/relay":
+                payload, status = private_host_relay_status(self._human_auth_context)
+                conn.rollback()
+                return self.send_json(payload, status)
             if path == "/api/agent-gateway/status":
                 payload, status = agent_gateway_status(conn, self.headers)
                 conn.commit()
@@ -32300,6 +32427,41 @@ class Handler(BaseHTTPRequestHandler):
                     payload, status = local_write_auth_error
                     conn.rollback()
                     return self.send_json(payload, status)
+            relay_confirm_match = re.fullmatch(
+                r"/api/host/relay/transitions/([A-Za-z0-9._:-]{1,160})/confirm",
+                path,
+            )
+            if path == "/api/host/relay/transitions" or relay_confirm_match:
+                transition_ref = relay_confirm_match.group(1) if relay_confirm_match else None
+                payload, status, event = private_host_relay_transition(
+                    body,
+                    human_context,
+                    transition_ref=transition_ref,
+                )
+                audit_ref = str(payload.get("transition_ref") or transition_ref or "relay_transition")
+                audit(
+                    conn,
+                    "user",
+                    human_context.get("account_id") if human_context else None,
+                    f"host.relay.{event}",
+                    "private_host_relay_transition",
+                    audit_ref,
+                    None,
+                    None,
+                    {
+                        "action": body.get("action") if body.get("action") in {"enable", "disable"} else None,
+                        "status": status,
+                        "error": payload.get("error"),
+                        "restart_required": payload.get("restart_required") is True,
+                        "network_used": False,
+                        "relay_material_omitted": True,
+                        "credentials_omitted": True,
+                        "paths_omitted": True,
+                        "digests_omitted": True,
+                    },
+                )
+                conn.commit()
+                return self.send_json(payload, status)
             if path == "/api/human-auth/sessions/revoke":
                 if not human_auth.required():
                     return self.send_json({"error": "human_auth_disabled", "message": "Human authentication is not enabled."}, 409)

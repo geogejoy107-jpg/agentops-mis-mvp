@@ -96,6 +96,10 @@ jobs:
           timeout 120s python3 scripts/relay_connector_service_smoke.py
           timeout 120s python3 scripts/private_host_relay_config_smoke.py
           timeout 120s python3 scripts/private_host_relay_lifecycle_smoke.py
+          timeout 120s python3 scripts/private_host_relay_control_core_smoke.py
+          timeout 120s python3 scripts/private_host_relay_cli_control_smoke.py
+          timeout 120s python3 scripts/private_host_relay_owner_control_smoke.py
+          timeout 120s python3 scripts/private_host_relay_owner_control_ui_smoke.py
           timeout 120s python3 scripts/local_relay_connector_supervisor_smoke.py
           timeout 120s python3 scripts/private_host_rc_status_smoke.py
           timeout 120s python3 scripts/release_branch_control_smoke.py

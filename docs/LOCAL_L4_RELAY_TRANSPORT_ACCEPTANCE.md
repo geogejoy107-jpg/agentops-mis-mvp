@@ -238,8 +238,8 @@ advanced private-network profile and is intentionally untouched.
 
 ## Next Slice
 
-Add Owner confirmation-gated enable/disable controls and private certificate
-provisioning, then teach Host status to verify fresh owned-process evidence
-without treating connection status as deployed-Relay readiness. After that, add
-SNI/multi-Host routing and deploy the same authority-free boundary behind a
-stable domain for 3C physical browser acceptance.
+Add an exact-definition, rollback-aware managed Host restart worker after the
+now-implemented Owner confirmation-gated enable/disable transition. Then add
+private certificate provisioning, SNI/multi-Host routing and deploy the same
+authority-free boundary behind a stable domain for 3C physical browser
+acceptance.

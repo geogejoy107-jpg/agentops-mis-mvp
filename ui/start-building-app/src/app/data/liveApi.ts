@@ -89,7 +89,7 @@ export interface HumanBrowserSessionRevokePayload {
 }
 
 export type HostRelayAction = "enable" | "disable";
-export type HostRelayDisplayState = "disabled" | "prepared" | "pending" | "restart_required" | "unavailable";
+export type HostRelayDisplayState = "disabled" | "enabled" | "prepared" | "pending" | "restart_required" | "unavailable";
 
 export interface HostRelayStatusPayload {
   state: HostRelayDisplayState;
@@ -395,13 +395,13 @@ function normalizeHostRelayState(value: unknown): HostRelayStatusPayload {
 
   let state: HostRelayDisplayState = "unavailable";
   if (restartRequired || rawState === "restart_required") state = "restart_required";
+  else if (rawState === "enabled") state = "enabled";
   else if (
     transitionPending
     || rawState === "pending"
     || rawState === "connecting"
     || rawState === "connected"
     || rawState === "backoff"
-    || rawState.startsWith("enabled")
   ) state = "pending";
   else if (explicitlyPrepared) state = "prepared";
   else if (explicitlyDisabled) state = "disabled";

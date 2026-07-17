@@ -29,6 +29,7 @@ from agentops_mis_cli.relay_connector_service import (
     RelayConnectorServiceError,
     validate_connector_material,
 )
+from agentops_mis_cli import relay_control
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -109,6 +110,7 @@ def paths() -> dict[str, Path]:
         "relay": home / "relay",
         "relay_config": home / "relay" / "config.json",
         "relay_prepared": home / "relay" / "prepared.json",
+        "relay_transition": home / "relay" / "transition.json",
         "relay_secrets": home / "relay" / "secrets.json",
         "relay_epoch": home / "relay" / "epoch.json",
         "relay_status": home / "relay" / "status.json",
@@ -2538,6 +2540,35 @@ def cmd_relay_preflight(_args) -> int:
     return 0
 
 
+def cmd_relay_transition(args) -> int:
+    require_initialized()
+    p = paths()
+    with lifecycle_lock():
+        common = {
+            "action": args.action,
+            "transition_path": p["relay_transition"],
+            "active_config_path": p["relay_config"],
+            "prepared_config_path": p["relay_prepared"],
+            "secrets_path": p["relay_secrets"],
+            "host_config_path": p["config"],
+        }
+        if args.confirm_ref:
+            confirmed = relay_control.confirm_relay_transition(
+                **common,
+                transition_ref=args.confirm_ref,
+            )
+            payload = confirmed
+            if confirmed.get("ok") is True:
+                payload = relay_control.execute_confirmed_relay_transition(
+                    **common,
+                    transition_ref=args.confirm_ref,
+                )
+        else:
+            payload = relay_control.prepare_relay_transition(**common)
+    emit(payload)
+    return 0 if payload.get("ok") is True else 1
+
+
 def cmd_tailscale_apply(args) -> int:
     config, _secret_values = require_initialized()
     target = f"http://{config['host']}:{config['port']}"
@@ -2759,6 +2790,10 @@ def build_parser() -> argparse.ArgumentParser:
     open_console.set_defaults(handler=cmd_open_console)
     relay_preflight = sub.add_parser("relay-preflight", help="Validate pre-provisioned private Relay material without enabling it or using the network.")
     relay_preflight.set_defaults(handler=cmd_relay_preflight)
+    relay_transition = sub.add_parser("relay-transition", help="Prepare or explicitly confirm one bounded private Relay config transition.", allow_abbrev=False)
+    relay_transition.add_argument("--action", choices=["enable", "disable"], required=True)
+    relay_transition.add_argument("--confirm-ref", default="", help="Confirm the exact prepared transition ref; the ref is non-secret and single-use.")
+    relay_transition.set_defaults(handler=cmd_relay_transition)
     preview = sub.add_parser("tailscale-preview", help="Preview Tailscale Serve and revoke commands without executing them.")
     preview.add_argument("--https-port", type=int, choices=range(1, 65536), default=443, metavar="PORT")
     preview.set_defaults(handler=cmd_tailscale_preview)
