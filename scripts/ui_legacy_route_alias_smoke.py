@@ -20,7 +20,7 @@ CONTRACT_ID = "ui_legacy_route_alias_v1"
 
 sys.path.insert(0, str(SCRIPTS))
 
-from nextjs_playwright_snapshot_smoke import free_port, require, restore_next_env, run, start_process, wait_http  # noqa: E402
+from nextjs_playwright_snapshot_smoke import free_port, require, restore_next_env, run, start_process, stop_process, wait_http  # noqa: E402
 
 
 ALIASES = [
@@ -138,12 +138,7 @@ def main() -> int:
         return 1
     finally:
         for proc in reversed(processes):
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+            stop_process(proc)
         run(["bash", "-lc", f"lsof -tiTCP:{next_port} -sTCP:LISTEN | xargs -r kill"], timeout=10)
         restore_next_env()
 
