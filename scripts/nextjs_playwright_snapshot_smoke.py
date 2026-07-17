@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import socket
 import sqlite3
 import subprocess
@@ -145,9 +146,27 @@ def start_process(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> subproce
         cwd=cwd,
         env=env,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        start_new_session=True,
     )
+
+
+def stop_process(proc: subprocess.Popen[str], *, timeout: int = 5) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        pass
+
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if proc.poll() is None:
+        proc.wait(timeout=timeout)
 
 
 def wait_http(url: str, timeout_sec: int = 45) -> None:
@@ -1425,12 +1444,7 @@ def main() -> int:
         return 1
     finally:
         for proc in reversed(processes):
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+            stop_process(proc)
         run(["bash", "-lc", f"lsof -tiTCP:{next_port} -sTCP:LISTEN | xargs -r kill"], timeout=10)
         run(["bash", "-lc", f"lsof -tiTCP:{api_port} -sTCP:LISTEN | xargs -r kill"], timeout=10)
         run(["rm", "-rf", str(NEXT_APP / ".next")], timeout=10)
@@ -1498,13 +1512,7 @@ def run_configured_retention_fixture(api_port_arg: int, next_port_arg: int) -> i
         return 1
     finally:
         for proc in reversed(processes):
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait(timeout=10)
+            stop_process(proc, timeout=10)
         run(["bash", "-lc", f"lsof -tiTCP:{next_port} -sTCP:LISTEN | xargs -r kill"], timeout=10)
         run(["rm", "-rf", str(NEXT_APP / ".next")], timeout=10)
         restore_next_env()
@@ -1644,13 +1652,7 @@ def run_postgres_write_fixture(
         return 1
     finally:
         for proc in reversed(processes):
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait(timeout=10)
+            stop_process(proc, timeout=10)
         if adapter is not None:
             try:
                 adapter.close()

@@ -35,6 +35,7 @@ from nextjs_playwright_snapshot_smoke import (  # noqa: E402
     run,
     seed_customer_project_fixture,
     start_process,
+    stop_process,
     wait_http,
 )
 
@@ -313,12 +314,7 @@ def main() -> int:
         return 1
     finally:
         for proc in reversed(processes):
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+            stop_process(proc)
         run(["bash", "-lc", f"lsof -tiTCP:{vite_port} -sTCP:LISTEN | xargs -r kill"], timeout=10)
         run(["bash", "-lc", f"lsof -tiTCP:{api_port} -sTCP:LISTEN | xargs -r kill"], timeout=10)
         run(["rm", "-rf", str(VITE_APP / "dist")], timeout=10)
