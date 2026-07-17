@@ -108,6 +108,7 @@ jobs:
           python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_cli_read_parity --expected-contract postgres_cli_read_parity_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_cli_read_parity.json -- python3 scripts/storage_postgres_cli_read_parity_smoke.py || status=1
           python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_write_helper_parity --expected-contract postgres_write_helper_parity_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_write_helper_parity.json -- python3 scripts/storage_postgres_write_helper_parity_smoke.py || status=1
           python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_http_write_task --expected-contract postgres_http_write_task_parity_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_http_write_task.json -- python3 scripts/storage_postgres_http_write_task_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_gateway_lifecycle --expected-contract postgres_http_gateway_lifecycle_write_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_gateway_lifecycle.json -- python3 scripts/storage_postgres_gateway_lifecycle_smoke.py || status=1
           python3 scripts/commercial_ci_receipt.py command --gate-id gate_3_storage_boundary_before_postgres --command-id storage_postgres_cli_write_parity --expected-contract postgres_cli_write_parity_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate3/storage_postgres_cli_write_parity.json -- python3 scripts/storage_postgres_cli_write_parity_smoke.py || status=1
           exit "$status"
 
@@ -131,6 +132,7 @@ jobs:
             --required-command-id storage_postgres_cli_read_parity \
             --required-command-id storage_postgres_write_helper_parity \
             --required-command-id storage_postgres_http_write_task \
+            --required-command-id storage_postgres_gateway_lifecycle \
             --required-command-id storage_postgres_cli_write_parity \
             --output receipts/gate3-scope.json
 

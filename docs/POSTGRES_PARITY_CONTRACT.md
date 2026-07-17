@@ -67,7 +67,12 @@ commands persist task, claim, run-start, agent/run heartbeat, run completion
 heartbeat, tool/evaluation/artifact evidence, Agent Plan, verified
 plan-evidence, memory, approval, audit, runtime-event, and token heartbeat
 evidence in Postgres without falling back to SQLite.
-The thirteenth layer is the BYOC recovery contract,
+The thirteenth layer is the Agent Gateway identity lifecycle contract,
+`postgres_http_gateway_lifecycle_write_v1`. Under the explicit Postgres write
+gate it proves registration, enrollment request/approval/issue/rotation/revoke,
+short-lived session create/revoke, workspace isolation, session non-nesting,
+parent-token revoke cascade, and token omission through the same HTTP contract
+used by external workers. The fourteenth layer is the BYOC recovery contract,
 `postgres_backup_restore_v1`, backed by the mandatory
 `postgres_backup_manifest_v1` sidecar. It creates a custom-format `pg_dump`,
 verifies its SHA-256 and `pg_restore` table of contents, requires explicit
@@ -314,6 +319,18 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   contract through `storage_backend_status.runtime_write_gate` for CLI/API/Next
   deployment readback, kept `free_local_dependencies=[]`, and
   did not fall back to SQLite.
+- `postgres_http_gateway_lifecycle_write_v1`,
+  `postgres_http_gateway_registration_write_v1`,
+  `postgres_http_gateway_enrollment_approval_write_v1`,
+  `postgres_http_gateway_enrollment_lifecycle_write_v1`, and
+  `postgres_http_gateway_session_lifecycle_write_v1` passed against
+  `postgres:16-alpine`: registration, enrollment request and human approval,
+  one-time approved/direct token issue, heartbeat, session create/revoke,
+  token rotation, and parent-token revocation cascade persisted through
+  `PostgresAdapter`; wrong admin credentials, cross-workspace heartbeat,
+  nested session creation, revoked sessions, replaced tokens, and revoked
+  tokens failed closed, while HTTP/admin readback, audit rows, runtime rows,
+  stdout, and evidence omitted raw token values and token hashes.
 - `nextjs_deployment_postgres_runtime_write_fixture_v1` passed against a
   temporary Postgres-backed MIS API in `experimental_write_http` mode and a
   Next.js server pointed at it. The browser fixture proves

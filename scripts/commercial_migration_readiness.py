@@ -1284,6 +1284,23 @@ def main() -> int:
             "experimental Postgres HTTP task, Agent Gateway task, claim, run-start, agent/run progress and completion heartbeat, tool/eval/artifact evidence, Agent Plan, plan-evidence manifest, memory candidate, approval request, and run-bound audit write routes are explicitly allowlisted, smoke-tested, and documented",
         ),
         check(
+            "postgres_gateway_lifecycle_write_surface_exists",
+            file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_http_gateway_lifecycle_write_v1")
+            and file_contains("docs/STORAGE_BOUNDARY_MAP.md", "storage_postgres_gateway_lifecycle_smoke.py")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "storage_postgres_gateway_lifecycle_smoke.py")
+            and file_contains("docs/AGENT_GATEWAY_CLI_SPEC.md", "Postgres Agent Gateway lifecycle helper")
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "storage_postgres_gateway_lifecycle")
+            and file_contains("server.py", "repo_upsert_gateway_enrollment_request")
+            and file_contains("scripts/storage_boundary_sqlite_smoke.py", "repo_upsert_gateway_enrollment_request")
+            and file_contains("server.py", "/api/agent-gateway/enrollment/rotate")
+            and file_contains("server.py", "/api/agent-gateway/session/revoke")
+            and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", "postgres_http_gateway_lifecycle_write_v1")
+            and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", "cross_workspace_rejected")
+            and file_contains("scripts/storage_postgres_gateway_lifecycle_smoke.py", "token_values_omitted_from_evidence")
+            and (ROOT / "scripts" / "storage_postgres_gateway_lifecycle_smoke.py").exists(),
+            "Postgres-backed Agent Gateway registration, enrollment approval/rotation/revocation, and short-session lifecycle are allowlisted, isolated, and token-omission tested",
+        ),
+        check(
             "postgres_cli_write_parity_surface_exists",
             file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_cli_write_parity_v1")
             and file_contains("docs/STORAGE_BOUNDARY_MAP.md", "storage_postgres_cli_write_parity_smoke.py")
@@ -1533,6 +1550,7 @@ def main() -> int:
                 "python3 scripts/storage_postgres_cli_read_parity_smoke.py",
                 "python3 scripts/storage_postgres_write_helper_parity_smoke.py",
                 "python3 scripts/storage_postgres_http_write_task_smoke.py",
+                "python3 scripts/storage_postgres_gateway_lifecycle_smoke.py",
                 "python3 scripts/storage_postgres_cli_write_parity_smoke.py",
             ],
         },

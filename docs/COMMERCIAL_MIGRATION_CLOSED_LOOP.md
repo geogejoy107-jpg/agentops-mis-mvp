@@ -209,6 +209,7 @@ python3 scripts/storage_postgres_http_read_parity_smoke.py
 python3 scripts/storage_postgres_cli_read_parity_smoke.py
 python3 scripts/storage_postgres_write_helper_parity_smoke.py
 python3 scripts/storage_postgres_http_write_task_smoke.py
+python3 scripts/storage_postgres_gateway_lifecycle_smoke.py
 python3 scripts/storage_postgres_cli_write_parity_smoke.py
 ```
 

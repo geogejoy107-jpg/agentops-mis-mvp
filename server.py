@@ -52,16 +52,25 @@ DEFAULT_ENTERPRISE_CONTROLS_PATH = ROOT / "config" / "enterprise-controls.local.
 STORAGE_BACKEND = os.environ.get("AGENTOPS_STORAGE_BACKEND", "sqlite").strip().lower() or "sqlite"
 POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {
     ("POST", "/api/approvals/:approval_id/approve"),
+    ("POST", "/api/agent-gateway/register"),
     ("POST", "/api/agent-gateway/artifacts"),
     ("POST", "/api/agent-gateway/agent-plans"),
     ("POST", "/api/agent-gateway/approvals/request"),
     ("POST", "/api/agent-gateway/audit"),
+    ("POST", "/api/agent-gateway/enrollment/create"),
+    ("POST", "/api/agent-gateway/enrollment/issue-approved"),
+    ("POST", "/api/agent-gateway/enrollment/policy-preview"),
+    ("POST", "/api/agent-gateway/enrollment/request"),
+    ("POST", "/api/agent-gateway/enrollment/revoke"),
+    ("POST", "/api/agent-gateway/enrollment/rotate"),
     ("POST", "/api/agent-gateway/evaluations/submit"),
     ("POST", "/api/agent-gateway/heartbeat"),
     ("POST", "/api/agent-gateway/memories/propose"),
     ("POST", "/api/agent-gateway/plan-evidence-manifests"),
     ("POST", "/api/agent-gateway/runs/:run_id/heartbeat"),
     ("POST", "/api/agent-gateway/runs/start"),
+    ("POST", "/api/agent-gateway/session/create"),
+    ("POST", "/api/agent-gateway/session/revoke"),
     ("POST", "/api/agent-gateway/tasks"),
     ("POST", "/api/agent-gateway/tasks/:task_id/claim"),
     ("POST", "/api/agent-gateway/tool-calls"),
@@ -761,6 +770,10 @@ def storage_backend_status(headers=None) -> dict:
             "contracts": [
                 "postgres_http_read_parity_v1",
                 "postgres_http_write_task_parity_v1",
+                "postgres_http_gateway_registration_write_v1",
+                "postgres_http_gateway_enrollment_approval_write_v1",
+                "postgres_http_gateway_enrollment_lifecycle_write_v1",
+                "postgres_http_gateway_session_lifecycle_write_v1",
                 "postgres_http_gateway_task_write_parity_v1",
                 "postgres_http_gateway_execution_start_write_v1",
                 "postgres_http_gateway_evidence_write_v1",
@@ -864,6 +877,22 @@ def postgres_prepared_action_decision_allowed(conn, approval_id: str) -> bool:
     if not action:
         return False
     return (action["provider"], action["action_type"]) in POSTGRES_HTTP_PREPARED_ACTION_DECISION_TYPES
+
+
+def postgres_gateway_enrollment_approval_allowed(conn, approval_id: str) -> bool:
+    return bool(conn.execute(
+        "SELECT 1 FROM agent_gateway_enrollment_requests WHERE approval_id=? LIMIT 1",
+        (approval_id,),
+    ).fetchone())
+
+
+def postgres_approval_decision_allowed(conn, approval_id: str, decision: str) -> bool:
+    if decision != "approved":
+        return False
+    return (
+        postgres_prepared_action_decision_allowed(conn, approval_id)
+        or postgres_gateway_enrollment_approval_allowed(conn, approval_id)
+    )
 
 
 def commercial_entitlement_block(conn, capability: str, operation: str, actor: str = "commercial-gate") -> dict:
@@ -1001,6 +1030,18 @@ def row_to_dict(row):
 
 def rows_to_dicts(rows):
     return [row_to_dict(r) for r in rows]
+
+
+def first_column(row, default=None):
+    if row is None:
+        return default
+    if isinstance(row, dict):
+        return next(iter(row.values()), default)
+    try:
+        return row[0]
+    except (KeyError, IndexError, TypeError):
+        values = dict(row).values()
+        return next(iter(values), default)
 
 
 def row_unchanged(before, row: dict, ignore=None) -> bool:
@@ -2131,7 +2172,7 @@ def seed(reset=False):
         DB_PATH.unlink()
     init_schema()
     with db() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM agents").fetchone()[0]
+        count = first_column(conn.execute("SELECT COUNT(*) FROM agents").fetchone(), 0)
         if count and not reset:
             return
         # clear in dependency order
@@ -2315,8 +2356,8 @@ def complete_run(conn: sqlite3.Connection, run_id: str, actor_type="system", act
     if not run:
         return False
     task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (run["task_id"],)).fetchone()
-    pending = conn.execute("SELECT COUNT(*) FROM approvals WHERE run_id=? AND decision='pending'", (run_id,)).fetchone()[0]
-    rejected = conn.execute("SELECT COUNT(*) FROM approvals WHERE run_id=? AND decision='rejected'", (run_id,)).fetchone()[0]
+    pending = first_column(conn.execute("SELECT COUNT(*) FROM approvals WHERE run_id=? AND decision='pending'", (run_id,)).fetchone(), 0)
+    rejected = first_column(conn.execute("SELECT COUNT(*) FROM approvals WHERE run_id=? AND decision='rejected'", (run_id,)).fetchone(), 0)
     if rejected:
         before = dict(run)
         conn.execute("UPDATE runs SET status='blocked', ended_at=?, duration_ms=?, error_type=?, error_message=? WHERE run_id=?",
@@ -2392,11 +2433,11 @@ def evaluate_run(conn: sqlite3.Connection, run, task):
         "no_error": not run["error_message"],
         "high_risk_approved": True,
     }
-    high_unapproved = conn.execute(
+    high_unapproved = first_column(conn.execute(
         """SELECT COUNT(*) FROM tool_calls tc LEFT JOIN approvals ap ON ap.tool_call_id=tc.tool_call_id AND ap.decision='approved'
         WHERE tc.run_id=? AND tc.risk_level IN ('high','critical') AND ap.approval_id IS NULL""",
         (run["run_id"],),
-    ).fetchone()[0]
+    ).fetchone(), 0)
     rules["high_risk_approved"] = high_unapproved == 0
     passed = all(rules.values())
     score = round(sum(1 for v in rules.values() if v) / len(rules), 2)
@@ -4142,6 +4183,30 @@ def repo_list_gateway_sessions(conn: sqlite3.Connection, workspace_id: str | Non
     ).fetchall()
 
 
+def repo_upsert_gateway_enrollment_request(conn: sqlite3.Connection, row: dict) -> tuple[sqlite3.Row | None, str]:
+    before = conn.execute(
+        "SELECT * FROM agent_gateway_enrollment_requests WHERE request_id=?",
+        (row["request_id"],),
+    ).fetchone()
+    if before:
+        conn.execute(
+            """UPDATE agent_gateway_enrollment_requests
+            SET approval_id=:approval_id, task_id=:task_id, run_id=:run_id, workspace_id=:workspace_id,
+                agent_id=:agent_id, name=:name, role=:role, runtime_type=:runtime_type,
+                scopes_json=:scopes_json, reason=:reason, status=:status, token_id=:token_id,
+                updated_at=:updated_at, decided_at=:decided_at
+            WHERE request_id=:request_id""",
+            row,
+        )
+        return before, "updated"
+    conn.execute(
+        """INSERT INTO agent_gateway_enrollment_requests(request_id,approval_id,task_id,run_id,workspace_id,agent_id,name,role,runtime_type,scopes_json,reason,status,token_id,created_at,updated_at,decided_at)
+        VALUES(:request_id,:approval_id,:task_id,:run_id,:workspace_id,:agent_id,:name,:role,:runtime_type,:scopes_json,:reason,:status,:token_id,:created_at,:updated_at,:decided_at)""",
+        row,
+    )
+    return before, "created"
+
+
 def normalize_workspace_id(value) -> str:
     raw = str(value or "local-demo").strip()[:120]
     normalized = re.sub(r"[^A-Za-z0-9_.:-]+", "_", raw).strip("_")
@@ -4459,11 +4524,7 @@ def agent_gateway_request_enrollment(conn, body) -> tuple[dict, int]:
         "updated_at": now,
         "decided_at": None,
     }
-    conn.execute(
-        """INSERT OR REPLACE INTO agent_gateway_enrollment_requests(request_id,approval_id,task_id,run_id,workspace_id,agent_id,name,role,runtime_type,scopes_json,reason,status,token_id,created_at,updated_at,decided_at)
-        VALUES(:request_id,:approval_id,:task_id,:run_id,:workspace_id,:agent_id,:name,:role,:runtime_type,:scopes_json,:reason,:status,:token_id,:created_at,:updated_at,:decided_at)""",
-        request,
-    )
+    repo_upsert_gateway_enrollment_request(conn, request)
     runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.request", "waiting_approval", run_id=run_id, task_id=task_id, agent_id=agent_id, output_summary=f"Enrollment request {request_id} is pending approval.")
     audit(conn, "agent", agent_id, "agent_gateway.enrollment_request", "agent_gateway_enrollment_requests", request_id, None, {k: v for k, v in request.items() if k != "scopes_json"}, {"scopes": scopes, "token_omitted": True})
     return {
@@ -15873,9 +15934,7 @@ class Handler(BaseHTTPRequestHandler):
         before = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
         if not before:
             return self.send_json({"error": "not found"}, 404)
-        if STORAGE_BACKEND == "postgres" and (
-            decision != "approved" or not postgres_prepared_action_decision_allowed(conn, approval_id)
-        ):
+        if STORAGE_BACKEND == "postgres" and not postgres_approval_decision_allowed(conn, approval_id, decision):
             return self.send_json(
                 postgres_read_only_write_block("POST", f"/api/approvals/{approval_id}/{'approve' if decision == 'approved' else 'reject'}"),
                 status=503,
@@ -16044,15 +16103,15 @@ def start_mock_run(conn, body):
 
 
 def dashboard_metrics(conn):
-    agents_total = conn.execute("SELECT COUNT(*) FROM agents").fetchone()[0]
-    agents_running = conn.execute("SELECT COUNT(*) FROM agents WHERE status='running'").fetchone()[0]
-    total_cost = conn.execute("SELECT COALESCE(SUM(cost_usd),0) FROM runs").fetchone()[0]
-    completed = conn.execute("SELECT COUNT(*) FROM tasks WHERE status='completed'").fetchone()[0]
-    failed = conn.execute("SELECT COUNT(*) FROM tasks WHERE status IN ('failed','blocked')").fetchone()[0]
-    tasks_total = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
-    avg_cost = conn.execute("SELECT COALESCE(AVG(cost_usd),0) FROM runs WHERE status='completed'").fetchone()[0]
-    pending_approvals = conn.execute("SELECT COUNT(*) FROM approvals WHERE decision='pending'").fetchone()[0]
-    stale_memories = conn.execute("SELECT COUNT(*) FROM memories WHERE review_status='stale' OR ttl_review_due_at < ?", (now_iso(),)).fetchone()[0]
+    agents_total = first_column(conn.execute("SELECT COUNT(*) FROM agents").fetchone(), 0)
+    agents_running = first_column(conn.execute("SELECT COUNT(*) FROM agents WHERE status='running'").fetchone(), 0)
+    total_cost = first_column(conn.execute("SELECT COALESCE(SUM(cost_usd),0) FROM runs").fetchone(), 0)
+    completed = first_column(conn.execute("SELECT COUNT(*) FROM tasks WHERE status='completed'").fetchone(), 0)
+    failed = first_column(conn.execute("SELECT COUNT(*) FROM tasks WHERE status IN ('failed','blocked')").fetchone(), 0)
+    tasks_total = first_column(conn.execute("SELECT COUNT(*) FROM tasks").fetchone(), 0)
+    avg_cost = first_column(conn.execute("SELECT COALESCE(AVG(cost_usd),0) FROM runs WHERE status='completed'").fetchone(), 0)
+    pending_approvals = first_column(conn.execute("SELECT COUNT(*) FROM approvals WHERE decision='pending'").fetchone(), 0)
+    stale_memories = first_column(conn.execute("SELECT COUNT(*) FROM memories WHERE review_status='stale' OR ttl_review_due_at < ?", (now_iso(),)).fetchone(), 0)
     task_status = rows_to_dicts(conn.execute("SELECT status, COUNT(*) AS count FROM tasks GROUP BY status").fetchall())
     top_cost_agents = rows_to_dicts(conn.execute("SELECT a.agent_id, a.name, ROUND(COALESCE(SUM(r.cost_usd),0),3) AS cost_usd FROM agents a LEFT JOIN runs r ON a.agent_id=r.agent_id GROUP BY a.agent_id ORDER BY cost_usd DESC LIMIT 5").fetchall())
     top_failing_agents = rows_to_dicts(conn.execute("SELECT a.agent_id, a.name, SUM(CASE WHEN r.status IN ('failed','blocked') THEN 1 ELSE 0 END) AS failures FROM agents a LEFT JOIN runs r ON a.agent_id=r.agent_id GROUP BY a.agent_id ORDER BY failures DESC LIMIT 5").fetchall())
@@ -16126,10 +16185,10 @@ def build_notion_report(conn) -> str:
     openclaw_run = conn.execute(
         "SELECT * FROM runs WHERE runtime_type='openclaw' ORDER BY created_at DESC LIMIT 1"
     ).fetchone()
-    pending_memory = conn.execute("SELECT COUNT(*) FROM memories WHERE review_status='candidate'").fetchone()[0]
-    evaluations = conn.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0]
-    tool_calls = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
-    audit_logs = conn.execute("SELECT COUNT(*) FROM audit_logs").fetchone()[0]
+    pending_memory = first_column(conn.execute("SELECT COUNT(*) FROM memories WHERE review_status='candidate'").fetchone(), 0)
+    evaluations = first_column(conn.execute("SELECT COUNT(*) FROM evaluations").fetchone(), 0)
+    tool_calls = first_column(conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone(), 0)
+    audit_logs = first_column(conn.execute("SELECT COUNT(*) FROM audit_logs").fetchone(), 0)
     openclaw = metrics["openclaw_import"]
     hermes = next((item for item in metrics["runtime_health"] if item["provider"] == "hermes"), {})
     quality = conn.execute("SELECT pass_fail, COUNT(*) AS count FROM evaluations GROUP BY pass_fail").fetchall()

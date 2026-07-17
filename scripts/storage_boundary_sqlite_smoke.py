@@ -51,6 +51,7 @@ def main() -> int:
     write_plan = "plan_storage_write"
     write_manifest = "pem_storage_write"
     write_approval = "ap_storage_write"
+    write_gateway_request = "enroll_req_storage_write"
     write_eval = "eval_storage_write"
     write_artifact = "art_storage_write"
     write_memory = "mem_storage_write"
@@ -148,6 +149,43 @@ def main() -> int:
                 "reason": "Storage boundary approval B.",
             })
             require(status == 201, f"approval B request failed: {status} {approval_b}")
+            gateway_request_row = {
+                "request_id": write_gateway_request,
+                "approval_id": approval_a["approval"]["approval_id"],
+                "task_id": task_a,
+                "run_id": run_a,
+                "workspace_id": workspace_a,
+                "agent_id": agent_a,
+                "name": "Storage Boundary Enrollment Request",
+                "role": "Remote AI Digital Employee",
+                "runtime_type": "mock",
+                "scopes_json": json.dumps(["agents:heartbeat", "tasks:read"]),
+                "reason": "Verify enrollment request storage helper parity.",
+                "status": "pending",
+                "token_id": None,
+                "created_at": server.now_iso(),
+                "updated_at": server.now_iso(),
+                "decided_at": None,
+            }
+            before_request, request_outcome = server.repo_upsert_gateway_enrollment_request(conn, dict(gateway_request_row))
+            require(before_request is None and request_outcome == "created", f"gateway request helper create failed: {request_outcome}")
+            gateway_request_row["status"] = "approved"
+            gateway_request_row["updated_at"] = server.now_iso()
+            gateway_request_row["decided_at"] = server.now_iso()
+            before_request, request_outcome = server.repo_upsert_gateway_enrollment_request(conn, dict(gateway_request_row))
+            require(before_request and request_outcome == "updated", f"gateway request helper update failed: {request_outcome}")
+            stored_request = conn.execute(
+                "SELECT status,workspace_id,agent_id,token_id FROM agent_gateway_enrollment_requests WHERE request_id=?",
+                (write_gateway_request,),
+            ).fetchone()
+            require(
+                stored_request
+                and stored_request["status"] == "approved"
+                and stored_request["workspace_id"] == workspace_a
+                and stored_request["agent_id"] == agent_a
+                and stored_request["token_id"] is None,
+                f"gateway request helper readback mismatch: {dict(stored_request) if stored_request else None}",
+            )
             evaluation_a, status = server.agent_gateway_eval_submit(conn, {
                 "workspace_id": workspace_a,
                 "agent_id": agent_a,
@@ -758,6 +796,7 @@ def main() -> int:
                 "repo_update_plan_evidence_manifest",
                 "repo_list_gateway_enrollments",
                 "repo_list_gateway_sessions",
+                "repo_upsert_gateway_enrollment_request",
                 "repo_pull_agent_gateway_tasks",
                 "repo_list_agent_gateway_tasks",
                 "repo_get_agent_gateway_task",
@@ -798,6 +837,7 @@ def main() -> int:
             "write_agent_plan": write_plan,
             "write_plan_evidence_manifest": write_manifest,
             "write_approval": write_approval,
+            "write_gateway_request": write_gateway_request,
             "write_evaluation": write_eval,
             "write_artifact": write_artifact,
             "write_memory": write_memory,
