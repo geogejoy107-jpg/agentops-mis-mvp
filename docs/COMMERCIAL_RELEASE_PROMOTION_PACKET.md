@@ -31,7 +31,7 @@ Attach a fresh real-runtime acceptance run without storing prompts, responses,
 private transcripts, token values, databases, or generated artifacts:
 
 ```bash
-HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api > /tmp/agentops-mis-runtime-acceptance.json
+HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api --openclaw-timeout 300 --hermes-timeout 600 --request-timeout 720 > /tmp/agentops-mis-runtime-acceptance.json
 python3 scripts/commercial_release_promotion_packet.py --include-external-ci-evidence --runtime-acceptance-json /tmp/agentops-mis-runtime-acceptance.json --require-current-runtime-evidence
 ```
 

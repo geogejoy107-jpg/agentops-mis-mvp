@@ -77,7 +77,7 @@ def main() -> int:
         "commercial_exact_head_ci_evidence_v1",
         "commercial_evidence_receipts_v1",
         "real_runtime_acceptance_verified",
-        "local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api",
+        "local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api --openclaw-timeout 300 --hermes-timeout 600 --request-timeout 720",
         "manual_receipt_promotion_without_ci",
         "raw_prompts",
         "token_values",

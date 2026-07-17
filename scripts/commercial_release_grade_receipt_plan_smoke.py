@@ -73,7 +73,7 @@ def main() -> int:
         CONTRACT_ID,
         "commercial_release_promotion_packet_v1",
         "all_gate_receipts_current_head",
-        "local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api",
+        "local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api --openclaw-timeout 300 --hermes-timeout 600 --request-timeout 720",
         "manual_receipt_promotion_without_ci",
         "raw_prompts",
         "token_values",

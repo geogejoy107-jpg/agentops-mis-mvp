@@ -31,7 +31,7 @@ REQUIRED_COMMANDS = {
     "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
     "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
     "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
-    "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api",
+    "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api --openclaw-timeout 300 --hermes-timeout 600 --request-timeout 720",
 }
 
 REQUIRED_CONTRACTS = {

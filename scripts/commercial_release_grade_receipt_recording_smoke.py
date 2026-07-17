@@ -104,7 +104,7 @@ def main() -> int:
         "preview_only_json_patch",
         "receipt_mutation_without_operator_confirmation",
         "release_grade_receipt_write_without_current_head_ci",
-        "local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api",
+        "local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api --openclaw-timeout 300 --hermes-timeout 600 --request-timeout 720",
         "raw_prompts",
         "token_values",
     ]:

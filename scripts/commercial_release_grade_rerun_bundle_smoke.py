@@ -81,7 +81,7 @@ def main() -> int:
         "COMMERCIAL_EVIDENCE_RECEIPTS.json",
         "receipt_mutation_during_preview",
         "rerun_command_auto_execution",
-        "local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api",
+        "local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api --openclaw-timeout 300 --hermes-timeout 600 --request-timeout 720",
         "raw_prompts",
         "token_values",
     ]:

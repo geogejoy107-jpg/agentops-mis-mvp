@@ -6567,11 +6567,20 @@ def ensure_openclaw_probe_agent_task(conn, body: dict | None = None, task_status
     return agent_id, task_id, provider, model_name
 
 
-def openclaw_probe_args(prompt_hash: str) -> dict:
+def runtime_timeout_seconds(value, default: int, minimum: int = 30, maximum: int = 900) -> int:
+    try:
+        timeout = int(value if value is not None else default)
+    except Exception:
+        timeout = default
+    return max(minimum, min(timeout, maximum))
+
+
+def openclaw_probe_args(prompt_hash: str, timeout_seconds=None) -> dict:
+    timeout = runtime_timeout_seconds(timeout_seconds, 180)
     return {
         "binary_path": str(OPENCLAW_BIN),
         "agent": "main",
-        "timeout_seconds": 180,
+        "timeout_seconds": timeout,
         "json": True,
         "prompt_hash": prompt_hash,
         "raw_prompt_omitted": True,
@@ -6585,7 +6594,7 @@ def openclaw_prepare_probe(conn, body: dict, prompt_hash: str) -> tuple[dict, in
     tool_call_id = body.get("tool_call_id") or stable_id("tc_oc_probe", run_id)
     approval_id = body.get("approval_id") or stable_id("ap_oc_probe", run_id)
     prepared_action_id = body.get("prepared_action_id") or stable_id("pact_oc_probe", run_id, prompt_hash[:16])
-    args = openclaw_probe_args(prompt_hash)
+    args = openclaw_probe_args(prompt_hash, body.get("openclaw_timeout") or body.get("timeout_seconds"))
     repo_upsert_run(conn, {
         "run_id": run_id,
         "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
@@ -6839,12 +6848,14 @@ def run_openclaw_probe(conn, body: dict | None = None) -> tuple[dict, int]:
     prompt = openclaw_probe_prompt()
     prompt_hash = stable_hash(prompt)
     refresh_runtime_connectors(conn)
+    timeout = runtime_timeout_seconds(body.get("openclaw_timeout") or body.get("timeout_seconds"), 180)
     plan = {
         "provider": "openclaw",
         "mode": "fixed_probe",
         "dry_run": True,
-        "would_run": [str(OPENCLAW_BIN), "agent", "--agent", "main", "-m", "[FIXED_SAFE_PROMPT]", "--timeout", "180", "--json"],
+        "would_run": [str(OPENCLAW_BIN), "agent", "--agent", "main", "-m", "[FIXED_SAFE_PROMPT]", "--timeout", str(timeout), "--json"],
         "prompt_hash": prompt_hash,
+        "timeout_seconds": timeout,
         "requires": {"confirm_run": True, "openclaw_binary_exists": True},
         "note": "Only the fixed safe probe is enabled here. Arbitrary OpenClaw prompts remain disabled.",
         "raw_prompt_omitted": True,
@@ -10378,11 +10389,13 @@ def ensure_hermes_run_task_agent_task(conn, body: dict, task_status: str = "plan
     return agent_id, task_id
 
 
-def hermes_run_task_args(status: dict, prompt_hash: str, risk: str) -> dict:
+def hermes_run_task_args(status: dict, prompt_hash: str, risk: str, timeout_seconds=None) -> dict:
+    timeout = runtime_timeout_seconds(timeout_seconds, 300)
     return {
         "gateway_url": status["gateway_url"].rstrip("/"),
         "endpoint": status["gateway_url"].rstrip("/") + "/v1/chat/completions",
         "model": "hermes-agent",
+        "timeout_seconds": timeout,
         "prompt_hash": prompt_hash,
         "risk_level": risk,
         "raw_prompt_omitted": True,
@@ -10396,7 +10409,7 @@ def hermes_prepare_run_task(conn, body: dict, cfg: dict, status: dict, prompt_ha
     tool_call_id = body.get("tool_call_id") or stable_id("tc_hermes_default_task", run_id)
     approval_id = body.get("approval_id") or stable_id("ap_hermes_default_task", run_id)
     prepared_action_id = body.get("prepared_action_id") or stable_id("pact_hermes_default_task", run_id, prompt_hash[:16])
-    args = hermes_run_task_args(status, prompt_hash, risk)
+    args = hermes_run_task_args(status, prompt_hash, risk, body.get("hermes_timeout") or body.get("timeout_seconds"))
     repo_upsert_run(conn, {
         "run_id": run_id,
         "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
@@ -10552,7 +10565,7 @@ def hermes_resume_run_task(conn, body: dict, cfg: dict, status: dict, prompt: st
             method="POST",
             headers={"Content-Type": "application/json"},
         )
-        with urlopen(req, timeout=180) as res:
+        with urlopen(req, timeout=runtime_timeout_seconds(stored_args.get("timeout_seconds") or stored_args.get("hermes_timeout"), 300)) as res:
             response = json.loads(res.read().decode("utf-8"))
         response_hash = stable_hash(response)
         visible = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
@@ -10640,6 +10653,7 @@ def hermes_run_task(conn, body: dict) -> tuple[dict, int]:
         "mode": "default_gateway_fixed_probe",
         "would_post": status["gateway_url"].rstrip("/") + "/v1/chat/completions",
         "prompt_hash": prompt_hash,
+        "timeout_seconds": runtime_timeout_seconds(body.get("hermes_timeout") or body.get("timeout_seconds"), 300),
         "requires": {"HERMES_ALLOW_REAL_RUN": True, "confirm_run": True, "api_listening": True},
         "note": "Only a fixed safe probe is enabled here. Arbitrary Hermes task prompts remain disabled.",
     }

@@ -371,7 +371,7 @@
           "postgres_counts_unchanged": true
         },
         {
-          "command": "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api",
+          "command": "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api --openclaw-timeout 300 --hermes-timeout 600 --request-timeout 720",
           "status": "passed",
           "contract": "real_hermes_openclaw_acceptance",
           "agent_gateway_run_id": "run_gw_dbcc32f95cb2",

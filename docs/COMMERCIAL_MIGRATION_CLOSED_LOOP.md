@@ -647,7 +647,7 @@ Must be true:
 - `commercial_release_promotion_packet_v1` is the operator-facing promotion
   packet over the preflight. It defaults to offline/read-only aggregation, can
   explicitly read exact-head CI, and can consume a freshly generated
-  `local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api`
+  `local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api --openclaw-timeout 300 --hermes-timeout 600 --request-timeout 720`
   JSON file without mutating receipt JSON or flipping handoff/merge. Verify with
   `python3 scripts/commercial_release_promotion_packet_smoke.py`; strict packet
   readiness uses
