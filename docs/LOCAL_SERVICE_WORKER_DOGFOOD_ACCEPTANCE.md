@@ -1,14 +1,14 @@
 # Local Service Worker Dogfood Acceptance
 
-Status: installed Host service Worker recovery and fresh OpenClaw/Hermes tasks accepted locally
+Status: preview.33 exact-package upgrade and fresh OpenClaw/Hermes service-Worker tasks accepted locally
 
 ## Scope
 
 This acceptance uses the installed Private Host at literal loopback. It repairs
 the local Hermes and OpenClaw LaunchAgent credential binding, proves both are
 fresh Agent Gateway service Workers, and dispatches one low-risk review task to
-the long-running OpenClaw Worker. It does not use a repository server, a mock
-adapter or a direct probe.
+each long-running Worker after an exact-package upgrade. It does not use a
+repository server, a mock adapter or a direct probe.
 
 No credential, private message, full transcript, raw prompt, raw response,
 Worker log, database row dump or local service file is stored in this document.
@@ -84,6 +84,62 @@ bounded output summary identified the correct Host-initiated Relay and Host-only
 TLS-key-custody constraints. The task evidence graph is a read model over MIS
 ledgers and explicitly omits raw prompt, raw response and token material.
 
+## Preview.33 Exact-Package Closure
+
+Commit `79eb036eddadd76dc5e7e22302e84b4684a25564` passed exact-head GitHub
+Actions run `29611604886`, including the production UI build, bundle smoke,
+offline safety suite and server-backed suite. A versioned
+`1.6.0-private-host-preview.33` candidate from that exact commit passed a clean
+HOME install and direct execution of both installed CLI entrypoints.
+
+Before installation, the online Host backup passed manifest, hash, size,
+schema, SQLite integrity and foreign-key verification without printing raw
+rows or including the secret store. The Host-only LaunchAgent was explicitly
+unloaded, the bundle atomically replaced preview.32 while preserving it as the
+rollback version, and the Host service returned ready. The two separate Worker
+LaunchAgents were then explicitly restarted from the new `current` package.
+Fresh fleet readback again showed two active service Workers, two execution
+capacity Workers, zero stale service Workers and zero unverified process
+claims. Tailscale Serve remained enabled only as the existing advanced profile;
+Funnel remained disabled.
+
+The upgraded Hermes Worker automatically claimed and completed:
+
+| Evidence | Reference / count |
+|---|---|
+| task | `tsk_preview33_hermes_claim_20260717T2041Z` |
+| run | `run_gw_1c8cfbc1adbd` |
+| Agent Plan | `plan_bf973d9ba83b6da3` |
+| verified plan-evidence manifest | `pem_a3a2a513ae5b5309` |
+| tool calls | 1 |
+| runtime events | 8 |
+| evaluations | 1 pass |
+| artifacts | 1 |
+| memory candidates | 1 |
+| audit events | 8 |
+
+The upgraded OpenClaw Worker independently claimed and completed the read-only
+replacement task:
+
+| Evidence | Reference / count |
+|---|---|
+| task | `tsk_preview33_openclaw_claim_readonly_20260717T2043Z` |
+| run | `run_gw_f2478047e54d` |
+| Agent Plan | `plan_e5812ec0f31af273` |
+| verified plan-evidence manifest | `pem_5ae3efef460701c0` |
+| tool calls | 1 |
+| runtime events | 8 |
+| evaluations | 1 pass |
+| artifacts | 1 |
+| memory candidates | 1 |
+| audit events | 8 |
+
+Both bounded summaries now state that the current Worker process is active and
+the current Agent Gateway task claim succeeded. Both also state that this fact
+does not prove OS service ownership and keep historical service-governance
+readback separate. This closes the installed Runtime claim-truth gap without
+weakening the existing loop-supervision or approval gates.
+
 ## Real Gap Found
 
 The OpenClaw run reported knowledge retrieval quality at attention level with
@@ -95,15 +151,24 @@ fresh enough for a production grounding claim. Improve the Relay/Remote
 Console corpus and inject current Fleet/service readback into governed task
 context before repeating this acceptance.
 
-The source Worker now adds a bounded current-process execution fact immediately
+The Worker adds a bounded current-process execution fact immediately
 after a successful Agent Gateway task claim. It tells the Runtime that the
 current process is active and the current claim succeeded, while explicitly
 refusing to infer launchd/systemd ownership; historical service receipt/readback
 remains visible as separate governance evidence. `worker_prompt_profile_smoke.py`
 proves that stale historical service fields and a successful current claim can
 coexist without exposing prompt, response, token, or service-template material.
-This correction still requires an installed-package upgrade and a fresh real
-Hermes/OpenClaw rerun before closing the live grounding gap.
+The preview.33 upgrade and fresh real Hermes/OpenClaw reruns prove this behavior
+in the installed product. Full task-bound Fleet/service readback is still not
+injected, so the historical service-governance side can remain `unverified` even
+while the current claim is correctly reported.
+
+The first preview.33 OpenClaw task contained terms about deployed infrastructure
+and was conservatively classified as a possible external action. It created
+run `run_gw_2425533f193e` and stopped at an exact pending Approval Wall instead
+of executing. The approval was not bypassed. The separate explicitly read-only
+task above completed normally. This proves the safety gate but also exposes a
+classification-precision issue for negated or analytical infrastructure text.
 
 ## Remaining Boundaries
 
