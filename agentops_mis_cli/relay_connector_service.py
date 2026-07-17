@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -15,11 +16,38 @@ from typing import Any
 
 from agentops_mis_cli.relay_connector_supervisor import RelayConnectorSupervisor
 from agentops_mis_cli.relay_epoch_store import PersistentRelayEpochStore
+from agentops_mis_cli.relay_host_tls_proxy import HostTlsProxy, bind_loopback_listener
 
 
 MAX_PRIVATE_JSON_BYTES = 16 * 1024
+MAX_TLS_FILE_BYTES = 1024 * 1024
 SERVICE_SCHEMA_VERSION = 1
 _stop = threading.Event()
+_SAFE_FAILURE_CODES = {
+    "config_port_invalid",
+    "config_schema_invalid",
+    "config_value_invalid",
+    "disabled_config_shape_invalid",
+    "enabled_config_shape_invalid",
+    "enabled_config_upgrade_required",
+    "host_certificate_hostname_mismatch",
+    "host_tls_proxy_start_failed",
+    "host_tls_proxy_unavailable",
+    "private_directory_invalid",
+    "private_directory_permissions_invalid",
+    "private_directory_unavailable",
+    "private_json_invalid",
+    "private_json_shape_invalid",
+    "private_json_unreadable",
+    "secrets_shape_invalid",
+    "service_stop_failed",
+    "status_target_invalid",
+    "status_target_unavailable",
+    "supervisor_start_failed",
+    "tls_file_invalid",
+    "tls_file_unavailable",
+    "tunnel_key_invalid",
+}
 
 
 class RelayConnectorServiceError(RuntimeError):
@@ -70,6 +98,69 @@ def _read_private_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise RelayConnectorServiceError("private_json_shape_invalid")
     return payload
+
+
+def _validate_tls_file(path_value: str, *, private_key: bool = False) -> Path:
+    path = _absolute(Path(path_value))
+    _private_directory(path.parent)
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise RelayConnectorServiceError("tls_file_unavailable") from exc
+    allowed_modes = {0o600} if private_key else {0o600, 0o644}
+    if (
+        path.is_symlink()
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) not in allowed_modes
+        or metadata.st_size <= 0
+        or metadata.st_size > MAX_TLS_FILE_BYTES
+    ):
+        raise RelayConnectorServiceError("tls_file_invalid")
+    return path
+
+
+def _validate_certificate_hostname(certificate_path: Path, hostname: str) -> None:
+    try:
+        decoded = ssl._ssl._test_decode_cert(str(certificate_path))  # type: ignore[attr-defined]
+        subject_alt_names = decoded.get("subjectAltName") or []
+        dns_names = {
+            str(value).rstrip(".").lower()
+            for kind, value in subject_alt_names
+            if kind == "DNS" and isinstance(value, str)
+        }
+    except (OSError, ValueError, TypeError) as exc:
+        raise RelayConnectorServiceError("host_certificate_hostname_mismatch") from exc
+    if hostname.rstrip(".").lower() not in dns_names:
+        raise RelayConnectorServiceError("host_certificate_hostname_mismatch")
+
+
+def _acquire_service_lock(status_path: Path) -> int:
+    status_path = _absolute(status_path)
+    _private_directory(status_path.parent, create=True)
+    lock_path = status_path.with_name(f".{status_path.name}.lock")
+    try:
+        descriptor = os.open(
+            lock_path,
+            os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
+            raise RelayConnectorServiceError("service_lock_invalid")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RelayConnectorServiceError("service_already_running") from exc
+        return descriptor
+    except Exception:
+        if "descriptor" in locals():
+            os.close(descriptor)
+        raise
 
 
 def _write_private_status(path: Path, payload: dict[str, Any]) -> None:
@@ -137,6 +228,9 @@ def _disabled_status() -> dict[str, Any]:
         },
         "ok": True,
         "operation": "relay_connector_service",
+        "host_tls_failure_code": None,
+        "host_tls_ready": False,
+        "host_tls_state": "disabled",
         "relay_tls_enabled": False,
         "state": "disabled",
         "successful_connections": 0,
@@ -155,8 +249,12 @@ def _failed_status(code: str) -> dict[str, Any]:
     return payload
 
 
-def _service_status(supervisor: RelayConnectorSupervisor) -> dict[str, Any]:
+def _service_status(
+    supervisor: RelayConnectorSupervisor,
+    host_tls_proxy: HostTlsProxy,
+) -> dict[str, Any]:
     status = supervisor.status()
+    host_tls_status = host_tls_proxy.status()
     return {
         "connect_attempts": status["connect_attempts"],
         "current_epoch": status["current_epoch"],
@@ -178,6 +276,16 @@ def _service_status(supervisor: RelayConnectorSupervisor) -> dict[str, Any]:
             "stopped",
         },
         "operation": "relay_connector_service",
+        "host_tls_accepted_connections": host_tls_status["accepted_connections"],
+        "host_tls_active_connections": host_tls_status["active_connections"],
+        "host_tls_failure_code": host_tls_status["failure_code"],
+        "host_tls_failure_counts": host_tls_status["failure_counts"],
+        "host_tls_handshake_failure_counts": host_tls_status[
+            "handshake_failure_counts"
+        ],
+        "host_tls_ready": host_tls_status["ready"],
+        "host_tls_rejected_connections": host_tls_status["rejected_connections"],
+        "host_tls_state": host_tls_status["state"],
         "relay_tls_enabled": status["relay_tls_enabled"],
         "state": status["state"],
         "successful_connections": status["successful_connections"],
@@ -196,6 +304,20 @@ def _load_enabled_configuration(config_path: Path, secrets_path: Path) -> tuple[
         return config, b""
     required = {
         "enabled",
+        "host_certificate_path",
+        "host_http_port",
+        "host_private_key_path",
+        "host_server_hostname",
+        "host_tls_listen_port",
+        "relay_ca_path",
+        "relay_host",
+        "relay_port",
+        "relay_server_hostname",
+        "route",
+        "schema_version",
+    }
+    legacy_required = {
+        "enabled",
         "host_tls_port",
         "relay_ca_path",
         "relay_host",
@@ -204,18 +326,32 @@ def _load_enabled_configuration(config_path: Path, secrets_path: Path) -> tuple[
         "route",
         "schema_version",
     }
+    if enabled is True and set(config) == legacy_required:
+        raise RelayConnectorServiceError("enabled_config_upgrade_required")
     if enabled is not True or set(config) != required:
         raise RelayConnectorServiceError("enabled_config_shape_invalid")
     if (
         not isinstance(config["relay_port"], int)
         or isinstance(config["relay_port"], bool)
         or not (1 <= config["relay_port"] <= 65535)
-        or not isinstance(config["host_tls_port"], int)
-        or isinstance(config["host_tls_port"], bool)
-        or not (1 <= config["host_tls_port"] <= 65535)
+        or not isinstance(config["host_http_port"], int)
+        or isinstance(config["host_http_port"], bool)
+        or not (1 <= config["host_http_port"] <= 65535)
+        or not isinstance(config["host_tls_listen_port"], int)
+        or isinstance(config["host_tls_listen_port"], bool)
+        or not (1 <= config["host_tls_listen_port"] <= 65535)
+        or config["host_http_port"] == config["host_tls_listen_port"]
     ):
         raise RelayConnectorServiceError("config_port_invalid")
-    for key in ("relay_host", "relay_server_hostname", "route", "relay_ca_path"):
+    for key in (
+        "host_certificate_path",
+        "host_private_key_path",
+        "host_server_hostname",
+        "relay_ca_path",
+        "relay_host",
+        "relay_server_hostname",
+        "route",
+    ):
         if not isinstance(config[key], str) or not config[key]:
             raise RelayConnectorServiceError("config_value_invalid")
 
@@ -238,7 +374,7 @@ def _request_stop(_signum: int, _frame: Any) -> None:
     _stop.set()
 
 
-def run_service(
+def _run_service_locked(
     *,
     config_path: Path,
     secrets_path: Path,
@@ -246,6 +382,7 @@ def run_service(
     status_path: Path,
 ) -> int:
     supervisor: RelayConnectorSupervisor | None = None
+    host_tls_proxy: HostTlsProxy | None = None
     try:
         config, tunnel_key = _load_enabled_configuration(config_path, secrets_path)
         if config.get("enabled") is False:
@@ -254,8 +391,37 @@ def run_service(
             print(json.dumps(status, sort_keys=True))
             return 0
 
-        relay_context = ssl.create_default_context(cafile=config["relay_ca_path"])
+        relay_ca_path = _validate_tls_file(config["relay_ca_path"])
+        host_certificate_path = _validate_tls_file(config["host_certificate_path"])
+        host_private_key_path = _validate_tls_file(
+            config["host_private_key_path"],
+            private_key=True,
+        )
+        relay_context = ssl.create_default_context(cafile=str(relay_ca_path))
         relay_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        _validate_certificate_hostname(
+            host_certificate_path,
+            config["host_server_hostname"],
+        )
+        host_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        host_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        host_context.load_cert_chain(
+            str(host_certificate_path),
+            str(host_private_key_path),
+        )
+        host_tls_listener = bind_loopback_listener(config["host_tls_listen_port"])
+        try:
+            host_tls_proxy = HostTlsProxy(
+                listener=host_tls_listener,
+                backend_target=("127.0.0.1", config["host_http_port"]),
+                tls_context=host_context,
+                expected_server_hostname=config["host_server_hostname"],
+            )
+        except Exception:
+            host_tls_listener.close()
+            raise
+        if not host_tls_proxy.start() or not host_tls_proxy.wait_until_ready():
+            raise RelayConnectorServiceError("host_tls_proxy_start_failed")
         identity_payload = json.dumps(
             {
                 "relay_host": config["relay_host"],
@@ -272,7 +438,7 @@ def run_service(
         )
         supervisor = RelayConnectorSupervisor(
             relay_address=(config["relay_host"], config["relay_port"]),
-            host_tls_target=("127.0.0.1", config["host_tls_port"]),
+            host_tls_target=("127.0.0.1", config["host_tls_listen_port"]),
             route=config["route"],
             key=tunnel_key,
             enabled=True,
@@ -285,30 +451,74 @@ def run_service(
 
         last_status = ""
         while not _stop.wait(0.1):
-            status = _service_status(supervisor)
+            status = _service_status(supervisor, host_tls_proxy)
             rendered = json.dumps(status, sort_keys=True, separators=(",", ":"))
             if rendered != last_status:
                 _write_private_status(status_path, status)
                 last_status = rendered
             if status["state"] == "failed":
+                supervisor_stopped = supervisor.stop()
+                proxy_stopped = host_tls_proxy.stop()
+                if not supervisor_stopped or not proxy_stopped:
+                    raise RelayConnectorServiceError("service_stop_failed")
+                status = _service_status(supervisor, host_tls_proxy)
+                _write_private_status(status_path, status)
                 print(json.dumps(status, sort_keys=True))
                 return 1
+            if not status["host_tls_ready"]:
+                raise RelayConnectorServiceError("host_tls_proxy_unavailable")
 
-        supervisor.stop()
-        status = _service_status(supervisor)
+        supervisor_stopped = supervisor.stop()
+        proxy_stopped = host_tls_proxy.stop()
+        if not supervisor_stopped or not proxy_stopped:
+            raise RelayConnectorServiceError("service_stop_failed")
+        status = _service_status(supervisor, host_tls_proxy)
         _write_private_status(status_path, status)
         print(json.dumps(status, sort_keys=True))
         return 0
-    except Exception:
+    except Exception as exc:
         if supervisor is not None:
             supervisor.stop()
-        status = _failed_status("service_configuration_or_runtime_failed")
+        if host_tls_proxy is not None:
+            host_tls_proxy.stop()
+        candidate_code = str(exc) if isinstance(exc, RelayConnectorServiceError) else ""
+        failure_code = (
+            candidate_code
+            if candidate_code in _SAFE_FAILURE_CODES
+            else "service_configuration_or_runtime_failed"
+        )
+        status = _failed_status(failure_code)
         try:
             _write_private_status(status_path, status)
         except Exception:
             pass
         print(json.dumps(status, sort_keys=True))
         return 1
+
+
+def run_service(
+    *,
+    config_path: Path,
+    secrets_path: Path,
+    epoch_state_path: Path,
+    status_path: Path,
+) -> int:
+    try:
+        lock_descriptor = _acquire_service_lock(status_path)
+    except RelayConnectorServiceError:
+        status = _failed_status("service_instance_lock_failed")
+        print(json.dumps(status, sort_keys=True))
+        return 1
+    try:
+        return _run_service_locked(
+            config_path=config_path,
+            secrets_path=secrets_path,
+            epoch_state_path=epoch_state_path,
+            status_path=status_path,
+        )
+    finally:
+        fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+        os.close(lock_descriptor)
 
 
 def main() -> int:

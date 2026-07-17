@@ -186,9 +186,10 @@ Implementation slices:
    An outer certificate-verifying Relay TLS channel plus inner Host-terminated
    application TLS now proves the production mutual-authentication shape
    locally. A strict disabled-by-default foreground connector process now owns
-   reconnect/status/epoch lifecycle and clean signal shutdown. Host/installer
-   ownership, certificate lifecycle, SNI routing, credential provisioning, and
-   the deployed Relay remain open.
+   reconnect/status/epoch lifecycle, loopback Host TLS termination, exact Host
+   SNI rejection, HTTP forwarding and clean signal shutdown. Host/installer
+   ownership, certificate lifecycle, Relay-side SNI routing, credential
+   provisioning, and the deployed Relay remain open.
 3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host
    Console origin, bounded operations metadata, deployment and rollback.
 4. `3D Physical acceptance`: fresh browser-only device, real Hermes/OpenClaw

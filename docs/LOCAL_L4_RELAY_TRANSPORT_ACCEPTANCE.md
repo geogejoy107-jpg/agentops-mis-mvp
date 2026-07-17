@@ -29,6 +29,7 @@ python3 scripts/private_host_relay_tls_smoke.py
 python3 scripts/local_fake_relay_tunnel_smoke.py
 python3 scripts/relay_persistent_epoch_smoke.py
 python3 scripts/relay_tls_authenticated_tunnel_smoke.py
+python3 scripts/relay_host_tls_proxy_smoke.py
 python3 scripts/relay_connector_service_smoke.py
 python3 scripts/local_relay_connector_supervisor_smoke.py
 ```
@@ -113,15 +114,44 @@ certificate and completes an exact binary round trip with TLS terminating at
 the Host endpoint. Relay evidence remains payload-, key-, certificate-, path-,
 hostname- and port-free.
 
-`scripts/relay_connector_service_smoke.py` runs the same connector as a real
+`scripts/relay_host_tls_proxy_smoke.py` adds the Host-owned application TLS
+boundary as a reusable loopback-only component. It binds only literal
+`127.0.0.1`, requires TLS 1.2 or newer and an exact expected SNI hostname, and
+forwards accepted connections only to a literal loopback Host HTTP port. A
+real HTTP request reaches the backend through this proxy, wrong SNI fails during
+the TLS handshake, and a bounded TLS-aware byte pump sends the server
+`close_notify` without applying unsafe plain-socket half-close semantics to the
+TLS stream. Fixed failure-stage counters distinguish handshake, backend-connect
+and forwarding failures without exception text. Bounded status omits hostname,
+port, certificate path and application bytes, and stop owns only its listener
+and accepted connections, including sockets that have not completed
+ClientHello. An unexpected accept-loop exit clears readiness and becomes a
+bounded failure instead of leaving a false-ready proxy.
+
+`scripts/relay_connector_service_smoke.py` runs the connector as a real
 foreground subprocess suitable for later Host/LaunchAgent ownership. Its
 strict `0600` config/secret inputs and atomic `0600` status/epoch outputs live
 under `0700` directories. Disabled configuration exits without reading a
 secret or attempting a connection; invalid secrets fail before network use.
-The enabled service establishes nested TLS, survives a forced Relay restart
-with a higher persisted epoch, completes a second browser-to-Host TLS round
-trip, and writes a clean stopped state on `SIGTERM`. Status and process output
-omit endpoint, route, key, certificate path and filesystem paths.
+The enabled service now owns the loopback Host TLS proxy as well as the Relay
+connector. It establishes nested TLS, forwards real HTTP to the loopback Host,
+rejects wrong browser SNI, survives a forced Relay restart with a higher
+persisted epoch, completes a second browser-to-Host round trip, and stops both
+layers cleanly on `SIGTERM`, including an in-flight browser connection that has
+not sent ClientHello. Status and process output omit endpoint, route,
+key, certificate path, hostname, port and filesystem paths. The schema-1
+configuration shape now makes the Host HTTP port, Host TLS listener,
+certificate/key paths and expected Host hostname explicit; the unchanged
+schema preserves secret and epoch compatibility, while an old
+external-TLS-target shape fails with an explicit upgrade-required boundary
+rather than being silently reinterpreted.
+
+TLS inputs must be regular owner-owned files in an exact `0700` owner
+directory; the private key must be `0600`, and the Host certificate must
+contain the exact configured DNS SAN. A nonblocking process lock prevents a
+second service from overwriting the active instance's status. A pre-existing
+protected epoch file continues with a strictly higher value under the new Host
+TLS composition.
 
 ## Boundaries
 
@@ -135,13 +165,16 @@ short test deadlines and an in-memory temporary tunnel key. It does not prove a
 deployed service, internet routing, long-lived browser sessions, TLS half-close
 or transport exactly-once delivery.
 
-The foreground service is not yet wired into Host startup or the installer. Its
+The foreground service is not yet wired into Host startup or the installer. It
+now owns local Host TLS termination, but it does not generate, renew or rotate
+the supplied certificate and key. Its
 epoch can now be crash-persistent when the protected allocator is supplied,
 while backoff/status state remains process-local. This proves the reconnect and
 epoch identity behavior needed by a later Host-owned connector daemon, not the
 deployed Relay itself.
 
-This slice does not yet implement SNI parsing, production Host-generated
+This slice validates exact Host SNI at TLS termination but does not yet
+implement Relay-side SNI parsing/routing, production Host-generated
 certificates, DNS/ACME coordination, a deployed Relay daemon,
 multi-Host routing, certificate rotation, or a stock-browser public endpoint.
 It also does not claim crash-proof exactly-once byte delivery; product-level
