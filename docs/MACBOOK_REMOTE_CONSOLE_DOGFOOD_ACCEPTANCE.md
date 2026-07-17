@@ -17,6 +17,20 @@ Date: 2026-07-18 (Asia/Shanghai)
   SSH-operated Codex execution channel. This is an internal dogfood mechanism,
   not a customer dependency or product authority.
 
+Internal operators attach from the Mini with:
+
+```bash
+TERM=xterm-256color ssh -t agentops-macbook \
+  'TERM=xterm-256color screen -xRR codex-resume'
+```
+
+This resumes the Codex task state in a fresh terminal; it does not take over an
+old TTY. The MacBook GUI terminal and the SSH-attached screen are a single-writer
+channel and must never submit input concurrently. Remote tasks must be bounded,
+must write redacted receipt files, and must not return or ingest terminal
+scrollback. This operating channel does not bypass Console authentication or
+move MIS authority away from the Mini.
+
 No Tailscale command, Serve mapping, Host database, Runtime credential or
 customer record was changed during the source hardening work.
 
