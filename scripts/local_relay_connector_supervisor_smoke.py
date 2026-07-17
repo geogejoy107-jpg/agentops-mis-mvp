@@ -27,6 +27,7 @@ from agentops_mis_cli.relay_connector_supervisor import (  # noqa: E402
     MAX_STATUS_EVENTS,
     RelayConnectorSupervisor,
 )
+from agentops_mis_cli.relay_epoch_store import PersistentRelayEpochStore  # noqa: E402
 from agentops_mis_cli.relay_tunnel import LocalFakeRelay, RelayProtocolError  # noqa: E402
 
 
@@ -180,6 +181,10 @@ def main() -> int:
         expected_der = ssl.PEM_cert_to_DER_cert(certificate.read_text(encoding="ascii"))
         expected_fingerprint = hashlib.sha256(expected_der).digest()
         key = os.urandom(32)
+        epoch_store = PersistentRelayEpochStore(
+            temporary_path / "relay-state" / "epoch.json",
+            connector_identity=hashlib.sha256(ROUTE.encode("ascii") + key).digest(),
+        )
 
         disabled = RelayConnectorSupervisor(
             relay_address=("127.0.0.1", 9),
@@ -221,6 +226,38 @@ def main() -> int:
             failures.append("weak supervisor key was accepted")
         if not non_loopback_rejected:
             failures.append("non-literal Relay target was accepted")
+
+        failed_state_directory = temporary_path / "failed-relay-state"
+        failed_state_directory.mkdir(mode=0o700)
+        failed_state_path = failed_state_directory / "epoch.json"
+        failed_state_path.write_text("{}\n", encoding="utf-8")
+        failed_state_path.chmod(0o600)
+        failed_allocator = PersistentRelayEpochStore(
+            failed_state_path,
+            connector_identity=b"corrupt-state-fixture",
+        )
+        allocation_failure = RelayConnectorSupervisor(
+            relay_address=("127.0.0.1", 9),
+            host_tls_target=("127.0.0.1", 9),
+            route=ROUTE,
+            key=key,
+            enabled=True,
+            epoch_allocator=failed_allocator,
+        )
+        allocation_failure.start()
+        allocation_failed_closed = wait_until(
+            lambda: allocation_failure.status()["state"] == "failed",
+            1.0,
+        )
+        allocation_failure_status = allocation_failure.status()
+        if (
+            not allocation_failed_closed
+            or allocation_failure_status["failure_code"] != "epoch_allocation_failed"
+            or allocation_failure_status["current_epoch"] is not None
+            or allocation_failure_status["successful_connections"] != 0
+        ):
+            failures.append("epoch allocation failure did not fail closed before connection")
+        allocation_failure.stop()
 
         stop_race_stable = True
         for _ in range(32):
@@ -275,6 +312,7 @@ def main() -> int:
             route=ROUTE,
             key=key,
             enabled=True,
+            epoch_allocator=epoch_store,
             connect_timeout_seconds=0.5,
             backoff_initial_seconds=0.03,
             backoff_cap_seconds=0.12,
@@ -374,6 +412,7 @@ def main() -> int:
             "current_epoch",
             "enabled",
             "events",
+            "failure_code",
             "limitations",
             "state",
             "successful_connections",
@@ -383,7 +422,7 @@ def main() -> int:
         ):
             failures.append("supervisor status contained a non-allowlisted field")
         if reconnected_status["limitations"] != {
-            "crash_persistent_epoch": False,
+            "crash_persistent_epoch": True,
             "deployed_relay": False,
             "dns_sni_certificate_lifecycle": False,
             "exactly_once_transport": False,
@@ -428,11 +467,14 @@ def main() -> int:
 
     result = {
         "bounded_status_events": True,
-        "crash_persistent_epoch": False,
+        "crash_persistent_epoch": True,
         "deployed_relay": False,
         "disabled_by_default": True,
         "dns_sni_certificate_lifecycle": False,
         "exactly_once_transport": False,
+        "epoch_allocation_failure_bounded": not any(
+            "epoch allocation failure" in item for item in failures
+        ),
         "failures": failures,
         "forced_control_disconnect": not any("disconnect" in item for item in failures),
         "higher_epoch_reconnect": not any("epoch" in item for item in failures),

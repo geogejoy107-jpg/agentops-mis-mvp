@@ -27,6 +27,7 @@ Run:
 python3 scripts/local_l4_relay_transport_smoke.py
 python3 scripts/private_host_relay_tls_smoke.py
 python3 scripts/local_fake_relay_tunnel_smoke.py
+python3 scripts/relay_persistent_epoch_smoke.py
 python3 scripts/local_relay_connector_supervisor_smoke.py
 ```
 
@@ -85,6 +86,19 @@ bounded allowlisted status history, and bounded permanent stop. The supervisor
 accepts only literal loopback test endpoints and owns no listener, OS service,
 network configuration, persistent credential, or Tailscale state.
 
+`scripts/relay_persistent_epoch_smoke.py` adds the crash-safe epoch primitive
+needed by that supervisor. The allocator writes the next epoch before network
+use under an exclusive file lock, atomically replaces a `0600` schema-bound
+state file inside a `0700` directory, fsyncs both file and directory, and
+rejects corruption, connector mismatch, broad permissions and symlinks. The
+state stores only a hash-derived connector reference and the last epoch; it
+omits endpoint, route, key material and filesystem paths. A restarted allocator
+and 16 concurrent allocators cannot reuse an epoch. The supervisor integration
+uses this allocator for reconnects and reports only that crash persistence is
+enabled, never the state path or connector identity. Corrupt or mismatched
+state stops before network connection with only the bounded
+`epoch_allocation_failed` status code.
+
 ## Boundaries
 
 The frame smoke itself sends TLS-looking bytes and does not prove TLS; the
@@ -98,9 +112,10 @@ deployed service, internet routing, long-lived browser sessions, TLS half-close
 or transport exactly-once delivery.
 
 The reconnect supervisor is not wired into Host startup or the installer. Its
-epoch is not crash-persistent, and its backoff/status state is process-local.
-It proves the reconnect control behavior needed by a later Host connector
-daemon, not the daemon or deployed Relay itself.
+epoch can now be crash-persistent when the protected allocator is supplied,
+while backoff/status state remains process-local. This proves the reconnect and
+epoch identity behavior needed by a later Host connector daemon, not the daemon
+or deployed Relay itself.
 
 This slice does not yet implement SNI parsing, production Host-generated
 certificates,
@@ -113,8 +128,8 @@ advanced private-network profile and is intentionally untouched.
 
 ## Next Slice
 
-Turn the accepted in-process supervisor into a disabled-by-default Host
-connector service with crash-safe epoch identity, certificate lifecycle and
+Turn the accepted in-process supervisor and crash-safe allocator into a
+disabled-by-default Host connector service with certificate lifecycle and
 operator enable/disable controls. Then add SNI/multi-Host routing and deploy the
 same authority-free boundary behind a stable domain for 3C physical browser
 acceptance.

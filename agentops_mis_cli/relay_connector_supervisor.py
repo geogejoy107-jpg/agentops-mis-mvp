@@ -1,14 +1,14 @@
 """Disabled-by-default in-process supervisor for the loopback fake Relay connector.
 
 This test-only slice owns no listener, network configuration, persistent state, or
-credentials. Epochs are strictly increasing only for the lifetime of one process.
+credentials. A caller may supply a separate crash-safe epoch allocator.
 """
 from __future__ import annotations
 
 import threading
 import time
 from collections import deque
-from typing import Any
+from typing import Any, Protocol
 
 from agentops_mis_cli.relay_tunnel import HostTunnelConnector, RelayProtocolError
 
@@ -17,11 +17,15 @@ MAX_STATUS_EVENTS = 32
 MIN_BACKOFF_SECONDS = 0.01
 MAX_BACKOFF_SECONDS = 5.0
 MONITOR_INTERVAL_SECONDS = 0.05
-_STATES = {"disabled", "starting", "connecting", "connected", "backoff", "stopped"}
+_STATES = {"disabled", "starting", "connecting", "connected", "backoff", "failed", "stopped"}
+
+
+class RelayEpochAllocator(Protocol):
+    def next_epoch(self) -> int: ...
 
 
 class RelayConnectorSupervisor:
-    """Reconnect ``HostTunnelConnector`` without persisting secrets or epochs."""
+    """Reconnect ``HostTunnelConnector`` without persisting secrets or status."""
 
     def __init__(
         self,
@@ -32,6 +36,7 @@ class RelayConnectorSupervisor:
         key: bytes,
         enabled: bool = False,
         initial_epoch: int = 0,
+        epoch_allocator: RelayEpochAllocator | None = None,
         connect_timeout_seconds: float = 1.0,
         backoff_initial_seconds: float = 0.05,
         backoff_cap_seconds: float = 1.0,
@@ -46,6 +51,8 @@ class RelayConnectorSupervisor:
             raise ValueError("invalid Relay route")
         if not isinstance(initial_epoch, int) or isinstance(initial_epoch, bool) or initial_epoch < 0:
             raise ValueError("initial epoch must be a non-negative integer")
+        if epoch_allocator is not None and initial_epoch:
+            raise ValueError("persistent epoch allocation cannot use an initial epoch")
         if not (0.1 <= float(connect_timeout_seconds) <= 30.0):
             raise ValueError("connect timeout must be between 0.1 and 30 seconds")
         if not (MIN_BACKOFF_SECONDS <= float(backoff_initial_seconds) <= MAX_BACKOFF_SECONDS):
@@ -63,6 +70,7 @@ class RelayConnectorSupervisor:
         self._key = bytes(key)
         self._enabled = bool(enabled)
         self._epoch = initial_epoch
+        self._epoch_allocator = epoch_allocator
         self._connect_timeout_seconds = float(connect_timeout_seconds)
         self._backoff_initial_seconds = float(backoff_initial_seconds)
         self._backoff_cap_seconds = float(backoff_cap_seconds)
@@ -74,6 +82,7 @@ class RelayConnectorSupervisor:
         self._state = "disabled"
         self._attempts = 0
         self._successful_connections = 0
+        self._failure_code: str | None = None
         self._events: deque[dict[str, Any]] = deque(maxlen=MAX_STATUS_EVENTS)
         self._record_locked("disabled")
 
@@ -119,9 +128,31 @@ class RelayConnectorSupervisor:
             with self._lock:
                 if self._stop.is_set():
                     break
-                self._epoch += 1
                 self._attempts += 1
-                epoch = self._epoch
+            try:
+                epoch = (
+                    self._epoch_allocator.next_epoch()
+                    if self._epoch_allocator is not None
+                    else self._epoch + 1
+                )
+            except Exception:
+                with self._lock:
+                    self._failure_code = "epoch_allocation_failed"
+                    self._record_locked("failed")
+                return
+            if (
+                not isinstance(epoch, int)
+                or isinstance(epoch, bool)
+                or epoch <= self._epoch
+            ):
+                with self._lock:
+                    self._failure_code = "invalid_allocated_epoch"
+                    self._record_locked("failed")
+                return
+            with self._lock:
+                if self._stop.is_set():
+                    break
+                self._epoch = epoch
                 self._record_locked("connecting")
 
             connector = HostTunnelConnector(
@@ -193,8 +224,9 @@ class RelayConnectorSupervisor:
                 "current_epoch": self._epoch if self._epoch else None,
                 "enabled": self._enabled,
                 "events": [dict(event) for event in self._events],
+                "failure_code": self._failure_code,
                 "limitations": {
-                    "crash_persistent_epoch": False,
+                    "crash_persistent_epoch": self._epoch_allocator is not None,
                     "deployed_relay": False,
                     "dns_sni_certificate_lifecycle": False,
                     "exactly_once_transport": False,

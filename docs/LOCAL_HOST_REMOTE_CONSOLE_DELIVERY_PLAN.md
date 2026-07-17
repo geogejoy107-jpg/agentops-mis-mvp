@@ -181,9 +181,10 @@ Implementation slices:
    The bounded frame/replay primitive and a separate raw-proxy Host-only TLS
    fixture are executable in `LOCAL_L4_RELAY_TRANSPORT_ACCEPTANCE.md`. The
    Host-initiated TLS-over-tunnel composition and a disabled-by-default,
-   in-process reconnect supervisor are also executable. Persistent connector
-   lifecycle, SNI routing, production tunnel authentication, and the deployed
-   Relay remain open.
+   in-process reconnect supervisor are also executable. A protected atomic
+   epoch allocator now prevents connector epoch reuse across process crashes.
+   Persistent Host connector lifecycle, certificate lifecycle, SNI routing,
+   production tunnel authentication, and the deployed Relay remain open.
 3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host
    Console origin, bounded operations metadata, deployment and rollback.
 4. `3D Physical acceptance`: fresh browser-only device, real Hermes/OpenClaw
