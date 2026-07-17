@@ -17,7 +17,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SENSITIVE_ASSIGNMENT_RE = re.compile(r"(?i)^([^=]*(?:token|secret|password|key|dsn)[^=]*)=(.*)$")
-SAFE_CODE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,120}$")
+SAFE_CODE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,119}$")
 
 
 def utc_now() -> str:
