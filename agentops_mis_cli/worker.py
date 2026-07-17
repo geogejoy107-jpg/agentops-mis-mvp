@@ -558,6 +558,26 @@ def build_task_prompt_bundle(task: dict, adapter: str | None = None) -> tuple[st
             "proof_source=/api/operator/loop-supervision; "
             "server_shell=false; raw_service_template/prompt/response/token omitted.\n"
         )
+    execution_fact = (
+        task.get("_worker_execution_fact")
+        if isinstance(task.get("_worker_execution_fact"), dict)
+        else {}
+    )
+    execution_fact_context = ""
+    if execution_fact:
+        execution_fact_context = (
+            "当前 Worker 执行事实："
+            f"adapter={redact_text(execution_fact.get('adapter') or adapter or 'worker', 40)}; "
+            f"agent_id={redact_text(execution_fact.get('agent_id'), 120)}; "
+            f"task_id={redact_text(execution_fact.get('task_id') or task.get('task_id'), 120)}; "
+            f"worker_process_active={bool(execution_fact.get('worker_process_active'))}; "
+            f"gateway_task_claim_succeeded={bool(execution_fact.get('gateway_task_claim_succeeded'))}; "
+            f"evidence_source={redact_text(execution_fact.get('evidence_source'), 100)}; "
+            f"os_service_ownership_inferred={bool(execution_fact.get('os_service_ownership_inferred'))}; "
+            "本条只证明当前进程已成功认领本任务；历史 service receipt/readback 仍是治理证据，"
+            "但不能否定已发生的当前 claim，也不能据此推断 launchd/systemd ownership； "
+            "raw_service_template/prompt/response/token omitted.\n"
+        )
     intake_plan = task.get("_intake_plan_evidence") if isinstance(task.get("_intake_plan_evidence"), dict) else {}
     intake_plan_context = ""
     if intake_plan:
@@ -595,6 +615,7 @@ def build_task_prompt_bundle(task: dict, adapter: str | None = None) -> tuple[st
         f"{profile_context}"
         f"{knowledge_context}"
         f"{service_context}"
+        f"{execution_fact_context}"
         f"{intake_plan_context}"
     )
     return prompt, profile
@@ -1749,6 +1770,18 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     })
     knowledge_evidence = fetch_worker_knowledge_evidence(client, task, adapter=args.adapter)
     task = dict(task)
+    task["_worker_execution_fact"] = {
+        "adapter": args.adapter,
+        "agent_id": client.agent_id,
+        "task_id": task_id,
+        "worker_process_active": True,
+        "gateway_task_claim_succeeded": True,
+        "evidence_source": "agent_gateway.task_claim.current_process",
+        "os_service_ownership_inferred": False,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
     task["_knowledge_retrieval_evidence"] = knowledge_evidence
     plan_reused = False
     plan_id, verified_plan = verified_intake_plan_for_task(client, task)

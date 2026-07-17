@@ -1,6 +1,6 @@
 # Local Service Worker Dogfood Acceptance
 
-Status: installed Host service Worker recovery and one fresh OpenClaw task accepted locally
+Status: installed Host service Worker recovery and fresh OpenClaw/Hermes tasks accepted locally
 
 ## Scope
 
@@ -64,6 +64,21 @@ The OpenClaw service Worker automatically claimed and completed:
 | memory candidates | 1 |
 | audit events | 8 |
 
+The Hermes service Worker then independently claimed and completed:
+
+| Evidence | Reference / count |
+|---|---|
+| task | `tsk_d0db920fc1cd` |
+| run | `run_gw_b472aac7db01` |
+| Agent Plan | `plan_981f8adf805bec31` |
+| verified plan-evidence manifest | `pem_88f1ee10747ef435` |
+| tool calls | 1 |
+| runtime events | 8 |
+| evaluations | 1 |
+| artifacts | 1 |
+| memory candidates | 1 |
+| audit events | 8 |
+
 The task and run both reached `completed`; the Worker returned to `idle`. The
 bounded output summary identified the correct Host-initiated Relay and Host-only
 TLS-key-custody constraints. The task evidence graph is a read model over MIS
@@ -71,16 +86,27 @@ ledgers and explicitly omits raw prompt, raw response and token material.
 
 ## Real Gap Found
 
-This live run also reported knowledge retrieval quality at attention level with
-`Recall@5=0.2` and `MRR=0.2`. The execution and ledger loop is accepted, but the
-knowledge quality signal is not promoted to production-ready evidence. Improve
-the Relay/Remote Console knowledge corpus and rerun the same governed task
-before making a knowledge-grounding readiness claim.
+The OpenClaw run reported knowledge retrieval quality at attention level with
+`Recall@5=0.2` and `MRR=0.2`. Both Runtime summaries also described the service
+loop as unverified even though the fresh Fleet readback showed two active
+service Workers and zero stale service Workers. The execution and ledger loops
+are accepted; the task-bound knowledge and operations-evidence context is not
+fresh enough for a production grounding claim. Improve the Relay/Remote
+Console corpus and inject current Fleet/service readback into governed task
+context before repeating this acceptance.
+
+The source Worker now adds a bounded current-process execution fact immediately
+after a successful Agent Gateway task claim. It tells the Runtime that the
+current process is active and the current claim succeeded, while explicitly
+refusing to infer launchd/systemd ownership; historical service receipt/readback
+remains visible as separate governance evidence. `worker_prompt_profile_smoke.py`
+proves that stale historical service fields and a successful current claim can
+coexist without exposing prompt, response, token, or service-template material.
+This correction still requires an installed-package upgrade and a fresh real
+Hermes/OpenClaw rerun before closing the live grounding gap.
 
 ## Remaining Boundaries
 
-- Only OpenClaw executed a fresh task in this recovery slice; Hermes is healthy
-  but did not execute a second task here.
 - The physical MacBook browser Console still lacks a successful authenticated
   `/workspace` receipt for this run.
 - The deployed browser-only Relay, Host connector daemon, DNS/certificate
