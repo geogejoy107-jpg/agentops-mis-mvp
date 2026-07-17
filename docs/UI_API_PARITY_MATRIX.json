@@ -978,6 +978,59 @@
       "retirement_gate": "No Vite route is replaced; this adds evidence visibility required before route retirement."
     },
     {
+      "id": "next_typescript_postgres_agent_gateway_control_plane",
+      "capability": "TypeScript-owned Postgres Agent Gateway task, plan, run lifecycle, and execution-evidence control plane.",
+      "status": "next_only",
+      "gate4_required": true,
+      "vite_routes": [],
+      "next_routes": [
+        "/api/mis/agent-gateway/tasks",
+        "/api/mis/agent-gateway/agent-plans",
+        "/api/mis/agent-gateway/runs/start",
+        "/api/mis/agent-gateway/runs/:runId/heartbeat",
+        "/api/mis/agent-gateway/tool-calls",
+        "/api/mis/agent-gateway/evaluations/submit",
+        "/api/mis/agent-gateway/artifacts",
+        "/api/mis/agent-gateway/plan-evidence-manifests"
+      ],
+      "api_contracts": [
+        "GET /agent-gateway/tasks",
+        "POST /agent-gateway/tasks",
+        "POST /agent-gateway/agent-plans",
+        "POST /agent-gateway/runs/start",
+        "POST /agent-gateway/runs/:runId/heartbeat",
+        "POST /agent-gateway/tool-calls",
+        "POST /agent-gateway/evaluations/submit",
+        "POST /agent-gateway/artifacts",
+        "POST /agent-gateway/plan-evidence-manifests"
+      ],
+      "vite_files": [],
+      "next_files": [
+        "ui/next-app/app/api/mis/agent-gateway/tasks/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/agent-plans/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/runs/start/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/runs/[runId]/heartbeat/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/tool-calls/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/evaluations/submit/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/artifacts/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/plan-evidence-manifests/route.ts",
+        "ui/next-app/src/server/controlPlane/agentGatewayTasks.ts",
+        "ui/next-app/src/server/controlPlane/agentGatewayPlans.ts",
+        "ui/next-app/src/server/controlPlane/agentGatewayRuns.ts",
+        "ui/next-app/src/server/controlPlane/agentGatewayEvidence.ts",
+        "ui/next-app/src/server/controlPlane/auth.ts",
+        "ui/next-app/src/server/controlPlane/config.ts",
+        "ui/next-app/src/server/controlPlane/db.ts",
+        "ui/next-app/src/server/controlPlane/ledger.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py",
+        "cd ui/next-app && npm run build"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "These exact routes are a commercial control-plane migration addition. Python remains Free Local and the explicit per-route rollback until broader API parity is proven."
+    },
+    {
       "id": "next_mis_proxy",
       "capability": "Next.js API proxy preserving current MIS API semantics.",
       "status": "next_only",
@@ -988,7 +1041,7 @@
       ],
       "api_contracts": [
         "ANY /api/mis/:path* -> AGENTOPS_API_BASE/:path*",
-        "POST /api/mis/agent-gateway/tasks -> AGENTOPS_API_BASE/agent-gateway/tasks",
+        "POST /api/mis/agent-gateway/tasks -> AGENTOPS_API_BASE/agent-gateway/tasks when AGENTOPS_TS_CONTROL_PLANE_MODE=proxy",
         "POST /api/mis/agent-gateway/enrollment/request -> AGENTOPS_API_BASE/agent-gateway/enrollment/request",
         "POST /api/mis/agent-gateway/enrollment/create -> AGENTOPS_API_BASE blocked before upstream by enrollment_token_issue_not_allowed_next_parity",
         "POST /api/mis/workflows/customer-worker-task -> AGENTOPS_API_BASE/workflows/customer-worker-task with prepared-action exact-resume guard for Hermes/OpenClaw",

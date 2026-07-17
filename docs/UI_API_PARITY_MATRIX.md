@@ -57,6 +57,16 @@ route retirement:
 
 ## Current Important Gaps
 
+- Eight exact Agent Gateway routes now form a `next_only` TypeScript/Postgres
+  control-plane slice: task list/create, Agent Plan submit, run start/heartbeat,
+  tool-call, evaluation, artifact, and plan-evidence-manifest writes. Production
+  defaults these routes to Postgres and fails closed without a DSN; Python is
+  retained for Free Local and the explicit per-route rollback. The
+  `nextjs_postgres_control_plane_tasks_v1` smoke starts Next.js plus real
+  Postgres with no Python API process and verifies authentication, workspace
+  isolation, immutable IDs, concurrent single winners, redaction, Plan-gated
+  non-mock execution, manifest closure, and the shared audit chain. This does
+  not retire a Vite route or declare the remaining broad proxy migrated.
 - Pixel Office / Dispatch now has explicit visual retirement evidence in
   `pixel_office_dispatch_retirement_evidence_v1`. Next proves a read-only Pixel
   Operating Map, the owner dispatch workflow route bridge, owner task dry-run,
@@ -176,6 +186,7 @@ python3 scripts/ui_admin_operations_route_retirement_smoke.py
 python3 scripts/ui_covered_route_retirement_packet_smoke.py
 python3 scripts/pixel_office_dispatch_retirement_evidence_smoke.py
 python3 scripts/nextjs_parity_smoke.py
+python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py
 cd ui/start-building-app && npm run build
 cd ui/next-app && npm run build
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
