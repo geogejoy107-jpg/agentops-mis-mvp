@@ -307,6 +307,7 @@ class AgentOpsClient:
         self.agent_id = context["agent_id"]
         self.request_timeout = int(context.get("request_timeout") or DEFAULT_REQUEST_TIMEOUT)
         self.sources = context.get("sources") if isinstance(context.get("sources"), dict) else {}
+        self.stale_config_token_ignored = False
 
     def connection_hint(self) -> str:
         source = self.sources.get("base_url") or "unknown"
@@ -326,27 +327,46 @@ class AgentOpsClient:
             hint += "; or unset/adjust AGENTOPS_BASE_URL"
         return hint
 
+    def _can_retry_without_stale_config_token(self, detail: str, status_code: int) -> bool:
+        production_requested = cli_deployment_mode() in {"production", "prod", "shared", "hosted"} or cli_truthy_env("AGENTOPS_REQUIRE_PRODUCTION_SECURITY")
+        return bool(
+            status_code == 401
+            and self.api_key
+            and self.sources.get("api_key") == "config"
+            and cli_host_is_loopback(self.base_url)
+            and not production_requested
+            and "token is not recognized" in detail
+        )
+
     def request(self, method: str, path: str, payload: dict | None = None, query: dict | None = None):
         url = self.base_url + path
         if query:
             url += "?" + urlencode({k: v for k, v in query.items() if v is not None}, doseq=True)
-        headers = {
-            "Content-Type": "application/json",
-            "X-AgentOps-Workspace-Id": self.workspace_id,
-        }
-        if self.agent_id:
-            headers["X-AgentOps-Agent-Id"] = self.agent_id
-        if self.api_key:
-            headers["X-AgentOps-Api-Key"] = self.api_key
-            headers["Authorization"] = f"Bearer {self.api_key}"
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
-        req = Request(url, data=data, headers=headers, method=method)
+
+        def make_request(api_key: str) -> Request:
+            headers = {
+                "Content-Type": "application/json",
+                "X-AgentOps-Workspace-Id": self.workspace_id,
+            }
+            if self.agent_id:
+                headers["X-AgentOps-Agent-Id"] = self.agent_id
+            if api_key:
+                headers["X-AgentOps-Api-Key"] = api_key
+                headers["Authorization"] = f"Bearer {api_key}"
+            return Request(url, data=data, headers=headers, method=method)
+
         try:
-            with urlopen(req, timeout=self.request_timeout) as res:
+            with urlopen(make_request(self.api_key), timeout=self.request_timeout) as res:
                 raw = res.read().decode("utf-8")
                 return json.loads(raw) if raw else {}
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
+            if self._can_retry_without_stale_config_token(detail, exc.code):
+                with urlopen(make_request(""), timeout=self.request_timeout) as res:
+                    self.stale_config_token_ignored = True
+                    raw = res.read().decode("utf-8")
+                    return json.loads(raw) if raw else {}
             raise RuntimeError(f"{method} {path} failed: {exc.code} {redact_text(detail, 1200)}") from exc
         except TimeoutError as exc:
             raise RuntimeError(f"{method} {path} timed out after {self.request_timeout}s; {self.connection_hint()}") from exc
@@ -397,6 +417,7 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
     production_requested = mode in {"production", "prod", "shared", "hosted"} or cli_truthy_env("AGENTOPS_REQUIRE_PRODUCTION_SECURITY")
     non_loopback_target = not cli_host_is_loopback(client.base_url)
     has_token = bool(client.api_key)
+    stale_config_token_ignored = False
 
     deployment_guard_ok = not ((non_loopback_target or production_requested) and not has_token)
     checks.append({
@@ -411,19 +432,58 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
 
     try:
         gateway = client.get("/api/agent-gateway/status")
+        stale_config_token_ignored = bool(client.stale_config_token_ignored)
         checks.append({
             "name": "agent_gateway_status",
             "ok": gateway.get("status") == "ready",
             "status": gateway.get("status"),
             "auth_mode": (gateway.get("auth") or {}).get("mode"),
+            "stale_config_token_ignored_for_local_loopback": stale_config_token_ignored,
             "token_omitted": gateway.get("token_omitted") is True,
         })
     except RuntimeError as exc:
-        checks.append({
-            "name": "agent_gateway_status",
-            "ok": False,
-            "error": str(exc),
-        })
+        error_text = str(exc)
+        can_retry_local_without_config_token = bool(
+            sources.get("api_key") == "config"
+            and client.api_key
+            and cli_host_is_loopback(client.base_url)
+            and not production_requested
+            and "401" in error_text
+            and "token is not recognized" in error_text
+        )
+        if can_retry_local_without_config_token:
+            retry_context = {
+                "base_url": client.base_url,
+                "api_key": "",
+                "workspace_id": client.workspace_id,
+                "agent_id": client.agent_id,
+                "request_timeout": client.request_timeout,
+                "sources": {**client.sources, "api_key": "ignored_config_for_local_dev"},
+            }
+            try:
+                gateway = AgentOpsClient(retry_context).get("/api/agent-gateway/status")
+                stale_config_token_ignored = True
+                checks.append({
+                    "name": "agent_gateway_status",
+                    "ok": gateway.get("status") == "ready",
+                    "status": gateway.get("status"),
+                    "auth_mode": (gateway.get("auth") or {}).get("mode"),
+                    "stale_config_token_ignored_for_local_loopback": True,
+                    "token_omitted": gateway.get("token_omitted") is True,
+                })
+            except RuntimeError as retry_exc:
+                checks.append({
+                    "name": "agent_gateway_status",
+                    "ok": False,
+                    "error": str(retry_exc),
+                    "stale_config_token_retry_failed": True,
+                })
+        else:
+            checks.append({
+                "name": "agent_gateway_status",
+                "ok": False,
+                "error": error_text,
+            })
 
     try:
         workers = client.get("/api/workers/status")
@@ -450,7 +510,10 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
     if not client.agent_id:
         setup_hints.append("No agent id resolved. Set AGENTOPS_AGENT_ID or run agentops login --agent-id ... before remote worker use.")
     if gateway and not (gateway.get("auth") or {}).get("authenticated") and has_token:
-        setup_hints.append("A token was provided but Agent Gateway did not authenticate it; rotate or re-enroll the agent.")
+        if stale_config_token_ignored:
+            setup_hints.append("Ignored a stale saved config token for loopback local-dev doctor; run agentops login --base-url ... --api-key <token> only when you intentionally want authenticated local Gateway checks.")
+        else:
+            setup_hints.append("A token was provided but Agent Gateway did not authenticate it; rotate or re-enroll the agent.")
     if workers and workers.get("stuck_worker_tasks", 0):
         setup_hints.append("Stuck worker tasks detected. Run agentops worker stuck and agentops worker release after review.")
     if not gateway and local_probe.get("ready"):
@@ -490,6 +553,7 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
         "local_demo_probe": local_probe,
         "checks": checks,
         "gateway": gateway,
+        "stale_config_token_ignored_for_local_loopback": stale_config_token_ignored,
         "worker_summary": {
             "status": workers.get("status") if workers else None,
             "worker_count": workers.get("worker_count") if workers else None,
