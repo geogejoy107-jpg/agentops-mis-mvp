@@ -87,6 +87,7 @@ def main() -> int:
 
             status_code, status = invoke("status")
             doctor_code, doctor = invoke("doctor")
+            preflight_code, preflight = invoke("relay-preflight")
             relay = status.get("relay_connector") or {}
             if (
                 status_code != 1
@@ -94,6 +95,9 @@ def main() -> int:
                 or relay.get("enabled") is not False
                 or relay.get("ready") is not False
                 or doctor_code != 0
+                or preflight_code != 2
+                or preflight.get("error") != "prepared_relay_material_unavailable"
+                or p["relay_prepared"].exists()
             ):
                 failures.append("disabled Relay projection was not healthy and inactive")
 

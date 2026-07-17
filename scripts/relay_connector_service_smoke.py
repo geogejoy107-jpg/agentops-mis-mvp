@@ -405,6 +405,34 @@ def main() -> int:
         ):
             failures.append("mismatched Host certificate hostname did not fail before network")
 
+        mismatched_key_config = dict(enabled_config_payload)
+        mismatched_key_config["host_private_key_path"] = str(wrong_key)
+        mismatched_key_config_path = service_home / "mismatched-key-config.json"
+        mismatched_key_status = service_home / "mismatched-key-status.json"
+        write_private_json(mismatched_key_config_path, mismatched_key_config)
+        mismatched_key = subprocess.run(
+            service_command(
+                mismatched_key_config_path,
+                secrets_path,
+                service_home / "mismatched-key-epoch.json",
+                mismatched_key_status,
+            ),
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        mismatched_key_payload = read_status(mismatched_key_status)
+        if (
+            mismatched_key.returncode == 0
+            or mismatched_key_payload.get("state") != "failed"
+            or mismatched_key_payload.get("failure_code")
+            != "host_certificate_key_mismatch"
+            or mismatched_key_payload.get("connect_attempts") != 0
+        ):
+            failures.append("mismatched Host certificate key did not fail before network")
+
         broad_tls_directory = temporary_path / "broad-tls"
         broad_tls_directory.mkdir(mode=0o755)
         broad_tls_directory.chmod(0o755)

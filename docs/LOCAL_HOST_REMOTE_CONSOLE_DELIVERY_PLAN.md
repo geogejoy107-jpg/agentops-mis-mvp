@@ -196,7 +196,10 @@ Implementation slices:
    changing Tailscale. Its readiness handshake now requires the first durable
    connector epoch, the lifecycle smoke exercises the exact managed instance
    lock, and real child environment inspection proves Host authority values are
-   excluded. Owner enable/disable controls, fresh runtime-status
+   excluded. A read-only `agentops host relay-preflight` now validates an
+   operator-provisioned private config, tunnel secret, CA, Host certificate,
+   private-key pairing and exact backend port without enabling Relay, binding a
+   socket or using the network. Owner enable/disable controls, fresh runtime-status
    projection, certificate lifecycle, Relay-side SNI routing, credential
    provisioning, installation into the current preview, and the deployed Relay
    remain open.

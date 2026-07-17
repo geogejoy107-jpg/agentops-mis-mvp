@@ -25,6 +25,11 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from agentops_mis_cli.relay_connector_service import (
+    RelayConnectorServiceError,
+    validate_connector_material,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 STACK = ROOT / "scripts" / "run_local_stack.py"
@@ -103,6 +108,7 @@ def paths() -> dict[str, Path]:
         "lifecycle_lock": home.parent / ".agentops-mis-host-lifecycle.lock",
         "relay": home / "relay",
         "relay_config": home / "relay" / "config.json",
+        "relay_prepared": home / "relay" / "prepared.json",
         "relay_secrets": home / "relay" / "secrets.json",
         "relay_epoch": home / "relay" / "epoch.json",
         "relay_status": home / "relay" / "status.json",
@@ -2373,6 +2379,75 @@ def cmd_tailscale_preview(args) -> int:
     return 0
 
 
+def cmd_relay_preflight(_args) -> int:
+    config, _secret_values = require_initialized()
+    p = paths()
+    base = {
+        "operation": "host_relay_preflight",
+        "prepared_config_present": p["relay_prepared"].is_file(),
+        "active_relay_enabled": relay_connector_projection(p)["enabled"],
+        "confirmation_required": True,
+        "deployed_relay": False,
+        "certificate_lifecycle": False,
+        "network_used": False,
+        "tailscale_changed": False,
+        "config_omitted": True,
+        "paths_omitted": True,
+        "certificate_material_omitted": True,
+        "machine_credential_omitted": True,
+        "token_omitted": True,
+    }
+    if not p["relay_prepared"].is_file():
+        emit({
+            **base,
+            "ok": False,
+            "error": "prepared_relay_material_unavailable",
+        })
+        return 2
+    if config.get("network_publication") != "disabled":
+        emit({
+            **base,
+            "ok": False,
+            "error": "network_publication_profile_active",
+        })
+        return 1
+    try:
+        prepared, _tunnel_key, _relay_context, _host_context = validate_connector_material(
+            p["relay_prepared"],
+            p["relay_secrets"],
+        )
+    except RelayConnectorServiceError as exc:
+        emit({
+            **base,
+            "ok": False,
+            "error": "prepared_relay_material_invalid",
+            "failure_code": str(exc),
+        })
+        return 1
+    if prepared.get("enabled") is not True:
+        emit({
+            **base,
+            "ok": False,
+            "error": "prepared_relay_material_not_enabled",
+        })
+        return 1
+    if prepared.get("host_http_port") != int(config.get("port") or 0):
+        emit({
+            **base,
+            "ok": False,
+            "error": "prepared_relay_backend_port_mismatch",
+        })
+        return 1
+    emit({
+        **base,
+        "ok": True,
+        "state": "prepared",
+        "exact_material_validated": True,
+        "next_action": "Owner confirmation controls are not implemented in this slice.",
+    })
+    return 0
+
+
 def cmd_tailscale_apply(args) -> int:
     config, _secret_values = require_initialized()
     target = f"http://{config['host']}:{config['port']}"
@@ -2592,6 +2667,8 @@ def build_parser() -> argparse.ArgumentParser:
     console_url.set_defaults(handler=cmd_console_url)
     open_console = sub.add_parser("open-console", help="Open the local Console with a protected browser handoff without printing local authority.")
     open_console.set_defaults(handler=cmd_open_console)
+    relay_preflight = sub.add_parser("relay-preflight", help="Validate pre-provisioned private Relay material without enabling it or using the network.")
+    relay_preflight.set_defaults(handler=cmd_relay_preflight)
     preview = sub.add_parser("tailscale-preview", help="Preview Tailscale Serve and revoke commands without executing them.")
     preview.add_argument("--https-port", type=int, choices=range(1, 65536), default=443, metavar="PORT")
     preview.set_defaults(handler=cmd_tailscale_preview)

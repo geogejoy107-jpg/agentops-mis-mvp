@@ -150,6 +150,7 @@ def main() -> int:
     relay_environment_minimal = False
     foreign_connector_preserved = False
     epoch_startup_failed_closed = False
+    prepared_material_preflight = False
     bounded_shutdown = PROCESS_SHUTDOWN_GRACE_SECONDS + PROCESS_KILL_GRACE_SECONDS < 10
     if not bounded_shutdown:
         failures.append("Stack cleanup bound exceeds the Host stop grace period")
@@ -259,11 +260,28 @@ def main() -> int:
                 "route": ROUTE,
                 "schema_version": 1,
             }
-            write_private_json(relay_home / "config.json", relay_config)
             write_private_json(
                 relay_home / "secrets.json",
                 {"schema_version": 1, "tunnel_key_hex": tunnel_key.hex()},
             )
+            write_private_json(relay_home / "prepared.json", relay_config)
+            write_private_json(relay_home / "config.json", {"enabled": False, "schema_version": 1})
+            preflight_code, preflight = run_host(env, "relay-preflight")
+            prepared_material_preflight = bool(
+                preflight_code == 0
+                and preflight.get("ok") is True
+                and preflight.get("state") == "prepared"
+                and preflight.get("exact_material_validated") is True
+                and preflight.get("active_relay_enabled") is False
+                and preflight.get("network_used") is False
+                and json.loads((relay_home / "config.json").read_text(encoding="utf-8"))
+                == {"enabled": False, "schema_version": 1}
+                and not (relay_home / "status.json").exists()
+                and not (relay_home / "epoch.json").exists()
+            )
+            if not prepared_material_preflight:
+                failures.append("prepared Relay material preflight mutated or used the network")
+            write_private_json(relay_home / "config.json", relay_config)
 
             foreign_epoch = relay_home / "foreign-epoch.json"
             foreign_connector = subprocess.Popen(
@@ -406,6 +424,7 @@ def main() -> int:
         "invalid_config_failed_closed": invalid_failed_closed,
         "ok": not failures,
         "operation": "private_host_relay_lifecycle_smoke",
+        "prepared_material_preflight": prepared_material_preflight,
         "relay_environment_minimal": relay_environment_minimal,
         "restart_recycled_connector": restart_recycled,
         "stop_reaped_owned_processes": stop_reaped,

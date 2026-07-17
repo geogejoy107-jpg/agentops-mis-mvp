@@ -185,6 +185,9 @@ rewriting its status. The Host accepts backend health only after the connector
 has allocated its first durable epoch and the complete stack sends its own
 inherited readiness signal. The lifecycle smoke observes the real child process
 environment rather than only testing the projection helper.
+`agentops host relay-preflight` separately validates pre-provisioned private
+material and the exact Host backend port while leaving the active config at the
+disabled default; it does not bind a socket, contact Relay or change Tailscale.
 The fixture observes no
 Tailscale invocation and uses an unavailable loopback fake Relay, so it proves
 lifecycle/backoff ownership rather than a deployed remote endpoint.

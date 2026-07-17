@@ -31,6 +31,7 @@ _SAFE_FAILURE_CODES = {
     "enabled_config_shape_invalid",
     "enabled_config_upgrade_required",
     "host_certificate_hostname_mismatch",
+    "host_certificate_key_mismatch",
     "host_tls_proxy_start_failed",
     "host_tls_proxy_unavailable",
     "private_directory_invalid",
@@ -381,6 +382,39 @@ def _load_enabled_configuration(config_path: Path, secrets_path: Path) -> tuple[
     return config, tunnel_key
 
 
+def validate_connector_material(
+    config_path: Path,
+    secrets_path: Path,
+) -> tuple[dict[str, Any], bytes, ssl.SSLContext | None, ssl.SSLContext | None]:
+    """Validate private Relay material without binding sockets or using the network."""
+    config, tunnel_key = _load_enabled_configuration(config_path, secrets_path)
+    if config.get("enabled") is False:
+        return config, tunnel_key, None, None
+
+    relay_ca_path = _validate_tls_file(config["relay_ca_path"])
+    host_certificate_path = _validate_tls_file(config["host_certificate_path"])
+    host_private_key_path = _validate_tls_file(
+        config["host_private_key_path"],
+        private_key=True,
+    )
+    relay_context = ssl.create_default_context(cafile=str(relay_ca_path))
+    relay_context.minimum_version = ssl.TLSVersion.TLSv1_2
+    _validate_certificate_hostname(
+        host_certificate_path,
+        config["host_server_hostname"],
+    )
+    host_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    host_context.minimum_version = ssl.TLSVersion.TLSv1_2
+    try:
+        host_context.load_cert_chain(
+            str(host_certificate_path),
+            str(host_private_key_path),
+        )
+    except (OSError, ssl.SSLError) as exc:
+        raise RelayConnectorServiceError("host_certificate_key_mismatch") from exc
+    return config, tunnel_key, relay_context, host_context
+
+
 def _request_stop(_signum: int, _frame: Any) -> None:
     _stop.set()
 
@@ -418,7 +452,10 @@ def _run_service_locked(
     supervisor: RelayConnectorSupervisor | None = None
     host_tls_proxy: HostTlsProxy | None = None
     try:
-        config, tunnel_key = _load_enabled_configuration(config_path, secrets_path)
+        config, tunnel_key, relay_context, host_context = validate_connector_material(
+            config_path,
+            secrets_path,
+        )
         if config.get("enabled") is False:
             status = _disabled_status(managed_by_host_stack=managed_by_host_stack)
             _write_private_status(status_path, status)
@@ -427,24 +464,8 @@ def _run_service_locked(
             print(json.dumps(status, sort_keys=True))
             return 0
 
-        relay_ca_path = _validate_tls_file(config["relay_ca_path"])
-        host_certificate_path = _validate_tls_file(config["host_certificate_path"])
-        host_private_key_path = _validate_tls_file(
-            config["host_private_key_path"],
-            private_key=True,
-        )
-        relay_context = ssl.create_default_context(cafile=str(relay_ca_path))
-        relay_context.minimum_version = ssl.TLSVersion.TLSv1_2
-        _validate_certificate_hostname(
-            host_certificate_path,
-            config["host_server_hostname"],
-        )
-        host_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        host_context.minimum_version = ssl.TLSVersion.TLSv1_2
-        host_context.load_cert_chain(
-            str(host_certificate_path),
-            str(host_private_key_path),
-        )
+        if relay_context is None or host_context is None:
+            raise RelayConnectorServiceError("enabled_config_shape_invalid")
         host_tls_listener = bind_loopback_listener(config["host_tls_listen_port"])
         try:
             host_tls_proxy = HostTlsProxy(
