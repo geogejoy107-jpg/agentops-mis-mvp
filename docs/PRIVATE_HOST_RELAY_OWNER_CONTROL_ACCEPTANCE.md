@@ -64,10 +64,13 @@ Relay.
 
 ## Known Limitations
 
-- The confirmed transition returns `restart_required:true`; this slice does not
-  restart the installed or current Host process.
-- No deployed Relay, DNS, certificate lifecycle, credential provisioning or
-  Relay-side SNI routing exists yet.
+- This document records the original non-restarting Owner-control slice. The
+  current branch now completes confirmed transitions through the managed Host
+  restart and terminal receipt path documented in
+  `PRIVATE_HOST_MANAGED_RESTART_ACCEPTANCE.md`.
+- A bounded Relay-side exact-SNI router now exists in the current branch, but no
+  deployed Relay, DNS, public certificate lifecycle or production credential
+  provisioning exists yet.
 - `remote_ready` must remain false until deployed-Relay and physical
   browser-only acceptance are both complete.
 - The current installed preview remains on its earlier source package and is
@@ -75,6 +78,5 @@ Relay.
 
 ## Next Slice
 
-Add an exact-definition, rollback-aware managed Host restart worker for a
-confirmed Relay transition. Then implement Relay-side SNI routing and deploy a
-non-authority Relay before running physical second-computer browser acceptance.
+Deploy the non-authority Relay, DNS and public certificate lifecycle, then bind
+the managed restart receipt to exact-head physical browser-only acceptance.

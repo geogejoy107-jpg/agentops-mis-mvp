@@ -199,8 +199,10 @@ prompt, response, private message or transcript was used.
   by init/start.
 - Trusted Origin validation is implemented; richer trusted-proxy identity and
   forwarded-header handling remain pending.
-- Account invitation, role management, password recovery and session/device
-  revocation UI remain pending.
+- One-time pairing invitations, password recovery, Session revocation and paired
+  device revocation now exist in the Workspace UI. General account
+  administration, post-enrollment role editing and enterprise device trust
+  remain pending.
 - `host logs` returns safe metadata and the local path, not live redacted tail.
 - Second-computer acceptance and real Hermes/OpenClaw remote-control evidence
   remain mandatory before product completion.
