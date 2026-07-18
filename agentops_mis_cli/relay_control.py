@@ -773,18 +773,13 @@ def _execute_with_restart_receipt(
                 raise _ControlFailure("rollback_pending")
             audit_outbox_dir = restart_receipt_path.parent / "restart-audit-outbox"
             try:
-                relay_restart.write_restart_audit_event(
+                exact_event = relay_restart.write_restart_audit_event(
                     outbox_dir=audit_outbox_dir,
                     action=existing_receipt["action"],
                     state=existing_receipt["state"],
                     transaction_sequence=existing_receipt["transaction_sequence"],
                     revision=existing_receipt["revision"],
                     transition_ref=existing_receipt["transition_ref"],
-                    nonblocking=True,
-                )
-                exact_event = relay_restart.read_restart_audit_event(
-                    outbox_dir=audit_outbox_dir,
-                    transaction_sequence=existing_receipt["transaction_sequence"],
                     nonblocking=True,
                 )
             except relay_restart.RelayRestartError as audit_error:
