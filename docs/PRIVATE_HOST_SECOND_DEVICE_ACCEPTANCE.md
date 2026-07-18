@@ -1,6 +1,6 @@
 # Advanced Tailscale Second-Device Acceptance
 
-Status: advanced Tailscale-mode protocol; browser-only Relay protocol pending
+Status: advanced Tailscale physical browser workflow partially accepted on preview.35; marker fix and ordinary browser-only Relay protocol pending
 
 This document now covers the advanced private-network fallback only. It no
 longer defines the ordinary customer onboarding path and cannot close the
@@ -281,9 +281,93 @@ Host reload, the same MacBook again received HTTP 200. It remained reachable
 while a fresh OpenClaw Worker run executed on the Host. Tailscale Serve remained
 the transport and Funnel stayed disabled.
 
-This is physical second-device network/render and maintenance-recovery
-evidence. It is not the full protocol pass: authenticated MacBook task creation,
-the pending Hermes human decision, approved artifact/receipt download,
-logout-denial, physical tailnet disconnect/reconnect and another-Mac clean
-installation remain open. No private URL, DNS name, IP address, credential,
-cookie, raw model content or screenshot artifact is committed here.
+That initial network/render receipt was extended on 2026-07-18 UTC by the
+authenticated browser workflow below. The advanced Tailscale client now proves
+human login, real OpenClaw dispatch, browser disconnect/reconnect, deliberate
+delivery and memory review, Evaluation/Audit readback, approved artifact and
+Host receipt download, and logout denial. It is still not the full protocol
+pass: the installed marker-task defect must be retested from an exact fixed
+package, and the ordinary deployed-Relay, Host reboot and another-Mac clean
+installation gates remain open. No private URL, DNS name, IP address,
+credential, cookie, raw model content or screenshot artifact is committed
+here.
+
+## Preview 35 Authenticated MacBook Evidence
+
+This receipt used the installed
+`v1.6.0-private-host-preview.35` package at exact commit
+`6424ec144013517b21438cd7e528c6db106a0a5e`. The Host was macOS major 26 and
+the physical Console was macOS 26.5 with Chrome major 150. The Console used the
+dedicated AgentOps MIS browser profile, used no AgentOps project checkout or
+Agent Runtime dependency for the workflow, reached the Host through private
+Tailscale HTTPS, and
+never enabled Funnel. Host status after the flow remained ready with Human
+login available; the ordinary Relay remained unconfigured and undeployed.
+
+### Real Run And Human Decisions
+
+The MacBook Owner Session submitted customer job
+`wfjob_ec747fe27ab2`, which created task
+`tsk_customer_worker_task_651b111ba9c71b15` and exactly one OpenClaw run
+`run_gw_edfe2753846f`. After the run entered `running`, the dedicated Console
+browser was closed. The Host and both independently managed Runtime Workers
+remained ready, and the job completed while the Console was disconnected.
+Reopening the Console and signing in showed the same completed job, task and
+run; bounded ledger readback found one workflow-job row and one run row, so no
+duplicate was created.
+
+The completed evidence chain contained passing evaluation
+`eval_gw_run_gw_edfe2753846f_rule` with score `1.0`, verified plan manifest
+`pem_825774cd8cac45dc`, artifact
+`art_customer_worker_task_run_gw_edfe2753846f`, and low-risk delivery approval
+`ap_customer_worker_delivery_run_gw_edfe2753846f`. The Owner approved only that
+delivery. Memory candidates `mem_customer_worker_task_run_gw_edfe2753846f`
+and `mem_gw_1f3c3b069c3bafdb` were deliberately rejected as generic or
+transient rather than promoted into project memory. The matching Evaluation and
+Audit entries were then visible from the MacBook UI.
+
+One earlier job, `wfjob_b2321f7faf73`, exposed a usability defect: negated
+phrases such as prohibiting publication or external connectors were
+conservatively interpreted as external-write intent. Prepared action
+`ap_prepared_action_b673fa1a19408a4b` was not approved and no consequential
+action was executed. This false positive remains a tracked classifier defect;
+it is not counted as the successful customer run above.
+
+### Downloads, Receipt And Logout
+
+After approval, the browser downloaded the ID-addressed artifact. Its Host
+authority receipt was `phr_c2ea51dd3d37a09055e20889`, with bounded evidence:
+
+```text
+adapter: openclaw
+artifact_id: art_customer_worker_task_run_gw_edfe2753846f
+artifact_metadata_sha256: 0d26751afa89b8ff85041ff81dff9301ac33e9fbc53d7764d2c88fc01ec2b38b
+downloaded_artifact_sha256: 236b8753da671cfd8a1bfcd88c83154977cc45c7d18c44d443de8de2a880cbf9
+receipt_id: phr_c2ea51dd3d37a09055e20889
+receipt_payload_sha256: ffce1b92ec7872f45b9d74f246ddc0738a46b77c54bff84265655500ec664bba
+downloaded_receipt_sha256: 4d3476361f7f18fdb23f4ea1e2477c30afe076e75c59cd879378c3129dd35869
+disconnect/reconnect passed: true
+logout denial passed: true
+```
+
+The artifact body and receipt JSON were not read into this record. After UI
+logout, the same physical browser received HTTP 401 for dashboard metrics, the
+artifact download and the authority-receipt download.
+
+### Remaining Acceptance Gap
+
+The Host Acceptance page's low-risk marker creation returned HTTP 500 on the
+installed preview.35 because an intentionally blank `owner_agent_id` reached a
+foreign-key write as an empty string. Source commit
+`70bae606c577191041778a92e3480138f3b67795` normalizes it to SQL `NULL`,
+preserves an explicit zero budget, and adds an authenticated Owner/CSRF smoke
+that proves the marker creates only task, runtime-event and audit evidence with
+no run, tool call, evaluation or real Runtime invocation. The deterministic
+smoke passes, but the physical marker row remains failed until that exact fix is
+packaged, installed and rerun from the MacBook.
+
+Therefore the authenticated advanced-Tailscale workflow is accepted for the
+real task, disconnect, review, download and logout rows, while the overall
+second-device protocol remains partial. Ordinary customer acceptance still
+requires a browser-only deployed Relay with no Tailscale client, exact-package
+marker retest, Host restart persistence and another clean Mac install.

@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.35 published and installed; fresh OpenClaw and Hermes Runtime evidence plus physical MacBook anonymous denial accepted, while Hermes delivery and ordinary browser-only physical gates remain open
+Status: preview.35 installed with authenticated MacBook OpenClaw dispatch, disconnect/reconnect, review, download and logout-denial evidence; the marker fix, ordinary browser-only Relay and final physical gates remain open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -13,11 +13,11 @@ physical evidence and cannot be closed by mock output.
 |---|---|---|---|
 | 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.35` publishes provenance, checksum, archive and no-repository bootstrap assets from exact commit `6424ec144013517b21438cd7e528c6db106a0a5e`. Candidate, Draft and public assets were byte-equal; isolated install/start/status/stop and the real preview.34-to-preview.35 upgrade passed with verified backups and preserved data. A receipt from another physical Mac remains missing. | Passed locally; external evidence required |
 | 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md`, `PRIVATE_HOST_AUTH_WORKSPACE_UI_ACCEPTANCE.md`, `PRIVATE_HOST_SERVICE_WORKER_PRESENCE_ACCEPTANCE.md` and bundle smoke cover installed CLI, production UI, browser-first Owner setup inside the existing React Workspace, init, doctor, start/status/stop, Runtime readiness and fail-closed Worker ownership. Installed preview.35 serves that integrated UI, reports Owner login ready and has two fresh external-service Workers. | Passed locally |
-| 3 | Browser-only second computer opens the stable per-Host HTTPS console, pairs and authenticates | The current preview proves same-origin Host auth and advanced Tailscale HTTPS only. The amended ordinary path requires a deployed L4 Relay, Host-side TLS, one-time pairing and a physical Console with no Tailscale/VPN client. No such receipt exists yet. | Relay implementation and external evidence required |
-| 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, `private_host_owner_browser_handoff_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, setup-code authority, role/session separation and CSRF/Origin checks. A physical MacBook also received HTTP 401 for protected workspace reads and task creation, with no task-count change. | Passed locally and on physical advanced client |
-| 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | Customer dispatch and ledger views exist; Audit and Memory use live APIs; approved artifact download is Session/workspace/approval checked and audited. Fresh preview.35 Hermes Runtime evidence reached the Human Approval Wall, but the physical MacBook has not yet logged in, decided that delivery, downloaded its approved artifact/receipt or proved logout denial. | Partial; physical human workflow open |
-| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | Installed preview.35 service Workers completed OpenClaw run `run_gw_45eac4968e30` and Hermes run `run_gw_7ac27edaf52c`. Each has bounded tool, evaluation, runtime-event, audit, artifact, memory and verified plan-evidence records. The OpenClaw task completed; the Hermes Runtime completed while delivery approval remains pending. | Passed on current package; delivery gate open |
-| 7 | Browser or Relay disconnect does not stop Host Worker or lose/duplicate task | `PRIVATE_HOST_CONSOLE_DISCONNECT_ACCEPTANCE.md` proves real Hermes/OpenClaw jobs completed after Host-local Session clients were discarded. Physical browser-only and deployed-Relay loss/reconnect evidence remains missing. | Passed on Host; Relay and external evidence required |
+| 3 | Browser-only second computer opens the stable per-Host HTTPS console, pairs and authenticates | A physical MacBook authenticated through the advanced Tailscale HTTPS profile with only the dedicated browser Console and no AgentOps project or Runtime dependency. The ordinary path still requires a deployed L4 Relay, Host-side TLS, one-time pairing and a physical Console with no Tailscale/VPN client. | Passed on advanced profile; ordinary Relay evidence required |
+| 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, `private_host_owner_browser_handoff_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, setup-code authority, role/session separation and CSRF/Origin checks. The physical MacBook received HTTP 401 for protected workspace reads and task creation before login, then again for dashboard, approved artifact and Host-receipt downloads after UI logout. | Passed locally and on physical advanced client |
+| 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | The physical MacBook submitted job `wfjob_ec747fe27ab2`, observed OpenClaw run `run_gw_edfe2753846f`, approved its low-risk delivery, rejected two low-value memory candidates, read the matching Evaluation/Audit entries, and downloaded both the approved artifact and Host authority receipt. The installed Host Acceptance marker separately failed because blank owner input violated a foreign key; source commit `70bae60` fixes and deterministically covers it, but an exact fixed package has not been installed. | Real advanced-client workflow passed; marker package retest and ordinary Relay open |
+| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | Installed preview.35 service Workers completed OpenClaw runs `run_gw_45eac4968e30` and `run_gw_edfe2753846f`, plus Hermes run `run_gw_7ac27edaf52c`. The MacBook-dispatched OpenClaw run has passing evaluation, verified plan evidence, approved artifact and Host authority receipt. The earlier Hermes Runtime completed while its separate delivery approval remains pending. | Passed on current package; separate Hermes delivery gate open |
+| 7 | Browser or Relay disconnect does not stop Host Worker or lose/duplicate task | `PRIVATE_HOST_CONSOLE_DISCONNECT_ACCEPTANCE.md` covers Host-local Session loss. The physical MacBook dedicated browser was also closed while `run_gw_edfe2753846f` was running; the Host completed it, reconnect showed the same job/task/run, and bounded readback found exactly one workflow job and one run. Deployed-Relay interruption evidence remains missing. | Passed on Host and physical browser disconnect; deployed Relay evidence required |
 | 8 | Host restart preserves ledger and knowledge state | `PRIVATE_HOST_RESTART_PERSISTENCE_ACCEPTANCE.md` covers Session, task and a 194-document local Markdown/FTS index remaining searchable after managed restart. | Passed locally |
 | 9 | Backup and restore pass on isolated database | `PRIVATE_HOST_BACKUP_RESTORE_ACCEPTANCE.md` covers strict manifest/hash/schema/integrity/foreign-key checks, atomic replacement and access revocation. | Passed locally |
 | 10 | Release/Git contain no credentials, DB, raw prompt/response or generated dependencies | Bundle forbidden-member scan, clean-clone tracked-file selection, release-consumer smoke and secret boundaries pass. Sample exports, DB, `.env`, `node_modules`, caches and temporary browser fixtures were excluded from commits and Release assets. Git does not track `dist`; the Release intentionally packages only the prebuilt production UI so a customer Host needs no Node runtime. | Passed locally; repeat at RC |
@@ -841,16 +841,32 @@ plan-evidence records. A fresh Hermes Runtime also completed, but its delivery
 remains at the Human Approval Wall; no approved delivery is claimed.
 
 A physical MacBook reached and rendered the login Workspace before and after
-the upgrade and remained connected during the OpenClaw run. From that MacBook,
-unauthenticated workspace reads and a task-create mutation returned HTTP 401,
-with no task-count change. This is useful advanced-Tailscale physical-client
-and fail-closed evidence, but it is not the ordinary deployed-Relay gate or the
-full authenticated browser workflow.
+the upgrade. Before login, protected workspace reads and a task-create mutation
+returned HTTP 401 with no task-count change. An authenticated Owner Session then
+submitted job `wfjob_ec747fe27ab2`; OpenClaw run `run_gw_edfe2753846f`
+continued to completion after the dedicated Console browser closed. Reconnect
+showed one matching workflow job and one run, its passing Evaluation and Audit
+evidence, verified plan manifest and reviewable artifact. The Owner approved
+only its low-risk delivery, rejected two low-value memory candidates, downloaded
+the approved artifact and Host authority receipt
+`phr_c2ea51dd3d37a09055e20889`, then logged out. Dashboard, artifact and receipt
+downloads all returned HTTP 401 after logout. The bounded receipt hashes and
+full physical record are in `PRIVATE_HOST_SECOND_DEVICE_ACCEPTANCE.md`; no raw
+artifact or model content was copied into the repository.
 
-The current preview therefore remains a prerelease. Deployed Relay/DNS/TLS,
-physical pairing and authenticated dispatch, Hermes approval, approved
-artifact and receipt download, physical disconnect/reconnect, logout denial,
-Host logout/reboot recovery and another-Mac clean installation remain open.
+The same physical flow found one release defect: the Host Acceptance marker
+sent an intentionally blank owner field that preview.35 stored as an invalid
+foreign key. Source commit `70bae606c577191041778a92e3480138f3b67795`
+normalizes blank ownership to SQL `NULL`, preserves a zero budget and passes an
+authenticated marker smoke without invoking a Runtime. A separate task with
+negated external-action wording also exposed a conservative intent-classifier
+false positive; its prepared action was not approved and no external action ran.
+
+The current preview therefore remains a prerelease. The exact marker fix must
+be packaged and physically retested. Deployed Relay/DNS/TLS, no-Tailscale
+browser pairing, deployed-Relay interruption, the separate Hermes delivery
+decision, Host logout/reboot recovery and another-Mac clean installation remain
+open.
 
 ## Release Gates
 

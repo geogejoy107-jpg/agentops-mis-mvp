@@ -77,8 +77,9 @@ def main() -> int:
 
     open_gate_markers = (
         "deployed Relay/DNS/TLS",
-        "physical pairing and authenticated dispatch",
-        "physical disconnect/reconnect",
+        "no-Tailscale browser pairing",
+        "deployed-Relay interruption",
+        "exact marker fix must be packaged and physically retested",
         "Host logout/reboot recovery",
         "another-Mac clean installation",
     )
@@ -88,7 +89,8 @@ def main() -> int:
             "current preview must not claim final RC", failures)
 
     require(
-        "Status: advanced Tailscale-mode protocol; browser-only Relay protocol pending" in second,
+        "Status: advanced Tailscale physical browser workflow partially accepted" in second
+        and "ordinary browser-only Relay protocol pending" in second,
         "second-device document must identify Tailscale as an advanced fallback and keep browser-only Relay pending",
         failures,
     )
@@ -105,10 +107,19 @@ def main() -> int:
             "physical MacBook receipt must bind the exact preview.35 package", failures)
     require("all returned HTTP 401" in normalized_second and "task count remained 25 before and after" in normalized_second,
             "physical MacBook anonymous denial receipt missing", failures)
-    require("it does not prove an authenticated Console workflow" in normalized_second,
-            "physical MacBook receipt must keep authenticated workflow open", failures)
     require("Tailscale Serve remained the transport and Funnel stayed disabled" in normalized_second,
             "advanced transport boundary missing from MacBook receipt", failures)
+    require("## Preview 35 Authenticated MacBook Evidence" in second,
+            "authenticated physical MacBook evidence section missing", failures)
+    require("run_gw_edfe2753846f" in second and "phr_c2ea51dd3d37a09055e20889" in second,
+            "authenticated MacBook run/receipt evidence missing", failures)
+    require("disconnect/reconnect passed: true" in normalized_second and "logout denial passed: true" in normalized_second,
+            "physical browser disconnect or logout-denial evidence missing", failures)
+    require("70bae606c577191041778a92e3480138f3b67795" in second
+            and "physical marker row remains failed" in normalized_second,
+            "unreleased marker fix boundary is no longer explicit", failures)
+    require("overall second-device protocol remains partial" in normalized_second,
+            "advanced receipt must not claim ordinary browser-only acceptance", failures)
 
     require(TAG in service_upgrade and COMMIT in service_upgrade,
             "preview.35 service-upgrade receipt is not exact-package bound", failures)
@@ -140,6 +151,10 @@ def main() -> int:
             "service_upgrade_migration",
             "real_runtime_evidence",
             "physical_macbook_anonymous_boundary",
+            "physical_macbook_authenticated_workflow",
+            "physical_browser_disconnect_reconnect",
+            "approved_artifact_and_host_receipt_download",
+            "physical_logout_denial",
         ],
         "external_gates_open": list(open_gate_markers),
         "failures": failures,
