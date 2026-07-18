@@ -80,7 +80,8 @@ def main() -> int:
         failures,
     )
     require(
-        "Status: advanced Tailscale-mode protocol; browser-only Relay protocol pending" in tailscale,
+        "Status: advanced Tailscale physical browser workflow partially accepted" in tailscale
+        and "ordinary browser-only Relay protocol pending" in tailscale,
         "legacy second-device protocol is not labeled as advanced fallback",
         failures,
     )
@@ -100,8 +101,8 @@ def main() -> int:
         failures,
     )
     require(
-        "Relay implementation and external evidence required" in rc
-        and "advanced Tailscale profile" in rc,
+        "ordinary Relay evidence required" in rc
+        and "advanced Tailscale HTTPS profile" in rc,
         "RC gates still treat Tailscale as the ordinary transport",
         failures,
     )
