@@ -69,6 +69,8 @@ were not changed.
 
 ## Remaining Integration
 
-- retain bounded post-restart audit evidence after recovery finalization;
+- prove the bounded post-restart audit projection from the exact installed
+  release candidate; deterministic coverage is recorded in
+  `PRIVATE_HOST_RESTART_AUDIT_RETENTION_ACCEPTANCE.md`;
 - install the new exact service template into a versioned Host release candidate;
 - run physical browser-only acceptance against a deployed Relay.

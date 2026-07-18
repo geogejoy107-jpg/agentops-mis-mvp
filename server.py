@@ -209,6 +209,7 @@ OPENCLAW_BIN = Path("/opt/homebrew/bin/openclaw")
 READ_MODEL_CACHE_TTL_SEC = float(os.environ.get("AGENTOPS_READ_MODEL_CACHE_TTL_SEC", "2"))
 READ_MODEL_CACHE_MAX_ITEMS = int(os.environ.get("AGENTOPS_READ_MODEL_CACHE_MAX_ITEMS", "96"))
 READ_MODEL_CACHE = ReadModelCache(ttl_sec=READ_MODEL_CACHE_TTL_SEC, max_items=READ_MODEL_CACHE_MAX_ITEMS)
+PRIVATE_HOST_RESTART_AUDIT_LOCK = threading.Lock()
 
 HIGH_RISK_CATEGORIES = {"shell", "email", "database"}
 VALID_TASK_STATUSES = {"backlog", "planned", "running", "waiting_approval", "blocked", "completed", "failed", "canceled"}
@@ -396,12 +397,12 @@ def json_array_contains(raw, needle) -> int:
     return 1 if needle in legacy_items else 0
 
 
-def db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, timeout=30, isolation_level=None)
+def db(timeout_seconds: float = 30) -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=timeout_seconds, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.create_function("agentops_json_array_contains", 2, json_array_contains)
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute(f"PRAGMA busy_timeout = {max(1, int(timeout_seconds * 1000))}")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
     return conn
@@ -691,6 +692,7 @@ def _private_host_relay_restart_context(payload: dict, paths: dict[str, Path]) -
             "expected_revision": int(payload["revision"]),
             "receipt_path": paths["relay_restart_receipt"],
             "sequence_path": paths["relay_restart_sequence"],
+            "audit_outbox_dir": paths["relay_restart_audit_outbox"],
         }
     except (KeyError, TypeError, ValueError):
         return None
@@ -708,6 +710,22 @@ def _private_host_relay_receipt_transition(context: dict, state: str) -> dict:
         state=state,
     )
     context["expected_revision"] = int(projection["revision"])
+    context["audit_event_pending"] = False
+    if state in relay_restart.TERMINAL_STATES:
+        audit_outbox = context.get("audit_outbox_dir") or (
+            Path(context["receipt_path"]).parent / "restart-audit-outbox"
+        )
+        try:
+            relay_restart.write_restart_audit_event(
+                outbox_dir=audit_outbox,
+                action=context["action"],
+                state=state,
+                transaction_sequence=context["transaction_sequence"],
+                revision=int(projection["revision"]),
+                transition_ref=context["transition_ref"],
+            )
+        except relay_restart.RelayRestartError:
+            context["audit_event_pending"] = True
     return projection
 
 
@@ -2014,7 +2032,20 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_workspace ON knowledge_chunks(wo
 """
 
 
-def audit(conn: sqlite3.Connection, actor_type: str, actor_id: str | None, action: str, entity_type: str, entity_id: str, before=None, after=None, metadata=None):
+def audit(
+    conn: sqlite3.Connection,
+    actor_type: str,
+    actor_id: str | None,
+    action: str,
+    entity_type: str,
+    entity_id: str,
+    before=None,
+    after=None,
+    metadata=None,
+    *,
+    audit_id: str | None = None,
+    ignore_duplicate: bool = False,
+):
     previous = conn.execute("SELECT tamper_chain_hash FROM audit_logs ORDER BY created_at DESC LIMIT 1").fetchone()
     previous_hash = previous[0] if previous else "genesis"
     payload = {
@@ -2029,18 +2060,182 @@ def audit(conn: sqlite3.Connection, actor_type: str, actor_id: str | None, actio
         "previous": previous_hash,
     }
     chain = stable_hash(payload)
-    audit_id = new_id("aud")
+    resolved_audit_id = audit_id or new_id("aud")
+    insert_mode = "INSERT OR IGNORE" if ignore_duplicate else "INSERT"
     conn.execute(
-        """
-        INSERT INTO audit_logs(audit_id, actor_type, actor_id, action, entity_type, entity_id, before_hash, after_hash, metadata_json, tamper_chain_hash, created_at)
+        f"""
+        {insert_mode} INTO audit_logs(audit_id, actor_type, actor_id, action, entity_type, entity_id, before_hash, after_hash, metadata_json, tamper_chain_hash, created_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
-            audit_id, actor_type, actor_id, action, entity_type, entity_id,
+            resolved_audit_id, actor_type, actor_id, action, entity_type, entity_id,
             payload["before_hash"], payload["after_hash"], json.dumps(metadata or {}, ensure_ascii=False), chain, now_iso()
         ),
     )
-    return audit_id
+    return resolved_audit_id
+
+
+def consume_private_host_restart_audit_events(limit: int = 32) -> dict:
+    """Project durable Host restart outcomes into the canonical audit ledger once."""
+    host_paths = private_host_cli.paths()
+    try:
+        bound_to_private_host = DB_PATH.expanduser().resolve() == host_paths["database"]
+    except (OSError, RuntimeError):
+        bound_to_private_host = False
+    if not bound_to_private_host:
+        return {"ok": True, "operation": "restart_audit_ingest", "skipped": "database_not_private_host"}
+    if not PRIVATE_HOST_RESTART_AUDIT_LOCK.acquire(blocking=False):
+        return {"ok": True, "operation": "restart_audit_ingest", "skipped": "ingest_active"}
+    try:
+        current_receipt = None
+        try:
+            current_receipt = relay_restart.restart_recovery_context(
+                receipt_path=host_paths["relay_restart_receipt"],
+                sequence_path=host_paths["relay_restart_sequence"],
+                nonblocking=True,
+            )
+        except relay_restart.RelayRestartError as exc:
+            if exc.code != "receipt_not_found":
+                return {"ok": False, "operation": "restart_audit_ingest", "error": exc.code}
+        if current_receipt is not None and current_receipt["state"] in relay_restart.TERMINAL_STATES:
+            try:
+                relay_restart.write_restart_audit_event(
+                    outbox_dir=host_paths["relay_restart_audit_outbox"],
+                    action=current_receipt["action"],
+                    state=current_receipt["state"],
+                    transaction_sequence=current_receipt["transaction_sequence"],
+                    revision=current_receipt["revision"],
+                    transition_ref=current_receipt["transition_ref"],
+                    nonblocking=True,
+                )
+            except relay_restart.RelayRestartError as exc:
+                return {"ok": False, "operation": "restart_audit_ingest", "error": exc.code}
+        try:
+            events = relay_restart.pending_restart_audit_events(
+                outbox_dir=host_paths["relay_restart_audit_outbox"],
+                limit=limit,
+                nonblocking=True,
+            )
+        except relay_restart.RelayRestartError as exc:
+            return {"ok": False, "operation": "restart_audit_ingest", "error": exc.code}
+        if not events:
+            return {"ok": True, "operation": "restart_audit_ingest", "ingested": 0, "acknowledged": 0}
+        same_receipt_events = [
+            event
+            for event in events
+            if current_receipt is not None
+            and current_receipt["transaction_sequence"] == event["transaction_sequence"]
+        ]
+        deferred = [event for event in same_receipt_events if event["state"] == "healthy"]
+        ingest_events = [event for event in events if event not in deferred]
+        acknowledge_events = [event for event in events if event not in same_receipt_events]
+        if not ingest_events:
+            return {
+                "ok": True,
+                "operation": "restart_audit_ingest",
+                "ingested": 0,
+                "acknowledged": 0,
+                "deferred": len(deferred),
+            }
+        ingested = 0
+        try:
+            with db(timeout_seconds=0.05) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                for event in ingest_events:
+                    action_name = f"host.relay.restart.{event['state']}"
+                    event_identity = stable_hash(
+                        {
+                            "action": event["action"],
+                            "state": event["state"],
+                            "transaction_sequence": event["transaction_sequence"],
+                            "revision": event["revision"],
+                            "transition_ref": event["transition_ref"],
+                        }
+                    )
+                    event_audit_id = f"aud_restart_{event_identity[:20]}"
+                    existing = conn.execute(
+                        "SELECT 1 FROM audit_logs WHERE audit_id=? LIMIT 1",
+                        (event_audit_id,),
+                    ).fetchone()
+                    if existing is None:
+                        previous_changes = conn.total_changes
+                        audit(
+                            conn,
+                            "system",
+                            "private-host-supervisor",
+                            action_name,
+                            "private_host_relay_transition",
+                            event["transition_ref"],
+                            None,
+                            None,
+                            {
+                                "action": event["action"],
+                                "state": event["state"],
+                                "transaction_sequence": event["transaction_sequence"],
+                                "revision": event["revision"],
+                                "restart_outcome": True,
+                                "relay_material_omitted": True,
+                                "credentials_omitted": True,
+                                "paths_omitted": True,
+                                "digests_omitted": True,
+                            },
+                            audit_id=event_audit_id,
+                            ignore_duplicate=True,
+                        )
+                        if conn.total_changes > previous_changes:
+                            ingested += 1
+                conn.commit()
+        except sqlite3.Error:
+            return {
+                "ok": False,
+                "operation": "restart_audit_ingest",
+                "error": "audit_database_busy",
+                "retryable": True,
+            }
+        acknowledged = 0
+        for event in acknowledge_events:
+            try:
+                relay_restart.acknowledge_restart_audit_event(
+                    outbox_dir=host_paths["relay_restart_audit_outbox"],
+                    transaction_sequence=event["transaction_sequence"],
+                    revision=event["revision"],
+                    transition_ref=event["transition_ref"],
+                    nonblocking=True,
+                )
+                acknowledged += 1
+            except relay_restart.RelayRestartError as exc:
+                if exc.code != "audit_event_not_found":
+                    return {
+                        "ok": False,
+                        "operation": "restart_audit_ingest",
+                        "error": exc.code,
+                        "ingested": ingested,
+                        "acknowledged": acknowledged,
+                    }
+        clear_read_model_cache()
+        return {
+            "ok": True,
+            "operation": "restart_audit_ingest",
+            "ingested": ingested,
+            "acknowledged": acknowledged,
+            "deferred": len(deferred),
+            "pending_acknowledgement": len(same_receipt_events),
+        }
+    finally:
+        PRIVATE_HOST_RESTART_AUDIT_LOCK.release()
+
+
+def private_host_restart_audit_tick() -> dict:
+    """Keep audit retention retryable without becoming an API availability gate."""
+    try:
+        return consume_private_host_restart_audit_events()
+    except Exception:
+        return {
+            "ok": False,
+            "operation": "restart_audit_ingest",
+            "error": "audit_ingest_unavailable",
+            "retryable": True,
+        }
 
 
 def init_schema():
@@ -31206,6 +31401,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.api_path(parsed.path)
         qs = parse_qs(parsed.query)
         try:
+            if path.startswith("/api/"):
+                private_host_restart_audit_tick()
             if path == "/health":
                 return self.send_json({
                     "provider": "agentops-mis",
@@ -31224,6 +31421,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         try:
+            private_host_restart_audit_tick()
             body = parse_json_body(self)
             return self.handle_post_api(self.api_path(parsed.path), body)
         except JsonRequestError as e:
@@ -31235,6 +31433,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_PATCH(self):
         parsed = urlparse(self.path)
         try:
+            private_host_restart_audit_tick()
             body = parse_json_body(self)
             return self.handle_patch_api(self.api_path(parsed.path), body)
         except JsonRequestError as e:
@@ -33605,6 +33804,19 @@ def main():
             return
     else:
         seed(reset=False)
+    restart_audit_ingest = private_host_restart_audit_tick()
+    if not restart_audit_ingest.get("ok", True):
+        print(
+            json.dumps(
+                {
+                    "warning": "private_host_restart_audit_pending",
+                    "error": restart_audit_ingest.get("error"),
+                    "private_paths_omitted": True,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
     if args.ui_dist:
         ui_dist = args.ui_dist.expanduser().resolve()
         if not (ui_dist / "index.html").is_file():

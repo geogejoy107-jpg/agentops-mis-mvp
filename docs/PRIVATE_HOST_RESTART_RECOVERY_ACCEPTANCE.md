@@ -61,7 +61,9 @@ Tailscale profile, Worker or network endpoint is changed.
 ## Remaining Release Gates
 
 - run this source from a versioned clean-install release candidate;
-- record bounded post-restart audit evidence after recovery finalization;
+- run the bounded post-restart audit projection from that exact installed
+  candidate; deterministic coverage is recorded in
+  `PRIVATE_HOST_RESTART_AUDIT_RETENTION_ACCEPTANCE.md`;
 - deploy and bind authenticated Relay/DNS/certificate infrastructure;
 - complete physical MacBook browser-only and fresh Hermes/OpenClaw acceptance.
 

@@ -15,9 +15,12 @@ from typing import Any
 
 SCHEMA_VERSION = 2
 SEQUENCE_SCHEMA_VERSION = 1
+AUDIT_EVENT_SCHEMA_VERSION = 1
 MAX_CONFIG_BYTES = 64 * 1024
 MAX_RECEIPT_BYTES = 384 * 1024
 MAX_SEQUENCE_BYTES = 4096
+MAX_AUDIT_EVENT_BYTES = 4096
+MAX_AUDIT_OUTBOX_ENTRIES = 1024
 MAX_TRANSACTION_SEQUENCE = (1 << 63) - 1
 MAX_REVISION = (1 << 31) - 1
 MAX_TRANSITION_REF_BYTES = 128
@@ -89,8 +92,22 @@ _RECEIPT_KEYS = frozenset(
     }
 )
 _SEQUENCE_KEYS = frozenset({"last_transaction_sequence", "schema_version"})
+_AUDIT_EVENT_KEYS = frozenset(
+    {
+        "action",
+        "revision",
+        "schema_version",
+        "state",
+        "transaction_sequence",
+        "transition_ref",
+    }
+)
+_AUDIT_EVENT_NAME_PATTERN = re.compile(r"restart-(0|[1-9][0-9]{0,18})[.]json")
 _ERROR_CODES = frozenset(
     {
+        "audit_event_invalid",
+        "audit_event_busy",
+        "audit_event_not_found",
         "archive_exists",
         "config_pair_invalid",
         "config_pair_rollback_failed",
@@ -299,7 +316,7 @@ def _unlink_private(path: Path) -> None:
         raise RelayRestartError("write_failed") from exc
 
 
-def _acquire_lock(target_path: Path) -> int:
+def _acquire_lock(target_path: Path, *, nonblocking: bool = False) -> int:
     target_path = _absolute(target_path)
     _private_directory(target_path.parent, create=True)
     lock_path = target_path.with_name(f".{target_path.name}.lock")
@@ -309,8 +326,12 @@ def _acquire_lock(target_path: Path) -> int:
         missing_code="target_invalid",
     )
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        flags = fcntl.LOCK_EX | (fcntl.LOCK_NB if nonblocking else 0)
+        fcntl.flock(descriptor, flags)
         return descriptor
+    except BlockingIOError as exc:
+        os.close(descriptor)
+        raise RelayRestartError("audit_event_busy") from exc
     except OSError as exc:
         os.close(descriptor)
         raise RelayRestartError("target_invalid") from exc
@@ -371,6 +392,62 @@ def _validate_revision(value: int) -> int:
     ):
         raise RelayRestartError("invalid_revision")
     return value
+
+
+def _restart_audit_event_payload(
+    *,
+    action: str,
+    state: str,
+    transaction_sequence: int,
+    revision: int,
+    transition_ref: str,
+) -> dict[str, Any]:
+    action = _validate_action(action)
+    if state not in TERMINAL_STATES:
+        raise RelayRestartError("terminal_required")
+    return {
+        "action": action,
+        "revision": _validate_revision(revision),
+        "schema_version": AUDIT_EVENT_SCHEMA_VERSION,
+        "state": state,
+        "transaction_sequence": _validate_transaction_sequence(
+            transaction_sequence
+        ),
+        "transition_ref": _validate_transition_ref(transition_ref),
+    }
+
+
+def _encode_restart_audit_event(payload: dict[str, Any]) -> bytes:
+    raw = (
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        + "\n"
+    ).encode("ascii")
+    if len(raw) > MAX_AUDIT_EVENT_BYTES:
+        raise RelayRestartError("audit_event_invalid")
+    return raw
+
+
+def _decode_restart_audit_event(raw: bytes) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw.decode("ascii"))
+    except (UnicodeError, ValueError, TypeError) as exc:
+        raise RelayRestartError("audit_event_invalid") from exc
+    if (
+        not isinstance(payload, dict)
+        or frozenset(payload) != _AUDIT_EVENT_KEYS
+        or payload.get("schema_version") != AUDIT_EVENT_SCHEMA_VERSION
+    ):
+        raise RelayRestartError("audit_event_invalid")
+    try:
+        return _restart_audit_event_payload(
+            action=payload.get("action"),
+            state=payload.get("state"),
+            transaction_sequence=payload.get("transaction_sequence"),
+            revision=payload.get("revision"),
+            transition_ref=payload.get("transition_ref"),
+        )
+    except RelayRestartError as exc:
+        raise RelayRestartError("audit_event_invalid") from exc
 
 
 def _decode_config(value: Any) -> bytes:
@@ -503,11 +580,16 @@ def _allocate_transaction_sequence(sequence_path: Path) -> int:
         _release_lock(lock_descriptor)
 
 
-def _verify_sequence(receipt: dict[str, Any], sequence_path: Path) -> None:
+def _verify_sequence(
+    receipt: dict[str, Any],
+    sequence_path: Path,
+    *,
+    nonblocking: bool = False,
+) -> None:
     sequence_path = _absolute(sequence_path)
     if receipt["sequence_path"] != str(sequence_path):
         raise RelayRestartError("sequence_binding_mismatch")
-    lock_descriptor = _acquire_lock(sequence_path)
+    lock_descriptor = _acquire_lock(sequence_path, nonblocking=nonblocking)
     try:
         last_sequence = _read_sequence_locked(sequence_path, allow_missing=False)
     finally:
@@ -716,14 +798,17 @@ def public_restart_receipt(
 
 
 def restart_recovery_context(
-    *, receipt_path: Path, sequence_path: Path
+    *,
+    receipt_path: Path,
+    sequence_path: Path,
+    nonblocking: bool = False,
 ) -> dict[str, Any]:
     """Read only the identity and state required to resume one private receipt."""
     receipt_path = _absolute(receipt_path)
-    lock_descriptor = _acquire_lock(receipt_path)
+    lock_descriptor = _acquire_lock(receipt_path, nonblocking=nonblocking)
     try:
         receipt = _load_receipt_locked(receipt_path)
-        _verify_sequence(receipt, sequence_path)
+        _verify_sequence(receipt, sequence_path, nonblocking=nonblocking)
         return _recovery_context(receipt)
     finally:
         _release_lock(lock_descriptor)
@@ -977,5 +1062,168 @@ def finalize_restart_receipt(
         projection = _public_projection(receipt)
         _unlink_private(receipt_path)
         return projection
+    finally:
+        _release_lock(lock_descriptor)
+
+
+def write_restart_audit_event(
+    *,
+    outbox_dir: Path,
+    action: str,
+    state: str,
+    transaction_sequence: int,
+    revision: int,
+    transition_ref: str,
+    nonblocking: bool = False,
+) -> dict[str, Any]:
+    """Durably enqueue one bounded terminal outcome for MIS audit ingestion."""
+    payload = _restart_audit_event_payload(
+        action=action,
+        state=state,
+        transaction_sequence=transaction_sequence,
+        revision=revision,
+        transition_ref=transition_ref,
+    )
+    outbox_dir = _absolute(outbox_dir)
+    _private_directory(outbox_dir, create=True)
+    event_path = outbox_dir / f"restart-{payload['transaction_sequence']}.json"
+    lock_descriptor = _acquire_lock(
+        outbox_dir / "events",
+        nonblocking=nonblocking,
+    )
+    try:
+        if _path_present(event_path):
+            existing = _decode_restart_audit_event(
+                _read_private_bytes(
+                    event_path,
+                    maximum_bytes=MAX_AUDIT_EVENT_BYTES,
+                    missing_code="audit_event_not_found",
+                    invalid_code="audit_event_invalid",
+                )
+            )
+            if existing != payload:
+                replaces_unfinalized_healthy = bool(
+                    existing["transaction_sequence"]
+                    == payload["transaction_sequence"]
+                    and existing["transition_ref"] == payload["transition_ref"]
+                    and existing["action"] == payload["action"]
+                    and existing["state"] == "healthy"
+                    and payload["state"] in {"rolled_back", "rollback_failed"}
+                    and payload["revision"] > existing["revision"]
+                )
+                if not replaces_unfinalized_healthy:
+                    raise RelayRestartError("audit_event_invalid")
+                _atomic_private_write(
+                    event_path,
+                    _encode_restart_audit_event(payload),
+                    allow_create=False,
+                )
+                return dict(payload)
+            return dict(existing)
+        if len(_restart_audit_event_candidates_locked(outbox_dir)) >= MAX_AUDIT_OUTBOX_ENTRIES:
+            raise RelayRestartError("audit_event_invalid")
+        _atomic_private_write(
+            event_path,
+            _encode_restart_audit_event(payload),
+            allow_create=True,
+        )
+        return dict(payload)
+    finally:
+        _release_lock(lock_descriptor)
+
+
+def _restart_audit_event_candidates_locked(
+    outbox_dir: Path,
+) -> list[tuple[int, Path]]:
+    candidates: list[tuple[int, Path]] = []
+    try:
+        with os.scandir(outbox_dir) as entries:
+            for entry in entries:
+                match = _AUDIT_EVENT_NAME_PATTERN.fullmatch(entry.name)
+                if match is None:
+                    continue
+                sequence = _validate_transaction_sequence(int(match.group(1)))
+                candidates.append((sequence, Path(entry.path)))
+                if len(candidates) > MAX_AUDIT_OUTBOX_ENTRIES:
+                    raise RelayRestartError("audit_event_invalid")
+    except RelayRestartError:
+        raise
+    except OSError as exc:
+        raise RelayRestartError("target_invalid") from exc
+    return candidates
+
+
+def pending_restart_audit_events(
+    *,
+    outbox_dir: Path,
+    limit: int = 32,
+    nonblocking: bool = False,
+) -> list[dict[str, Any]]:
+    """Read a bounded ordered batch without exposing private filesystem paths."""
+    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 64):
+        raise RelayRestartError("audit_event_invalid")
+    outbox_dir = _absolute(outbox_dir)
+    if not _path_present(outbox_dir):
+        return []
+    _private_directory(outbox_dir)
+    lock_descriptor = _acquire_lock(
+        outbox_dir / "events",
+        nonblocking=nonblocking,
+    )
+    try:
+        candidates = _restart_audit_event_candidates_locked(outbox_dir)
+        events: list[dict[str, Any]] = []
+        for sequence, path in sorted(candidates)[:limit]:
+            event = _decode_restart_audit_event(
+                _read_private_bytes(
+                    path,
+                    maximum_bytes=MAX_AUDIT_EVENT_BYTES,
+                    missing_code="audit_event_not_found",
+                    invalid_code="audit_event_invalid",
+                )
+            )
+            if event["transaction_sequence"] != sequence:
+                raise RelayRestartError("audit_event_invalid")
+            events.append(event)
+        return events
+    finally:
+        _release_lock(lock_descriptor)
+
+
+def acknowledge_restart_audit_event(
+    *,
+    outbox_dir: Path,
+    transaction_sequence: int,
+    revision: int,
+    transition_ref: str,
+    nonblocking: bool = False,
+) -> None:
+    """Delete only the exact event already committed to the MIS ledger."""
+    transaction_sequence = _validate_transaction_sequence(transaction_sequence)
+    revision = _validate_revision(revision)
+    transition_ref = _validate_transition_ref(transition_ref)
+    outbox_dir = _absolute(outbox_dir)
+    _private_directory(outbox_dir)
+    event_path = outbox_dir / f"restart-{transaction_sequence}.json"
+    lock_descriptor = _acquire_lock(
+        outbox_dir / "events",
+        nonblocking=nonblocking,
+    )
+    try:
+        event = _decode_restart_audit_event(
+            _read_private_bytes(
+                event_path,
+                maximum_bytes=MAX_AUDIT_EVENT_BYTES,
+                missing_code="audit_event_not_found",
+                invalid_code="audit_event_invalid",
+            )
+        )
+        if (
+            event["transaction_sequence"] != transaction_sequence
+            or event["revision"] != revision
+            or event["transition_ref"] != transition_ref
+        ):
+            raise RelayRestartError("audit_event_invalid")
+        _unlink_private(event_path)
     finally:
         _release_lock(lock_descriptor)

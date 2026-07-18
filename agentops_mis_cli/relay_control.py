@@ -761,7 +761,7 @@ def _execute_with_restart_receipt(
     try:
         replace_terminal = False
         try:
-            existing_receipt = relay_restart.public_restart_receipt(
+            existing_receipt = relay_restart.restart_recovery_context(
                 receipt_path=restart_receipt_path,
                 sequence_path=restart_sequence_path,
             )
@@ -770,6 +770,30 @@ def _execute_with_restart_receipt(
                 raise
         else:
             if existing_receipt.get("state") not in {"healthy", "rolled_back"}:
+                raise _ControlFailure("rollback_pending")
+            audit_outbox_dir = restart_receipt_path.parent / "restart-audit-outbox"
+            relay_restart.write_restart_audit_event(
+                outbox_dir=audit_outbox_dir,
+                action=existing_receipt["action"],
+                state=existing_receipt["state"],
+                transaction_sequence=existing_receipt["transaction_sequence"],
+                revision=existing_receipt["revision"],
+                transition_ref=existing_receipt["transition_ref"],
+            )
+            audit_events = relay_restart.pending_restart_audit_events(
+                outbox_dir=audit_outbox_dir,
+                limit=64,
+            )
+            exact_terminal_event = any(
+                event["action"] == existing_receipt["action"]
+                and event["state"] == existing_receipt["state"]
+                and event["transaction_sequence"]
+                == existing_receipt["transaction_sequence"]
+                and event["revision"] == existing_receipt["revision"]
+                and event["transition_ref"] == existing_receipt["transition_ref"]
+                for event in audit_events
+            )
+            if not exact_terminal_event:
                 raise _ControlFailure("rollback_pending")
             replace_terminal = True
         receipt = relay_restart.create_restart_receipt(

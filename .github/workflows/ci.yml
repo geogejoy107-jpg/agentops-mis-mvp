@@ -106,6 +106,7 @@ jobs:
           timeout 120s python3 scripts/private_host_relay_restart_receipt_smoke.py
           timeout 120s python3 scripts/private_host_relay_restart_recovery_smoke.py
           timeout 120s python3 scripts/private_host_restart_start_reconciliation_smoke.py
+          timeout 120s python3 scripts/private_host_restart_audit_retention_smoke.py
           timeout 120s python3 scripts/private_host_relay_managed_restart_rollback_smoke.py
           timeout 120s python3 scripts/local_relay_connector_supervisor_smoke.py
           timeout 120s python3 scripts/private_host_rc_status_smoke.py

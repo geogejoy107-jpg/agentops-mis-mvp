@@ -120,6 +120,7 @@ def paths() -> dict[str, Path]:
         "relay_restart_receipt": home / "relay" / "restart-receipt.json",
         "relay_restart_sequence": home / "relay" / "restart-sequence.json",
         "relay_restart_archive": home / "relay" / "restart-archive.json",
+        "relay_restart_audit_outbox": home / "relay" / "restart-audit-outbox",
         "relay_secrets": home / "relay" / "secrets.json",
         "relay_epoch": home / "relay" / "epoch.json",
         "relay_status": home / "relay" / "status.json",
@@ -1918,7 +1919,43 @@ def _advance_managed_restart_receipt(
         expected_revision=request["expected_revision"],
         state=state,
     )
-    return {**request, "expected_revision": int(projection["revision"])}
+    audit_event_pending = False
+    if state in relay_restart.TERMINAL_STATES:
+        audit_event_pending = not _try_write_managed_restart_audit_event(
+            p,
+            request,
+            state=state,
+            revision=int(projection["revision"]),
+        )
+    return {
+        **request,
+        "expected_revision": int(projection["revision"]),
+        "audit_event_pending": audit_event_pending,
+    }
+
+
+def _try_write_managed_restart_audit_event(
+    p: dict[str, Path],
+    context: dict,
+    *,
+    state: str,
+    revision: int,
+) -> bool:
+    audit_outbox = p.get("relay_restart_audit_outbox") or (
+        p["relay_restart_receipt"].parent / "restart-audit-outbox"
+    )
+    try:
+        relay_restart.write_restart_audit_event(
+            outbox_dir=audit_outbox,
+            action=context["action"],
+            state=state,
+            transaction_sequence=context["transaction_sequence"],
+            revision=revision,
+            transition_ref=context["transition_ref"],
+        )
+        return True
+    except relay_restart.RelayRestartError:
+        return False
 
 
 def _managed_relay_runtime_healthy(action: str, p: dict[str, Path]) -> bool:
@@ -1949,6 +1986,12 @@ def _prepare_restart_receipt_recovery(p: dict[str, Path]) -> dict | None:
     context = {**context, "expected_revision": int(context["revision"])}
     state = str(context["state"])
     if state == "rollback_failed":
+        _try_write_managed_restart_audit_event(
+            p,
+            context,
+            state=state,
+            revision=int(context["revision"]),
+        )
         raise RuntimeError("Private Host restart recovery requires operator repair.")
     if state == "config_applied":
         context = _advance_managed_restart_receipt(p, context, "restoring_config")
@@ -1964,6 +2007,12 @@ def _prepare_restart_receipt_recovery(p: dict[str, Path]) -> dict | None:
             use_target=False,
         )
         if state == "rolled_back":
+            _try_write_managed_restart_audit_event(
+                p,
+                context,
+                state=state,
+                revision=int(projection["revision"]),
+            )
             return None
         return {
             **context,
@@ -2027,6 +2076,18 @@ def _finish_restart_receipt_recovery(
     if target_healthy:
         if state != "healthy":
             context = _advance_managed_restart_receipt(p, context, "healthy")
+        else:
+            context = {
+                **context,
+                "audit_event_pending": not _try_write_managed_restart_audit_event(
+                    p,
+                    context,
+                    state="healthy",
+                    revision=int(context["expected_revision"]),
+                ),
+            }
+        if context.get("audit_event_pending") is True:
+            return True
         relay_restart.finalize_restart_receipt(
             receipt_path=p["relay_restart_receipt"],
             sequence_path=p["relay_restart_sequence"],
@@ -2360,14 +2421,15 @@ def _run_managed_foreground_supervisor(
                 replacement_healthy = False
             if replacement_healthy:
                 healthy = _advance_managed_restart_receipt(p, restart_request, "healthy")
-                relay_restart.finalize_restart_receipt(
-                    receipt_path=p["relay_restart_receipt"],
-                    sequence_path=p["relay_restart_sequence"],
-                    action=healthy["action"],
-                    transition_ref=healthy["transition_ref"],
-                    transaction_sequence=healthy["transaction_sequence"],
-                    expected_revision=healthy["expected_revision"],
-                )
+                if healthy.get("audit_event_pending") is not True:
+                    relay_restart.finalize_restart_receipt(
+                        receipt_path=p["relay_restart_receipt"],
+                        sequence_path=p["relay_restart_sequence"],
+                        action=healthy["action"],
+                        transition_ref=healthy["transition_ref"],
+                        transaction_sequence=healthy["transaction_sequence"],
+                        expected_revision=healthy["expected_revision"],
+                    )
                 _release_lifecycle_lock(restart_lock_descriptor)
                 restart_lock_descriptor = -1
                 continue

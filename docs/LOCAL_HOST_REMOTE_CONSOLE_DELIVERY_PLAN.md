@@ -232,9 +232,10 @@ Implementation slices:
    reconciles every receipt state before loading config: unflushed changes roll
    back, flushed/manual changes resume target validation, interrupted rollback
    resumes the original health gate, and `rollback_failed` blocks blind startup.
-   Installation into the current preview, bounded post-restart audit retention,
-   authenticated SNI route binding, certificate lifecycle, credential
-   provisioning and the deployed Relay remain open.
+   Terminal outcomes now enter an owner-only bounded outbox and project exactly
+   once into the same Host's MIS audit ledger. Installation and audit proof from
+   a versioned candidate, authenticated SNI route binding, certificate
+   lifecycle, credential provisioning and the deployed Relay remain open.
 3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host
    Console origin, bounded operations metadata, deployment and rollback.
 4. `3D Physical acceptance`: fresh browser-only device, real Hermes/OpenClaw

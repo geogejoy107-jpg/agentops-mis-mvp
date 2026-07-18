@@ -75,7 +75,9 @@ The production React build also passes. Existing bundle-size warning remains.
 
 ## Open Before Release
 
-- retain bounded post-restart audit evidence after recovery finalization;
+- prove the bounded post-restart audit projection from the exact installed
+  release candidate; deterministic coverage is recorded in
+  `PRIVATE_HOST_RESTART_AUDIT_RETENTION_ACCEPTANCE.md`;
 - publish and install a versioned release candidate with the new exact
   LaunchAgent template;
 - deploy Relay/DNS/certificate infrastructure and bind SNI routes to current
