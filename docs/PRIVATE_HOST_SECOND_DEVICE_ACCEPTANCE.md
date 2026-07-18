@@ -266,6 +266,14 @@ real 1280 x 800 login Workspace, including the existing navigation and account
 form, rather than a blank page. That temporary process was stopped without
 reading or modifying the user's normal Chrome profile.
 
+The same physical MacBook then exercised the unauthenticated boundary through
+the private HTTPS origin. Dashboard metrics, approvals, audit logs and memories
+all returned HTTP 401. An unauthenticated task create also returned HTTP 401,
+and the bounded Host task count remained 25 before and after the request. No
+response body, cookie, Session value, credential or private origin is retained
+in this acceptance record. This proves physical-client fail-closed behavior;
+it does not prove an authenticated Console workflow.
+
 The Console became unavailable only during the explicit Host service
 maintenance window. After preview.35 installation, exact legacy migration and
 Host reload, the same MacBook again received HTTP 200. It remained reachable
