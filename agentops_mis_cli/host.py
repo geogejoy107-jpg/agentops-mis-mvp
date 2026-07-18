@@ -3009,24 +3009,26 @@ def host_service_path(value: str = "") -> Path:
     return Path(value).expanduser().absolute() if value else default_host_service_path().absolute()
 
 
-def host_service_definition() -> dict:
+def host_service_definition(*, managed_launch_agent: bool = True) -> dict:
     state = install_state()
     packaged = bool(state["current"])
     current_path = Path(state["current_link"]) if packaged else ROOT
     install_root = Path(state["install_root"]).resolve()
     p = paths()
+    program_arguments = [
+        str(Path(sys.executable).resolve()),
+        "-m",
+        "agentops_mis_cli",
+        "host",
+        "start",
+        "--foreground",
+    ]
+    if managed_launch_agent:
+        program_arguments.append("--managed-launch-agent")
+    program_arguments.append("--no-workers")
     return {
         "Label": HOST_SERVICE_LABEL,
-        "ProgramArguments": [
-            str(Path(sys.executable).resolve()),
-            "-m",
-            "agentops_mis_cli",
-            "host",
-            "start",
-            "--foreground",
-            "--managed-launch-agent",
-            "--no-workers",
-        ],
+        "ProgramArguments": program_arguments,
         "EnvironmentVariables": {
             "AGENTOPS_HOST_HOME": str(p["home"]),
             "AGENTOPS_INSTALL_ROOT": str(install_root),
@@ -3041,8 +3043,8 @@ def host_service_definition() -> dict:
     }
 
 
-def host_service_template() -> bytes:
-    service = host_service_definition()
+def host_service_template(*, managed_launch_agent: bool = True) -> bytes:
+    service = host_service_definition(managed_launch_agent=managed_launch_agent)
     arguments = "\n".join(
         f"      <string>{html.escape(str(value))}</string>"
         for value in service["ProgramArguments"]
@@ -3127,6 +3129,23 @@ def host_service_launchd_state(*, timeout: int = 5) -> dict:
 def inspect_host_service(path: Path, *, timeout: int = 5) -> dict:
     exists = path.exists()
     safe_regular_file = bool(exists and not path.is_symlink() and path.is_file())
+    file_owned_by_user = False
+    mode_exact_private = False
+    parent_directory_safe = False
+    try:
+        if safe_regular_file:
+            metadata = path.lstat()
+            file_owned_by_user = metadata.st_uid == os.getuid()
+            mode_exact_private = stat.S_IMODE(metadata.st_mode) == 0o600
+        parent_metadata = path.parent.lstat()
+        parent_directory_safe = bool(
+            not path.parent.is_symlink()
+            and stat.S_ISDIR(parent_metadata.st_mode)
+            and parent_metadata.st_uid == os.getuid()
+            and stat.S_IMODE(parent_metadata.st_mode) & 0o022 == 0
+        )
+    except OSError:
+        pass
     content = b""
     if safe_regular_file:
         try:
@@ -3135,10 +3154,32 @@ def inspect_host_service(path: Path, *, timeout: int = 5) -> dict:
             pass
     parse_ok = bool(content.startswith(b'<?xml version="1.0"') and content.rstrip().endswith(b"</plist>"))
     exact_definition = bool(content and secrets.compare_digest(content, host_service_template()))
+    legacy_definition = bool(
+        content
+        and secrets.compare_digest(
+            content,
+            host_service_template(managed_launch_agent=False),
+        )
+    )
     text = content.decode("utf-8", errors="replace")
     token_like_detected = any(prefix in text for prefix in ("agthost_", "agtadmin_", "agtok_", "agtsess_", "ntn_", "sk-"))
     mode_private = bool(safe_regular_file and (path.stat().st_mode & 0o077) == 0)
     service_state = host_service_launchd_state(timeout=timeout)
+    launchctl_absence_verified = bool(
+        service_state.get("available") is True
+        and service_state.get("check_failed") is not True
+        and service_state.get("loaded") is False
+        and service_state.get("returncode") in {1, 113}
+    )
+    legacy_owned_definition = bool(
+        safe_regular_file
+        and parse_ok
+        and legacy_definition
+        and file_owned_by_user
+        and mode_exact_private
+        and parent_directory_safe
+        and not token_like_detected
+    )
     return {
         "ok": bool(safe_regular_file and parse_ok and exact_definition and mode_private and not token_like_detected),
         "operation": "host_service_check",
@@ -3150,15 +3191,21 @@ def inspect_host_service(path: Path, *, timeout: int = 5) -> dict:
             "safe_regular_file": safe_regular_file,
             "parse_ok": parse_ok,
             "exact_managed_definition": exact_definition,
+            "legacy_managed_definition": legacy_definition,
+            "legacy_owned_definition": legacy_owned_definition,
+            "file_owned_by_user": file_owned_by_user,
             "mode_private": mode_private,
+            "mode_exact_private": mode_exact_private,
+            "parent_directory_safe": parent_directory_safe,
             "token_like_detected": token_like_detected,
             "raw_content_omitted": True,
         },
         "service_state": service_state,
+        "legacy_migration_ready": bool(legacy_owned_definition and launchctl_absence_verified),
         "host_only": True,
         "workers": [],
         "live_workers_started": False,
-        "credential_material_in_service": False,
+        "credential_material_in_service": token_like_detected,
         "token_omitted": True,
     }
 
@@ -3195,14 +3242,31 @@ def cmd_service_install(args) -> int:
     template = host_service_template()
     before = inspect_host_service(path, timeout=args.timeout)
     exists_before = bool(before["service_file"]["exists"])
-    overwrite_allowed = bool(not exists_before or (args.overwrite and before["ok"]))
+    legacy_owned = bool(before["service_file"].get("legacy_owned_definition"))
+    legacy_migration_ready = bool(before.get("legacy_migration_ready"))
+    service_loaded = bool(before["service_state"].get("loaded"))
+    owned_for_overwrite = bool(before["ok"] or legacy_owned)
+    overwrite_allowed = bool(
+        not exists_before
+        or (
+            args.overwrite
+            and (
+                before["ok"]
+                or legacy_migration_ready
+            )
+        )
+    )
     blockers = []
     if path.is_symlink():
         blockers.append("service_path_is_symlink")
     if exists_before and not args.overwrite:
         blockers.append("service_file_exists")
-    if exists_before and args.overwrite and not before["ok"]:
+    if exists_before and args.overwrite and not owned_for_overwrite:
         blockers.append("existing_service_not_owned")
+    if exists_before and args.overwrite and legacy_owned and service_loaded:
+        blockers.append("legacy_service_still_loaded")
+    if exists_before and args.overwrite and legacy_owned and not service_loaded and not legacy_migration_ready:
+        blockers.append("launchctl_state_unverified")
     if any(prefix.encode("ascii") in template for prefix in ("agthost_", "agtadmin_", "agtok_", "agtsess_", "ntn_", "sk-")):
         blockers.append("token_like_content_detected")
     wrote = False
@@ -3221,6 +3285,8 @@ def cmd_service_install(args) -> int:
         "wrote": wrote,
         "overwrite": bool(args.overwrite),
         "exists_before": exists_before,
+        "legacy_migration": legacy_owned,
+        "legacy_migration_ready": legacy_migration_ready,
         "service_path": str(path),
         "service_file_mode": "0600" if wrote else None,
         "template_hash": hashlib.sha256(template).hexdigest(),
@@ -3232,7 +3298,7 @@ def cmd_service_install(args) -> int:
             if wrote
             else "Re-run with --confirm-install after reviewing this preview."
         ),
-        "service_loaded": False,
+        "service_loaded": service_loaded,
         "host_only": True,
         "workers": [],
         "live_workers_started": False,
@@ -3259,9 +3325,11 @@ def cmd_service_control(args) -> int:
     checked = inspect_host_service(path, timeout=args.timeout)
     state = checked["service_state"]
     loaded = bool(state["loaded"])
+    legacy_owned = bool(checked["service_file"].get("legacy_owned_definition"))
+    legacy_unload = bool(args.action == "unload" and legacy_owned and loaded)
     commands = host_service_control_commands(path, args.action, loaded=loaded)
     blockers = []
-    if not checked["ok"]:
+    if not checked["ok"] and not legacy_unload:
         blockers.append("managed_service_check_failed")
     if not state["available"]:
         blockers.append("launchctl_unavailable")
@@ -3306,6 +3374,7 @@ def cmd_service_control(args) -> int:
         "dry_run": dry_run,
         "confirmed_control": bool(args.confirm_control),
         "service_path": str(path),
+        "legacy_unload": legacy_unload,
         "service_loaded_before": loaded,
         "service_state_after": state_after,
         "service_control_skipped": no_op,

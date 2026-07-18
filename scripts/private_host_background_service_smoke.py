@@ -40,6 +40,19 @@ def run(env: dict[str, str], *arguments: str, expected: tuple[int, ...] = (0,)) 
     return process.returncode, payload, process.stdout + process.stderr
 
 
+def write_private_service(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    path.chmod(0o600)
+
+
+def replace_service_fragment(content: bytes, old: bytes, new: bytes, *, count: int = 1) -> bytes:
+    replaced = content.replace(old, new, count)
+    if replaced == content:
+        raise RuntimeError(f"service fixture fragment was not found: {old!r}")
+    return replaced
+
+
 def main() -> int:
     failures: list[str] = []
     with tempfile.TemporaryDirectory(prefix="agentops-host-service-") as temporary:
@@ -98,6 +111,11 @@ def main() -> int:
         require(all(f"<key>{key}</key>" in service for key in ("AGENTOPS_HOST_HOME", "AGENTOPS_INSTALL_ROOT", "PYTHONPATH")), "expected service environment is incomplete", failures)
         require("AGENTOPS_API_KEY" not in service and "AGENTOPS_ADMIN_KEY" not in service, "service environment contains credential keys", failures)
         require(not any(prefix in service for prefix in ("agthost_", "agtadmin_", "agtok_", "agtsess_", "ntn_", "sk-")), "service file contains token-like material", failures)
+        current_service = service_path.read_bytes()
+        managed_argument = b"      <string>--managed-launch-agent</string>\n"
+        previous_service = replace_service_fragment(current_service, managed_argument, b"")
+        require(previous_service != current_service, "previous managed service fixture did not differ from the current template", failures)
+        require(b"<string>dev.agentops.mis.private-host</string>" in previous_service, "previous managed service fixture is invalid", failures)
 
         _, checked, _ = run(env, "service-check", "--service-path", str(service_path))
         require(checked.get("ok") is True, f"installed service check failed: {checked}", failures)
@@ -204,6 +222,198 @@ def main() -> int:
         require("existing_service_not_owned" in (refused.get("blockers") or []), "unmanaged service overwrite did not fail closed", failures)
         require(service_path.read_text(encoding="utf-8") == "unmanaged service", "unmanaged service file was overwritten", failures)
 
+        write_private_service(service_path, previous_service)
+        migration_code, migrated, _ = run(
+            env,
+            "service-install",
+            "--service-path",
+            str(service_path),
+            "--confirm-install",
+            "--overwrite",
+            expected=(0, 1),
+        )
+        require(migration_code == 0, f"unloaded previous managed service migration failed: {migrated}", failures)
+        require(migrated.get("wrote") is True, "unloaded previous managed service migration did not write the current template", failures)
+        require(not (migrated.get("blockers") or []), f"unloaded previous managed service migration returned blockers: {migrated}", failures)
+        require(
+            migrated.get("service_check", {}).get("service_file", {}).get("exact_managed_definition") is True,
+            "unloaded previous managed service migration did not produce the exact current definition",
+            failures,
+        )
+
+        write_private_service(service_path, previous_service)
+        service_path.chmod(0o644)
+        _, public_mode_refused, _ = run(
+            env,
+            "service-install",
+            "--service-path",
+            str(service_path),
+            "--confirm-install",
+            "--overwrite",
+            expected=(1,),
+        )
+        require("existing_service_not_owned" in (public_mode_refused.get("blockers") or []), "non-private previous service overwrite did not fail closed", failures)
+        require(service_path.read_bytes() == previous_service, "non-private previous service changed on refusal", failures)
+
+        write_private_service(service_path, previous_service)
+        service_path.parent.chmod(0o777)
+        _, unsafe_parent_refused, _ = run(
+            env,
+            "service-install",
+            "--service-path",
+            str(service_path),
+            "--confirm-install",
+            "--overwrite",
+            expected=(1,),
+        )
+        require("existing_service_not_owned" in (unsafe_parent_refused.get("blockers") or []), "unsafe service directory overwrite did not fail closed", failures)
+        require(service_path.read_bytes() == previous_service, "service in unsafe directory changed on refusal", failures)
+        service_path.parent.chmod(0o700)
+
+        write_private_service(service_path, previous_service)
+        _, unverified_migration, _ = run(
+            unavailable_env,
+            "service-install",
+            "--service-path",
+            str(service_path),
+            "--confirm-install",
+            "--overwrite",
+            expected=(1,),
+        )
+        require("launchctl_state_unverified" in (unverified_migration.get("blockers") or []), "legacy migration did not fail closed without launchctl", failures)
+        require(service_path.read_bytes() == previous_service, "legacy service changed without verified launchctl state", failures)
+
+        arbitrary_service = replace_service_fragment(
+            previous_service,
+            b"      <string>agentops_mis_cli</string>",
+            b"      <string>agentops_unowned_cli</string>",
+        )
+        write_private_service(service_path, arbitrary_service)
+        _, arbitrary_refused, _ = run(
+            env,
+            "service-install",
+            "--service-path",
+            str(service_path),
+            "--confirm-install",
+            "--overwrite",
+            expected=(1,),
+        )
+        require("existing_service_not_owned" in (arbitrary_refused.get("blockers") or []), "arbitrary same-label service overwrite did not fail closed", failures)
+        require(service_path.read_bytes() == arbitrary_service, "arbitrary same-label service was overwritten", failures)
+
+        credential_marker = "agt" + "host_fixture_not_a_secret"
+        environment_open = b"  <key>EnvironmentVariables</key>\n  <dict>\n"
+        credential_service = replace_service_fragment(
+            previous_service,
+            environment_open,
+            environment_open
+            + b"      <key>AGENTOPS_API_KEY</key>\n"
+            + f"      <string>{credential_marker}</string>\n".encode("utf-8"),
+        )
+        write_private_service(service_path, credential_service)
+        _, credential_refused, _ = run(
+            env,
+            "service-install",
+            "--service-path",
+            str(service_path),
+            "--confirm-install",
+            "--overwrite",
+            expected=(1,),
+        )
+        require("existing_service_not_owned" in (credential_refused.get("blockers") or []), "credential-bearing service overwrite did not fail closed", failures)
+        require(service_path.read_bytes() == credential_service, "credential-bearing service was overwritten", failures)
+
+        outside_root = temp.parent / "outside-agentops-install"
+        escaped_service = replace_service_fragment(
+            previous_service,
+            str(ROOT).encode("utf-8"),
+            str(outside_root).encode("utf-8"),
+            count=3,
+        )
+        write_private_service(service_path, escaped_service)
+        _, escaped_refused, _ = run(
+            env,
+            "service-install",
+            "--service-path",
+            str(service_path),
+            "--confirm-install",
+            "--overwrite",
+            expected=(1,),
+        )
+        require("existing_service_not_owned" in (escaped_refused.get("blockers") or []), "path-escaping service overwrite did not fail closed", failures)
+        require(service_path.read_bytes() == escaped_service, "path-escaping service was overwritten", failures)
+
+        write_private_service(service_path, previous_service)
+        launchctl_state.touch(mode=0o600)
+        _, loaded_previous_refused, _ = run(
+            env,
+            "service-install",
+            "--service-path",
+            str(service_path),
+            "--confirm-install",
+            "--overwrite",
+            expected=(1,),
+        )
+        require(loaded_previous_refused.get("wrote") is False, "loaded previous managed service was overwritten", failures)
+        require(
+            "legacy_service_still_loaded" in (loaded_previous_refused.get("blockers") or []),
+            f"loaded previous managed service did not return the exact blocker: {loaded_previous_refused}",
+            failures,
+        )
+        require(service_path.read_bytes() == previous_service, "loaded previous managed service changed on refusal", failures)
+
+        _, legacy_load_refused, _ = run(
+            env,
+            "service-control",
+            "--action",
+            "load",
+            "--service-path",
+            str(service_path),
+            "--confirm-control",
+            expected=(1,),
+        )
+        require("managed_service_check_failed" in (legacy_load_refused.get("blockers") or []), "current CLI allowed loading a legacy service", failures)
+
+        _, legacy_restart_refused, _ = run(
+            env,
+            "service-control",
+            "--action",
+            "restart",
+            "--service-path",
+            str(service_path),
+            "--confirm-control",
+            expected=(1,),
+        )
+        require("managed_service_check_failed" in (legacy_restart_refused.get("blockers") or []), "current CLI allowed restarting a legacy service", failures)
+
+        _, legacy_unloaded, _ = run(
+            env,
+            "service-control",
+            "--action",
+            "unload",
+            "--service-path",
+            str(service_path),
+            "--confirm-control",
+        )
+        require(legacy_unloaded.get("legacy_unload") is True, f"legacy service unload was not explicitly classified: {legacy_unloaded}", failures)
+        require(legacy_unloaded.get("service_mutated") is True and not launchctl_state.exists(), f"legacy service unload failed: {legacy_unloaded}", failures)
+        require(service_path.read_bytes() == previous_service, "legacy unload changed the service file", failures)
+
+        _, post_unload_migrated, _ = run(
+            env,
+            "service-install",
+            "--service-path",
+            str(service_path),
+            "--confirm-install",
+            "--overwrite",
+        )
+        require(post_unload_migrated.get("wrote") is True, f"legacy service did not migrate after unload: {post_unload_migrated}", failures)
+        require(
+            post_unload_migrated.get("service_check", {}).get("service_file", {}).get("exact_managed_definition") is True,
+            "post-unload migration did not produce the current service definition",
+            failures,
+        )
+
     result = {
         "ok": not failures,
         "failures": failures,
@@ -212,6 +422,9 @@ def main() -> int:
         "host_only_no_workers": True,
         "credential_material_omitted": True,
         "unmanaged_file_overwrite_blocked": True,
+        "previous_managed_service_migration_covered": True,
+        "previous_managed_service_unload_only_control_covered": True,
+        "same_label_credential_path_mode_state_and_loaded_rejections_covered": True,
     }
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if not failures else 1

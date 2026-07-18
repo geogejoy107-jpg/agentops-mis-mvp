@@ -39,7 +39,13 @@ agentops host service-remove --confirm-remove
 - Load is blocked while an independently managed Host process is already
   running. Repeated confirmed load is an idempotent no-op.
 - An existing file can be overwritten only when its complete bytes match the
-  expected managed definition. An unknown or edited file fails closed.
+  current managed definition, or the one explicitly supported previous
+  definition. A previous definition must be private, credential-free and
+  unloaded before an explicitly confirmed overwrite can migrate it. An unknown,
+  edited or loaded previous file fails closed.
+- The current CLI may issue only `unload` for an exact loaded previous
+  definition. It cannot load or restart that definition. This gives upgrades a
+  bounded recovery path without executing code from the previous package.
 - Removal is blocked while launchd reports the service loaded.
 - The product uninstaller refuses to continue while the default service file is
   present, preventing a leftover restart loop after binary removal.
@@ -62,7 +68,36 @@ The isolated smoke uses a temporary Host home, service path and fake launchctl
 state. It proves dry-run install, confirmed write, exact host-only arguments,
 private mode, credential omission, read-only check, dry-run control, confirmed
 load/restart/unload, duplicate-load idempotency, loaded-removal blocking,
-confirmed removal and unknown-file overwrite rejection.
+confirmed removal, exact previous-definition migration, loaded previous-service
+blocking and unknown/same-label/credential/path-edited overwrite rejection.
+
+## Upgrade Migration Contract
+
+preview.34 added the `--managed-launch-agent` process-identity gate to the Host
+service definition. A real preview.33-to-preview.34 installation preserved the
+existing LaunchAgent file, but the preview.34 CLI correctly rejected it as not
+the current exact definition. That exposed an upgrade loop: the new CLI would
+not overwrite the old managed file, while the old file could still launch the
+new package through the stable `current` link.
+
+The corrective source slice recognizes exactly one previous byte definition:
+the same Host-only, credential-free service without
+`--managed-launch-agent`. Recognition is not enough to mutate it. Migration
+also requires mode `0600`, a regular non-symlink file, the exact current Host
+home/install/current-link/log paths, launchd reporting the service unloaded,
+`--overwrite`, and `--confirm-install`. The replacement remains atomic and the
+post-write check must match the current exact definition.
+
+If that exact previous definition is still loaded, the current CLI permits one
+operation: an explicitly confirmed `service-control --action unload`. It still
+rejects load and restart, leaves the plist bytes unchanged during unload, and
+requires the separate confirmed overwrite before the service can be loaded
+again.
+
+The migration gate does not accept structurally similar plist files. A changed
+command, extra environment value, credential marker, path outside the managed
+installation contract, unsafe mode, symlink or loaded previous service remains
+blocked. Raw plist content is still omitted from command output.
 
 ## Local Service Loaded Receipt
 
