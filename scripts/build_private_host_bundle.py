@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
@@ -12,7 +13,6 @@ import subprocess
 import tarfile
 import tempfile
 import zipfile
-from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 
@@ -73,6 +73,10 @@ def run_git(*args: str) -> str:
 
 def tracked_files() -> list[str]:
     return [line for line in run_git("ls-files", "-z").split("\0") if line]
+
+
+def source_timestamp() -> str:
+    return run_git("show", "-s", "--format=%cI", "HEAD")
 
 
 def require_clean_tracked_source() -> None:
@@ -157,8 +161,10 @@ def tar_tree(source: Path, destination: Path, root_name: str) -> None:
         info.mtime = 0
         return info
 
-    with tarfile.open(destination, "w:gz", compresslevel=9) as archive:
-        archive.add(source, arcname=root_name, recursive=True, filter=normalize)
+    with destination.open("wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, compresslevel=9, mtime=0) as compressed:
+            with tarfile.open(fileobj=compressed, mode="w") as archive:
+                archive.add(source, arcname=root_name, recursive=True, filter=normalize)
 
 
 def build(output_dir: Path, ui_dist: Path, version: str) -> dict:
@@ -195,7 +201,7 @@ def build(output_dir: Path, ui_dist: Path, version: str) -> dict:
             "product": "AgentOps MIS Private Host",
             "version": version,
             "git_commit": commit,
-            "built_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "built_at": source_timestamp(),
             "platform": "macOS",
             "python_requires": ">=3.10",
             "ui_source": "prebuilt_dist",

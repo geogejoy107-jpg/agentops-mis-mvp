@@ -173,6 +173,14 @@ def main() -> int:
         if built.returncode != 0:
             fail("bundle build failed", built)
         build_result = json.loads(built.stdout)
+        reproducible_output = temp / "out-reproducible"
+        rebuilt = run([sys.executable, str(BUILDER), "--output-dir", str(reproducible_output), "--version", version])
+        if rebuilt.returncode != 0:
+            fail("repeat bundle build failed", rebuilt)
+        for first in sorted(output.iterdir()):
+            second = reproducible_output / first.name
+            if not second.is_file() or digest(first) != digest(second):
+                fail(f"bundle build is not reproducible: {first.name}", rebuilt)
         tar_path = next(Path(path) for path in build_result["artifacts"] if path.endswith(".tar.gz"))
         zip_path = next(Path(path) for path in build_result["artifacts"] if path.endswith(".zip"))
         checksum_path = Path(build_result["checksums"])
