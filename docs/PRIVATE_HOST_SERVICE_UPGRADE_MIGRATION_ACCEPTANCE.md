@@ -49,28 +49,30 @@ launchctl. It proves an unloaded exact legacy definition migrates to the
 current template, while a loaded exact legacy definition and every edited
 variant remain unchanged and fail closed.
 
-## Real Host Observation
+## Preview 35 Release And Real Upgrade
 
-The installed Host is still the public preview.34 package. It is healthy and
-serves the existing loopback and Tailscale Console. The preserved preview.33
-LaunchAgent is loaded and starts the preview.34 package through the stable
-`current` link; independently managed Hermes and OpenClaw Worker services are
-also loaded. The corrective source read-only check recognizes that plist as the
-exact supported legacy definition when evaluated with the installed Host home
-and install root.
+`v1.6.0-private-host-preview.35` was published from exact commit
+`6424ec144013517b21438cd7e528c6db106a0a5e`. Both exact-head backend jobs and
+both production UI jobs passed. The five candidate assets were reproducible,
+matched their Draft downloads byte-for-byte, and passed an isolated
+no-repository install/start/status/stop receipt before publication.
 
-No live service mutation is part of this source acceptance. A new immutable
-preview must pass exact-head CI and release-consumer checks before the real Host
-is unloaded, upgraded, migrated with the new CLI, and loaded again.
+The real preview.34 Host ledger was backed up and verified before maintenance.
+The independent Hermes and OpenClaw services were explicitly unloaded first.
+The preview.35 release payload then exercised the new unload-only path against
+the loaded exact previous service definition. launchd reported the service
+unloaded and the Host stopped; no plist or Tailscale mutation occurred during
+that action.
 
-## Remaining Release Gate
+The public bootstrap downloaded and verified preview.35, preserved user data,
+created another pre-update backup and reported preview.34 as the previous
+version. The installed preview.35 CLI first returned a successful dry-run
+legacy migration plan. The separate confirmed overwrite atomically replaced
+the previous plist, and readback proved the current exact definition, unloaded
+state and no credential material. A confirmed load returned the Host to ready,
+the private Tailscale route remained ready with Funnel disabled, and both
+independent Worker services were reloaded with fresh idle heartbeats.
 
-1. Commit and push the corrective source and exact regression.
-2. Require exact-head backend and UI CI success.
-3. Build and verify reproducible preview assets from clean tracked source.
-4. Publish a new immutable prerelease; do not rewrite preview.34.
-5. Back up the real Host ledger, unload Workers and Host, install the new
-   prerelease, perform the confirmed legacy migration, then reload Host and
-   Workers.
-6. Verify exact installed commit, Host/Tailscale readiness, Worker freshness,
-   and one new governed Hermes and OpenClaw task closure.
+This closes the specific service-upgrade migration defect without modifying
+the immutable preview.34 release. It does not claim signed/notarized packaging,
+physical logout/reboot persistence or unattended automatic upgrades.

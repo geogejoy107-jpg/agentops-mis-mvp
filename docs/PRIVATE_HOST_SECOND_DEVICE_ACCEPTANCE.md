@@ -251,3 +251,30 @@ the private HTTPS route rejected the two new low-value memory candidates and
 two conservative prepared-action false positives, then logged out. That closes
 the Host-side Owner review gate only; it is not a physical Console receipt. No
 external evidence is synthesized from local, CI, or prior-preview receipts.
+
+## Preview 35 MacBook Client Staging
+
+During the preview.35 release and real Host upgrade, a physical MacBook acted
+as the browser-only Console while the Mac mini retained the ledger, knowledge,
+Host and Runtime authority. The MacBook required no project checkout, Python,
+Node, Hermes or OpenClaw.
+
+Before maintenance, the MacBook reached the private HTTPS Workspace with HTTP
+200 and the dedicated Console application opened a Chrome window titled
+`AgentOps MIS`. A separate temporary no-account Chrome profile rendered the
+real 1280 x 800 login Workspace, including the existing navigation and account
+form, rather than a blank page. That temporary process was stopped without
+reading or modifying the user's normal Chrome profile.
+
+The Console became unavailable only during the explicit Host service
+maintenance window. After preview.35 installation, exact legacy migration and
+Host reload, the same MacBook again received HTTP 200. It remained reachable
+while a fresh OpenClaw Worker run executed on the Host. Tailscale Serve remained
+the transport and Funnel stayed disabled.
+
+This is physical second-device network/render and maintenance-recovery
+evidence. It is not the full protocol pass: authenticated MacBook task creation,
+the pending Hermes human decision, approved artifact/receipt download,
+logout-denial, physical tailnet disconnect/reconnect and another-Mac clean
+installation remain open. No private URL, DNS name, IP address, credential,
+cookie, raw model content or screenshot artifact is committed here.

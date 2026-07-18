@@ -168,3 +168,44 @@ content was retained.
 This closes the exact-package Host-local async Session-disconnect gate. Physical
 second-device private HTTPS, physical tailnet disconnect/reconnect, and a clean
 install on another Mac remain external gates.
+
+## Exact-Package Preview 35 Result
+
+The installed `v1.6.0-private-host-preview.35` package at exact commit
+`6424ec144013517b21438cd7e528c6db106a0a5e` restored both independently managed
+Worker services after the Host service migration. Each Worker wrote a fresh
+idle heartbeat after receiving a new process ID.
+
+An unauthenticated call to the customer workflow returned `401` and created no
+task, proving that the Private Host did not accept a machine caller as a human
+browser Session. A later Owner-authenticated Hermes request created and ran a
+fresh real task before the waiting client was interrupted:
+
+| Adapter | Task | Run | Result |
+|---|---|---|---|
+| Hermes | `tsk_customer_worker_task_hermes_hermes_worker_20260718140610_20260718060610225788` | `run_gw_7ac27edaf52c` | Runtime completed; delivery remains at Human Approval Wall |
+
+The Hermes ledger contains 1 tool call, 1 evaluation, 15 runtime events, 8
+bounded audit entries, 2 artifacts, 2 memory candidates and 1 verified
+plan-evidence manifest. Delivery approval
+`ap_customer_worker_delivery_run_gw_7ac27edaf52c` remains `pending`; no machine
+credential or interrupted browser client approved it.
+
+A separate normal Agent Gateway task-create call then assigned a low-risk,
+read-only customer review task to the persistent OpenClaw Worker. The Worker
+claimed it automatically and completed a fresh real run:
+
+| Adapter | Task | Run | Result |
+|---|---|---|---|
+| OpenClaw | `tsk_preview35_openclaw_product_review_20260718T0611Z` | `run_gw_45eac4968e30` | Completed |
+
+The OpenClaw ledger contains 1 tool call, 1 evaluation, 13 runtime events, 7
+bounded audit entries, 1 artifact, 1 memory candidate and 1 verified
+plan-evidence manifest. Its bounded output summary is present and capped at 200
+characters. No raw prompt, raw response, credential, private message, full
+transcript or database content was retained in this acceptance record.
+
+This proves both authenticated human dispatch to an approval stop and direct
+API/Gateway dispatch to a persistent real Worker on the installed package. The
+Hermes delivery still requires an explicit human decision before an approved
+artifact/receipt claim can be made.
