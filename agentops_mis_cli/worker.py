@@ -33,6 +33,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
+from agentops_mis_core.approval_wall import task_has_external_write_intent
 from agentops_mis_cli.codex_runtime import (
     codex_preflight,
     codex_binary_attestation,
@@ -994,53 +995,6 @@ def adapter_capability_profile(adapter: str, codex_mode: str = "read-only") -> d
     }
 
 
-EXTERNAL_WRITE_INTENT_KEYWORDS = {
-    "publish",
-    "upload",
-    "deploy",
-    "push",
-    "send email",
-    "webhook",
-    "external write",
-    "notion",
-    "dify",
-    "dataset",
-    "file search",
-    "customer portal",
-    "生产发布",
-    "发布",
-    "上传",
-    "部署",
-    "推送",
-    "发邮件",
-    "外部写入",
-    "知识库上传",
-}
-
-
-EXTERNAL_WRITE_NEGATION_RE = re.compile(
-    r"(?:\b(?:do\s+not|don't|must\s+not|never|without|no)\b[^.!?;\n]{0,48}|"
-    r"(?:不要|不得|禁止|无需|无须|不进行|不执行|仅限本地)[^。！？；\n]{0,32})$",
-    re.IGNORECASE,
-)
-
-
-def positive_external_write_intent(text: str) -> bool:
-    lowered = text.lower()
-    for keyword in EXTERNAL_WRITE_INTENT_KEYWORDS:
-        needle = keyword.lower()
-        start = 0
-        while True:
-            index = lowered.find(needle, start)
-            if index < 0:
-                break
-            prefix = lowered[max(0, index - 64):index]
-            if not EXTERNAL_WRITE_NEGATION_RE.search(prefix):
-                return True
-            start = index + len(needle)
-    return False
-
-
 def worker_external_write_intent(task: dict, args, capability: dict) -> bool:
     if args.adapter not in {"hermes", "openclaw", "codex"}:
         return False
@@ -1048,14 +1002,13 @@ def worker_external_write_intent(task: dict, args, capability: dict) -> bool:
         return False
     if capability.get("requires_prepared_action_for_external_write") is not True:
         return False
-    combined = " ".join([
-        str(task.get("title") or ""),
-        str(task.get("description") or ""),
-        str(task.get("acceptance_criteria") or ""),
-        str(task.get("target_resource") or ""),
-        str(task.get("external_action_type") or ""),
-    ]).lower()
-    return positive_external_write_intent(combined)
+    return task_has_external_write_intent(
+        title=task.get("title"),
+        description=task.get("description"),
+        acceptance_criteria=task.get("acceptance_criteria"),
+        target_resource=task.get("target_resource"),
+        external_action_type=task.get("external_action_type"),
+    )
 
 
 def codex_workspace_write_requested(args) -> bool:

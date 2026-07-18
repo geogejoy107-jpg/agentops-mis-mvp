@@ -60,6 +60,7 @@ from agentops_mis_core.approval_wall import (
     prepared_action_stored_args,
     runtime_probe_blocked_payload,
     runtime_probe_prepared_action_required_payload,
+    task_has_external_write_intent,
     tool_call_has_external_side_effect_intent,
 )
 from agentops_mis_core.agent_plans import (
@@ -29955,42 +29956,15 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
     }
 
 
-EXTERNAL_WRITE_INTENT_KEYWORDS = {
-    "publish",
-    "upload",
-    "deploy",
-    "push",
-    "send email",
-    "webhook",
-    "external write",
-    "notion",
-    "dify",
-    "dataset",
-    "file search",
-    "customer portal",
-    "生产发布",
-    "发布",
-    "上传",
-    "部署",
-    "推送",
-    "发邮件",
-    "外部写入",
-    "知识库上传",
-}
-
-
 def customer_worker_external_write_intent(body: dict, title: str, description: str, acceptance: str) -> bool:
-    explicit = body.get("external_write_intent")
-    if explicit is not None:
-        return bool(explicit)
-    combined = " ".join([
-        str(title or ""),
-        str(description or ""),
-        str(acceptance or ""),
-        str(body.get("target_resource") or ""),
-        str(body.get("external_action_type") or ""),
-    ]).lower()
-    return any(keyword.lower() in combined for keyword in EXTERNAL_WRITE_INTENT_KEYWORDS)
+    return task_has_external_write_intent(
+        title=title,
+        description=description,
+        acceptance_criteria=acceptance,
+        target_resource=body.get("target_resource"),
+        external_action_type=body.get("external_action_type"),
+        explicit_intent=body.get("external_write_intent"),
+    )
 
 
 def customer_worker_loop_admission_readback(

@@ -60,6 +60,56 @@ LOOPBACK_HTTP_PREFIXES = (
     "http://localhost",
     "http://[::1]",
 )
+EXTERNAL_WRITE_INTENT_KEYWORDS = (
+    "knowledge base upload",
+    "customer portal",
+    "external write",
+    "send email",
+    "file search",
+    "生产发布",
+    "知识库上传",
+    "外部写入",
+    "publish",
+    "upload",
+    "deploy",
+    "push",
+    "send",
+    "webhook",
+    "notion",
+    "dify",
+    "dataset",
+    "发布",
+    "上传",
+    "部署",
+    "推送",
+    "发邮件",
+    "发送",
+)
+EXTERNAL_WRITE_NEGATION_RE = re.compile(
+    r"(?:"
+    r"\b(?:do\s+not|don't|must\s+not|shall\s+not|may\s+not|never|cannot|can't)\b[^.!?;\n]{0,64}|"
+    r"(?:不要|不得|禁止|不允许|不再|不能|不会)[^。！？；\n]{0,40}"
+    r")$",
+    re.IGNORECASE,
+)
+EXTERNAL_WRITE_ACTION_CHAIN_TERM = (
+    r"(?:publish(?:es|ed|ing)?|upload(?:s|ed|ing)?|deploy(?:s|ed|ing)?|"
+    r"push(?:es|ed|ing)?|send(?:s|ing)?|sent|external\s+writ(?:e|es|ing|ten)|"
+    r"生产发布|知识库上传|外部写入|发布|上传|部署|推送|发邮件|发送)"
+)
+EXTERNAL_WRITE_TIGHT_NEGATION_RE = re.compile(
+    r"(?:"
+    r"\b(?:without|no)\b(?:\s+(?:any|an|a|direct|actual|external|production|unauthorized|outbound))*|"
+    r"(?:无需|无须|不进行|不执行|不使用|不调用)(?:任何形式的|任何|外部|对外|直接|实际)*|"
+    r"不(?!仅|但)(?:再|向外部|对外|直接|实际)?"
+    r")\s*"
+    rf"(?:{EXTERNAL_WRITE_ACTION_CHAIN_TERM}\s*(?:,|、|，)?\s*(?:or|and|或|和|及|与)\s*)*$",
+    re.IGNORECASE,
+)
+EXTERNAL_WRITE_NEGATION_BREAK_RE = re.compile(
+    r"(?:\b(?:but|however|then|instead|except)\b|但是|但|不过|然而|然后|随后|(?<!不)再|改为|而是|除外)",
+    re.IGNORECASE,
+)
 
 
 def stable_hash(value: Any) -> str:
@@ -79,6 +129,54 @@ def redact_text(text: Any, limit: int = 200) -> str:
         value = re.sub(pattern, replacement, value)
     value = re.sub(r"\s+", " ", value).strip()
     return value[:limit]
+
+
+def positive_external_write_intent(text: Any) -> bool:
+    """Detect write intent while ignoring only explicitly negated occurrences."""
+    lowered = str(text or "").lower()
+    for keyword in EXTERNAL_WRITE_INTENT_KEYWORDS:
+        needle = keyword.lower()
+        start = 0
+        while True:
+            index = lowered.find(needle, start)
+            if index < 0:
+                break
+            prefix = lowered[max(0, index - 80):index]
+            negation = EXTERNAL_WRITE_NEGATION_RE.search(prefix) or EXTERNAL_WRITE_TIGHT_NEGATION_RE.search(prefix)
+            if negation is None or EXTERNAL_WRITE_NEGATION_BREAK_RE.search(negation.group(0)):
+                return True
+            start = index + len(needle)
+    return False
+
+
+def task_has_external_write_intent(
+    *,
+    title: Any,
+    description: Any,
+    acceptance_criteria: Any,
+    target_resource: Any = None,
+    external_action_type: Any = None,
+    explicit_intent: Any = None,
+) -> bool:
+    """Classify task intent without allowing negative prose to bypass real writes."""
+    if explicit_intent is True or str(explicit_intent or "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+
+    action_type = str(external_action_type or "").strip()
+    if action_type:
+        return True
+
+    target = str(target_resource or "").strip().lower()
+    target_is_loopback = target.startswith(LOOPBACK_HTTP_PREFIXES)
+    if target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES) and not target_is_loopback:
+        return True
+    if positive_external_write_intent(target):
+        return True
+
+    return any(
+        positive_external_write_intent(value)
+        for value in (title, description, acceptance_criteria)
+    )
 
 
 def safe_json_metadata(value: Any) -> Any:
