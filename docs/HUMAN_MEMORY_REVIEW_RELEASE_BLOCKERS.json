@@ -1,0 +1,65 @@
+{
+  "contract_id": "human_memory_review_release_blockers_v1",
+  "slice": "nextjs_postgres_human_session_memory_review",
+  "status": "blocked",
+  "release_claim_allowed": false,
+  "closed_loop_claim_allowed": false,
+  "implemented_controls": {
+    "fixed_cost_dummy_scrypt": true,
+    "process_login_admission": true,
+    "bounded_stale_login_throttle_cleanup": true,
+    "production_proxy_identity_downgrade_blocked": true,
+    "production_catch_all_python_proxy_blocked": true,
+    "standard_next_start_defaults_postgres": true,
+    "unknown_deployment_mode_fails_closed": true,
+    "malformed_auth_timestamps_fail_closed": true,
+    "malformed_agent_gateway_expiry_fails_closed": true,
+    "missing_agent_gateway_session_expiry_fails_closed": true,
+    "malformed_login_window_fails_closed": true,
+    "exact_postgres_schema_version_gate": true
+  },
+  "open_blockers": [
+    {
+      "id": "production_api_route_ownership_incomplete",
+      "severity": "P1",
+      "status": "open",
+      "kind": "migration",
+      "detail": "Commercial production now rejects the generic Python catch-all, but remaining UI/read-model APIs still need explicit TypeScript/Postgres owners before the production Next application is feature-complete."
+    },
+    {
+      "id": "real_worker_candidate_human_review_bridge_missing",
+      "severity": "P1",
+      "status": "open",
+      "kind": "cross_contract_acceptance",
+      "detail": "The Human Review smoke uses synthetic manual candidates and does not yet prove a run_log candidate from a real Hermes or OpenClaw Worker is reviewed through Next/Postgres with actor_type=user and exactly one runtime event."
+    },
+    {
+      "id": "trusted_proxy_ip_edge_rate_limit_required",
+      "severity": "P1",
+      "status": "open",
+      "kind": "deployment_requirement",
+      "detail": "Each production ingress must enforce trusted-proxy-aware source-IP sign-in rate limits; process admission only bounds one Next.js process and does not replace an edge limit."
+    },
+    {
+      "id": "human_session_retention_job_missing",
+      "severity": "P2",
+      "status": "open",
+      "kind": "retention",
+      "detail": "Expired and revoked Human Session rows do not yet have a scheduled bounded retention job."
+    },
+    {
+      "id": "human_memory_review_request_retention_policy_missing",
+      "severity": "P2",
+      "status": "open",
+      "kind": "retention",
+      "detail": "Completed Human Memory Review idempotency rows do not yet have an approved retention policy and bounded cleanup job."
+    },
+    {
+      "id": "owner_bootstrap_compiled_entry_missing",
+      "severity": "P2",
+      "status": "open",
+      "kind": "packaging",
+      "detail": "Owner bootstrap currently runs through tsx; a precompiled, signed production artifact is still required before release packaging."
+    }
+  ]
+}

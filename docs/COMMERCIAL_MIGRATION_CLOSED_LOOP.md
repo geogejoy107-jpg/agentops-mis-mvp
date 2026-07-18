@@ -985,7 +985,7 @@ Must be true:
 
 | Area | Current product line | Commercial migration target | Gate |
 | --- | --- | --- | --- |
-| Backend/control plane | Python `server.py` plus TypeScript/Postgres-owned Agent Gateway task, run lifecycle, and execution-evidence routes | Next.js TypeScript owns commercial control-plane APIs; Python is retired route by route after dynamic parity and remains only the migration rollback | 2/4/5 |
+| Backend/control plane | Python `server.py` for Free Local plus TypeScript/Postgres-owned commercial Agent Gateway, Human Session, and Memory Review routes | Next.js TypeScript owns commercial control-plane APIs; Python remains only the explicit Free Local rollback while unowned commercial production routes fail closed | 2/4/5 |
 | Agent execution | Agent Gateway CLI/API/MCP | Keep as the durable agent contract | 1 |
 | UI | Vite + React + TypeScript plus parallel `ui/next-app` | Next.js App Router replaces pages only after parity gate | 4 |
 | Database | SQLite plus Postgres adapter/write gates | SQLite Free Local; Postgres default for commercial and BYOC control plane | 3/5 |
@@ -1026,9 +1026,12 @@ Commercial work should merge in this order:
 
 - A commercial branch can be abandoned without touching `main` or
   `codex/agent-gateway-kb-demo`.
-- If a Next.js route fails parity, select explicit
-  `AGENTOPS_TS_CONTROL_PLANE_MODE=proxy` for that migration rollback, record the
-  gap, and do not present the route as commercially migrated.
+- If a Next.js route fails parity, select explicit Free Local
+  `AGENTOPS_DEPLOYMENT_MODE=free_local` plus
+  `AGENTOPS_CONTROL_PLANE_MODE=proxy` for rollback, record the gap, and do not
+  present the route as commercially migrated. Commercial production never
+  falls through the generic Python catch-all; unowned routes fail with
+  `typescript_route_owner_required` until they receive a direct TypeScript owner.
 - If Postgres behavior diverges, keep SQLite available for Free Local or an
   explicit rollback, add a failing adapter test, and keep commercial production
   fail closed until Postgres parity is restored.
@@ -1122,10 +1125,22 @@ Deliver:
 The commercial migration closed loop is considered established when:
 
 - This document is linked from README and the parallel branch plan.
-- `python3 scripts/commercial_migration_readiness.py` returns
-  `overall_status: "ready"` on the commercial branch.
+- `python3 scripts/commercial_migration_readiness.py` exits successfully with
+  `readiness_contract_valid: true` on the commercial branch.
+- The same output keeps `overall_status: "blocked"`,
+  `release_status: "blocked"`, and `release_claim_allowed: false` whenever a
+  machine-readable release blocker remains open; engineering-check success is
+  not a release claim.
 - The readiness output names the current branch, phase gates, verification
   commands, and blocked artifacts.
+- The commercial Worker bridge preserves `/api/agent-gateway/*` as the durable
+  CLI/API contract while Next owns direct Postgres routes for Worker register,
+  pull, claim, heartbeat, audit, plan, run, tool, evaluation, artifact, memory,
+  and plan-evidence writes. `nextjs_postgres_worker_task_pull_claim_v1` is the
+  deterministic Postgres CI contract; `worker_provider_call_evidence_v1`
+  guards the adapter evidence flags without starting an API, and
+  `nextjs_postgres_real_worker_human_review_v1` is the separate live
+  Hermes/OpenClaw-to-Human-review acceptance that never starts the Python API.
 - `git diff --check` passes.
 - No local DB, runtime log, generated service file, `dist`, `node_modules`,
   `.env`, raw credential, raw prompt, raw model response, or private transcript

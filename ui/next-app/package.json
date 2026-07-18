@@ -4,17 +4,28 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
+    "bootstrap:owner": "tsx scripts/bootstrap-owner.ts",
+    "migrate:postgres": "tsx scripts/migrate-postgres.ts",
+    "schema:readiness": "tsx scripts/migrate-postgres.ts --check",
     "dev": "next dev -p 3001",
     "build": "next build",
     "start": "next start -p 3001",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:control-plane-mode-contract": "tsx scripts/control-plane-mode-contract.ts",
+    "test:human-scrypt-contract": "tsx scripts/human-scrypt-contract.ts",
+    "test:human-schema-contract": "tsx scripts/schema-readiness-contract.ts",
+    "test:human-session-timestamp-contract": "tsx scripts/human-session-timestamp-contract.ts",
+    "test:memory-review-idempotency-contract": "tsx scripts/memory-review-idempotency-contract.ts",
+    "test:worker-gateway-direct-contract": "tsx scripts/agent-gateway-worker-direct-contract.ts",
+    "test:worker-task-pull-claim-contract": "tsx scripts/worker-task-pull-claim-contract.ts"
   },
   "dependencies": {
     "lucide-react": "0.487.0",
     "next": "16.2.9",
     "pg": "8.22.0",
     "react": "19.2.7",
-    "react-dom": "19.2.7"
+    "react-dom": "19.2.7",
+    "tsx": "4.23.1"
   },
   "devDependencies": {
     "@types/node": "22.10.2",

@@ -16,13 +16,14 @@ collaborator. A task scope without a real task or run binding fails closed.
 
 Agents may create immutable `candidate` rows only. They cannot assign a Human
 owner, set a review decision, mutate a reviewed memory, or choose an arbitrary
-memory ID. Exact `/api/mis/memories/:memory_id/approve|reject` routes now use
-the fail-closed workspace-admin identity before any database query and transact
-candidate review directly in Postgres with per-memory locking, immutable
-terminal decisions, concurrent idempotency, and one audit/runtime transition.
-That decision surface is source/typecheck ready but remains outside this
-candidate-only receipt until the expanded no-Python Postgres smoke passes; it
-must not be claimed from `nextjs_postgres_memory_propose_v1` alone.
+memory ID. Exact `/api/mis/memories/:memory_id/approve|reject` routes use a
+distinct Human Session, locked workspace membership, CSRF, and Origin contract.
+Agent Gateway and workspace administration credentials are explicitly rejected.
+Candidate review transacts directly in Postgres with immutable terminal
+decisions, concurrent idempotency, and one truthful Human audit/runtime
+transition. Its separate evidence contract is
+`nextjs_postgres_human_memory_review_v1`; it must not be claimed from
+`nextjs_postgres_memory_propose_v1` alone.
 
 ## Evidence
 
@@ -47,7 +48,13 @@ python3 -B scripts/nextjs_postgres_memory_propose_smoke.py
 ```
 
 The smoke does not execute a model adapter or a complete Worker process. It is
-deterministic integration evidence only. Product-level acceptance additionally
-requires a real Agent Gateway Worker run through Hermes or OpenClaw on the exact
-committed head, with `dry_run=false` and raw prompt, raw response, credential,
-and transcript omission.
+deterministic integration evidence only. Product-level acceptance is
+`nextjs_postgres_real_worker_human_review_v1`: a real Agent Gateway Worker runs
+through Hermes and OpenClaw on the exact committed head, reaches the direct
+Next/TypeScript/Postgres routes over the durable `/api/agent-gateway/*` path,
+creates a run-bound candidate, and receives one idempotent Human approval with
+`python_api_started=false`, real Runtime execution, and raw prompt, raw
+response, credential, and transcript omission.
+
+The Human decision boundary, first Owner bootstrap, and browser acceptance are
+specified in `docs/NEXTJS_POSTGRES_HUMAN_MEMORY_REVIEW_ACCEPTANCE.md`.

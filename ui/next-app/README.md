@@ -12,8 +12,11 @@ npm install
 AGENTOPS_API_BASE=http://127.0.0.1:8765/api npm run dev
 ```
 
-Most Next.js `/api/mis/*` routes still proxy to the current MIS API provider;
-the default provider is `http://127.0.0.1:8765/api`. The first backend migration
+Most Next.js `/api/mis/*` routes still proxy to the current MIS API provider in
+explicit Free Local mode; the default provider is `http://127.0.0.1:8765/api`.
+Commercial production never uses the catch-all Python bridge: an unowned route
+returns `typescript_route_owner_required` until it has a direct TypeScript owner.
+The first backend migration
 slice owns exact routes `/api/mis/agent-gateway/tasks`,
 `/api/mis/agent-gateway/runs/start`, and
 `/api/mis/agent-gateway/runs/[runId]/heartbeat` plus Agent Plan,
@@ -21,8 +24,11 @@ plan-evidence-manifest, tool-call, evaluation, and artifact evidence routes:
 local development defaults to proxy mode,
 while `AGENTOPS_DEPLOYMENT_MODE=production` defaults those routes to the
 TypeScript Postgres control plane and fails closed when
-`AGENTOPS_POSTGRES_DSN` is absent. `AGENTOPS_TS_CONTROL_PLANE_MODE=proxy` is the
-explicit rollback switch during the migration window.
+`AGENTOPS_POSTGRES_DSN` is absent. `AGENTOPS_CONTROL_PLANE_MODE=proxy` is an
+explicit rollback switch only with `AGENTOPS_DEPLOYMENT_MODE=local|free_local`;
+`AGENTOPS_TS_CONTROL_PLANE_MODE` remains a compatibility alias. Production
+Memory Review never follows either proxy switch because Human identity cannot
+be downgraded to the Python compatibility actor.
 
 ```bash
 AGENTOPS_DEPLOYMENT_MODE=production \
@@ -34,9 +40,16 @@ npm run dev
 
 ```bash
 python3 scripts/nextjs_parity_smoke.py
+python3 scripts/nextjs_production_python_proxy_fail_closed_smoke.py
 cd ui/next-app && npm run build
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py
+python3 scripts/nextjs_postgres_memory_propose_smoke.py
+python3 scripts/nextjs_postgres_human_memory_review_smoke.py
+AGENTOPS_POSTGRES_DSN=postgresql://... npm run test:worker-task-pull-claim-contract
+AGENTOPS_POSTGRES_DSN=postgresql://... npm run test:worker-gateway-direct-contract
+python3 scripts/nextjs_postgres_real_worker_human_review_smoke.py \
+  --postgres-dsn postgresql://...
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_pixel_office_floor_smoke.py
@@ -52,6 +65,31 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
 python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture
 python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture
 ```
+
+## Commercial Human Session
+
+Production direct mode owns `/api/mis/human-auth/login|session|logout`, the
+workspace-scoped candidate list, and candidate approve/reject in
+TypeScript/Postgres. Configure `AGENTOPS_ALLOWED_ORIGINS` and a minimum 32-byte
+`AGENTOPS_HUMAN_SESSION_HMAC_KEY`; machine Agent Gateway and workspace admin
+credentials cannot authorize these routes.
+
+Apply and verify the exact schema version, then create the first Owner from a
+deployment terminal:
+
+```bash
+AGENTOPS_POSTGRES_DSN=postgresql://... npm run migrate:postgres
+AGENTOPS_POSTGRES_DSN=postgresql://... npm run schema:readiness
+AGENTOPS_POSTGRES_DSN=postgresql://... npm run bootstrap:owner -- \
+  --workspace-id acme --username owner --display-name "Workspace Owner"
+```
+
+This command is global first-deployment bootstrap only. It fails once an Owner
+exists. Later user/workspace provisioning and credential lifecycle are not yet
+implemented. Production ingress must also enforce a trusted-proxy-aware IP rate
+limit for sign-in. Retention jobs and a precompiled bootstrap artifact remain
+release blockers; see `docs/HUMAN_MEMORY_REVIEW_RELEASE_BLOCKERS.json` and
+`docs/NEXTJS_POSTGRES_HUMAN_MEMORY_REVIEW_ACCEPTANCE.md`.
 
 The Playwright smoke starts an isolated MIS API provider and Next.js dev server,
 captures browser snapshots for the current parity routes, exercises approval and
@@ -84,7 +122,8 @@ memory review actions through the Next.js UI, verifies the state change through
 - App Router route: `/workspace/audit`
 - App Router route: `/workspace/reports`
 - App Router route: `/workspace/customer-projects/[projectId]/report`
-- Runtime API proxy: `/api/mis/[...path]`
+- Free Local compatibility API proxy: `/api/mis/[...path]`; commercial production
+  rejects this catch-all and requires an explicit TypeScript/Postgres route owner.
 - Agent Gateway task migration contract: scoped
   `GET|POST /api/mis/agent-gateway/tasks` preserves no-token, missing-scope,
   workspace, agent-binding, and short-session behavior. Production defaults to
@@ -104,6 +143,15 @@ memory review actions through the Next.js UI, verifies the state change through
   suppresses duplicate runtime/audit evidence for identical heartbeats, gives
   conflicting terminal heartbeats one winner, syncs terminal task/agent state,
   and rejects terminal revival.
+- Agent Gateway Worker ingress migration contract: the durable
+  `/api/agent-gateway/*` CLI path is rewritten by Next to direct TypeScript
+  handlers for register, task pull/claim, heartbeat, and audit. Production uses
+  Postgres scope/workspace/agent/run/task locks; Free Local keeps the Python
+  proxy rollback path. The focused Postgres contracts prove bounded bodies,
+  server-derived audit actors, sensitive metadata omission, and single-winner
+  claims. `nextjs_postgres_real_worker_human_review_v1` separately proves real
+  Hermes/OpenClaw execution through candidate creation and Human approval
+  without starting the Python API.
 - Agent Gateway execution-evidence migration contract: scoped tool-call,
   evaluation-submit, and artifact routes bind evidence to the authenticated
   workspace/run/agent, redact structured and summary data, serialize same-ID

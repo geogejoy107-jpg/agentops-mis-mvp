@@ -71,6 +71,20 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "customer-projects" / "[projectId]" / "report" / "archive" / "route.ts",
         NEXT_APP / "app" / "workspace" / "audit" / "page.tsx",
         NEXT_APP / "app" / "api" / "mis" / "[...path]" / "route.ts",
+        NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "register" / "route.ts",
+        NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "heartbeat" / "route.ts",
+        NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "audit" / "route.ts",
+        NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "tasks" / "pull" / "route.ts",
+        NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "tasks" / "[taskId]" / "claim" / "route.ts",
+        NEXT_APP / "src" / "server" / "controlPlane" / "agentGatewayHeartbeatAudit.ts",
+        NEXT_APP / "src" / "server" / "controlPlane" / "agentGatewayTasks.ts",
+        NEXT_APP / "src" / "server" / "controlPlane" / "auth.ts",
+        NEXT_APP / "src" / "server" / "controlPlane" / "config.ts",
+        NEXT_APP / "src" / "server" / "controlPlane" / "humanSession.ts",
+        NEXT_APP / "scripts" / "control-plane-mode-contract.ts",
+        NEXT_APP / "scripts" / "human-session-timestamp-contract.ts",
+        NEXT_APP / "scripts" / "worker-task-pull-claim-contract.ts",
+        NEXT_APP / "next.config.mjs",
         NEXT_APP / "src" / "components" / "AppFrame.tsx",
         NEXT_APP / "src" / "components" / "AgentsParityPage.tsx",
         NEXT_APP / "src" / "components" / "WorkerConsolePage.tsx",
@@ -101,6 +115,9 @@ def main() -> int:
         ROOT / "scripts" / "ui_covered_route_retirement_packet_smoke.py",
         ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py",
         ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py",
+        ROOT / "scripts" / "nextjs_production_python_proxy_fail_closed_smoke.py",
+        ROOT / "scripts" / "nextjs_postgres_real_worker_human_review_smoke.py",
+        ROOT / "scripts" / "worker_provider_call_evidence_smoke.py",
         ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py",
         ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py",
         ROOT / "scripts" / "nextjs_pixel_office_dispatch_smoke.py",
@@ -126,6 +143,7 @@ def main() -> int:
         ROOT / "docs" / "UI_COVERED_ROUTE_RETIREMENT_PACKET.md",
         ROOT / "docs" / "PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.json",
         ROOT / "docs" / "PIXEL_OFFICE_DISPATCH_RETIREMENT_EVIDENCE.md",
+        ROOT / "docs" / "HUMAN_MEMORY_REVIEW_RELEASE_BLOCKERS.json",
     ]
 
     for path in required_files:
@@ -133,6 +151,22 @@ def main() -> int:
 
     server_text = read_text(ROOT / "server.py")
     route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "[...path]" / "route.ts")
+    next_config_text = read_text(NEXT_APP / "next.config.mjs")
+    gateway_register_route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "register" / "route.ts")
+    gateway_heartbeat_route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "heartbeat" / "route.ts")
+    gateway_audit_route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "audit" / "route.ts")
+    gateway_pull_route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "tasks" / "pull" / "route.ts")
+    gateway_claim_route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "tasks" / "[taskId]" / "claim" / "route.ts")
+    gateway_heartbeat_audit_text = read_text(NEXT_APP / "src" / "server" / "controlPlane" / "agentGatewayHeartbeatAudit.ts")
+    gateway_tasks_text = read_text(NEXT_APP / "src" / "server" / "controlPlane" / "agentGatewayTasks.ts")
+    gateway_auth_text = read_text(NEXT_APP / "src" / "server" / "controlPlane" / "auth.ts")
+    control_plane_config_text = read_text(NEXT_APP / "src" / "server" / "controlPlane" / "config.ts")
+    human_session_text = read_text(NEXT_APP / "src" / "server" / "controlPlane" / "humanSession.ts")
+    control_plane_mode_contract_text = read_text(NEXT_APP / "scripts" / "control-plane-mode-contract.ts")
+    human_session_timestamp_contract_text = read_text(NEXT_APP / "scripts" / "human-session-timestamp-contract.ts")
+    worker_task_contract_text = read_text(NEXT_APP / "scripts" / "worker-task-pull-claim-contract.ts")
+    real_worker_human_review_text = read_text(ROOT / "scripts" / "nextjs_postgres_real_worker_human_review_smoke.py")
+    worker_provider_evidence_text = read_text(ROOT / "scripts" / "worker_provider_call_evidence_smoke.py")
     approvals_review_route_text = read_text(NEXT_APP / "app" / "workspace" / "approvals" / "review" / "route.ts")
     memory_review_route_text = read_text(NEXT_APP / "app" / "workspace" / "memory" / "review" / "route.ts")
     report_archive_route_text = read_text(NEXT_APP / "app" / "workspace" / "customer-projects" / "[projectId]" / "report" / "archive" / "route.ts")
@@ -179,6 +213,7 @@ def main() -> int:
     playwright_smoke_text = read_text(ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py")
     gateway_task_proxy_smoke_text = read_text(ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py")
     gateway_cli_worker_dogfood_smoke_text = read_text(ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py")
+    production_python_proxy_smoke_text = read_text(ROOT / "scripts" / "nextjs_production_python_proxy_fail_closed_smoke.py")
     worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py")
     pixel_office_floor_smoke_text = read_text(ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py")
     pixel_office_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_pixel_office_dispatch_smoke.py")
@@ -206,11 +241,47 @@ def main() -> int:
     covered_retirement_packet_smoke_text = read_text(ROOT / "scripts" / "ui_covered_route_retirement_packet_smoke.py")
     covered_retirement_packet_text = read_text(ROOT / "docs" / "UI_COVERED_ROUTE_RETIREMENT_PACKET.json")
     covered_retirement_packet_doc_text = read_text(ROOT / "docs" / "UI_COVERED_ROUTE_RETIREMENT_PACKET.md")
+    human_memory_release_blockers = json.loads(read_text(ROOT / "docs" / "HUMAN_MEMORY_REVIEW_RELEASE_BLOCKERS.json"))
+    commercial_readiness_text = read_text(ROOT / "scripts" / "commercial_migration_readiness.py")
 
     require(dependencies.get("next") == "16.2.9", "Next.js version is not pinned to the selected migration version")
     require(dependencies.get("react") == "19.2.7", "React version is not pinned to the selected migration version")
     require("build" in scripts and "next build" in scripts["build"], "Next.js build script is missing")
-    require("AGENTOPS_API_BASE" in route_text, "API proxy must be configurable with AGENTOPS_API_BASE")
+    require(scripts.get("test:control-plane-mode-contract") == "tsx scripts/control-plane-mode-contract.ts", "Production control-plane mode contract script is missing")
+    require(scripts.get("test:human-schema-contract") == "tsx scripts/schema-readiness-contract.ts", "Human schema negative contract script is missing")
+    require(scripts.get("test:human-session-timestamp-contract") == "tsx scripts/human-session-timestamp-contract.ts", "Human and Agent Gateway timestamp contract script is missing")
+    require(scripts.get("test:memory-review-idempotency-contract") == "tsx scripts/memory-review-idempotency-contract.ts", "Memory Review idempotency contract script is missing")
+    require(scripts.get("test:worker-gateway-direct-contract") == "tsx scripts/agent-gateway-worker-direct-contract.ts", "Worker register/heartbeat/audit contract script is missing")
+    require(scripts.get("test:worker-task-pull-claim-contract") == "tsx scripts/worker-task-pull-claim-contract.ts", "Worker task pull/claim contract script is missing")
+    require("AGENTOPS_API_BASE" in route_text, "Free Local API proxy must be configurable with AGENTOPS_API_BASE")
+    require("legacyPythonProxyAllowed" in route_text and "typescript_route_owner_required" in route_text and "python_proxy_performed: false" in route_text, "Commercial production catch-all must fail closed instead of forwarding to Python")
+    require("nextjs_production_python_proxy_fail_closed_v1" in production_python_proxy_smoke_text and "upstream_request_count" in production_python_proxy_smoke_text and "python_proxy_performed" in production_python_proxy_smoke_text, "Production no-Python proxy dynamic contract is incomplete")
+    require("/api/agent-gateway/:path*" in next_config_text and "/api/mis/agent-gateway/:path*" in next_config_text, "Next must preserve the durable Agent Gateway CLI path while routing it to TypeScript ownership")
+    require(all("controlPlaneMode" in text and "proxyControlPlaneRequest" in text for text in (
+        gateway_register_route_text, gateway_heartbeat_route_text, gateway_audit_route_text,
+        gateway_pull_route_text, gateway_claim_route_text,
+    )), "Direct Worker routes must preserve the Free Local proxy path")
+    require("registerAgentGatewayWorker" in gateway_register_route_text and "recordAgentGatewayHeartbeat" in gateway_heartbeat_route_text and "emitAgentGatewayAudit" in gateway_audit_route_text, "Worker register/heartbeat/audit routes must have direct TypeScript owners")
+    require("pullAgentGatewayTasks" in gateway_pull_route_text and "claimAgentGatewayTask" in gateway_claim_route_text, "Worker pull/claim routes must have direct TypeScript owners")
+    require("authenticateAgentGateway" in gateway_heartbeat_audit_text and "boundedJsonObject" in gateway_heartbeat_audit_text and "assertExclusiveWorkspaceBinding" in gateway_heartbeat_audit_text, "Worker register/heartbeat/audit ownership must be authenticated, bounded, and workspace-bound")
+    require("tasks:read" in gateway_tasks_text and "tasks:claim" in gateway_tasks_text and "pg_advisory_xact_lock" in gateway_tasks_text, "Worker pull/claim ownership must enforce scopes and a single-winner claim lock")
+    require("nextjs_postgres_worker_task_pull_claim_v1" in worker_task_contract_text and "planned_to_running_single_winner" in worker_task_contract_text, "Worker pull/claim Postgres contract is incomplete")
+    require("nextjs_postgres_real_worker_human_review_v1" in real_worker_human_review_text and "python_api_started" in real_worker_human_review_text and "real_runtime_execution_performed" in real_worker_human_review_text, "Real Worker to Human Review acceptance contract is missing or cannot distinguish Python API and live Runtime evidence")
+    require("provider_call_performed" in real_worker_human_review_text and "dry_run" in real_worker_human_review_text, "Real Worker acceptance must distinguish a provider call from a dry run")
+    require("worker_provider_call_evidence_v1" in worker_provider_evidence_text and "provider_call_performed" in worker_provider_evidence_text and "dry_run" in worker_provider_evidence_text, "Worker provider-call evidence contract is incomplete")
+    require('normalized(process.env.NODE_ENV) === "production"' in control_plane_config_text, "standard next start must be recognized as a production deployment")
+    require('if (configured === "proxy") return isProductionDeployment() ? "postgres" : "proxy"' in control_plane_config_text, "production proxy override must fail closed to Postgres ownership")
+    require("legacyPythonProxyAllowed" in control_plane_config_text and "FREE_LOCAL_DEPLOYMENT_MODES" in control_plane_config_text, "Python proxy must be restricted to explicit Free Local deployment modes")
+    require("AGENTOPS_DEPLOYMENT_MODE must be production" in control_plane_config_text, "Unknown deployment modes must fail closed")
+    require("control_plane_production_fail_closed_v1" in control_plane_mode_contract_text and "standard_next_start_defaults_postgres" in control_plane_mode_contract_text and "production_proxy_override_blocked" in control_plane_mode_contract_text and "production_python_catch_all_blocked" in control_plane_mode_contract_text and "unknown_deployment_mode_rejected" in control_plane_mode_contract_text, "Production control-plane fail-closed contract is incomplete")
+    require("humanThrottleTimestampActive" in human_session_text and "humanSessionTimestampExpired" in human_session_text, "Human Session timestamp fail-closed helpers are missing")
+    require("agentGatewayTimestampExpired" in gateway_auth_text and "!Number.isFinite(expiresAt)" in gateway_auth_text and "allowMissing" in gateway_auth_text, "Agent Gateway malformed or missing Session expiry must fail closed")
+    require("nextHumanLoginFailureState" in human_session_text and "failedClosed" in human_session_text, "Malformed Human login throttle windows must fail closed")
+    require("human_session_timestamp_fail_closed_v1" in human_session_timestamp_contract_text and "invalid_gateway_credential_expires" in human_session_timestamp_contract_text and "missing_gateway_session_expiry_expires" in human_session_timestamp_contract_text and "malformed_login_window_blocks" in human_session_timestamp_contract_text, "Human and Agent Gateway malformed timestamp contract is incomplete")
+    require(all(marker not in server_text for marker in (
+        "workspace_memberships", "human_login_credentials", "human_sessions",
+        "human_login_throttle", "human_memory_review_requests",
+    )), "Python server must not own commercial Human Session or Memory Review tables")
     require("Workspace control plane" in dashboard_text and "control-tower-live-metrics" in dashboard_text, "Workspace dashboard must expose Control Tower live metrics")
     require("control-tower-split-proof" in dashboard_text and "/workspace/agents agent performance drilldown" in dashboard_text and "/workspace/governance production and session governance" in dashboard_text and "/workspace/deployment BYOC storage and recovery gates" in dashboard_text, "Workspace dashboard must expose split-route Control Tower proof")
     require("control-tower-runtime-health" in dashboard_text and "Runtime health" in dashboard_text, "Workspace dashboard must expose runtime health readback")
@@ -541,7 +612,18 @@ def main() -> int:
     require("ApprovalsParityPage" in ledger_pages_text and "decideApproval" in ledger_pages_text, "approval parity page must expose decision action")
     require('action="/workspace/approvals/review"' in ledger_pages_text, "approval parity page must keep the Next form fallback")
     require("MemoryParityPage" in governance_pages_text and "decideMemory" in governance_pages_text, "memory parity page must expose review action")
-    require('action="/workspace/memory/review"' in governance_pages_text, "memory parity page must keep the Next form fallback")
+    require('action="/workspace/memory/review"' not in governance_pages_text, "commercial memory review must not retain the unsafe Python form fallback")
+    require('type="button"' in governance_pages_text, "commercial memory review decisions must use explicit client buttons")
+    require("controlPlaneMode() === \"postgres\"" in memory_review_route_text, "legacy memory review route must detect direct Postgres mode")
+    require("human_session_direct_route_required" in memory_review_route_text, "legacy memory review route must fail closed in direct Postgres mode")
+    require("request.formData()" in memory_review_route_text and "TARGET_BASE" in memory_review_route_text, "legacy memory review route must retain proxy-mode compatibility")
+    require(human_memory_release_blockers.get("contract_id") == "human_memory_review_release_blockers_v1", "Human Memory Review release blocker contract is missing")
+    require(human_memory_release_blockers.get("release_claim_allowed") is False and human_memory_release_blockers.get("closed_loop_claim_allowed") is False, "Human Memory Review must not claim release closure with open blockers")
+    require('"engineering_surface_status"' in commercial_readiness_text and '"release_status"' in commercial_readiness_text, "commercial readiness must separate engineering checks from release eligibility")
+    require('"release_claim_allowed": release_ready' in commercial_readiness_text and '"overall_status": "ready" if release_ready else "blocked"' in commercial_readiness_text, "commercial readiness must remain fail closed while release blockers are open")
+    require('return 0 if command_ok else 1' in commercial_readiness_text, "commercial readiness exit status must validate the truth contract rather than imply release eligibility")
+    blocker_ids = {item.get("id") for item in human_memory_release_blockers.get("open_blockers", [])}
+    require({"production_api_route_ownership_incomplete", "real_worker_candidate_human_review_bridge_missing", "trusted_proxy_ip_edge_rate_limit_required", "human_session_retention_job_missing", "human_memory_review_request_retention_policy_missing", "owner_bootstrap_compiled_entry_missing"}.issubset(blocker_ids), "Human Memory Review release blockers are incomplete")
     require("AuditParityPage" in governance_pages_text and "loadAudit" in governance_pages_text, "audit parity page must expose evidence readback")
     require("loadWorkspaceSnapshot" in dashboard_text, "workspace page must consume the shared Next.js MIS data contract")
 
@@ -615,7 +697,8 @@ def main() -> int:
             "react": dependencies.get("react"),
             "typescript": package.get("devDependencies", {}).get("typescript"),
         },
-        "api_provider": "AGENTOPS_API_BASE or http://127.0.0.1:8765/api",
+        "free_local_api_provider": "AGENTOPS_API_BASE or http://127.0.0.1:8765/api",
+        "commercial_production_catch_all": "blocked_requires_typescript_route_owner",
     }, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 

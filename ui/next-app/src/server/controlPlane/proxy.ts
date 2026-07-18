@@ -4,6 +4,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 import { proxyBaseUrl } from "./config";
+import { removeHumanSessionCookie, removeHumanSessionSetCookie } from "./proxyHeaders";
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -16,19 +17,28 @@ const HOP_BY_HOP_HEADERS = new Set([
   "upgrade",
 ]);
 
-export async function proxyControlPlaneRequest(request: NextRequest, upstreamPath: string) {
+export async function proxyControlPlaneRequest(
+  request: NextRequest,
+  upstreamPath: string,
+  boundedBody?: Buffer,
+) {
   const body = ["GET", "HEAD"].includes(request.method)
     ? undefined
-    : Buffer.from(await request.arrayBuffer());
+    : boundedBody ?? Buffer.from(await request.arrayBuffer());
   const path = upstreamPath.startsWith("/") ? upstreamPath : `/${upstreamPath}`;
   const url = new URL(`${proxyBaseUrl()}${path}${request.nextUrl.search}`);
-  const headers: Record<string, string> = {};
+  const forwarded = new Headers();
   for (const [key, value] of request.headers.entries()) {
     const normalized = key.toLowerCase();
     if (!HOP_BY_HOP_HEADERS.has(normalized) && normalized !== "host" && normalized !== "content-length") {
-      headers[key] = value;
+      forwarded.set(key, value);
     }
   }
+  removeHumanSessionCookie(forwarded);
+  const headers: Record<string, string> = {};
+  forwarded.forEach((value, key) => {
+    headers[key] = value;
+  });
   if (body) headers["content-length"] = String(body.byteLength);
 
   const upstream = await new Promise<{
@@ -67,6 +77,7 @@ export async function proxyControlPlaneRequest(request: NextRequest, upstreamPat
   const responseHeaders = new Headers(upstream.headers);
   for (const key of HOP_BY_HOP_HEADERS) responseHeaders.delete(key);
   responseHeaders.delete("content-length");
+  removeHumanSessionSetCookie(responseHeaders);
   return new NextResponse(upstream.body.byteLength > 0 ? upstream.body : null, {
     status: upstream.status,
     statusText: upstream.statusText,

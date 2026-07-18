@@ -137,6 +137,8 @@ schema to include:
 
 - core ledger: `users`, `agents`, `tasks`, `runs`, `tool_calls`, `approvals`,
   `evaluations`, `artifacts`, `audit_logs`, `memories`;
+- Human governance: `workspace_memberships`, `human_login_credentials`,
+  `human_sessions`, `human_login_throttle`, `human_memory_review_requests`;
 - prepared actions: `prepared_actions`;
 - runtime and workflow state: `runtime_connectors`, `runtime_events`,
   `workflow_jobs`;
@@ -162,6 +164,10 @@ python3 scripts/storage_postgres_cli_read_parity_smoke.py
 python3 scripts/storage_postgres_write_helper_parity_smoke.py
 python3 scripts/storage_postgres_http_write_task_smoke.py
 python3 scripts/storage_postgres_cli_write_parity_smoke.py
+python3 scripts/nextjs_postgres_human_memory_review_smoke.py
+AGENTOPS_POSTGRES_DSN=postgresql://... npm --prefix ui/next-app run test:worker-task-pull-claim-contract
+AGENTOPS_POSTGRES_DSN=postgresql://... npm --prefix ui/next-app run test:worker-gateway-direct-contract
+python3 scripts/nextjs_postgres_real_worker_human_review_smoke.py --postgres-dsn postgresql://...
 python3 scripts/agentops_postgres_backup_smoke.py
 python3 scripts/storage_boundary_sqlite_smoke.py
 ```
@@ -235,6 +241,7 @@ python3 scripts/storage_postgres_cli_read_parity_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_write_helper_parity_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_http_write_task_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_cli_write_parity_smoke.py --skip-if-unavailable
+python3 scripts/nextjs_postgres_human_memory_review_smoke.py --skip-if-unavailable
 python3 scripts/agentops_postgres_backup_smoke.py --skip-if-unavailable
 ```
 

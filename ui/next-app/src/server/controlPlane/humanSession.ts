@@ -337,8 +337,46 @@ export function humanScryptWorkCountForTests() {
   return scryptWorkCount;
 }
 
+export function humanThrottleTimestampActive(value: string | null | undefined, nowMs = Date.now()) {
+  if (!value) return false;
+  const blockedUntil = Date.parse(value);
+  return !Number.isFinite(blockedUntil) || blockedUntil > nowMs;
+}
+
+export function humanSessionTimestampExpired(value: string, nowMs = Date.now()) {
+  const expiresAt = Date.parse(value);
+  return !Number.isFinite(expiresAt) || expiresAt <= nowMs;
+}
+
 function throttleActive(row: ThrottleRow | undefined, now: Date) {
-  return Boolean(row?.blocked_until && Date.parse(row.blocked_until) > now.getTime());
+  return humanThrottleTimestampActive(row?.blocked_until, now.getTime());
+}
+
+export function nextHumanLoginFailureState(
+  row: { failure_count: number; window_started_at: string } | undefined,
+  nowMs = Date.now(),
+) {
+  if (!row) {
+    return { count: 1, startedAt: new Date(nowMs).toISOString(), failedClosed: false };
+  }
+  const windowStarted = Date.parse(row.window_started_at);
+  const invalidState = !Number.isFinite(windowStarted)
+    || windowStarted > nowMs
+    || !Number.isInteger(row.failure_count)
+    || row.failure_count < 0;
+  if (invalidState) {
+    return {
+      count: LOGIN_MAX_FAILURES,
+      startedAt: new Date(nowMs).toISOString(),
+      failedClosed: true,
+    };
+  }
+  const withinWindow = nowMs - windowStarted < LOGIN_WINDOW_MS;
+  return {
+    count: withinWindow ? row.failure_count + 1 : 1,
+    startedAt: withinWindow ? row.window_started_at : new Date(nowMs).toISOString(),
+    failedClosed: false,
+  };
 }
 
 function loginAdmissionLimit() {
@@ -381,10 +419,9 @@ async function cleanupStaleLoginThrottle(client: PoolClient, now: Date) {
 }
 
 async function recordLoginFailure(client: PoolClient, bucketKey: string, row: ThrottleRow | undefined, now: Date) {
-  const windowStarted = row ? Date.parse(row.window_started_at) : Number.NaN;
-  const withinWindow = Number.isFinite(windowStarted) && now.getTime() - windowStarted < LOGIN_WINDOW_MS;
-  const count = withinWindow ? Number(row?.failure_count || 0) + 1 : 1;
-  const startedAt = withinWindow ? row!.window_started_at : now.toISOString();
+  const failure = nextHumanLoginFailureState(row, now.getTime());
+  const count = failure.count;
+  const startedAt = failure.startedAt;
   const blockedUntil = count >= LOGIN_MAX_FAILURES
     ? new Date(now.getTime() + LOGIN_BLOCK_MS).toISOString()
     : null;
@@ -512,7 +549,7 @@ async function lockSession(client: PoolClient, headers: Headers) {
   if (!row || row.status !== "active") {
     throw new ControlPlaneHttpError(401, "human_session_invalid", "The Human Session is invalid or revoked.");
   }
-  if (Date.parse(row.expires_at) <= Date.now()) {
+  if (humanSessionTimestampExpired(row.expires_at)) {
     const now = new Date().toISOString();
     await client.query(
       "UPDATE human_sessions SET status='expired',revoked_at=$1 WHERE session_id=$2 AND status='active'",

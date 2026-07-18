@@ -2,6 +2,9 @@ import http from "node:http";
 import https from "node:https";
 import { NextRequest, NextResponse } from "next/server";
 
+import { legacyPythonProxyAllowed } from "@/server/controlPlane/config";
+import { removeHumanSessionCookie, removeHumanSessionSetCookie } from "@/server/controlPlane/proxyHeaders";
+
 const TARGET_BASE = process.env.AGENTOPS_API_BASE || "http://127.0.0.1:8765/api";
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -377,7 +380,7 @@ function forwardedHeaders(request: NextRequest) {
       headers.set(key, value);
     }
   }
-  return headers;
+  return removeHumanSessionCookie(headers);
 }
 
 function proxyRequest(target: string, method: string, headers: Headers, body: Buffer | undefined): Promise<ProxyResponse> {
@@ -426,6 +429,15 @@ function proxyRequest(target: string, method: string, headers: Headers, body: Bu
 
 async function proxy(request: NextRequest, context: RouteContext) {
   const { path = [] } = await context.params;
+  if (!legacyPythonProxyAllowed()) {
+    return NextResponse.json({
+      ok: false,
+      error: "typescript_route_owner_required",
+      message: "This commercial production route has not migrated to the TypeScript/Postgres control plane.",
+      python_proxy_performed: false,
+      token_omitted: true,
+    }, { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
   const body = ["GET", "HEAD"].includes(request.method)
     ? undefined
     : Buffer.from(new Uint8Array(await request.arrayBuffer()));
@@ -519,6 +531,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
     headers.delete(key);
   }
   headers.delete("content-length");
+  removeHumanSessionSetCookie(headers);
   if (isEnrollmentPath(path)) {
     headers.set("cache-control", "no-store");
   }

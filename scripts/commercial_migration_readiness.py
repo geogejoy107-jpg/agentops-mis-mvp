@@ -28,6 +28,7 @@ BLOCKED_SUFFIXES = (
     ".db-wal",
     ".env",
     ".log",
+    ".tsbuildinfo",
 )
 
 
@@ -227,6 +228,7 @@ def main() -> int:
         "docs/UI_ROUTE_NAMING_DECISION.json",
         "docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.md",
         "docs/UI_COVERED_ROUTE_RETIREMENT_PACKET.json",
+        "docs/HUMAN_MEMORY_REVIEW_RELEASE_BLOCKERS.json",
     ]
     required_stack = [
         "server.py",
@@ -236,6 +238,16 @@ def main() -> int:
         "ui/start-building-app/package.json",
         "ui/next-app/package.json",
     ]
+    human_memory_blockers = read_json("docs/HUMAN_MEMORY_REVIEW_RELEASE_BLOCKERS.json")
+    human_memory_open_blockers = [
+        item
+        for item in human_memory_blockers.get("open_blockers") or []
+        if isinstance(item, dict) and item.get("status") == "open"
+    ]
+    human_memory_blocker_ids = {
+        str(item.get("id"))
+        for item in human_memory_open_blockers
+    }
 
     checks = [
         check(
@@ -248,6 +260,20 @@ def main() -> int:
             "required_migration_docs_present",
             all((ROOT / path).exists() for path in required_docs),
             "required_docs=" + ",".join(required_docs),
+        ),
+        check(
+            "human_memory_review_release_blockers_recorded",
+            human_memory_blockers.get("contract_id") == "human_memory_review_release_blockers_v1"
+            and human_memory_blockers.get("release_claim_allowed") is False
+            and human_memory_blockers.get("closed_loop_claim_allowed") is False
+            and {
+                "real_worker_candidate_human_review_bridge_missing",
+                "trusted_proxy_ip_edge_rate_limit_required",
+                "human_session_retention_job_missing",
+                "human_memory_review_request_retention_policy_missing",
+                "owner_bootstrap_compiled_entry_missing",
+            }.issubset(human_memory_blocker_ids),
+            "open Human Memory Review ingress, retention, and bootstrap packaging gaps remain machine-readable and block release claims",
         ),
         check(
             "current_product_stack_present",
@@ -1454,9 +1480,27 @@ def main() -> int:
         check(
             "nextjs_postgres_control_plane_tasks_surface_exists",
             file_contains("ui/next-app/package.json", '"pg"')
+            and file_contains("ui/next-app/src/server/controlPlane/config.ts", "AGENTOPS_CONTROL_PLANE_MODE")
             and file_contains("ui/next-app/src/server/controlPlane/config.ts", "AGENTOPS_TS_CONTROL_PLANE_MODE")
-            and file_contains("ui/next-app/src/server/controlPlane/config.ts", 'AGENTOPS_DEPLOYMENT_MODE) === "production" ? "postgres"')
+            and file_contains("ui/next-app/src/server/controlPlane/config.ts", "isProductionDeployment() ? \"postgres\" : \"proxy\"")
+            and file_contains("ui/next-app/src/server/controlPlane/config.ts", "normalized(process.env.AGENTOPS_DEPLOYMENT_MODE)")
+            and file_contains("ui/next-app/src/server/controlPlane/config.ts", 'normalized(process.env.NODE_ENV) === "production"')
+            and file_contains("ui/next-app/src/server/controlPlane/config.ts", 'if (configured === "proxy") return isProductionDeployment() ? "postgres" : "proxy"')
+            and file_contains("ui/next-app/src/server/controlPlane/config.ts", "FREE_LOCAL_DEPLOYMENT_MODES")
+            and file_contains("ui/next-app/src/server/controlPlane/config.ts", "legacyPythonProxyAllowed")
+            and file_contains("ui/next-app/src/server/controlPlane/config.ts", "AGENTOPS_DEPLOYMENT_MODE must be production")
+            and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "typescript_route_owner_required")
+            and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "python_proxy_performed: false")
+            and file_contains("scripts/nextjs_production_python_proxy_fail_closed_smoke.py", "nextjs_production_python_proxy_fail_closed_v1")
+            and file_contains("scripts/nextjs_production_python_proxy_fail_closed_smoke.py", "upstream_request_count")
+            and file_contains("ui/next-app/package.json", '"test:control-plane-mode-contract"')
+            and file_contains("ui/next-app/scripts/control-plane-mode-contract.ts", "control_plane_production_fail_closed_v1")
+            and file_contains("ui/next-app/scripts/control-plane-mode-contract.ts", "production_python_catch_all_blocked")
+            and file_contains("ui/next-app/scripts/control-plane-mode-contract.ts", "unknown_deployment_mode_rejected")
             and file_contains("ui/next-app/src/server/controlPlane/auth.ts", "authenticateAgentGateway")
+            and file_contains("ui/next-app/src/server/controlPlane/auth.ts", "allowMissing")
+            and file_contains("ui/next-app/scripts/human-session-timestamp-contract.ts", "missing_gateway_session_expiry_expires")
+            and file_contains("ui/next-app/scripts/human-session-timestamp-contract.ts", "malformed_login_window_blocks")
             and file_contains("ui/next-app/src/server/controlPlane/auth.ts", "FROM agent_gateway_tokens WHERE token_id=$1 FOR UPDATE")
             and file_contains("ui/next-app/src/server/controlPlane/auth.ts", "WHERE session_id=$1 AND session_hash=$2 FOR UPDATE")
             and file_contains("ui/next-app/src/server/controlPlane/db.ts", "error.commitTransaction")
@@ -1860,14 +1904,31 @@ def main() -> int:
         },
     ]
 
-    overall_ready = all(item["ok"] for item in checks)
+    engineering_surface_ready = all(item["ok"] for item in checks)
+    declared_slice_release_allowed = human_memory_blockers.get("release_claim_allowed") is True
+    declared_slice_closed_loop_allowed = human_memory_blockers.get("closed_loop_claim_allowed") is True
+    release_blocked_by_contract = (
+        bool(human_memory_open_blockers)
+        or not declared_slice_release_allowed
+        or not declared_slice_closed_loop_allowed
+    )
+    expected_blocker_status = "blocked" if release_blocked_by_contract else "ready"
+    blocker_contract_truthful = human_memory_blockers.get("status") == expected_blocker_status
+    command_ok = engineering_surface_ready and blocker_contract_truthful
+    release_ready = command_ok and not release_blocked_by_contract
     payload = {
-        "overall_status": "ready" if overall_ready else "blocked",
+        "overall_status": "ready" if release_ready else "blocked",
+        "engineering_surface_status": "ready" if engineering_surface_ready else "blocked",
+        "release_status": "ready" if release_ready else "blocked",
+        "release_claim_allowed": release_ready,
+        "closed_loop_claim_allowed": release_ready,
+        "readiness_contract_valid": command_ok,
+        "open_release_blocker_ids": sorted(human_memory_blocker_ids),
         "branch": branch,
         "worktree": str(ROOT),
         "strategy": {
             "rewrite_policy": "no_big_bang",
-            "backend": "typescript_postgres_strangler_active_python_rollback_until_full_api_parity",
+            "backend": "typescript_postgres_production_python_free_local_rollback_until_full_api_parity",
             "database": "postgres_default_for_commercial_control_plane_sqlite_free_local_only",
             "frontend": "nextjs_canonical_migration_track_with_vite_rollback_until_route_retirement",
             "agent_contract": "agent_gateway_cli_api_mcp_remains_durable",
@@ -1877,7 +1938,9 @@ def main() -> int:
         "pending_paths": paths,
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0 if overall_ready else 1
+    # Exit success means the checker and blocker contract are internally valid;
+    # release eligibility is expressed only by the fail-closed payload fields.
+    return 0 if command_ok else 1
 
 
 if __name__ == "__main__":

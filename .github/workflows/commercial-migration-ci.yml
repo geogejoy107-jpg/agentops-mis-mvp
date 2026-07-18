@@ -207,6 +207,13 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/nextjs_parity_smoke.py
+          python3 scripts/nextjs_production_python_proxy_fail_closed_smoke.py
+          python3 scripts/worker_provider_call_evidence_smoke.py
+          (cd ui/next-app && npm run test:control-plane-mode-contract)
+          (cd ui/next-app && npm run test:human-scrypt-contract)
+          (cd ui/next-app && npm run test:human-session-timestamp-contract)
+          (cd ui/next-app && npm run test:memory-review-idempotency-contract)
+          (cd ui/next-app && npm run typecheck)
           python3 scripts/ui_api_parity_matrix_smoke.py
           python3 scripts/ui_route_naming_decision_smoke.py
           python3 scripts/ui_legacy_route_alias_smoke.py
@@ -223,6 +230,20 @@ jobs:
     name: Independent Postgres and BYOC evidence
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16.14-alpine3.23@sha256:c95dee655b8a0743021bdbd2d21abb7ef2fd520c5df39bd328798769c049648f
+        env:
+          POSTGRES_USER: agentops
+          POSTGRES_PASSWORD: agentops
+          POSTGRES_DB: agentops
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agentops -d agentops"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -266,7 +287,10 @@ jobs:
           python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id nextjs_postgres_write --expected-contract nextjs_deployment_postgres_runtime_write_fixture_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate5/nextjs_postgres_write.json -- python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture || status=1
           python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id byoc_acceptance --expected-contract byoc_deployment_acceptance_v1 --expected-contract postgres_backup_restore_v1 --expected-contract postgres_backup_manifest_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate5/byoc_acceptance.json -- python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture || status=1
           python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id nextjs_postgres_control_plane_tasks --expected-contract nextjs_postgres_control_plane_tasks_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate5/nextjs_postgres_control_plane_tasks.json -- python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id nextjs_postgres_worker_task_pull_claim --expected-contract nextjs_postgres_worker_task_pull_claim_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate5/nextjs_postgres_worker_task_pull_claim.json -- env AGENTOPS_POSTGRES_DSN="postgresql://agentops:agentops@127.0.0.1:5432/agentops" AGENTOPS_POSTGRES_SSL=0 npm --prefix ui/next-app run test:worker-task-pull-claim-contract || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id nextjs_postgres_worker_gateway_direct --expected-contract agent_gateway_worker_direct_next_postgres_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate5/nextjs_postgres_worker_gateway_direct.json -- env AGENTOPS_POSTGRES_DSN="postgresql://agentops:agentops@127.0.0.1:5432/agentops" AGENTOPS_POSTGRES_SSL=0 npm --prefix ui/next-app run test:worker-gateway-direct-contract || status=1
           python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id nextjs_postgres_memory_propose --expected-contract nextjs_postgres_memory_propose_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate5/nextjs_postgres_memory_propose.json -- python3 scripts/nextjs_postgres_memory_propose_smoke.py || status=1
+          python3 scripts/commercial_ci_receipt.py command --gate-id gate_5_byoc_enterprise_deployment_ci --command-id nextjs_postgres_human_memory_review --expected-contract nextjs_postgres_human_memory_review_v1 --container-image "$AGENTOPS_POSTGRES_IMAGE" --output receipts/gate5/nextjs_postgres_human_memory_review.json -- python3 scripts/nextjs_postgres_human_memory_review_smoke.py --postgres-dsn postgresql://agentops:agentops@127.0.0.1:5432/agentops || status=1
           exit "$status"
 
       - name: Assemble Gate 5 CI-scope receipt
@@ -284,7 +308,10 @@ jobs:
             --required-command-id nextjs_postgres_write \
             --required-command-id byoc_acceptance \
             --required-command-id nextjs_postgres_control_plane_tasks \
+            --required-command-id nextjs_postgres_worker_task_pull_claim \
+            --required-command-id nextjs_postgres_worker_gateway_direct \
             --required-command-id nextjs_postgres_memory_propose \
+            --required-command-id nextjs_postgres_human_memory_review \
             --output receipts/gate5-scope.json
 
       - name: Upload Gate 5 CI-scope receipt

@@ -1,15 +1,28 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Bot, Brain, CheckCircle2, Filter, History, Monitor, RefreshCw, User, XCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Bot, Brain, CheckCircle2, Filter, History, LogIn, LogOut, Monitor, RefreshCw, User, XCircle } from "lucide-react";
 import { AppFrame } from "./AppFrame";
 import {
   decideMemory,
+  isHumanSessionUnauthorized,
+  loadHumanSession,
   loadAudit,
   loadMemories,
+  loginHumanSession,
+  logoutHumanSession,
+  MisApiError,
   type AuditSummary,
+  type HumanSessionPayload,
   type MemorySummary,
 } from "@/lib/mis";
+import {
+  acquireMemoryReviewIdempotencyKey,
+  getMemoryReviewSessionStorage,
+  memoryReviewIdempotencyStorageKey,
+  reconcileMemoryReviewIdempotencyKeys,
+  type MemoryReviewIdempotencyScope,
+} from "@/lib/memoryReviewIdempotency";
 
 type LoadState<T> = {
   data: T;
@@ -58,24 +71,114 @@ export function MemoryParityPage({
   const [scopeFilter, setScopeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<"loading" | "required" | "authenticated" | "proxy">("loading");
+  const [humanSession, setHumanSession] = useState<HumanSessionPayload | null>(null);
+  const [workspaceId, setWorkspaceId] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const fallbackDecisionIdempotencyKeys = useRef(new Map<string, string>());
   const [state, setState] = useState<LoadState<MemorySummary[]>>({
     data: initialMemories,
     error: initialError,
     loading: !initialLoaded,
   });
 
-  const refresh = async () => {
+  const refresh = async (
+    selectedWorkspace = workspaceId,
+    mode = authMode,
+    selectedUserId = humanSession?.user?.user_id || "",
+  ): Promise<MemorySummary[] | null> => {
     setState((current) => ({ ...current, error: null, loading: true }));
     try {
-      setState({ data: await loadMemories(), error: null, loading: false });
+      const directWorkspace = mode === "authenticated" ? selectedWorkspace : undefined;
+      const memories = await loadMemories(directWorkspace);
+      if (mode === "authenticated" && selectedUserId && selectedWorkspace) {
+        const storage = getMemoryReviewSessionStorage();
+        if (storage) {
+          reconcileMemoryReviewIdempotencyKeys(storage, selectedUserId, selectedWorkspace, memories);
+        }
+      }
+      setState({ data: memories, error: null, loading: false });
+      return memories;
     } catch (err) {
+      if (isHumanSessionUnauthorized(err)) {
+        setHumanSession(null);
+        setAuthMode("required");
+      }
       setState({ data: [], error: err instanceof Error ? err.message : String(err), loading: false });
+      return null;
     }
   };
 
   useEffect(() => {
-    if (!initialLoaded) void refresh();
+    let active = true;
+    const initialize = async () => {
+      try {
+        const session = await loadHumanSession();
+        if (!active) return;
+        const selectedWorkspace = session.memberships?.[0]?.workspace_id || "";
+        setHumanSession(session);
+        setWorkspaceId(selectedWorkspace);
+        setAuthMode("authenticated");
+        await refresh(selectedWorkspace, "authenticated", session.user?.user_id || "");
+      } catch (err) {
+        if (!active) return;
+        if (isHumanSessionUnauthorized(err)) {
+          setHumanSession(null);
+          setAuthMode("required");
+          setState({ data: [], error: null, loading: false });
+          return;
+        }
+        if (err instanceof MisApiError && err.code === "human_session_postgres_required") {
+          setAuthMode("proxy");
+          if (!initialLoaded) await refresh("", "proxy");
+          return;
+        }
+        setState({ data: [], error: err instanceof Error ? err.message : String(err), loading: false });
+      }
+    };
+    void initialize();
+    return () => {
+      active = false;
+    };
   }, [initialLoaded]);
+
+  const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setState((current) => ({ ...current, error: null, loading: true }));
+    try {
+      const session = await loginHumanSession(username, password);
+      const selectedWorkspace = session.memberships?.[0]?.workspace_id || "";
+      setPassword("");
+      setHumanSession(session);
+      setWorkspaceId(selectedWorkspace);
+      setAuthMode("authenticated");
+      await refresh(selectedWorkspace, "authenticated", session.user?.user_id || "");
+    } catch (err) {
+      setPassword("");
+      setState({ data: [], error: err instanceof Error ? err.message : String(err), loading: false });
+    }
+  };
+
+  const submitLogout = async () => {
+    const csrfToken = humanSession?.csrf_token || "";
+    try {
+      await logoutHumanSession(csrfToken);
+      setHumanSession(null);
+      setWorkspaceId("");
+      setAuthMode("required");
+      setState({ data: [], error: null, loading: false });
+    } catch (err) {
+      if (isHumanSessionUnauthorized(err)) {
+        setHumanSession(null);
+        setWorkspaceId("");
+        setAuthMode("required");
+        setState({ data: [], error: null, loading: false });
+        return;
+      }
+      setState((current) => ({ ...current, error: err instanceof Error ? err.message : String(err) }));
+    }
+  };
 
   const counts = useMemo(() => {
     const scopes = new Map<string, number>();
@@ -92,12 +195,43 @@ export function MemoryParityPage({
     if (statusFilter !== "all" && memory.review_status !== statusFilter) return false;
     return true;
   });
+  const selectedMembership = humanSession?.memberships?.find((membership) => membership.workspace_id === workspaceId);
+  const canReview = authMode === "proxy" || ["approver", "owner"].includes(selectedMembership?.role || "");
+  const statusFilters = authMode === "authenticated"
+    ? ["all", "candidate"]
+    : ["all", "candidate", "approved", "rejected", "stale"];
 
   const submitDecision = async (memoryId: string, decision: "approve" | "reject") => {
     setBusyId(memoryId);
     try {
-      await decideMemory(memoryId, decision);
-      await refresh();
+      const userId = humanSession?.user?.user_id || "";
+      let human: { workspaceId: string; csrfToken: string; idempotencyKey: string } | undefined;
+      if (authMode === "authenticated") {
+        if (!userId || !workspaceId) throw new Error("Human Session workspace context is unavailable");
+        const scope: MemoryReviewIdempotencyScope = { userId, workspaceId, memoryId, decision };
+        const storageKey = memoryReviewIdempotencyStorageKey(scope);
+        const storage = getMemoryReviewSessionStorage();
+        let idempotencyKey = fallbackDecisionIdempotencyKeys.current.get(storageKey);
+        if (storage) {
+          const acquired = acquireMemoryReviewIdempotencyKey(storage, scope);
+          idempotencyKey = acquired.persisted
+            ? acquired.key
+            : idempotencyKey || acquired.key;
+        }
+        if (!idempotencyKey) {
+          idempotencyKey = `memory-review-${crypto.randomUUID()}`;
+        }
+        fallbackDecisionIdempotencyKeys.current.set(storageKey, idempotencyKey);
+        human = { workspaceId, csrfToken: humanSession?.csrf_token || "", idempotencyKey };
+      }
+      await decideMemory(memoryId, decision, human);
+      await refresh(workspaceId, authMode, userId);
+    } catch (err) {
+      if (isHumanSessionUnauthorized(err)) {
+        setHumanSession(null);
+        setAuthMode("required");
+      }
+      setState((current) => ({ ...current, error: err instanceof Error ? err.message : String(err) }));
     } finally {
       setBusyId(null);
     }
@@ -106,11 +240,52 @@ export function MemoryParityPage({
   return (
     <AppFrame>
       <PageHeader
-        title="Memory"
+        title={authMode === "authenticated" ? "Memory Review Queue" : "Memory"}
         summary={`${state.data.length} memories · ${counts.statuses.get("candidate") || 0} candidates pending review`}
         loading={state.loading || Boolean(busyId)}
-        onRefresh={refresh}
+        onRefresh={() => void refresh()}
       />
+      {authMode === "required" ? (
+        <form className="humanSessionBar" onSubmit={submitLogin}>
+          <label className="field">
+            <span>Username</span>
+            <input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required />
+          </label>
+          <label className="field">
+            <span>Password</span>
+            <input autoComplete="current-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+          </label>
+          <button className="miniButton good" disabled={state.loading} type="submit"><LogIn size={13} />Sign in</button>
+        </form>
+      ) : null}
+      {authMode === "authenticated" && humanSession ? (
+        <div className="humanSessionBar">
+          <div className="sessionIdentity">
+            <User size={15} />
+            <span>{humanSession.user?.name || humanSession.user?.user_id}</span>
+          </div>
+          <label className="field workspaceSelect">
+            <span>Workspace</span>
+            <select
+              value={workspaceId}
+              onChange={(event) => {
+                const selected = event.target.value;
+                setWorkspaceId(selected);
+                void refresh(selected, "authenticated");
+              }}
+            >
+              {(humanSession.memberships || []).map((membership) => (
+                <option key={membership.workspace_id} value={membership.workspace_id}>
+                  {membership.workspace_id} ({membership.role})
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="iconButton" onClick={() => void submitLogout()} type="button" aria-label="Sign out" title="Sign out">
+            <LogOut size={16} />
+          </button>
+        </div>
+      ) : null}
       {state.error ? <div className="banner error">MIS API unavailable through /api/mis/memories: {state.error}</div> : null}
 
       <div className="filterBar">
@@ -120,7 +295,7 @@ export function MemoryParityPage({
             <span>{scope === "all" ? state.data.length : counts.scopes.get(scope) || 0}</span>
           </button>
         ))}
-        {["all", "candidate", "approved", "rejected", "stale"].map((status) => (
+        {statusFilters.map((status) => (
           <button className={`filterChip ${statusFilter === status ? "active" : ""}`} key={status} onClick={() => setStatusFilter(status)}>
             {status}
             <span>{status === "all" ? state.data.length : counts.statuses.get(status) || 0}</span>
@@ -140,38 +315,24 @@ export function MemoryParityPage({
             </div>
             <div className="rowActions">
               <span className={statusClass(memory.review_status)}>{memory.review_status}</span>
-              {memory.review_status === "candidate" ? (
+              {memory.review_status === "candidate" && canReview ? (
                 <>
-                  <form className="inlineForm" method="post" action="/workspace/memory/review">
-                    <input type="hidden" name="memory_id" value={memory.memory_id} />
-                    <input type="hidden" name="decision" value="approve" />
-                    <button
-                      className="miniButton good"
-                      disabled={busyId === memory.memory_id}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        void submitDecision(memory.memory_id, "approve");
-                      }}
-                      type="submit"
-                    >
-                      <CheckCircle2 size={13} />Approve
-                    </button>
-                  </form>
-                  <form className="inlineForm" method="post" action="/workspace/memory/review">
-                    <input type="hidden" name="memory_id" value={memory.memory_id} />
-                    <input type="hidden" name="decision" value="reject" />
-                    <button
-                      className="miniButton bad"
-                      disabled={busyId === memory.memory_id}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        void submitDecision(memory.memory_id, "reject");
-                      }}
-                      type="submit"
-                    >
-                      <XCircle size={13} />Reject
-                    </button>
-                  </form>
+                  <button
+                    className="miniButton good"
+                    disabled={busyId === memory.memory_id}
+                    onClick={() => void submitDecision(memory.memory_id, "approve")}
+                    type="button"
+                  >
+                    <CheckCircle2 size={13} />Approve
+                  </button>
+                  <button
+                    className="miniButton bad"
+                    disabled={busyId === memory.memory_id}
+                    onClick={() => void submitDecision(memory.memory_id, "reject")}
+                    type="button"
+                  >
+                    <XCircle size={13} />Reject
+                  </button>
                 </>
               ) : null}
             </div>

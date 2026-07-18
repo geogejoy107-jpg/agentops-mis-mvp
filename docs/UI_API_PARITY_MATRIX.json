@@ -28,6 +28,9 @@
       "nextjs_worker_gateway_lifecycle_guard_v1",
       "nextjs_worker_daemon_control_v1",
       "nextjs_worker_console_parity_v1",
+      "nextjs_postgres_worker_task_pull_claim_v1",
+      "agent_gateway_worker_direct_next_postgres_v1",
+      "nextjs_postgres_real_worker_human_review_v1",
       "operator_execution_mode_v1",
       "nextjs_template_switching_parity_v1",
       "nextjs_control_tower_parity_v1",
@@ -261,6 +264,11 @@
         "GET /agent-gateway/enrollments",
         "GET /agent-gateway/sessions",
         "GET /agent-gateway/status",
+        "GET /agent-gateway/tasks/pull",
+        "POST /agent-gateway/tasks/:task_id/claim",
+        "POST /agent-gateway/register",
+        "POST /agent-gateway/heartbeat",
+        "POST /agent-gateway/audit",
         "POST /agent-gateway/enrollment/policy-preview",
         "POST /agent-gateway/enrollment/request",
         "POST /agent-gateway/session/create",
@@ -284,6 +292,13 @@
         "ui/next-app/app/workspace/agents/daemon-control/route.ts",
         "ui/next-app/app/workspace/workers/page.tsx",
         "ui/next-app/app/api/mis/[...path]/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/tasks/pull/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/tasks/[taskId]/claim/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/register/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/heartbeat/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/audit/route.ts",
+        "ui/next-app/src/server/controlPlane/agentGatewayTasks.ts",
+        "ui/next-app/src/server/controlPlane/agentGatewayHeartbeatAudit.ts",
         "ui/next-app/src/components/AgentsParityPage.tsx",
         "ui/next-app/src/components/WorkerConsolePage.tsx",
         "ui/next-app/src/lib/mis.ts"
@@ -296,6 +311,9 @@
         "python3 scripts/nextjs_worker_gateway_lifecycle_guard_smoke.py",
         "python3 scripts/nextjs_worker_daemon_control_smoke.py",
         "python3 scripts/nextjs_worker_console_parity_smoke.py",
+        "cd ui/next-app && npm run test:worker-task-pull-claim-contract",
+        "cd ui/next-app && npm run test:worker-gateway-direct-contract",
+        "python3 scripts/nextjs_postgres_real_worker_human_review_smoke.py --postgres-dsn <isolated-postgres-dsn>",
         "python3 scripts/ui_covered_route_retirement_packet_smoke.py",
         "python3 scripts/operator_execution_mode_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
@@ -391,7 +409,12 @@
       ],
       "next_routes": [
         "/workspace/memory",
-        "/workspace/memory/review"
+        "/workspace/memory/review",
+        "/api/mis/human-auth/login",
+        "/api/mis/human-auth/session",
+        "/api/mis/human-auth/logout",
+        "/api/mis/memories",
+        "/api/mis/memories/:memoryId/:decision"
       ],
       "api_contracts": [
         "GET /memories",
@@ -407,12 +430,17 @@
         "ui/next-app/app/workspace/memory/review/route.ts",
         "ui/next-app/src/components/GovernancePages.tsx",
         "ui/next-app/src/lib/mis.ts",
-        "ui/next-app/src/lib/misServer.ts"
+        "ui/next-app/src/lib/misServer.ts",
+        "ui/next-app/src/server/controlPlane/humanSession.ts",
+        "ui/next-app/src/server/controlPlane/memoryCandidates.ts",
+        "ui/next-app/src/server/controlPlane/memoryReviews.ts",
+        "ui/next-app/scripts/bootstrap-owner.ts"
       ],
       "evidence_commands": [
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
-        "python3 scripts/nextjs_parity_smoke.py"
+        "python3 scripts/nextjs_parity_smoke.py",
+        "python3 scripts/nextjs_postgres_human_memory_review_smoke.py"
       ],
       "retirement_allowed": false,
       "retirement_gate": "Need route-level Vite/Next decision side-effect diff before retirement."
@@ -984,6 +1012,11 @@
       "gate4_required": true,
       "vite_routes": [],
       "next_routes": [
+        "/api/mis/agent-gateway/register",
+        "/api/mis/agent-gateway/tasks/pull",
+        "/api/mis/agent-gateway/tasks/:taskId/claim",
+        "/api/mis/agent-gateway/heartbeat",
+        "/api/mis/agent-gateway/audit",
         "/api/mis/agent-gateway/tasks",
         "/api/mis/agent-gateway/agent-plans",
         "/api/mis/agent-gateway/runs/start",
@@ -995,6 +1028,11 @@
         "/api/mis/agent-gateway/memories/propose"
       ],
       "api_contracts": [
+        "POST /agent-gateway/register",
+        "GET /agent-gateway/tasks/pull",
+        "POST /agent-gateway/tasks/:taskId/claim",
+        "POST /agent-gateway/heartbeat",
+        "POST /agent-gateway/audit",
         "GET /agent-gateway/tasks",
         "POST /agent-gateway/tasks",
         "POST /agent-gateway/agent-plans",
@@ -1008,6 +1046,11 @@
       ],
       "vite_files": [],
       "next_files": [
+        "ui/next-app/app/api/mis/agent-gateway/register/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/tasks/pull/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/tasks/[taskId]/claim/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/heartbeat/route.ts",
+        "ui/next-app/app/api/mis/agent-gateway/audit/route.ts",
         "ui/next-app/app/api/mis/agent-gateway/tasks/route.ts",
         "ui/next-app/app/api/mis/agent-gateway/agent-plans/route.ts",
         "ui/next-app/app/api/mis/agent-gateway/runs/start/route.ts",
@@ -1017,6 +1060,7 @@
         "ui/next-app/app/api/mis/agent-gateway/artifacts/route.ts",
         "ui/next-app/app/api/mis/agent-gateway/plan-evidence-manifests/route.ts",
         "ui/next-app/src/server/controlPlane/agentGatewayTasks.ts",
+        "ui/next-app/src/server/controlPlane/agentGatewayHeartbeatAudit.ts",
         "ui/next-app/src/server/controlPlane/agentGatewayPlans.ts",
         "ui/next-app/src/server/controlPlane/agentGatewayRuns.ts",
         "ui/next-app/src/server/controlPlane/agentGatewayEvidence.ts",
@@ -1029,6 +1073,9 @@
       ],
       "evidence_commands": [
         "python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py",
+        "cd ui/next-app && npm run test:worker-task-pull-claim-contract",
+        "cd ui/next-app && npm run test:worker-gateway-direct-contract",
+        "python3 scripts/nextjs_postgres_real_worker_human_review_smoke.py --postgres-dsn <isolated-postgres-dsn>",
         "cd ui/next-app && npm run build",
         "python3 scripts/nextjs_postgres_memory_propose_smoke.py"
       ],

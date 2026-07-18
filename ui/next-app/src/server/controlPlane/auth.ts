@@ -47,8 +47,14 @@ function scopes(value: string) {
   }
 }
 
-function expired(value: string | null) {
-  return Boolean(value && Date.parse(value) <= Date.now());
+export function agentGatewayTimestampExpired(
+  value: string | null,
+  nowMs = Date.now(),
+  allowMissing = false,
+) {
+  if (value === null) return !allowMissing;
+  const expiresAt = Date.parse(value);
+  return !Number.isFinite(expiresAt) || expiresAt <= nowMs;
 }
 
 export async function authenticateAgentGateway(
@@ -102,7 +108,7 @@ export async function authenticateAgentGateway(
   if (row.status !== "active") {
     throw new ControlPlaneHttpError(401, "unauthorized", `Agent Gateway ${row.credential_type} is ${row.status}.`);
   }
-  if (expired(row.expires_at)) {
+  if (agentGatewayTimestampExpired(row.expires_at, Date.now(), row.credential_type === "token")) {
     const table = row.credential_type === "token" ? "agent_gateway_tokens" : "agent_gateway_sessions";
     const idColumn = row.credential_type === "token" ? "token_id" : "session_id";
     await client.query(`UPDATE ${table} SET status='expired' WHERE ${idColumn}=$1 AND status='active'`, [row.credential_id]);
@@ -167,7 +173,7 @@ export async function authenticateAgentGateway(
         true,
       );
     }
-    if (expired(sessionParent.expires_at)) {
+    if (agentGatewayTimestampExpired(sessionParent.expires_at, Date.now(), true)) {
       await client.query(
         "UPDATE agent_gateway_tokens SET status='expired' WHERE token_id=$1 AND status='active'",
         [sessionParent.token_id],

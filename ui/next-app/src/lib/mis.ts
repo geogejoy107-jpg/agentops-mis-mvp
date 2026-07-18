@@ -187,6 +187,7 @@ export type ApprovalSummary = {
 
 export type MemorySummary = {
   memory_id: string;
+  workspace_id?: string;
   scope: string;
   memory_type: string;
   canonical_text: string;
@@ -1696,14 +1697,104 @@ export type WorkspaceSnapshot = {
 
 async function misJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/mis${path}`, {
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    credentials: "include",
     cache: "no-store",
     ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
   });
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
+  const raw = await response.text();
+  let payload: unknown = {};
+  let parsed = false;
+  try {
+    payload = raw ? JSON.parse(raw) : {};
+    parsed = Boolean(raw);
+  } catch {
+    payload = {};
   }
-  return response.json() as Promise<T>;
+  if (!response.ok) {
+    const errorPayload = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : {};
+    throw new MisApiError(
+      response.status,
+      String(errorPayload.error || "request_failed"),
+      `${response.status} ${response.statusText}: ${String(errorPayload.message || "Request failed.")}`,
+    );
+  }
+  if (!parsed) {
+    throw new MisApiError(502, "invalid_json_response", "The MIS API returned a non-JSON success response.");
+  }
+  return payload as T;
+}
+
+export type HumanSessionMembership = {
+  workspace_id: string;
+  role: "viewer" | "operator" | "approver" | "owner";
+};
+
+export type HumanSessionPayload = {
+  ok: boolean;
+  authenticated: boolean;
+  user?: { user_id: string; name: string };
+  memberships?: HumanSessionMembership[];
+  csrf_token?: string;
+  session_expires_at?: string;
+  token_omitted?: boolean;
+};
+
+const HUMAN_SESSION_UNAUTHORIZED_ERRORS = new Set([
+  "human_auth_required",
+  "human_session_invalid",
+  "human_session_expired",
+]);
+
+export class MisApiError extends Error {
+  constructor(readonly status: number, readonly code: string, message: string) {
+    super(message);
+  }
+}
+
+export function isHumanSessionUnauthorized(error: unknown) {
+  return error instanceof MisApiError
+    && error.status === 401
+    && HUMAN_SESSION_UNAUTHORIZED_ERRORS.has(error.code);
+}
+
+async function humanJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`/api/mis${path}`, {
+    credentials: "include",
+    cache: "no-store",
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+  });
+  const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok) {
+    throw new MisApiError(
+      response.status,
+      String(payload.error || "request_failed"),
+      String(payload.message || `${response.status} ${response.statusText}`),
+    );
+  }
+  return payload as T;
+}
+
+export function loadHumanSession(): Promise<HumanSessionPayload> {
+  return humanJson<HumanSessionPayload>("/human-auth/session");
+}
+
+export function loginHumanSession(username: string, password: string): Promise<HumanSessionPayload> {
+  return humanJson<HumanSessionPayload>("/human-auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export function logoutHumanSession(csrfToken: string): Promise<HumanSessionPayload> {
+  return humanJson<HumanSessionPayload>("/human-auth/logout", {
+    method: "POST",
+    headers: { "X-AgentOps-CSRF": csrfToken },
+    body: "{}",
+  });
 }
 
 export async function loadWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
@@ -1791,14 +1882,24 @@ export async function decideApproval(id: string, decision: "approve" | "reject")
   });
 }
 
-export async function loadMemories(): Promise<MemorySummary[]> {
-  return misJson<MemorySummary[]>("/memories");
+export async function loadMemories(workspaceId?: string): Promise<MemorySummary[]> {
+  const query = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : "";
+  return misJson<MemorySummary[]>(`/memories${query}`);
 }
 
-export async function decideMemory(id: string, decision: "approve" | "reject"): Promise<MemorySummary> {
+export async function decideMemory(
+  id: string,
+  decision: "approve" | "reject",
+  human?: { workspaceId: string; csrfToken: string; idempotencyKey: string },
+): Promise<MemorySummary> {
   return misJson<MemorySummary>(`/memories/${encodeURIComponent(id)}/${decision}`, {
     method: "POST",
-    body: JSON.stringify({}),
+    headers: human ? {
+      "Idempotency-Key": human.idempotencyKey,
+      "X-AgentOps-CSRF": human.csrfToken,
+      "X-AgentOps-Workspace-Id": human.workspaceId,
+    } : undefined,
+    body: JSON.stringify(human ? { workspace_id: human.workspaceId } : {}),
   });
 }
 

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { controlPlaneMode, isProductionDeployment } from "@/server/controlPlane/config";
+
 const TARGET_BASE = process.env.AGENTOPS_API_BASE || "http://127.0.0.1:8765/api";
 
 function redirectBack(request: Request, params: Record<string, string>) {
@@ -11,6 +13,17 @@ function redirectBack(request: Request, params: Record<string, string>) {
 }
 
 export async function POST(request: Request) {
+  if (isProductionDeployment() || controlPlaneMode() === "postgres") {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "human_session_direct_route_required",
+        message: "Commercial Memory Review requires the Human Session API route.",
+        token_omitted: true,
+      },
+      { status: 409, headers: { "Cache-Control": "no-store" } },
+    );
+  }
   const form = await request.formData();
   const memoryId = String(form.get("memory_id") || "");
   const decision = String(form.get("decision") || "");

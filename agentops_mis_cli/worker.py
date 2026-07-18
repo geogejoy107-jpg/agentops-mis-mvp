@@ -339,6 +339,8 @@ class AdapterResult:
     attempt_count: int = 1
     max_attempts: int = 1
     retry_history: list[dict] | None = None
+    provider_call_performed: bool = False
+    dry_run: bool = False
 
 
 def build_task_prompt(task: dict) -> str:
@@ -391,6 +393,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             error_message="Hermes live execution requires --confirm-run.",
             target_resource=gateway_url.rstrip() + "/v1/chat/completions",
             retryable=False,
+            dry_run=True,
         )
     payload = {
         "model": model,
@@ -420,6 +423,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             output_tokens=int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
             target_resource=gateway_url.rstrip("/") + "/v1/chat/completions",
             retryable=not bool(visible),
+            provider_call_performed=bool(visible),
         )
     except Exception as exc:
         return AdapterResult(
@@ -445,6 +449,7 @@ def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int
             error_message="OpenClaw live execution requires --confirm-run.",
             target_resource=f"local://openclaw/{agent_name}",
             retryable=False,
+            dry_run=True,
         )
     started = time.time()
     try:
@@ -471,6 +476,7 @@ def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int
             duration_ms=int(meta.get("durationMs") or ((time.time() - started) * 1000)),
             target_resource=f"local://openclaw/{agent_name}",
             retryable=not ok,
+            provider_call_performed=ok,
         )
     except Exception as exc:
         return AdapterResult(
@@ -670,6 +676,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "task_id": task_id,
             "adapter": args.adapter,
             "prompt_hash": result.prompt_hash,
+            "provider_call_performed": result.provider_call_performed,
+            "dry_run": result.dry_run,
             "attempt_count": result.attempt_count,
             "max_attempts": result.max_attempts,
             "retry_history": result.retry_history or [],
@@ -703,6 +711,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "adapter": args.adapter,
             "requires_completed_run": True,
             "raw_prompt_response_omitted": True,
+            "provider_call_performed": result.provider_call_performed,
+            "dry_run": result.dry_run,
             "attempt_count": result.attempt_count,
             "max_attempts": result.max_attempts,
         },
@@ -752,6 +762,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "ok": result.ok,
             "prompt_hash": result.prompt_hash,
             "raw_payload_hash": result.raw_payload_hash,
+            "provider_call_performed": result.provider_call_performed,
+            "dry_run": result.dry_run,
             "attempt_count": result.attempt_count,
             "max_attempts": result.max_attempts,
             "retryable_final": result.retryable,
@@ -777,6 +789,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "plan_evidence_pass": manifest_verification.get("pass"),
         "adapter": args.adapter,
         "ok": result.ok,
+        "provider_call_performed": result.provider_call_performed,
+        "dry_run": result.dry_run,
         "attempt_count": result.attempt_count,
         "output_summary": result.output_summary,
         "error_type": result.error_type,
