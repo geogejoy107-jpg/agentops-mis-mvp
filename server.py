@@ -2140,7 +2140,6 @@ def consume_private_host_restart_audit_events(limit: int = 32) -> dict:
         ingested = 0
         try:
             with db(timeout_seconds=0.05) as conn:
-                conn.execute("BEGIN IMMEDIATE")
                 for event in ingest_events:
                     action_name = f"host.relay.restart.{event['state']}"
                     event_identity = stable_hash(
