@@ -30,6 +30,15 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def ledger_counts(db_path: Path) -> dict[str, int]:
+    tables = ("tasks", "runs", "tool_calls", "evaluations", "runtime_events", "audit_logs")
+    with sqlite3.connect(db_path) as conn:
+        return {
+            table: int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+            for table in tables
+        }
+
+
 def offline_async_disconnect_state_machine() -> dict:
     original_authenticate = acceptance.authenticate_human_session
     original_http_json = acceptance.http_json
@@ -185,22 +194,65 @@ def main() -> int:
                 setup_code_env="AGENTOPS_OWNER_SETUP_CODE",
             )
             opener, csrf_token, origin = acceptance.authenticate_human_session(args)
+            owner_status, owner_session = acceptance.http_json(
+                "GET", base_url, "/api/human-auth/status", None, 10, opener=opener
+            )
             read_status, tasks = acceptance.http_json(
                 "GET", base_url, "/api/tasks", None, 10, opener=opener
             )
+            marker_counts_before = ledger_counts(temp / "agentops_mis.db")
             write_status, task = acceptance.http_json(
                 "POST",
                 base_url,
                 "/api/tasks",
-                {"title": "Private Host acceptance client smoke", "description": "Bounded auth proof."},
+                {
+                    "title": "Private Host acceptance marker smoke",
+                    "description": "Low-risk browser acceptance marker. No Runtime or external connector is invoked.",
+                    "acceptance_criteria": "The marker task is readable through the same authenticated human Session.",
+                    "owner_agent_id": "",
+                    "collaborator_agent_ids": [],
+                    "status": "planned",
+                    "priority": "low",
+                    "risk_level": "low",
+                    "budget_limit_usd": 0,
+                },
                 10,
                 opener=opener,
                 headers={"Origin": origin, "X-AgentOps-CSRF": csrf_token},
             )
+            marker_counts_after = ledger_counts(temp / "agentops_mis.db")
+            marker_task = task.get("task") or {}
             evidence = {
-                "owner_session_created": bool(csrf_token),
+                "owner_session_created": (
+                    bool(csrf_token)
+                    and owner_status == 200
+                    and (owner_session.get("user") or {}).get("role") == "owner"
+                ),
                 "authenticated_read": read_status == 200 and isinstance(tasks, list),
                 "csrf_write": write_status in {200, 201} and bool(task.get("task_id")),
+                "marker_task_created": (
+                    write_status == 201
+                    and bool(task.get("task_id"))
+                    and marker_counts_after["tasks"] == marker_counts_before["tasks"] + 1
+                ),
+                "marker_owner_unassigned": (
+                    write_status == 201
+                    and bool(marker_task)
+                    and marker_task.get("owner_agent_id") is None
+                ),
+                "marker_low_risk_zero_budget": (
+                    marker_task.get("risk_level") == "low"
+                    and float(marker_task.get("budget_limit_usd", -1)) == 0
+                ),
+                "marker_runtime_not_called": (
+                    marker_counts_after["runs"] == marker_counts_before["runs"]
+                    and marker_counts_after["tool_calls"] == marker_counts_before["tool_calls"]
+                    and marker_counts_after["evaluations"] == marker_counts_before["evaluations"]
+                ),
+                "marker_ledger_recorded": (
+                    marker_counts_after["runtime_events"] == marker_counts_before["runtime_events"] + 1
+                    and marker_counts_after["audit_logs"] == marker_counts_before["audit_logs"] + 2
+                ),
                 "authenticated_readiness": False,
                 "machine_token_used_for_browser": False,
                 "real_runtime_called": False,
@@ -547,7 +599,7 @@ def main() -> int:
                 and disconnect_result.get("anonymous_after_disconnect_status") == 401
                 and disconnect_result.get("matching_job_count") == 1
             )
-            if not all((evidence["owner_session_created"], evidence["authenticated_read"], evidence["csrf_write"], evidence["authenticated_readiness"], evidence["async_disconnect_state_machine"], evidence["async_idempotent_replay"], evidence["async_idempotency_conflict"], evidence["async_single_job"], evidence["async_single_run"], evidence["queued_reservation_recovered"], evidence["transport_alias_replay"], evidence["cross_workspace_job_hidden"], evidence["cross_workspace_job_list_hidden"], evidence["cross_workspace_stuck_hidden"], evidence["cross_workspace_submit_denied"], evidence["cross_workspace_mark_failed_hidden"], evidence["cross_workspace_recover_hidden"])):
+            if not all((evidence["owner_session_created"], evidence["authenticated_read"], evidence["csrf_write"], evidence["marker_task_created"], evidence["marker_owner_unassigned"], evidence["marker_low_risk_zero_budget"], evidence["marker_runtime_not_called"], evidence["marker_ledger_recorded"], evidence["authenticated_readiness"], evidence["async_disconnect_state_machine"], evidence["async_idempotent_replay"], evidence["async_idempotency_conflict"], evidence["async_single_job"], evidence["async_single_run"], evidence["queued_reservation_recovered"], evidence["transport_alias_replay"], evidence["cross_workspace_job_hidden"], evidence["cross_workspace_job_list_hidden"], evidence["cross_workspace_stuck_hidden"], evidence["cross_workspace_submit_denied"], evidence["cross_workspace_mark_failed_hidden"], evidence["cross_workspace_recover_hidden"])):
                 failures.append(f"Private Host acceptance client auth failed: {evidence}")
         except (OSError, RuntimeError, ValueError) as exc:
             failures.append(f"acceptance client exception: {type(exc).__name__}: {str(exc)[:180]}")

@@ -5138,7 +5138,7 @@ def create_task_api(conn, body: dict) -> tuple[dict, int]:
     owner_agent_id = body.get("owner_agent_id")
     if owner_agent_id is None:
         owner_agent_id = body.get("agent_id") or "agt_research"
-    owner_agent_id = str(owner_agent_id or "").strip()
+    owner_agent_id = str(owner_agent_id or "").strip() or None
     if owner_agent_id:
         owner_exists = conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (owner_agent_id,)).fetchone()
         if not owner_exists:
@@ -5171,7 +5171,7 @@ def create_task_api(conn, body: dict) -> tuple[dict, int]:
         "due_date": body.get("due_date"),
         "acceptance_criteria": acceptance,
         "risk_level": coerce_choice(body.get("risk_level"), VALID_RISK_LEVELS, "medium"),
-        "budget_limit_usd": float(body.get("budget_limit_usd") or 3.0),
+        "budget_limit_usd": float(3.0 if body.get("budget_limit_usd") in (None, "") else body["budget_limit_usd"]),
         "created_at": before["created_at"] if before else now,
         "updated_at": now,
     }
