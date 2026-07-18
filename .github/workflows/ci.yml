@@ -56,6 +56,7 @@ jobs:
           timeout 120s python3 scripts/sqlite_pragmas_smoke.py
           timeout 120s python3 scripts/sqlite_reliability_smoke.py
           timeout 120s python3 scripts/sqlite_concurrency_smoke.py
+          timeout 120s python3 scripts/audit_chain_concurrency_smoke.py
           timeout 120s python3 scripts/migration_rollback_smoke.py
           timeout 120s python3 scripts/run_local_stack_smoke.py
           timeout 120s python3 scripts/worker_process_identity_smoke.py

@@ -397,10 +397,37 @@ def json_array_contains(raw, needle) -> int:
     return 1 if needle in legacy_items else 0
 
 
+def audit_chain_hash_sql(
+    actor_type,
+    actor_id,
+    action,
+    entity_type,
+    entity_id,
+    before_hash,
+    after_hash,
+    metadata_json,
+    previous_hash,
+) -> str:
+    """Build an audit hash inside the atomic SQLite append statement."""
+    metadata = json.loads(str(metadata_json or "{}"))
+    return stable_hash({
+        "actor_type": actor_type,
+        "actor_id": actor_id,
+        "action": action,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "before_hash": before_hash,
+        "after_hash": after_hash,
+        "metadata_json": metadata,
+        "previous": previous_hash,
+    })
+
+
 def db(timeout_seconds: float = 30) -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=timeout_seconds, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.create_function("agentops_json_array_contains", 2, json_array_contains)
+    conn.create_function("agentops_audit_chain_hash", 9, audit_chain_hash_sql, deterministic=True)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute(f"PRAGMA busy_timeout = {max(1, int(timeout_seconds * 1000))}")
     conn.execute("PRAGMA journal_mode = WAL")
@@ -1634,6 +1661,26 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS audit_chain_state (
+    singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
+    head_hash TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+INSERT OR IGNORE INTO audit_chain_state(singleton_id, head_hash, updated_at)
+SELECT 1,
+       COALESCE((SELECT tamper_chain_hash FROM audit_logs ORDER BY rowid DESC LIMIT 1), 'genesis'),
+       CURRENT_TIMESTAMP;
+
+CREATE TRIGGER IF NOT EXISTS trg_audit_chain_head_after_insert
+AFTER INSERT ON audit_logs
+BEGIN
+    UPDATE audit_chain_state
+    SET head_hash = NEW.tamper_chain_hash,
+        updated_at = NEW.created_at
+    WHERE singleton_id = 1;
+END;
+
 CREATE TABLE IF NOT EXISTS runtime_connectors (
     runtime_connector_id TEXT PRIMARY KEY,
     provider TEXT NOT NULL,
@@ -2046,30 +2093,25 @@ def audit(
     audit_id: str | None = None,
     ignore_duplicate: bool = False,
 ):
-    previous = conn.execute("SELECT tamper_chain_hash FROM audit_logs ORDER BY created_at DESC LIMIT 1").fetchone()
-    previous_hash = previous[0] if previous else "genesis"
-    payload = {
-        "actor_type": actor_type,
-        "actor_id": actor_id,
-        "action": action,
-        "entity_type": entity_type,
-        "entity_id": entity_id,
-        "before_hash": stable_hash(before) if before is not None else None,
-        "after_hash": stable_hash(after) if after is not None else None,
-        "metadata_json": metadata or {},
-        "previous": previous_hash,
-    }
-    chain = stable_hash(payload)
     resolved_audit_id = audit_id or new_id("aud")
     insert_mode = "INSERT OR IGNORE" if ignore_duplicate else "INSERT"
+    before_hash = stable_hash(before) if before is not None else None
+    after_hash = stable_hash(after) if after is not None else None
+    metadata_json = json.dumps(metadata or {}, ensure_ascii=False)
     conn.execute(
         f"""
         {insert_mode} INTO audit_logs(audit_id, actor_type, actor_id, action, entity_type, entity_id, before_hash, after_hash, metadata_json, tamper_chain_hash, created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?)
+        SELECT ?,?,?,?,?,?,?,?,?,
+               agentops_audit_chain_hash(?,?,?,?,?,?,?,?,head_hash),
+               ?
+        FROM audit_chain_state
+        WHERE singleton_id = 1
         """,
         (
             resolved_audit_id, actor_type, actor_id, action, entity_type, entity_id,
-            payload["before_hash"], payload["after_hash"], json.dumps(metadata or {}, ensure_ascii=False), chain, now_iso()
+            before_hash, after_hash, metadata_json,
+            actor_type, actor_id, action, entity_type, entity_id,
+            before_hash, after_hash, metadata_json, now_iso(),
         ),
     )
     return resolved_audit_id
