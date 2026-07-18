@@ -95,6 +95,28 @@ registration/reconnect, RC status, Release evidence, secret scan and diff checks
 also passed. These checks used temporary fixtures and did not mutate the
 installed Host, Tailscale, Workers or user ledger.
 
+The next exact-head CI run exposed a separate real pre-arm compatibility defect
+in the Relay control core. `prepare_relay_transition()` used an unprefixed
+URL-safe random token, which can begin with `_` or `-`, while the restart
+receipt contract requires an alphanumeric first character. Those refs were
+valid through prepare and confirm but could be rejected before a restart receipt
+was armed. The pre-arm exception was then incorrectly projected as
+`transition_write_failed`, and the core smoke assumed that error meant a receipt
+must exist.
+
+Relay transition refs now carry an alphanumeric `relay_` prefix while retaining
+the same random token entropy. Receipt execution initializes its arm state
+explicitly: a receipt-creation failure returns bounded `transition_invalid`
+without changing either config or consuming the confirmed transition; a failure
+after receipt creation still performs the existing exact rollback. The core
+smoke deterministically forces a leading-underscore random value, injects a
+pre-arm receipt failure, proves that no receipt/sequence/config mutation occurs,
+and separately proves post-arm consume failure reaches `rolled_back`. It does
+not sleep, retry or treat a missing receipt as successful. The corrected core
+smoke passed 300 consecutive iterations on local Python 3.14 and another 300 on
+Python 3.11; the adjacent Relay control, Owner UI, post-response, managed
+restart, rollback, audit-retention and secret checks also passed.
+
 ## Open Before Release
 
 - prove the bounded post-restart audit projection from the exact installed

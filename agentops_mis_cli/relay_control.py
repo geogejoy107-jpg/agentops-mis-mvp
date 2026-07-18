@@ -525,7 +525,7 @@ def prepare_relay_transition(
             host_config_path=host_config_path,
             validate=True,
         )
-        transition_ref = secrets.token_urlsafe(24)
+        transition_ref = f"relay_{secrets.token_urlsafe(24)}"
         _write_private_json(
             transition_path,
             {
@@ -758,6 +758,7 @@ def _execute_with_restart_receipt(
         )
     )
     del active
+    receipt: dict[str, Any] | None = None
     try:
         replace_terminal = False
         try:
@@ -821,36 +822,37 @@ def _execute_with_restart_receipt(
         _unlink_private(transition_path)
         return receipt
     except (relay_restart.RelayRestartError, _ControlFailure) as exc:
-        if "receipt" not in locals() and isinstance(exc, _ControlFailure):
-            raise
+        if receipt is None:
+            if isinstance(exc, _ControlFailure):
+                raise
+            raise _ControlFailure("transition_invalid") from exc
         try:
-            if "receipt" in locals():
-                restoring = relay_restart.transition_restart_receipt(
-                    receipt_path=restart_receipt_path,
-                    sequence_path=restart_sequence_path,
-                    action=action,
-                    transition_ref=transition_ref,
-                    transaction_sequence=int(receipt["transaction_sequence"]),
-                    expected_revision=int(receipt["revision"]),
-                    state="restoring_config",
-                )
-                relay_restart.restore_original_configs(
-                    receipt_path=restart_receipt_path,
-                    sequence_path=restart_sequence_path,
-                    action=action,
-                    transition_ref=transition_ref,
-                    transaction_sequence=int(restoring["transaction_sequence"]),
-                    expected_revision=int(restoring["revision"]),
-                )
-                relay_restart.transition_restart_receipt(
-                    receipt_path=restart_receipt_path,
-                    sequence_path=restart_sequence_path,
-                    action=action,
-                    transition_ref=transition_ref,
-                    transaction_sequence=int(restoring["transaction_sequence"]),
-                    expected_revision=int(restoring["revision"]),
-                    state="rolled_back",
-                )
+            restoring = relay_restart.transition_restart_receipt(
+                receipt_path=restart_receipt_path,
+                sequence_path=restart_sequence_path,
+                action=action,
+                transition_ref=transition_ref,
+                transaction_sequence=int(receipt["transaction_sequence"]),
+                expected_revision=int(receipt["revision"]),
+                state="restoring_config",
+            )
+            relay_restart.restore_original_configs(
+                receipt_path=restart_receipt_path,
+                sequence_path=restart_sequence_path,
+                action=action,
+                transition_ref=transition_ref,
+                transaction_sequence=int(restoring["transaction_sequence"]),
+                expected_revision=int(restoring["revision"]),
+            )
+            relay_restart.transition_restart_receipt(
+                receipt_path=restart_receipt_path,
+                sequence_path=restart_sequence_path,
+                action=action,
+                transition_ref=transition_ref,
+                transaction_sequence=int(restoring["transaction_sequence"]),
+                expected_revision=int(restoring["revision"]),
+                state="rolled_back",
+            )
         except relay_restart.RelayRestartError as rollback_error:
             raise _ControlFailure("rollback_incomplete") from rollback_error
         raise _ControlFailure("transition_write_failed") from exc

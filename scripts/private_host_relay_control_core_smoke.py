@@ -161,6 +161,8 @@ def main() -> int:
             "prepared": relay_home / "prepared.json",
             "restart_receipt": relay_home / "restart-receipt.json",
             "restart_sequence": relay_home / "restart-sequence.json",
+            "prearm_restart_receipt": relay_home / "prearm-restart-receipt.json",
+            "prearm_restart_sequence": relay_home / "prearm-restart-sequence.json",
             "secrets": relay_home / "secrets.json",
             "transition": relay_home / "transition.json",
             "host": host_home / "config.json",
@@ -413,8 +415,61 @@ def main() -> int:
         evidence["rollback_journal_was_private"] = journal_was_private
 
         paths["transition"].unlink(missing_ok=True)
-        receipt_rollback_prepared = prepare(paths, action="enable", now=5_100)
+        prearm_prepared = prepare(paths, action="enable", now=5_050)
+        public_payloads.append(prearm_prepared)
+        prearm_confirmed = confirm(
+            paths,
+            action="enable",
+            transition_ref=str(prearm_prepared.get("transition_ref") or ""),
+            now=5_051,
+        )
+        public_payloads.append(prearm_confirmed)
+        prearm_active_before = paths["active"].read_bytes()
+        prearm_host_before = paths["host"].read_bytes()
+        real_create_restart_receipt = relay_restart.create_restart_receipt
+
+        def fail_before_receipt_arm(**_kwargs: Any) -> dict[str, Any]:
+            raise relay_restart.RelayRestartError("write_failed")
+
+        relay_restart.create_restart_receipt = fail_before_receipt_arm
+        try:
+            prearm_failed = relay_control.execute_confirmed_relay_transition(
+                action="enable",
+                transition_ref=str(prearm_prepared.get("transition_ref") or ""),
+                transition_path=paths["transition"],
+                active_config_path=paths["active"],
+                prepared_config_path=paths["prepared"],
+                secrets_path=paths["secrets"],
+                host_config_path=paths["host"],
+                restart_receipt_path=paths["prearm_restart_receipt"],
+                restart_sequence_path=paths["prearm_restart_sequence"],
+                now=5_052,
+            )
+        finally:
+            relay_restart.create_restart_receipt = real_create_restart_receipt
+        public_payloads.append(prearm_failed)
+        evidence["prearm_failure_preserves_configs_and_transition"] = bool(
+            prearm_failed.get("error") == "transition_invalid"
+            and paths["active"].read_bytes() == prearm_active_before
+            and paths["host"].read_bytes() == prearm_host_before
+            and paths["transition"].is_file()
+            and not paths["prearm_restart_receipt"].exists()
+            and not paths["prearm_restart_sequence"].exists()
+        )
+
+        paths["transition"].unlink(missing_ok=True)
+        real_token_urlsafe = relay_control.secrets.token_urlsafe
+        relay_control.secrets.token_urlsafe = lambda _bytes: "_forced-leading-ref"
+        try:
+            receipt_rollback_prepared = prepare(paths, action="enable", now=5_100)
+        finally:
+            relay_control.secrets.token_urlsafe = real_token_urlsafe
         public_payloads.append(receipt_rollback_prepared)
+        evidence["restart_receipt_ref_compatible"] = bool(
+            receipt_rollback_prepared.get("ok") is True
+            and str(receipt_rollback_prepared.get("transition_ref") or "")
+            .startswith("relay_")
+        )
         receipt_rollback_confirmed = confirm(
             paths,
             action="enable",
@@ -425,9 +480,12 @@ def main() -> int:
         receipt_active_before = paths["active"].read_bytes()
         receipt_host_before = paths["host"].read_bytes()
         real_unlink_private = relay_control._unlink_private
+        consume_failure_injected = False
 
         def fail_transition_consume(path: Path) -> None:
+            nonlocal consume_failure_injected
             if path == paths["transition"]:
+                consume_failure_injected = True
                 raise relay_control._ControlFailure("transition_store_invalid")
             real_unlink_private(path)
 
@@ -448,12 +506,15 @@ def main() -> int:
         finally:
             relay_control._unlink_private = real_unlink_private
         public_payloads.append(receipt_rolled_back)
-        receipt_projection = relay_restart.public_restart_receipt(
-            receipt_path=paths["restart_receipt"],
-            sequence_path=paths["restart_sequence"],
-        )
+        receipt_projection: dict[str, Any] = {}
+        if consume_failure_injected and paths["restart_receipt"].is_file():
+            receipt_projection = relay_restart.public_restart_receipt(
+                receipt_path=paths["restart_receipt"],
+                sequence_path=paths["restart_sequence"],
+            )
         evidence["receipt_consume_failure_rolled_back_both_configs"] = bool(
-            receipt_rolled_back.get("error") == "transition_write_failed"
+            consume_failure_injected
+            and receipt_rolled_back.get("error") == "transition_write_failed"
             and receipt_projection.get("state") == "rolled_back"
             and paths["active"].read_bytes() == receipt_active_before
             and paths["host"].read_bytes() == receipt_host_before
