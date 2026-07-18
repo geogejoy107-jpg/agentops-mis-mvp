@@ -8,6 +8,7 @@ import { appendAudit, appendRuntimeEvent, newLedgerId, pythonFloat, stableHash }
 const TASK_STATUSES = new Set(["backlog", "planned", "running", "waiting_approval", "blocked", "completed", "failed", "canceled"]);
 const PRIORITIES = new Set(["low", "medium", "high", "urgent"]);
 const RISK_LEVELS = new Set(["low", "medium", "high", "critical"]);
+const TASK_CLAIM_BODY_MAX_BYTES = 4 * 1024;
 
 type TaskRow = {
   task_id: string;
@@ -45,6 +46,14 @@ function taskId(value: unknown) {
   return normalized;
 }
 
+function requiredTaskId(value: unknown) {
+  const normalized = String(value ?? "").trim();
+  if (!/^[A-Za-z0-9._:-]{1,128}$/.test(normalized)) {
+    throw new ControlPlaneHttpError(400, "task_id_invalid", "task_id must use 1-128 safe identifier characters.");
+  }
+  return normalized;
+}
+
 function collaboratorIds(value: unknown) {
   const parsed = Array.isArray(value) ? value : [];
   return parsed.map((item) => text(item, 120)).filter(Boolean).slice(0, 32);
@@ -57,6 +66,77 @@ function number(value: unknown, fallback: number) {
 
 function taskAuditSnapshot(row: TaskRow | undefined) {
   return row ? { ...row, budget_limit_usd: pythonFloat(Number(row.budget_limit_usd)) } : undefined;
+}
+
+function taskCollaborators(row: TaskRow) {
+  try {
+    const parsed = JSON.parse(row.collaborator_agent_ids || "[]");
+    return Array.isArray(parsed) ? parsed.map((item) => String(item)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function agentCanAccessTask(row: TaskRow, agentId: string) {
+  return !row.owner_agent_id
+    || row.owner_agent_id === agentId
+    || taskCollaborators(row).includes(agentId);
+}
+
+function suppliedBinding(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  return String(value).trim();
+}
+
+function enforceAgentBinding(agentId: string, ...requestedValues: unknown[]) {
+  for (const value of requestedValues) {
+    const requested = suppliedBinding(value);
+    if (requested && requested !== agentId) {
+      throw new ControlPlaneHttpError(403, "forbidden", "Agent credential cannot act as another agent.");
+    }
+  }
+}
+
+async function taskClaimBody(request: Request) {
+  const declaredLength = request.headers.get("content-length");
+  if (declaredLength && (!/^\d+$/.test(declaredLength) || Number(declaredLength) > TASK_CLAIM_BODY_MAX_BYTES)) {
+    throw new ControlPlaneHttpError(
+      413,
+      "request_too_large",
+      `Task claim body exceeds ${TASK_CLAIM_BODY_MAX_BYTES} bytes.`,
+    );
+  }
+  const chunks: Buffer[] = [];
+  let receivedBytes = 0;
+  const reader = request.body?.getReader();
+  if (reader) {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      receivedBytes += value.byteLength;
+      if (receivedBytes > TASK_CLAIM_BODY_MAX_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new ControlPlaneHttpError(
+          413,
+          "request_too_large",
+          `Task claim body exceeds ${TASK_CLAIM_BODY_MAX_BYTES} bytes.`,
+        );
+      }
+      chunks.push(Buffer.from(value));
+    }
+  }
+  const raw = Buffer.concat(chunks, receivedBytes).toString("utf8");
+  if (!raw.trim()) return {} as Record<string, unknown>;
+  let body: unknown;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    throw new ControlPlaneHttpError(400, "invalid_json", "A JSON object is required.");
+  }
+  if (!body || Array.isArray(body) || typeof body !== "object") {
+    throw new ControlPlaneHttpError(400, "invalid_json", "A JSON object is required.");
+  }
+  return body as Record<string, unknown>;
 }
 
 async function ensureTaskOwner(client: PoolClient, agentId: string) {
@@ -103,6 +183,196 @@ export async function listAgentGatewayTasks(request: Request) {
       count: result.rows.length,
       workspace_id: identity.workspaceId,
       token_omitted: true,
+    };
+  });
+}
+
+export async function pullAgentGatewayTasks(request: Request) {
+  const url = new URL(request.url);
+  return withPostgresTransaction(async (client) => {
+    const identity = await authenticateAgentGateway(client, request.headers, "tasks:read");
+    enforceWorkspaceBinding(identity, {
+      header: request.headers.get("x-agentops-workspace-id"),
+      query: url.searchParams.get("workspace_id"),
+    });
+    enforceAgentBinding(
+      identity.agentId,
+      request.headers.get("x-agentops-agent-id"),
+      url.searchParams.get("agent_id"),
+    );
+
+    const requestedLimit = Number(url.searchParams.get("limit") || 10);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.max(1, Math.min(Math.trunc(requestedLimit), 50))
+      : 10;
+    const requestedStatuses = url.searchParams.getAll("status");
+    const statuses = (requestedStatuses.length ? requestedStatuses : ["planned", "backlog"])
+      .map((status) => choice(status, TASK_STATUSES, "planned"));
+    const result = await client.query<TaskRow>(
+      `SELECT * FROM tasks
+      WHERE workspace_id=$1
+        AND status=ANY($2::text[])
+        AND (
+          owner_agent_id IS NULL OR owner_agent_id='' OR owner_agent_id=$3
+          OR COALESCE(collaborator_agent_ids,'[]')::jsonb ? $3
+        )
+      ORDER BY created_at ASC
+      LIMIT $4`,
+      [identity.workspaceId, statuses, identity.agentId, limit],
+    );
+    await appendRuntimeEvent(client, {
+      eventType: "task.pull",
+      status: "completed",
+      agentId: identity.agentId,
+      outputSummary: `Pulled ${result.rows.length} task(s).`,
+      rawPayloadHash: stableHash({
+        workspace_id: identity.workspaceId,
+        agent_id: identity.agentId,
+        statuses,
+        limit,
+        count: result.rows.length,
+      }),
+    });
+    await appendAudit(client, {
+      actorType: "agent",
+      actorId: identity.agentId,
+      action: "agent_gateway.task_pull",
+      entityType: "tasks",
+      entityId: identity.agentId,
+      after: { count: result.rows.length },
+      metadata: {
+        workspace_id: identity.workspaceId,
+        statuses,
+        limit,
+        raw_payload_omitted: true,
+        token_omitted: true,
+      },
+    });
+    return {
+      provider: "agent_gateway",
+      control_plane: "typescript_postgres",
+      operation: "task_pull",
+      tasks: result.rows,
+      count: result.rows.length,
+      workspace_id: identity.workspaceId,
+      token_omitted: true,
+    };
+  });
+}
+
+export async function claimAgentGatewayTask(request: Request, requestedTaskId: string) {
+  const body = await taskClaimBody(request);
+  const id = requiredTaskId(requestedTaskId);
+  return withPostgresTransaction(async (client) => {
+    const identity = await authenticateAgentGateway(client, request.headers, "tasks:claim");
+    enforceWorkspaceBinding(identity, {
+      header: request.headers.get("x-agentops-workspace-id"),
+      body: suppliedBinding(body.workspace_id),
+    });
+    enforceAgentBinding(
+      identity.agentId,
+      request.headers.get("x-agentops-agent-id"),
+      body.agent_id,
+      body.requested_by_agent_id,
+    );
+    const bodyTaskId = suppliedBinding(body.task_id);
+    if (bodyTaskId && bodyTaskId !== id) {
+      throw new ControlPlaneHttpError(403, "forbidden", "Task claim body does not match the requested task.");
+    }
+
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`agentops-task:${id}`]);
+    const taskResult = await client.query<TaskRow>(
+      "SELECT * FROM tasks WHERE task_id=$1 AND workspace_id=$2 FOR UPDATE",
+      [id, identity.workspaceId],
+    );
+    const before = taskResult.rows[0];
+    if (!before) {
+      throw new ControlPlaneHttpError(404, "task_not_found", "Task was not found in the credential workspace.");
+    }
+    if (!agentCanAccessTask(before, identity.agentId)) {
+      throw new ControlPlaneHttpError(403, "forbidden", "Task is assigned to another agent.");
+    }
+    if (before.status === "running") {
+      if (before.owner_agent_id === identity.agentId) {
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            provider: "agentops-mis",
+            control_plane: "typescript_postgres",
+            operation: "task_claim",
+            outcome: "unchanged",
+            task: before,
+            claimed_by: identity.agentId,
+            already_claimed: true,
+            workspace_id: identity.workspaceId,
+            token_omitted: true,
+          },
+        };
+      }
+      throw new ControlPlaneHttpError(409, "task_running_conflict", "Task is already running for another agent.");
+    }
+    if (before.status !== "planned" && before.status !== "backlog") {
+      throw new ControlPlaneHttpError(
+        409,
+        "task_status_conflict",
+        `Task cannot be claimed from status ${before.status}.`,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const updated = await client.query<TaskRow>(
+      `UPDATE tasks SET owner_agent_id=$1,status='running',updated_at=$2
+      WHERE task_id=$3 AND workspace_id=$4 AND status IN ('planned','backlog')
+      RETURNING *`,
+      [identity.agentId, now, id, identity.workspaceId],
+    );
+    const after = updated.rows[0];
+    if (!after) {
+      throw new ControlPlaneHttpError(409, "task_claim_conflict", "Task was claimed or changed before this claim completed.");
+    }
+    await appendRuntimeEvent(client, {
+      eventType: "task.claim",
+      status: "completed",
+      taskId: id,
+      agentId: identity.agentId,
+      outputSummary: `${identity.agentId} claimed ${id}.`,
+      rawPayloadHash: stableHash({
+        workspace_id: identity.workspaceId,
+        task_id: id,
+        agent_id: identity.agentId,
+        before_status: before.status,
+        after_status: after.status,
+      }),
+    });
+    await appendAudit(client, {
+      actorType: "agent",
+      actorId: identity.agentId,
+      action: "agent_gateway.task_claim",
+      entityType: "tasks",
+      entityId: id,
+      before: taskAuditSnapshot(before),
+      after: taskAuditSnapshot(after),
+      metadata: {
+        workspace_id: identity.workspaceId,
+        credential_mode: identity.mode,
+        raw_payload_omitted: true,
+        token_omitted: true,
+      },
+    });
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        provider: "agentops-mis",
+        control_plane: "typescript_postgres",
+        operation: "task_claim",
+        outcome: "claimed",
+        task: after,
+        claimed_by: identity.agentId,
+        workspace_id: identity.workspaceId,
+        token_omitted: true,
+      },
     };
   });
 }
