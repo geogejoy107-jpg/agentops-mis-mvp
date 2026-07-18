@@ -41,7 +41,9 @@ Generated archives and UI `dist` remain untracked.
   release provenance and Private Host operator runbook.
 - `manifest.json` records product version, exact Git commit, build timestamp,
   platform, Python requirement, file sizes and SHA-256 for every payload and
-  installer file.
+  installer file. The timestamp is the immutable source commit timestamp, and
+  tar/gzip/zip metadata is normalized so two builds from the same commit, UI
+  and version are byte-for-byte identical.
 - Archive-level SHA-256 values are emitted separately.
 - The checksum manifest also covers the published release-consumer bootstrap.
 - The release-consumer bootstrap pins one explicit GitHub tag, verifies the
@@ -53,7 +55,8 @@ Generated archives and UI `dist` remain untracked.
   `__pycache__`, `.agentops_runtime`, sample exports and local artifacts are
   excluded.
 - `scripts/private_host_bundle_smoke.py` proves a dirty tracked clone is
-  rejected before any release archive is written.
+  rejected before any release archive is written and repeats the build to
+  compare every emitted asset digest.
 - Installer rejects missing, modified, undeclared or traversal paths before
   copying payload files.
 - Default install path is `~/.local/share/agentops-mis`; the operator CLI shim
