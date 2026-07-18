@@ -1326,13 +1326,14 @@ def stack_command(config: dict, args, *, stack_ready_fd: int | None = None) -> l
 
 
 def _cmd_start_unlocked(args) -> int:
-    config, secret_values = require_initialized()
     p = paths()
     pid_record = read_json(p["pid"])
     pid = int(pid_record.get("pid") or 0)
     if process_alive(pid):
         emit({"ok": False, "operation": "host_start", "error": "already_running", "pid": pid, "token_omitted": True})
         return 2
+    startup_recovery = _prepare_restart_receipt_recovery(p)
+    config, secret_values = require_initialized()
     worker_preflight = host_worker_ownership_preflight(args)
     if not worker_preflight["ok"]:
         return emit_host_worker_ownership_error(worker_preflight)
@@ -1393,16 +1394,33 @@ def _cmd_start_unlocked(args) -> int:
         time.sleep(0.25)
     os.close(stack_ready_read_fd)
     if not stack_ready or not readiness["reachable"]:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except OSError:
-            pass
-        p["pid"].unlink(missing_ok=True)
+        terminated = _terminate_background_stack(process)
+        if terminated:
+            p["pid"].unlink(missing_ok=True)
+            _fail_restart_receipt_recovery_start(p, startup_recovery)
+        else:
+            _mark_restart_recovery_rollback_failed(p)
         emit({
             "ok": False,
             "operation": "host_start",
             "error": "startup_failed",
             "log_path": str(p["log"]),
+            "token_omitted": True,
+        })
+        return 1
+    recovery_healthy, terminated = _finish_restart_recovery_with_cleanup(
+        p,
+        startup_recovery,
+        process,
+        terminate=_terminate_background_stack,
+    )
+    if not recovery_healthy:
+        if terminated:
+            p["pid"].unlink(missing_ok=True)
+        emit({
+            "ok": False,
+            "operation": "host_start",
+            "error": "restart_recovery_retry_required",
             "token_omitted": True,
         })
         return 1
@@ -1422,16 +1440,39 @@ def _cmd_start_unlocked(args) -> int:
 
 
 def _launch_foreground_locked(args):
-    config, secret_values = require_initialized()
     p = paths()
     pid_record = read_json(p["pid"])
     pid = int(pid_record.get("pid") or 0)
     if process_alive(pid):
         emit({"ok": False, "operation": "host_start", "error": "already_running", "pid": pid, "token_omitted": True})
         return None, p, 2
+    startup_recovery = _prepare_restart_receipt_recovery(p)
+    config, secret_values = require_initialized()
     worker_preflight = host_worker_ownership_preflight(args)
     if not worker_preflight["ok"]:
         return None, p, emit_host_worker_ownership_error(worker_preflight)
+    if startup_recovery is not None:
+        process, _readiness = _launch_supervised_stack_locked(
+            args,
+            config,
+            secret_values,
+            p,
+        )
+        if process is None:
+            _fail_restart_receipt_recovery_start(p, startup_recovery)
+            return None, p, 1
+        recovery_healthy, terminated = _finish_restart_recovery_with_cleanup(
+            p,
+            startup_recovery,
+            process,
+            terminate=_terminate_supervised_child,
+        )
+        if not recovery_healthy:
+            current_record = read_json(p["pid"])
+            if terminated and int(current_record.get("pid") or 0) == process.pid:
+                p["pid"].unlink(missing_ok=True)
+            return None, p, 1
+        return process, p, 0
     process = subprocess.Popen(stack_command(config, args), cwd=ROOT, env=host_env(config, secret_values))
     write_managed_pid_record(p["pid"], process, foreground=True)
     return process, p, 0
@@ -1565,6 +1606,28 @@ def _terminate_supervised_child(process, *, timeout: float = HOST_STOP_GRACE_SEC
     except subprocess.TimeoutExpired:
         try:
             process.kill()
+        except OSError:
+            return process.poll() is not None
+        try:
+            process.wait(timeout=max(0.05, min(timeout, 5)))
+        except subprocess.TimeoutExpired:
+            return False
+        return True
+
+
+def _terminate_background_stack(process, *, timeout: float = HOST_STOP_GRACE_SECONDS) -> bool:
+    if process.poll() is not None:
+        return True
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except OSError:
+        return process.poll() is not None
+    try:
+        process.wait(timeout=max(0.05, timeout))
+        return True
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
         except OSError:
             return process.poll() is not None
         try:
@@ -1873,6 +1936,215 @@ def _managed_relay_runtime_healthy(action: str, p: dict[str, Path]) -> bool:
     )
 
 
+def _prepare_restart_receipt_recovery(p: dict[str, Path]) -> dict | None:
+    try:
+        context = relay_restart.restart_recovery_context(
+            receipt_path=p["relay_restart_receipt"],
+            sequence_path=p["relay_restart_sequence"],
+        )
+    except relay_restart.RelayRestartError as exc:
+        if exc.code == "receipt_not_found":
+            return None
+        raise RuntimeError("Private Host restart recovery is unavailable.") from exc
+    context = {**context, "expected_revision": int(context["revision"])}
+    state = str(context["state"])
+    if state == "rollback_failed":
+        raise RuntimeError("Private Host restart recovery requires operator repair.")
+    if state == "config_applied":
+        context = _advance_managed_restart_receipt(p, context, "restoring_config")
+        state = "restoring_config"
+    if state in {"restoring_config", "rolled_back"}:
+        projection = relay_restart.ensure_restart_recovery_configs(
+            receipt_path=p["relay_restart_receipt"],
+            sequence_path=p["relay_restart_sequence"],
+            action=context["action"],
+            transition_ref=context["transition_ref"],
+            transaction_sequence=context["transaction_sequence"],
+            expected_revision=context["expected_revision"],
+            use_target=False,
+        )
+        if state == "rolled_back":
+            return None
+        return {
+            **context,
+            "expected_revision": int(projection["revision"]),
+            "recovery_mode": "original",
+        }
+    if state in {
+        "response_flushed",
+        "restart_requested",
+        "validating_new_host",
+        "manual_restart_required",
+        "healthy",
+    }:
+        projection = relay_restart.ensure_restart_recovery_configs(
+            receipt_path=p["relay_restart_receipt"],
+            sequence_path=p["relay_restart_sequence"],
+            action=context["action"],
+            transition_ref=context["transition_ref"],
+            transaction_sequence=context["transaction_sequence"],
+            expected_revision=context["expected_revision"],
+            use_target=True,
+        )
+        return {
+            **context,
+            "expected_revision": int(projection["revision"]),
+            "recovery_mode": "target",
+        }
+    raise RuntimeError("Private Host restart recovery state is invalid.")
+
+
+def _finish_restart_receipt_recovery(
+    p: dict[str, Path],
+    context: dict | None,
+    *,
+    runtime_validator=None,
+) -> bool:
+    if context is None:
+        return True
+    validate_runtime = runtime_validator or _managed_relay_runtime_healthy
+    if context["recovery_mode"] == "original":
+        original_action = "disable" if context["action"] == "enable" else "enable"
+        try:
+            original_healthy = bool(validate_runtime(original_action, p))
+        except Exception:
+            original_healthy = False
+        terminal_state = "rolled_back" if original_healthy else "rollback_failed"
+        _advance_managed_restart_receipt(p, context, terminal_state)
+        return terminal_state == "rolled_back"
+
+    state = str(context["state"])
+    if state == "response_flushed":
+        context = _advance_managed_restart_receipt(p, context, "restart_requested")
+        state = "restart_requested"
+    if state in {"restart_requested", "manual_restart_required"}:
+        context = _advance_managed_restart_receipt(p, context, "validating_new_host")
+        state = "validating_new_host"
+    try:
+        target_healthy = bool(validate_runtime(context["action"], p))
+    except Exception:
+        target_healthy = False
+    if target_healthy:
+        if state != "healthy":
+            context = _advance_managed_restart_receipt(p, context, "healthy")
+        relay_restart.finalize_restart_receipt(
+            receipt_path=p["relay_restart_receipt"],
+            sequence_path=p["relay_restart_sequence"],
+            action=context["action"],
+            transition_ref=context["transition_ref"],
+            transaction_sequence=context["transaction_sequence"],
+            expected_revision=context["expected_revision"],
+        )
+        return True
+
+    if state != "restoring_config":
+        context = _advance_managed_restart_receipt(p, context, "restoring_config")
+    try:
+        relay_restart.ensure_restart_recovery_configs(
+            receipt_path=p["relay_restart_receipt"],
+            sequence_path=p["relay_restart_sequence"],
+            action=context["action"],
+            transition_ref=context["transition_ref"],
+            transaction_sequence=context["transaction_sequence"],
+            expected_revision=context["expected_revision"],
+            use_target=False,
+        )
+    except relay_restart.RelayRestartError:
+        try:
+            _advance_managed_restart_receipt(p, context, "rollback_failed")
+        except relay_restart.RelayRestartError:
+            pass
+        raise
+    return False
+
+
+def _fail_restart_receipt_recovery_start(
+    p: dict[str, Path],
+    context: dict | None,
+) -> None:
+    if context is None:
+        return
+    if context["recovery_mode"] == "original":
+        try:
+            _advance_managed_restart_receipt(p, context, "rollback_failed")
+        except relay_restart.RelayRestartError:
+            pass
+        return
+    try:
+        context = _advance_managed_restart_receipt(p, context, "restoring_config")
+        relay_restart.ensure_restart_recovery_configs(
+            receipt_path=p["relay_restart_receipt"],
+            sequence_path=p["relay_restart_sequence"],
+            action=context["action"],
+            transition_ref=context["transition_ref"],
+            transaction_sequence=context["transaction_sequence"],
+            expected_revision=context["expected_revision"],
+            use_target=False,
+        )
+    except relay_restart.RelayRestartError:
+        try:
+            _advance_managed_restart_receipt(p, context, "rollback_failed")
+        except relay_restart.RelayRestartError:
+            pass
+
+
+def _mark_restart_recovery_rollback_failed(
+    p: dict[str, Path],
+) -> None:
+    try:
+        latest = relay_restart.restart_recovery_context(
+            receipt_path=p["relay_restart_receipt"],
+            sequence_path=p["relay_restart_sequence"],
+        )
+    except relay_restart.RelayRestartError:
+        return
+    context = {**latest, "expected_revision": int(latest["revision"])}
+    if context["state"] == "rollback_failed":
+        return
+    try:
+        if context.get("state") != "restoring_config":
+            context = _advance_managed_restart_receipt(p, context, "restoring_config")
+        _advance_managed_restart_receipt(p, context, "rollback_failed")
+    except relay_restart.RelayRestartError:
+        pass
+
+
+def _finish_restart_recovery_with_cleanup(
+    p: dict[str, Path],
+    context: dict | None,
+    process,
+    *,
+    terminate,
+    runtime_validator=None,
+) -> tuple[bool, bool]:
+    def clear_pid_record_if_terminated(terminated: bool) -> None:
+        if not terminated:
+            return
+        current_record = read_json(p["pid"])
+        if int(current_record.get("pid") or 0) == process.pid:
+            p["pid"].unlink(missing_ok=True)
+
+    try:
+        recovery_healthy = _finish_restart_receipt_recovery(
+            p,
+            context,
+            runtime_validator=runtime_validator,
+        )
+    except Exception:
+        terminated = bool(terminate(process))
+        clear_pid_record_if_terminated(terminated)
+        if not terminated:
+            _mark_restart_recovery_rollback_failed(p)
+        raise
+    if recovery_healthy:
+        return True, False
+    terminated = bool(terminate(process))
+    clear_pid_record_if_terminated(terminated)
+    if not terminated:
+        _mark_restart_recovery_rollback_failed(p)
+    return False, terminated
+
+
 def request_managed_host_restart(
     *,
     action: str,
@@ -1948,6 +2220,8 @@ def _run_managed_foreground_supervisor(
     config_loader=None,
     relay_runtime_validator=None,
     peer_authorizer=None,
+    startup_recovery=None,
+    startup_lock_descriptor: int | None = None,
     install_signal_handlers: bool = True,
 ) -> int:
     stopping = False
@@ -1957,14 +2231,23 @@ def _run_managed_foreground_supervisor(
         nonlocal stopping
         stopping = True
 
-    if install_signal_handlers:
-        for signum in (signal.SIGTERM, signal.SIGINT):
-            previous_handlers[signum] = signal.getsignal(signum)
-            signal.signal(signum, request_stop)
+    try:
+        if install_signal_handlers:
+            for signum in (signal.SIGTERM, signal.SIGINT):
+                previous_handlers[signum] = signal.getsignal(signum)
+                signal.signal(signum, request_stop)
+    except Exception:
+        if startup_lock_descriptor is not None:
+            _release_lifecycle_lock(startup_lock_descriptor)
+        raise
 
     process = None
     completed_status = None
-    restart_lock_descriptor = -1
+    restart_lock_descriptor = (
+        startup_lock_descriptor
+        if startup_lock_descriptor is not None
+        else _acquire_lifecycle_lock()
+    )
     try:
         process, _readiness = _launch_supervised_stack_locked(
             args,
@@ -1976,6 +2259,7 @@ def _run_managed_foreground_supervisor(
             health_check=health_check,
         )
         if process is None:
+            _fail_restart_receipt_recovery_start(p, startup_recovery)
             completed_status = 1
             return completed_status
         _write_managed_service_instance(
@@ -1983,6 +2267,21 @@ def _run_managed_foreground_supervisor(
             child_pid=process.pid,
             template_hash=template_hash,
         )
+        recovery_healthy, _terminated = _finish_restart_recovery_with_cleanup(
+            p,
+            startup_recovery,
+            process,
+            terminate=lambda child: _terminate_supervised_child(
+                child,
+                timeout=stop_timeout,
+            ),
+            runtime_validator=relay_runtime_validator,
+        )
+        if not recovery_healthy:
+            completed_status = 1
+            return completed_status
+        _release_lifecycle_lock(restart_lock_descriptor)
+        restart_lock_descriptor = -1
         while True:
             if stopping:
                 completed_status = 0 if _terminate_supervised_child(process, timeout=stop_timeout) else 1
@@ -2189,10 +2488,19 @@ def cmd_start(args) -> int:
                 paths()["ownership"].unlink(missing_ok=True)
             return status
     if getattr(args, "managed_launch_agent", False):
-        with lifecycle_lock():
+        startup_lock_descriptor = _acquire_lifecycle_lock()
+        supervisor_owns_lock = False
+        try:
             marker_created = ensure_host_data_marker(allow_legacy=True)
-            config, secret_values = require_initialized()
             p = paths()
+            pid_record = read_json(p["pid"])
+            if process_alive(int(pid_record.get("pid") or 0)):
+                if marker_created:
+                    p["ownership"].unlink(missing_ok=True)
+                emit({"ok": False, "operation": "host_start", "error": "already_running", "token_omitted": True})
+                return 2
+            startup_recovery = _prepare_restart_receipt_recovery(p)
+            config, secret_values = require_initialized()
             gate = _managed_launch_agent_gate(args)
             if not gate["ok"]:
                 if marker_created:
@@ -2205,12 +2513,6 @@ def cmd_start(args) -> int:
                     "token_omitted": True,
                 })
                 return 2
-            pid_record = read_json(p["pid"])
-            if process_alive(int(pid_record.get("pid") or 0)):
-                if marker_created:
-                    p["ownership"].unlink(missing_ok=True)
-                emit({"ok": False, "operation": "host_start", "error": "already_running", "token_omitted": True})
-                return 2
             worker_preflight = host_worker_ownership_preflight(args)
             if not worker_preflight["ok"]:
                 if marker_created:
@@ -2222,15 +2524,21 @@ def cmd_start(args) -> int:
                 if marker_created:
                     p["ownership"].unlink(missing_ok=True)
                 raise
-        return _run_managed_foreground_supervisor(
-            args,
-            config,
-            secret_values,
-            p,
-            listener,
-            gate["template_hash"],
-            marker_created=marker_created,
-        )
+            supervisor_owns_lock = True
+            return _run_managed_foreground_supervisor(
+                args,
+                config,
+                secret_values,
+                p,
+                listener,
+                gate["template_hash"],
+                marker_created=marker_created,
+                startup_recovery=startup_recovery,
+                startup_lock_descriptor=startup_lock_descriptor,
+            )
+        finally:
+            if not supervisor_owns_lock:
+                _release_lifecycle_lock(startup_lock_descriptor)
     with lifecycle_lock():
         marker_created = ensure_host_data_marker(allow_legacy=True)
         try:

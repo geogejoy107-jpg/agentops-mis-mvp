@@ -36,8 +36,19 @@ STATES = frozenset(
     }
 )
 TERMINAL_STATES = frozenset(
-    {"healthy", "rolled_back", "rollback_failed", "manual_restart_required"}
+    {"healthy", "rolled_back", "rollback_failed"}
 )
+
+_TARGET_RECOVERY_STATES = frozenset(
+    {
+        "response_flushed",
+        "restart_requested",
+        "validating_new_host",
+        "manual_restart_required",
+        "healthy",
+    }
+)
+_ORIGINAL_RECOVERY_STATES = frozenset({"restoring_config", "rolled_back"})
 
 _ACTIONS = frozenset({"disable", "enable"})
 _TRANSITION_REF_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
@@ -53,10 +64,12 @@ _TRANSITIONS = {
         {"healthy", "restoring_config", "manual_restart_required"}
     ),
     "restoring_config": frozenset({"rolled_back", "rollback_failed"}),
-    "healthy": frozenset(),
+    "healthy": frozenset({"restoring_config"}),
     "rolled_back": frozenset(),
     "rollback_failed": frozenset(),
-    "manual_restart_required": frozenset(),
+    "manual_restart_required": frozenset(
+        {"validating_new_host", "restoring_config"}
+    ),
 }
 _RECEIPT_KEYS = frozenset(
     {
@@ -581,6 +594,16 @@ def _public_projection(receipt: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _recovery_context(receipt: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "action": receipt["action"],
+        "state": receipt["state"],
+        "transaction_sequence": receipt["transaction_sequence"],
+        "revision": receipt["revision"],
+        "transition_ref": receipt["transition_ref"],
+    }
+
+
 def create_restart_receipt(
     *,
     receipt_path: Path,
@@ -688,6 +711,20 @@ def public_restart_receipt(
         receipt = _load_receipt_locked(receipt_path)
         _verify_sequence(receipt, sequence_path)
         return _public_projection(receipt)
+    finally:
+        _release_lock(lock_descriptor)
+
+
+def restart_recovery_context(
+    *, receipt_path: Path, sequence_path: Path
+) -> dict[str, Any]:
+    """Read only the identity and state required to resume one private receipt."""
+    receipt_path = _absolute(receipt_path)
+    lock_descriptor = _acquire_lock(receipt_path)
+    try:
+        receipt = _load_receipt_locked(receipt_path)
+        _verify_sequence(receipt, sequence_path)
+        return _recovery_context(receipt)
     finally:
         _release_lock(lock_descriptor)
 
@@ -862,6 +899,42 @@ def restore_original_configs(
         expected_revision=expected_revision,
         use_target=False,
     )
+
+
+def ensure_restart_recovery_configs(
+    *,
+    receipt_path: Path,
+    sequence_path: Path,
+    action: str,
+    transition_ref: str,
+    transaction_sequence: int,
+    expected_revision: int,
+    use_target: bool,
+) -> dict[str, Any]:
+    """Idempotently restore the config pair implied by one recoverable state."""
+    if not isinstance(use_target, bool):
+        raise RelayRestartError("receipt_invalid")
+    receipt_path = _absolute(receipt_path)
+    lock_descriptor = _acquire_lock(receipt_path)
+    try:
+        receipt = _load_receipt_locked(receipt_path)
+        _check_identity(
+            receipt,
+            sequence_path=sequence_path,
+            action=action,
+            transition_ref=transition_ref,
+            transaction_sequence=transaction_sequence,
+            expected_revision=expected_revision,
+        )
+        state = receipt["state"]
+        if use_target and state not in _TARGET_RECOVERY_STATES:
+            raise RelayRestartError("invalid_state")
+        if not use_target and state not in _ORIGINAL_RECOVERY_STATES:
+            raise RelayRestartError("invalid_state")
+        _write_config_pair(receipt=receipt, use_target=use_target)
+        return _public_projection(receipt)
+    finally:
+        _release_lock(lock_descriptor)
 
 
 def finalize_restart_receipt(

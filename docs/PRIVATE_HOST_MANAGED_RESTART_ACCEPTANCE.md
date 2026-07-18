@@ -75,8 +75,7 @@ The production React build also passes. Existing bundle-size warning remains.
 
 ## Open Before Release
 
-- reconcile crash-interrupted nonterminal receipts when launchd starts a new
-  supervisor;
+- retain bounded post-restart audit evidence after recovery finalization;
 - publish and install a versioned release candidate with the new exact
   LaunchAgent template;
 - deploy Relay/DNS/certificate infrastructure and bind SNI routes to current

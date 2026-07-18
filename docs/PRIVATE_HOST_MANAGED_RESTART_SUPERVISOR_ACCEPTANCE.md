@@ -14,7 +14,8 @@ The Owner Relay confirmation route now invokes this primitive only after its
 `202` response body flushes. The request is bound to the private receipt action,
 transition ref, transaction sequence and expected revision. Replacement runtime
 failure restores both configs and relaunches the old Host. Crash reconciliation
-by a newly launched supervisor remains a separate open slice.
+is now performed before a newly launched supervisor loads config or starts its
+first stack.
 
 The supervisor validates the kernel-reported Unix peer PID as the exact direct
 `server.py` child of its current stack and holds the Host lifecycle lock for the
@@ -68,6 +69,6 @@ were not changed.
 
 ## Remaining Integration
 
-- reconcile crash-interrupted receipts before normal managed startup;
+- retain bounded post-restart audit evidence after recovery finalization;
 - install the new exact service template into a versioned Host release candidate;
 - run physical browser-only acceptance against a deployed Relay.

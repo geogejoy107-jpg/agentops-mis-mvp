@@ -228,9 +228,12 @@ Implementation slices:
    monotonic transaction sequence, enforces ordered revisions, restores or
    reapplies both files transactionally, and supports terminal archive/reuse.
    Owner route, receipt, parent request, replacement health and runtime-failure
-   rollback are now integrated and locally accepted. Crash-interrupted receipt
-   reconciliation by a newly launched supervisor, installation into the current
-   preview, authenticated SNI route binding, certificate lifecycle, credential
+   rollback are now integrated and locally accepted. Host startup also
+   reconciles every receipt state before loading config: unflushed changes roll
+   back, flushed/manual changes resume target validation, interrupted rollback
+   resumes the original health gate, and `rollback_failed` blocks blind startup.
+   Installation into the current preview, bounded post-restart audit retention,
+   authenticated SNI route binding, certificate lifecycle, credential
    provisioning and the deployed Relay remain open.
 3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host
    Console origin, bounded operations metadata, deployment and rollback.

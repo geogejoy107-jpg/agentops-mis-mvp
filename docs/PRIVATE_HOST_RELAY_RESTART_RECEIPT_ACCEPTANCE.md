@@ -50,7 +50,6 @@ subprocess, database, Tailscale or Worker access.
 
 ## Remaining Integration
 
-- reconcile unfinished receipts on managed Host startup;
 - retain or archive bounded post-restart audit evidence after a successful
   receipt is finalized;
 - install and physically validate the integrated source in a later release

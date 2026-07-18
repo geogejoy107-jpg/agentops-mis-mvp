@@ -510,6 +510,36 @@ def main() -> int:
             state="manual_restart_required",
         )
         public_payloads.extend((applied_second, second_response, manual))
+        evidence["manual_finalize_blocked"] = expect_error(
+            "terminal_required",
+            lambda: relay_restart.finalize_restart_receipt(
+                receipt_path=receipt,
+                sequence_path=sequence,
+                action="disable",
+                transition_ref=REF_2,
+                transaction_sequence=second_sequence,
+                expected_revision=3,
+            ),
+        )
+        validating_manual = transition(
+            receipt=receipt,
+            sequence=sequence,
+            action="disable",
+            transition_ref=REF_2,
+            transaction_sequence=second_sequence,
+            revision=3,
+            state="validating_new_host",
+        )
+        healthy_manual = transition(
+            receipt=receipt,
+            sequence=sequence,
+            action="disable",
+            transition_ref=REF_2,
+            transaction_sequence=second_sequence,
+            revision=4,
+            state="healthy",
+        )
+        public_payloads.extend((validating_manual, healthy_manual))
         archive = private_root / "archive" / "transaction-2.json"
         finalized = relay_restart.finalize_restart_receipt(
             receipt_path=receipt,
@@ -517,7 +547,7 @@ def main() -> int:
             action="disable",
             transition_ref=REF_2,
             transaction_sequence=second_sequence,
-            expected_revision=3,
+            expected_revision=5,
             archive_path=archive,
         )
         public_payloads.append(finalized)
