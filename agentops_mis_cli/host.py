@@ -11,12 +11,14 @@ import io
 import ipaddress
 import json
 import os
+import re
 import select
 import secrets
 import shutil
 import signal
 import socket
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -30,7 +32,7 @@ from agentops_mis_cli.relay_connector_service import (
     RelayConnectorServiceError,
     validate_connector_material,
 )
-from agentops_mis_cli import relay_control
+from agentops_mis_cli import relay_control, relay_restart
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +42,7 @@ DEFAULT_UI_DIST = ROOT / "ui" / "start-building-app" / "dist"
 MACOS_TAILSCALE_BIN = Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
 HOST_STOP_GRACE_SECONDS = 20
 HOST_SERVICE_LABEL = "dev.agentops.mis.private-host"
-HOST_MANAGED_RESTART_REQUEST = b"agentops-managed-host-restart-v1\n"
+HOST_MANAGED_RESTART_REQUEST_MAX_BYTES = 1024
 HOST_DATA_MARKER = {
     "schema_version": 1,
     "product": "AgentOps MIS Private Host Data",
@@ -115,6 +117,9 @@ def paths() -> dict[str, Path]:
         "relay_config": home / "relay" / "config.json",
         "relay_prepared": home / "relay" / "prepared.json",
         "relay_transition": home / "relay" / "transition.json",
+        "relay_restart_receipt": home / "relay" / "restart-receipt.json",
+        "relay_restart_sequence": home / "relay" / "restart-sequence.json",
+        "relay_restart_archive": home / "relay" / "restart-archive.json",
         "relay_secrets": home / "relay" / "secrets.json",
         "relay_epoch": home / "relay" / "epoch.json",
         "relay_status": home / "relay" / "status.json",
@@ -419,8 +424,7 @@ def managed_host_running() -> bool:
     return process_alive(int(record.get("pid") or 0))
 
 
-@contextlib.contextmanager
-def lifecycle_lock():
+def _acquire_lifecycle_lock() -> int:
     lock_path = paths()["lifecycle_lock"]
     lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     descriptor = os.open(
@@ -433,12 +437,22 @@ def lifecycle_lock():
         os.close(descriptor)
         raise RuntimeError("Host lifecycle lock is not a regular file.")
     os.fchmod(descriptor, 0o600)
+    fcntl.flock(descriptor, fcntl.LOCK_EX)
+    return descriptor
+
+
+def _release_lifecycle_lock(descriptor: int) -> None:
+    fcntl.flock(descriptor, fcntl.LOCK_UN)
+    os.close(descriptor)
+
+
+@contextlib.contextmanager
+def lifecycle_lock():
+    descriptor = _acquire_lifecycle_lock()
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
         yield
     finally:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
+        _release_lifecycle_lock(descriptor)
 
 
 def ensure_host_data_marker(*, allow_legacy: bool = False) -> bool:
@@ -1667,11 +1681,10 @@ def _managed_restart_instance_valid(
     )
 
 
-def request_managed_host_restart(
+def managed_host_restart_status(
     *,
     service_path: Path | None = None,
     launchd_state: dict | None = None,
-    timeout: float = 2,
     _caller_parent_pid_override: int | None = None,
 ) -> dict:
     p = paths()
@@ -1685,16 +1698,225 @@ def request_managed_host_restart(
     ) or int((record or {}).get("stack_child_pid") or 0) != caller_parent_pid:
         return {
             "ok": False,
-            "operation": "host_managed_restart_request",
+            "operation": "host_managed_restart_status",
             "error": "managed_launch_agent_required",
+            "available": False,
             "paths_omitted": True,
             "token_omitted": True,
         }
+    return {
+        "ok": True,
+        "operation": "host_managed_restart_status",
+        "available": True,
+        "paths_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def _managed_restart_request_bytes(
+    *,
+    action: str,
+    transition_ref: str,
+    transaction_sequence: int,
+    expected_revision: int,
+) -> bytes:
+    if action not in {"enable", "disable"}:
+        raise ValueError("invalid_managed_restart_request")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", transition_ref or ""):
+        raise ValueError("invalid_managed_restart_request")
+    if (
+        not isinstance(transaction_sequence, int)
+        or isinstance(transaction_sequence, bool)
+        or transaction_sequence < 1
+        or not isinstance(expected_revision, int)
+        or isinstance(expected_revision, bool)
+        or expected_revision < 1
+    ):
+        raise ValueError("invalid_managed_restart_request")
+    payload = (json.dumps({
+        "action": action,
+        "expected_revision": expected_revision,
+        "transaction_sequence": transaction_sequence,
+        "transition_ref": transition_ref,
+    }, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+    if len(payload) > HOST_MANAGED_RESTART_REQUEST_MAX_BYTES:
+        raise ValueError("invalid_managed_restart_request")
+    return payload
+
+
+def _receive_managed_restart_request(connection: socket.socket) -> dict | None:
+    payload = bytearray()
+    while len(payload) <= HOST_MANAGED_RESTART_REQUEST_MAX_BYTES:
+        try:
+            chunk = connection.recv(min(256, HOST_MANAGED_RESTART_REQUEST_MAX_BYTES + 1 - len(payload)))
+        except OSError:
+            return None
+        if not chunk:
+            break
+        payload.extend(chunk)
+        if b"\n" in chunk:
+            break
+    if not payload.endswith(b"\n") or len(payload) > HOST_MANAGED_RESTART_REQUEST_MAX_BYTES:
+        return None
+    try:
+        value = json.loads(bytes(payload).decode("ascii"))
+    except (UnicodeError, ValueError):
+        return None
+    if not isinstance(value, dict) or set(value) != {
+        "action",
+        "expected_revision",
+        "transaction_sequence",
+        "transition_ref",
+    }:
+        return None
+    try:
+        expected = _managed_restart_request_bytes(
+            action=value["action"],
+            transition_ref=value["transition_ref"],
+            transaction_sequence=value["transaction_sequence"],
+            expected_revision=value["expected_revision"],
+        )
+    except (KeyError, ValueError):
+        return None
+    return value if secrets.compare_digest(bytes(payload), expected) else None
+
+
+def _unix_peer_pid(connection: socket.socket) -> int | None:
+    try:
+        if hasattr(socket, "SO_PEERCRED"):
+            raw = connection.getsockopt(
+                socket.SOL_SOCKET,
+                socket.SO_PEERCRED,
+                struct.calcsize("3i"),
+            )
+            pid, _uid, _gid = struct.unpack("3i", raw)
+            return pid if pid > 0 else None
+        if sys.platform == "darwin":
+            raw = connection.getsockopt(0, 2, struct.calcsize("i"))
+            pid = struct.unpack("i", raw)[0]
+            return pid if pid > 0 else None
+    except (OSError, struct.error, ValueError):
+        return None
+    return None
+
+
+def _managed_backend_process(pid: int, expected_parent_pid: int) -> bool:
+    if pid <= 0 or expected_parent_pid <= 0:
+        return False
+    try:
+        result = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "ppid=", "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    columns = result.stdout.strip().split(None, 1)
+    if result.returncode != 0 or len(columns) != 2:
+        return False
+    try:
+        parent_pid = int(columns[0])
+    except ValueError:
+        return False
+    command = columns[1]
+    return bool(
+        parent_pid == expected_parent_pid
+        and re.search(r"(^|[ /])server\.py([ ]|$)", command)
+        and "--host" in command
+        and "--port" in command
+    )
+
+
+def _managed_restart_peer_authorized(
+    connection: socket.socket,
+    expected_parent_pid: int,
+    *,
+    peer_pid_reader=None,
+    backend_checker=None,
+) -> bool:
+    peer_pid = (peer_pid_reader or _unix_peer_pid)(connection)
+    check_backend = backend_checker or _managed_backend_process
+    return peer_pid is not None and check_backend(peer_pid, expected_parent_pid)
+
+
+def _advance_managed_restart_receipt(
+    p: dict[str, Path],
+    request: dict,
+    state: str,
+) -> dict:
+    projection = relay_restart.transition_restart_receipt(
+        receipt_path=p["relay_restart_receipt"],
+        sequence_path=p["relay_restart_sequence"],
+        action=request["action"],
+        transition_ref=request["transition_ref"],
+        transaction_sequence=request["transaction_sequence"],
+        expected_revision=request["expected_revision"],
+        state=state,
+    )
+    return {**request, "expected_revision": int(projection["revision"])}
+
+
+def _managed_relay_runtime_healthy(action: str, p: dict[str, Path]) -> bool:
+    projection = relay_connector_projection(p)
+    if action == "enable":
+        return bool(
+            projection.get("enabled") is True
+            and projection.get("runtime_ready") is True
+            and projection.get("host_tls_ready") is True
+        )
+    return bool(
+        projection.get("enabled") is False
+        and projection.get("state") == "disabled"
+        and projection.get("ok") is True
+    )
+
+
+def request_managed_host_restart(
+    *,
+    action: str,
+    transition_ref: str,
+    transaction_sequence: int,
+    expected_revision: int,
+    service_path: Path | None = None,
+    launchd_state: dict | None = None,
+    timeout: float = 2,
+    _caller_parent_pid_override: int | None = None,
+) -> dict:
+    status = managed_host_restart_status(
+        service_path=service_path,
+        launchd_state=launchd_state,
+        _caller_parent_pid_override=_caller_parent_pid_override,
+    )
+    if status.get("available") is not True:
+        return {
+            **status,
+            "operation": "host_managed_restart_request",
+            "accepted": False,
+        }
+    try:
+        request_bytes = _managed_restart_request_bytes(
+            action=action,
+            transition_ref=transition_ref,
+            transaction_sequence=transaction_sequence,
+            expected_revision=expected_revision,
+        )
+    except ValueError:
+        return {
+            "ok": False,
+            "operation": "host_managed_restart_request",
+            "accepted": False,
+            "error": "managed_restart_request_invalid",
+            "paths_omitted": True,
+            "token_omitted": True,
+        }
+    p = paths()
     requester = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     requester.settimeout(max(0.1, min(timeout, 5)))
     try:
         requester.connect(str(p["restart_socket"]))
-        requester.sendall(HOST_MANAGED_RESTART_REQUEST)
+        requester.sendall(request_bytes)
         accepted = requester.recv(1) == b"\x01"
     except OSError:
         accepted = False
@@ -1724,6 +1946,8 @@ def _run_managed_foreground_supervisor(
     popen_factory=None,
     health_check=None,
     config_loader=None,
+    relay_runtime_validator=None,
+    peer_authorizer=None,
     install_signal_handlers: bool = True,
 ) -> int:
     stopping = False
@@ -1740,6 +1964,7 @@ def _run_managed_foreground_supervisor(
 
     process = None
     completed_status = None
+    restart_lock_descriptor = -1
     try:
         process, _readiness = _launch_supervised_stack_locked(
             args,
@@ -1773,18 +1998,33 @@ def _run_managed_foreground_supervisor(
                 connection, _address = listener.accept()
             except BlockingIOError:
                 continue
+            restart_request = None
             with connection:
                 connection.settimeout(1)
-                try:
-                    requested = connection.recv(len(HOST_MANAGED_RESTART_REQUEST) + 1)
-                except OSError:
-                    requested = b""
-                accepted = secrets.compare_digest(requested, HOST_MANAGED_RESTART_REQUEST)
+                authorize_peer = peer_authorizer or _managed_restart_peer_authorized
+                peer_authorized = bool(authorize_peer(connection, process.pid))
+                if peer_authorized:
+                    restart_request = _receive_managed_restart_request(connection)
+                accepted = False
+                if restart_request is not None:
+                    try:
+                        restart_lock_descriptor = _acquire_lifecycle_lock()
+                        restart_request = _advance_managed_restart_receipt(
+                            p,
+                            restart_request,
+                            "restart_requested",
+                        )
+                        accepted = True
+                    except relay_restart.RelayRestartError:
+                        if restart_lock_descriptor >= 0:
+                            _release_lifecycle_lock(restart_lock_descriptor)
+                            restart_lock_descriptor = -1
+                        restart_request = None
                 try:
                     connection.sendall(b"\x01" if accepted else b"\x00")
                 except OSError:
                     pass
-            if not accepted:
+            if not accepted or restart_request is None:
                 continue
             if not _terminate_supervised_child(process, timeout=stop_timeout):
                 completed_status = 1
@@ -1792,25 +2032,131 @@ def _run_managed_foreground_supervisor(
             current_record = read_json(p["pid"])
             if int(current_record.get("pid") or 0) == process.pid:
                 p["pid"].unlink(missing_ok=True)
-            replacement_config, replacement_secrets = (config_loader or require_initialized)()
-            process, _readiness = _launch_supervised_stack_locked(
-                args,
-                replacement_config,
-                replacement_secrets,
+            restart_request = _advance_managed_restart_receipt(
                 p,
-                startup_timeout=startup_timeout,
-                popen_factory=popen_factory,
-                health_check=health_check,
+                restart_request,
+                "validating_new_host",
             )
-            if process is None:
+            replacement_healthy = False
+            try:
+                replacement_config, replacement_secrets = (config_loader or require_initialized)()
+                process, _readiness = _launch_supervised_stack_locked(
+                    args,
+                    replacement_config,
+                    replacement_secrets,
+                    p,
+                    startup_timeout=startup_timeout,
+                    popen_factory=popen_factory,
+                    health_check=health_check,
+                )
+                if process is not None:
+                    _write_managed_service_instance(
+                        p["service_instance"],
+                        child_pid=process.pid,
+                        template_hash=template_hash,
+                    )
+                    validate_runtime = relay_runtime_validator or _managed_relay_runtime_healthy
+                    replacement_healthy = bool(validate_runtime(restart_request["action"], p))
+            except (OSError, RuntimeError, relay_restart.RelayRestartError):
+                replacement_healthy = False
+            if replacement_healthy:
+                healthy = _advance_managed_restart_receipt(p, restart_request, "healthy")
+                relay_restart.finalize_restart_receipt(
+                    receipt_path=p["relay_restart_receipt"],
+                    sequence_path=p["relay_restart_sequence"],
+                    action=healthy["action"],
+                    transition_ref=healthy["transition_ref"],
+                    transaction_sequence=healthy["transaction_sequence"],
+                    expected_revision=healthy["expected_revision"],
+                )
+                _release_lifecycle_lock(restart_lock_descriptor)
+                restart_lock_descriptor = -1
+                continue
+            if (
+                process is not None
+                and process.poll() is None
+                and not _terminate_supervised_child(process, timeout=stop_timeout)
+            ):
+                try:
+                    restart_request = _advance_managed_restart_receipt(
+                        p,
+                        restart_request,
+                        "restoring_config",
+                    )
+                    _advance_managed_restart_receipt(
+                        p,
+                        restart_request,
+                        "rollback_failed",
+                    )
+                except relay_restart.RelayRestartError:
+                    pass
                 completed_status = 1
                 return completed_status
-            _write_managed_service_instance(
-                p["service_instance"],
-                child_pid=process.pid,
-                template_hash=template_hash,
+            current_record = read_json(p["pid"])
+            if process is not None and int(current_record.get("pid") or 0) == process.pid:
+                p["pid"].unlink(missing_ok=True)
+            restart_request = _advance_managed_restart_receipt(
+                p,
+                restart_request,
+                "restoring_config",
             )
+            try:
+                relay_restart.restore_original_configs(
+                    receipt_path=p["relay_restart_receipt"],
+                    sequence_path=p["relay_restart_sequence"],
+                    action=restart_request["action"],
+                    transition_ref=restart_request["transition_ref"],
+                    transaction_sequence=restart_request["transaction_sequence"],
+                    expected_revision=restart_request["expected_revision"],
+                )
+            except relay_restart.RelayRestartError:
+                try:
+                    _advance_managed_restart_receipt(
+                        p,
+                        restart_request,
+                        "rollback_failed",
+                    )
+                except relay_restart.RelayRestartError:
+                    pass
+                completed_status = 1
+                return completed_status
+            rollback_healthy = False
+            try:
+                rollback_config, rollback_secrets = (config_loader or require_initialized)()
+                process, _readiness = _launch_supervised_stack_locked(
+                    args,
+                    rollback_config,
+                    rollback_secrets,
+                    p,
+                    startup_timeout=startup_timeout,
+                    popen_factory=popen_factory,
+                    health_check=health_check,
+                )
+                if process is not None:
+                    _write_managed_service_instance(
+                        p["service_instance"],
+                        child_pid=process.pid,
+                        template_hash=template_hash,
+                    )
+                    validate_runtime = relay_runtime_validator or _managed_relay_runtime_healthy
+                    original_action = "disable" if restart_request["action"] == "enable" else "enable"
+                    rollback_healthy = bool(validate_runtime(original_action, p))
+            except (OSError, RuntimeError, relay_restart.RelayRestartError):
+                rollback_healthy = False
+            terminal_state = "rolled_back" if rollback_healthy else "rollback_failed"
+            restart_request = _advance_managed_restart_receipt(
+                p,
+                restart_request,
+                terminal_state,
+            )
+            if not rollback_healthy:
+                completed_status = 1
+                return completed_status
+            _release_lifecycle_lock(restart_lock_descriptor)
+            restart_lock_descriptor = -1
     finally:
+        if restart_lock_descriptor >= 0:
+            _release_lifecycle_lock(restart_lock_descriptor)
         if process is not None and process.poll() is None:
             _terminate_supervised_child(process, timeout=stop_timeout)
         listener.close()
@@ -3002,7 +3348,35 @@ def cmd_relay_transition(args) -> int:
                 payload = relay_control.execute_confirmed_relay_transition(
                     **common,
                     transition_ref=args.confirm_ref,
+                    restart_receipt_path=p["relay_restart_receipt"],
+                    restart_sequence_path=p["relay_restart_sequence"],
                 )
+                if payload.get("ok") is True and payload.get("transaction_sequence"):
+                    flushed = relay_restart.transition_restart_receipt(
+                        receipt_path=p["relay_restart_receipt"],
+                        sequence_path=p["relay_restart_sequence"],
+                        action=args.action,
+                        transition_ref=args.confirm_ref,
+                        transaction_sequence=int(payload["transaction_sequence"]),
+                        expected_revision=int(payload["revision"]),
+                        state="response_flushed",
+                    )
+                    manual = relay_restart.transition_restart_receipt(
+                        receipt_path=p["relay_restart_receipt"],
+                        sequence_path=p["relay_restart_sequence"],
+                        action=args.action,
+                        transition_ref=args.confirm_ref,
+                        transaction_sequence=int(flushed["transaction_sequence"]),
+                        expected_revision=int(flushed["revision"]),
+                        state="manual_restart_required",
+                    )
+                    payload.update({
+                        "state": "manual_restart_required",
+                        "restart_mode": "manual",
+                        "restart_required": True,
+                        "revision": manual["revision"],
+                        "rollback_armed": True,
+                    })
         else:
             payload = relay_control.prepare_relay_transition(**common)
     emit(payload)

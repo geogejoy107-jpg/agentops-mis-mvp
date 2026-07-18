@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -68,6 +69,28 @@ def main() -> int:
     original_process_alive = host.process_alive
     original_record_matches = host.managed_process_record_matches
     try:
+        peer_left, peer_right = socket.socketpair()
+        try:
+            kernel_peer_pid = host._unix_peer_pid(peer_left)
+            exact_backend_peer = host._managed_restart_peer_authorized(
+                peer_left,
+                42000,
+                peer_pid_reader=lambda _connection: 42001,
+                backend_checker=lambda pid, parent: pid == 42001 and parent == 42000,
+            )
+            unrelated_peer = host._managed_restart_peer_authorized(
+                peer_left,
+                42000,
+                peer_pid_reader=lambda _connection: 42002,
+                backend_checker=lambda pid, parent: pid == 42001 and parent == 42000,
+            )
+            require(kernel_peer_pid == os.getpid(), "kernel peer PID was unavailable", failures)
+            require(exact_backend_peer is True, "exact backend peer was rejected", failures)
+            require(unrelated_peer is False, "unrelated same-UID peer was accepted", failures)
+        finally:
+            peer_left.close()
+            peer_right.close()
+
         with tempfile.TemporaryDirectory(prefix="agentops-managed-restart-") as temporary:
             temp = Path(temporary)
             host_home = temp / "host"
@@ -125,7 +148,7 @@ def main() -> int:
             service_path.write_bytes(host.host_service_template())
             service_path.chmod(0o600)
 
-            manual_request = host.request_managed_host_restart(
+            manual_request = host.managed_host_restart_status(
                 service_path=service_path,
                 launchd_state=loaded_state,
             )
@@ -172,6 +195,7 @@ def main() -> int:
 
             p = host.paths()
             p["run"].mkdir(parents=True, mode=0o700)
+            p["home"].chmod(0o700)
             p["run"].chmod(0o700)
             listener = host._open_managed_restart_socket(p["restart_socket"])
             require(host._private_managed_restart_socket(p["restart_socket"]), "restart socket was not mode 0600", failures)
@@ -218,6 +242,57 @@ def main() -> int:
             }
             replacement_origin = "https://transition.example.invalid"
             replacement_secret_marker = "agthost_REPLACEMENT_SMOKE_SECRET"
+            transition_ref = "rst_supervisor_smoke_01"
+            p["relay"].mkdir(parents=True, mode=0o700)
+            p["relay"].chmod(0o700)
+            active_original = b'{"enabled":false,"schema_version":1}\n'
+            active_target = b'{"enabled":true,"schema_version":1}\n'
+            host_original = (json.dumps(config, sort_keys=True) + "\n").encode("utf-8")
+            host_target_config = {
+                **config,
+                "allowed_origins": [replacement_origin],
+                "cookie_secure": True,
+            }
+            host_target = (json.dumps(host_target_config, sort_keys=True) + "\n").encode("utf-8")
+            p["relay_config"].write_bytes(active_original)
+            p["relay_config"].chmod(0o600)
+            p["config"].write_bytes(host_original)
+            p["config"].chmod(0o600)
+            restart_receipt = host.relay_restart.create_restart_receipt(
+                receipt_path=p["relay_restart_receipt"],
+                sequence_path=p["relay_restart_sequence"],
+                action="enable",
+                transition_ref=transition_ref,
+                active_config_path=p["relay_config"],
+                host_config_path=p["config"],
+                active_original_config=active_original,
+                active_target_config=active_target,
+                host_original_config=host_original,
+                host_target_config=host_target,
+            )
+            host.relay_restart.apply_target_configs(
+                receipt_path=p["relay_restart_receipt"],
+                sequence_path=p["relay_restart_sequence"],
+                action="enable",
+                transition_ref=transition_ref,
+                transaction_sequence=int(restart_receipt["transaction_sequence"]),
+                expected_revision=int(restart_receipt["revision"]),
+            )
+            restart_receipt = host.relay_restart.transition_restart_receipt(
+                receipt_path=p["relay_restart_receipt"],
+                sequence_path=p["relay_restart_sequence"],
+                action="enable",
+                transition_ref=transition_ref,
+                transaction_sequence=int(restart_receipt["transaction_sequence"]),
+                expected_revision=int(restart_receipt["revision"]),
+                state="response_flushed",
+            )
+            request_context = {
+                "action": "enable",
+                "transition_ref": transition_ref,
+                "transaction_sequence": int(restart_receipt["transaction_sequence"]),
+                "expected_revision": int(restart_receipt["revision"]),
+            }
             config_loads = 0
 
             def load_replacement_config():
@@ -248,6 +323,8 @@ def main() -> int:
                         popen_factory=fake_popen,
                         health_check=lambda _url: {"reachable": True, "status": "ok"},
                         config_loader=load_replacement_config,
+                        relay_runtime_validator=lambda _action, _paths: True,
+                        peer_authorizer=lambda _connection, _parent_pid: True,
                         install_signal_handlers=False,
                     ))
                 except Exception as exc:
@@ -280,6 +357,7 @@ def main() -> int:
             wrong_instance["template_hash"] = "0" * 64
             host.write_private_json(p["service_instance"], wrong_instance)
             rejected = host.request_managed_host_restart(
+                **request_context,
                 service_path=service_path,
                 launchd_state=loaded_state,
                 _caller_parent_pid_override=int((instance or {}).get("stack_child_pid") or 0),
@@ -289,6 +367,7 @@ def main() -> int:
             host.write_private_json(p["service_instance"], instance or {})
 
             unrelated_caller = host.request_managed_host_restart(
+                **request_context,
                 service_path=service_path,
                 launchd_state=loaded_state,
             )
@@ -300,6 +379,7 @@ def main() -> int:
             )
 
             requested = host.request_managed_host_restart(
+                **request_context,
                 service_path=service_path,
                 launchd_state=loaded_state,
                 _caller_parent_pid_override=int((instance or {}).get("stack_child_pid") or 0),
@@ -353,6 +433,8 @@ def main() -> int:
         "bounded_exact_child_cleanup": True,
         "replacement_config_reloaded": True,
         "caller_parent_bound": True,
+        "kernel_peer_identity_bound": True,
+        "unrelated_same_uid_peer_rejected": True,
         "unsafe_run_directories_rejected": True,
         "private_record_mode": "0600",
         "public_results_redacted": True,

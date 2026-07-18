@@ -67,6 +67,8 @@ def main() -> int:
             "relay_config": root / "relay" / "config.json",
             "relay_prepared": root / "relay" / "prepared.json",
             "relay_secrets": root / "relay" / "secrets.json",
+            "relay_restart_receipt": root / "relay" / "restart-receipt.json",
+            "relay_restart_sequence": root / "relay" / "restart-sequence.json",
         }
 
         code, payload, prepare, confirm, execute = invoke(
@@ -93,6 +95,8 @@ def main() -> int:
             and execute.call_count == 1
             and confirm.call_args.kwargs.get("transition_ref") == "fixture-safe-ref"
             and execute.call_args.kwargs.get("transition_ref") == "fixture-safe-ref"
+            and execute.call_args.kwargs.get("restart_receipt_path") == host_paths["relay_restart_receipt"]
+            and execute.call_args.kwargs.get("restart_sequence_path") == host_paths["relay_restart_sequence"]
         )
 
         code, payload, prepare, confirm, execute = invoke(

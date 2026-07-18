@@ -9,8 +9,9 @@ the active Relay config and Host config without exposing either file to HTTP,
 audit or UI. It binds an action, validated transition ref, persistent monotonic
 transaction sequence and ordered state revision.
 
-The receipt is a local crash/rollback primitive. It is not yet wired to the
-Owner confirmation route or managed Host supervisor.
+The receipt is now wired to the Owner confirmation route and exact managed Host
+supervisor. A failed HTTP body write restores both originals before any restart;
+a failed target runtime restores both originals and relaunches the old Host.
 
 ## Proven Boundaries
 
@@ -27,6 +28,10 @@ Owner confirmation route or managed Host supervisor.
 - a terminal receipt may be archived/finalized or explicitly replaced;
 - second-file target write failure restores both originals;
 - second-file restore failure reapplies both targets, preventing mixed config;
+- failed one-time transition consumption after both targets are applied restores
+  both originals and records a terminal rollback receipt;
+- a response-path restore failure records `rollback_failed` rather than leaving
+  an ambiguous nonterminal state;
 - public output omits config bytes, refs, paths and digests.
 
 ## Verification
@@ -45,11 +50,8 @@ subprocess, database, Tailscale or Worker access.
 
 ## Remaining Integration
 
-- create and apply the receipt inside the exact confirmed Relay transaction;
-- roll back from a broken Owner response before any restart request;
-- send only transaction sequence/ref-bound restart requests to the exact Host
-  parent;
-- transition through validation, healthy, restore and rollback states from the
-  supervisor;
 - reconcile unfinished receipts on managed Host startup;
-- surface only the bounded public state from `GET /api/host/relay`.
+- retain or archive bounded post-restart audit evidence after a successful
+  receipt is finalized;
+- install and physically validate the integrated source in a later release
+  candidate.

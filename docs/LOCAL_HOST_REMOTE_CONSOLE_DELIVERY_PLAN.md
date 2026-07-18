@@ -205,8 +205,11 @@ Implementation slices:
    Host TLS plus a durable epoch; remote readiness remains false without a
    deployed Relay. Owner enable/disable now uses an Owner-only, same-origin,
    CSRF-protected prepare/confirm transition with private material binding,
-   transactional rollback and bounded audit output. The confirmed transition
-   reports `restart_required` but does not yet restart the installed Host.
+   transactional rollback and bounded audit output. A managed source Host now
+   returns a flushed `202`, submits one receipt-bound request to its exact
+   LaunchAgent parent, validates the replacement stack and Relay runtime, and
+   restores both configs plus the old stack when the target health gate fails.
+   A manual foreground Host remains explicit `manual_restart_required`.
    A dependency-free, loopback-tested Relay-side ClientHello SNI selector now
    proves exact two-Host route isolation, bounded parsing/backpressure, opaque
    application bytes, and fail-closed unknown/malformed input. Binding its
@@ -220,12 +223,15 @@ Implementation slices:
    called after a broken response. The exact managed LaunchAgent parent now has
    an internal, caller-parent-bound restart supervisor that reloads current Host
    config for every bounded stack replacement; manual foreground mode has no
-   automatic authority. Restart-receipt, health-result and rollback integration
-   remain open. The private restart receipt itself now stores both Relay and
+   automatic authority. The private restart receipt stores both Relay and
    Host original/target config pairs, binds one transition ref plus a persistent
    monotonic transaction sequence, enforces ordered revisions, restores or
    reapplies both files transactionally, and supports terminal archive/reuse.
-   It is not yet invoked by the Owner route or supervisor.
+   Owner route, receipt, parent request, replacement health and runtime-failure
+   rollback are now integrated and locally accepted. Crash-interrupted receipt
+   reconciliation by a newly launched supervisor, installation into the current
+   preview, authenticated SNI route binding, certificate lifecycle, credential
+   provisioning and the deployed Relay remain open.
 3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host
    Console origin, bounded operations metadata, deployment and rollback.
 4. `3D Physical acceptance`: fresh browser-only device, real Hermes/OpenClaw

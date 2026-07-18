@@ -42,12 +42,12 @@ TERMINAL_STATES = frozenset(
 _ACTIONS = frozenset({"disable", "enable"})
 _TRANSITION_REF_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _TRANSITIONS = {
-    "config_applied": frozenset({"response_flushed"}),
+    "config_applied": frozenset({"response_flushed", "restoring_config"}),
     "response_flushed": frozenset(
-        {"restart_requested", "manual_restart_required"}
+        {"restart_requested", "restoring_config", "manual_restart_required"}
     ),
     "restart_requested": frozenset(
-        {"validating_new_host", "manual_restart_required"}
+        {"validating_new_host", "restoring_config", "manual_restart_required"}
     ),
     "validating_new_host": frozenset(
         {"healthy", "restoring_config", "manual_restart_required"}

@@ -109,6 +109,20 @@ def wait_ready(opener, base_url: str, process: subprocess.Popen) -> bool:
     return False
 
 
+def wait_receipt_state(path: Path, expected: str, timeout: float = 2) -> dict:
+    deadline = time.monotonic() + timeout
+    receipt = {}
+    while time.monotonic() < deadline:
+        try:
+            receipt = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            receipt = {}
+        if receipt.get("state") == expected:
+            break
+        time.sleep(0.02)
+    return receipt
+
+
 def add_operator_account(db_path: Path) -> None:
     with sqlite3.connect(db_path) as conn:
         owner = conn.execute("SELECT * FROM human_accounts WHERE role='owner' LIMIT 1").fetchone()
@@ -333,15 +347,28 @@ def main() -> int:
             )
             active = json.loads((relay_home / "config.json").read_text(encoding="utf-8"))
             host_config = json.loads((host_home / "config.json").read_text(encoding="utf-8"))
+            restart_receipt = wait_receipt_state(relay_home / "restart-receipt.json", "manual_restart_required")
+            evidence["confirmed_execution_observed"] = {
+                "http_status": status,
+                "state": executed.get("state"),
+                "restart_mode": executed.get("restart_mode"),
+                "restart_required": executed.get("restart_required"),
+                "rollback_armed": executed.get("rollback_armed"),
+                "active_enabled": executed.get("active_enabled"),
+                "receipt_state": restart_receipt.get("state"),
+            }
             evidence["confirmed_execution"] = bool(
-                status == 200
-                and executed.get("state") == "restart_required"
+                status == 202
+                and executed.get("state") == "manual_restart_required"
+                and executed.get("restart_mode") == "manual"
                 and executed.get("restart_required") is True
+                and executed.get("rollback_armed") is True
                 and executed.get("active_enabled") is True
                 and active.get("enabled") is True
                 and host_config.get("network_publication") == "agentops_relay"
                 and host_config.get("tailscale_https_port") == 8443
                 and host_config.get("tailscale_device_name") == "preserve-device"
+                and restart_receipt.get("state") == "manual_restart_required"
             )
 
             status, _headers, replay = request_json(
@@ -353,6 +380,29 @@ def main() -> int:
             )
             evidence["confirmation_replay_rejected"] = bool(
                 status == 409 and replay.get("error") == "transition_not_found"
+            )
+
+            status, _headers, blocked_prepare = request_json(
+                owner,
+                base_url + "/api/host/relay/transitions",
+                method="POST",
+                body={"action": "disable"},
+                headers=owner_headers,
+            )
+            blocked_ref = str(blocked_prepare.get("transition_ref") or "")
+            status_confirm, _headers, blocked_confirm = request_json(
+                owner,
+                base_url + f"/api/host/relay/transitions/{blocked_ref}/confirm",
+                method="POST",
+                body={"action": "disable"},
+                headers=owner_headers,
+            )
+            evidence["pending_restart_blocks_next_transition"] = bool(
+                status == 200
+                and blocked_ref
+                and status_confirm == 409
+                and blocked_confirm.get("error") == "rollback_pending"
+                and json.loads((relay_home / "config.json").read_text(encoding="utf-8")).get("enabled") is True
             )
 
             with sqlite3.connect(db_path) as conn:
@@ -377,7 +427,7 @@ def main() -> int:
                 stdout, stderr = process.communicate(timeout=5)
 
         for name, passed in evidence.items():
-            if passed is not True:
+            if isinstance(passed, bool) and passed is not True:
                 failures.append(f"{name} failed")
         combined = (stdout or "") + (stderr or "")
         if any(value in combined for value in secrets.values()) or str(root) in combined:

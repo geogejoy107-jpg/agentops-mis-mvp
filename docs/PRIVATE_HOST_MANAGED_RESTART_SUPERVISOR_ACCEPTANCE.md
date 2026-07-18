@@ -10,9 +10,16 @@ The parent stops only that child, reloads the current private Host config and
 secrets from disk, waits for the inherited readiness signal plus loopback health,
 and writes a new private service-instance record.
 
-This is an internal lifecycle primitive. The Owner Relay confirmation route does
-not invoke it yet, the restart receipt is not yet bound to the request, and
-automatic rollback is not yet integrated.
+The Owner Relay confirmation route now invokes this primitive only after its
+`202` response body flushes. The request is bound to the private receipt action,
+transition ref, transaction sequence and expected revision. Replacement runtime
+failure restores both configs and relaunches the old Host. Crash reconciliation
+by a newly launched supervisor remains a separate open slice.
+
+The supervisor validates the kernel-reported Unix peer PID as the exact direct
+`server.py` child of its current stack and holds the Host lifecycle lock for the
+whole replacement transaction. Unrelated same-UID socket clients and concurrent
+Host lifecycle commands cannot consume the receipt or create a second stack.
 
 ## Authority And Isolation
 
@@ -20,7 +27,8 @@ automatic rollback is not yet integrated.
 - The exact service label must be loaded and the supervisor parent must be
   launchd.
 - The hidden managed flag is accepted only with `--foreground --no-workers`.
-- The backend requester must be a direct child of the exact current stack child.
+- The backend requester must be the exact direct `server.py` child of the current
+  stack child, verified again from the accepted socket peer PID.
 - The private service-instance record binds supervisor PID, stack child PID,
   exact label and exact template hash.
 - The Unix socket and instance record are mode `0600`; their directory is a
@@ -60,11 +68,6 @@ were not changed.
 
 ## Remaining Integration
 
-- bind each internal request to one private restart transaction sequence and
-  transition ref;
-- mark response-flushed/restart-requested/validating/healthy states durably;
-- validate enabled or disabled Relay runtime after replacement;
-- restore both Relay and Host config byte-for-byte and relaunch the old stack on
-  failure;
 - reconcile crash-interrupted receipts before normal managed startup;
-- wire the Owner confirmation response through the existing post-response hook.
+- install the new exact service template into a versioned Host release candidate;
+- run physical browser-only acceptance against a deployed Relay.

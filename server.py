@@ -171,7 +171,7 @@ from agentops_mis_core.workflow_jobs import (
 )
 from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
 from agentops_mis_cli import host as private_host_cli
-from agentops_mis_cli import relay_control
+from agentops_mis_cli import relay_control, relay_restart
 from agentops_mis_cli.redaction import redact_full_text as shared_redact_full_text
 from agentops_mis_cli.redaction import redact_text as shared_redact_text
 from agentops_mis_runtime.capabilities import (
@@ -638,7 +638,151 @@ def private_host_relay_status(human_context: dict | None) -> tuple[dict, int]:
             host_config_path=paths["config"],
         )
     public = private_host_relay_public_payload(payload)
+    try:
+        receipt = relay_restart.public_restart_receipt(
+            receipt_path=paths["relay_restart_receipt"],
+            sequence_path=paths["relay_restart_sequence"],
+        )
+    except relay_restart.RelayRestartError as exc:
+        if exc.code != "receipt_not_found":
+            public.update({
+                "ok": False,
+                "state": "rollback_failed",
+                "control_available": False,
+                "restart_required": True,
+                "restart_pending": False,
+                "rollback_armed": True,
+                "error": "restart_receipt_invalid",
+            })
+    else:
+        receipt_state = str(receipt.get("state") or "")
+        if receipt_state == "config_applied":
+            public.update({"state": "restart_required", "restart_required": True, "rollback_armed": True})
+        elif receipt_state in {
+            "response_flushed",
+            "restart_requested",
+            "validating_new_host",
+            "restoring_config",
+        }:
+            public.update({
+                "state": "restart_scheduled",
+                "restart_required": True,
+                "restart_pending": True,
+                "rollback_armed": True,
+                "control_available": False,
+            })
+        elif receipt_state in {"manual_restart_required", "rolled_back", "rollback_failed"}:
+            public.update({
+                "state": receipt_state,
+                "restart_required": receipt_state in {"manual_restart_required", "rollback_failed"},
+                "restart_pending": False,
+                "rollback_armed": receipt_state != "rolled_back",
+                "control_available": receipt_state == "rolled_back",
+            })
     return public, 200 if public["ok"] else private_host_relay_error_status(public)
+
+
+def _private_host_relay_restart_context(payload: dict, paths: dict[str, Path]) -> dict | None:
+    try:
+        context = {
+            "action": str(payload["action"]),
+            "transition_ref": str(payload["transition_ref"]),
+            "transaction_sequence": int(payload["transaction_sequence"]),
+            "expected_revision": int(payload["revision"]),
+            "receipt_path": paths["relay_restart_receipt"],
+            "sequence_path": paths["relay_restart_sequence"],
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+    return context if context["action"] in {"enable", "disable"} else None
+
+
+def _private_host_relay_receipt_transition(context: dict, state: str) -> dict:
+    projection = relay_restart.transition_restart_receipt(
+        receipt_path=context["receipt_path"],
+        sequence_path=context["sequence_path"],
+        action=context["action"],
+        transition_ref=context["transition_ref"],
+        transaction_sequence=context["transaction_sequence"],
+        expected_revision=context["expected_revision"],
+        state=state,
+    )
+    context["expected_revision"] = int(projection["revision"])
+    return projection
+
+
+def _private_host_relay_compensate_after_send(context: dict) -> None:
+    try:
+        current = relay_restart.public_restart_receipt(
+            receipt_path=context["receipt_path"],
+            sequence_path=context["sequence_path"],
+        )
+    except relay_restart.RelayRestartError:
+        return
+    if current.get("state") not in {"config_applied", "response_flushed"}:
+        return
+    context["expected_revision"] = int(current["revision"])
+    try:
+        _private_host_relay_receipt_transition(context, "restoring_config")
+    except relay_restart.RelayRestartError:
+        return
+    try:
+        relay_restart.restore_original_configs(
+            receipt_path=context["receipt_path"],
+            sequence_path=context["sequence_path"],
+            action=context["action"],
+            transition_ref=context["transition_ref"],
+            transaction_sequence=context["transaction_sequence"],
+            expected_revision=context["expected_revision"],
+        )
+    except relay_restart.RelayRestartError:
+        try:
+            _private_host_relay_receipt_transition(context, "rollback_failed")
+        except relay_restart.RelayRestartError:
+            pass
+        return
+    _private_host_relay_receipt_transition(context, "rolled_back")
+
+
+def private_host_relay_after_send(context: dict) -> None:
+    try:
+        with private_host_cli.lifecycle_lock():
+            _private_host_relay_receipt_transition(context, "response_flushed")
+        if context.get("restart_mode") == "managed_launchagent":
+            result = private_host_cli.request_managed_host_restart(
+                action=context["action"],
+                transition_ref=context["transition_ref"],
+                transaction_sequence=context["transaction_sequence"],
+                expected_revision=context["expected_revision"],
+            )
+            if result.get("accepted") is not True:
+                with private_host_cli.lifecycle_lock():
+                    _private_host_relay_receipt_transition(context, "manual_restart_required")
+        else:
+            with private_host_cli.lifecycle_lock():
+                _private_host_relay_receipt_transition(context, "manual_restart_required")
+    except Exception:
+        with private_host_cli.lifecycle_lock():
+            _private_host_relay_compensate_after_send(context)
+        raise
+
+
+def private_host_relay_send_error(context: dict) -> None:
+    with private_host_cli.lifecycle_lock():
+        _private_host_relay_receipt_transition(context, "restoring_config")
+        try:
+            relay_restart.restore_original_configs(
+                receipt_path=context["receipt_path"],
+                sequence_path=context["sequence_path"],
+                action=context["action"],
+                transition_ref=context["transition_ref"],
+                transaction_sequence=context["transaction_sequence"],
+                expected_revision=context["expected_revision"],
+            )
+        except relay_restart.RelayRestartError:
+            _private_host_relay_receipt_transition(context, "rollback_failed")
+            raise
+        _private_host_relay_receipt_transition(context, "rolled_back")
 
 
 def private_host_relay_transition(
@@ -646,13 +790,13 @@ def private_host_relay_transition(
     human_context: dict | None,
     *,
     transition_ref: str | None = None,
-) -> tuple[dict, int, str]:
+) -> tuple[dict, int, str, dict | None]:
     owner_error = private_host_owner_error(human_context)
     if owner_error:
         payload, status = owner_error
-        return payload, status, "blocked"
+        return payload, status, "blocked", None
     if set(body) != {"action"} or body.get("action") not in {"enable", "disable"}:
-        return {"error": "invalid_request_fields", "allowed_fields": ["action"]}, 400, "blocked"
+        return {"error": "invalid_request_fields", "allowed_fields": ["action"]}, 400, "blocked", None
     action = str(body["action"])
     paths = private_host_cli.paths()
     common = {
@@ -678,10 +822,28 @@ def private_host_relay_transition(
                 payload = relay_control.execute_confirmed_relay_transition(
                     **common,
                     transition_ref=transition_ref,
+                    restart_receipt_path=paths["relay_restart_receipt"],
+                    restart_sequence_path=paths["relay_restart_sequence"],
                 )
                 event = "executed" if payload.get("ok") is True else "execute_failed"
     public = private_host_relay_public_payload(payload)
-    return public, 200 if public["ok"] else private_host_relay_error_status(public), event
+    restart_context = _private_host_relay_restart_context(payload, paths) if event == "executed" else None
+    status = 200 if public["ok"] else private_host_relay_error_status(public)
+    if restart_context is not None:
+        managed = private_host_cli.managed_host_restart_status()
+        restart_mode = "managed_launchagent" if managed.get("available") is True else "manual"
+        restart_context["restart_mode"] = restart_mode
+        public.update({
+            "state": "restart_scheduled" if restart_mode == "managed_launchagent" else "manual_restart_required",
+            "restart_mode": restart_mode,
+            "restart_pending": restart_mode == "managed_launchagent",
+            "rollback_armed": True,
+            "config_applied": True,
+            "remote_ready": False,
+            "status_url": "/api/host/relay",
+        })
+        status = 202
+    return public, status, event, restart_context
 
 
 def private_host_release_identity() -> dict:
@@ -32472,7 +32634,7 @@ class Handler(BaseHTTPRequestHandler):
             )
             if path == "/api/host/relay/transitions" or relay_confirm_match:
                 transition_ref = relay_confirm_match.group(1) if relay_confirm_match else None
-                payload, status, event = private_host_relay_transition(
+                payload, status, event, restart_context = private_host_relay_transition(
                     body,
                     human_context,
                     transition_ref=transition_ref,
@@ -32492,6 +32654,9 @@ class Handler(BaseHTTPRequestHandler):
                         "status": status,
                         "error": payload.get("error"),
                         "restart_required": payload.get("restart_required") is True,
+                        "restart_mode": payload.get("restart_mode"),
+                        "restart_pending": payload.get("restart_pending") is True,
+                        "rollback_armed": payload.get("rollback_armed") is True,
                         "network_used": False,
                         "relay_material_omitted": True,
                         "credentials_omitted": True,
@@ -32500,6 +32665,13 @@ class Handler(BaseHTTPRequestHandler):
                     },
                 )
                 conn.commit()
+                if restart_context is not None:
+                    return self.send_json(
+                        payload,
+                        status,
+                        after_send=lambda: private_host_relay_after_send(restart_context),
+                        on_send_error=lambda: private_host_relay_send_error(restart_context),
+                    )
                 return self.send_json(payload, status)
             if path == "/api/human-auth/sessions/revoke":
                 if not human_auth.required():

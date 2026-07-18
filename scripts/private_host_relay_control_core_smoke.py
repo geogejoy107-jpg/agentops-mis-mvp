@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agentops_mis_cli import relay_control  # noqa: E402
+from agentops_mis_cli import relay_control, relay_restart  # noqa: E402
 
 
 RELAY_HOSTNAME = "relay.control.test"
@@ -159,6 +159,8 @@ def main() -> int:
         paths = {
             "active": relay_home / "config.json",
             "prepared": relay_home / "prepared.json",
+            "restart_receipt": relay_home / "restart-receipt.json",
+            "restart_sequence": relay_home / "restart-sequence.json",
             "secrets": relay_home / "secrets.json",
             "transition": relay_home / "transition.json",
             "host": host_home / "config.json",
@@ -409,6 +411,54 @@ def main() -> int:
             and not (relay_home / ".relay-transition-rollback.json").exists()
         )
         evidence["rollback_journal_was_private"] = journal_was_private
+
+        paths["transition"].unlink(missing_ok=True)
+        receipt_rollback_prepared = prepare(paths, action="enable", now=5_100)
+        public_payloads.append(receipt_rollback_prepared)
+        receipt_rollback_confirmed = confirm(
+            paths,
+            action="enable",
+            transition_ref=str(receipt_rollback_prepared.get("transition_ref") or ""),
+            now=5_101,
+        )
+        public_payloads.append(receipt_rollback_confirmed)
+        receipt_active_before = paths["active"].read_bytes()
+        receipt_host_before = paths["host"].read_bytes()
+        real_unlink_private = relay_control._unlink_private
+
+        def fail_transition_consume(path: Path) -> None:
+            if path == paths["transition"]:
+                raise relay_control._ControlFailure("transition_store_invalid")
+            real_unlink_private(path)
+
+        relay_control._unlink_private = fail_transition_consume
+        try:
+            receipt_rolled_back = relay_control.execute_confirmed_relay_transition(
+                action="enable",
+                transition_ref=str(receipt_rollback_prepared.get("transition_ref") or ""),
+                transition_path=paths["transition"],
+                active_config_path=paths["active"],
+                prepared_config_path=paths["prepared"],
+                secrets_path=paths["secrets"],
+                host_config_path=paths["host"],
+                restart_receipt_path=paths["restart_receipt"],
+                restart_sequence_path=paths["restart_sequence"],
+                now=5_102,
+            )
+        finally:
+            relay_control._unlink_private = real_unlink_private
+        public_payloads.append(receipt_rolled_back)
+        receipt_projection = relay_restart.public_restart_receipt(
+            receipt_path=paths["restart_receipt"],
+            sequence_path=paths["restart_sequence"],
+        )
+        evidence["receipt_consume_failure_rolled_back_both_configs"] = bool(
+            receipt_rolled_back.get("error") == "transition_write_failed"
+            and receipt_projection.get("state") == "rolled_back"
+            and paths["active"].read_bytes() == receipt_active_before
+            and paths["host"].read_bytes() == receipt_host_before
+            and paths["transition"].is_file()
+        )
 
         paths["transition"].unlink(missing_ok=True)
         relay_home.chmod(0o755)

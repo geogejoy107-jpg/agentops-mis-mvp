@@ -19,6 +19,7 @@ from agentops_mis_cli.relay_connector_service import (
     load_connector_config,
     validate_connector_material,
 )
+from agentops_mis_cli import relay_restart
 
 
 SCHEMA_VERSION = 1
@@ -711,6 +712,125 @@ def _execute_with_rollback(
         raise _ControlFailure("transition_write_failed") from write_error
 
 
+def _execute_with_restart_receipt(
+    *,
+    action: str,
+    transition_ref: str,
+    transition_path: Path,
+    active_config_path: Path,
+    prepared_config_path: Path,
+    host_config_path: Path,
+    restart_receipt_path: Path,
+    restart_sequence_path: Path,
+    active: dict[str, Any],
+    host_config: dict[str, Any],
+    relay_origin: str,
+) -> dict[str, Any]:
+    active_original = _read_bounded_file(
+        active_config_path,
+        maximum_bytes=MAX_PRIVATE_JSON_BYTES,
+        allowed_modes={0o600},
+        missing_code="active_relay_state_invalid",
+        invalid_code="active_relay_state_invalid",
+    )
+    host_original = _read_bounded_file(
+        host_config_path,
+        maximum_bytes=MAX_PRIVATE_JSON_BYTES,
+        allowed_modes={0o600},
+        missing_code="host_config_invalid",
+        invalid_code="host_config_invalid",
+    )
+    if action == "enable":
+        active_target = _read_bounded_file(
+            prepared_config_path,
+            maximum_bytes=MAX_PRIVATE_JSON_BYTES,
+            allowed_modes={0o600},
+            missing_code="relay_material_invalid",
+            invalid_code="relay_material_invalid",
+        )
+    else:
+        active_target = _json_bytes(DISABLED_RELAY_CONFIG)
+    host_target = _json_bytes(
+        _target_host_config(
+            action=action,
+            host_config=host_config,
+            relay_origin=relay_origin,
+        )
+    )
+    del active
+    try:
+        replace_terminal = False
+        try:
+            existing_receipt = relay_restart.public_restart_receipt(
+                receipt_path=restart_receipt_path,
+                sequence_path=restart_sequence_path,
+            )
+        except relay_restart.RelayRestartError as existing_error:
+            if existing_error.code != "receipt_not_found":
+                raise
+        else:
+            if existing_receipt.get("state") not in {"healthy", "rolled_back"}:
+                raise _ControlFailure("rollback_pending")
+            replace_terminal = True
+        receipt = relay_restart.create_restart_receipt(
+            receipt_path=restart_receipt_path,
+            sequence_path=restart_sequence_path,
+            action=action,
+            transition_ref=transition_ref,
+            active_config_path=active_config_path,
+            host_config_path=host_config_path,
+            active_original_config=active_original,
+            active_target_config=active_target,
+            host_original_config=host_original,
+            host_target_config=host_target,
+            replace_terminal=replace_terminal,
+        )
+        relay_restart.apply_target_configs(
+            receipt_path=restart_receipt_path,
+            sequence_path=restart_sequence_path,
+            action=action,
+            transition_ref=transition_ref,
+            transaction_sequence=int(receipt["transaction_sequence"]),
+            expected_revision=int(receipt["revision"]),
+        )
+        _unlink_private(transition_path)
+        return receipt
+    except (relay_restart.RelayRestartError, _ControlFailure) as exc:
+        if "receipt" not in locals() and isinstance(exc, _ControlFailure):
+            raise
+        try:
+            if "receipt" in locals():
+                restoring = relay_restart.transition_restart_receipt(
+                    receipt_path=restart_receipt_path,
+                    sequence_path=restart_sequence_path,
+                    action=action,
+                    transition_ref=transition_ref,
+                    transaction_sequence=int(receipt["transaction_sequence"]),
+                    expected_revision=int(receipt["revision"]),
+                    state="restoring_config",
+                )
+                relay_restart.restore_original_configs(
+                    receipt_path=restart_receipt_path,
+                    sequence_path=restart_sequence_path,
+                    action=action,
+                    transition_ref=transition_ref,
+                    transaction_sequence=int(restoring["transaction_sequence"]),
+                    expected_revision=int(restoring["revision"]),
+                )
+                relay_restart.transition_restart_receipt(
+                    receipt_path=restart_receipt_path,
+                    sequence_path=restart_sequence_path,
+                    action=action,
+                    transition_ref=transition_ref,
+                    transaction_sequence=int(restoring["transaction_sequence"]),
+                    expected_revision=int(restoring["revision"]),
+                    state="rolled_back",
+                )
+        except relay_restart.RelayRestartError as rollback_error:
+            raise _ControlFailure("rollback_incomplete") from rollback_error
+        raise _ControlFailure("transition_write_failed") from exc
+
+
 def _validated_transition_material(
     *,
     action: str,
@@ -881,6 +1001,8 @@ def execute_confirmed_relay_transition(
     prepared_config_path: Path,
     secrets_path: Path,
     host_config_path: Path,
+    restart_receipt_path: Path | None = None,
+    restart_sequence_path: Path | None = None,
     now: int | None = None,
 ) -> dict[str, Any]:
     """Execute one confirmed transition transactionally, then consume it."""
@@ -906,17 +1028,33 @@ def execute_confirmed_relay_transition(
             secrets_path=secrets_path,
             host_config_path=host_config_path,
         )
-        _execute_with_rollback(
-            action=action,
-            transition_ref=transition_ref,
-            transition_path=transition_path,
-            active_config_path=active_config_path,
-            prepared_config_path=prepared_config_path,
-            host_config_path=host_config_path,
-            active=active,
-            host_config=host_config,
-            relay_origin=relay_origin,
-        )
+        restart_receipt = None
+        if restart_receipt_path is not None and restart_sequence_path is not None:
+            restart_receipt = _execute_with_restart_receipt(
+                action=action,
+                transition_ref=transition_ref,
+                transition_path=transition_path,
+                active_config_path=active_config_path,
+                prepared_config_path=prepared_config_path,
+                host_config_path=host_config_path,
+                restart_receipt_path=restart_receipt_path,
+                restart_sequence_path=restart_sequence_path,
+                active=active,
+                host_config=host_config,
+                relay_origin=relay_origin,
+            )
+        else:
+            _execute_with_rollback(
+                action=action,
+                transition_ref=transition_ref,
+                transition_path=transition_path,
+                active_config_path=active_config_path,
+                prepared_config_path=prepared_config_path,
+                host_config_path=host_config_path,
+                active=active,
+                host_config=host_config,
+                relay_origin=relay_origin,
+            )
         return _public_result(
             ok=True,
             operation=operation,
@@ -927,6 +1065,15 @@ def execute_confirmed_relay_transition(
             restart_required=True,
             network_publication="agentops_relay" if action == "enable" else "disabled",
             state="executed",
+            **(
+                {
+                    "transaction_sequence": restart_receipt["transaction_sequence"],
+                    "revision": restart_receipt["revision"],
+                    "rollback_armed": True,
+                }
+                if restart_receipt is not None
+                else {}
+            ),
         )
     except _ControlFailure as exc:
         return _failure(operation, exc.code)
