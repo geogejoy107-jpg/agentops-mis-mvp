@@ -1952,10 +1952,32 @@ def _try_write_managed_restart_audit_event(
             transaction_sequence=context["transaction_sequence"],
             revision=revision,
             transition_ref=context["transition_ref"],
+            nonblocking=True,
         )
         return True
     except relay_restart.RelayRestartError:
         return False
+
+
+def _try_finalize_managed_restart_receipt(
+    p: dict[str, Path],
+    context: dict,
+) -> bool:
+    """Finalize terminal evidence without killing a healthy Host on retryable I/O."""
+    try:
+        relay_restart.finalize_restart_receipt(
+            receipt_path=p["relay_restart_receipt"],
+            sequence_path=p["relay_restart_sequence"],
+            action=context["action"],
+            transition_ref=context["transition_ref"],
+            transaction_sequence=context["transaction_sequence"],
+            expected_revision=context["expected_revision"],
+        )
+        return True
+    except relay_restart.RelayRestartError as exc:
+        if exc.code in {"audit_event_busy", "write_failed"}:
+            return False
+        raise
 
 
 def _managed_relay_runtime_healthy(action: str, p: dict[str, Path]) -> bool:
@@ -2088,14 +2110,7 @@ def _finish_restart_receipt_recovery(
             }
         if context.get("audit_event_pending") is True:
             return True
-        relay_restart.finalize_restart_receipt(
-            receipt_path=p["relay_restart_receipt"],
-            sequence_path=p["relay_restart_sequence"],
-            action=context["action"],
-            transition_ref=context["transition_ref"],
-            transaction_sequence=context["transaction_sequence"],
-            expected_revision=context["expected_revision"],
-        )
+        _try_finalize_managed_restart_receipt(p, context)
         return True
 
     if state != "restoring_config":
@@ -2422,14 +2437,7 @@ def _run_managed_foreground_supervisor(
             if replacement_healthy:
                 healthy = _advance_managed_restart_receipt(p, restart_request, "healthy")
                 if healthy.get("audit_event_pending") is not True:
-                    relay_restart.finalize_restart_receipt(
-                        receipt_path=p["relay_restart_receipt"],
-                        sequence_path=p["relay_restart_sequence"],
-                        action=healthy["action"],
-                        transition_ref=healthy["transition_ref"],
-                        transaction_sequence=healthy["transaction_sequence"],
-                        expected_revision=healthy["expected_revision"],
-                    )
+                    _try_finalize_managed_restart_receipt(p, healthy)
                 _release_lifecycle_lock(restart_lock_descriptor)
                 restart_lock_descriptor = -1
                 continue

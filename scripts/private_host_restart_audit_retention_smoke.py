@@ -6,10 +6,12 @@ import json
 import os
 import sqlite3
 import stat
+import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -287,6 +289,164 @@ def main() -> int:
             completed_retry = server.consume_private_host_restart_audit_events()
             require(completed_retry.get("ingested") == 1, "retried outcome was not committed", failures)
 
+            finalize_receipt = relay_restart.create_restart_receipt(
+                receipt_path=receipt_path,
+                sequence_path=sequence_path,
+                action="enable",
+                transition_ref="transition_finalize_retry",
+                active_config_path=active_config,
+                host_config_path=host_config,
+                active_original_config=active_config.read_bytes(),
+                active_target_config=b'{"enabled":true}\n',
+                host_original_config=host_config.read_bytes(),
+                host_target_config=b'{"relay_enabled":true}\n',
+            )
+            finalize_context = {
+                "action": "enable",
+                "transition_ref": "transition_finalize_retry",
+                "transaction_sequence": finalize_receipt["transaction_sequence"],
+                "expected_revision": finalize_receipt["revision"],
+            }
+            for state in ("response_flushed", "restart_requested", "validating_new_host", "healthy"):
+                finalize_context = server.private_host_cli._advance_managed_restart_receipt(
+                    server.private_host_cli.paths(),
+                    finalize_context,
+                    state,
+                )
+            finalize_process = SimpleNamespace(pid=5151)
+            finalize_terminations: list[int] = []
+            real_finalize = relay_restart.finalize_restart_receipt
+
+            def fail_finalize_retryable(**_kwargs):
+                raise relay_restart.RelayRestartError("write_failed")
+
+            relay_restart.finalize_restart_receipt = fail_finalize_retryable
+            try:
+                finalize_healthy, finalize_terminated = (
+                    server.private_host_cli._finish_restart_recovery_with_cleanup(
+                        server.private_host_cli.paths(),
+                        {
+                            **finalize_context,
+                            "state": "healthy",
+                            "recovery_mode": "target",
+                        },
+                        finalize_process,
+                        terminate=lambda process: finalize_terminations.append(process.pid) or True,
+                        runtime_validator=lambda _action, _paths: True,
+                    )
+                )
+            finally:
+                relay_restart.finalize_restart_receipt = real_finalize
+            require(
+                finalize_healthy and not finalize_terminated and not finalize_terminations,
+                "retryable finalize failure terminated a healthy Host",
+                failures,
+            )
+            require(
+                relay_restart.restart_recovery_context(
+                    receipt_path=receipt_path,
+                    sequence_path=sequence_path,
+                ).get("state") == "healthy",
+                "retryable finalize failure did not preserve terminal receipt",
+                failures,
+            )
+            require(
+                (outbox / f"restart-{finalize_context['transaction_sequence']}.json").is_file(),
+                "retryable finalize failure did not preserve terminal outbox evidence",
+                failures,
+            )
+            require(
+                server.private_host_cli._finish_restart_receipt_recovery(
+                    server.private_host_cli.paths(),
+                    {
+                        **finalize_context,
+                        "state": "healthy",
+                        "recovery_mode": "target",
+                    },
+                    runtime_validator=lambda _action, _paths: True,
+                ),
+                "retryable finalize receipt did not recover",
+                failures,
+            )
+            require(
+                server.consume_private_host_restart_audit_events().get("ingested") == 1,
+                "recovered finalize outcome was not retained",
+                failures,
+            )
+
+            invalid_receipt = relay_restart.create_restart_receipt(
+                receipt_path=receipt_path,
+                sequence_path=sequence_path,
+                action="enable",
+                transition_ref="transition_finalize_invalid",
+                active_config_path=active_config,
+                host_config_path=host_config,
+                active_original_config=active_config.read_bytes(),
+                active_target_config=b'{"enabled":true}\n',
+                host_original_config=host_config.read_bytes(),
+                host_target_config=b'{"relay_enabled":true}\n',
+            )
+            invalid_context = {
+                "action": "enable",
+                "transition_ref": "transition_finalize_invalid",
+                "transaction_sequence": invalid_receipt["transaction_sequence"],
+                "expected_revision": invalid_receipt["revision"],
+            }
+            for state in ("response_flushed", "restart_requested", "validating_new_host", "healthy"):
+                invalid_context = server.private_host_cli._advance_managed_restart_receipt(
+                    server.private_host_cli.paths(),
+                    invalid_context,
+                    state,
+                )
+            invalid_process = SimpleNamespace(pid=5152)
+            invalid_terminations: list[int] = []
+            server.private_host_cli.write_private_json(
+                server.private_host_cli.paths()["pid"],
+                {"pid": invalid_process.pid},
+            )
+
+            def fail_finalize_invalid(**_kwargs):
+                raise relay_restart.RelayRestartError("receipt_invalid")
+
+            relay_restart.finalize_restart_receipt = fail_finalize_invalid
+            try:
+                try:
+                    server.private_host_cli._finish_restart_recovery_with_cleanup(
+                        server.private_host_cli.paths(),
+                        {
+                            **invalid_context,
+                            "state": "healthy",
+                            "recovery_mode": "target",
+                        },
+                        invalid_process,
+                        terminate=lambda process: invalid_terminations.append(process.pid) or True,
+                        runtime_validator=lambda _action, _paths: True,
+                    )
+                except relay_restart.RelayRestartError as exc:
+                    require(exc.code == "receipt_invalid", "identity failure changed error code", failures)
+                else:
+                    failures.append("identity failure did not fail closed")
+            finally:
+                relay_restart.finalize_restart_receipt = real_finalize
+            require(
+                invalid_terminations == [invalid_process.pid],
+                "identity failure left the Host process running",
+                failures,
+            )
+            real_finalize(
+                receipt_path=receipt_path,
+                sequence_path=sequence_path,
+                action=invalid_context["action"],
+                transition_ref=invalid_context["transition_ref"],
+                transaction_sequence=invalid_context["transaction_sequence"],
+                expected_revision=invalid_context["expected_revision"],
+            )
+            require(
+                server.consume_private_host_restart_audit_events().get("ingested") == 1,
+                "identity failure cleanup outcome was not retained",
+                failures,
+            )
+
             enqueue(outbox, 500)
             blocker = sqlite3.connect(server.DB_PATH, timeout=1, isolation_level=None)
             blocker.execute("PRAGMA journal_mode = WAL")
@@ -326,6 +486,44 @@ def main() -> int:
             require(
                 server.consume_private_host_restart_audit_events().get("ingested") == 1,
                 "lock-busy audit event did not retry",
+                failures,
+            )
+
+            lock_path = outbox / ".events.lock"
+            holder = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import fcntl,os,sys,time;"
+                        "fd=os.open(sys.argv[1],os.O_RDWR|os.O_CREAT,0o600);"
+                        "os.fchmod(fd,0o600);fcntl.flock(fd,fcntl.LOCK_EX);"
+                        "print('ready',flush=True);time.sleep(5)"
+                    ),
+                    str(lock_path),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            require(holder.stdout is not None and holder.stdout.readline().strip() == "ready", "lock holder did not start", failures)
+            started = time.monotonic()
+            cross_process_write = server.private_host_cli._try_write_managed_restart_audit_event(
+                server.private_host_cli.paths(),
+                {
+                    "action": "enable",
+                    "transition_ref": "transition_cross_process_lock",
+                    "transaction_sequence": 560,
+                },
+                state="healthy",
+                revision=4,
+            )
+            cross_process_elapsed = time.monotonic() - started
+            holder.terminate()
+            holder.wait(timeout=2)
+            require(
+                cross_process_write is False and cross_process_elapsed < 1.0,
+                "cross-process outbox lock blocked lifecycle write",
                 failures,
             )
 
@@ -381,6 +579,54 @@ def main() -> int:
                 expected_revision=lock_receipt["revision"],
             )
 
+            corrupt_event = outbox / "restart-570.json"
+            corrupt_event.write_bytes(b"{invalid-json\n")
+            corrupt_event.chmod(0o600)
+            valid_after_corrupt = enqueue(outbox, 571)
+            isolated_events = relay_restart.pending_restart_audit_events(
+                outbox_dir=outbox,
+                limit=1,
+            )
+            quarantine = outbox / "quarantine"
+            quarantined = list(quarantine.glob("restart-570*.invalid")) if quarantine.is_dir() else []
+            require(
+                isolated_events == [valid_after_corrupt],
+                "corrupt event prevented the next valid event from being read",
+                failures,
+            )
+            require(
+                len(quarantined) == 1
+                and stat.S_IMODE(quarantine.stat().st_mode) == 0o700
+                and stat.S_IMODE(quarantined[0].stat().st_mode) == 0o600,
+                "corrupt event was not retained in owner-only quarantine",
+                failures,
+            )
+            relay_restart.acknowledge_restart_audit_event(
+                outbox_dir=outbox,
+                transaction_sequence=valid_after_corrupt["transaction_sequence"],
+                revision=valid_after_corrupt["revision"],
+                transition_ref=valid_after_corrupt["transition_ref"],
+            )
+
+            backlog_events = [enqueue(outbox, sequence) for sequence in range(700, 770)]
+            exact_backlog_event = relay_restart.read_restart_audit_event(
+                outbox_dir=outbox,
+                transaction_sequence=769,
+                nonblocking=True,
+            )
+            require(
+                exact_backlog_event == backlog_events[-1],
+                "terminal event beyond the first 64 entries was not found directly",
+                failures,
+            )
+            for event in backlog_events:
+                relay_restart.acknowledge_restart_audit_event(
+                    outbox_dir=outbox,
+                    transaction_sequence=event["transaction_sequence"],
+                    revision=event["revision"],
+                    transition_ref=event["transition_ref"],
+                )
+
             ignored = outbox / "operator-note.txt"
             ignored.write_text("ignored non-event fixture\n", encoding="ascii")
             ignored.chmod(0o600)
@@ -415,6 +661,11 @@ def main() -> int:
                         "sqlite_busy_nonblocking": busy_result.get("error") == "audit_database_busy" and elapsed < 1.0,
                         "outbox_lock_nonblocking": lock_busy_result.get("error") == "audit_event_busy" and lock_elapsed < 1.0,
                         "receipt_lock_nonblocking": receipt_busy_result.get("error") == "audit_event_busy" and receipt_lock_elapsed < 1.0,
+                        "cross_process_lifecycle_lock_nonblocking": cross_process_write is False and cross_process_elapsed < 1.0,
+                        "retryable_finalize_kept_host_alive": finalize_healthy and not finalize_terminated and not finalize_terminations,
+                        "invalid_finalize_failed_closed": invalid_terminations == [invalid_process.pid],
+                        "corrupt_event_quarantined": len(quarantined) == 1,
+                        "backlog_exact_lookup": exact_backlog_event == backlog_events[-1],
                         "outbox_capacity_enforced": capacity_rejected,
                         "private_event_acknowledged": not (outbox / "restart-102.json").exists(),
                         "credentials_omitted": True,

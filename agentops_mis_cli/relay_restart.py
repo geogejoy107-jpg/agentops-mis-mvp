@@ -1132,6 +1132,33 @@ def write_restart_audit_event(
         _release_lock(lock_descriptor)
 
 
+def _quarantine_restart_audit_event_locked(
+    outbox_dir: Path,
+    *,
+    transaction_sequence: int,
+    event_path: Path,
+) -> Path:
+    """Preserve one malformed event as owner-only repair evidence."""
+    quarantine_dir = outbox_dir / "quarantine"
+    _private_directory(quarantine_dir, create=True)
+    for suffix in range(MAX_AUDIT_OUTBOX_ENTRIES + 1):
+        marker = "" if suffix == 0 else f".{suffix}"
+        quarantine_path = quarantine_dir / (
+            f"restart-{transaction_sequence}{marker}.invalid"
+        )
+        if _path_present(quarantine_path):
+            continue
+        try:
+            os.replace(event_path, quarantine_path)
+            os.chmod(quarantine_path, 0o600, follow_symlinks=False)
+            _fsync_directory(quarantine_dir)
+            _fsync_directory(outbox_dir)
+            return quarantine_path
+        except OSError as exc:
+            raise RelayRestartError("write_failed") from exc
+    raise RelayRestartError("audit_event_invalid")
+
+
 def _restart_audit_event_candidates_locked(
     outbox_dir: Path,
 ) -> list[tuple[int, Path]]:
@@ -1151,6 +1178,37 @@ def _restart_audit_event_candidates_locked(
     except OSError as exc:
         raise RelayRestartError("target_invalid") from exc
     return candidates
+
+
+def read_restart_audit_event(
+    *,
+    outbox_dir: Path,
+    transaction_sequence: int,
+    nonblocking: bool = False,
+) -> dict[str, Any]:
+    """Read one exact event without scanning or exposing its private path."""
+    transaction_sequence = _validate_transaction_sequence(transaction_sequence)
+    outbox_dir = _absolute(outbox_dir)
+    _private_directory(outbox_dir)
+    event_path = outbox_dir / f"restart-{transaction_sequence}.json"
+    lock_descriptor = _acquire_lock(
+        outbox_dir / "events",
+        nonblocking=nonblocking,
+    )
+    try:
+        event = _decode_restart_audit_event(
+            _read_private_bytes(
+                event_path,
+                maximum_bytes=MAX_AUDIT_EVENT_BYTES,
+                missing_code="audit_event_not_found",
+                invalid_code="audit_event_invalid",
+            )
+        )
+        if event["transaction_sequence"] != transaction_sequence:
+            raise RelayRestartError("audit_event_invalid")
+        return event
+    finally:
+        _release_lock(lock_descriptor)
 
 
 def pending_restart_audit_events(
@@ -1173,17 +1231,33 @@ def pending_restart_audit_events(
     try:
         candidates = _restart_audit_event_candidates_locked(outbox_dir)
         events: list[dict[str, Any]] = []
-        for sequence, path in sorted(candidates)[:limit]:
-            event = _decode_restart_audit_event(
-                _read_private_bytes(
+        for sequence, path in sorted(candidates):
+            if len(events) >= limit:
+                break
+            try:
+                raw = _read_private_bytes(
                     path,
                     maximum_bytes=MAX_AUDIT_EVENT_BYTES,
                     missing_code="audit_event_not_found",
                     invalid_code="audit_event_invalid",
                 )
-            )
+                event = _decode_restart_audit_event(raw)
+            except RelayRestartError as exc:
+                if exc.code != "audit_event_invalid":
+                    raise
+                _quarantine_restart_audit_event_locked(
+                    outbox_dir,
+                    transaction_sequence=sequence,
+                    event_path=path,
+                )
+                continue
             if event["transaction_sequence"] != sequence:
-                raise RelayRestartError("audit_event_invalid")
+                _quarantine_restart_audit_event_locked(
+                    outbox_dir,
+                    transaction_sequence=sequence,
+                    event_path=path,
+                )
+                continue
             events.append(event)
         return events
     finally:

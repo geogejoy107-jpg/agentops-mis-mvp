@@ -772,26 +772,32 @@ def _execute_with_restart_receipt(
             if existing_receipt.get("state") not in {"healthy", "rolled_back"}:
                 raise _ControlFailure("rollback_pending")
             audit_outbox_dir = restart_receipt_path.parent / "restart-audit-outbox"
-            relay_restart.write_restart_audit_event(
-                outbox_dir=audit_outbox_dir,
-                action=existing_receipt["action"],
-                state=existing_receipt["state"],
-                transaction_sequence=existing_receipt["transaction_sequence"],
-                revision=existing_receipt["revision"],
-                transition_ref=existing_receipt["transition_ref"],
-            )
-            audit_events = relay_restart.pending_restart_audit_events(
-                outbox_dir=audit_outbox_dir,
-                limit=64,
-            )
-            exact_terminal_event = any(
-                event["action"] == existing_receipt["action"]
-                and event["state"] == existing_receipt["state"]
-                and event["transaction_sequence"]
+            try:
+                relay_restart.write_restart_audit_event(
+                    outbox_dir=audit_outbox_dir,
+                    action=existing_receipt["action"],
+                    state=existing_receipt["state"],
+                    transaction_sequence=existing_receipt["transaction_sequence"],
+                    revision=existing_receipt["revision"],
+                    transition_ref=existing_receipt["transition_ref"],
+                    nonblocking=True,
+                )
+                exact_event = relay_restart.read_restart_audit_event(
+                    outbox_dir=audit_outbox_dir,
+                    transaction_sequence=existing_receipt["transaction_sequence"],
+                    nonblocking=True,
+                )
+            except relay_restart.RelayRestartError as audit_error:
+                if audit_error.code == "audit_event_busy":
+                    raise _ControlFailure("rollback_pending") from audit_error
+                raise
+            exact_terminal_event = bool(
+                exact_event["action"] == existing_receipt["action"]
+                and exact_event["state"] == existing_receipt["state"]
+                and exact_event["transaction_sequence"]
                 == existing_receipt["transaction_sequence"]
-                and event["revision"] == existing_receipt["revision"]
-                and event["transition_ref"] == existing_receipt["transition_ref"]
-                for event in audit_events
+                and exact_event["revision"] == existing_receipt["revision"]
+                and exact_event["transition_ref"] == existing_receipt["transition_ref"]
             )
             if not exact_terminal_event:
                 raise _ControlFailure("rollback_pending")
