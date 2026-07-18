@@ -254,10 +254,11 @@ external evidence is synthesized from local, CI, or prior-preview receipts.
 
 ## Preview 35 MacBook Client Staging
 
-During the preview.35 release and real Host upgrade, a physical MacBook acted
-as the browser-only Console while the Mac mini retained the ledger, knowledge,
-Host and Runtime authority. The MacBook required no project checkout, Python,
-Node, Hermes or OpenClaw.
+During the `v1.6.0-private-host-preview.35` release from exact commit
+`6424ec144013517b21438cd7e528c6db106a0a5e` and the real Host upgrade, a
+physical MacBook acted as the browser-only Console while the Mac mini retained
+the ledger, knowledge, Host and Runtime authority. The MacBook required no
+project checkout, Python, Node, Hermes or OpenClaw.
 
 Before maintenance, the MacBook reached the private HTTPS Workspace with HTTP
 200 and the dedicated Console application opened a Chrome window titled

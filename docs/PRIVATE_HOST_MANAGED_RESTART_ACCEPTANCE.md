@@ -73,13 +73,36 @@ The production React build also passes. Existing bundle-size warning remains.
 - installation: current installed preview, Tailscale and Hermes/OpenClaw service
   processes were not modified by these tests.
 
+## Preview 35 CI Synchronization
+
+The preview.35 RC matrix update exposed two deterministic-smoke defects rather
+than a new Host state-machine failure. The RC status smoke still required
+preview.31 metadata. The rollback smoke treated creation of the restored stack
+process as proof that rollback had finished, even though runtime validation and
+the terminal receipt transition follow process creation asynchronously.
+
+The RC smoke now binds the current preview.35 tag, exact commit, five public
+asset hashes, service-upgrade receipt, fresh real Runtime evidence, physical
+MacBook anonymous-denial receipt and all still-open external gates. The rollback
+smoke keeps its process-launch assertion and separately waits for the receipt to
+reach `rolled_back` or `rollback_failed` before checking the expected terminal
+state, config restore and validation order. It does not retry the restart or
+accept a nonterminal state.
+
+The corrected rollback smoke passed 100 consecutive local iterations. Managed
+restart supervisor, terminal audit retention, restart receipt, Relay
+registration/reconnect, RC status, Release evidence, secret scan and diff checks
+also passed. These checks used temporary fixtures and did not mutate the
+installed Host, Tailscale, Workers or user ledger.
+
 ## Open Before Release
 
 - prove the bounded post-restart audit projection from the exact installed
   release candidate; deterministic coverage is recorded in
   `PRIVATE_HOST_RESTART_AUDIT_RETENTION_ACCEPTANCE.md`;
-- publish and install a versioned release candidate with the new exact
-  LaunchAgent template;
+- execute and verify one installed-package managed Relay transition after the
+  deployed Relay material exists; preview.35 already packages and runs the exact
+  current LaunchAgent definition;
 - deploy Relay/DNS/certificate infrastructure and bind SNI routes to current
   authenticated Host tunnels;
 - complete physical MacBook browser-only pairing, disconnect/reconnect and real

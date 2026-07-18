@@ -232,6 +232,17 @@ def main() -> int:
             )
             require(request.get("accepted") is True, "supervisor rejected the bound restart receipt", failures)
             require(wait_for(lambda: len(children) == 3), "rollback stack was not launched", failures)
+            require(
+                wait_for(
+                    lambda: relay_restart.public_restart_receipt(
+                        receipt_path=p["relay_restart_receipt"],
+                        sequence_path=p["relay_restart_sequence"],
+                    ).get("state")
+                    in {"rolled_back", "rollback_failed"}
+                ),
+                "rollback receipt did not reach a terminal state",
+                failures,
+            )
             rolled_back = relay_restart.public_restart_receipt(
                 receipt_path=p["relay_restart_receipt"],
                 sequence_path=p["relay_restart_sequence"],

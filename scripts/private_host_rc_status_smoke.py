@@ -9,19 +9,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RC = ROOT / "docs" / "PRIVATE_HOST_RC_ACCEPTANCE.md"
 SECOND_DEVICE = ROOT / "docs" / "PRIVATE_HOST_SECOND_DEVICE_ACCEPTANCE.md"
-LAUNCHER = ROOT / "docs" / "PRIVATE_HOST_MACOS_LAUNCHER_ACCEPTANCE.md"
-BACKGROUND_SERVICE = ROOT / "docs" / "PRIVATE_HOST_BACKGROUND_SERVICE_ACCEPTANCE.md"
-BACKUP_RESTORE = ROOT / "docs" / "PRIVATE_HOST_BACKUP_RESTORE_ACCEPTANCE.md"
+SERVICE_UPGRADE = ROOT / "docs" / "PRIVATE_HOST_SERVICE_UPGRADE_MIGRATION_ACCEPTANCE.md"
+REAL_RUNTIME = ROOT / "docs" / "PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md"
 
-VERSION = "1.6.0-private-host-preview.31"
+VERSION = "1.6.0-private-host-preview.35"
 TAG = f"v{VERSION}"
-COMMIT = "fed1b2410d6725a217c9727dba570db62cc46963"
+COMMIT = "6424ec144013517b21438cd7e528c6db106a0a5e"
 RELEASE_URL = f"https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/{TAG}"
 CHECKSUMS = {
-    "manifest": "030cc85cf277255f6195c66933fe8251dbc1b6195368ae03e3fa820fe541e90a",
-    "tar": "07e1c94740424a3a8a4d3cab90cb513e06b0a5ddd62c372eafe27b2ec4770aab",
-    "zip": "b27e0d3e53b51cf9d015e2ffc2e042efd4621232a3f4f5fc0d7b48628a63745d",
-    "bootstrap": "6f78549bdb4c1da6ff3128907d8b82067a3ae06741cf823b34e1acdaaf03a44f",
+    "provenance": "bb87a5c74ec2b5afd510b92ee3023a97991e156d98f6556a871ece3250f8cbe4",
+    "manifest": "b4cd6da7dc6bd327eef292d188699f38e8a69bc77f0ae8619dfccf85e9663386",
+    "tar": "77ba016157dcd0880a42bc17bc1a5aad6a9cb26039506e769c7315018cf973ca",
+    "zip": "02703e5b4dabdf3cc1dec501cc5dbe8735798493fcab1928d5ea0e4c266a2f6c",
+    "bootstrap": "75854f364502722eb24d5a7df3c0fc26685bf25acae6d5926e4c6396d16bd812",
 }
 
 
@@ -34,17 +34,17 @@ def main() -> int:
     failures: list[str] = []
     rc = RC.read_text(encoding="utf-8")
     second = SECOND_DEVICE.read_text(encoding="utf-8")
-    launcher = LAUNCHER.read_text(encoding="utf-8")
-    service = BACKGROUND_SERVICE.read_text(encoding="utf-8")
-    backup = BACKUP_RESTORE.read_text(encoding="utf-8")
+    service_upgrade = SERVICE_UPGRADE.read_text(encoding="utf-8")
+    runtime = REAL_RUNTIME.read_text(encoding="utf-8")
     rc_headings = [line for line in rc.splitlines() if line.startswith("## Current Preview ")]
+    normalized_rc = " ".join(rc.split())
     normalized_second = " ".join(second.split())
-    normalized_launcher = " ".join(launcher.split())
-    normalized_service = " ".join(service.split()).lower()
-    normalized_backup = " ".join(backup.split()).lower()
+    normalized_service = " ".join(service_upgrade.split())
+    normalized_runtime = " ".join(runtime.split())
 
     require(len(rc_headings) == 1, "RC document must name exactly one Current Preview", failures)
-    require("## Current Preview 31" in rc, "preview.31 must be the current RC prerelease", failures)
+    require("## Current Preview 35" in rc, "preview.35 must be the current RC prerelease", failures)
+    require("## Superseded Preview 31" in rc, "preview.31 must be preserved as superseded history", failures)
     require("## Superseded Preview 30" in rc, "preview.30 must preserve its immutable upgrade-defect history", failures)
     require("## Superseded Preview 29" in rc, "preview.29 must be preserved as superseded history", failures)
     require("## Superseded Preview 28" in rc, "preview.28 must be preserved as superseded history", failures)
@@ -65,16 +65,17 @@ def main() -> int:
         require(checksum in rc, f"{label} checksum missing from RC document", failures)
 
     open_gate_markers = (
-        "physical second-device",
-        "another-Mac clean install",
-        "logout/reboot service proof",
+        "deployed Relay/DNS/TLS",
+        "physical pairing and authenticated dispatch",
+        "physical disconnect/reconnect",
+        "Host logout/reboot recovery",
+        "another-Mac clean installation",
     )
     for marker in open_gate_markers:
-        require(marker in rc, f"open external gate is no longer explicit: {marker}", failures)
-    require("Owner review completed" in rc and "Owner review passed" in rc,
-            "current-package Owner review closure is not explicit", failures)
-    require("A fresh Owner Human Session over the private HTTPS route rejected" in normalized_second,
-            "second-device document must record Host-side Owner review without claiming physical evidence", failures)
+        require(marker.lower() in normalized_rc.lower(), f"open external gate is no longer explicit: {marker}", failures)
+    require("This is a prerelease, not the final RC" in rc,
+            "current preview must not claim final RC", failures)
+
     require(
         "Status: advanced Tailscale-mode protocol; browser-only Relay protocol pending" in second,
         "second-device document must identify Tailscale as an advanced fallback and keep browser-only Relay pending",
@@ -87,37 +88,34 @@ def main() -> int:
     )
     require("Automated browser runtimes outside the Host tailnet are not accepted as a substitute." in normalized_second,
             "physical evidence anti-substitution boundary missing", failures)
-    require("not the final RC" in rc, "prerelease must not claim final RC", failures)
-    require("## Installed App Launch Receipt" in launcher, "installed app launch receipt missing", failures)
-    require(TAG in launcher, "installed app receipt must name the current prerelease tag", failures)
-    require("preview.31 app open" in normalized_launcher,
-            "current-package app-open process-reuse receipt missing", failures)
-    require("Host PID `37995`" in launcher and "Hermes Worker PID `38056`" in launcher and "OpenClaw Worker PID `38080`" in launcher,
-            "current-package app-open PID preservation receipt missing", failures)
-    require("browser_visual_readback_performed:false" in normalized_launcher,
-            "launcher history must not synthesize a browser visual check", failures)
-    require("the address bar contained no fragment" in normalized_launcher, "launcher receipt must prove fragment scrubbing", failures)
-    require("the manual setup-code input was absent" in normalized_launcher, "launcher receipt must prove graphical setup-code handoff", failures)
-    require("live_execution_performed:false" in normalized_launcher, "launcher receipt must prove no live task ran", failures)
-    require("A separate clean Mac still must" in launcher, "another-Mac launcher gate must remain open", failures)
-    require("## Local Service Loaded Receipt" in service, "local loaded-service receipt missing", failures)
-    require("## current preview 31" in service.lower(),
-            "installed preview.31 service-load receipt missing", failures)
-    require("launchd reports the Host-only service loaded" in service, "loaded Host service receipt missing", failures)
-    require("loaded receipt is not logout/reboot proof" in normalized_service, "service receipt must not claim reboot proof", failures)
-    require(COMMIT in service, "installed preview.31 service receipt missing", failures)
-    require("actual independent hermes and openclaw launchagent units showed both still running" in normalized_service,
-            "service restart must preserve independent Worker receipt", failures)
-    require("still does not substitute for a physical logout/reboot receipt" in normalized_service,
-            "service restart receipt must keep the physical reboot gate open", failures)
-    require("## Installed Preview 31 Pre-Update Backup Receipt" in backup,
-            "installed preview.31 backup receipt missing", failures)
-    require("4a7e6df29d81f33ae0353be48ba4f3bae6dd565948093604052c75010560520e" in backup,
-            "installed preview.31 backup hash missing", failures)
-    require("secret store was excluded" in normalized_backup and "no raw" in normalized_backup,
-            "installed backup privacy receipt missing", failures)
-    require("not a restore of the user's live ledger" in normalized_backup,
-            "installed backup receipt must not claim a live restore", failures)
+    require("## Preview 35 MacBook Client Staging" in second,
+            "physical MacBook preview.35 staging receipt missing", failures)
+    require(TAG in second and COMMIT in second,
+            "physical MacBook receipt must bind the exact preview.35 package", failures)
+    require("all returned HTTP 401" in normalized_second and "task count remained 25 before and after" in normalized_second,
+            "physical MacBook anonymous denial receipt missing", failures)
+    require("it does not prove an authenticated Console workflow" in normalized_second,
+            "physical MacBook receipt must keep authenticated workflow open", failures)
+    require("Tailscale Serve remained the transport and Funnel stayed disabled" in normalized_second,
+            "advanced transport boundary missing from MacBook receipt", failures)
+
+    require(TAG in service_upgrade and COMMIT in service_upgrade,
+            "preview.35 service-upgrade receipt is not exact-package bound", failures)
+    require("no-repository install/start/status/stop receipt" in normalized_service,
+            "preview.35 no-repository release receipt missing", failures)
+    require("preserved user data" in normalized_service and "fresh idle heartbeats" in normalized_service,
+            "preview.35 data/Worker recovery receipt missing", failures)
+    require("Funnel disabled" in normalized_service,
+            "preview.35 upgrade must preserve the private transport boundary", failures)
+
+    require(TAG in runtime and COMMIT in runtime,
+            "preview.35 Runtime receipt is not exact-package bound", failures)
+    require("run_gw_45eac4968e30" in runtime and "run_gw_7ac27edaf52c" in runtime,
+            "fresh preview.35 OpenClaw/Hermes run evidence missing", failures)
+    require("ap_customer_worker_delivery_run_gw_7ac27edaf52c` remains `pending`" in runtime,
+            "Hermes Human Approval Wall state is no longer explicit", failures)
+    require("No raw prompt, raw response, credential, private message, full transcript or database content was retained" in normalized_runtime,
+            "preview.35 Runtime privacy boundary missing", failures)
 
     output = {
         "operation": "private_host_rc_status_smoke",
@@ -127,10 +125,10 @@ def main() -> int:
         "exact_commit": COMMIT,
         "checksums_recorded": len(CHECKSUMS),
         "local_receipts": [
-            "installed_app_launch",
-            "host_service_loaded",
-            "installed_service_restart",
-            "installed_backup_verified",
+            "release_asset_install",
+            "service_upgrade_migration",
+            "real_runtime_evidence",
+            "physical_macbook_anonymous_boundary",
         ],
         "external_gates_open": list(open_gate_markers),
         "failures": failures,
