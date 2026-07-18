@@ -15,6 +15,7 @@ import select
 import secrets
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -39,6 +40,7 @@ DEFAULT_UI_DIST = ROOT / "ui" / "start-building-app" / "dist"
 MACOS_TAILSCALE_BIN = Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
 HOST_STOP_GRACE_SECONDS = 20
 HOST_SERVICE_LABEL = "dev.agentops.mis.private-host"
+HOST_MANAGED_RESTART_REQUEST = b"agentops-managed-host-restart-v1\n"
 HOST_DATA_MARKER = {
     "schema_version": 1,
     "product": "AgentOps MIS Private Host Data",
@@ -105,6 +107,8 @@ def paths() -> dict[str, Path]:
         "log": home / "logs" / "host.log",
         "run": home / "run",
         "pid": home / "run" / "host.pid.json",
+        "service_instance": home / "run" / "host.service-instance.json",
+        "restart_socket": home / "run" / "host.restart.sock",
         "ownership": home / ".agentops-host-data.json",
         "lifecycle_lock": home.parent / ".agentops-mis-host-lifecycle.lock",
         "relay": home / "relay",
@@ -1433,6 +1437,398 @@ def _wait_foreground(process, p: dict[str, Path], *, marker_created: bool = Fals
                 p["ownership"].unlink(missing_ok=True)
 
 
+def _managed_launch_agent_gate(
+    args,
+    *,
+    service_path: Path | None = None,
+    parent_pid: int | None = None,
+    launchd_state: dict | None = None,
+) -> dict:
+    definition = host_service_definition()
+    checked = inspect_host_service(service_path or default_host_service_path())
+    state = launchd_state if launchd_state is not None else checked["service_state"]
+    exact_environment = all(
+        os.environ.get(key) == str(value)
+        for key, value in definition["EnvironmentVariables"].items()
+    )
+    try:
+        exact_working_directory = Path.cwd().resolve() == Path(definition["WorkingDirectory"]).resolve()
+    except OSError:
+        exact_working_directory = False
+    exact_arguments = bool(
+        getattr(args, "command", "") == "start"
+        and getattr(args, "foreground", False)
+        and getattr(args, "managed_launch_agent", False)
+        and getattr(args, "no_workers", False)
+        and not getattr(args, "worker", None)
+        and not getattr(args, "build_ui", False)
+        and not getattr(args, "install_ui", False)
+        and not getattr(args, "confirm_live_workers", False)
+    )
+    exact_service = bool(
+        checked["ok"]
+        and state.get("loaded") is True
+        and state.get("label", HOST_SERVICE_LABEL) == HOST_SERVICE_LABEL
+        and (os.getppid() if parent_pid is None else parent_pid) == 1
+        and exact_arguments
+        and exact_environment
+        and exact_working_directory
+    )
+    return {
+        "ok": exact_service,
+        "error": None if exact_service else "managed_launch_agent_required",
+        "label": HOST_SERVICE_LABEL,
+        "template_hash": hashlib.sha256(host_service_template()).hexdigest(),
+        "token_omitted": True,
+        "paths_omitted": True,
+    }
+
+
+def _open_managed_restart_socket(path: Path) -> socket.socket:
+    try:
+        parent_metadata = path.parent.lstat()
+    except FileNotFoundError:
+        path.parent.mkdir(parents=True, mode=0o700)
+        parent_metadata = path.parent.lstat()
+    if (
+        path.parent.is_symlink()
+        or not stat.S_ISDIR(parent_metadata.st_mode)
+        or parent_metadata.st_uid != os.getuid()
+        or stat.S_IMODE(parent_metadata.st_mode) != 0o700
+    ):
+        raise RuntimeError("Managed restart directory is unsafe.")
+    if path.exists() or path.is_symlink():
+        metadata = path.lstat()
+        if path.is_symlink() or not stat.S_ISSOCK(metadata.st_mode) or metadata.st_uid != os.getuid():
+            raise RuntimeError("Managed restart endpoint is unsafe.")
+        path.unlink()
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        listener.bind(str(path))
+        path.chmod(0o600)
+        listener.listen(4)
+        listener.setblocking(False)
+        return listener
+    except Exception:
+        listener.close()
+        if path.exists() and not path.is_symlink() and stat.S_ISSOCK(path.lstat().st_mode):
+            path.unlink(missing_ok=True)
+        raise
+
+
+def _remove_managed_restart_socket(path: Path) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return
+    if not path.is_symlink() and stat.S_ISSOCK(metadata.st_mode) and metadata.st_uid == os.getuid():
+        path.unlink(missing_ok=True)
+
+
+def _private_managed_restart_socket(path: Path) -> bool:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return False
+    return bool(
+        not path.is_symlink()
+        and stat.S_ISSOCK(metadata.st_mode)
+        and metadata.st_uid == os.getuid()
+        and stat.S_IMODE(metadata.st_mode) == 0o600
+    )
+
+
+def _terminate_supervised_child(process, *, timeout: float = HOST_STOP_GRACE_SECONDS) -> bool:
+    if process.poll() is not None:
+        return True
+    try:
+        process.terminate()
+    except OSError:
+        return process.poll() is not None
+    try:
+        process.wait(timeout=max(0.05, timeout))
+        return True
+    except subprocess.TimeoutExpired:
+        try:
+            process.kill()
+        except OSError:
+            return process.poll() is not None
+        try:
+            process.wait(timeout=max(0.05, min(timeout, 5)))
+        except subprocess.TimeoutExpired:
+            return False
+        return True
+
+
+def _launch_supervised_stack_locked(
+    args,
+    config: dict,
+    secret_values: dict,
+    p: dict[str, Path],
+    *,
+    startup_timeout: float = 25,
+    popen_factory=None,
+    health_check=None,
+):
+    stack_ready_read_fd, stack_ready_write_fd = os.pipe()
+    process = None
+    factory = popen_factory or subprocess.Popen
+    check_health = health_check or health
+    try:
+        process = factory(
+            stack_command(config, args, stack_ready_fd=stack_ready_write_fd),
+            cwd=ROOT,
+            env=host_env(config, secret_values),
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            pass_fds=(stack_ready_write_fd,),
+        )
+    except Exception:
+        os.close(stack_ready_read_fd)
+        raise
+    finally:
+        os.close(stack_ready_write_fd)
+    try:
+        write_managed_pid_record(p["pid"], process, foreground=True)
+        base_url = f"http://{config['host']}:{config['port']}"
+        deadline = time.monotonic() + startup_timeout
+        stack_ready = False
+        readiness = {"reachable": False, "status": "unavailable"}
+        while time.monotonic() < deadline and process.poll() is None:
+            if not stack_ready:
+                readable, _writable, _exceptional = select.select([stack_ready_read_fd], [], [], 0.05)
+                if readable:
+                    stack_ready = os.read(stack_ready_read_fd, 1) == b"\x01"
+            readiness = check_health(base_url)
+            if stack_ready and readiness.get("reachable") is True:
+                return process, readiness
+            time.sleep(0.05)
+        _terminate_supervised_child(process)
+        current_record = read_json(p["pid"])
+        if int(current_record.get("pid") or 0) == process.pid:
+            p["pid"].unlink(missing_ok=True)
+        return None, readiness
+    finally:
+        os.close(stack_ready_read_fd)
+
+
+def _write_managed_service_instance(path: Path, *, child_pid: int, template_hash: str) -> None:
+    payload = {
+        "schema_version": 1,
+        "supervisor_pid": os.getpid(),
+        "stack_child_pid": child_pid,
+        "label": HOST_SERVICE_LABEL,
+        "template_hash": template_hash,
+    }
+    _atomic_write_service(
+        path,
+        (json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n").encode("ascii"),
+    )
+
+
+def _managed_restart_instance_valid(
+    record: dict | None,
+    p: dict[str, Path],
+    *,
+    service_path: Path | None = None,
+    launchd_state: dict | None = None,
+) -> bool:
+    if record is None or set(record) != {
+        "schema_version",
+        "supervisor_pid",
+        "stack_child_pid",
+        "label",
+        "template_hash",
+    }:
+        return False
+    try:
+        supervisor_pid = int(record["supervisor_pid"])
+        child_pid = int(record["stack_child_pid"])
+    except (TypeError, ValueError):
+        return False
+    expected_hash = hashlib.sha256(host_service_template()).hexdigest()
+    checked = inspect_host_service(service_path or default_host_service_path())
+    state = launchd_state if launchd_state is not None else checked["service_state"]
+    pid_record = _read_private_bounded_json(p["pid"])
+    return bool(
+        record["schema_version"] == 1
+        and record["label"] == HOST_SERVICE_LABEL
+        and secrets.compare_digest(str(record["template_hash"]), expected_hash)
+        and supervisor_pid > 0
+        and child_pid > 0
+        and process_alive(supervisor_pid)
+        and process_alive(child_pid)
+        and pid_record is not None
+        and int(pid_record.get("pid") or 0) == child_pid
+        and managed_process_record_matches(pid_record, child_pid)
+        and _private_managed_restart_socket(p["restart_socket"])
+        and checked["ok"]
+        and state.get("loaded") is True
+    )
+
+
+def request_managed_host_restart(
+    *,
+    service_path: Path | None = None,
+    launchd_state: dict | None = None,
+    timeout: float = 2,
+    _caller_parent_pid_override: int | None = None,
+) -> dict:
+    p = paths()
+    record = _read_private_bounded_json(p["service_instance"])
+    caller_parent_pid = os.getppid() if _caller_parent_pid_override is None else _caller_parent_pid_override
+    if not _managed_restart_instance_valid(
+        record,
+        p,
+        service_path=service_path,
+        launchd_state=launchd_state,
+    ) or int((record or {}).get("stack_child_pid") or 0) != caller_parent_pid:
+        return {
+            "ok": False,
+            "operation": "host_managed_restart_request",
+            "error": "managed_launch_agent_required",
+            "paths_omitted": True,
+            "token_omitted": True,
+        }
+    requester = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    requester.settimeout(max(0.1, min(timeout, 5)))
+    try:
+        requester.connect(str(p["restart_socket"]))
+        requester.sendall(HOST_MANAGED_RESTART_REQUEST)
+        accepted = requester.recv(1) == b"\x01"
+    except OSError:
+        accepted = False
+    finally:
+        requester.close()
+    return {
+        "ok": accepted,
+        "operation": "host_managed_restart_request",
+        "accepted": accepted,
+        **({"error": "managed_restart_request_failed"} if not accepted else {}),
+        "paths_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def _run_managed_foreground_supervisor(
+    args,
+    config: dict,
+    secret_values: dict,
+    p: dict[str, Path],
+    listener: socket.socket,
+    template_hash: str,
+    *,
+    marker_created: bool = False,
+    startup_timeout: float = 25,
+    stop_timeout: float = HOST_STOP_GRACE_SECONDS,
+    popen_factory=None,
+    health_check=None,
+    config_loader=None,
+    install_signal_handlers: bool = True,
+) -> int:
+    stopping = False
+    previous_handlers: dict[int, object] = {}
+
+    def request_stop(_signum, _frame):
+        nonlocal stopping
+        stopping = True
+
+    if install_signal_handlers:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            previous_handlers[signum] = signal.getsignal(signum)
+            signal.signal(signum, request_stop)
+
+    process = None
+    completed_status = None
+    try:
+        process, _readiness = _launch_supervised_stack_locked(
+            args,
+            config,
+            secret_values,
+            p,
+            startup_timeout=startup_timeout,
+            popen_factory=popen_factory,
+            health_check=health_check,
+        )
+        if process is None:
+            completed_status = 1
+            return completed_status
+        _write_managed_service_instance(
+            p["service_instance"],
+            child_pid=process.pid,
+            template_hash=template_hash,
+        )
+        while True:
+            if stopping:
+                completed_status = 0 if _terminate_supervised_child(process, timeout=stop_timeout) else 1
+                return completed_status
+            status = process.poll()
+            if status is not None:
+                completed_status = status
+                return completed_status
+            readable, _writable, _exceptional = select.select([listener], [], [], 0.1)
+            if not readable:
+                continue
+            try:
+                connection, _address = listener.accept()
+            except BlockingIOError:
+                continue
+            with connection:
+                connection.settimeout(1)
+                try:
+                    requested = connection.recv(len(HOST_MANAGED_RESTART_REQUEST) + 1)
+                except OSError:
+                    requested = b""
+                accepted = secrets.compare_digest(requested, HOST_MANAGED_RESTART_REQUEST)
+                try:
+                    connection.sendall(b"\x01" if accepted else b"\x00")
+                except OSError:
+                    pass
+            if not accepted:
+                continue
+            if not _terminate_supervised_child(process, timeout=stop_timeout):
+                completed_status = 1
+                return completed_status
+            current_record = read_json(p["pid"])
+            if int(current_record.get("pid") or 0) == process.pid:
+                p["pid"].unlink(missing_ok=True)
+            replacement_config, replacement_secrets = (config_loader or require_initialized)()
+            process, _readiness = _launch_supervised_stack_locked(
+                args,
+                replacement_config,
+                replacement_secrets,
+                p,
+                startup_timeout=startup_timeout,
+                popen_factory=popen_factory,
+                health_check=health_check,
+            )
+            if process is None:
+                completed_status = 1
+                return completed_status
+            _write_managed_service_instance(
+                p["service_instance"],
+                child_pid=process.pid,
+                template_hash=template_hash,
+            )
+    finally:
+        if process is not None and process.poll() is None:
+            _terminate_supervised_child(process, timeout=stop_timeout)
+        listener.close()
+        _remove_managed_restart_socket(p["restart_socket"])
+        with lifecycle_lock():
+            instance = _read_private_bounded_json(p["service_instance"])
+            if instance and int(instance.get("supervisor_pid") or 0) == os.getpid():
+                p["service_instance"].unlink(missing_ok=True)
+            if process is not None:
+                current_record = read_json(p["pid"])
+                if int(current_record.get("pid") or 0) == process.pid:
+                    p["pid"].unlink(missing_ok=True)
+            if marker_created and completed_status != 0:
+                p["ownership"].unlink(missing_ok=True)
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+
+
 def cmd_start(args) -> int:
     if not args.foreground:
         with lifecycle_lock():
@@ -1446,6 +1842,49 @@ def cmd_start(args) -> int:
             if marker_created and status != 0:
                 paths()["ownership"].unlink(missing_ok=True)
             return status
+    if getattr(args, "managed_launch_agent", False):
+        with lifecycle_lock():
+            marker_created = ensure_host_data_marker(allow_legacy=True)
+            config, secret_values = require_initialized()
+            p = paths()
+            gate = _managed_launch_agent_gate(args)
+            if not gate["ok"]:
+                if marker_created:
+                    p["ownership"].unlink(missing_ok=True)
+                emit({
+                    "ok": False,
+                    "operation": "host_start",
+                    "error": gate["error"],
+                    "paths_omitted": True,
+                    "token_omitted": True,
+                })
+                return 2
+            pid_record = read_json(p["pid"])
+            if process_alive(int(pid_record.get("pid") or 0)):
+                if marker_created:
+                    p["ownership"].unlink(missing_ok=True)
+                emit({"ok": False, "operation": "host_start", "error": "already_running", "token_omitted": True})
+                return 2
+            worker_preflight = host_worker_ownership_preflight(args)
+            if not worker_preflight["ok"]:
+                if marker_created:
+                    p["ownership"].unlink(missing_ok=True)
+                return emit_host_worker_ownership_error(worker_preflight)
+            try:
+                listener = _open_managed_restart_socket(p["restart_socket"])
+            except Exception:
+                if marker_created:
+                    p["ownership"].unlink(missing_ok=True)
+                raise
+        return _run_managed_foreground_supervisor(
+            args,
+            config,
+            secret_values,
+            p,
+            listener,
+            gate["template_hash"],
+            marker_created=marker_created,
+        )
     with lifecycle_lock():
         marker_created = ensure_host_data_marker(allow_legacy=True)
         try:
@@ -1861,6 +2300,7 @@ def host_service_definition() -> dict:
             "host",
             "start",
             "--foreground",
+            "--managed-launch-agent",
             "--no-workers",
         ],
         "EnvironmentVariables": {
@@ -2708,6 +3148,7 @@ def cmd_tailscale_revoke(args) -> int:
 
 def add_start_options(parser) -> None:
     parser.add_argument("--foreground", action="store_true")
+    parser.add_argument("--managed-launch-agent", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--build-ui", action="store_true")
     parser.add_argument("--install-ui", action="store_true")
     parser.add_argument("--worker", action="append", choices=["mock", "hermes", "openclaw"])

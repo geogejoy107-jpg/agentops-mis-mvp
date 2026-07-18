@@ -217,8 +217,11 @@ Implementation slices:
    exact-service authority, response-flush ordering, health gate, rollback, and
    Tailscale/Worker isolation. A deterministic response hook now proves that a
    restart request cannot run before the accepted JSON body flushes and is not
-   called after a broken response; parent supervision and restart-receipt
-   integration remain open.
+   called after a broken response. The exact managed LaunchAgent parent now has
+   an internal, caller-parent-bound restart supervisor that reloads current Host
+   config for every bounded stack replacement; manual foreground mode has no
+   automatic authority. Restart-receipt, health-result and rollback integration
+   remain open.
 3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host
    Console origin, bounded operations metadata, deployment and rollback.
 4. `3D Physical acceptance`: fresh browser-only device, real Hermes/OpenClaw
