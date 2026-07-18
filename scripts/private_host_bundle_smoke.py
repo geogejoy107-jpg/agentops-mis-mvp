@@ -144,6 +144,29 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="agentops-private-host-smoke-") as temporary:
         temp = Path(temporary)
+        dirty_source = temp / "dirty-source"
+        cloned = run(["git", "clone", "--quiet", "--no-local", str(ROOT), str(dirty_source)])
+        if cloned.returncode != 0:
+            fail("release source fixture clone failed", cloned)
+        with (dirty_source / "README.md").open("a", encoding="utf-8") as handle:
+            handle.write("\ntracked dirty release fixture\n")
+        dirty_output = temp / "dirty-output"
+        dirty_build = run(
+            [
+                sys.executable,
+                str(dirty_source / "scripts" / "build_private_host_bundle.py"),
+                "--ui-dist",
+                str(ui.parent),
+                "--output-dir",
+                str(dirty_output),
+                "--version",
+                "0.0.0-dirty-source",
+            ],
+            cwd=dirty_source,
+        )
+        if dirty_build.returncode == 0 or dirty_output.exists():
+            fail("bundle builder accepted dirty tracked release source", dirty_build)
+
         output = temp / "out"
         version = "0.0.0-smoke"
         built = run([sys.executable, str(BUILDER), "--output-dir", str(output), "--version", version])

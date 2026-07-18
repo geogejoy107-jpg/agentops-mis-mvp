@@ -75,6 +75,15 @@ def tracked_files() -> list[str]:
     return [line for line in run_git("ls-files", "-z").split("\0") if line]
 
 
+def require_clean_tracked_source() -> None:
+    unstaged = subprocess.run(["git", "diff", "--quiet", "--"], cwd=ROOT, check=False)
+    staged = subprocess.run(["git", "diff", "--cached", "--quiet", "--"], cwd=ROOT, check=False)
+    if unstaged.returncode not in {0, 1} or staged.returncode not in {0, 1}:
+        raise RuntimeError("unable to verify release source state")
+    if unstaged.returncode or staged.returncode:
+        raise RuntimeError("tracked release source is dirty; commit or restore tracked changes before building")
+
+
 def safe_relative(path: str) -> PurePosixPath:
     rel = PurePosixPath(path)
     if rel.is_absolute() or ".." in rel.parts:
@@ -153,6 +162,7 @@ def tar_tree(source: Path, destination: Path, root_name: str) -> None:
 
 
 def build(output_dir: Path, ui_dist: Path, version: str) -> dict:
+    require_clean_tracked_source()
     if not (ui_dist / "index.html").is_file():
         raise RuntimeError(f"built production UI missing: {ui_dist / 'index.html'}")
     output_dir.mkdir(parents=True, exist_ok=True)
