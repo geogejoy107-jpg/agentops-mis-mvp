@@ -24,6 +24,7 @@ Outputs:
 - `agentops-mis-private-host-<version>.tar.gz`;
 - `agentops-mis-private-host-<version>.zip`;
 - `agentops-mis-private-host-<version>.sha256.json`.
+- `agentops-mis-private-host-<version>.provenance.json`.
 - `install-agentops-mis-private-host.sh` release-consumer bootstrap.
 
 Generated archives and UI `dist` remain untracked.
@@ -45,10 +46,14 @@ Generated archives and UI `dist` remain untracked.
   tar/gzip/zip metadata is normalized so two builds from the same commit, UI
   and version are byte-for-byte identical.
 - Archive-level SHA-256 values are emitted separately.
+- Candidate provenance binds the version and exact clean Git commit to the
+  normalized UI tree hash, bundle file count and archive/bootstrap hashes. The
+  checksum manifest also covers that provenance document.
 - The checksum manifest also covers the published release-consumer bootstrap.
 - The release-consumer bootstrap pins one explicit GitHub tag, verifies the
-  downloaded tar archive programmatically, rejects unsafe archive members,
-  installs the bundle, and verifies installed version provenance. Optional
+  downloaded tar archive and provenance programmatically, rejects unsafe
+  archive members or non-clean provenance, installs the bundle, and verifies
+  both installed version and exact source commit. Optional
   `--init --start` remains loopback-only and does not create an Owner or enable
   live Runtimes/Tailscale.
 - `.git`, `.env*`, DB/SQLite, token-named files, logs, caches, `node_modules`,
