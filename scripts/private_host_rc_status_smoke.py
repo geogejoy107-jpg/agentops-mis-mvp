@@ -30,6 +30,16 @@ def require(condition: bool, message: str, failures: list[str]) -> None:
         failures.append(message)
 
 
+def heading_section(text: str, heading: str) -> str:
+    marker = f"## {heading}"
+    start = text.find(marker)
+    if start < 0:
+        return ""
+    remainder = text[start:]
+    next_heading = remainder.find("\n## ", len(marker))
+    return remainder if next_heading < 0 else remainder[:next_heading]
+
+
 def main() -> int:
     failures: list[str] = []
     rc = RC.read_text(encoding="utf-8")
@@ -37,7 +47,8 @@ def main() -> int:
     service_upgrade = SERVICE_UPGRADE.read_text(encoding="utf-8")
     runtime = REAL_RUNTIME.read_text(encoding="utf-8")
     rc_headings = [line for line in rc.splitlines() if line.startswith("## Current Preview ")]
-    normalized_rc = " ".join(rc.split())
+    current_rc = heading_section(rc, "Current Preview 35")
+    normalized_current_rc = " ".join(current_rc.split())
     normalized_second = " ".join(second.split())
     normalized_service = " ".join(service_upgrade.split())
     normalized_runtime = " ".join(runtime.split())
@@ -58,11 +69,11 @@ def main() -> int:
     require("## Superseded Preview 20" in rc, "preview.20 must be preserved as superseded history", failures)
     require("## Superseded Preview 19" in rc, "preview.19 must be preserved as superseded history", failures)
     require("## Superseded Preview 12" in rc, "preview.12 must be marked superseded", failures)
-    require(TAG in rc and VERSION in rc, "current version/tag missing from RC document", failures)
-    require(COMMIT in rc and COMMIT in second, "exact release commit missing from acceptance documents", failures)
-    require(RELEASE_URL in rc, "public prerelease URL missing from RC document", failures)
+    require(TAG in current_rc and VERSION in current_rc, "current version/tag missing from current RC section", failures)
+    require(COMMIT in current_rc and COMMIT in second, "exact release commit missing from current acceptance evidence", failures)
+    require(RELEASE_URL in current_rc, "public prerelease URL missing from current RC section", failures)
     for label, checksum in CHECKSUMS.items():
-        require(checksum in rc, f"{label} checksum missing from RC document", failures)
+        require(checksum in current_rc, f"{label} checksum missing from current RC section", failures)
 
     open_gate_markers = (
         "deployed Relay/DNS/TLS",
@@ -72,8 +83,8 @@ def main() -> int:
         "another-Mac clean installation",
     )
     for marker in open_gate_markers:
-        require(marker.lower() in normalized_rc.lower(), f"open external gate is no longer explicit: {marker}", failures)
-    require("This is a prerelease, not the final RC" in rc,
+        require(marker.lower() in normalized_current_rc.lower(), f"open external gate is no longer explicit in current RC section: {marker}", failures)
+    require("The current preview therefore remains a prerelease." in current_rc,
             "current preview must not claim final RC", failures)
 
     require(
