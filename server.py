@@ -587,7 +587,14 @@ def private_host_relay_public_payload(payload: dict) -> dict:
     active_enabled = payload.get("relay_enabled") is True or (
         core_state == "executed" and payload.get("action") == "enable"
     )
-    if core_state == "idle":
+    if core_state in {
+        "restart_scheduled",
+        "manual_restart_required",
+        "rolled_back",
+        "rollback_failed",
+    }:
+        state = core_state
+    elif core_state == "idle":
         state = "enabled" if active_enabled else "disabled"
     elif core_state in {"prepared", "confirmed", "expired"}:
         state = core_state
@@ -604,8 +611,13 @@ def private_host_relay_public_payload(payload: dict) -> dict:
         "control_available": ok,
         "transition_pending": core_state in {"prepared", "confirmed"},
         "restart_required": payload.get("restart_required") is True,
+        "restart_pending": payload.get("restart_pending") is True,
+        "rollback_armed": payload.get("rollback_armed") is True,
         "confirmation_required": payload.get("confirmation_required") is True,
         "network_used": False,
+        "remote_ready": False,
+        "tailscale_changed": False,
+        "workers_affected": False,
         "sensitive_values_omitted": True,
     }
     for field in ("action", "transition_ref", "expires_at", "error", "network_publication"):
@@ -30943,18 +30955,45 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
 
-    def send_json(self, data, status=200, headers=None):
+    def send_json(
+        self,
+        data,
+        status=200,
+        headers=None,
+        *,
+        after_send=None,
+        on_send_error=None,
+    ):
         payload = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
-        for name, value in (headers or {}).items():
-            values = value if isinstance(value, (list, tuple)) else [value]
-            for item in values:
-                self.send_header(name, item)
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+        response_headers = dict(headers or {})
+        if after_send is not None:
+            response_headers["Connection"] = "close"
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            for name, value in response_headers.items():
+                values = value if isinstance(value, (list, tuple)) else [value]
+                for item in values:
+                    self.send_header(name, item)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            if after_send is not None:
+                self.wfile.flush()
+                self.close_connection = True
+        except Exception:
+            if on_send_error is not None:
+                try:
+                    on_send_error()
+                except Exception:
+                    pass
+            raise
+        if after_send is not None:
+            try:
+                after_send()
+            except Exception:
+                sys.stderr.write("[private-host] post-response action failed; private reconciliation remains required\n")
 
     def send_text(self, text, content_type="text/plain; charset=utf-8", status=200):
         payload = text.encode("utf-8")

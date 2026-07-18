@@ -57,8 +57,9 @@ function relayErrorMessage(locale: "zh" | "en") {
 
 function relayStatusColor(state: HostRelayDisplayState) {
   if (state === "enabled") return "var(--mis-success)";
-  if (state === "prepared") return "var(--mis-primary)";
-  if (state === "pending" || state === "restart_required") return "var(--mis-warning)";
+  if (state === "prepared" || state === "rolled_back") return "var(--mis-primary)";
+  if (state === "rollback_failed") return "#F87171";
+  if (state === "pending" || state === "restart_scheduled" || state === "manual_restart_required" || state === "restart_required") return "var(--mis-warning)";
   return "var(--mis-muted)";
 }
 
@@ -151,7 +152,11 @@ export function AccountSecurity() {
       relayEnabled: "已启用",
       relayPrepared: "等待明确确认",
       relayPending: "正在处理",
+      relayRestartScheduled: "正在安全重启主机服务",
+      relayManualRestartRequired: "需要手动重启主机服务",
       relayRestartRequired: "需要重启主机服务",
+      relayRolledBack: "新配置启动失败，已恢复原配置",
+      relayRollbackFailed: "自动恢复失败，需要本机处理",
       relayUnavailable: "暂不可用",
       relayEnable: "准备启用",
       relayDisable: "准备停用",
@@ -228,7 +233,11 @@ export function AccountSecurity() {
       relayEnabled: "Enabled",
       relayPrepared: "Awaiting explicit confirmation",
       relayPending: "Pending",
+      relayRestartScheduled: "Safely restarting the Host service",
+      relayManualRestartRequired: "Manual Host service restart required",
       relayRestartRequired: "Host service restart required",
+      relayRolledBack: "New configuration failed; original configuration restored",
+      relayRollbackFailed: "Automatic recovery failed; local action required",
       relayUnavailable: "Unavailable",
       relayEnable: "Prepare enable",
       relayDisable: "Prepare disable",
@@ -390,7 +399,11 @@ export function AccountSecurity() {
     enabled: copy.relayEnabled,
     prepared: copy.relayPrepared,
     pending: copy.relayPending,
+    restart_scheduled: copy.relayRestartScheduled,
+    manual_restart_required: copy.relayManualRestartRequired,
     restart_required: copy.relayRestartRequired,
+    rolled_back: copy.relayRolledBack,
+    rollback_failed: copy.relayRollbackFailed,
     unavailable: copy.relayUnavailable,
   } as const)[relayState];
   const relayControlsBlocked = !canManageRelay
@@ -399,6 +412,8 @@ export function AccountSecurity() {
     || relayStatus?.control_available === false
     || relayStatus?.transition_pending === true
     || relayStatus?.restart_required === true
+    || relayStatus?.restart_pending === true
+    || relayStatus?.state === "rollback_failed"
     || relayStatus?.state === "unavailable";
 
   const prepareRelay = async () => {

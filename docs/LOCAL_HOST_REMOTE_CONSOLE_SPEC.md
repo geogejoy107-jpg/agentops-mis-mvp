@@ -245,6 +245,13 @@ publication profile owns the Host. Runtime status may report a healthy local
 connector, but `remote_ready` remains false until a deployed Relay and physical
 browser-only receipt exist.
 
+The managed activation and failure-recovery contract is defined in
+`PRIVATE_HOST_MANAGED_RESTART_SPEC.md`. The exact managed LaunchAgent parent is
+the only automatic restart authority; a manual foreground Host remains manual.
+The Owner response must be fully written and flushed before a restart request,
+and a broken response must restore the original config without signalling a
+process.
+
 ## 6. Application Serving Model
 
 Private host mode must use a production UI build, not the Vite development

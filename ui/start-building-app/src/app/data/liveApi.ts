@@ -89,7 +89,17 @@ export interface HumanBrowserSessionRevokePayload {
 }
 
 export type HostRelayAction = "enable" | "disable";
-export type HostRelayDisplayState = "disabled" | "enabled" | "prepared" | "pending" | "restart_required" | "unavailable";
+export type HostRelayDisplayState =
+  | "disabled"
+  | "enabled"
+  | "prepared"
+  | "pending"
+  | "restart_scheduled"
+  | "manual_restart_required"
+  | "restart_required"
+  | "rolled_back"
+  | "rollback_failed"
+  | "unavailable";
 
 export interface HostRelayStatusPayload {
   state: HostRelayDisplayState;
@@ -97,6 +107,8 @@ export interface HostRelayStatusPayload {
   control_available: boolean;
   transition_pending: boolean;
   restart_required: boolean;
+  restart_pending?: boolean;
+  rollback_armed?: boolean;
 }
 
 export interface HostRelayTransitionPayload extends HostRelayStatusPayload {
@@ -386,6 +398,12 @@ function normalizeHostRelayState(value: unknown): HostRelayStatusPayload {
   const restartRequired = hostRelayBoolean(
     source.restart_required ?? source.requires_restart ?? root.restart_required ?? root.requires_restart,
   );
+  const restartPending = hostRelayBoolean(
+    source.restart_pending ?? root.restart_pending,
+  );
+  const rollbackArmed = hostRelayBoolean(
+    source.rollback_armed ?? root.rollback_armed,
+  );
   const controlAvailable = hostRelayOptionalBoolean(
     source.control_available ?? source.available ?? root.control_available ?? root.available,
   ) !== false;
@@ -394,7 +412,11 @@ function normalizeHostRelayState(value: unknown): HostRelayStatusPayload {
   const explicitlyDisabled = rawState === "disabled" || (!activeEnabled && configured === false);
 
   let state: HostRelayDisplayState = "unavailable";
-  if (restartRequired || rawState === "restart_required") state = "restart_required";
+  if (rawState === "restart_scheduled") state = "restart_scheduled";
+  else if (rawState === "manual_restart_required") state = "manual_restart_required";
+  else if (rawState === "rolled_back") state = "rolled_back";
+  else if (rawState === "rollback_failed") state = "rollback_failed";
+  else if (restartRequired || rawState === "restart_required") state = "restart_required";
   else if (rawState === "enabled") state = "enabled";
   else if (
     transitionPending
@@ -412,6 +434,8 @@ function normalizeHostRelayState(value: unknown): HostRelayStatusPayload {
     control_available: controlAvailable,
     transition_pending: transitionPending,
     restart_required: restartRequired,
+    restart_pending: restartPending,
+    rollback_armed: rollbackArmed,
   };
 }
 

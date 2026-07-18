@@ -213,6 +213,12 @@ Implementation slices:
    opaque route refs to authenticated current Host tunnels, safe managed Host
    restart, certificate lifecycle, credential provisioning, installation into
    the current preview, and the deployed Relay remain open.
+   `PRIVATE_HOST_MANAGED_RESTART_SPEC.md` freezes the safe restart state machine,
+   exact-service authority, response-flush ordering, health gate, rollback, and
+   Tailscale/Worker isolation. A deterministic response hook now proves that a
+   restart request cannot run before the accepted JSON body flushes and is not
+   called after a broken response; parent supervision and restart-receipt
+   integration remain open.
 3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host
    Console origin, bounded operations metadata, deployment and rollback.
 4. `3D Physical acceptance`: fresh browser-only device, real Hermes/OpenClaw

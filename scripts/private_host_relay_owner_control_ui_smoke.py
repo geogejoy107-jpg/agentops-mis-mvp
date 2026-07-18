@@ -45,10 +45,24 @@ def main() -> int:
     )
     require(
         'relayEnabled: "已启用"' in account
+        and 'relayRestartScheduled: "正在安全重启主机服务"' in account
+        and 'relayManualRestartRequired: "需要手动重启主机服务"' in account
         and 'relayRestartRequired: "需要重启主机服务"' in account
+        and 'relayRolledBack: "新配置启动失败，已恢复原配置"' in account
+        and 'relayRollbackFailed: "自动恢复失败，需要本机处理"' in account
         and 'relayEnabled: "Enabled"' in account
+        and 'relayRestartScheduled: "Safely restarting the Host service"' in account
+        and 'relayManualRestartRequired: "Manual Host service restart required"' in account
         and 'relayRestartRequired: "Host service restart required"' in account,
         "Relay state copy is not bilingual",
+        failures,
+    )
+    require(
+        'rawState === "restart_scheduled"' in api
+        and 'rawState === "manual_restart_required"' in api
+        and 'rawState === "rolled_back"' in api
+        and 'rawState === "rollback_failed"' in api,
+        "managed restart states are not normalized",
         failures,
     )
     require(
@@ -82,7 +96,7 @@ def main() -> int:
                 "ok": not failures,
                 "operation": "private_host_relay_owner_control_ui_smoke",
                 "route": "/workspace/account",
-                "checks": 9,
+                "checks": 10,
                 "owner_only": True,
                 "transition_ref_storage": "react_memory_only",
                 "private_material_rendered": False,
