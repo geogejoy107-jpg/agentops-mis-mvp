@@ -766,7 +766,7 @@ Host data and pre-update backup remained valid. The Host was recovered through
 the installed module entry point and byte-identical shims on new inodes.
 preview.30 is immutable and must not be used for another in-place upgrade.
 
-## Current Preview 31
+## Superseded Preview 31
 
 - Tag: `v1.6.0-private-host-preview.31`
 - Exact commit: `fed1b2410d6725a217c9727dba570db62cc46963`
@@ -812,6 +812,45 @@ Physical second-device login/disconnect, another-Mac clean install and
 logout/reboot service proof remain open. The same-Host private-HTTPS Owner
 receipt does not substitute for those physical gates, and no external evidence
 is synthesized. This is a prerelease, not the final RC.
+
+## Current Preview 35
+
+- Tag: `v1.6.0-private-host-preview.35`
+- Exact commit: `6424ec144013517b21438cd7e528c6db106a0a5e`
+- Push CI: passed at the exact commit (`29632908345`)
+- Pull-request CI: passed at the exact commit (`29632909374`)
+- Release: `https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.35`
+- Provenance asset SHA-256: `bb87a5c74ec2b5afd510b92ee3023a97991e156d98f6556a871ece3250f8cbe4`
+- SHA-256 manifest asset: `b4cd6da7dc6bd327eef292d188699f38e8a69bc77f0ae8619dfccf85e9663386`
+- Tar archive: `77ba016157dcd0880a42bc17bc1a5aad6a9cb26039506e769c7315018cf973ca`
+- Zip archive: `02703e5b4dabdf3cc1dec501cc5dbe8735798493fcab1928d5ea0e4c266a2f6c`
+- Release-consumer bootstrap: `75854f364502722eb24d5a7df3c0fc26685bf25acae6d5926e4c6396d16bd812`
+
+preview.35 supersedes previews 32 through 34. Candidate and Draft builds were
+reproducible, candidate, Draft and public assets were byte-equal, and the public
+release passed an isolated no-repository install/start/status/stop receipt.
+The exact release source has green push and pull-request backend and UI checks.
+
+The real Host upgrade created verified backups, preserved user data and safely
+migrated the exact previous Host LaunchAgent definition before reloading the
+current exact service. The private Tailscale route recovered with Funnel
+disabled, and the independent Hermes and OpenClaw services returned with fresh
+heartbeats. A fresh OpenClaw task completed through the persistent Worker with
+bounded tool, evaluation, runtime-event, audit, artifact, memory and verified
+plan-evidence records. A fresh Hermes Runtime also completed, but its delivery
+remains at the Human Approval Wall; no approved delivery is claimed.
+
+A physical MacBook reached and rendered the login Workspace before and after
+the upgrade and remained connected during the OpenClaw run. From that MacBook,
+unauthenticated workspace reads and a task-create mutation returned HTTP 401,
+with no task-count change. This is useful advanced-Tailscale physical-client
+and fail-closed evidence, but it is not the ordinary deployed-Relay gate or the
+full authenticated browser workflow.
+
+The current preview therefore remains a prerelease. Deployed Relay/DNS/TLS,
+physical pairing and authenticated dispatch, Hermes approval, approved
+artifact and receipt download, physical disconnect/reconnect, logout denial,
+Host logout/reboot recovery and another-Mac clean installation remain open.
 
 ## Release Gates
 
