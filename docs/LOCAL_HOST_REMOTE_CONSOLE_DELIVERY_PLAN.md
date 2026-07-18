@@ -221,7 +221,11 @@ Implementation slices:
    an internal, caller-parent-bound restart supervisor that reloads current Host
    config for every bounded stack replacement; manual foreground mode has no
    automatic authority. Restart-receipt, health-result and rollback integration
-   remain open.
+   remain open. The private restart receipt itself now stores both Relay and
+   Host original/target config pairs, binds one transition ref plus a persistent
+   monotonic transaction sequence, enforces ordered revisions, restores or
+   reapplies both files transactionally, and supports terminal archive/reuse.
+   It is not yet invoked by the Owner route or supervisor.
 3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host
    Console origin, bounded operations metadata, deployment and rollback.
 4. `3D Physical acceptance`: fresh browser-only device, real Hermes/OpenClaw
