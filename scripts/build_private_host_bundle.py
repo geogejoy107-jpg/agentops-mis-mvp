@@ -135,6 +135,11 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def records_sha256(records: list[dict]) -> str:
+    payload = json.dumps(records, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def normalize_version(value: str) -> str:
     value = value.strip().removeprefix("v")
     allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
@@ -178,6 +183,7 @@ def build(output_dir: Path, ui_dist: Path, version: str) -> dict:
     with tempfile.TemporaryDirectory(prefix="agentops-private-host-build-") as temporary:
         root = Path(temporary) / bundle_name
         payload = root / "payload"
+        ui_records = []
         for rel_name in source_selection():
             copy_file(ROOT / rel_name, payload / rel_name, executable=rel_name == "scripts/agentops")
         for source in sorted(ui_dist.rglob("*")):
@@ -186,6 +192,7 @@ def build(output_dir: Path, ui_dist: Path, version: str) -> dict:
                 if is_forbidden(rel):
                     raise RuntimeError(f"forbidden file in UI dist: {rel}")
                 copy_file(source, payload / "ui" / "start-building-app" / "dist" / rel.as_posix(), source_root=ui_dist)
+                ui_records.append({"path": rel.as_posix(), "sha256": sha256(source), "size": source.stat().st_size})
         copy_file(ROOT / "packaging" / "macos" / "install.sh", root / "install.sh", executable=True)
         copy_file(ROOT / "packaging" / "macos" / "uninstall.sh", root / "uninstall.sh", executable=True)
 
@@ -205,6 +212,7 @@ def build(output_dir: Path, ui_dist: Path, version: str) -> dict:
             "platform": "macOS",
             "python_requires": ">=3.10",
             "ui_source": "prebuilt_dist",
+            "ui_tree_sha256": records_sha256(ui_records),
             "file_count": len(file_records),
             "files": file_records,
         }
@@ -217,15 +225,30 @@ def build(output_dir: Path, ui_dist: Path, version: str) -> dict:
 
     bootstrap_path = output_dir / "install-agentops-mis-private-host.sh"
     copy_file(ROOT / "packaging" / "macos" / "install-private-host.sh", bootstrap_path, executable=True)
-    checksums = {path.name: sha256(path) for path in (tar_path, zip_path, bootstrap_path)}
+    artifact_checksums = {path.name: sha256(path) for path in (tar_path, zip_path, bootstrap_path)}
+    provenance_path = output_dir / f"{bundle_name}.provenance.json"
+    provenance = {
+        "schema_version": 1,
+        "product": "AgentOps MIS Private Host",
+        "version": version,
+        "git_commit": commit,
+        "source_timestamp": source_timestamp(),
+        "source_clean": True,
+        "ui_tree_sha256": manifest["ui_tree_sha256"],
+        "bundle_file_count": manifest["file_count"],
+        "artifacts": artifact_checksums,
+    }
+    provenance_path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    checksums = {**artifact_checksums, provenance_path.name: sha256(provenance_path)}
     checksum_path = output_dir / f"{bundle_name}.sha256.json"
     checksum_path.write_text(json.dumps(checksums, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {
         "ok": True,
         "version": version,
         "git_commit": commit,
-        "artifacts": [str(tar_path), str(zip_path), str(bootstrap_path)],
+        "artifacts": [str(tar_path), str(zip_path), str(bootstrap_path), str(provenance_path)],
         "checksums": str(checksum_path),
+        "provenance": str(provenance_path),
         "file_count": manifest["file_count"],
     }
 

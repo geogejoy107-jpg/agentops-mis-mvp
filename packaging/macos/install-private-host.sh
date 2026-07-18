@@ -86,8 +86,10 @@ trap 'rm -rf "$TMPDIR_ROOT"' EXIT HUP INT TERM
 PREFIX="agentops-mis-private-host-$VERSION"
 ARCHIVE="$PREFIX.tar.gz"
 CHECKSUMS="$PREFIX.sha256.json"
+PROVENANCE="$PREFIX.provenance.json"
 ARCHIVE_PATH="$TMPDIR_ROOT/$ARCHIVE"
 CHECKSUM_PATH="$TMPDIR_ROOT/$CHECKSUMS"
+PROVENANCE_PATH="$TMPDIR_ROOT/$PROVENANCE"
 
 fetch_asset() {
   asset=$1
@@ -107,26 +109,54 @@ fetch_asset() {
 }
 
 fetch_asset "$CHECKSUMS" "$CHECKSUM_PATH" 1048576
+fetch_asset "$PROVENANCE" "$PROVENANCE_PATH" 1048576
 fetch_asset "$ARCHIVE" "$ARCHIVE_PATH" 536870912
 
-python3 - "$CHECKSUM_PATH" "$ARCHIVE_PATH" "$ARCHIVE" <<'PY'
+EXPECTED_COMMIT=$(python3 - "$CHECKSUM_PATH" "$ARCHIVE_PATH" "$PROVENANCE_PATH" "$0" "$VERSION" <<'PY'
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
-checksum_path, archive_path, archive_name = map(Path, sys.argv[1:])
-payload = json.loads(checksum_path.read_text(encoding="utf-8"))
-expected = payload.get(archive_name.name)
-if not isinstance(expected, str) or len(expected) != 64:
-    raise SystemExit("release checksum entry is missing or invalid")
-digest = hashlib.sha256()
-with archive_path.open("rb") as handle:
-    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-        digest.update(chunk)
-if digest.hexdigest() != expected.lower():
-    raise SystemExit("release archive SHA-256 mismatch")
+checksum_path, archive_path, provenance_path, bootstrap_path = map(Path, sys.argv[1:5])
+expected_version = sys.argv[5]
+checksums = json.loads(checksum_path.read_text(encoding="utf-8"))
+provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+
+def digest(path):
+    value = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            value.update(chunk)
+    return value.hexdigest()
+
+for path in (archive_path, provenance_path, bootstrap_path):
+    expected = checksums.get(path.name)
+    if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise SystemExit("release checksum entry is missing or invalid")
+    if digest(path) != expected:
+        raise SystemExit("release asset SHA-256 mismatch")
+
+commit = provenance.get("git_commit")
+artifacts = provenance.get("artifacts")
+if (
+    provenance.get("schema_version") != 1
+    or provenance.get("version") != expected_version
+    or provenance.get("source_clean") is not True
+    or not isinstance(commit, str)
+    or not re.fullmatch(r"[0-9a-f]{40}", commit)
+    or not isinstance(provenance.get("ui_tree_sha256"), str)
+    or not re.fullmatch(r"[0-9a-f]{64}", provenance["ui_tree_sha256"])
+    or not isinstance(artifacts, dict)
+):
+    raise SystemExit("release provenance is missing or invalid")
+for path in (archive_path, bootstrap_path):
+    if artifacts.get(path.name) != digest(path):
+        raise SystemExit("release provenance artifact mismatch")
+print(commit)
 PY
+)
 
 EXTRACT_ROOT="$TMPDIR_ROOT/extracted"
 mkdir "$EXTRACT_ROOT"
@@ -174,13 +204,18 @@ BIN_DIR=${AGENTOPS_BIN_DIR:-"$HOME/.local/bin"}
 AGENTOPS="$BIN_DIR/agentops"
 [ -x "$AGENTOPS" ] || { echo "installed agentops command is missing" >&2; exit 1; }
 VERSION_JSON=$("$AGENTOPS" host version)
-python3 - "$VERSION" "$VERSION_JSON" <<'PY'
+python3 - "$VERSION" "$EXPECTED_COMMIT" "$VERSION_JSON" <<'PY'
 import json
 import sys
 
-expected = sys.argv[1]
-payload = json.loads(sys.argv[2])
-if payload.get("packaged_install") is not True or payload.get("version") != expected:
+expected_version = sys.argv[1]
+expected_commit = sys.argv[2]
+payload = json.loads(sys.argv[3])
+if (
+    payload.get("packaged_install") is not True
+    or payload.get("version") != expected_version
+    or payload.get("git_commit") != expected_commit
+):
     raise SystemExit("installed release provenance mismatch")
 PY
 

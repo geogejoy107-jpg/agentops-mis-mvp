@@ -183,11 +183,12 @@ def main() -> int:
                 fail(f"bundle build is not reproducible: {first.name}", rebuilt)
         tar_path = next(Path(path) for path in build_result["artifacts"] if path.endswith(".tar.gz"))
         zip_path = next(Path(path) for path in build_result["artifacts"] if path.endswith(".zip"))
+        provenance_path = Path(build_result["provenance"])
         checksum_path = Path(build_result["checksums"])
         checksums = json.loads(checksum_path.read_text(encoding="utf-8"))
-        for archive_path in (tar_path, zip_path):
-            if checksums.get(archive_path.name) != digest(archive_path):
-                fail(f"archive checksum mismatch: {archive_path.name}")
+        for release_path in (tar_path, zip_path, provenance_path):
+            if checksums.get(release_path.name) != digest(release_path):
+                fail(f"release checksum mismatch: {release_path.name}")
 
         with zipfile.ZipFile(zip_path) as archive:
             for info in archive.infolist():
@@ -200,8 +201,18 @@ def main() -> int:
 
         bundle = extract_bundle(tar_path, temp / "extract")
         manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
         if manifest["version"] != version or manifest["git_commit"] != subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip():
             fail("manifest version or commit mismatch")
+        if (
+            provenance.get("version") != version
+            or provenance.get("git_commit") != manifest["git_commit"]
+            or provenance.get("source_clean") is not True
+            or provenance.get("ui_tree_sha256") != manifest.get("ui_tree_sha256")
+            or provenance.get("artifacts", {}).get(tar_path.name) != digest(tar_path)
+            or provenance.get("artifacts", {}).get(zip_path.name) != digest(zip_path)
+        ):
+            fail("candidate provenance does not bind source, UI, and release assets")
         for record in manifest["files"]:
             path = bundle / record["path"]
             if not path.is_file() or digest(path) != record["sha256"]:
@@ -764,6 +775,7 @@ def main() -> int:
             "archive_forbidden_scan": "tar_and_zip_passed",
             "managed_host_cleanup": "signal_and_exception_safe",
             "manifest_checksums": "passed",
+            "candidate_provenance": "source_ui_and_assets_bound",
             "installed_sbom_notices_and_runbook": "passed",
             "tampered_payload_rejected": True,
             "installed_host_help": "passed",

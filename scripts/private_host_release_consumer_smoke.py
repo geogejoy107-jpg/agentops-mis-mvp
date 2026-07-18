@@ -69,8 +69,12 @@ def main() -> int:
         bootstrap = output / "install-agentops-mis-private-host.sh"
         checksums_path = Path(payload["checksums"])
         checksums = json.loads(checksums_path.read_text(encoding="utf-8"))
+        provenance_path = Path(payload["provenance"])
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
         require(bootstrap in [Path(path) for path in payload["artifacts"]], "bootstrap installer missing from release artifacts")
         require(checksums.get(bootstrap.name) == digest(bootstrap), "bootstrap installer checksum missing or invalid")
+        require(checksums.get(provenance_path.name) == digest(provenance_path), "provenance checksum missing or invalid")
+        require(provenance.get("git_commit") == payload.get("git_commit"), "provenance source commit mismatch")
 
         archive_name = f"agentops-mis-private-host-{version}.tar.gz"
         tampered_release = temp / "tampered-release"
@@ -103,7 +107,12 @@ def main() -> int:
             archive.addfile(member, io.BytesIO(content))
         unsafe_checksums_path = unsafe_release / f"agentops-mis-private-host-{version}.sha256.json"
         unsafe_checksums = json.loads(unsafe_checksums_path.read_text(encoding="utf-8"))
+        unsafe_provenance_path = unsafe_release / f"agentops-mis-private-host-{version}.provenance.json"
+        unsafe_provenance = json.loads(unsafe_provenance_path.read_text(encoding="utf-8"))
+        unsafe_provenance["artifacts"][archive_name] = digest(unsafe_archive)
+        unsafe_provenance_path.write_text(json.dumps(unsafe_provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         unsafe_checksums[archive_name] = digest(unsafe_archive)
+        unsafe_checksums[unsafe_provenance_path.name] = digest(unsafe_provenance_path)
         unsafe_checksums_path.write_text(json.dumps(unsafe_checksums, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         unsafe_home = temp / "unsafe-home"
         unsafe_env = {
@@ -121,6 +130,32 @@ def main() -> int:
         require(unsafe.returncode != 0, "release consumer accepted an unsafe archive member", unsafe)
         require(not Path(unsafe_env["AGENTOPS_INSTALL_ROOT"]).exists(), "unsafe archive wrote an install tree")
         require(not (temp / "escaped").exists(), "unsafe archive escaped the extraction root")
+
+        invalid_provenance_release = temp / "invalid-provenance-release"
+        shutil.copytree(output, invalid_provenance_release)
+        invalid_provenance_path = invalid_provenance_release / provenance_path.name
+        invalid_provenance = json.loads(invalid_provenance_path.read_text(encoding="utf-8"))
+        invalid_provenance["source_clean"] = False
+        invalid_provenance_path.write_text(json.dumps(invalid_provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        invalid_checksums_path = invalid_provenance_release / checksums_path.name
+        invalid_checksums = json.loads(invalid_checksums_path.read_text(encoding="utf-8"))
+        invalid_checksums[invalid_provenance_path.name] = digest(invalid_provenance_path)
+        invalid_checksums_path.write_text(json.dumps(invalid_checksums, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        invalid_home = temp / "invalid-provenance-home"
+        invalid_env = {
+            **base_env,
+            "HOME": str(invalid_home),
+            "AGENTOPS_INSTALL_ROOT": str(invalid_home / ".local" / "share" / "agentops-mis"),
+            "AGENTOPS_BIN_DIR": str(invalid_home / ".local" / "bin"),
+            "AGENTOPS_APP_DIR": str(invalid_home / "Applications"),
+            "AGENTOPS_HOST_HOME": str(invalid_home / ".agentops" / "host"),
+            "AGENTOPS_INSTALLER_TEST_MODE": "1",
+            "AGENTOPS_INSTALLER_TEST_RELEASE_DIR": str(invalid_provenance_release),
+            "AGENTOPS_BUNDLE_INSTALLER_TEST_MODE": "1",
+        }
+        invalid_result = run(["sh", str(bootstrap), "--tag", f"v{version}"], env=invalid_env)
+        require(invalid_result.returncode != 0, "release consumer accepted invalid provenance", invalid_result)
+        require(not Path(invalid_env["AGENTOPS_INSTALL_ROOT"]).exists(), "invalid provenance wrote an install tree")
 
         home = temp / "clean-home"
         install_root = home / ".local" / "share" / "agentops-mis"
@@ -162,6 +197,7 @@ def main() -> int:
             version_payload = json.loads(version_result.stdout)
             status_payload = json.loads(status_result.stdout)
             require(version_result.returncode == 0 and version_payload.get("version") == version, "installed version readback failed", version_result)
+            require(version_payload.get("git_commit") == payload.get("git_commit"), "installed source commit readback failed", version_result)
             require(status_result.returncode == 0 and status_payload.get("running") is True, "installed Host did not become ready", status_result)
             require((status_payload.get("human_access") or {}).get("status") == "bootstrap_required", "clean Host did not expose Owner bootstrap action")
         finally:
@@ -175,8 +211,11 @@ def main() -> int:
             "operation": "private_host_release_consumer_smoke",
             "release_asset_count": len(payload["artifacts"]) + 1,
             "checksum_verified": True,
+            "candidate_provenance_verified": True,
             "checksum_mismatch_rejected": True,
             "archive_traversal_rejected": True,
+            "invalid_provenance_rejected": True,
+            "installed_commit_verified": True,
             "clean_home": True,
             "repository_required_on_consumer": False,
             "host_started": True,
