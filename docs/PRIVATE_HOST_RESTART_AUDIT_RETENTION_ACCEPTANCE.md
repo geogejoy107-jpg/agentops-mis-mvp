@@ -31,8 +31,17 @@ committed while its same-sequence receipt still exists; if finalization fails,
 a higher-revision rollback outcome atomically replaces it. SQLite contention is
 limited to 50 milliseconds and returns a private retryable pending state rather
 than failing an ordinary API request. Outbox locks are also non-blocking on the
-API path, as are receipt/sequence reads; lifecycle writers keep the strict lock
-and API ingestion retries.
+API path, as are receipt/sequence reads. Lifecycle outbox writes now use the
+same bounded non-blocking behavior while receipt state remains durable; core
+receipt transitions continue to use strict identity and state validation.
+
+A retryable terminal-receipt finalize failure keeps the validated replacement
+Host alive and leaves the receipt plus outbox evidence for startup recovery or
+a later operation. Receipt identity or state corruption still fails closed and
+terminates the untrusted replacement. Malformed event files are moved
+atomically into an owner-only quarantine and no longer prevent later valid
+events from being consumed. Terminal replacement reads its exact transaction
+sequence directly instead of depending on the first page of the queue.
 
 ## Verification
 
@@ -53,9 +62,11 @@ The focused smoke proves owner-only event storage, database-to-Host binding,
 exactly-once ledger projection, retry acknowledgement, bounded metadata and
 terminal success/rollback outcomes. It also injects outbox write failure,
 unfinalized success, success-to-rollback replacement, SQLite write contention
-outbox lock contention and queue capacity exhaustion. Existing restart and
-response-path smokes remain the source of truth for process replacement,
-health validation and config-pair rollback.
+outbox lock contention, retryable finalize failure, receipt corruption,
+malformed-event quarantine, a terminal event beyond the first 64 queue entries
+and queue capacity exhaustion. Existing restart and response-path smokes remain
+the source of truth for process replacement, health validation and config-pair
+rollback.
 
 ## Boundaries
 
