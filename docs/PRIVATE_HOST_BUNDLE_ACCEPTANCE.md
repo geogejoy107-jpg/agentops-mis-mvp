@@ -30,8 +30,10 @@ Generated archives and UI `dist` remain untracked.
 
 ## Bundle Contract
 
-- Source selection starts from Git-tracked runtime files, not the dirty working
-  directory.
+- Source selection starts from Git-tracked runtime files. The builder refuses
+  staged or unstaged changes to tracked files before it creates an output
+  directory, so `manifest.json` cannot name `HEAD` while packaging different
+  tracked source. Untracked local files are never selected.
 - The production UI is copied from the explicit built `dist` directory.
 - Runtime packages include CLI, core and runtime adapters plus the Python
   server, knowledge/static/config data and bounded scripts needed by Host mode.
@@ -50,6 +52,8 @@ Generated archives and UI `dist` remain untracked.
 - `.git`, `.env*`, DB/SQLite, token-named files, logs, caches, `node_modules`,
   `__pycache__`, `.agentops_runtime`, sample exports and local artifacts are
   excluded.
+- `scripts/private_host_bundle_smoke.py` proves a dirty tracked clone is
+  rejected before any release archive is written.
 - Installer rejects missing, modified, undeclared or traversal paths before
   copying payload files.
 - Default install path is `~/.local/share/agentops-mis`; the operator CLI shim
