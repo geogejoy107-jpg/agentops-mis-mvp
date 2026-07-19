@@ -112,3 +112,46 @@ CLI receipt. Follow-up source commit `a88b5fa` adds four bounded 100ms state
 reads and a deterministic stale-then-converged regression, while a
 never-converging launchd state continues to fail closed. The fix still requires
 a later package before it becomes installed release behavior.
+
+## Preview 37 Release And Real Upgrade
+
+`v1.6.0-private-host-preview.37` was published from exact commit
+`6a87e048b7a8e40f5d33c50983c7d0c482804ffc`. Push CI `29675492028` and
+pull-request CI `29675493139` passed Backend deterministic smokes and the
+production UI build. Two candidate builds were byte-equal. Five Candidate,
+Draft and public assets were compared in separate directories, and isolated
+Candidate, Draft and public-network consumers each completed no-repository
+install/start/status/stop with exact provenance readback.
+
+The real preview.36 ledger received a fresh verified backup before maintenance.
+Both Worker LaunchAgents were explicitly unloaded and independently confirmed
+absent. The preview.36 Host `bootout` returned zero but its immediate readback
+again returned `ok:false`; independent launchd, process and port checks proved
+the Host was unloaded. This remains a failed preview.36 CLI receipt and is the
+behavior preview.37 was built to correct.
+
+The first public-installer attempt stopped before changing `current` because
+the automatic pre-update backup could not complete on a nearly full data
+volume. The verified manual backup remained valid, preview.36 remained current,
+and no Host or Worker restarted. Only the failed partial backup, a separately
+verified byte-identical debug duplicate and stopped `/tmp` consumer homes from
+this maintenance window were removed. No historical backup or authority
+ledger was deleted. The retry retained the backup gate, created and verified a
+new pre-update backup, preserved Host data, recorded preview.36 as the previous
+version and bound `current` to preview.37 at the exact release commit.
+
+The installed preview.37 CLI then completed a real service roundtrip. Initial
+load converged in one read. Confirmed unload returned `ok:true`, required two
+bounded reads to observe `loaded:false`, and independent process/port checks
+agreed. The following load converged in one read and returned the Host to
+health `ready`. Tailscale remained running, Serve stayed configured and Funnel
+remained disabled. No Worker was implicitly controlled by the Host service.
+
+Both independent Worker LaunchAgents were reloaded and wrote fresh bounded
+`task.pull` events. That readback exposed a separate source defect: an
+Intake-blocked poll returned before `agent.heartbeat`, so Fleet health remained
+stale despite live processes and current pulls. The correction and package
+boundary are recorded in
+`PRIVATE_HOST_WORKER_INTAKE_HEARTBEAT_ACCEPTANCE.md`; it requires a later
+package and is not attributed to preview.37. No model task ran during the
+maintenance window.

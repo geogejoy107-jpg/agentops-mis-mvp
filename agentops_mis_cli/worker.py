@@ -298,9 +298,11 @@ class WorkerState:
             "next_sleep_sec": 0,
             "session_refresh_count": 0,
             "adapter_max_attempts": args.adapter_max_attempts,
+            "state_schema_version": 2,
             "started_at": now_iso(),
             "updated_at": now_iso(),
             "last_heartbeat_at": None,
+            "last_iteration_at": None,
             "last_result": None,
             "last_error": None,
         }
@@ -325,7 +327,7 @@ class WorkerState:
             last_result=result,
             last_task_id=result.get("task_id"),
             last_run_id=result.get("run_id"),
-            last_heartbeat_at=now_iso(),
+            last_iteration_at=now_iso(),
         )
 
     def record_error(self, exc: Exception | str):
@@ -333,7 +335,7 @@ class WorkerState:
         self.data["iterations"] = int(self.data.get("iterations") or 0) + 1
         self.data["total_errors"] = int(self.data.get("total_errors") or 0) + 1
         self.data["consecutive_errors"] = int(self.data.get("consecutive_errors") or 0) + 1
-        self.update(status="error", last_error=error, last_result=None, last_heartbeat_at=now_iso())
+        self.update(status="error", last_error=error, last_result=None, last_iteration_at=now_iso())
         return error
 
     def stop(self, status: str = "stopped"):
@@ -1186,17 +1188,44 @@ def emit_jsonl(args, payload: dict):
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
 
 
-def safe_worker_heartbeat(client: AgentOpsClient, args, status: str, summary: str):
+def worker_heartbeat(client: AgentOpsClient, args, status: str, summary: str, *, force: bool = False) -> dict:
+    interval_sec = max(float(getattr(args, "heartbeat_interval_sec", 60.0) or 0), 0.0)
+    monotonic_now = time.monotonic()
+    last_sent_at = getattr(client, "_worker_heartbeat_sent_at", None)
+    last_status = getattr(client, "_worker_heartbeat_status", None)
+    if (
+        not force
+        and last_sent_at is not None
+        and last_status == status
+        and monotonic_now - float(last_sent_at) < interval_sec
+    ):
+        return {
+            "sent": False,
+            "reason": "heartbeat_interval",
+            "interval_sec": interval_sec,
+            "token_omitted": True,
+        }
+    response = client.post("/api/agent-gateway/heartbeat", {
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "status": status,
+        "summary": redact_text(summary, 200),
+        "runtime_type": args.adapter,
+    }, timeout=20)
+    client._worker_heartbeat_sent_at = monotonic_now
+    client._worker_heartbeat_status = status
+    return {
+        "sent": True,
+        "ledger_recorded": bool(response.get("ledger_recorded", True)),
+        "token_omitted": True,
+    }
+
+
+def safe_worker_heartbeat(client: AgentOpsClient, args, status: str, summary: str, *, force: bool = False) -> dict:
     try:
-        client.post("/api/agent-gateway/heartbeat", {
-            "workspace_id": client.workspace_id,
-            "agent_id": client.agent_id,
-            "status": status,
-            "summary": redact_text(summary, 200),
-            "runtime_type": args.adapter,
-        }, timeout=20)
+        return worker_heartbeat(client, args, status, summary, force=force)
     except Exception:
-        pass
+        return {"sent": False, "failed": True, "token_omitted": True}
 
 
 def backoff_sleep(base_interval: float, cap: float, streak: int, factor: float) -> float:
@@ -2444,6 +2473,12 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     if not tasks:
         intake = pulled.get("intake") or {}
         if intake.get("blocked"):
+            worker_heartbeat(
+                client,
+                args,
+                "idle",
+                "Worker intake is blocked pending required planning or review.",
+            )
             auto_plan_result = maybe_auto_plan_intake_block(client, args, intake)
             if auto_plan_result:
                 return {
@@ -2465,13 +2500,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
                     "token_omitted": True,
                 },
             }
-        client.post("/api/agent-gateway/heartbeat", {
-            "workspace_id": client.workspace_id,
-            "agent_id": client.agent_id,
-            "status": "idle",
-            "summary": "Worker found no eligible task.",
-            "runtime_type": args.adapter,
-        })
+        worker_heartbeat(client, args, "idle", "Worker found no eligible task.")
         return {"processed": False, "reason": "no_task"}
 
     task = tasks[0]
@@ -2911,13 +2940,13 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     )
     manifest = manifest_payload.get("manifest") or {}
     manifest_verification = manifest_payload.get("verification") or {}
-    client.post("/api/agent-gateway/heartbeat", {
-        "workspace_id": client.workspace_id,
-        "agent_id": client.agent_id,
-        "status": "idle" if result.ok else "error",
-        "summary": result.output_summary,
-        "runtime_type": args.adapter,
-    })
+    worker_heartbeat(
+        client,
+        args,
+        "idle" if result.ok else "error",
+        result.output_summary,
+        force=True,
+    )
     return {
         "processed": True,
         "task_id": task_id,
@@ -2991,6 +3020,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--auto-plan-intake", action=argparse.BooleanOptionalAction, default=True, help="When intake blocks an assigned low/medium-risk task for missing/unverified Agent Plan, create or verify the plan before the next poll.")
     parser.add_argument("--once", action="store_true", help="Process at most one task and exit.")
     parser.add_argument("--poll-interval", type=float, default=5.0)
+    parser.add_argument("--heartbeat-interval-sec", type=float, default=float(os.environ.get("AGENTOPS_WORKER_HEARTBEAT_INTERVAL_SEC", "60")), help="Minimum interval between unchanged Worker heartbeat requests.")
     parser.add_argument("--idle-backoff-max", type=float, default=30.0, help="Maximum sleep seconds after consecutive no-task polls.")
     parser.add_argument("--error-backoff-max", type=float, default=30.0, help="Maximum sleep seconds after consecutive worker errors.")
     parser.add_argument("--backoff-factor", type=float, default=2.0, help="Exponential backoff factor for idle/error loops.")
@@ -3901,7 +3931,7 @@ def main(argv: list[str] | None = None) -> int:
             error = state.record_error(exc)
             result = {"processed": False, "ok": False, **error}
             results.append(result)
-            safe_worker_heartbeat(client, args, "error", error["error_message"])
+            safe_worker_heartbeat(client, args, "error", error["error_message"], force=True)
             emit_jsonl(args, {"event": "worker.error", "ok": False, "error": error, "state": state.data})
             if args.once or not args.continue_on_error:
                 fatal_failure = True

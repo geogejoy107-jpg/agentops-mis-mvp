@@ -1,0 +1,525 @@
+#!/usr/bin/env python3
+"""Verify intake-blocked Workers stay fresh without heartbeat ledger amplification."""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
+def require(condition: bool, message: str, failures: list[str]) -> None:
+    if not condition:
+        failures.append(message)
+
+
+def heartbeat_counts(server, agent_id: str) -> dict[str, int]:
+    with server.db() as conn:
+        return {
+            "runtime_events": conn.execute(
+                "SELECT COUNT(*) FROM runtime_events WHERE event_type='agent.heartbeat' AND agent_id=?",
+                (agent_id,),
+            ).fetchone()[0],
+            "audit_logs": conn.execute(
+                "SELECT COUNT(*) FROM audit_logs WHERE action='agent_gateway.heartbeat' AND actor_id=?",
+                (agent_id,),
+            ).fetchone()[0],
+        }
+
+
+def pull_counts(server, agent_id: str) -> dict[str, int]:
+    with server.db() as conn:
+        return {
+            "runtime_events": conn.execute(
+                "SELECT COUNT(*) FROM runtime_events WHERE event_type='task.pull' AND agent_id=?",
+                (agent_id,),
+            ).fetchone()[0],
+            "audit_logs": conn.execute(
+                "SELECT COUNT(*) FROM audit_logs WHERE action='agent_gateway.task_pull' AND actor_id=?",
+                (agent_id,),
+            ).fetchone()[0],
+        }
+
+
+class AuthenticatedHeartbeatClient:
+    workspace_id = "local-demo"
+    agent_id = "agt_worker_intake_heartbeat_fleet"
+
+    def __init__(self, server, session_token: str, *, workspace_id: str = "local-demo", agent_id: str | None = None) -> None:
+        self.server = server
+        self._session_token = session_token
+        self.workspace_id = workspace_id
+        self.agent_id = agent_id or type(self).agent_id
+        self.heartbeat_responses: list[dict] = []
+        self.pull_responses: list[dict] = []
+
+    def get(self, path: str, query: dict | None = None) -> dict:
+        if path != "/api/agent-gateway/tasks/pull":
+            raise AssertionError(f"unexpected GET {path}")
+        headers = {"Authorization": f"Bearer {self._session_token}"}
+        normalized_query = {
+            key: value if isinstance(value, list) else [str(value)]
+            for key, value in (query or {}).items()
+        }
+        with self.server.db() as conn:
+            auth_ctx, auth_error = self.server.agent_gateway_auth_context(
+                conn,
+                headers,
+                required_scope="tasks:read",
+            )
+            if auth_error:
+                raise RuntimeError(auth_error.get("error") or "pull_auth_failed")
+            response, status = self.server.agent_gateway_pull_tasks(
+                conn,
+                normalized_query,
+                headers,
+                auth_ctx,
+            )
+            if status != 200:
+                raise RuntimeError(response.get("error") or "pull_failed")
+            conn.commit()
+        self.pull_responses.append(response)
+        return response
+
+    def post(self, path: str, payload: dict, timeout: int = 180) -> dict:
+        if path != "/api/agent-gateway/heartbeat":
+            raise AssertionError(f"unexpected POST {path}")
+        headers = {"Authorization": f"Bearer {self._session_token}"}
+        with self.server.db() as conn:
+            auth_ctx, auth_error = self.server.agent_gateway_auth_context(
+                conn,
+                headers,
+                required_scope="agents:heartbeat",
+            )
+            if auth_error:
+                raise RuntimeError(auth_error.get("error") or "heartbeat_auth_failed")
+            body = dict(payload)
+            body["agent_id"] = auth_ctx["agent_id"]
+            body["workspace_id"] = auth_ctx["workspace_id"]
+            body["_auth_token_id"] = auth_ctx.get("token_id")
+            body["_auth_session_id"] = auth_ctx.get("session_id")
+            response, status = self.server.agent_gateway_heartbeat(conn, body)
+            if status != 200:
+                raise RuntimeError(response.get("error") or "heartbeat_failed")
+            conn.commit()
+        self.heartbeat_responses.append(response)
+        return response
+
+
+def main() -> int:
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="agentops-worker-intake-heartbeat-") as tmp:
+        os.environ["AGENTOPS_DB_PATH"] = str(Path(tmp) / "agentops_mis.db")
+        os.environ["AGENTOPS_LIVE_RUNTIME_DISABLED"] = "true"
+        os.environ["AGENTOPS_SKIP_SEED_EXPORTS"] = "1"
+        os.environ["AGENTOPS_WORKER_RUNTIME_DIR"] = str(Path(tmp) / "worker-runtime")
+
+        import server
+        from agentops_mis_cli import worker
+        from agentops_mis_core.worker_fleet import SERVICE_WORKER_EXECUTION_SCOPES
+
+        server.seed(reset=True)
+        worker_scopes = list(worker.LOCAL_CONFIG_WORKER_SESSION_SCOPES)
+        require(set(worker_scopes) == set(SERVICE_WORKER_EXECUTION_SCOPES),
+                "Fleet execution scopes drifted from the real Worker session policy", failures)
+        with server.db() as conn:
+            enrollment, enrollment_status = server.agent_gateway_create_enrollment(conn, {
+                "agent_id": AuthenticatedHeartbeatClient.agent_id,
+                "name": "Worker Intake Heartbeat Fleet Smoke",
+                "runtime_type": "openclaw",
+                "workspace_id": "local-demo",
+                "scopes": worker_scopes,
+                "heartbeat_timeout_sec": 300,
+                "ttl_days": 1,
+            })
+            require(enrollment_status == 201, f"enrollment failed: {enrollment_status}", failures)
+            token = enrollment.get("token") or ""
+            session, session_status = server.agent_gateway_create_session(
+                conn,
+                {"Authorization": f"Bearer {token}"},
+                {"scopes": worker_scopes, "ttl_sec": 900},
+            )
+            require(session_status == 201, f"session failed: {session_status}", failures)
+            session_token = session.get("session_token") or ""
+            task, task_status = server.create_task_api(conn, {
+                "task_id": "tsk_worker_intake_heartbeat_fleet",
+                "workspace_id": "local-demo",
+                "title": "Worker intake heartbeat Fleet smoke",
+                "description": "Remain blocked at the Agent Plan intake gate.",
+                "acceptance_criteria": "No Runtime executes while the Worker remains visible.",
+                "owner_agent_id": AuthenticatedHeartbeatClient.agent_id,
+                "status": "planned",
+                "priority": "medium",
+                "risk_level": "low",
+            })
+            require(task_status == 201 and task.get("task_id"), f"task create failed: {task_status}", failures)
+            conn.commit()
+
+        client = AuthenticatedHeartbeatClient(server, session_token)
+        args = worker.build_parser().parse_args([
+            "--once",
+            "--adapter",
+            "openclaw",
+            "--confirm-run",
+            "--no-auto-plan-intake",
+            "--heartbeat-interval-sec",
+            "60",
+        ])
+        before = heartbeat_counts(server, client.agent_id)
+        pulls_before = pull_counts(server, client.agent_id)
+        results = [worker.process_one_task(client, args) for _ in range(20)]
+        after_repeated = heartbeat_counts(server, client.agent_id)
+
+        client._worker_heartbeat_sent_at = time.monotonic() - 61
+        forced_result = worker.process_one_task(client, args)
+        after_due_client = heartbeat_counts(server, client.agent_id)
+        pulls_after = pull_counts(server, client.agent_id)
+
+        with server.db() as conn:
+            enrollment_row = conn.execute(
+                "SELECT last_heartbeat_at FROM agent_gateway_tokens WHERE token_id=?",
+                (enrollment.get("token_id"),),
+            ).fetchone()
+            fleet = server.worker_remote_fleet_summary(conn)
+            status = server.worker_status(conn, refresh_runtime=False)
+
+        remote_worker = next(
+            (
+                item
+                for item in (fleet.get("remote_workers") or [])
+                if item.get("agent_id") == client.agent_id
+            ),
+            {},
+        )
+        require(all(result.get("reason") == "intake_blocked" for result in results), "blocked intake result changed", failures)
+        require(forced_result.get("reason") == "intake_blocked", "due-client result changed", failures)
+        require(len(client.heartbeat_responses) == 2, f"client cadence mismatch: {len(client.heartbeat_responses)}", failures)
+        require(client.heartbeat_responses[0].get("ledger_recorded") is True, "first heartbeat missed ledger evidence", failures)
+        require(client.heartbeat_responses[1].get("ledger_recorded") is False, "same-state heartbeat was not coalesced", failures)
+        require(after_repeated["runtime_events"] - before["runtime_events"] == 1, f"runtime heartbeat amplification: {after_repeated}", failures)
+        require(after_repeated["audit_logs"] - before["audit_logs"] == 1, f"audit heartbeat amplification: {after_repeated}", failures)
+        require(after_due_client == after_repeated, f"server coalescing changed ledger counts: {after_due_client}", failures)
+        require(pulls_after["runtime_events"] - pulls_before["runtime_events"] == 1, f"task.pull Runtime Event amplification: {pulls_after}", failures)
+        require(pulls_after["audit_logs"] - pulls_before["audit_logs"] == 1, f"task.pull Audit amplification: {pulls_after}", failures)
+        require(sum(bool((response.get("observation") or {}).get("ledger_recorded")) for response in client.pull_responses) == 1,
+                "unchanged pull state was not coalesced", failures)
+        require(bool(enrollment_row and enrollment_row["last_heartbeat_at"]), "token heartbeat timestamp missing", failures)
+        require(remote_worker.get("heartbeat_state") == "fresh", f"Fleet did not become fresh: {remote_worker}", failures)
+        require(int(remote_worker.get("active_session_count") or 0) == 1, f"Fleet session state missing: {remote_worker}", failures)
+        service_worker = next((
+            item for item in (fleet.get("service_workers") or [])
+            if item.get("agent_id") == client.agent_id and item.get("workspace_id") == "local-demo"
+        ), {})
+        require(service_worker.get("heartbeat_state") == "fresh", f"service Worker projection stayed stale: {service_worker}", failures)
+        require(fleet.get("fresh_service_workers") == 1, f"fresh service Worker count mismatch: {fleet}", failures)
+        require(status.get("active_service_workers") == 1, f"active service Worker count mismatch: {status}", failures)
+        require(status.get("execution_capacity_workers") == 1, f"execution capacity mismatch: {status}", failures)
+        deduplicated_status = server.build_worker_status_payload(
+            worker_agents=[],
+            worker_runs=[],
+            worker_tasks=[],
+            worker_events=[],
+            daemons=[{
+                "running": True,
+                "agent_id": client.agent_id,
+                "adapter": "openclaw",
+                "process_claim_active": True,
+                "process_identity_verified": True,
+            }],
+            stuck_tasks=[],
+            remote_fleet=fleet,
+            stuck_workflow_jobs=[],
+            adapter_readiness={"summary": {}},
+        )
+        require(deduplicated_status.get("running_workers") == 1,
+                f"local daemon count mismatch: {deduplicated_status}", failures)
+        require(deduplicated_status.get("active_service_workers") == 1,
+                f"service Worker count changed during deduplication: {deduplicated_status}", failures)
+        require(deduplicated_status.get("execution_capacity_workers") == 1,
+                f"same Worker was counted twice as execution capacity: {deduplicated_status}", failures)
+
+        aged_pull_at = (datetime.now(timezone.utc) - timedelta(seconds=901)).isoformat()
+        with server.db() as conn:
+            conn.execute(
+                "UPDATE agent_gateway_pull_observations SET last_ledger_at=? WHERE workspace_id=? AND agent_id=?",
+                (aged_pull_at, "local-demo", client.agent_id),
+            )
+            conn.commit()
+        aged_pull = client.get("/api/agent-gateway/tasks/pull", {
+            "agent_id": client.agent_id,
+            "workspace_id": "local-demo",
+            "limit": 1,
+            "status": ["planned"],
+            "enforce_intake": "true",
+        })
+        pulls_after_interval = pull_counts(server, client.agent_id)
+        require((aged_pull.get("observation") or {}).get("ledger_recorded") is True,
+                "aged unchanged pull was not sampled", failures)
+        require((aged_pull.get("observation") or {}).get("state_changed") is False,
+                "aged unchanged pull was mislabeled as a queue change", failures)
+        require(pulls_after_interval["runtime_events"] - pulls_after["runtime_events"] == 1,
+                f"aged pull Runtime Event sample missing: {pulls_after_interval}", failures)
+        require(pulls_after_interval["audit_logs"] - pulls_after["audit_logs"] == 1,
+                f"aged pull Audit sample missing: {pulls_after_interval}", failures)
+
+        with server.db() as conn:
+            restricted_session, restricted_session_status = server.agent_gateway_create_session(
+                conn,
+                {"Authorization": f"Bearer {token}"},
+                {"scopes": ["tasks:read"], "ttl_sec": 900},
+            )
+            conn.commit()
+        restricted_client = AuthenticatedHeartbeatClient(
+            server,
+            restricted_session.get("session_token") or "",
+        )
+        restricted_rejected = False
+        try:
+            worker.process_one_task(restricted_client, args)
+        except RuntimeError as exc:
+            restricted_rejected = str(exc) == "forbidden"
+        require(restricted_session_status == 201, "restricted session setup failed", failures)
+        require(restricted_rejected, "real scoped Session heartbeat rejection did not propagate", failures)
+
+        observer_agent_id = "agt_worker_read_only_observer"
+        with server.db() as conn:
+            observer_enrollment, observer_enrollment_status = server.agent_gateway_create_enrollment(conn, {
+                "agent_id": observer_agent_id,
+                "name": "Read-only Fleet Observer",
+                "runtime_type": "openclaw",
+                "workspace_id": "local-demo",
+                "scopes": ["tasks:read"],
+                "heartbeat_timeout_sec": 300,
+                "ttl_days": 1,
+            })
+            observer_session, observer_session_status = server.agent_gateway_create_session(
+                conn,
+                {"Authorization": f"Bearer {observer_enrollment.get('token') or ''}"},
+                {"scopes": ["tasks:read"], "ttl_sec": 900},
+            )
+        observer_client = AuthenticatedHeartbeatClient(
+            server,
+            observer_session.get("session_token") or "",
+            agent_id=observer_agent_id,
+        )
+        observer_client.get("/api/agent-gateway/tasks/pull", {
+            "agent_id": observer_agent_id,
+            "workspace_id": "local-demo",
+            "limit": 1,
+            "status": ["planned"],
+            "enforce_intake": "true",
+        })
+        with server.db() as conn:
+            observer_fleet = server.worker_remote_fleet_summary(conn)
+            observer_status = server.worker_status(conn, refresh_runtime=False)
+        observer_remote_worker = next((
+            item for item in (observer_fleet.get("remote_workers") or [])
+            if item.get("agent_id") == observer_agent_id
+        ), {})
+        observer_service_worker = next((
+            item for item in (observer_fleet.get("service_workers") or [])
+            if item.get("agent_id") == observer_agent_id
+        ), {})
+        require(observer_enrollment_status == 201 and observer_session_status == 201,
+                "read-only observer fixture setup failed", failures)
+        require(observer_remote_worker.get("active_session_count") == 1,
+                f"read-only Session activity was not visible: {observer_remote_worker}", failures)
+        require(not observer_service_worker,
+                f"read-only Session was misclassified as a service Worker: {observer_service_worker}", failures)
+        require(observer_status.get("execution_capacity_workers") == 1,
+                f"read-only Session inflated execution capacity: {observer_status}", failures)
+
+        with server.db() as conn:
+            other_enrollment, other_enrollment_status = server.agent_gateway_create_enrollment(conn, {
+                "agent_id": client.agent_id,
+                "name": "Same Agent Other Workspace",
+                "runtime_type": "openclaw",
+                "workspace_id": "workspace-other",
+                "scopes": worker_scopes,
+                "heartbeat_timeout_sec": 300,
+                "ttl_days": 1,
+            })
+            other_token = other_enrollment.get("token") or ""
+            other_session, other_session_status = server.agent_gateway_create_session(
+                conn,
+                {"Authorization": f"Bearer {other_token}"},
+                {"scopes": worker_scopes, "ttl_sec": 900},
+            )
+            conn.commit()
+        other_client = AuthenticatedHeartbeatClient(
+            server,
+            other_session.get("session_token") or "",
+            workspace_id="workspace-other",
+            agent_id=client.agent_id,
+        )
+        other_heartbeat = other_client.post("/api/agent-gateway/heartbeat", {
+            "workspace_id": "workspace-other",
+            "agent_id": client.agent_id,
+            "status": "idle",
+            "summary": "Other workspace heartbeat sampling smoke.",
+            "runtime_type": "openclaw",
+        })
+        with server.db() as conn:
+            stale_at = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat()
+            conn.execute(
+                "UPDATE agent_gateway_tokens SET last_heartbeat_at=?,last_used_at=? WHERE token_id=?",
+                (stale_at, stale_at, other_enrollment.get("token_id")),
+            )
+            conn.execute(
+                "UPDATE agent_gateway_sessions SET last_used_at=? WHERE session_id=?",
+                (stale_at, other_session.get("session_id")),
+            )
+            conn.commit()
+            scoped_fleet = server.worker_remote_fleet_summary(conn)
+            scoped_status = server.worker_status(conn, refresh_runtime=False)
+            heartbeat_observation_workspaces = {
+                row["workspace_id"]
+                for row in conn.execute(
+                    "SELECT workspace_id FROM agent_gateway_heartbeat_observations WHERE agent_id=?",
+                    (client.agent_id,),
+                ).fetchall()
+            }
+        require(other_enrollment_status == 201 and other_session_status == 201, "cross-workspace fixture setup failed", failures)
+        require(other_heartbeat.get("ledger_recorded") is True,
+                f"other workspace heartbeat was suppressed: {other_heartbeat}", failures)
+        require(heartbeat_observation_workspaces == {"local-demo", "workspace-other"},
+                f"heartbeat sampling state crossed workspace boundary: {heartbeat_observation_workspaces}", failures)
+        scoped_service_workers = {
+            item.get("workspace_id"): item
+            for item in (scoped_fleet.get("service_workers") or [])
+            if item.get("agent_id") == client.agent_id
+        }
+        require(scoped_service_workers.get("local-demo", {}).get("heartbeat_state") == "fresh",
+                f"primary workspace lost fresh state: {scoped_service_workers}", failures)
+        require(scoped_service_workers.get("workspace-other", {}).get("heartbeat_state") == "stale",
+                f"fresh heartbeat crossed workspace boundary: {scoped_service_workers}", failures)
+        require(scoped_status.get("active_service_workers") == 1,
+                f"stale workspace was counted as active service capacity: {scoped_status}", failures)
+        require(scoped_status.get("execution_capacity_workers") == 1,
+                f"cross-workspace capacity count mismatch: {scoped_status}", failures)
+
+        concurrent_agent_id = "agt_worker_heartbeat_concurrency"
+        with server.db() as conn:
+            concurrent_enrollment, concurrent_enrollment_status = server.agent_gateway_create_enrollment(conn, {
+                "agent_id": concurrent_agent_id,
+                "name": "Worker Heartbeat Concurrency Smoke",
+                "runtime_type": "openclaw",
+                "workspace_id": "local-demo",
+                "scopes": ["agents:heartbeat"],
+                "heartbeat_timeout_sec": 300,
+                "ttl_days": 1,
+            })
+            conn.commit()
+        require(concurrent_enrollment_status == 201, "concurrent enrollment failed", failures)
+
+        def concurrent_heartbeat(_index: int) -> bool:
+            with server.db() as conn:
+                response, status = server.agent_gateway_heartbeat(conn, {
+                    "agent_id": concurrent_agent_id,
+                    "workspace_id": "local-demo",
+                    "runtime_type": "openclaw",
+                    "status": "idle",
+                    "summary": "Concurrent heartbeat smoke.",
+                    "_auth_token_id": concurrent_enrollment.get("token_id"),
+                })
+                conn.commit()
+            if status != 200:
+                raise RuntimeError(response.get("error") or "concurrent_heartbeat_failed")
+            return bool(response.get("ledger_recorded"))
+
+        with ThreadPoolExecutor(max_workers=20) as pool:
+            concurrent_recorded = list(pool.map(concurrent_heartbeat, range(20)))
+        concurrent_counts = heartbeat_counts(server, concurrent_agent_id)
+        require(sum(concurrent_recorded) == 1, f"concurrent ledger decisions were not atomic: {concurrent_recorded}", failures)
+        require(concurrent_counts == {"runtime_events": 1, "audit_logs": 1}, f"concurrent heartbeat amplification: {concurrent_counts}", failures)
+
+        with server.db() as conn:
+            conn.execute(
+                "DELETE FROM agent_gateway_pull_observations WHERE workspace_id=? AND agent_id=?",
+                ("local-demo", client.agent_id),
+            )
+        concurrent_pull_before = pull_counts(server, client.agent_id)
+
+        def concurrent_pull(_index: int) -> bool:
+            headers = {"Authorization": f"Bearer {session_token}"}
+            query = {
+                "agent_id": [client.agent_id],
+                "workspace_id": ["local-demo"],
+                "limit": ["1"],
+                "status": ["planned"],
+                "enforce_intake": ["true"],
+            }
+            with server.db() as conn:
+                auth_ctx, auth_error = server.agent_gateway_auth_context(
+                    conn,
+                    headers,
+                    required_scope="tasks:read",
+                )
+                if auth_error:
+                    raise RuntimeError(auth_error.get("error") or "concurrent_pull_auth_failed")
+                response, status = server.agent_gateway_pull_tasks(conn, query, headers, auth_ctx)
+            if status != 200:
+                raise RuntimeError(response.get("error") or "concurrent_pull_failed")
+            return bool((response.get("observation") or {}).get("ledger_recorded"))
+
+        with ThreadPoolExecutor(max_workers=20) as pool:
+            concurrent_pull_recorded = list(pool.map(concurrent_pull, range(20)))
+        concurrent_pull_after = pull_counts(server, client.agent_id)
+        require(sum(concurrent_pull_recorded) == 1,
+                f"concurrent pull ledger decisions were not atomic: {concurrent_pull_recorded}", failures)
+        require(concurrent_pull_after["runtime_events"] - concurrent_pull_before["runtime_events"] == 1,
+                f"concurrent task.pull Runtime Event amplification: {concurrent_pull_after}", failures)
+        require(concurrent_pull_after["audit_logs"] - concurrent_pull_before["audit_logs"] == 1,
+                f"concurrent task.pull Audit amplification: {concurrent_pull_after}", failures)
+
+        output = {
+            "ok": not failures,
+            "operation": "worker_intake_heartbeat_fleet_smoke",
+            "blocked_iterations": len(results) + 1,
+            "heartbeat_requests": len(client.heartbeat_responses),
+            "heartbeat_runtime_events_added": after_due_client["runtime_events"] - before["runtime_events"],
+            "heartbeat_audit_rows_added": after_due_client["audit_logs"] - before["audit_logs"],
+            "pull_runtime_events_added": pulls_after["runtime_events"] - pulls_before["runtime_events"],
+            "pull_audit_rows_added": pulls_after["audit_logs"] - pulls_before["audit_logs"],
+            "aged_pull_ledger_recorded": (aged_pull.get("observation") or {}).get("ledger_recorded"),
+            "restricted_session_heartbeat_rejected": restricted_rejected,
+            "read_only_session_execution_capacity_excluded": not bool(observer_service_worker),
+            "fleet_heartbeat_state": remote_worker.get("heartbeat_state"),
+            "service_worker_heartbeat_state": service_worker.get("heartbeat_state"),
+            "active_session_count": remote_worker.get("active_session_count"),
+            "deduplicated_execution_capacity_workers": deduplicated_status.get("execution_capacity_workers"),
+            "cross_workspace_states": {
+                workspace_id: item.get("heartbeat_state")
+                for workspace_id, item in scoped_service_workers.items()
+            },
+            "cross_workspace_heartbeat_ledgers": len(heartbeat_observation_workspaces),
+            "concurrent_heartbeat_requests": len(concurrent_recorded),
+            "concurrent_ledger_records": sum(concurrent_recorded),
+            "concurrent_runtime_events": concurrent_counts["runtime_events"],
+            "concurrent_audit_rows": concurrent_counts["audit_logs"],
+            "concurrent_pull_requests": len(concurrent_pull_recorded),
+            "concurrent_pull_ledger_records": sum(concurrent_pull_recorded),
+            "concurrent_pull_runtime_events_added": concurrent_pull_after["runtime_events"] - concurrent_pull_before["runtime_events"],
+            "concurrent_pull_audit_rows_added": concurrent_pull_after["audit_logs"] - concurrent_pull_before["audit_logs"],
+            "isolated_database": True,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+            "failures": failures,
+        }
+        print(json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if not failures else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

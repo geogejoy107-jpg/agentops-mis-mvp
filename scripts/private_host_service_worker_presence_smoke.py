@@ -29,6 +29,7 @@ def main() -> int:
         os.environ["AGENTOPS_LIVE_RUNTIME_DISABLED"] = "true"
 
         import server
+        from agentops_mis_core.worker_fleet import SERVICE_WORKER_EXECUTION_SCOPES
 
         server.init_schema()
         now = dt.datetime.now(dt.timezone.utc)
@@ -69,7 +70,7 @@ def main() -> int:
                     None,
                     "local-demo",
                     agent_id,
-                    json.dumps(["agents:heartbeat", "tasks:read"]),
+                    json.dumps(sorted(SERVICE_WORKER_EXECUTION_SCOPES)),
                     "active",
                     now.isoformat(),
                     expires_at,

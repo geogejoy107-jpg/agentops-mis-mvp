@@ -1781,6 +1781,26 @@ CREATE TABLE IF NOT EXISTS agent_gateway_sessions (
     FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
 );
 
+CREATE TABLE IF NOT EXISTS agent_gateway_pull_observations (
+    workspace_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    state_hash TEXT NOT NULL,
+    last_ledger_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(workspace_id, agent_id),
+    FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
+);
+
+CREATE TABLE IF NOT EXISTS agent_gateway_heartbeat_observations (
+    workspace_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    last_ledger_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(workspace_id, agent_id),
+    FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS agent_gateway_enrollment_requests (
     request_id TEXT PRIMARY KEY,
     approval_id TEXT NOT NULL,
@@ -5052,21 +5072,157 @@ def agent_gateway_rotate_enrollment(conn, body) -> tuple[dict, int]:
     return created, 201
 
 
+AGENT_GATEWAY_HEARTBEAT_LEDGER_INTERVAL_SEC = 900
+AGENT_GATEWAY_HEARTBEAT_LOCK = threading.Lock()
+
+
 def agent_gateway_heartbeat(conn, body) -> tuple[dict, int]:
     ident = agent_gateway_identity({}, body)
     agent_id = ident["agent_id"]
     if not agent_id:
         return {"error": "agent_id is required"}, 400
+    with AGENT_GATEWAY_HEARTBEAT_LOCK:
+        return agent_gateway_heartbeat_locked(conn, body, agent_id)
+
+
+def agent_gateway_heartbeat_locked(conn, body, agent_id: str) -> tuple[dict, int]:
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
     before = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
     status = coerce_choice(body.get("status"), {"idle", "running", "paused", "error", "disabled"}, "idle")
-    conn.execute("UPDATE agents SET status=?, updated_at=? WHERE agent_id=?", (status, now_iso(), agent_id))
+    recorded_at = now_iso()
+    conn.execute("UPDATE agents SET status=?, updated_at=? WHERE agent_id=?", (status, recorded_at, agent_id))
     after = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
     if body.get("_auth_token_id"):
-        conn.execute("UPDATE agent_gateway_tokens SET last_heartbeat_at=?, last_used_at=? WHERE token_id=?", (now_iso(), now_iso(), body.get("_auth_token_id")))
-    runtime_event(conn, "rtc_agent_gateway_local", "agent.heartbeat", status, agent_id=agent_id, output_summary=body.get("summary") or "Heartbeat recorded.")
-    audit(conn, "agent", agent_id, "agent_gateway.heartbeat", "agents", agent_id, dict(before) if before else None, dict(after) if after else None, {"workspace_id": body.get("workspace_id", "local-demo")})
-    return {"agent_id": agent_id, "status": status, "recorded_at": now_iso()}, 200
+        conn.execute(
+            "UPDATE agent_gateway_tokens SET last_heartbeat_at=?, last_used_at=? WHERE token_id=?",
+            (recorded_at, recorded_at, body.get("_auth_token_id")),
+        )
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    previous_observation = conn.execute(
+        "SELECT status,last_ledger_at FROM agent_gateway_heartbeat_observations WHERE workspace_id=? AND agent_id=?",
+        (workspace_id, agent_id),
+    ).fetchone()
+    last_recorded_at = parse_iso_datetime(previous_observation["last_ledger_at"]) if previous_observation else None
+    current_dt = parse_iso_datetime(recorded_at) or dt.datetime.now(dt.timezone.utc)
+    ledger_due = bool(
+        previous_observation is None
+        or previous_observation["status"] != status
+        or last_recorded_at is None
+        or (current_dt - last_recorded_at).total_seconds() >= AGENT_GATEWAY_HEARTBEAT_LEDGER_INTERVAL_SEC
+    )
+    last_ledger_at = recorded_at if ledger_due else previous_observation["last_ledger_at"]
+    conn.execute(
+        """INSERT INTO agent_gateway_heartbeat_observations(workspace_id,agent_id,status,last_ledger_at,updated_at)
+        VALUES(?,?,?,?,?)
+        ON CONFLICT(workspace_id,agent_id) DO UPDATE SET
+            status=excluded.status,
+            last_ledger_at=excluded.last_ledger_at,
+            updated_at=excluded.updated_at""",
+        (workspace_id, agent_id, status, last_ledger_at, recorded_at),
+    )
+    if ledger_due:
+        runtime_event(conn, "rtc_agent_gateway_local", "agent.heartbeat", status, agent_id=agent_id, output_summary=body.get("summary") or "Heartbeat recorded.")
+        audit(
+            conn,
+            "agent",
+            agent_id,
+            "agent_gateway.heartbeat",
+            "agents",
+            agent_id,
+            dict(before) if before else None,
+            dict(after) if after else None,
+            {
+                "workspace_id": workspace_id,
+                "ledger_interval_sec": AGENT_GATEWAY_HEARTBEAT_LEDGER_INTERVAL_SEC,
+            },
+        )
+    return {
+        "agent_id": agent_id,
+        "status": status,
+        "recorded_at": recorded_at,
+        "ledger_recorded": ledger_due,
+        "ledger_interval_sec": AGENT_GATEWAY_HEARTBEAT_LEDGER_INTERVAL_SEC,
+    }, 200
+
+
+AGENT_GATEWAY_PULL_LEDGER_INTERVAL_SEC = 900
+AGENT_GATEWAY_PULL_OBSERVATION_LOCK = threading.Lock()
+
+
+def record_agent_gateway_pull_observation(
+    conn,
+    *,
+    workspace_id: str,
+    agent_id: str,
+    statuses: list[str],
+    enforce_intake: bool,
+    requested_task_id: str,
+    rows: list[dict],
+    intake: dict,
+) -> dict:
+    with AGENT_GATEWAY_PULL_OBSERVATION_LOCK:
+        observed_at = now_iso()
+        pull_state_hash = stable_hash({
+            "workspace_id": workspace_id,
+            "agent_id": agent_id,
+            "statuses": sorted(statuses),
+            "enforce_intake": enforce_intake,
+            "requested_task": bool(requested_task_id),
+            "eligible_count": len(rows),
+            "eligible_refs_hash": stable_hash(sorted(str(row.get("task_id") or "") for row in rows)),
+            "blocked_count": intake["blocked"] if enforce_intake else 0,
+            "blocked_refs_hash": stable_hash(sorted(
+                str(item.get("task_id") or "")
+                for item in (intake.get("blocked_tasks") or [])
+            )),
+        })
+        previous_observation = conn.execute(
+            "SELECT state_hash,last_ledger_at FROM agent_gateway_pull_observations WHERE workspace_id=? AND agent_id=?",
+            (workspace_id, agent_id),
+        ).fetchone()
+        previous_ledger_at = parse_iso_datetime(previous_observation["last_ledger_at"]) if previous_observation else None
+        observed_dt = parse_iso_datetime(observed_at) or dt.datetime.now(dt.timezone.utc)
+        state_changed = bool(previous_observation is None or previous_observation["state_hash"] != pull_state_hash)
+        ledger_due = bool(
+            state_changed
+            or previous_ledger_at is None
+            or (observed_dt - previous_ledger_at).total_seconds() >= AGENT_GATEWAY_PULL_LEDGER_INTERVAL_SEC
+        )
+        last_ledger_at = observed_at if ledger_due else previous_observation["last_ledger_at"]
+        conn.execute(
+            """INSERT INTO agent_gateway_pull_observations(workspace_id,agent_id,state_hash,last_ledger_at,updated_at)
+            VALUES(?,?,?,?,?)
+            ON CONFLICT(workspace_id,agent_id) DO UPDATE SET
+                state_hash=excluded.state_hash,
+                last_ledger_at=excluded.last_ledger_at,
+                updated_at=excluded.updated_at""",
+            (workspace_id, agent_id, pull_state_hash, last_ledger_at, observed_at),
+        )
+        blocked_suffix = f"; intake blocked {intake['blocked']} task(s)" if enforce_intake and intake["blocked"] else ""
+        if ledger_due:
+            runtime_event(conn, "rtc_agent_gateway_local", "task.pull", "completed", agent_id=agent_id, output_summary=f"Pulled {len(rows)} task(s){blocked_suffix}.")
+            audit(
+                conn,
+                "agent",
+                agent_id,
+                "agent_gateway.task_pull",
+                "tasks",
+                agent_id,
+                None,
+                {"count": len(rows), "intake_blocked": intake["blocked"] if enforce_intake else 0},
+                {
+                    "workspace_id": workspace_id,
+                    "enforce_intake": enforce_intake,
+                    "state_hash": pull_state_hash,
+                    "ledger_interval_sec": AGENT_GATEWAY_PULL_LEDGER_INTERVAL_SEC,
+                },
+            )
+        return {
+            "ledger_recorded": ledger_due,
+            "ledger_interval_sec": AGENT_GATEWAY_PULL_LEDGER_INTERVAL_SEC,
+            "state_changed": state_changed,
+            "token_omitted": True,
+        }
 
 
 def agent_gateway_pull_tasks(conn, qs, headers, auth_ctx=None) -> tuple[dict, int]:
@@ -5121,11 +5277,29 @@ def agent_gateway_pull_tasks(conn, qs, headers, auth_ctx=None) -> tuple[dict, in
         intake["blocked"] = len(blocked_items)
         intake["blocked_tasks"] = blocked_items[:5]
         intake["next_actions"] = [item["command"] for item in blocked_items if item.get("command")][:5]
+    pull_observation = {
+        "ledger_recorded": False,
+        "ledger_interval_sec": AGENT_GATEWAY_PULL_LEDGER_INTERVAL_SEC,
+        "token_omitted": True,
+    }
     if agent_id:
-        blocked_suffix = f"; intake blocked {intake['blocked']} task(s)" if enforce_intake and intake["blocked"] else ""
-        runtime_event(conn, "rtc_agent_gateway_local", "task.pull", "completed", agent_id=agent_id, output_summary=f"Pulled {len(rows)} task(s){blocked_suffix}.")
-        audit(conn, "agent", agent_id, "agent_gateway.task_pull", "tasks", agent_id, None, {"count": len(rows), "intake_blocked": intake["blocked"] if enforce_intake else 0}, {"workspace_id": ident["workspace_id"], "enforce_intake": enforce_intake})
-    return {"tasks": rows, "count": len(rows), "workspace_id": ident["workspace_id"], "intake": intake}, 200
+        pull_observation = record_agent_gateway_pull_observation(
+            conn,
+            workspace_id=ident["workspace_id"],
+            agent_id=agent_id,
+            statuses=statuses,
+            enforce_intake=enforce_intake,
+            requested_task_id=requested_task_id,
+            rows=rows,
+            intake=intake,
+        )
+    return {
+        "tasks": rows,
+        "count": len(rows),
+        "workspace_id": ident["workspace_id"],
+        "intake": intake,
+        "observation": pull_observation,
+    }, 200
 
 
 def create_task_api(conn, body: dict) -> tuple[dict, int]:

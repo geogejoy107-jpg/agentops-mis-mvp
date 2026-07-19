@@ -11,19 +11,23 @@ RC = ROOT / "docs" / "PRIVATE_HOST_RC_ACCEPTANCE.md"
 SECOND_DEVICE = ROOT / "docs" / "PRIVATE_HOST_SECOND_DEVICE_ACCEPTANCE.md"
 SERVICE_UPGRADE = ROOT / "docs" / "PRIVATE_HOST_SERVICE_UPGRADE_MIGRATION_ACCEPTANCE.md"
 REAL_RUNTIME = ROOT / "docs" / "PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md"
+WORKER_INTAKE_HEARTBEAT = ROOT / "docs" / "PRIVATE_HOST_WORKER_INTAKE_HEARTBEAT_ACCEPTANCE.md"
 
-VERSION = "1.6.0-private-host-preview.36"
+VERSION = "1.6.0-private-host-preview.37"
 TAG = f"v{VERSION}"
-COMMIT = "a5c7d559cfce5157b10401e34204a6b6a405a554"
+COMMIT = "6a87e048b7a8e40f5d33c50983c7d0c482804ffc"
 RELEASE_URL = f"https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/{TAG}"
-PHYSICAL_VERSION = "1.6.0-private-host-preview.35"
+PHYSICAL_VERSION = "1.6.0-private-host-preview.36"
 PHYSICAL_TAG = f"v{PHYSICAL_VERSION}"
-PHYSICAL_COMMIT = "6424ec144013517b21438cd7e528c6db106a0a5e"
+PHYSICAL_COMMIT = "a5c7d559cfce5157b10401e34204a6b6a405a554"
+LEGACY_PHYSICAL_VERSION = "1.6.0-private-host-preview.35"
+LEGACY_PHYSICAL_TAG = f"v{LEGACY_PHYSICAL_VERSION}"
+LEGACY_PHYSICAL_COMMIT = "6424ec144013517b21438cd7e528c6db106a0a5e"
 CHECKSUMS = {
-    "provenance": "fc7ca64aab0b4cd573365ed18dc2dd8e3f39cc792092b2974beb8fc0ddb6beac",
-    "manifest": "1868238dc606b4dc4728e70ad6e6028699e6925fcf1a7ba0c45034a91efb2377",
-    "tar": "3cb5e38cd772a1fea0ecfc74f529fec2bc068d069e055c67e7454077b2f9842b",
-    "zip": "9c8dd0abc955c974aeb2374bf2d52a92ccc877e445fd76810a2101759d961c6c",
+    "provenance": "6db23e6b8f2a089b3fb7918f6b8515cddf12b408a49a0fe2f4e792bdc3a500a3",
+    "manifest": "f2130ce98798c99a798f196f0ab6598b892616dcf5842d70e620e84f92d87824",
+    "tar": "45f4919959970ae60e3b7dce69cd61903c13fc7839193e2c2342ecea4f7036ad",
+    "zip": "78bbdda1f372e4f6d7721c6763477f9ac0565619384d4505a9fa24b0938e89a0",
     "bootstrap": "75854f364502722eb24d5a7df3c0fc26685bf25acae6d5926e4c6396d16bd812",
 }
 
@@ -49,11 +53,13 @@ def main() -> int:
     second = SECOND_DEVICE.read_text(encoding="utf-8")
     service_upgrade = SERVICE_UPGRADE.read_text(encoding="utf-8")
     runtime = REAL_RUNTIME.read_text(encoding="utf-8")
+    worker_intake_heartbeat = WORKER_INTAKE_HEARTBEAT.read_text(encoding="utf-8")
     rc_headings = [line for line in rc.splitlines() if line.startswith("## Current Preview ")]
-    current_rc = heading_section(rc, "Current Preview 36")
+    current_rc = heading_section(rc, "Current Preview 37")
     second_preview36_host = heading_section(second, "Preview 36 Host Staging")
     second_preview36_physical = heading_section(second, "Preview 36 Physical MacBook Retest")
     second_preview35_physical = heading_section(second, "Preview 35 Authenticated MacBook Evidence")
+    service_preview37 = heading_section(service_upgrade, "Preview 37 Release And Real Upgrade")
     service_preview36 = heading_section(service_upgrade, "Preview 36 Release And Real Upgrade")
     runtime_preview36_host = heading_section(runtime, "Exact-Package Preview 36 Negated Read-Only Result")
     runtime_preview36_physical = heading_section(runtime, "Exact-Package Preview 36 Physical MacBook Result")
@@ -61,12 +67,15 @@ def main() -> int:
     normalized_second = " ".join(second.split())
     normalized_second_preview36_physical = " ".join(second_preview36_physical.split())
     normalized_second_preview35_physical = " ".join(second_preview35_physical.split())
+    normalized_service_preview37 = " ".join(service_preview37.split())
     normalized_service_preview36 = " ".join(service_preview36.split())
     normalized_runtime = " ".join(runtime.split())
     normalized_runtime_preview36_host = " ".join(runtime_preview36_host.split())
+    normalized_worker_intake_heartbeat = " ".join(worker_intake_heartbeat.split())
 
     require(len(rc_headings) == 1, "RC document must name exactly one Current Preview", failures)
-    require("## Current Preview 36" in rc, "preview.36 must be the current RC prerelease", failures)
+    require("## Current Preview 37" in rc, "preview.37 must be the current RC prerelease", failures)
+    require("## Superseded Preview 36" in rc, "preview.36 physical evidence must be preserved as superseded history", failures)
     require("## Superseded Preview 35" in rc, "preview.35 physical evidence must be preserved as superseded history", failures)
     require("## Superseded Preview 31" in rc, "preview.31 must be preserved as superseded history", failures)
     require("## Superseded Preview 30" in rc, "preview.30 must preserve its immutable upgrade-defect history", failures)
@@ -83,7 +92,8 @@ def main() -> int:
     require("## Superseded Preview 19" in rc, "preview.19 must be preserved as superseded history", failures)
     require("## Superseded Preview 12" in rc, "preview.12 must be marked superseded", failures)
     require(TAG in current_rc and VERSION in current_rc, "current version/tag missing from current RC section", failures)
-    require(COMMIT in current_rc and COMMIT in second, "exact release commit missing from current acceptance evidence", failures)
+    require(COMMIT in current_rc and COMMIT in service_preview37,
+            "exact release commit missing from current acceptance evidence", failures)
     require(RELEASE_URL in current_rc, "public prerelease URL missing from current RC section", failures)
     for label, checksum in CHECKSUMS.items():
         require(checksum in current_rc, f"{label} checksum missing from current RC section", failures)
@@ -92,7 +102,8 @@ def main() -> int:
         "deployed Relay/DNS/TLS",
         "no-Tailscale browser pairing",
         "deployed-Relay interruption",
-        "launchd convergence fix requires a later package",
+        "Worker Intake heartbeat correction package",
+        "current-package real Runtime readback",
         "Host logout/reboot recovery",
         "another-Mac clean installation",
     )
@@ -100,6 +111,23 @@ def main() -> int:
         require(marker.lower() in normalized_current_rc.lower(), f"open external gate is no longer explicit in current RC section: {marker}", failures)
     require("The current preview therefore remains a prerelease." in current_rc,
             "current preview must not claim final RC", failures)
+    require(TAG in service_preview37 and COMMIT in service_preview37,
+            "preview.37 service-upgrade receipt is not exact-package bound", failures)
+    require("Candidate, Draft and public-network consumers each completed no-repository" in normalized_service_preview37,
+            "preview.37 separate release-consumer receipt missing", failures)
+    require("preserved Host data" in normalized_service_preview37
+            and "real service roundtrip" in normalized_service_preview37,
+            "preview.37 data/service convergence receipt missing", failures)
+    require("Funnel remained disabled" in normalized_service_preview37,
+            "preview.37 upgrade must preserve the private transport boundary", failures)
+    require("requires a later package" in normalized_service_preview37
+            and "not attributed to preview.37" in normalized_service_preview37,
+            "preview.37 source-only Worker correction boundary missing", failures)
+    require("60 seconds" in normalized_worker_intake_heartbeat
+            and "15 minutes" in normalized_worker_intake_heartbeat,
+            "Worker heartbeat request and ledger cadence contract missing", failures)
+    require("failure is returned to the Worker loop" in normalized_worker_intake_heartbeat,
+            "Worker heartbeat rejection observability contract missing", failures)
 
     require(
         "Status: advanced Tailscale physical browser workflow partially accepted" in second
@@ -116,11 +144,11 @@ def main() -> int:
             "physical evidence anti-substitution boundary missing", failures)
     require("## Preview 36 Host Staging" in second,
             "preview.36 Host staging receipt missing", failures)
-    require(TAG in second_preview36_host and COMMIT in second_preview36_host,
+    require(PHYSICAL_TAG in second_preview36_host and PHYSICAL_COMMIT in second_preview36_host,
             "preview.36 Host staging is not exact-package bound", failures)
     require("## Preview 36 Physical MacBook Retest" in second,
             "preview.36 physical MacBook retest receipt missing", failures)
-    require(TAG in second_preview36_physical and COMMIT in second_preview36_physical,
+    require(PHYSICAL_TAG in second_preview36_physical and PHYSICAL_COMMIT in second_preview36_physical,
             "preview.36 physical MacBook receipt is not exact-package bound", failures)
     require("tsk_570cb03937f6" in second_preview36_physical
             and "run_gw_c8d2ad1aa845" in second_preview36_physical,
@@ -130,7 +158,7 @@ def main() -> int:
             "preview.36 physical safety/logout proof missing", failures)
     require("## Preview 35 MacBook Client Staging" in second,
             "physical MacBook preview.35 staging receipt missing", failures)
-    require(PHYSICAL_TAG in second and PHYSICAL_COMMIT in second,
+    require(LEGACY_PHYSICAL_TAG in second and LEGACY_PHYSICAL_COMMIT in second,
             "physical MacBook receipt must bind the exact preview.35 package", failures)
     require("all returned HTTP 401" in normalized_second and "task count remained 25 before and after" in normalized_second,
             "physical MacBook anonymous denial receipt missing", failures)
@@ -149,7 +177,7 @@ def main() -> int:
     require("overall second-device protocol remains partial" in normalized_second,
             "advanced receipt must not claim ordinary browser-only acceptance", failures)
 
-    require(TAG in service_preview36 and COMMIT in service_preview36,
+    require(PHYSICAL_TAG in service_preview36 and PHYSICAL_COMMIT in service_preview36,
             "preview.36 service-upgrade receipt is not exact-package bound", failures)
     require("no-repository install/start/status/stop" in normalized_service_preview36,
             "preview.36 no-repository release receipt missing", failures)
@@ -159,7 +187,7 @@ def main() -> int:
     require("Funnel disabled" in normalized_service_preview36,
             "preview.36 upgrade must preserve the private transport boundary", failures)
 
-    require(PHYSICAL_TAG in runtime and PHYSICAL_COMMIT in runtime,
+    require(LEGACY_PHYSICAL_TAG in runtime and LEGACY_PHYSICAL_COMMIT in runtime,
             "preview.35 Runtime receipt is not exact-package bound", failures)
     require("run_gw_45eac4968e30" in runtime and "run_gw_7ac27edaf52c" in runtime,
             "fresh preview.35 OpenClaw/Hermes run evidence missing", failures)
@@ -167,7 +195,7 @@ def main() -> int:
             "Hermes Human Approval Wall state is no longer explicit", failures)
     require("No raw prompt, raw response, credential, private message, full transcript or database content was retained" in normalized_runtime,
             "preview.35 Runtime privacy boundary missing", failures)
-    require(TAG in runtime_preview36_host and COMMIT in runtime_preview36_host,
+    require(PHYSICAL_TAG in runtime_preview36_host and PHYSICAL_COMMIT in runtime_preview36_host,
             "preview.36 Runtime receipt is not exact-package bound", failures)
     require("run_gw_ed42f579d487" in runtime_preview36_host
             and "pem_e1b9275c986daf4b" in runtime_preview36_host,
@@ -178,7 +206,7 @@ def main() -> int:
             "preview.36 negated external-write proof missing", failures)
     require("## Exact-Package Preview 36 Physical MacBook Result" in runtime,
             "preview.36 physical Runtime receipt missing", failures)
-    require(TAG in runtime_preview36_physical and COMMIT in runtime_preview36_physical,
+    require(PHYSICAL_TAG in runtime_preview36_physical and PHYSICAL_COMMIT in runtime_preview36_physical,
             "preview.36 physical Runtime receipt is not exact-package bound", failures)
     require("wfjob_9940b1e6ea15" in runtime_preview36_physical
             and "run_gw_c8d2ad1aa845" in runtime_preview36_physical
@@ -195,9 +223,10 @@ def main() -> int:
         "exact_commit": COMMIT,
         "checksums_recorded": len(CHECKSUMS),
         "local_receipts": [
-            "release_asset_install",
-            "service_upgrade_migration",
-            "real_runtime_evidence",
+            "preview37_release_asset_install",
+            "preview37_service_upgrade_migration",
+            "preview37_launchd_convergence",
+            "preview36_real_runtime_evidence",
             "preview36_negated_read_only_runtime",
             "physical_macbook_anonymous_boundary",
             "physical_macbook_authenticated_workflow",

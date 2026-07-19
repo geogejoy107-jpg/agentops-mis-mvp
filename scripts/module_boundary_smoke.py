@@ -123,6 +123,7 @@ from agentops_mis_core.operator_receipts import (
     operator_receipt_requires_control_readback,
 )
 from agentops_mis_core.worker_fleet import (
+    SERVICE_WORKER_EXECUTION_SCOPES,
     build_worker_remote_fleet_summary,
     build_worker_fleet_hygiene_plan,
     build_worker_fleet_view,
@@ -1455,7 +1456,7 @@ def main() -> int:
         "workspace_id": "local-demo",
         "status": "active",
         "session_state": "active",
-        "scopes": ["tasks:read"],
+        "scopes": sorted(SERVICE_WORKER_EXECUTION_SCOPES),
     }
     public_remote = public_remote_worker(
         remote_enrollment,
@@ -1478,7 +1479,7 @@ def main() -> int:
             "workspace_id": "local-demo",
             "status": "active",
             "session_state": "active",
-            "scopes": ["tasks:read"],
+            "scopes": sorted(SERVICE_WORKER_EXECUTION_SCOPES),
         }],
         agents_by_id={
             "agt_worker_service_smoke": {
