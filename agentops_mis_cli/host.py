@@ -42,6 +42,9 @@ DEFAULT_UI_DIST = ROOT / "ui" / "start-building-app" / "dist"
 MACOS_TAILSCALE_BIN = Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
 HOST_STOP_GRACE_SECONDS = 20
 HOST_SERVICE_LABEL = "dev.agentops.mis.private-host"
+HOST_SERVICE_STATE_CONVERGENCE_ATTEMPTS = 4
+HOST_SERVICE_STATE_CONVERGENCE_DELAY_SECONDS = 0.1
+HOST_SERVICE_STATE_CONVERGENCE_READ_TIMEOUT_SECONDS = 1
 HOST_MANAGED_RESTART_REQUEST_MAX_BYTES = 1024
 HOST_DATA_MARKER = {
     "schema_version": 1,
@@ -3126,6 +3129,28 @@ def host_service_launchd_state(*, timeout: int = 5) -> dict:
     return result
 
 
+def host_service_launchd_state_after_mutation(*, expected_loaded: bool) -> dict:
+    state = {}
+    converged = False
+    for attempt in range(1, HOST_SERVICE_STATE_CONVERGENCE_ATTEMPTS + 1):
+        state = host_service_launchd_state(timeout=HOST_SERVICE_STATE_CONVERGENCE_READ_TIMEOUT_SECONDS)
+        converged = bool(
+            state.get("available") is True
+            and state.get("check_failed") is not True
+            and bool(state.get("loaded")) == expected_loaded
+        )
+        if converged:
+            break
+        if attempt < HOST_SERVICE_STATE_CONVERGENCE_ATTEMPTS:
+            time.sleep(HOST_SERVICE_STATE_CONVERGENCE_DELAY_SECONDS)
+    return {
+        **state,
+        "converged": converged,
+        "expected_loaded": expected_loaded,
+        "verification_attempts": attempt,
+    }
+
+
 def inspect_host_service(path: Path, *, timeout: int = 5) -> dict:
     exists = path.exists()
     safe_regular_file = bool(exists and not path.is_symlink() and path.is_file())
@@ -3360,9 +3385,20 @@ def cmd_service_control(args) -> int:
                 results.append({"ok": False, "command_failed": True, "command_output_omitted": True})
                 blockers.append("launchctl_command_failed")
                 break
-    state_after = host_service_launchd_state(timeout=args.timeout) if args.confirm_control and not blockers else state
+    successful_mutation = bool(args.confirm_control and commands and not blockers)
+    state_after = (
+        host_service_launchd_state_after_mutation(
+            expected_loaded=args.action in {"load", "restart"},
+        )
+        if successful_mutation
+        else state
+    )
     expected_loaded = args.action in {"load", "restart"}
-    if args.confirm_control and not blockers and bool(state_after["loaded"]) != expected_loaded:
+    if args.confirm_control and not blockers and (
+        state_after.get("available") is not True
+        or state_after.get("check_failed") is True
+        or bool(state_after.get("loaded")) != expected_loaded
+    ):
         blockers.append("launchctl_state_verification_failed")
     no_op = not commands and not blockers
     ok = not blockers

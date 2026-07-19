@@ -61,15 +61,28 @@ def main() -> int:
         service_path = temp / "LaunchAgents" / "dev.agentops.mis.private-host.plist"
         launchctl_state = temp / "launchctl.loaded"
         launchctl_calls = temp / "launchctl.calls"
+        launchctl_stale_reads = temp / "launchctl.stale-reads"
         fake_launchctl = temp / "launchctl"
         fake_launchctl.write_text(
             "#!/bin/sh\n"
             "set -eu\n"
             f"printf '%s\\n' \"$*\" >> {launchctl_calls}\n"
             "case \"${1:-}\" in\n"
-            "  print) [ -f \"$AGENTOPS_TEST_LAUNCHCTL_STATE\" ] ;;\n"
+            "  print)\n"
+            "    if [ -f \"$AGENTOPS_TEST_LAUNCHCTL_STALE_READS_STATE\" ]; then\n"
+            "      stale_reads=$(cat \"$AGENTOPS_TEST_LAUNCHCTL_STALE_READS_STATE\")\n"
+            "      if [ \"$stale_reads\" -gt 0 ]; then\n"
+            "        printf '%s\\n' \"$((stale_reads - 1))\" > \"$AGENTOPS_TEST_LAUNCHCTL_STALE_READS_STATE\"\n"
+            "        exit 0\n"
+            "      fi\n"
+            "    fi\n"
+            "    [ -f \"$AGENTOPS_TEST_LAUNCHCTL_STATE\" ]\n"
+            "    ;;\n"
             "  bootstrap) : > \"$AGENTOPS_TEST_LAUNCHCTL_STATE\" ;;\n"
-            "  bootout) rm -f \"$AGENTOPS_TEST_LAUNCHCTL_STATE\" ;;\n"
+            "  bootout)\n"
+            "    rm -f \"$AGENTOPS_TEST_LAUNCHCTL_STATE\"\n"
+            "    printf '%s\\n' \"${AGENTOPS_TEST_LAUNCHCTL_STALE_UNLOAD_READS:-0}\" > \"$AGENTOPS_TEST_LAUNCHCTL_STALE_READS_STATE\"\n"
+            "    ;;\n"
             "  kickstart) [ -f \"$AGENTOPS_TEST_LAUNCHCTL_STATE\" ] ;;\n"
             "  *) exit 2 ;;\n"
             "esac\n",
@@ -83,6 +96,7 @@ def main() -> int:
                 "AGENTOPS_INSTALL_ROOT": str(ROOT),
                 "AGENTOPS_LAUNCHCTL_BIN": str(fake_launchctl),
                 "AGENTOPS_TEST_LAUNCHCTL_STATE": str(launchctl_state),
+                "AGENTOPS_TEST_LAUNCHCTL_STALE_READS_STATE": str(launchctl_stale_reads),
             }
         )
 
@@ -193,8 +207,9 @@ def main() -> int:
             "--confirm-control",
         )
         require(restarted.get("service_mutated") is True, f"confirmed restart failed: {restarted}", failures)
+        stale_then_converged_env = {**env, "AGENTOPS_TEST_LAUNCHCTL_STALE_UNLOAD_READS": "1"}
         _, unloaded, _ = run(
-            env,
+            stale_then_converged_env,
             "service-control",
             "--action",
             "unload",
@@ -203,6 +218,40 @@ def main() -> int:
             "--confirm-control",
         )
         require(unloaded.get("service_mutated") is True and not launchctl_state.exists(), f"confirmed unload failed: {unloaded}", failures)
+        require(not (unloaded.get("blockers") or []), f"stale unload read did not converge: {unloaded}", failures)
+        require(
+            unloaded.get("service_state_after", {}).get("converged") is True
+            and unloaded.get("service_state_after", {}).get("verification_attempts") == 2,
+            f"stale unload read did not require one bounded retry: {unloaded}",
+            failures,
+        )
+
+        launchctl_state.touch(mode=0o600)
+        never_converged_env = {**env, "AGENTOPS_TEST_LAUNCHCTL_STALE_UNLOAD_READS": "99"}
+        _, never_converged, _ = run(
+            never_converged_env,
+            "service-control",
+            "--action",
+            "unload",
+            "--service-path",
+            str(service_path),
+            "--confirm-control",
+            expected=(1,),
+        )
+        require(
+            "launchctl_state_verification_failed" in (never_converged.get("blockers") or []),
+            f"never-converging unload did not fail closed: {never_converged}",
+            failures,
+        )
+        require(never_converged.get("service_mutated") is False, f"unverified mutation was reported as successful: {never_converged}", failures)
+        require(
+            never_converged.get("service_state_after", {}).get("converged") is False
+            and never_converged.get("service_state_after", {}).get("verification_attempts") == 4,
+            f"never-converging unload was not bounded: {never_converged}",
+            failures,
+        )
+        require(not launchctl_state.exists(), "fake bootout did not mutate its underlying state", failures)
+        launchctl_stale_reads.unlink(missing_ok=True)
         _, remove_preview, _ = run(env, "service-remove", "--service-path", str(service_path))
         require(remove_preview.get("dry_run") is True and service_path.exists(), "remove preview deleted the service", failures)
         _, removed, _ = run(env, "service-remove", "--service-path", str(service_path), "--confirm-remove")
@@ -424,6 +473,8 @@ def main() -> int:
         "unmanaged_file_overwrite_blocked": True,
         "previous_managed_service_migration_covered": True,
         "previous_managed_service_unload_only_control_covered": True,
+        "post_mutation_state_convergence_covered": True,
+        "post_mutation_state_never_converges_fail_closed": True,
         "same_label_credential_path_mode_state_and_loaded_rejections_covered": True,
     }
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
