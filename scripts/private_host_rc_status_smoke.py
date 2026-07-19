@@ -51,10 +51,19 @@ def main() -> int:
     runtime = REAL_RUNTIME.read_text(encoding="utf-8")
     rc_headings = [line for line in rc.splitlines() if line.startswith("## Current Preview ")]
     current_rc = heading_section(rc, "Current Preview 36")
+    second_preview36_host = heading_section(second, "Preview 36 Host Staging")
+    second_preview36_physical = heading_section(second, "Preview 36 Physical MacBook Retest")
+    second_preview35_physical = heading_section(second, "Preview 35 Authenticated MacBook Evidence")
+    service_preview36 = heading_section(service_upgrade, "Preview 36 Release And Real Upgrade")
+    runtime_preview36_host = heading_section(runtime, "Exact-Package Preview 36 Negated Read-Only Result")
+    runtime_preview36_physical = heading_section(runtime, "Exact-Package Preview 36 Physical MacBook Result")
     normalized_current_rc = " ".join(current_rc.split())
     normalized_second = " ".join(second.split())
-    normalized_service = " ".join(service_upgrade.split())
+    normalized_second_preview36_physical = " ".join(second_preview36_physical.split())
+    normalized_second_preview35_physical = " ".join(second_preview35_physical.split())
+    normalized_service_preview36 = " ".join(service_preview36.split())
     normalized_runtime = " ".join(runtime.split())
+    normalized_runtime_preview36_host = " ".join(runtime_preview36_host.split())
 
     require(len(rc_headings) == 1, "RC document must name exactly one Current Preview", failures)
     require("## Current Preview 36" in rc, "preview.36 must be the current RC prerelease", failures)
@@ -83,7 +92,7 @@ def main() -> int:
         "deployed Relay/DNS/TLS",
         "no-Tailscale browser pairing",
         "deployed-Relay interruption",
-        "launchd convergence fix is installed",
+        "launchd convergence fix requires a later package",
         "Host logout/reboot recovery",
         "another-Mac clean installation",
     )
@@ -107,14 +116,17 @@ def main() -> int:
             "physical evidence anti-substitution boundary missing", failures)
     require("## Preview 36 Host Staging" in second,
             "preview.36 Host staging receipt missing", failures)
-    require(TAG in second and COMMIT in second,
+    require(TAG in second_preview36_host and COMMIT in second_preview36_host,
             "preview.36 Host staging is not exact-package bound", failures)
     require("## Preview 36 Physical MacBook Retest" in second,
             "preview.36 physical MacBook retest receipt missing", failures)
-    require("tsk_570cb03937f6" in second and "run_gw_c8d2ad1aa845" in second,
+    require(TAG in second_preview36_physical and COMMIT in second_preview36_physical,
+            "preview.36 physical MacBook receipt is not exact-package bound", failures)
+    require("tsk_570cb03937f6" in second_preview36_physical
+            and "run_gw_c8d2ad1aa845" in second_preview36_physical,
             "preview.36 physical marker or OpenClaw run evidence missing", failures)
-    require("zero external-write PreparedActions" in normalized_second
-            and "protected Dashboard request returned HTTP 401" in normalized_second,
+    require("zero external-write PreparedActions" in normalized_second_preview36_physical
+            and "protected Dashboard request returned HTTP 401" in normalized_second_preview36_physical,
             "preview.36 physical safety/logout proof missing", failures)
     require("## Preview 35 MacBook Client Staging" in second,
             "physical MacBook preview.35 staging receipt missing", failures)
@@ -130,20 +142,21 @@ def main() -> int:
             "authenticated MacBook run/receipt evidence missing", failures)
     require("disconnect/reconnect passed: true" in normalized_second and "logout denial passed: true" in normalized_second,
             "physical browser disconnect or logout-denial evidence missing", failures)
-    require("70bae606c577191041778a92e3480138f3b67795" in second
-            and "preview.36 packages the fix" in normalized_second
-            and "closes the exact-package physical retest" in normalized_second,
+    require("70bae606c577191041778a92e3480138f3b67795" in second_preview35_physical
+            and "preview.36 packages the fix" in normalized_second_preview35_physical
+            and "closes the exact-package physical retest" in normalized_second_preview35_physical,
             "preview.35 marker defect history or preview.36 closure is missing", failures)
     require("overall second-device protocol remains partial" in normalized_second,
             "advanced receipt must not claim ordinary browser-only acceptance", failures)
 
-    require(TAG in service_upgrade and COMMIT in service_upgrade,
+    require(TAG in service_preview36 and COMMIT in service_preview36,
             "preview.36 service-upgrade receipt is not exact-package bound", failures)
-    require("no-repository install/start/status/stop receipt" in normalized_service,
+    require("no-repository install/start/status/stop" in normalized_service_preview36,
             "preview.36 no-repository release receipt missing", failures)
-    require("preserved Host data" in normalized_service and "two execution-capacity lanes" in normalized_service,
+    require("preserved Host data" in normalized_service_preview36
+            and "two execution-capacity lanes" in normalized_service_preview36,
             "preview.36 data/Worker recovery receipt missing", failures)
-    require("Funnel disabled" in normalized_service,
+    require("Funnel disabled" in normalized_service_preview36,
             "preview.36 upgrade must preserve the private transport boundary", failures)
 
     require(PHYSICAL_TAG in runtime and PHYSICAL_COMMIT in runtime,
@@ -154,20 +167,24 @@ def main() -> int:
             "Hermes Human Approval Wall state is no longer explicit", failures)
     require("No raw prompt, raw response, credential, private message, full transcript or database content was retained" in normalized_runtime,
             "preview.35 Runtime privacy boundary missing", failures)
-    require(TAG in runtime and COMMIT in runtime,
+    require(TAG in runtime_preview36_host and COMMIT in runtime_preview36_host,
             "preview.36 Runtime receipt is not exact-package bound", failures)
-    require("run_gw_ed42f579d487" in runtime and "pem_e1b9275c986daf4b" in runtime,
+    require("run_gw_ed42f579d487" in runtime_preview36_host
+            and "pem_e1b9275c986daf4b" in runtime_preview36_host,
             "fresh preview.36 OpenClaw negated-intent evidence missing", failures)
-    require("ap_customer_worker_delivery_run_gw_ed42f579d487` remains `pending`" in runtime,
+    require("ap_customer_worker_delivery_run_gw_ed42f579d487` remains `pending`" in runtime_preview36_host,
             "preview.36 delivery decision boundary is no longer explicit", failures)
-    require("zero PreparedActions" in normalized_runtime,
+    require("zero PreparedActions" in normalized_runtime_preview36_host,
             "preview.36 negated external-write proof missing", failures)
     require("## Exact-Package Preview 36 Physical MacBook Result" in runtime,
             "preview.36 physical Runtime receipt missing", failures)
-    require("wfjob_9940b1e6ea15" in runtime and "run_gw_c8d2ad1aa845" in runtime
-            and "pem_094a19932cdcc50e" in runtime,
+    require(TAG in runtime_preview36_physical and COMMIT in runtime_preview36_physical,
+            "preview.36 physical Runtime receipt is not exact-package bound", failures)
+    require("wfjob_9940b1e6ea15" in runtime_preview36_physical
+            and "run_gw_c8d2ad1aa845" in runtime_preview36_physical
+            and "pem_094a19932cdcc50e" in runtime_preview36_physical,
             "preview.36 physical OpenClaw evidence is incomplete", failures)
-    require("ap_customer_worker_delivery_run_gw_c8d2ad1aa845` remains `pending`" in runtime,
+    require("ap_customer_worker_delivery_run_gw_c8d2ad1aa845` remains `pending`" in runtime_preview36_physical,
             "preview.36 physical delivery decision boundary is no longer explicit", failures)
 
     output = {

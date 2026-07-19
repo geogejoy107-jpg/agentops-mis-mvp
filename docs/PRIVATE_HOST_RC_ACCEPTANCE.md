@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.36 is published, installed and physically retested from the MacBook advanced Console; ordinary browser-only Relay, the packaged launchd convergence fix and final physical gates remain open
+Status: preview.36 is published, installed and physically retested from the MacBook advanced Console; ordinary browser-only Relay, the source-only launchd convergence fix and final physical gates remain open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -885,8 +885,9 @@ successful load.
 
 The current preview therefore remains a prerelease. The exact marker and
 negated-intent fixes are packaged and physically retested through the advanced
-MacBook Console. Source commit `a88b5fa` still requires a later package before
-the launchd convergence fix is installed. Deployed Relay/DNS/TLS, no-Tailscale
+MacBook Console. The launchd convergence fix requires a later package; source
+commit `a88b5fa` is not silently treated as installed preview.36 behavior.
+Deployed Relay/DNS/TLS, no-Tailscale
 browser pairing, deployed-Relay interruption, the separate pending delivery
 decisions, Host logout/reboot recovery and another-Mac clean installation also
 remain open.

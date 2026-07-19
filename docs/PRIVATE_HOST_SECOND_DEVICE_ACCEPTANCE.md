@@ -428,8 +428,10 @@ no run, tool call, evaluation or real Runtime invocation. The deterministic
 smoke passes, preview.36 packages the fix, and marker `tsk_570cb03937f6` now
 closes the exact-package physical retest.
 
-Therefore the authenticated advanced-Tailscale workflow is accepted for the
-current-package marker, real task, disconnect, review, download and logout
-rows, while the overall second-device protocol remains partial. Ordinary
-customer acceptance still requires a browser-only deployed Relay with no
-Tailscale client, Host restart persistence and another clean Mac install.
+Therefore the authenticated advanced-Tailscale workflow is accepted across two
+package-bound receipts: preview.36 closes the current-package marker, real task,
+Run-page and logout rows; preview.35 remains the historical evidence for
+disconnect/reconnect, deliberate review and approved downloads. The overall
+second-device protocol remains partial. Ordinary customer acceptance still
+requires a browser-only deployed Relay with no Tailscale client, Host
+logout/reboot recovery and another clean Mac install.

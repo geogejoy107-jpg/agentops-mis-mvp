@@ -241,8 +241,9 @@ full transcript and database content were omitted.
 ## Exact-Package Preview 36 Physical MacBook Result
 
 The physical MacBook dedicated Console then authenticated to the same installed
-`v1.6.0-private-host-preview.36` Host and used the normal AI Employees dispatch
-UI. The browser selected OpenClaw, explicitly confirmed live execution and
+`v1.6.0-private-host-preview.36` Host at exact commit
+`a5c7d559cfce5157b10401e34204a6b6a405a554` and used the normal AI Employees
+dispatch UI. The browser selected OpenClaw, explicitly confirmed live execution and
 submitted customer job `wfjob_9940b1e6ea15`. The Host completed task
 `tsk_customer_worker_task_7606dfeb537fe9f9` and real run
 `run_gw_c8d2ad1aa845`.
