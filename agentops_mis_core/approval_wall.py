@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import re
 import datetime as dt
 from typing import Any
+from urllib.parse import urlparse
 
 
 REDACTION_RULES: tuple[tuple[str, str], ...] = (
@@ -55,11 +57,6 @@ EXTERNAL_SIDE_EFFECT_SCHEMES = (
     "discord://",
     "email://",
 )
-LOOPBACK_HTTP_PREFIXES = (
-    "http://127.0.0.1",
-    "http://localhost",
-    "http://[::1]",
-)
 EXTERNAL_WRITE_INTENT_KEYWORDS = (
     "knowledge base upload",
     "customer portal",
@@ -87,7 +84,8 @@ EXTERNAL_WRITE_INTENT_KEYWORDS = (
 )
 EXTERNAL_WRITE_NEGATION_RE = re.compile(
     r"(?:"
-    r"\b(?:do\s+not|don't|must\s+not|shall\s+not|may\s+not|never|cannot|can't)\b[^.!?;\n]{0,64}|"
+    r"\b(?:do(?:es)?\s+not|don't|must\s+not|shall\s+not|may\s+not|should\s+not|"
+    r"will\s+not|would\s+not|could\s+not|never|cannot|can't)\b[^.!?;\n]{0,64}|"
     r"(?:不要|不得|禁止|不允许|不再|不能|不会)[^。！？；\n]{0,40}"
     r")$",
     re.IGNORECASE,
@@ -149,6 +147,23 @@ def positive_external_write_intent(text: Any) -> bool:
     return False
 
 
+def is_loopback_http_target(value: Any) -> bool:
+    """Accept only an exact HTTP loopback hostname, never a string prefix."""
+    try:
+        parsed = urlparse(str(value or "").strip())
+        hostname = (parsed.hostname or "").rstrip(".").lower()
+    except ValueError:
+        return False
+    if parsed.scheme.lower() != "http" or not hostname:
+        return False
+    if hostname == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
 def task_has_external_write_intent(
     *,
     title: Any,
@@ -159,15 +174,17 @@ def task_has_external_write_intent(
     explicit_intent: Any = None,
 ) -> bool:
     """Classify task intent without allowing negative prose to bypass real writes."""
-    if explicit_intent is True or str(explicit_intent or "").strip().lower() in {"1", "true", "yes", "on"}:
-        return True
+    if explicit_intent is not None:
+        normalized_intent = str(explicit_intent).strip().lower()
+        if explicit_intent is not False and normalized_intent not in {"", "0", "false", "no", "off"}:
+            return True
 
     action_type = str(external_action_type or "").strip()
     if action_type:
         return True
 
     target = str(target_resource or "").strip().lower()
-    target_is_loopback = target.startswith(LOOPBACK_HTTP_PREFIXES)
+    target_is_loopback = is_loopback_http_target(target)
     if target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES) and not target_is_loopback:
         return True
     if positive_external_write_intent(target):
@@ -554,8 +571,8 @@ def tool_call_has_external_side_effect_intent(
         json.dumps(scanned_args, ensure_ascii=False, sort_keys=True),
     ]).lower()
     target = (target_resource or "").strip().lower()
-    target_is_loopback = target.startswith(LOOPBACK_HTTP_PREFIXES)
-    explicit_target_is_loopback = explicit_target.startswith(LOOPBACK_HTTP_PREFIXES)
+    target_is_loopback = is_loopback_http_target(target)
+    explicit_target_is_loopback = is_loopback_http_target(explicit_target)
     if (
         (target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES) and not target_is_loopback)
         or (explicit_target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES) and not explicit_target_is_loopback)

@@ -56,6 +56,14 @@ def main() -> int:
                 False,
                 {},
                 "Read-only acceptance",
+                "This task does not publish, send, upload, or deploy anything.",
+                "The worker should not perform an external write.",
+                "English third-person negated task",
+            ),
+            (
+                False,
+                {},
+                "Read-only acceptance",
                 "Without publishing or uploading, return a local summary.",
                 "No external write is allowed.",
                 "English tight negation chain",
@@ -135,10 +143,69 @@ def main() -> int:
                 "Return a summary.",
                 "structured external action remains fail closed",
             ),
+            (
+                True,
+                {"external_write_intent": {"unexpected": True}},
+                "Local summary",
+                "Return a bounded local summary.",
+                "No connector action is requested.",
+                "malformed explicit intent fails closed",
+            ),
+            (
+                True,
+                {"target_resource": "http://localhost.evil.example/write"},
+                "Local summary",
+                "Return a bounded local summary.",
+                "No connector action is requested.",
+                "localhost suffix is not loopback",
+            ),
+            (
+                True,
+                {"target_resource": "http://127.0.0.1.evil.example/write"},
+                "Local summary",
+                "Return a bounded local summary.",
+                "No connector action is requested.",
+                "loopback-looking suffix is not loopback",
+            ),
+            (
+                False,
+                {"target_resource": "http://127.0.0.1:8787/local"},
+                "Local summary",
+                "Return a bounded local summary.",
+                "No connector action is requested.",
+                "exact IPv4 loopback remains local",
+            ),
+            (
+                False,
+                {"target_resource": "http://[::1]:8787/local"},
+                "Local summary",
+                "Return a bounded local summary.",
+                "No connector action is requested.",
+                "exact IPv6 loopback remains local",
+            ),
         ]
         for expected, body, title, description, acceptance, label in classifier_cases:
             actual = server.customer_worker_external_write_intent(body, title, description, acceptance)
             require(actual is expected, f"{label} classified as {actual}, expected {expected}")
+
+        require(
+            server.tool_call_has_external_side_effect_intent(
+                "local.read", "read", "http://localhost.evil.example/write", {}
+            ) is True,
+            "tool-call gate accepted a localhost-suffix external target",
+        )
+        require(
+            server.tool_call_has_external_side_effect_intent(
+                "local.read", "read", "http://127.0.0.1:8787/local", {}
+            ) is False,
+            "tool-call gate rejected an exact IPv4 loopback read",
+        )
+        require(
+            server.tool_call_has_external_side_effect_intent(
+                "local.read", "read", None, {"url": "http://127.0.0.1.evil.example/write"}
+            ) is True,
+            "tool-call gate accepted a loopback-looking explicit target",
+        )
 
         class FakeClient:
             workspace_id = "local-demo"

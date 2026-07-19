@@ -1,6 +1,6 @@
 # Advanced Tailscale Second-Device Acceptance
 
-Status: advanced Tailscale physical browser workflow partially accepted on preview.35; marker fix and ordinary browser-only Relay protocol pending
+Status: advanced Tailscale physical browser workflow partially accepted on preview.35; source fixes and ordinary browser-only Relay protocol pending
 
 This document now covers the advanced private-network fallback only. It no
 longer defines the ordinary customer onboarding path and cannot close the
@@ -330,8 +330,11 @@ One earlier job, `wfjob_b2321f7faf73`, exposed a usability defect: negated
 phrases such as prohibiting publication or external connectors were
 conservatively interpreted as external-write intent. Prepared action
 `ap_prepared_action_b673fa1a19408a4b` was not approved and no consequential
-action was executed. This false positive remains a tracked classifier defect;
-it is not counted as the successful customer run above.
+action was executed. Current source now centralizes external-write intent in a
+negation-aware, fail-closed classifier and covers the observed wording plus
+mixed real-write instructions. That fix is not present in preview.35 and still
+requires exact-package physical retest; the failed job is not counted as the
+successful customer run above.
 
 ### Downloads, Receipt And Logout
 

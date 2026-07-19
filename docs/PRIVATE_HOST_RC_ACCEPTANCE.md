@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.35 installed with authenticated MacBook OpenClaw dispatch, disconnect/reconnect, review, download and logout-denial evidence; the marker fix, ordinary browser-only Relay and final physical gates remain open
+Status: preview.35 installed with authenticated MacBook OpenClaw dispatch, disconnect/reconnect, review, download and logout-denial evidence; source fixes, ordinary browser-only Relay and final physical gates remain open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -860,7 +860,10 @@ foreign key. Source commit `70bae606c577191041778a92e3480138f3b67795`
 normalizes blank ownership to SQL `NULL`, preserves a zero budget and passes an
 authenticated marker smoke without invoking a Runtime. A separate task with
 negated external-action wording also exposed a conservative intent-classifier
-false positive; its prepared action was not approved and no external action ran.
+false positive; its prepared action was not approved and no external action
+ran. Current source now uses one negation-aware, fail-closed classifier for the
+server and Worker paths, but preview.35 has not been upgraded or physically
+retested with that fix.
 
 The current preview therefore remains a prerelease. The exact marker fix must
 be packaged and physically retested. Deployed Relay/DNS/TLS, no-Tailscale
