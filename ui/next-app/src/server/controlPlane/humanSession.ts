@@ -494,15 +494,23 @@ export async function establishHumanSession(headers: Headers, body: Record<strin
       [now.toISOString(), credential.credential_id],
     );
     const sessionRef = opaqueReference("hsref", sessionId);
-    await appendAudit(client, {
-      actorType: "user",
-      actorId: credential.user_id,
-      action: "human_auth.login",
-      entityType: "human_sessions",
-      entityId: sessionRef,
-      after: { status: "active", expires_at: expiresAt },
-      metadata: { credentials_omitted: true, session_id_omitted: true, token_omitted: true },
-    });
+    for (const membership of activeMemberships.rows) {
+      await appendAudit(client, {
+        workspaceId: membership.workspace_id,
+        actorType: "user",
+        actorId: credential.user_id,
+        action: "human_auth.login",
+        entityType: "human_sessions",
+        entityId: sessionRef,
+        after: { status: "active", expires_at: expiresAt },
+        metadata: {
+          credentials_omitted: true,
+          session_id_omitted: true,
+          token_omitted: true,
+          workspace_audit_fanout: true,
+        },
+      });
+    }
     return {
       status: 200,
       body: {
@@ -585,19 +593,35 @@ async function authenticateWorkspaceMembership(
   requireReviewAuthority: boolean,
 ): Promise<HumanSessionIdentity> {
   const { row, token } = await lockSession(client, headers);
-  const workspaceId = String(requestedWorkspaceId ?? "").trim();
-  if (!/^[A-Za-z0-9._:-]{1,128}$/.test(workspaceId)) {
+  const requestedWorkspace = String(requestedWorkspaceId ?? "").trim();
+  const headerWorkspace = String(headers.get("x-agentops-workspace-id") || "").trim();
+  const validWorkspaceId = (value: string) => /^[A-Za-z0-9._:-]{1,128}$/.test(value);
+  if ((requestedWorkspace && !validWorkspaceId(requestedWorkspace))
+    || (headerWorkspace && !validWorkspaceId(headerWorkspace))) {
     throw new ControlPlaneHttpError(403, "workspace_id_required", "A valid workspace id is required.");
   }
-  const headerWorkspace = String(headers.get("x-agentops-workspace-id") || "").trim();
-  if (headerWorkspace && headerWorkspace !== workspaceId) {
+  if (requestedWorkspace && headerWorkspace && headerWorkspace !== requestedWorkspace) {
     throw new ControlPlaneHttpError(403, "forbidden", "The request workspace binding does not match.");
   }
-  const membershipResult = await client.query<MembershipRow>(
-    `SELECT workspace_id,user_id,role,status FROM workspace_memberships
-    WHERE workspace_id=$1 AND user_id=$2 FOR UPDATE`,
-    [workspaceId, row.user_id],
-  );
+  const suppliedWorkspaceId = requestedWorkspace || headerWorkspace;
+  const membershipResult = suppliedWorkspaceId
+    ? await client.query<MembershipRow>(
+      `SELECT workspace_id,user_id,role,status FROM workspace_memberships
+      WHERE workspace_id=$1 AND user_id=$2 FOR UPDATE`,
+      [suppliedWorkspaceId, row.user_id],
+    )
+    : await client.query<MembershipRow>(
+      `SELECT workspace_id,user_id,role,status FROM workspace_memberships
+      WHERE user_id=$1 AND status='active' ORDER BY workspace_id FOR UPDATE`,
+      [row.user_id],
+    );
+  if (!suppliedWorkspaceId && membershipResult.rows.length !== 1) {
+    throw new ControlPlaneHttpError(
+      403,
+      "workspace_id_required",
+      "A workspace id is required unless the Human Session has exactly one active workspace membership.",
+    );
+  }
   const membership = membershipResult.rows[0];
   if (!membership || membership.status !== "active") {
     throw new ControlPlaneHttpError(403, "human_membership_forbidden", "The Human Session is not a member of this workspace.");
@@ -619,7 +643,7 @@ async function authenticateWorkspaceMembership(
     sessionRef: opaqueReference("hsref", row.session_id),
     userId: row.user_id,
     userName: row.name,
-    workspaceId,
+    workspaceId: membership.workspace_id,
     membershipRole: membership.role,
   };
 }
@@ -660,22 +684,38 @@ export async function logoutHumanSession(headers: Headers) {
     if (!suppliedCsrf || !sameValue(suppliedCsrf, csrfToken(token))) {
       throw new ControlPlaneHttpError(403, "csrf_validation_failed", "A valid Human Session CSRF token is required.");
     }
+    const memberships = await client.query<MembershipRow>(
+      `SELECT workspace_id,user_id,role,status FROM workspace_memberships
+      WHERE user_id=$1 AND status='active' ORDER BY workspace_id FOR UPDATE`,
+      [row.user_id],
+    );
     const now = new Date().toISOString();
     await client.query(
       "UPDATE human_sessions SET status='revoked',revoked_at=$1 WHERE session_id=$2 AND status='active'",
       [now, row.session_id],
     );
     const sessionRef = opaqueReference("hsref", row.session_id);
-    await appendAudit(client, {
-      actorType: "user",
-      actorId: row.user_id,
-      action: "human_auth.logout",
-      entityType: "human_sessions",
-      entityId: sessionRef,
-      before: { status: "active" },
-      after: { status: "revoked" },
-      metadata: { credentials_omitted: true, session_id_omitted: true, token_omitted: true },
-    });
+    const auditWorkspaceIds: Array<string | null> = memberships.rows.length
+      ? memberships.rows.map((membership) => membership.workspace_id)
+      : [null];
+    for (const workspaceId of auditWorkspaceIds) {
+      await appendAudit(client, {
+        workspaceId,
+        actorType: "user",
+        actorId: row.user_id,
+        action: "human_auth.logout",
+        entityType: "human_sessions",
+        entityId: sessionRef,
+        before: { status: "active" },
+        after: { status: "revoked" },
+        metadata: {
+          credentials_omitted: true,
+          session_id_omitted: true,
+          token_omitted: true,
+          workspace_audit_fanout: true,
+        },
+      });
+    }
     return {
       status: 200,
       body: {

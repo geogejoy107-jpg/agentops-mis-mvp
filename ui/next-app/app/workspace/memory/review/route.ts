@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { controlPlaneMode, isProductionDeployment } from "@/server/controlPlane/config";
+import { legacyWorkspacePythonProxyGuard } from "@/server/controlPlane/legacyWorkspacePythonProxyGuard";
 
 const TARGET_BASE = process.env.AGENTOPS_API_BASE || "http://127.0.0.1:8765/api";
 
@@ -13,6 +14,9 @@ function redirectBack(request: Request, params: Record<string, string>) {
 }
 
 export async function POST(request: Request) {
+  const guardResponse = legacyWorkspacePythonProxyGuard(request);
+  if (guardResponse) return guardResponse;
+
   if (isProductionDeployment() || controlPlaneMode() === "postgres") {
     return NextResponse.json(
       {
@@ -27,11 +31,17 @@ export async function POST(request: Request) {
   const form = await request.formData();
   const memoryId = String(form.get("memory_id") || "");
   const decision = String(form.get("decision") || "");
-  const action = decision === "reject" ? "reject" : "approve";
 
   if (!memoryId) {
     return redirectBack(request, { review_error: "missing_memory_id" });
   }
+  if (decision !== "approve" && decision !== "reject") {
+    return NextResponse.json(
+      { ok: false, error: "decision_invalid", message: "Memory decision must be approve or reject." },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+  const action = decision;
 
   const response = await fetch(`${TARGET_BASE.replace(/\/$/, "")}/memories/${encodeURIComponent(memoryId)}/${action}`, {
     method: "POST",

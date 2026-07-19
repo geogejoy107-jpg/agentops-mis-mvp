@@ -183,6 +183,7 @@ async function reviewCandidate(
     [identity.workspaceId, identity.userId, idempotencyHash, requestHash, memoryId, requestedDecision, now],
   );
   await appendAudit(client, {
+    workspaceId: identity.workspaceId,
     actorType: "user",
     actorId: identity.userId,
     action: `memory.${requestedDecision}`,

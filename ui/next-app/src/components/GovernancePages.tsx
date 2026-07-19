@@ -12,6 +12,7 @@ import {
   loginHumanSession,
   logoutHumanSession,
   MisApiError,
+  setActiveWorkspaceId,
   type AuditSummary,
   type HumanSessionPayload,
   type MemorySummary,
@@ -103,6 +104,8 @@ export function MemoryParityPage({
     } catch (err) {
       if (isHumanSessionUnauthorized(err)) {
         setHumanSession(null);
+        setWorkspaceId("");
+        setActiveWorkspaceId("");
         setAuthMode("required");
       }
       setState({ data: [], error: err instanceof Error ? err.message : String(err), loading: false });
@@ -116,15 +119,23 @@ export function MemoryParityPage({
       try {
         const session = await loadHumanSession();
         if (!active) return;
-        const selectedWorkspace = session.memberships?.[0]?.workspace_id || "";
+        const memberships = session.memberships || [];
+        const selectedWorkspace = memberships.length === 1 ? memberships[0].workspace_id : "";
         setHumanSession(session);
         setWorkspaceId(selectedWorkspace);
+        setActiveWorkspaceId(selectedWorkspace);
         setAuthMode("authenticated");
-        await refresh(selectedWorkspace, "authenticated", session.user?.user_id || "");
+        if (selectedWorkspace) {
+          await refresh(selectedWorkspace, "authenticated", session.user?.user_id || "");
+        } else {
+          setState({ data: [], error: null, loading: false });
+        }
       } catch (err) {
         if (!active) return;
         if (isHumanSessionUnauthorized(err)) {
           setHumanSession(null);
+          setWorkspaceId("");
+          setActiveWorkspaceId("");
           setAuthMode("required");
           setState({ data: [], error: null, loading: false });
           return;
@@ -148,12 +159,18 @@ export function MemoryParityPage({
     setState((current) => ({ ...current, error: null, loading: true }));
     try {
       const session = await loginHumanSession(username, password);
-      const selectedWorkspace = session.memberships?.[0]?.workspace_id || "";
+      const memberships = session.memberships || [];
+      const selectedWorkspace = memberships.length === 1 ? memberships[0].workspace_id : "";
       setPassword("");
       setHumanSession(session);
       setWorkspaceId(selectedWorkspace);
+      setActiveWorkspaceId(selectedWorkspace);
       setAuthMode("authenticated");
-      await refresh(selectedWorkspace, "authenticated", session.user?.user_id || "");
+      if (selectedWorkspace) {
+        await refresh(selectedWorkspace, "authenticated", session.user?.user_id || "");
+      } else {
+        setState({ data: [], error: null, loading: false });
+      }
     } catch (err) {
       setPassword("");
       setState({ data: [], error: err instanceof Error ? err.message : String(err), loading: false });
@@ -163,15 +180,17 @@ export function MemoryParityPage({
   const submitLogout = async () => {
     const csrfToken = humanSession?.csrf_token || "";
     try {
-      await logoutHumanSession(csrfToken);
+      await logoutHumanSession(csrfToken, workspaceId);
       setHumanSession(null);
       setWorkspaceId("");
+      setActiveWorkspaceId("");
       setAuthMode("required");
       setState({ data: [], error: null, loading: false });
     } catch (err) {
       if (isHumanSessionUnauthorized(err)) {
         setHumanSession(null);
         setWorkspaceId("");
+        setActiveWorkspaceId("");
         setAuthMode("required");
         setState({ data: [], error: null, loading: false });
         return;
@@ -229,6 +248,8 @@ export function MemoryParityPage({
     } catch (err) {
       if (isHumanSessionUnauthorized(err)) {
         setHumanSession(null);
+        setWorkspaceId("");
+        setActiveWorkspaceId("");
         setAuthMode("required");
       }
       setState((current) => ({ ...current, error: err instanceof Error ? err.message : String(err) }));
@@ -268,12 +289,15 @@ export function MemoryParityPage({
             <span>Workspace</span>
             <select
               value={workspaceId}
+              required
               onChange={(event) => {
                 const selected = event.target.value;
                 setWorkspaceId(selected);
+                setActiveWorkspaceId(selected);
                 void refresh(selected, "authenticated");
               }}
             >
+              <option value="" disabled>Select workspace</option>
               {(humanSession.memberships || []).map((membership) => (
                 <option key={membership.workspace_id} value={membership.workspace_id}>
                   {membership.workspace_id} ({membership.role})

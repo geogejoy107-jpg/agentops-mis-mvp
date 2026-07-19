@@ -1,7 +1,23 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { Activity, Bot, ClipboardList, Database, FileText, KeyRound, Map, Plug, ShieldCheck, Workflow } from "lucide-react";
 import { AppFrame } from "./AppFrame";
-import type { AgentSummary, ApprovalSummary, AuditSummary, DashboardMetrics, MemorySummary, RunSummary, TaskSummary } from "@/lib/mis";
+import {
+  getActiveWorkspaceId,
+  loadAgents,
+  loadAudit,
+  loadMemories,
+  loadWorkspaceSnapshot,
+  type AgentSummary,
+  type ApprovalSummary,
+  type AuditSummary,
+  type DashboardMetrics,
+  type MemorySummary,
+  type RunSummary,
+  type TaskSummary,
+} from "@/lib/mis";
 
 type ZoneTone = "cyan" | "green" | "amber" | "red" | "purple" | "slate";
 
@@ -41,6 +57,81 @@ type PixelOfficeFeedback = {
   localBriefRunId?: string;
   localBriefArtifactId?: string;
 };
+
+type PixelOfficeLiveState = {
+  metrics: DashboardMetrics;
+  agents: AgentSummary[];
+  tasks: TaskSummary[];
+  runs: RunSummary[];
+  approvals: ApprovalSummary[];
+  memories: MemorySummary[];
+  audit: AuditSummary[];
+  errors: Record<string, string | null>;
+};
+
+const EMPTY_LIVE_STATE: PixelOfficeLiveState = {
+  metrics: {},
+  agents: [],
+  tasks: [],
+  runs: [],
+  approvals: [],
+  memories: [],
+  audit: [],
+  errors: {},
+};
+
+function loadError(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function PixelOfficeLivePage({ feedback }: Readonly<{ feedback?: PixelOfficeFeedback }>) {
+  const [state, setState] = useState<PixelOfficeLiveState>(EMPTY_LIVE_STATE);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadLiveState = async () => {
+      const workspaceId = getActiveWorkspaceId() || undefined;
+      const [snapshot, audit, agents, memories] = await Promise.allSettled([
+        loadWorkspaceSnapshot(workspaceId),
+        loadAudit(workspaceId),
+        loadAgents(),
+        loadMemories(workspaceId),
+      ]);
+      if (!active) return;
+
+      const next: PixelOfficeLiveState = {
+        metrics: snapshot.status === "fulfilled" ? snapshot.value.metrics : {},
+        tasks: snapshot.status === "fulfilled" ? snapshot.value.tasks : [],
+        runs: snapshot.status === "fulfilled" ? snapshot.value.runs : [],
+        approvals: snapshot.status === "fulfilled" ? snapshot.value.approvals : [],
+        audit: audit.status === "fulfilled" ? audit.value : [],
+        agents: agents.status === "fulfilled" ? agents.value : [],
+        memories: memories.status === "fulfilled" ? memories.value : [],
+        errors: {},
+      };
+
+      if (snapshot.status === "rejected") {
+        const error = loadError(snapshot.reason);
+        next.errors.metrics = error;
+        next.errors.tasks = error;
+        next.errors.runs = error;
+        next.errors.approvals = error;
+      }
+      if (audit.status === "rejected") next.errors.audit = loadError(audit.reason);
+      if (agents.status === "rejected") next.errors.agents = loadError(agents.reason);
+      if (memories.status === "rejected") next.errors.memories = loadError(memories.reason);
+      setState(next);
+    };
+
+    void loadLiveState();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return <PixelOfficeParityPage {...state} feedback={feedback} />;
+}
 
 function countWhere<T>(rows: T[], predicate: (row: T) => boolean) {
   return rows.filter(predicate).length;

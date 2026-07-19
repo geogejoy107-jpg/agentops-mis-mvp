@@ -203,6 +203,7 @@ async function bootstrap() {
       [credentialId, userId, args.username, derived.toString("hex"), salt.toString("hex"), params, now],
     );
     await appendAudit(client as unknown as PoolClient, {
+      workspaceId: args.workspaceId,
       actorType: "system",
       actorId: null,
       action: "human_auth.owner_bootstrap",

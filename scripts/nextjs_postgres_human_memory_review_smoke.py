@@ -194,7 +194,13 @@ def wait_for_next(base_url: str, proc: subprocess.Popen[str], sensitive: list[st
     raise RuntimeError(redact(f"Next.js Human Session route was not ready: {last}", sensitive))
 
 
-def wait_for_proxy_next(base_url: str, proc: subprocess.Popen[str], sensitive: list[str]) -> None:
+def wait_for_proxy_next(
+    base_url: str,
+    proc: subprocess.Popen[str],
+    sensitive: list[str],
+    *,
+    production_fail_closed: bool = False,
+) -> None:
     deadline = time.time() + 75
     last = ""
     while time.time() < deadline:
@@ -204,6 +210,12 @@ def wait_for_proxy_next(base_url: str, proc: subprocess.Popen[str], sensitive: l
         try:
             status, payload, _headers = http_json("GET", f"{base_url}/api/mis/dashboard/metrics")
             if status == 200 and payload.get("ok") is True:
+                return
+            if (
+                production_fail_closed
+                and status == 503
+                and payload.get("error") == "typescript_control_plane_unavailable"
+            ):
                 return
             last = f"{status}:{payload.get('error')}"
         except Exception as exc:  # pragma: no cover - diagnostic path
@@ -364,6 +376,12 @@ def click(env: dict[str, str], ref: str) -> None:
     result = playwright(env, "click", ref)
     if result.returncode != 0:
         raise RuntimeError(f"Playwright click failed: {result.stderr[-300:]}")
+
+
+def select_option(env: dict[str, str], ref: str, value: str) -> None:
+    result = playwright(env, "select", ref, value)
+    if result.returncode != 0:
+        raise RuntimeError(f"Playwright select failed: {result.stderr[-300:]}")
 
 
 def load_human_session_state(env: dict[str, str], base_url: str, session_cookie: str) -> None:
@@ -759,6 +777,16 @@ def run_memory_ui_smoke(
     signed_out = wait_for_snapshot(env, lambda text: has_button(text, "Sign in"), "operator logout")
 
     load_human_session_state(env, base_url, owner_cookie)
+    owner_workspace_view = wait_for_snapshot(
+        env,
+        lambda text: "Select workspace" in text and "combobox" in text.lower(),
+        "Owner explicit workspace selection",
+    )
+    select_option(
+        env,
+        snapshot_ref(owner_workspace_view, "Workspace", "combobox"),
+        WORKSPACE_ID,
+    )
     owner_view = wait_for_snapshot(
         env,
         lambda text: WORKSPACE_ID in text and has_button(text, "Approve"),
@@ -872,6 +900,7 @@ def main() -> int:
         pw_env: dict[str, str] | None = None
         checks: dict[str, bool] = {}
         failures: list[str] = []
+        production_proxy_diagnostics: dict[str, Any] = {}
         try:
             if not base_dsn:
                 started = container_smoke.run([
@@ -929,11 +958,11 @@ def main() -> int:
                 and second_migration_payload.get("ready") is True
                 and schema_readiness_payload.get("operation") == "commercial_schema_readiness"
                 and schema_readiness_payload.get("ready") is True
-                and schema_contract_payload.get("contract") == "human_memory_schema_readiness_v1"
+                and schema_contract_payload.get("contract") == "human_memory_schema_readiness_v2"
                 and all((schema_contract_payload.get("checks") or {}).values())
                 and schema_version is not None
-                and schema_version["version"] == "20260718_human_session_memory_review_v1"
-                and schema_version["schema_contract"] == "agentops-human-session-memory-review-contract-v1",
+                and schema_version["version"] == "20260719_workspace_read_models_v2"
+                and schema_version["schema_contract"] == "agentops-human-session-workspace-read-models-contract-v2",
             )
 
             scrypt_contract = subprocess.run(
@@ -976,7 +1005,7 @@ def main() -> int:
                 and scrypt_payload.get("scrypt_work_count") == 4
                 and first_bootstrap.returncode == 0
                 and first_bootstrap_payload.get("ok") is True
-                and first_bootstrap_payload.get("schema_version") == "20260718_human_session_memory_review_v1"
+                and first_bootstrap_payload.get("schema_version") == "20260719_workspace_read_models_v2"
                 and second_bootstrap.returncode != 0
                 and second_bootstrap_payload.get("error") == "owner_already_initialized"
                 and owner_count == 1
@@ -1170,8 +1199,9 @@ def main() -> int:
                 checks,
                 failures,
                 "postgres_form_fallback_is_fail_closed_without_python",
-                fallback_status == 409
-                and fallback_payload.get("error") == "human_session_direct_route_required"
+                fallback_status == 503
+                and fallback_payload.get("error") == "typescript_route_owner_required"
+                and fallback_payload.get("python_proxy_performed") is False
                 and fallback_before == fallback_after,
             )
 
@@ -1225,6 +1255,12 @@ def main() -> int:
                 "SELECT session_id,session_hash,status FROM human_sessions WHERE session_hash=?",
                 (session_hash(hmac_key, cookie_a),),
             )
+            login_audits = adapter.fetchall(
+                "SELECT workspace_id FROM audit_logs "
+                "WHERE action='human_auth.login' AND actor_id=? "
+                "ORDER BY created_at DESC,audit_id DESC LIMIT 2",
+                (APPROVER_A,),
+            )
             adapter.commit()
             check(
                 checks,
@@ -1243,6 +1279,7 @@ def main() -> int:
                     and membership.get("role") == "approver"
                     for membership in payload_a.get("memberships", [])
                 )
+                and {row["workspace_id"] for row in login_audits} == {WORKSPACE_ID, OTHER_WORKSPACE_ID}
                 and passwords[APPROVER_A] not in json.dumps(payload_a),
             )
 
@@ -1710,6 +1747,7 @@ def main() -> int:
                     "Origin": loopback_origin,
                     "Cookie": f"agentops_human_session={cookie_a}",
                     "X-AgentOps-CSRF": csrf_a,
+                    "X-AgentOps-Workspace-Id": WORKSPACE_ID,
                 },
             )
             post_logout_status, post_logout_payload, _ = http_json(
@@ -1717,6 +1755,13 @@ def main() -> int:
                 f"{base_url}/api/mis/human-auth/session",
                 headers={"Cookie": f"agentops_human_session={cookie_a}"},
             )
+            logout_audits = adapter.fetchall(
+                "SELECT workspace_id FROM audit_logs "
+                "WHERE action='human_auth.logout' AND actor_id=? "
+                "ORDER BY created_at DESC,audit_id DESC LIMIT 2",
+                (APPROVER_A,),
+            )
+            adapter.commit()
             check(
                 checks,
                 failures,
@@ -1728,7 +1773,8 @@ def main() -> int:
                 and logout_payload.get("authenticated") is False
                 and "Max-Age=0" in logout_headers.get("set-cookie", "")
                 and post_logout_status == 401
-                and post_logout_payload.get("error") == "human_session_invalid",
+                and post_logout_payload.get("error") == "human_session_invalid"
+                and {row["workspace_id"] for row in logout_audits} == {WORKSPACE_ID, OTHER_WORKSPACE_ID},
             )
 
             safe_auth_responses = json.dumps([
@@ -1810,18 +1856,30 @@ def main() -> int:
                 "AGENTOPS_HUMAN_SESSION_HMAC_KEY": hmac_key,
                 "NEXT_TELEMETRY_DISABLED": "1",
             })
+            proxy_env.pop("AGENTOPS_POSTGRES_DSN", None)
+            proxy_env.pop("DATABASE_URL", None)
             proxy_proc = start_process(
                 [node_binary, str(NEXT_APP / "node_modules" / "next" / "dist" / "bin" / "next"), "dev", "-p", str(proxy_port)],
                 cwd=NEXT_APP,
                 env=proxy_env,
             )
-            wait_for_proxy_next(proxy_base_url, proxy_proc, sensitive)
+            wait_for_proxy_next(
+                proxy_base_url,
+                proxy_proc,
+                sensitive,
+                production_fail_closed=True,
+            )
             proxy_observations.clear()
             bridge_headers = {
                 "Cookie": f"theme=dark; agentops_human_session={cookie_a}",
                 "Authorization": "Bearer synthetic-machine-readback",
             }
             catchall_status, catchall_payload, catchall_headers = http_json(
+                "GET",
+                f"{proxy_base_url}/api/mis/not-migrated-production-probe",
+                headers=bridge_headers,
+            )
+            owned_dashboard_status, owned_dashboard_payload, _ = http_json(
                 "GET",
                 f"{proxy_base_url}/api/mis/dashboard/metrics",
                 headers=bridge_headers,
@@ -1859,7 +1917,11 @@ def main() -> int:
                 "POST",
                 f"{proxy_base_url}/api/mis/memories/{MEM_OPERATOR}/approve",
                 {"workspace_id": WORKSPACE_ID},
-                headers=bridge_headers,
+                headers={
+                    "Cookie": f"agentops_human_session={cookie_a}",
+                    "Idempotency-Key": "production-no-db-memory-decision",
+                    "Origin": proxy_base_url,
+                },
             )
             production_form_status, production_form_payload, _ = http_json(
                 "POST",
@@ -1903,32 +1965,87 @@ def main() -> int:
                 "dedicated": dedicated_payload,
                 "catchall_headers": catchall_headers,
             }, sort_keys=True)
+            production_proxy_conditions = {
+                "catchall_route_owner_required": (
+                    catchall_status == 503
+                    and catchall_payload.get("error") == "typescript_route_owner_required"
+                    and catchall_payload.get("python_proxy_performed") is False
+                ),
+                "owned_dashboard_unavailable": (
+                    owned_dashboard_status == 503
+                    and owned_dashboard_payload.get("error") == "typescript_control_plane_unavailable"
+                ),
+                "memory_page_renders_without_upstream": (
+                    production_memory_page_status == 200
+                    and upstream_count_before_memory_page == 0
+                    and upstream_count_after_memory_page == upstream_count_before_memory_page
+                ),
+                "memory_read_unavailable": (
+                    dedicated_status == 503
+                    and dedicated_payload.get("error") == "typescript_control_plane_unavailable"
+                ),
+                "memory_decision_unavailable": (
+                    production_decision_status == 503
+                    and production_decision_payload.get("error") == "typescript_control_plane_unavailable"
+                ),
+                "memory_form_route_owner_required": (
+                    production_form_status == 503
+                    and production_form_payload.get("error") == "typescript_route_owner_required"
+                    and production_form_payload.get("python_proxy_performed") is False
+                ),
+                "no_python_upstream_requests": len(proxy_observations) == 0,
+                "catchall_does_not_set_human_cookie": (
+                    "agentops_human_session=" not in catchall_headers.get("set-cookie", "")
+                ),
+                "bridge_evidence_omits_human_cookie": cookie_a not in bridge_evidence,
+                "human_login_unavailable": (
+                    direct_human_status == 503
+                    and direct_human_payload.get("error") == "typescript_control_plane_unavailable"
+                ),
+                "human_session_unavailable": (
+                    direct_session_status == 503
+                    and direct_session_payload.get("error") == "typescript_control_plane_unavailable"
+                ),
+                "human_routes_do_not_use_upstream": (
+                    upstream_count_before_human == 0
+                    and upstream_count_before_human == upstream_count_after_human
+                ),
+                "database_unchanged": production_db_before == production_db_after,
+            }
+            production_proxy_diagnostics = {
+                "conditions": production_proxy_conditions,
+                "statuses": {
+                    "catchall": catchall_status,
+                    "dashboard": owned_dashboard_status,
+                    "memory_page": production_memory_page_status,
+                    "memory_read": dedicated_status,
+                    "memory_decision": production_decision_status,
+                    "memory_form": production_form_status,
+                    "human_login": direct_human_status,
+                    "human_session": direct_session_status,
+                },
+                "errors": {
+                    "catchall": catchall_payload.get("error"),
+                    "dashboard": owned_dashboard_payload.get("error"),
+                    "memory_read": dedicated_payload.get("error"),
+                    "memory_decision": production_decision_payload.get("error"),
+                    "memory_form": production_form_payload.get("error"),
+                    "human_login": direct_human_payload.get("error"),
+                    "human_session": direct_session_payload.get("error"),
+                },
+                "upstream_request_counts": {
+                    "before_memory_page": upstream_count_before_memory_page,
+                    "after_memory_page": upstream_count_after_memory_page,
+                    "before_human_routes": upstream_count_before_human,
+                    "after_human_routes": upstream_count_after_human,
+                    "final": len(proxy_observations),
+                },
+            }
             check(
                 checks,
                 failures,
                 "production_proxy_memory_routes_fail_closed_without_upstream_or_db_write",
-                catchall_status == 503
-                and catchall_payload.get("error") == "typescript_route_owner_required"
-                and catchall_payload.get("python_proxy_performed") is False
-                and production_memory_page_status == 200
-                and upstream_count_before_memory_page == 0
-                and upstream_count_after_memory_page == upstream_count_before_memory_page
-                and dedicated_status == 503
-                and dedicated_payload.get("error") == "typescript_control_plane_unavailable"
-                and production_decision_status == 503
-                and production_decision_payload.get("error") == "typescript_control_plane_unavailable"
-                and production_form_status == 409
-                and production_form_payload.get("error") == "human_session_direct_route_required"
-                and len(proxy_observations) == 0
-                and "agentops_human_session=" not in catchall_headers.get("set-cookie", "")
-                and cookie_a not in bridge_evidence
-                and direct_human_status == 503
-                and direct_human_payload.get("error") == "typescript_control_plane_unavailable"
-                and direct_session_status == 503
-                and direct_session_payload.get("error") == "typescript_control_plane_unavailable"
-                and upstream_count_before_human == 0
-                and upstream_count_before_human == upstream_count_after_human
-                and production_db_before == production_db_after,
+                all(production_proxy_conditions.values()),
             )
 
             stop_process(proxy_proc)
@@ -1994,6 +2111,7 @@ def main() -> int:
                 "contract": CONTRACT_ID,
                 "checks": checks,
                 "failures": failures,
+                "production_proxy_diagnostics": production_proxy_diagnostics,
                 "dynamic_postgres_smoke": True,
                 "nextjs_control_plane_started": True,
                 "python_api_started": False,

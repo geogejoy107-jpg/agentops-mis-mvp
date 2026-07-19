@@ -16,7 +16,17 @@
     "malformed_agent_gateway_expiry_fails_closed": true,
     "missing_agent_gateway_session_expiry_fails_closed": true,
     "malformed_login_window_fails_closed": true,
-    "exact_postgres_schema_version_gate": true
+    "exact_postgres_schema_version_gate": true,
+    "workspace_core_read_routes_typescript_postgres_owned": true,
+    "structured_audit_workspace_binding": true,
+    "audit_workspace_binding_chain_constrained": true,
+    "audit_workspace_index_online_restartable": true,
+    "production_server_loader_python_blocked": true,
+    "legacy_workspace_python_mutation_routes_blocked": true,
+    "free_local_legacy_workspace_mutation_same_origin_enforced": true,
+    "legacy_review_decisions_fail_closed": true,
+    "real_openclaw_worker_human_review_bridge_verified": true,
+    "real_hermes_worker_human_review_bridge_verified": true
   },
   "open_blockers": [
     {
@@ -24,14 +34,7 @@
       "severity": "P1",
       "status": "open",
       "kind": "migration",
-      "detail": "Commercial production now rejects the generic Python catch-all, but remaining UI/read-model APIs still need explicit TypeScript/Postgres owners before the production Next application is feature-complete."
-    },
-    {
-      "id": "real_worker_candidate_human_review_bridge_missing",
-      "severity": "P1",
-      "status": "open",
-      "kind": "cross_contract_acceptance",
-      "detail": "The Human Review smoke uses synthetic manual candidates and does not yet prove a run_log candidate from a real Hermes or OpenClaw Worker is reviewed through Next/Postgres with actor_type=user and exactly one runtime event."
+      "detail": "Commercial production rejects the generic Python catch-all and all 16 legacy Workspace mutation proxies; the first Workspace task/run/approval/audit/dashboard read set now has direct TypeScript/Postgres owners. The blocked UI, detail, administration, entitlement, deployment, and integration APIs still need direct TypeScript/Postgres owners before the production Next application is feature-complete."
     },
     {
       "id": "trusted_proxy_ip_edge_rate_limit_required",
@@ -39,6 +42,13 @@
       "status": "open",
       "kind": "deployment_requirement",
       "detail": "Each production ingress must enforce trusted-proxy-aware source-IP sign-in rate limits; process admission only bounds one Next.js process and does not replace an edge limit."
+    },
+    {
+      "id": "historical_audit_workspace_backfill_missing",
+      "severity": "P2",
+      "status": "open",
+      "kind": "migration",
+      "detail": "Historical audit_logs rows created before the workspace_id v2 binding cannot be attributed safely. They remain unscoped and excluded from workspace read models until an approved migration provides an auditable, trusted workspace mapping; guessed backfill is forbidden."
     },
     {
       "id": "human_session_retention_job_missing",

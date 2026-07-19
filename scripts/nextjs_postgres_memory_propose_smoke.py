@@ -501,6 +501,17 @@ def main() -> int:
             secrets.append(runtime_dsn)
             adapter = connect_postgres_when_ready(runtime_dsn, secret=pg_secret)
             adapter.executescript(contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
+            adapter.execute("ALTER TABLE audit_logs ADD COLUMN workspace_id TEXT")
+            adapter.execute(
+                "ALTER TABLE audit_logs ADD CONSTRAINT audit_logs_workspace_metadata_match "
+                "CHECK (CASE WHEN workspace_id IS NULL THEN TRUE ELSE metadata_json IS NOT NULL "
+                "AND jsonb_typeof(metadata_json::jsonb) = 'object' "
+                "AND metadata_json::jsonb ->> 'workspace_id' = workspace_id END)"
+            )
+            adapter.execute(
+                "CREATE INDEX idx_audit_logs_workspace_created "
+                "ON audit_logs(workspace_id,created_at DESC,audit_id DESC)"
+            )
             seed(
                 adapter,
                 parent_tokens=parent_tokens,

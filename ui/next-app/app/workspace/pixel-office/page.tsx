@@ -1,13 +1,4 @@
-import { PixelOfficeParityPage } from "@/components/PixelOfficePage";
-import {
-  loadServerAgents,
-  loadServerApprovals,
-  loadServerAudit,
-  loadServerDashboardMetrics,
-  loadServerMemories,
-  loadServerRuns,
-  loadServerTasks,
-} from "@/lib/misServer";
+import { PixelOfficeLivePage } from "@/components/PixelOfficePage";
 
 export const dynamic = "force-dynamic";
 
@@ -21,35 +12,10 @@ function one(value: string | string[] | undefined) {
 }
 
 export default async function PixelOfficePage({ searchParams }: PageProps) {
-  const [metrics, agents, tasks, runs, approvals, memories, audit, params] = await Promise.all([
-    loadServerDashboardMetrics(),
-    loadServerAgents(),
-    loadServerTasks(),
-    loadServerRuns(),
-    loadServerApprovals(),
-    loadServerMemories(),
-    loadServerAudit(40),
-    searchParams || Promise.resolve({} as SearchParams),
-  ]);
+  const params = await (searchParams || Promise.resolve({} as SearchParams));
 
   return (
-    <PixelOfficeParityPage
-      metrics={metrics.data}
-      agents={agents.data}
-      tasks={tasks.data}
-      runs={runs.data}
-      approvals={approvals.data}
-      memories={memories.data}
-      audit={audit.data}
-      errors={{
-        metrics: metrics.error,
-        agents: agents.error,
-        tasks: tasks.error,
-        runs: runs.error,
-        approvals: approvals.error,
-        memories: memories.error,
-        audit: audit.error,
-      }}
+    <PixelOfficeLivePage
       feedback={{
         localBriefStatus: one(params.local_brief_status),
         localBriefError: one(params.local_brief_error),

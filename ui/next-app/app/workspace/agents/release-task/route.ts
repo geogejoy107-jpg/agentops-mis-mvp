@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { legacyWorkspacePythonProxyGuard } from "@/server/controlPlane/legacyWorkspacePythonProxyGuard";
+
 const TARGET_BASE = process.env.AGENTOPS_API_BASE || "http://127.0.0.1:8765/api";
 
 function redirectBack(request: Request, params: Record<string, string>) {
@@ -11,6 +13,9 @@ function redirectBack(request: Request, params: Record<string, string>) {
 }
 
 export async function POST(request: Request) {
+  const guardResponse = legacyWorkspacePythonProxyGuard(request);
+  if (guardResponse) return guardResponse;
+
   const form = await request.formData();
   const taskId = String(form.get("task_id") || "");
   if (!taskId) {

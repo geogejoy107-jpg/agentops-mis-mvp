@@ -373,6 +373,7 @@ export async function registerAgentGatewayWorker(request: Request) {
     }
     if (outcome !== "unchanged") {
       await appendAudit(client, {
+        workspaceId: identity.workspaceId,
         actorType: "agent",
         actorId: identity.agentId,
         action: outcome === "created" ? "agent.create" : "agent.update",
@@ -430,6 +431,7 @@ export async function recordAgentGatewayHeartbeat(request: Request) {
       outputSummary: summary,
     });
     await appendAudit(client, {
+      workspaceId: identity.workspaceId,
       actorType: "agent",
       actorId: identity.agentId,
       action: "agent_gateway.heartbeat",
@@ -478,6 +480,7 @@ export async function emitAgentGatewayAudit(request: Request) {
       omitted_after_fields: safeAfter.omitted,
     };
     await appendAudit(client, {
+      workspaceId: identity.workspaceId,
       actorType: "agent",
       actorId: identity.agentId,
       action,

@@ -25,6 +25,12 @@ The target state is:
   cross-workspace identities, idempotent concurrent run start, and single-winner
   terminal heartbeat transitions that cannot revive completed runs. Remaining
   routes retire from Python only after equivalent dynamic parity evidence.
+- `GET /api/mis/tasks`, `/runs`, `/approvals`, `/audit`, and
+  `/dashboard/metrics` now have direct TypeScript/Postgres read owners behind
+  Human Session membership. A single active membership may bind an omitted
+  workspace; multi-workspace sessions must select one explicitly. Audit rows
+  carry a structured, indexed `workspace_id`, and list projections omit raw
+  metadata, hashes, prompts, responses, and error text.
 - Commercial release status is also exposed through read-only
   `/api/commercial/release-status` and rendered on Next `/workspace/commercial`
   so release promotion, exact-head CI, and current-evidence blockers are visible
@@ -55,6 +61,14 @@ not release complete:
   legacy Python Agent Gateway run-start does not enforce the new non-mock
   verified-plan gate; operators must not treat proxy mode as security-equivalent
   evidence for the commercial default path.
+- The first browser Workspace read set is also TypeScript/Postgres-owned:
+  tasks, runs, approvals, audit, and dashboard metrics all derive their SQL
+  workspace from Human Session membership. Production server loaders are
+  prohibited from bypassing these routes to call `AGENTOPS_API_BASE` directly.
+  The 16 remaining legacy `/workspace/**` mutation proxies are also guarded
+  before body parsing: commercial production returns
+  `typescript_route_owner_required` with zero Python upstream requests until
+  each route receives a direct TypeScript owner.
 - Release-grade promotion has a narrower trust boundary than ordinary local
   smoke evidence. It binds the exact GitHub repository, workflow ID
   `301537454`, workflow path `.github/workflows/commercial-migration-ci.yml`,

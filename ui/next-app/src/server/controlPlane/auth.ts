@@ -113,6 +113,7 @@ export async function authenticateAgentGateway(
     const idColumn = row.credential_type === "token" ? "token_id" : "session_id";
     await client.query(`UPDATE ${table} SET status='expired' WHERE ${idColumn}=$1 AND status='active'`, [row.credential_id]);
     await appendAudit(client, {
+      workspaceId: row.workspace_id,
       actorType: "system",
       actorId: "agent-gateway-auth",
       action: `agent_gateway.${row.credential_type}_expired`,
@@ -136,6 +137,7 @@ export async function authenticateAgentGateway(
         [new Date().toISOString(), row.credential_id],
       );
       await appendAudit(client, {
+        workspaceId: row.workspace_id,
         actorType: "system",
         actorId: "agent-gateway-auth",
         action: "agent_gateway.session_parent_missing",
@@ -153,6 +155,7 @@ export async function authenticateAgentGateway(
         [new Date().toISOString(), row.credential_id],
       );
       await appendAudit(client, {
+        workspaceId: row.workspace_id,
         actorType: "system",
         actorId: "agent-gateway-auth",
         action: "agent_gateway.session_parent_revoked",
@@ -183,6 +186,7 @@ export async function authenticateAgentGateway(
         [row.credential_id],
       );
       await appendAudit(client, {
+        workspaceId: row.workspace_id,
         actorType: "system",
         actorId: "agent-gateway-auth",
         action: "agent_gateway.session_parent_expired",
@@ -200,6 +204,7 @@ export async function authenticateAgentGateway(
         [new Date().toISOString(), row.credential_id],
       );
       await appendAudit(client, {
+        workspaceId: row.workspace_id,
         actorType: "system",
         actorId: "agent-gateway-auth",
         action: "agent_gateway.session_parent_binding_mismatch",

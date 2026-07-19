@@ -1695,6 +1695,24 @@ export type WorkspaceSnapshot = {
   approvals: ApprovalSummary[];
 };
 
+const ACTIVE_WORKSPACE_STORAGE_KEY = "agentops_active_workspace";
+
+export function getActiveWorkspaceId() {
+  if (typeof window === "undefined") return "";
+  const workspaceId = String(window.sessionStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY) || "").trim();
+  return /^[A-Za-z0-9._:-]{1,128}$/.test(workspaceId) ? workspaceId : "";
+}
+
+export function setActiveWorkspaceId(workspaceId: string) {
+  if (typeof window === "undefined") return;
+  const normalized = String(workspaceId || "").trim();
+  if (/^[A-Za-z0-9._:-]{1,128}$/.test(normalized)) {
+    window.sessionStorage.setItem(ACTIVE_WORKSPACE_STORAGE_KEY, normalized);
+  } else {
+    window.sessionStorage.removeItem(ACTIVE_WORKSPACE_STORAGE_KEY);
+  }
+}
+
 async function misJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/mis${path}`, {
     credentials: "include",
@@ -1789,20 +1807,31 @@ export function loginHumanSession(username: string, password: string): Promise<H
   });
 }
 
-export function logoutHumanSession(csrfToken: string): Promise<HumanSessionPayload> {
+export function logoutHumanSession(csrfToken: string, workspaceId?: string): Promise<HumanSessionPayload> {
   return humanJson<HumanSessionPayload>("/human-auth/logout", {
     method: "POST",
-    headers: { "X-AgentOps-CSRF": csrfToken },
+    headers: {
+      "X-AgentOps-CSRF": csrfToken,
+      ...(workspaceId ? { "X-AgentOps-Workspace-Id": workspaceId } : {}),
+    },
     body: "{}",
   });
 }
 
-export async function loadWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
+function workspaceReadPath(path: string, workspaceId?: string, params?: Record<string, string>) {
+  const query = new URLSearchParams(params);
+  const selectedWorkspace = workspaceId || getActiveWorkspaceId();
+  if (selectedWorkspace) query.set("workspace_id", selectedWorkspace);
+  const encoded = query.toString();
+  return `${path}${encoded ? `?${encoded}` : ""}`;
+}
+
+export async function loadWorkspaceSnapshot(workspaceId?: string): Promise<WorkspaceSnapshot> {
   const [metrics, tasks, runs, approvals] = await Promise.all([
-    misJson<DashboardMetrics>("/dashboard/metrics"),
-    loadTasks(),
-    loadRuns(),
-    loadApprovals(),
+    misJson<DashboardMetrics>(workspaceReadPath("/dashboard/metrics", workspaceId)),
+    loadTasks(workspaceId),
+    loadRuns(workspaceId),
+    loadApprovals(workspaceId),
   ]);
   return {
     metrics,
@@ -1812,12 +1841,12 @@ export async function loadWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
   };
 }
 
-export async function loadTasks(): Promise<TaskSummary[]> {
-  return misJson<TaskSummary[]>("/tasks");
+export async function loadTasks(workspaceId?: string): Promise<TaskSummary[]> {
+  return misJson<TaskSummary[]>(workspaceReadPath("/tasks", workspaceId));
 }
 
-export async function loadRuns(): Promise<RunSummary[]> {
-  return misJson<RunSummary[]>("/runs");
+export async function loadRuns(workspaceId?: string): Promise<RunSummary[]> {
+  return misJson<RunSummary[]>(workspaceReadPath("/runs", workspaceId));
 }
 
 export async function loadToolCalls(): Promise<ToolCallSummary[]> {
@@ -1871,8 +1900,8 @@ export async function runNotionConfirmedExport(): Promise<NotionExportResult> {
   });
 }
 
-export async function loadApprovals(): Promise<ApprovalSummary[]> {
-  return misJson<ApprovalSummary[]>("/approvals");
+export async function loadApprovals(workspaceId?: string): Promise<ApprovalSummary[]> {
+  return misJson<ApprovalSummary[]>(workspaceReadPath("/approvals", workspaceId));
 }
 
 export async function decideApproval(id: string, decision: "approve" | "reject"): Promise<ApprovalSummary> {
@@ -1903,8 +1932,8 @@ export async function decideMemory(
   });
 }
 
-export async function loadAudit(): Promise<AuditSummary[]> {
-  return misJson<AuditSummary[]>("/audit?limit=120");
+export async function loadAudit(workspaceId?: string): Promise<AuditSummary[]> {
+  return misJson<AuditSummary[]>(workspaceReadPath("/audit", workspaceId, { limit: "120" }));
 }
 
 export async function loadAgents(): Promise<AgentSummary[]> {

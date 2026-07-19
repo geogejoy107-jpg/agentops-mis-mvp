@@ -1,9 +1,13 @@
 import type { PoolClient } from "pg";
 
 export const HUMAN_MEMORY_SCHEMA_COMPONENT = "human_session_memory_review";
-export const HUMAN_MEMORY_SCHEMA_VERSION = "20260718_human_session_memory_review_v1";
-export const HUMAN_MEMORY_SCHEMA_CONTRACT = "agentops-human-session-memory-review-contract-v1";
-export const HUMAN_MEMORY_SCHEMA_CHECKSUM = "6203fe8813acbdf048da59e17193df74fd6a52c5b7c998e35b0355b9e90aba69";
+export const HUMAN_MEMORY_SCHEMA_V1_VERSION = "20260718_human_session_memory_review_v1";
+export const HUMAN_MEMORY_SCHEMA_V1_CONTRACT = "agentops-human-session-memory-review-contract-v1";
+export const HUMAN_MEMORY_SCHEMA_V1_CHECKSUM = "6203fe8813acbdf048da59e17193df74fd6a52c5b7c998e35b0355b9e90aba69";
+export const HUMAN_MEMORY_SCHEMA_VERSION = "20260719_workspace_read_models_v2";
+export const HUMAN_MEMORY_SCHEMA_CONTRACT = "agentops-human-session-workspace-read-models-contract-v2";
+export const HUMAN_MEMORY_SCHEMA_CHECKSUM = "d3da5e4b3597c38a0e9261636b363a36bf9b58e4354f3363896aded0bec2dd58";
+export const HUMAN_MEMORY_SCHEMA_ONLINE_INDEX_CHECKSUM = "6f37e786f1394e6e3e229374aca90fe6b7bb7d2b576f7e33cb8e35164c77fc95";
 
 type RequiredColumn = {
   dataType: "text" | "integer";
@@ -225,6 +229,12 @@ type RequiredIndex = {
 
 const REQUIRED_INDEXES: RequiredIndex[] = [
   {
+    tableName: "audit_logs",
+    indexName: "idx_audit_logs_workspace_created",
+    unique: false,
+    keys: ["workspace_id", "created_at", "audit_id"],
+  },
+  {
     tableName: "workspace_memberships",
     indexName: "idx_workspace_memberships_user",
     unique: false,
@@ -339,6 +349,60 @@ async function assertColumnsReady(client: PoolClient) {
   }
 }
 
+async function assertAuditWorkspaceColumnReady(client: PoolClient) {
+  let rows: ColumnRow[];
+  try {
+    const result = await client.query<ColumnRow>(
+      `SELECT table_name,column_name,data_type,is_nullable
+      FROM information_schema.columns
+      WHERE table_schema=current_schema()
+        AND table_name='audit_logs' AND column_name='workspace_id'`,
+    );
+    rows = result.rows;
+  } catch {
+    throw new SchemaReadinessError("human_memory_schema_columns_mismatch");
+  }
+  if (rows.length !== 1
+    || rows[0].data_type !== "text"
+    || rows[0].is_nullable !== "YES") {
+    throw new SchemaReadinessError("human_memory_schema_columns_mismatch");
+  }
+
+  let constraints: Array<{ constraint_type: string; validated: boolean; definition: string }>;
+  try {
+    const result = await client.query<{
+      constraint_type: string;
+      validated: boolean;
+      definition: string;
+    }>(
+      `SELECT constraint_record.contype AS constraint_type,
+        constraint_record.convalidated AS validated,
+        pg_get_constraintdef(constraint_record.oid,true) AS definition
+      FROM pg_constraint constraint_record
+      JOIN pg_class relation ON relation.oid=constraint_record.conrelid
+      JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+      WHERE namespace.nspname=current_schema()
+        AND relation.relname='audit_logs'
+        AND constraint_record.conname='audit_logs_workspace_metadata_match'`,
+    );
+    constraints = result.rows;
+  } catch {
+    throw new SchemaReadinessError("human_memory_schema_constraints_mismatch");
+  }
+  const constraint = constraints[0];
+  const definition = normalizedDefinition(constraint?.definition || "");
+  if (constraints.length !== 1
+    || constraint.constraint_type !== "c"
+    || !constraint.validated
+    || !definition.includes("workspace_id IS NULL")
+    || !definition.includes("metadata_json")
+    || !definition.includes("::jsonb")
+    || !definition.includes("->> 'workspace_id'::text")
+    || !definition.includes("= workspace_id")) {
+    throw new SchemaReadinessError("human_memory_schema_constraints_mismatch");
+  }
+}
+
 async function assertConstraintsReady(client: PoolClient) {
   let rows: ConstraintRow[];
   try {
@@ -424,9 +488,14 @@ async function assertIndexesReady(client: PoolClient) {
   }
 }
 
-export async function assertHumanMemorySchemaStructureReady(client: PoolClient) {
+export async function assertHumanMemorySchemaCoreReady(client: PoolClient) {
   await assertColumnsReady(client);
+  await assertAuditWorkspaceColumnReady(client);
   await assertConstraintsReady(client);
+}
+
+export async function assertHumanMemorySchemaStructureReady(client: PoolClient) {
+  await assertHumanMemorySchemaCoreReady(client);
   await assertIndexesReady(client);
 }
 

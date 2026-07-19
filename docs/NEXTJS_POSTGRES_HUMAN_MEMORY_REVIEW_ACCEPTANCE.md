@@ -28,11 +28,24 @@ an HMAC-derived CSRF token bound to the same session. Agent Gateway tokens and
 workspace administration keys are rejected rather than translated into a Human
 identity.
 
+Single-membership Sessions may infer their workspace. Multi-membership Sessions
+must select one explicitly before tenant reads or review decisions. Login and
+logout write one audit event per active membership using the same opaque Session
+reference, so every affected workspace receives the auth event and a caller
+cannot choose its sole audit attribution. Logout remains available after all
+memberships are disabled and then writes only an unscoped global audit event.
+
 The Free Local Next-to-Python rollback bridge treats this cookie name as
 reserved. Both the catch-all proxy and dedicated control-plane proxy remove
 `agentops_human_session` from outbound `Cookie` headers while preserving machine
 `Authorization`, and suppress any upstream `Set-Cookie` that tries to set the
 reserved name. Other compatibility cookies may pass through.
+
+The 16 legacy Workspace mutation bridges exist only for explicit Free Local
+rollback. Before parsing a form or contacting Python, each bridge requires an
+exact Origin/Host match and rejects cross-site Fetch Metadata. The legacy
+approval and memory-review forms also accept only the exact `approve` or
+`reject` decision; unknown values fail before any upstream request.
 
 Workspace authorization comes only from the locked
 `workspace_memberships(workspace_id,user_id)` row. `users.role` is not an
@@ -62,8 +75,23 @@ closed if any Owner membership already exists, and atomically creates the user,
 active Owner membership, fixed-parameter scrypt credential, and a truthful
 `actor_type=system` bootstrap audit. No session is created and no password,
 salt, hash, DSN, or setup code is returned. Bootstrap validates the exact
-`20260718_human_session_memory_review_v1` schema and catalog before it reads or
+`20260719_workspace_read_models_v2` schema and catalog before it reads or
 derives the Owner password.
+
+The original `20260718_human_session_memory_review_v1` migration remains
+immutable. The append-only `20260719_workspace_read_models_v2` migration adds
+the nullable `audit_logs.workspace_id` binding plus a validated constraint that
+requires every scoped row to match the workspace copied into hashed metadata.
+The core DDL has bounded lock and statement timeouts. Its supporting index is
+created after the receipt transaction with `CREATE INDEX CONCURRENTLY`; a
+failed online stage can be retried from the exact current receipt. The migration
+runner accepts only a missing receipt, the exact v1 receipt, or the exact
+current receipt; any other receipt fails before v2 DDL is executed.
+TypeScript audit writers must supply the workspace explicitly; the same value
+is included in hashed metadata, and tenant reads require both copies to match.
+Legacy rows without a trustworthy binding stay unscoped and are excluded from
+tenant reads. They may enter a workspace read model only after an approved
+migration supplies an auditable, trusted workspace mapping; v2 never guesses one.
 
 This is intentionally global first-deployment bootstrap. Subsequent workspace,
 membership, invitation, credential rotation, recovery, and user lifecycle
@@ -174,3 +202,11 @@ CI runs `nextjs_postgres_worker_task_pull_claim_v1` against Postgres to guard
 scope binding, tenant isolation, bounded claim bodies, same-agent replay, and
 single-winner claim concurrency. CI does not claim real Runtime execution;
 the live cross-contract command remains required release evidence.
+
+The migration branch has also passed this cross-contract independently with
+the real OpenClaw and Hermes adapters: both provider calls were non-dry-run,
+each resulting `run_log` candidate was approved exactly once through Human
+Session, cross-workspace access returned 403, and the Python API was never
+started. This closes the bridge-implementation blocker; commercial promotion
+still requires fresh exact-HEAD OpenClaw and Hermes receipts after the final
+commit plus the remaining release gates.

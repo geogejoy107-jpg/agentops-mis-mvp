@@ -341,6 +341,7 @@ export async function proposeAgentGatewayMemory(request: Request) {
       outputSummary: memory.canonical_text,
     });
     await appendAudit(client, {
+      workspaceId: identity.workspaceId,
       actorType: "agent",
       actorId: identity.agentId,
       action: "agent_gateway.memory_candidate",

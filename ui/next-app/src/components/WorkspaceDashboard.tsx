@@ -1,10 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, Bot, Brain, CheckCircle2, Database, DollarSign, Download, RefreshCw, ServerCog, ShieldCheck } from "lucide-react";
-import { loadWorkspaceSnapshot, type WorkspaceSnapshot } from "@/lib/mis";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Activity, AlertTriangle, Bot, Brain, CheckCircle2, Database, DollarSign, Download, LogIn, LogOut, RefreshCw, ServerCog, ShieldCheck, User } from "lucide-react";
+import {
+  isHumanSessionUnauthorized,
+  loadHumanSession,
+  loadWorkspaceSnapshot,
+  loginHumanSession,
+  logoutHumanSession,
+  MisApiError,
+  setActiveWorkspaceId,
+  type HumanSessionPayload,
+  type WorkspaceSnapshot,
+} from "@/lib/mis";
 import { AppFrame } from "./AppFrame";
+
+type AuthMode = "loading" | "required" | "authenticated" | "proxy";
 
 function formatNumber(value: unknown) {
   const num = Number(value || 0);
@@ -36,13 +48,40 @@ export function WorkspaceDashboard() {
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authMode, setAuthMode] = useState<AuthMode>("loading");
+  const [humanSession, setHumanSession] = useState<HumanSessionPayload | null>(null);
+  const [workspaceId, setWorkspaceId] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
 
-  const refresh = async () => {
+  const requireLogin = () => {
+    setActiveWorkspaceId("");
+    setHumanSession(null);
+    setWorkspaceId("");
+    setSnapshot(null);
+    setAuthMode("required");
+  };
+
+  const refresh = async (
+    selectedWorkspace = workspaceId,
+    mode = authMode,
+  ) => {
+    if (mode === "authenticated" && !selectedWorkspace) {
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      setSnapshot(await loadWorkspaceSnapshot());
+      const directWorkspace = mode === "authenticated" ? selectedWorkspace : undefined;
+      setSnapshot(await loadWorkspaceSnapshot(directWorkspace));
     } catch (err) {
+      if (isHumanSessionUnauthorized(err)) {
+        requireLogin();
+        setError(null);
+        return;
+      }
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
@@ -50,8 +89,91 @@ export function WorkspaceDashboard() {
   };
 
   useEffect(() => {
-    void refresh();
+    let active = true;
+    const initialize = async () => {
+      try {
+        const session = await loadHumanSession();
+        if (!active) return;
+        const memberships = session.memberships || [];
+        const selectedWorkspace = memberships.length === 1 ? memberships[0].workspace_id : "";
+        setHumanSession(session);
+        setWorkspaceId(selectedWorkspace);
+        setActiveWorkspaceId(selectedWorkspace);
+        setAuthMode("authenticated");
+        if (selectedWorkspace) {
+          await refresh(selectedWorkspace, "authenticated");
+        } else {
+          setSnapshot(null);
+          setError(null);
+          setLoading(false);
+        }
+      } catch (err) {
+        if (!active) return;
+        if (isHumanSessionUnauthorized(err)) {
+          requireLogin();
+          setError(null);
+          setLoading(false);
+          return;
+        }
+        if (err instanceof MisApiError && err.code === "human_session_postgres_required") {
+          setAuthMode("proxy");
+          await refresh("", "proxy");
+          return;
+        }
+        setError(err instanceof Error ? err.message : String(err));
+        setLoading(false);
+      }
+    };
+    void initialize();
+    return () => {
+      active = false;
+    };
   }, []);
+
+  const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      const session = await loginHumanSession(username, password);
+      const memberships = session.memberships || [];
+      const selectedWorkspace = memberships.length === 1 ? memberships[0].workspace_id : "";
+      setPassword("");
+      setHumanSession(session);
+      setWorkspaceId(selectedWorkspace);
+      setActiveWorkspaceId(selectedWorkspace);
+      setAuthMode("authenticated");
+      if (selectedWorkspace) {
+        await refresh(selectedWorkspace, "authenticated");
+      } else {
+        setSnapshot(null);
+        setLoading(false);
+      }
+    } catch (err) {
+      setPassword("");
+      setError(err instanceof Error ? err.message : String(err));
+      setLoading(false);
+    }
+  };
+
+  const submitLogout = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await logoutHumanSession(humanSession?.csrf_token || "", workspaceId);
+      requireLogin();
+      setError(null);
+    } catch (err) {
+      if (isHumanSessionUnauthorized(err)) {
+        requireLogin();
+        setError(null);
+        return;
+      }
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const activeTasks = useMemo(
     () => (snapshot?.tasks || []).filter((task) => task.status !== "completed").slice(0, 5),
@@ -79,10 +201,62 @@ export function WorkspaceDashboard() {
             <Link className="miniButton" href="/workspace/deployment">Deployment</Link>
             <Link className="miniButton" href="/workspace/workers">Workers</Link>
           </div>
-          <button className="iconButton" onClick={refresh} disabled={loading} aria-label="Refresh workspace snapshot">
+          <button
+            className="iconButton"
+            onClick={() => void refresh(workspaceId, authMode)}
+            disabled={loading || authMode === "required" || (authMode === "authenticated" && !workspaceId)}
+            aria-label="Refresh workspace snapshot"
+          >
             <RefreshCw size={17} className={loading ? "spin" : ""} />
           </button>
         </header>
+
+        {authMode === "required" ? (
+          <form className="humanSessionBar" onSubmit={submitLogin}>
+            <label className="field">
+              <span>Username</span>
+              <input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required />
+            </label>
+            <label className="field">
+              <span>Password</span>
+              <input autoComplete="current-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+            </label>
+            <button className="miniButton good" disabled={loading} type="submit"><LogIn size={13} />Sign in</button>
+          </form>
+        ) : null}
+
+        {authMode === "authenticated" && humanSession ? (
+          <div className="humanSessionBar">
+            <div className="sessionIdentity">
+              <User size={15} />
+              <span>{humanSession.user?.name || humanSession.user?.user_id}</span>
+            </div>
+            <label className="field workspaceSelect">
+              <span>Workspace</span>
+              <select
+                value={workspaceId}
+                disabled={loading}
+                onChange={(event) => {
+                  const selected = event.target.value;
+                  setWorkspaceId(selected);
+                  setActiveWorkspaceId(selected);
+                  setSnapshot(null);
+                  if (selected) void refresh(selected, "authenticated");
+                }}
+              >
+                {(humanSession.memberships || []).length !== 1 ? <option value="">Select workspace</option> : null}
+                {(humanSession.memberships || []).map((membership) => (
+                  <option key={membership.workspace_id} value={membership.workspace_id}>
+                    {membership.workspace_id} ({membership.role})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button className="iconButton" onClick={() => void submitLogout()} disabled={loading} type="button" aria-label="Sign out" title="Sign out">
+              <LogOut size={16} />
+            </button>
+          </div>
+        ) : null}
 
         {error ? (
           <div className="banner error">

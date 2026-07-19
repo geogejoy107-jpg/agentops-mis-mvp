@@ -118,6 +118,7 @@ async function main() {
       );
       CREATE TABLE audit_logs(
         audit_id TEXT PRIMARY KEY,
+        workspace_id TEXT,
         actor_type TEXT NOT NULL,
         actor_id TEXT,
         action TEXT NOT NULL,

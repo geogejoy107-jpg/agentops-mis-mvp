@@ -420,6 +420,22 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   start; a complete bound manifest verified while a manifest declaring missing
   evidence was persisted as blocked. Plan and manifest after-hashes and the full
   cross-language audit chain were recomputed from Postgres rows.
+- `nextjs_postgres_workspace_read_models_v1` passes against a real Postgres
+  database in a random isolated schema. It proves Human Session membership for
+  task, run, approval, audit, and dashboard reads; strict query/header binding;
+  single-membership inference; explicit multi-workspace selection; bounded
+  limits and run filters; two-tenant isolation; strict approval task/run
+  ownership; constraint-backed, chain-bound audit workspace filtering;
+  fail-closed reads after constraint loss; omission of raw audit and run text;
+  workspace-only aggregates; and inclusion of workspace-bound
+  Gateway agents. No Python API process participates in these reads.
+- `human_memory_schema_v1_to_v2_upgrade_v1` proves an exact deployed v1
+  receipt upgrades through a bounded transactional core, validates the audit
+  workspace/metadata constraint, creates the audit index concurrently outside
+  that transaction, resumes the online stage after a partial failure, and
+  passes exact readiness. A tampered
+  v1 receipt is rejected before `audit_logs.workspace_id` is added, so schema
+  drift cannot be blessed by rerunning the migrator.
 - `deployment_readiness_postgres_runtime_write_fixture_v1` passed against a
   temporary Postgres-backed MIS API in `experimental_write_http` mode. The
   backend fixture proves `GET /api/deployment/readiness` and

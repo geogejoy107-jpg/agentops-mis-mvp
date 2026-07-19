@@ -40,6 +40,7 @@ import type {
   RunSummary,
   WorkflowJobListPayload,
 } from "./mis";
+import { legacyPythonProxyAllowed } from "@/server/controlPlane/config";
 
 const TARGET_BASE = process.env.AGENTOPS_API_BASE || "http://127.0.0.1:8765/api";
 
@@ -49,6 +50,11 @@ export type ServerLoadResult<T> = {
 };
 
 async function serverMisJson<T>(path: string): Promise<T> {
+  if (!legacyPythonProxyAllowed()) {
+    throw new Error(
+      "typescript_route_owner_required: production server loaders cannot call the legacy Python API directly",
+    );
+  }
   const response = await fetch(`${TARGET_BASE.replace(/\/$/, "")}${path}`, {
     cache: "no-store",
   });

@@ -267,13 +267,25 @@ def main() -> int:
             and human_memory_blockers.get("release_claim_allowed") is False
             and human_memory_blockers.get("closed_loop_claim_allowed") is False
             and {
-                "real_worker_candidate_human_review_bridge_missing",
                 "trusted_proxy_ip_edge_rate_limit_required",
+                "historical_audit_workspace_backfill_missing",
                 "human_session_retention_job_missing",
                 "human_memory_review_request_retention_policy_missing",
                 "owner_bootstrap_compiled_entry_missing",
-            }.issubset(human_memory_blocker_ids),
-            "open Human Memory Review ingress, retention, and bootstrap packaging gaps remain machine-readable and block release claims",
+            }.issubset(human_memory_blocker_ids)
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "real_openclaw_worker_human_review_bridge_verified"
+            ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "real_hermes_worker_human_review_bridge_verified"
+            ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "free_local_legacy_workspace_mutation_same_origin_enforced"
+            ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "legacy_review_decisions_fail_closed"
+            ) is True,
+            "the live OpenClaw and Hermes bridges are recorded while remaining ingress, historical audit mapping, retention, and bootstrap packaging gaps block release claims",
         ),
         check(
             "current_product_stack_present",
@@ -433,7 +445,7 @@ def main() -> int:
             and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "isCustomerWorkerWorkflowPath")
             and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "customerWorkerWorkflowGuard")
             and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "prepared_action_required")
-            and file_contains("ui/next-app/app/workspace/pixel-office/page.tsx", "PixelOfficeParityPage")
+            and file_contains("ui/next-app/app/workspace/pixel-office/page.tsx", "PixelOfficeLivePage")
             and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "Pixel Operating Map")
             and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "Local brief controls")
             and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "/workspace/pixel-office/local-brief")
@@ -1493,6 +1505,7 @@ def main() -> int:
             and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "python_proxy_performed: false")
             and file_contains("scripts/nextjs_production_python_proxy_fail_closed_smoke.py", "nextjs_production_python_proxy_fail_closed_v1")
             and file_contains("scripts/nextjs_production_python_proxy_fail_closed_smoke.py", "upstream_request_count")
+            and file_contains("scripts/nextjs_production_python_proxy_fail_closed_smoke.py", "typescript_owned_workspace_routes_python_blocked")
             and file_contains("ui/next-app/package.json", '"test:control-plane-mode-contract"')
             and file_contains("ui/next-app/scripts/control-plane-mode-contract.ts", "control_plane_production_fail_closed_v1")
             and file_contains("ui/next-app/scripts/control-plane-mode-contract.ts", "production_python_catch_all_blocked")
@@ -1576,6 +1589,38 @@ def main() -> int:
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "nextjs_postgres_control_plane_tasks_v1")
             and (ROOT / "scripts" / "nextjs_postgres_control_plane_tasks_smoke.py").exists(),
             "The TypeScript-owned Agent Gateway task/run lifecycle, Agent Plan, verified plan-evidence manifest, and immutable execution-evidence routes default to Postgres in production, retain local proxy rollback, use workspace-scoped evidence queries plus consistent task/run, evidence-ID, and parent-token/session locking, force risky tools to approval, require verified plans for non-mock run start, and have a no-Python dynamic CI receipt",
+        ),
+        check(
+            "nextjs_postgres_workspace_read_models_surface_exists",
+            file_contains("ui/next-app/src/server/controlPlane/workspaceReadModels.ts", "authenticateHumanMember")
+            and file_contains("ui/next-app/src/server/controlPlane/workspaceReadModels.ts", "audit.workspace_id=$1")
+            and file_contains("ui/next-app/src/server/controlPlane/workspaceReadModels.ts", "metadata_json::jsonb ->> 'workspace_id'=$1")
+            and file_contains("ui/next-app/src/server/controlPlane/workspaceReadModels.ts", "JOIN tasks task")
+            and file_contains("ui/next-app/src/server/controlPlane/workspaceReadModels.ts", "JOIN runs run")
+            and file_contains("ui/next-app/src/server/controlPlane/humanSession.ts", "membershipResult.rows.length !== 1")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "typescript_route_owner_required")
+            and file_contains("ui/next-app/src/components/WorkspaceDashboard.tsx", "Select workspace")
+            and file_contains("ui/next-app/src/components/WorkspaceDashboard.tsx", "loadHumanSession")
+            and file_contains("ui/next-app/src/components/WorkspaceDashboard.tsx", "setActiveWorkspaceId")
+            and file_contains("ui/next-app/src/lib/mis.ts", "agentops_active_workspace")
+            and file_contains("ui/next-app/app/api/mis/tasks/route.ts", "listWorkspaceTasks")
+            and file_contains("ui/next-app/app/api/mis/runs/route.ts", "listWorkspaceRuns")
+            and file_contains("ui/next-app/app/api/mis/approvals/route.ts", "listWorkspaceApprovals")
+            and file_contains("ui/next-app/app/api/mis/audit/route.ts", "listWorkspaceAudit")
+            and file_contains("ui/next-app/app/api/mis/dashboard/metrics/route.ts", "workspaceDashboardMetrics")
+            and file_contains("migrations/postgres/20260719_workspace_read_models_v2.sql", "audit_logs_workspace_metadata_match")
+            and file_contains("migrations/postgres/20260719_workspace_read_models_v2.sql", "SET LOCAL lock_timeout")
+            and file_contains("migrations/postgres/20260719_workspace_read_models_v2_online_indexes.sql", "CREATE INDEX CONCURRENTLY")
+            and file_contains("ui/next-app/src/server/controlPlane/ledger.ts", "workspaceId: string | null")
+            and file_contains("ui/next-app/scripts/workspace-read-model-contract.ts", "nextjs_postgres_workspace_read_models_v1")
+            and file_contains("ui/next-app/scripts/workspace-read-model-contract.ts", "authenticated_http_routes_return_private_200")
+            and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "nextjs_postgres_workspace_read_models_v1")
+            and file_contains("ui/next-app/package.json", '"test:workspace-read-model-contract"')
+            and file_contains("ui/next-app/package.json", '"test:human-schema-upgrade-contract"')
+            and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "human_memory_schema_v1_to_v2_upgrade_v1")
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "nextjs_postgres_workspace_read_models")
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "human_schema_v1_to_v2_upgrade"),
+            "Human Session-protected Workspace task/run/approval/audit/dashboard reads are direct TypeScript/Postgres owners with structured audit tenancy, single-membership inference, production Python blocking, and dynamic Postgres isolation evidence",
         ),
         check(
             "postgres_cli_write_parity_surface_exists",
@@ -1898,6 +1943,9 @@ def main() -> int:
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py --configured-retention-fixture",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
                 "python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py",
+                "npm --prefix ui/next-app run test:workspace-read-model-contract",
+                "npm --prefix ui/next-app run test:human-schema-upgrade-contract",
+                "python3 scripts/nextjs_postgres_human_memory_review_smoke.py --postgres-dsn postgresql://...",
                 "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
                 "backup/restore and signed export checks",
             ],

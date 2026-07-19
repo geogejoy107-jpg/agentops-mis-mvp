@@ -234,6 +234,7 @@ export async function pullAgentGatewayTasks(request: Request) {
       }),
     });
     await appendAudit(client, {
+      workspaceId: identity.workspaceId,
       actorType: "agent",
       actorId: identity.agentId,
       action: "agent_gateway.task_pull",
@@ -346,6 +347,7 @@ export async function claimAgentGatewayTask(request: Request, requestedTaskId: s
       }),
     });
     await appendAudit(client, {
+      workspaceId: identity.workspaceId,
       actorType: "agent",
       actorId: identity.agentId,
       action: "agent_gateway.task_claim",
@@ -464,6 +466,7 @@ export async function createAgentGatewayTask(request: Request) {
     );
     const outcome = existing ? "updated" : "created";
     await appendAudit(client, {
+      workspaceId: identity.workspaceId,
       actorType: "system",
       actorId: "task-api",
       action: existing ? "task.update" : "task.create",
@@ -482,6 +485,7 @@ export async function createAgentGatewayTask(request: Request) {
       rawPayloadHash: stableHash({ task_id: id, title: row.title, owner_agent_id: row.owner_agent_id }),
     });
     await appendAudit(client, {
+      workspaceId: identity.workspaceId,
       actorType: "user",
       actorId: row.requester_id,
       action: existing ? "task.api_update" : "task.api_create",

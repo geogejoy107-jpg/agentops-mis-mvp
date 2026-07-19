@@ -372,6 +372,7 @@ export async function startAgentGatewayRun(request: Request) {
       ],
     );
     await appendAudit(client, {
+      workspaceId: identity.workspaceId,
       actorType: "system",
       actorId: "agent-gateway",
       action: "run.create",
@@ -393,6 +394,7 @@ export async function startAgentGatewayRun(request: Request) {
       const updatedTask = taskUpdate.rows[0];
       if (!updatedTask) throw new Error("typescript_control_plane_task_transition_missing");
       await appendAudit(client, {
+        workspaceId: identity.workspaceId,
         actorType: "agent",
         actorId: identity.agentId,
         action: "agent_gateway.task_run_start",
@@ -547,6 +549,7 @@ export async function heartbeatAgentGatewayRun(request: Request, requestedRunId:
     const after = updateResult.rows[0];
     if (!after) throw new Error("typescript_control_plane_run_heartbeat_missing");
     await appendAudit(client, {
+      workspaceId: identity.workspaceId,
       actorType: "agent",
       actorId: identity.agentId,
       action: "agent_gateway.run_heartbeat",
@@ -567,6 +570,7 @@ export async function heartbeatAgentGatewayRun(request: Request, requestedRunId:
         const updatedTask = taskUpdate.rows[0];
         if (!updatedTask) throw new Error("typescript_control_plane_task_heartbeat_transition_missing");
         await appendAudit(client, {
+          workspaceId: identity.workspaceId,
           actorType: "agent",
           actorId: identity.agentId,
           action: "agent_gateway.task_run_heartbeat",

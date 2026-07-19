@@ -76,14 +76,22 @@ def main() -> int:
         NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "audit" / "route.ts",
         NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "tasks" / "pull" / "route.ts",
         NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "tasks" / "[taskId]" / "claim" / "route.ts",
+        NEXT_APP / "app" / "api" / "mis" / "tasks" / "route.ts",
+        NEXT_APP / "app" / "api" / "mis" / "runs" / "route.ts",
+        NEXT_APP / "app" / "api" / "mis" / "approvals" / "route.ts",
+        NEXT_APP / "app" / "api" / "mis" / "audit" / "route.ts",
+        NEXT_APP / "app" / "api" / "mis" / "dashboard" / "metrics" / "route.ts",
         NEXT_APP / "src" / "server" / "controlPlane" / "agentGatewayHeartbeatAudit.ts",
         NEXT_APP / "src" / "server" / "controlPlane" / "agentGatewayTasks.ts",
         NEXT_APP / "src" / "server" / "controlPlane" / "auth.ts",
         NEXT_APP / "src" / "server" / "controlPlane" / "config.ts",
         NEXT_APP / "src" / "server" / "controlPlane" / "humanSession.ts",
+        NEXT_APP / "src" / "server" / "controlPlane" / "workspaceReadModels.ts",
         NEXT_APP / "scripts" / "control-plane-mode-contract.ts",
         NEXT_APP / "scripts" / "human-session-timestamp-contract.ts",
         NEXT_APP / "scripts" / "worker-task-pull-claim-contract.ts",
+        NEXT_APP / "scripts" / "workspace-read-model-contract.ts",
+        NEXT_APP / "scripts" / "schema-migration-upgrade-contract.ts",
         NEXT_APP / "next.config.mjs",
         NEXT_APP / "src" / "components" / "AppFrame.tsx",
         NEXT_APP / "src" / "components" / "AgentsParityPage.tsx",
@@ -165,6 +173,16 @@ def main() -> int:
     control_plane_mode_contract_text = read_text(NEXT_APP / "scripts" / "control-plane-mode-contract.ts")
     human_session_timestamp_contract_text = read_text(NEXT_APP / "scripts" / "human-session-timestamp-contract.ts")
     worker_task_contract_text = read_text(NEXT_APP / "scripts" / "worker-task-pull-claim-contract.ts")
+    workspace_read_models_text = read_text(NEXT_APP / "src" / "server" / "controlPlane" / "workspaceReadModels.ts")
+    workspace_read_contract_text = read_text(NEXT_APP / "scripts" / "workspace-read-model-contract.ts")
+    schema_upgrade_contract_text = read_text(NEXT_APP / "scripts" / "schema-migration-upgrade-contract.ts")
+    postgres_parity_contract_text = read_text(ROOT / "docs" / "POSTGRES_PARITY_CONTRACT.md")
+    workspace_read_route_texts = [
+        read_text(NEXT_APP / "app" / "api" / "mis" / route / "route.ts")
+        for route in ("tasks", "runs", "approvals", "audit")
+    ] + [read_text(NEXT_APP / "app" / "api" / "mis" / "dashboard" / "metrics" / "route.ts")]
+    schema_migration_text = read_text(ROOT / "migrations" / "postgres" / "20260719_workspace_read_models_v2.sql")
+    schema_online_index_text = read_text(ROOT / "migrations" / "postgres" / "20260719_workspace_read_models_v2_online_indexes.sql")
     real_worker_human_review_text = read_text(ROOT / "scripts" / "nextjs_postgres_real_worker_human_review_smoke.py")
     worker_provider_evidence_text = read_text(ROOT / "scripts" / "worker_provider_call_evidence_smoke.py")
     approvals_review_route_text = read_text(NEXT_APP / "app" / "workspace" / "approvals" / "review" / "route.ts")
@@ -252,10 +270,12 @@ def main() -> int:
     require(scripts.get("test:human-session-timestamp-contract") == "tsx scripts/human-session-timestamp-contract.ts", "Human and Agent Gateway timestamp contract script is missing")
     require(scripts.get("test:memory-review-idempotency-contract") == "tsx scripts/memory-review-idempotency-contract.ts", "Memory Review idempotency contract script is missing")
     require(scripts.get("test:worker-gateway-direct-contract") == "tsx scripts/agent-gateway-worker-direct-contract.ts", "Worker register/heartbeat/audit contract script is missing")
+    require(scripts.get("test:workspace-read-model-contract") == "tsx scripts/workspace-read-model-contract.ts", "Workspace Human Session read-model contract script is missing")
+    require(scripts.get("test:human-schema-upgrade-contract") == "tsx scripts/schema-migration-upgrade-contract.ts", "Human schema v1 to v2 upgrade contract script is missing")
     require(scripts.get("test:worker-task-pull-claim-contract") == "tsx scripts/worker-task-pull-claim-contract.ts", "Worker task pull/claim contract script is missing")
     require("AGENTOPS_API_BASE" in route_text, "Free Local API proxy must be configurable with AGENTOPS_API_BASE")
     require("legacyPythonProxyAllowed" in route_text and "typescript_route_owner_required" in route_text and "python_proxy_performed: false" in route_text, "Commercial production catch-all must fail closed instead of forwarding to Python")
-    require("nextjs_production_python_proxy_fail_closed_v1" in production_python_proxy_smoke_text and "upstream_request_count" in production_python_proxy_smoke_text and "python_proxy_performed" in production_python_proxy_smoke_text, "Production no-Python proxy dynamic contract is incomplete")
+    require("nextjs_production_python_proxy_fail_closed_v1" in production_python_proxy_smoke_text and "upstream_request_count" in production_python_proxy_smoke_text and "python_proxy_performed" in production_python_proxy_smoke_text and "typescript_owned_workspace_routes_python_blocked" in production_python_proxy_smoke_text, "Production no-Python proxy dynamic contract is incomplete")
     require("/api/agent-gateway/:path*" in next_config_text and "/api/mis/agent-gateway/:path*" in next_config_text, "Next must preserve the durable Agent Gateway CLI path while routing it to TypeScript ownership")
     require(all("controlPlaneMode" in text and "proxyControlPlaneRequest" in text for text in (
         gateway_register_route_text, gateway_heartbeat_route_text, gateway_audit_route_text,
@@ -263,6 +283,14 @@ def main() -> int:
     )), "Direct Worker routes must preserve the Free Local proxy path")
     require("registerAgentGatewayWorker" in gateway_register_route_text and "recordAgentGatewayHeartbeat" in gateway_heartbeat_route_text and "emitAgentGatewayAudit" in gateway_audit_route_text, "Worker register/heartbeat/audit routes must have direct TypeScript owners")
     require("pullAgentGatewayTasks" in gateway_pull_route_text and "claimAgentGatewayTask" in gateway_claim_route_text, "Worker pull/claim routes must have direct TypeScript owners")
+    require(all("controlPlaneMode" in text and "workspaceReadModels" in text and "X-AgentOps-Workspace-Id" in text for text in workspace_read_route_texts), "Workspace read routes must have direct TypeScript owners, Free Local rollback, and private cookie/workspace cache variance")
+    require("authenticateHumanMember" in workspace_read_models_text and "audit.workspace_id=$1" in workspace_read_models_text and "metadata_json::jsonb ->> 'workspace_id'=$1" in workspace_read_models_text, "Workspace read models must enforce Human Session membership and chain-bound audit workspace binding")
+    require("JOIN tasks task" in workspace_read_models_text and "JOIN runs run" in workspace_read_models_text and "run.workspace_id=$1" in workspace_read_models_text, "Approval reads must require matching task/run workspace ownership")
+    require("audit.metadata_json," not in workspace_read_models_text and "tamper_chain_hash" not in workspace_read_models_text, "Workspace audit read model must omit raw metadata and chain internals")
+    require("nextjs_postgres_workspace_read_models_v1" in workspace_read_contract_text and "authenticated_http_routes_return_private_200" in workspace_read_contract_text, "Workspace read-model Postgres isolation and authenticated HTTP contract is incomplete")
+    require("human_memory_schema_v1_to_v2_upgrade_v1" in schema_upgrade_contract_text and "tampered_v1_receipt_rejected_without_ddl" in schema_upgrade_contract_text, "Human schema v1 to v2 upgrade contract is incomplete")
+    require("nextjs_postgres_workspace_read_models_v1" in postgres_parity_contract_text, "Workspace read-model Postgres contract is not documented")
+    require("ADD COLUMN IF NOT EXISTS workspace_id TEXT" in schema_migration_text and "audit_logs_workspace_metadata_match" in schema_migration_text and "CREATE INDEX" not in schema_migration_text and "CREATE INDEX CONCURRENTLY" in schema_online_index_text, "Postgres audit schema must bind workspace ownership and build its index outside the core transaction")
     require("authenticateAgentGateway" in gateway_heartbeat_audit_text and "boundedJsonObject" in gateway_heartbeat_audit_text and "assertExclusiveWorkspaceBinding" in gateway_heartbeat_audit_text, "Worker register/heartbeat/audit ownership must be authenticated, bounded, and workspace-bound")
     require("tasks:read" in gateway_tasks_text and "tasks:claim" in gateway_tasks_text and "pg_advisory_xact_lock" in gateway_tasks_text, "Worker pull/claim ownership must enforce scopes and a single-winner claim lock")
     require("nextjs_postgres_worker_task_pull_claim_v1" in worker_task_contract_text and "planned_to_running_single_winner" in worker_task_contract_text, "Worker pull/claim Postgres contract is incomplete")
@@ -397,6 +425,8 @@ def main() -> int:
     require("operator_execution_mode_v1" in operator_execution_mode_smoke_text and "/api/operator/execution-mode" in operator_execution_mode_smoke_text and "agentops operator execution-mode" in operator_execution_mode_smoke_text, "Operator execution-mode smoke contract is missing")
     require("AGENTOPS_API_BASE" in server_lib_text and "loadServerApprovals" in server_lib_text, "server-side first paint loaders are missing")
     require("/dashboard/metrics" in lib_text, "workspace parity data must include dashboard metrics")
+    require("loadHumanSession" in dashboard_text and "Select workspace" in dashboard_text and "loadWorkspaceSnapshot(directWorkspace)" in dashboard_text and "setActiveWorkspaceId" in dashboard_text, "Workspace dashboard must require Human Session, propagate active workspace, and require explicit multi-workspace selection for direct Postgres reads")
+    require("getActiveWorkspaceId" in lib_text and "agentops_active_workspace" in lib_text, "Workspace ledger clients must propagate the selected workspace across pages")
     require("/tasks" in lib_text and "/runs" in lib_text and "/approvals" in lib_text, "workspace parity data misses core ledgers")
     require("/tool-calls" in lib_text and "loadToolCalls" in lib_text, "tool call ledger parity data is missing")
     require("/evaluations" in lib_text and "loadEvaluations" in lib_text, "evaluation ledger parity data is missing")
@@ -404,7 +434,7 @@ def main() -> int:
     require("updateRuntimeConnectorTrust" in lib_text, "runtime connector trust parity action is missing")
     require("/integrations/notion/status" in lib_text and "loadNotionPreview" in lib_text, "Notion external base parity data is missing")
     require("/integrations/notion/dry-run-export" in lib_text and "/integrations/notion/export-confirmed" in lib_text, "Notion external base export actions are missing")
-    require("/memories" in lib_text and "/audit?limit=120" in lib_text, "governance parity data misses memory or audit ledgers")
+    require("/memories" in lib_text and 'workspaceReadPath("/audit"' in lib_text and 'limit: "120"' in lib_text, "governance parity data misses memory or audit ledgers")
     require("/workers/status" in lib_text and "/workers/adapter-readiness" in lib_text, "agent-control parity data misses worker readiness")
     require("/workers/fleet" in lib_text and "loadWorkerFleet" in lib_text, "agent-control parity data misses worker fleet readback")
     require("/workers/fleet/hygiene" in lib_text and "loadWorkerFleetHygiene" in lib_text, "agent-control parity data misses worker fleet hygiene readback")
@@ -441,6 +471,8 @@ def main() -> int:
     require("/memories/${encodeURIComponent(id)}/${decision}" in lib_text, "memory decision parity action is missing")
     require("/approvals/${encodeURIComponent(approvalId)}/${action}" in approvals_review_route_text, "approval review form fallback must write through MIS API")
     require("/memories/${encodeURIComponent(memoryId)}/${action}" in memory_review_route_text, "memory review form fallback must write through MIS API")
+    require('decision !== "approve" && decision !== "reject"' in approvals_review_route_text, "approval review form fallback must reject unknown decisions")
+    require('decision !== "approve" && decision !== "reject"' in memory_review_route_text, "memory review form fallback must reject unknown decisions")
     require("/workflows/customer-projects/${encodeURIComponent(projectId)}/report-artifact" in report_archive_route_text, "customer report archive fallback must write through MIS API")
     require("/workflows/customer-task-templates/run" in dispatch_route_text and "entitlement_required" in dispatch_route_text, "dispatch template fallback must preserve entitlement blocking")
     require("/workflows/customer-worker-task" in customer_worker_dispatch_route_text and "prepared_action_id" in customer_worker_dispatch_route_text and "request_hash" in customer_worker_dispatch_route_text, "customer-worker dispatch fallback must preserve prepared-action controls")
@@ -623,7 +655,11 @@ def main() -> int:
     require('"release_claim_allowed": release_ready' in commercial_readiness_text and '"overall_status": "ready" if release_ready else "blocked"' in commercial_readiness_text, "commercial readiness must remain fail closed while release blockers are open")
     require('return 0 if command_ok else 1' in commercial_readiness_text, "commercial readiness exit status must validate the truth contract rather than imply release eligibility")
     blocker_ids = {item.get("id") for item in human_memory_release_blockers.get("open_blockers", [])}
-    require({"production_api_route_ownership_incomplete", "real_worker_candidate_human_review_bridge_missing", "trusted_proxy_ip_edge_rate_limit_required", "human_session_retention_job_missing", "human_memory_review_request_retention_policy_missing", "owner_bootstrap_compiled_entry_missing"}.issubset(blocker_ids), "Human Memory Review release blockers are incomplete")
+    require({"production_api_route_ownership_incomplete", "trusted_proxy_ip_edge_rate_limit_required", "historical_audit_workspace_backfill_missing", "human_session_retention_job_missing", "human_memory_review_request_retention_policy_missing", "owner_bootstrap_compiled_entry_missing"}.issubset(blocker_ids), "Human Memory Review release blockers are incomplete")
+    require(human_memory_release_blockers.get("implemented_controls", {}).get("real_openclaw_worker_human_review_bridge_verified") is True, "real OpenClaw Worker to Human Review bridge verification is not recorded")
+    require(human_memory_release_blockers.get("implemented_controls", {}).get("real_hermes_worker_human_review_bridge_verified") is True, "real Hermes Worker to Human Review bridge verification is not recorded")
+    require(human_memory_release_blockers.get("implemented_controls", {}).get("free_local_legacy_workspace_mutation_same_origin_enforced") is True, "Free Local legacy Workspace writes must stay same-origin")
+    require(human_memory_release_blockers.get("implemented_controls", {}).get("legacy_review_decisions_fail_closed") is True, "legacy review forms must reject unknown decisions")
     require("AuditParityPage" in governance_pages_text and "loadAudit" in governance_pages_text, "audit parity page must expose evidence readback")
     require("loadWorkspaceSnapshot" in dashboard_text, "workspace page must consume the shared Next.js MIS data contract")
 

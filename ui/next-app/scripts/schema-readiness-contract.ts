@@ -10,12 +10,20 @@ import {
   HUMAN_MEMORY_SCHEMA_CHECKSUM,
   HUMAN_MEMORY_SCHEMA_COMPONENT,
   HUMAN_MEMORY_SCHEMA_CONTRACT,
+  HUMAN_MEMORY_SCHEMA_ONLINE_INDEX_CHECKSUM,
   HUMAN_MEMORY_SCHEMA_VERSION,
+  HUMAN_MEMORY_SCHEMA_V1_CHECKSUM,
   SchemaReadinessError,
 } from "../src/server/controlPlane/schemaReadiness";
 
-const MIGRATION_PATH = fileURLToPath(
+const BASE_MIGRATION_PATH = fileURLToPath(
   new URL("../../../migrations/postgres/20260718_human_session_memory_review.sql", import.meta.url),
+);
+const UPGRADE_MIGRATION_PATH = fileURLToPath(
+  new URL("../../../migrations/postgres/20260719_workspace_read_models_v2.sql", import.meta.url),
+);
+const ONLINE_INDEX_MIGRATION_PATH = fileURLToPath(
+  new URL("../../../migrations/postgres/20260719_workspace_read_models_v2_online_indexes.sql", import.meta.url),
 );
 
 function output(payload: Record<string, unknown>) {
@@ -37,9 +45,15 @@ async function main() {
   if (!dsn) throw new Error("postgres_dsn_required");
   const sslEnabled = ["1", "true", "require", "required", "on"]
     .includes(String(process.env.AGENTOPS_POSTGRES_SSL || "").trim().toLowerCase());
-  const migrationBytes = await readFile(MIGRATION_PATH);
-  const migrationChecksum = createHash("sha256").update(migrationBytes).digest("hex");
-  if (migrationChecksum !== HUMAN_MEMORY_SCHEMA_CHECKSUM) {
+  const baseMigrationBytes = await readFile(BASE_MIGRATION_PATH);
+  const upgradeMigrationBytes = await readFile(UPGRADE_MIGRATION_PATH);
+  const onlineIndexMigrationBytes = await readFile(ONLINE_INDEX_MIGRATION_PATH);
+  const baseMigrationChecksum = createHash("sha256").update(baseMigrationBytes).digest("hex");
+  const upgradeMigrationChecksum = createHash("sha256").update(upgradeMigrationBytes).digest("hex");
+  const onlineIndexMigrationChecksum = createHash("sha256").update(onlineIndexMigrationBytes).digest("hex");
+  if (baseMigrationChecksum !== HUMAN_MEMORY_SCHEMA_V1_CHECKSUM
+    || upgradeMigrationChecksum !== HUMAN_MEMORY_SCHEMA_CHECKSUM
+    || onlineIndexMigrationChecksum !== HUMAN_MEMORY_SCHEMA_ONLINE_INDEX_CHECKSUM) {
     throw new Error("migration_checksum_fixture_mismatch");
   }
 
@@ -58,7 +72,12 @@ async function main() {
     await client.query(`SET search_path TO ${quotedSchema}`);
     await client.query("CREATE TABLE users(user_id TEXT PRIMARY KEY)");
     await client.query("CREATE TABLE memories(memory_id TEXT PRIMARY KEY)");
-    await client.query(migrationBytes.toString("utf8"));
+    await client.query(
+      "CREATE TABLE audit_logs(audit_id TEXT PRIMARY KEY,metadata_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL)",
+    );
+    await client.query(baseMigrationBytes.toString("utf8"));
+    await client.query(upgradeMigrationBytes.toString("utf8"));
+    await client.query(onlineIndexMigrationBytes.toString("utf8"));
     await client.query(
       `INSERT INTO agentops_schema_migrations(
         component,version,schema_contract,checksum,applied_at
@@ -105,9 +124,9 @@ async function main() {
 
     output({
       ok: true,
-      contract: "human_memory_schema_readiness_v1",
+      contract: "human_memory_schema_readiness_v2",
       checks: {
-        migration_bytes_match_fixed_checksum: true,
+        base_and_upgrade_migration_bytes_match_fixed_checksums: true,
         exact_schema_ready: true,
         same_name_weak_check_rejected: true,
         same_name_weak_index_rejected: true,

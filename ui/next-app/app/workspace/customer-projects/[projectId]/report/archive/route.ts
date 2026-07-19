@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { legacyWorkspacePythonProxyGuard } from "@/server/controlPlane/legacyWorkspacePythonProxyGuard";
+
 const TARGET_BASE = process.env.AGENTOPS_API_BASE || "http://127.0.0.1:8765/api";
 
 type RouteContext = {
@@ -7,6 +9,9 @@ type RouteContext = {
 };
 
 export async function POST(request: Request, context: RouteContext) {
+  const guardResponse = legacyWorkspacePythonProxyGuard(request);
+  if (guardResponse) return guardResponse;
+
   const { projectId } = await context.params;
   const response = await fetch(`${TARGET_BASE.replace(/\/$/, "")}/workflows/customer-projects/${encodeURIComponent(projectId)}/report-artifact`, {
     method: "POST",

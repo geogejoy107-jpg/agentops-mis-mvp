@@ -208,9 +208,23 @@ def command_receipt(args: argparse.Namespace) -> int:
             failures.append("command_timeout")
     stdout = proc.stdout if isinstance(proc.stdout, bytes) else str(proc.stdout or "").encode("utf-8", errors="replace")
     stderr = proc.stderr if isinstance(proc.stderr, bytes) else str(proc.stderr or "").encode("utf-8", errors="replace")
+    stdout_text = stdout.decode("utf-8", errors="replace")
+    payload: object | None = None
     try:
-        payload = json.loads(stdout.decode("utf-8"))
+        payload = json.loads(stdout_text)
     except Exception:
+        for line in reversed(stdout_text.splitlines()):
+            candidate = line.strip()
+            if not candidate.startswith("{") or not candidate.endswith("}"):
+                continue
+            try:
+                decoded = json.loads(candidate)
+            except Exception:
+                continue
+            if isinstance(decoded, dict) and "ok" in decoded:
+                payload = decoded
+                break
+    if payload is None:
         payload = {}
         failures.append("stdout_json_invalid")
     payload = payload if isinstance(payload, dict) else {}

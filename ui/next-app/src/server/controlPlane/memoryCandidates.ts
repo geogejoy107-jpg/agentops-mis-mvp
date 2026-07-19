@@ -18,7 +18,7 @@ type MemoryCandidateRow = {
 
 export async function listWorkspaceMemoryCandidates(headers: Headers, workspaceId: unknown) {
   return withPostgresTransaction(async (client) => {
-    await authenticateHumanMember(client, headers, workspaceId);
+    const identity = await authenticateHumanMember(client, headers, workspaceId);
     const rows = await client.query<MemoryCandidateRow>(
       `SELECT memory_id,workspace_id,scope,memory_type,canonical_text,source_type,confidence,
       review_status,task_id,agent_id,created_at,updated_at
@@ -26,7 +26,7 @@ export async function listWorkspaceMemoryCandidates(headers: Headers, workspaceI
       WHERE workspace_id=$1 AND review_status='candidate'
       ORDER BY updated_at DESC,memory_id
       LIMIT 200`,
-      [String(workspaceId).trim()],
+      [identity.workspaceId],
     );
     return {
       status: 200,

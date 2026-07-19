@@ -85,6 +85,7 @@ function nextAuditCreatedAt(previousCreatedAt: string | null) {
 export async function appendAudit(
   client: PoolClient,
   input: {
+    workspaceId: string | null;
     actorType: "user" | "agent" | "system";
     actorId: string | null;
     action: string;
@@ -100,7 +101,9 @@ export async function appendAudit(
     "SELECT tamper_chain_hash,created_at FROM audit_logs ORDER BY created_at DESC, audit_id DESC LIMIT 1",
   );
   const previousRow = previous.rows[0];
-  const metadata = input.metadata || {};
+  const metadata = input.workspaceId
+    ? { ...(input.metadata || {}), workspace_id: input.workspaceId }
+    : input.metadata || {};
   const beforeHash = input.before === undefined ? null : stableHash(input.before);
   const afterHash = input.after === undefined ? null : stableHash(input.after);
   const chainHash = stableHash({
@@ -117,10 +120,11 @@ export async function appendAudit(
   const createdAt = nextAuditCreatedAt(previousRow?.created_at || null);
   await client.query(
     `INSERT INTO audit_logs(
-      audit_id,actor_type,actor_id,action,entity_type,entity_id,before_hash,after_hash,metadata_json,tamper_chain_hash,created_at
-    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      audit_id,workspace_id,actor_type,actor_id,action,entity_type,entity_id,before_hash,after_hash,metadata_json,tamper_chain_hash,created_at
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
     [
       newLedgerId("aud"),
+      input.workspaceId,
       input.actorType,
       input.actorId,
       input.action,

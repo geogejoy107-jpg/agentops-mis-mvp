@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { legacyWorkspacePythonProxyGuard } from "@/server/controlPlane/legacyWorkspacePythonProxyGuard";
+
 const TARGET_BASE = process.env.AGENTOPS_API_BASE || "http://127.0.0.1:8765/api";
 const DEFAULT_SCOPES = [
   "agents:heartbeat",
@@ -51,6 +53,9 @@ function validId(value: string) {
 }
 
 export async function POST(request: Request) {
+  const guardResponse = legacyWorkspacePythonProxyGuard(request);
+  if (guardResponse) return guardResponse;
+
   const form = await request.formData();
   const agentId = String(form.get("agent_id") || "").trim();
   const name = String(form.get("name") || "").trim();

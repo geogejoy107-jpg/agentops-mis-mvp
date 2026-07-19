@@ -396,6 +396,7 @@ export async function recordAgentGatewayToolCall(request: Request) {
       );
     }
     await appendAudit(client, {
+      workspaceId: identity.workspaceId,
       actorType: "system",
       actorId: "agent-gateway",
       action: existing ? "tool_call.update" : "tool_call.create",
@@ -414,6 +415,7 @@ export async function recordAgentGatewayToolCall(request: Request) {
         );
         const updatedRun = updatedRunResult.rows[0];
         await appendAudit(client, {
+          workspaceId: identity.workspaceId,
           actorType: "agent",
           actorId: identity.agentId,
           action: "agent_gateway.tool_call_run_waiting_approval",
@@ -431,6 +433,7 @@ export async function recordAgentGatewayToolCall(request: Request) {
         );
         const updatedTask = updatedTaskResult.rows[0];
         await appendAudit(client, {
+          workspaceId: identity.workspaceId,
           actorType: "agent",
           actorId: identity.agentId,
           action: "agent_gateway.tool_call_task_waiting_approval",
@@ -499,6 +502,7 @@ export async function submitAgentGatewayEvaluation(request: Request) {
       [row.evaluation_id, row.task_id, row.run_id, row.agent_id, row.evaluator_type, row.score, row.pass_fail, row.rubric_json, row.notes, row.created_at],
     );
     await appendAudit(client, {
+      workspaceId: identity.workspaceId,
       actorType: "system",
       actorId: "agent-gateway",
       action: "evaluation.create",
@@ -577,6 +581,7 @@ export async function recordAgentGatewayArtifact(request: Request) {
       rawPayloadHash: contentHash,
     });
     await appendAudit(client, {
+      workspaceId: identity.workspaceId,
       actorType: "agent",
       actorId: identity.agentId,
       action: "agent_gateway.artifact_record",

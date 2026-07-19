@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { legacyWorkspacePythonProxyGuard } from "@/server/controlPlane/legacyWorkspacePythonProxyGuard";
+
 const TARGET_BASE = process.env.AGENTOPS_API_BASE || "http://127.0.0.1:8765/api";
 
 function redirectBack(request: Request, params: Record<string, string>) {
@@ -30,6 +32,9 @@ function selectedAgentIds(form: FormData, ownerAgentId: string) {
 }
 
 export async function POST(request: Request) {
+  const guardResponse = legacyWorkspacePythonProxyGuard(request);
+  if (guardResponse) return guardResponse;
+
   const form = await request.formData();
   const ownerAgentId = safeText(form.get("owner_agent_id"), "agt_next_customer_owner");
   const confirmRun = safeText(form.get("confirm_run"), "false") === "true";

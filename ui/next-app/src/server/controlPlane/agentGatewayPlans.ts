@@ -320,6 +320,7 @@ export async function createAgentGatewayPlan(request: Request) {
       );
     }
     await appendAudit(client, {
+      workspaceId: identity.workspaceId,
       actorType: "agent",
       actorId: identity.agentId,
       action: existing ? "agent_gateway.agent_plan_update" : "agent_gateway.agent_plan_create",
@@ -607,6 +608,7 @@ export async function createAgentGatewayPlanEvidenceManifest(request: Request) {
       );
     }
     await appendAudit(client, {
+      workspaceId: identity.workspaceId,
       actorType: "agent",
       actorId: identity.agentId,
       action: existing ? "agent_gateway.plan_evidence_manifest_verify" : "agent_gateway.plan_evidence_manifest_create",

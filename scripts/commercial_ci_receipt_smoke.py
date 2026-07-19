@@ -59,6 +59,31 @@ def main() -> int:
         require(good.get("raw_output_stored") is False, f"raw output policy missing: {good}", failures)
         require(len(str(good.get("subject_sha") or "")) == 40, f"subject SHA missing: {good}", failures)
 
+        prefixed_path = receipts / "prefixed.json"
+        code, prefixed = run([
+            sys.executable,
+            str(RECEIPT),
+            "command",
+            "--gate-id",
+            "gate_test",
+            "--command-id",
+            "prefixed",
+            "--expected-contract",
+            "prefixed_fixture_v1",
+            "--output",
+            str(prefixed_path),
+            "--",
+            sys.executable,
+            "-c",
+            'import json; print("> package@1.0.0 test"); print("> tsx contract.ts"); '
+            'print(json.dumps({"ok": True, "contract": "prefixed_fixture_v1"}))',
+        ])
+        require(
+            code == 0 and prefixed.get("evidence_complete") is True,
+            f"prefixed JSON command receipt failed: {prefixed}",
+            failures,
+        )
+
         sensitive_failure = "customer token agtok_should_not_escape"
         failure_fixture = tmp_path / "emit_failure.py"
         failure_fixture.write_text(
@@ -117,6 +142,8 @@ def main() -> int:
             str(receipts),
             "--required-command-id",
             "good",
+            "--required-command-id",
+            "prefixed",
             "--output",
             str(scope_path),
         ])
