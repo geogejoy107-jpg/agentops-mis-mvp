@@ -102,8 +102,8 @@ def main() -> int:
             "current preview must not claim final RC", failures)
 
     require(
-        "Status: preview.36 Host package" in second
-        and "ordinary browser-only Relay protocol remains pending" in second,
+        "Status: advanced Tailscale physical browser workflow partially accepted" in second
+        and "ordinary browser-only Relay protocol pending" in second,
         "second-device document must identify Tailscale as an advanced fallback and keep browser-only Relay pending",
         failures,
     )

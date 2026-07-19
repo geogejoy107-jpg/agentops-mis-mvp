@@ -1,6 +1,6 @@
 # Advanced Tailscale Second-Device Acceptance
 
-Status: preview.36 Host package and its marker/negated-intent fixes are physically accepted through the advanced Tailscale MacBook Console; the ordinary browser-only Relay protocol remains pending
+Status: advanced Tailscale physical browser workflow partially accepted; preview.36 Host package and its marker/negated-intent fixes are physically accepted; ordinary browser-only Relay protocol pending
 
 This document now covers the advanced private-network fallback only. It no
 longer defines the ordinary customer onboarding path and cannot close the
