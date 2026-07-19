@@ -209,3 +209,57 @@ This proves both authenticated human dispatch to an approval stop and direct
 API/Gateway dispatch to a persistent real Worker on the installed package. The
 Hermes delivery still requires an explicit human decision before an approved
 artifact/receipt claim can be made.
+
+## Exact-Package Preview 36 Negated Read-Only Result
+
+The installed `v1.6.0-private-host-preview.36` package at exact commit
+`a5c7d559cfce5157b10401e34204a6b6a405a554` completed a fresh, explicitly
+confirmed OpenClaw customer job after the real preview.35-to-preview.36 Host
+upgrade:
+
+| Adapter | Job | Task | Run | Result |
+|---|---|---|---|---|
+| OpenClaw | `wfjob_83cb57da8242e855501f3780` | `tsk_customer_worker_task_openclaw_preview36_20260719t052502z_20260719052502088849` | `run_gw_ed42f579d487` | Completed with no external-write PreparedAction |
+
+The task deliberately prohibited publication, external connectors, messages,
+external APIs and file writes while requesting a Host-local review. This is the
+wording class that preview.35 misclassified. preview.36 produced one tool call,
+one passing evaluation, 15 runtime events, 12 bounded audit rows, artifact and
+memory evidence, plus verified plan-evidence manifest
+`pem_e1b9275c986daf4b`. Bounded approval readback found zero PreparedActions.
+The normal delivery approval
+`ap_customer_worker_delivery_run_gw_ed42f579d487` remains `pending`; no human
+delivery decision is implied by successful Runtime execution.
+
+The run used a Host-local Owner Session and real OpenClaw Worker. By itself it
+was not a physical MacBook receipt and did not close the preview.36 marker or
+negated-intent client retest; the next section closes those two rows. Ordinary
+Relay, reboot and another-Mac gates remain separate. Raw
+prompt, raw response, credential, private origin, Worker log, private message,
+full transcript and database content were omitted.
+
+## Exact-Package Preview 36 Physical MacBook Result
+
+The physical MacBook dedicated Console then authenticated to the same installed
+`v1.6.0-private-host-preview.36` Host and used the normal AI Employees dispatch
+UI. The browser selected OpenClaw, explicitly confirmed live execution and
+submitted customer job `wfjob_9940b1e6ea15`. The Host completed task
+`tsk_customer_worker_task_7606dfeb537fe9f9` and real run
+`run_gw_c8d2ad1aa845`.
+
+The bounded evidence chain contains one tool call, one passing evaluation, 16
+runtime events, 11 audit rows, two artifacts, two memory candidates, one
+delivery approval and verified plan-evidence manifest
+`pem_094a19932cdcc50e`. The task used the negated read-only wording class from
+the preview.35 defect and created zero external-write PreparedActions. Delivery
+approval `ap_customer_worker_delivery_run_gw_c8d2ad1aa845` remains `pending`;
+successful Runtime execution does not imply human acceptance of the delivery.
+
+The MacBook rendered `/admin/runs/run_gw_c8d2ad1aa845` with its Evaluation and
+Audit entry points, then logged out through the UI. The next protected Dashboard
+request returned HTTP 401. This closes the preview.36 advanced-client marker and
+negated-intent physical retest, but does not close ordinary no-Tailscale Relay,
+deployed-Relay interruption, Host reboot or another-Mac installation. No raw
+prompt/response, credential, Session/CSRF value, private origin, browser
+storage, Worker log, private message, transcript or database content was
+retained.

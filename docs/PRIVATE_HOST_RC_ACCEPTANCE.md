@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.35 installed with authenticated MacBook OpenClaw dispatch, disconnect/reconnect, review, download and logout-denial evidence; source fixes, ordinary browser-only Relay and final physical gates remain open
+Status: preview.36 is published, installed and physically retested from the MacBook advanced Console; ordinary browser-only Relay, the packaged launchd convergence fix and final physical gates remain open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -11,12 +11,12 @@ physical evidence and cannot be closed by mock output.
 
 | # | Requirement | Current evidence | Status |
 |---|---|---|---|
-| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.35` publishes provenance, checksum, archive and no-repository bootstrap assets from exact commit `6424ec144013517b21438cd7e528c6db106a0a5e`. Candidate, Draft and public assets were byte-equal; isolated install/start/status/stop and the real preview.34-to-preview.35 upgrade passed with verified backups and preserved data. A receipt from another physical Mac remains missing. | Passed locally; external evidence required |
-| 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md`, `PRIVATE_HOST_AUTH_WORKSPACE_UI_ACCEPTANCE.md`, `PRIVATE_HOST_SERVICE_WORKER_PRESENCE_ACCEPTANCE.md` and bundle smoke cover installed CLI, production UI, browser-first Owner setup inside the existing React Workspace, init, doctor, start/status/stop, Runtime readiness and fail-closed Worker ownership. Installed preview.35 serves that integrated UI, reports Owner login ready and has two fresh external-service Workers. | Passed locally |
+| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.36` publishes provenance, checksum, archive and no-repository bootstrap assets from exact commit `a5c7d559cfce5157b10401e34204a6b6a405a554`. Two local candidate builds, Draft downloads and the public release assets were byte-equal; isolated candidate, Draft and public network install/start/status/stop receipts passed, followed by a verified preview.35-to-preview.36 upgrade with preserved data. A receipt from another physical Mac remains missing. | Passed locally; external evidence required |
+| 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | `PRIVATE_HOST_LIFECYCLE_ACCEPTANCE.md`, `PRIVATE_HOST_AUTH_WORKSPACE_UI_ACCEPTANCE.md`, `PRIVATE_HOST_SERVICE_WORKER_PRESENCE_ACCEPTANCE.md` and bundle smoke cover installed CLI, production UI, browser-first Owner setup inside the existing React Workspace, init, doctor, start/status/stop, Runtime readiness and fail-closed Worker ownership. Installed preview.36 serves that integrated UI, reports Owner login ready, exposes two execution-capacity lanes and has both launchd-managed Hermes/OpenClaw Worker processes restored. | Passed locally |
 | 3 | Browser-only second computer opens the stable per-Host HTTPS console, pairs and authenticates | A physical MacBook authenticated through the advanced Tailscale HTTPS profile with only the dedicated browser Console and no AgentOps project or Runtime dependency. The ordinary path still requires a deployed L4 Relay, Host-side TLS, one-time pairing and a physical Console with no Tailscale/VPN client. | Passed on advanced profile; ordinary Relay evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, `private_host_owner_browser_handoff_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, setup-code authority, role/session separation and CSRF/Origin checks. The physical MacBook received HTTP 401 for protected workspace reads and task creation before login, then again for dashboard, approved artifact and Host-receipt downloads after UI logout. | Passed locally and on physical advanced client |
-| 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | The physical MacBook submitted job `wfjob_ec747fe27ab2`, observed OpenClaw run `run_gw_edfe2753846f`, approved its low-risk delivery, rejected two low-value memory candidates, read the matching Evaluation/Audit entries, and downloaded both the approved artifact and Host authority receipt. The installed Host Acceptance marker separately failed because blank owner input violated a foreign key; source commit `70bae60` fixes and deterministically covers it, but an exact fixed package has not been installed. | Real advanced-client workflow passed; marker package retest and ordinary Relay open |
-| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | Installed preview.35 service Workers completed OpenClaw runs `run_gw_45eac4968e30` and `run_gw_edfe2753846f`, plus Hermes run `run_gw_7ac27edaf52c`. The MacBook-dispatched OpenClaw run has passing evaluation, verified plan evidence, approved artifact and Host authority receipt. The earlier Hermes Runtime completed while its separate delivery approval remains pending. | Passed on current package; separate Hermes delivery gate open |
+| 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | The preview.35 MacBook flow submitted job `wfjob_ec747fe27ab2`, approved its low-risk delivery, reviewed memory/Evaluation/Audit and downloaded the approved artifact plus Host receipt. The same physical Console then retested preview.36: marker `tsk_570cb03937f6` wrote only bounded marker evidence, and confirmed OpenClaw job `wfjob_9940b1e6ea15` completed run `run_gw_c8d2ad1aa845`; its Run page rendered Evaluation/Audit entry points and UI logout made protected Dashboard readback return 401. | Real advanced-client workflow and current-package retest passed; ordinary Relay open |
+| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | Installed preview.36 completed Host-local run `run_gw_ed42f579d487` and physical-MacBook run `run_gw_c8d2ad1aa845`. Both used the negated read-only wording class and produced zero external-write PreparedActions. The physical run has one tool call, one passing evaluation, 16 runtime events, 11 bounded audit rows, two artifacts, two memory candidates and verified plan manifest `pem_094a19932cdcc50e`; delivery remains pending for a human decision. | Passed on current package and physical advanced client; delivery decision remains explicit |
 | 7 | Browser or Relay disconnect does not stop Host Worker or lose/duplicate task | `PRIVATE_HOST_CONSOLE_DISCONNECT_ACCEPTANCE.md` covers Host-local Session loss. The physical MacBook dedicated browser was also closed while `run_gw_edfe2753846f` was running; the Host completed it, reconnect showed the same job/task/run, and bounded readback found exactly one workflow job and one run. Deployed-Relay interruption evidence remains missing. | Passed on Host and physical browser disconnect; deployed Relay evidence required |
 | 8 | Host restart preserves ledger and knowledge state | `PRIVATE_HOST_RESTART_PERSISTENCE_ACCEPTANCE.md` covers Session, task and a 194-document local Markdown/FTS index remaining searchable after managed restart. | Passed locally |
 | 9 | Backup and restore pass on isolated database | `PRIVATE_HOST_BACKUP_RESTORE_ACCEPTANCE.md` covers strict manifest/hash/schema/integrity/foreign-key checks, atomic replacement and access revocation. | Passed locally |
@@ -813,7 +813,85 @@ logout/reboot service proof remain open. The same-Host private-HTTPS Owner
 receipt does not substitute for those physical gates, and no external evidence
 is synthesized. This is a prerelease, not the final RC.
 
-## Current Preview 35
+## Current Preview 36
+
+- Tag: `v1.6.0-private-host-preview.36`
+- Exact commit: `a5c7d559cfce5157b10401e34204a6b6a405a554`
+- Push CI: passed at the exact commit (`29671655369`)
+- Pull-request CI: passed at the exact commit (`29671656879`)
+- Release: `https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.36`
+- Provenance asset SHA-256: `fc7ca64aab0b4cd573365ed18dc2dd8e3f39cc792092b2974beb8fc0ddb6beac`
+- SHA-256 manifest asset: `1868238dc606b4dc4728e70ad6e6028699e6925fcf1a7ba0c45034a91efb2377`
+- Tar archive: `3cb5e38cd772a1fea0ecfc74f529fec2bc068d069e055c67e7454077b2f9842b`
+- Zip archive: `9c8dd0abc955c974aeb2374bf2d52a92ccc877e445fd76810a2101759d961c6c`
+- Release-consumer bootstrap: `75854f364502722eb24d5a7df3c0fc26685bf25acae6d5926e4c6396d16bd812`
+
+preview.36 packages the blank-owner Host Acceptance marker fix and the shared,
+negation-aware external-write classifier found by the preview.35 physical
+workflow. Both exact-head backend jobs and both production UI jobs passed. Two
+independent local builds produced byte-equal five-asset sets; candidate, Draft
+download and public Release assets were byte-equal. Candidate, Draft and public
+network consumers each completed an isolated no-repository
+install/start/status/stop flow with exact version and commit readback.
+
+Before the real upgrade, the preview.35 Host ledger received a new verified
+backup. Hermes and OpenClaw Worker LaunchAgents were explicitly unloaded, then
+the Host LaunchAgent was unloaded without touching Tailscale. The public
+preview.36 bootstrap preserved Host data, created its own verified pre-update
+backup, recorded preview.35 as the previous version, and moved the installed
+`current` link to the exact preview.36 package. The new CLI passed service
+preflight and loaded the Host to `ready`; the private transport remained ready,
+Funnel remained disabled, and both launchd-managed Worker processes returned.
+Authenticated bounded readback reports two execution-capacity lanes and a
+ready Worker fleet without reading Worker logs or model content.
+
+On the installed package, a fresh Host-local Owner-authenticated OpenClaw customer job
+`wfjob_83cb57da8242e855501f3780` completed run `run_gw_ed42f579d487`. The
+request deliberately prohibited publication, external connectors, messages,
+external APIs and file writes. It produced one tool call, one passing
+evaluation, 15 runtime events, 12 bounded audit rows, artifact/memory evidence
+and verified plan manifest `pem_e1b9275c986daf4b`, while approval readback found
+zero external-write PreparedActions. Its normal delivery approval
+`ap_customer_worker_delivery_run_gw_ed42f579d487` remains pending. This proves
+the packaged classifier through a real Runtime on the Mini.
+
+The physical MacBook dedicated Console then authenticated to that same installed
+preview.36 Host. From **Host Acceptance**, it created marker task
+`tsk_570cb03937f6`. Same-origin readback found exactly one related runtime event
+and two audit rows, with zero runs, tool calls or evaluations. From the normal
+AI Employees dispatch UI, the Console explicitly confirmed and submitted
+OpenClaw job `wfjob_9940b1e6ea15`, which completed task
+`tsk_customer_worker_task_7606dfeb537fe9f9` and run
+`run_gw_c8d2ad1aa845`. Bounded readback found one tool call, one passing
+evaluation, 16 runtime events, 11 audit rows, two artifacts, two memory
+candidates, one delivery approval and verified plan manifest
+`pem_094a19932cdcc50e`. The same negated read-only wording class created zero
+external-write PreparedActions. Delivery approval
+`ap_customer_worker_delivery_run_gw_c8d2ad1aa845` remains pending and was not
+silently accepted. The Run page rendered the matching run plus Evaluation/Audit
+entry points; UI logout then made the protected Dashboard request return 401.
+No raw prompt/response, credential, private origin, browser storage, Worker log
+or database content was retained.
+
+The old preview.35 CLI exposed a bounded launchd convergence defect during the
+maintenance window: `bootout` returned zero and direct process/launchd readback
+confirmed the Host was unloaded, but its immediate single post-check still saw
+the stale loaded state and returned `ok:false`. The upgrade continued only
+after independent unloaded-state confirmation. Follow-up source commit
+`a88b5fa` adds four bounded 100ms convergence reads and keeps a
+never-converging launchd state fail closed. That fix still requires a later
+package; it does not invalidate preview.36 runtime operation after the separate
+successful load.
+
+The current preview therefore remains a prerelease. The exact marker and
+negated-intent fixes are packaged and physically retested through the advanced
+MacBook Console. Source commit `a88b5fa` still requires a later package before
+the launchd convergence fix is installed. Deployed Relay/DNS/TLS, no-Tailscale
+browser pairing, deployed-Relay interruption, the separate pending delivery
+decisions, Host logout/reboot recovery and another-Mac clean installation also
+remain open.
+
+## Superseded Preview 35
 
 - Tag: `v1.6.0-private-host-preview.35`
 - Exact commit: `6424ec144013517b21438cd7e528c6db106a0a5e`

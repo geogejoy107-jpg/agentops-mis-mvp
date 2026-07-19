@@ -76,3 +76,39 @@ independent Worker services were reloaded with fresh idle heartbeats.
 This closes the specific service-upgrade migration defect without modifying
 the immutable preview.34 release. It does not claim signed/notarized packaging,
 physical logout/reboot persistence or unattended automatic upgrades.
+
+## Preview 36 Release And Real Upgrade
+
+`v1.6.0-private-host-preview.36` was published from exact commit
+`a5c7d559cfce5157b10401e34204a6b6a405a554`. Push CI `29671655369` and
+pull-request CI `29671656879` passed both Backend deterministic smokes and the
+production UI build. Two candidate builds were byte-equal; all five candidate,
+Draft and public assets matched. Isolated candidate, Draft and public network
+consumers each completed no-repository install/start/status/stop with exact
+version and commit readback.
+
+The real preview.35 Host ledger received a fresh verified backup before the
+maintenance window. Both launchd-managed Worker services were explicitly
+unloaded and their processes stopped. The Host `bootout` command returned zero,
+and independent launchd/process checks confirmed the Host was unloaded while
+Tailscale remained present. The public bootstrap then installed preview.36,
+preserved Host data, created a verified pre-update backup and recorded
+preview.35 as the previous version. Installed provenance and the `current`
+symlink both bind to preview.36 and its exact commit.
+
+The new CLI passed Host service preflight, loaded the Host successfully and
+returned health `ready` from the preview.36 UI/API. The private transport
+remained ready with Funnel disabled. Hermes and OpenClaw Worker service checks
+passed, both LaunchAgents loaded, both worker processes returned, and bounded
+authenticated status reported two execution-capacity lanes with fleet status
+`ready`. No Worker logs, model bodies, credential, private origin or database
+content were retained.
+
+The maintenance window also exposed a narrower convergence defect in the old
+preview.35 CLI: its immediate post-`bootout` state read briefly remained
+`loaded`, so it returned `ok:false` even though the command succeeded and the
+service was independently confirmed unloaded. This is not treated as a passed
+CLI receipt. Follow-up source commit `a88b5fa` adds four bounded 100ms state
+reads and a deterministic stale-then-converged regression, while a
+never-converging launchd state continues to fail closed. The fix still requires
+a later package before it becomes installed release behavior.

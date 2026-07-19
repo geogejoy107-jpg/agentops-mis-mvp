@@ -1,6 +1,6 @@
 # Advanced Tailscale Second-Device Acceptance
 
-Status: advanced Tailscale physical browser workflow partially accepted on preview.35; source fixes and ordinary browser-only Relay protocol pending
+Status: preview.36 Host package and its marker/negated-intent fixes are physically accepted through the advanced Tailscale MacBook Console; the ordinary browser-only Relay protocol remains pending
 
 This document now covers the advanced private-network fallback only. It no
 longer defines the ordinary customer onboarding path and cannot close the
@@ -252,6 +252,65 @@ two conservative prepared-action false positives, then logged out. That closes
 the Host-side Owner review gate only; it is not a physical Console receipt. No
 external evidence is synthesized from local, CI, or prior-preview receipts.
 
+## Preview 36 Host Staging
+
+`v1.6.0-private-host-preview.36` was published from exact commit
+`a5c7d559cfce5157b10401e34204a6b6a405a554`. Exact-head push and pull-request
+Backend/UI CI passed. The five candidate assets were reproduced byte-for-byte,
+matched their Draft and public downloads, and passed isolated no-repository
+candidate, Draft and public network install/start/status/stop checks.
+
+The real Mini Host then upgraded from preview.35 after a fresh verified ledger
+backup and explicit Host/Worker service unload. The public installer preserved
+Host data, created another verified pre-update backup and bound the installed
+version to the exact preview.36 commit. The Host returned to `ready`, both
+launchd-managed Hermes/OpenClaw Worker processes returned, the private transport
+remained ready and Funnel remained disabled. No Tailscale configuration,
+credential, private origin or database content was copied into the repository.
+
+This package includes the blank-owner marker normalization and the shared
+negation-aware external-write classifier found by the preview.35 MacBook flow.
+Their deterministic local gates pass. A fresh Host-local real OpenClaw job
+`wfjob_83cb57da8242e855501f3780` completed run `run_gw_ed42f579d487` using the
+previously misclassified negated read-only wording and created zero
+external-write PreparedActions. Its delivery approval remains pending. The
+physical retest below independently verifies both fixes through the current
+package. The earlier preview.35 browser receipt remains valid historical
+evidence for disconnect/reconnect, deliberate review and approved downloads;
+it is not silently relabeled as preview.36 acceptance.
+
+## Preview 36 Physical MacBook Retest
+
+The physical MacBook dedicated Console authenticated to the installed
+`v1.6.0-private-host-preview.36` Host at exact commit
+`a5c7d559cfce5157b10401e34204a6b6a405a554` through private Tailscale HTTPS.
+The Console still had no AgentOps repository, Python, Node, Hermes, OpenClaw or
+machine token, and Funnel remained disabled.
+
+From **Admin Console > Host Acceptance**, the browser created marker task
+`tsk_570cb03937f6`. Same-origin authenticated readback found one related runtime
+event and two audit rows, with zero runs, tool calls or evaluations. The task
+remained low risk, zero budget and unassigned, so the fixed browser action did
+not invoke a Runtime or external connector.
+
+From the normal AI Employees customer-dispatch UI, the same browser selected
+OpenClaw, checked the explicit live confirmation and submitted job
+`wfjob_9940b1e6ea15`. It completed task
+`tsk_customer_worker_task_7606dfeb537fe9f9` and run
+`run_gw_c8d2ad1aa845` on the Host. Bounded readback found one tool call, one
+passing evaluation, 16 runtime events, 11 audit rows, two artifacts, two memory
+candidates, one delivery approval and verified plan manifest
+`pem_094a19932cdcc50e`. The negated read-only wording class produced zero
+external-write PreparedActions. Delivery approval
+`ap_customer_worker_delivery_run_gw_c8d2ad1aa845` remains pending; no product
+claim treats Runtime completion as a human delivery decision.
+
+The MacBook rendered `/admin/runs/run_gw_c8d2ad1aa845` with the run and its
+Evaluation/Audit entry points visible. UI logout completed, and an immediate
+protected Dashboard request returned HTTP 401. No raw prompt/response,
+credential, Session/CSRF value, private origin, browser storage, Worker log,
+private message, transcript or database content was recorded.
+
 ## Preview 35 MacBook Client Staging
 
 During the `v1.6.0-private-host-preview.35` release from exact commit
@@ -285,10 +344,10 @@ That initial network/render receipt was extended on 2026-07-18 UTC by the
 authenticated browser workflow below. The advanced Tailscale client now proves
 human login, real OpenClaw dispatch, browser disconnect/reconnect, deliberate
 delivery and memory review, Evaluation/Audit readback, approved artifact and
-Host receipt download, and logout denial. It is still not the full protocol
-pass: the installed marker-task defect must be retested from an exact fixed
-package, and the ordinary deployed-Relay, Host reboot and another-Mac clean
-installation gates remain open. No private URL, DNS name, IP address,
+Host receipt download, and logout denial. The preview.36 section above closes
+the later exact-package marker and negated-intent retest. It is still not the
+full ordinary protocol pass: the deployed Relay, Host reboot and another-Mac
+clean installation gates remain open. No private URL, DNS name, IP address,
 credential, cookie, raw model content or screenshot artifact is committed
 here.
 
@@ -330,11 +389,11 @@ One earlier job, `wfjob_b2321f7faf73`, exposed a usability defect: negated
 phrases such as prohibiting publication or external connectors were
 conservatively interpreted as external-write intent. Prepared action
 `ap_prepared_action_b673fa1a19408a4b` was not approved and no consequential
-action was executed. Current source now centralizes external-write intent in a
+action was executed. Current source centralizes external-write intent in a
 negation-aware, fail-closed classifier and covers the observed wording plus
-mixed real-write instructions. That fix is not present in preview.35 and still
-requires exact-package physical retest; the failed job is not counted as the
-successful customer run above.
+mixed real-write instructions. The fix is not present in preview.35; the
+preview.36 physical retest above closes it. The failed preview.35 job is not
+counted as the successful customer run below.
 
 ### Downloads, Receipt And Logout
 
@@ -366,11 +425,11 @@ foreign-key write as an empty string. Source commit
 preserves an explicit zero budget, and adds an authenticated Owner/CSRF smoke
 that proves the marker creates only task, runtime-event and audit evidence with
 no run, tool call, evaluation or real Runtime invocation. The deterministic
-smoke passes, but the physical marker row remains failed until that exact fix is
-packaged, installed and rerun from the MacBook.
+smoke passes, preview.36 packages the fix, and marker `tsk_570cb03937f6` now
+closes the exact-package physical retest.
 
 Therefore the authenticated advanced-Tailscale workflow is accepted for the
-real task, disconnect, review, download and logout rows, while the overall
-second-device protocol remains partial. Ordinary customer acceptance still
-requires a browser-only deployed Relay with no Tailscale client, exact-package
-marker retest, Host restart persistence and another clean Mac install.
+current-package marker, real task, disconnect, review, download and logout
+rows, while the overall second-device protocol remains partial. Ordinary
+customer acceptance still requires a browser-only deployed Relay with no
+Tailscale client, Host restart persistence and another clean Mac install.
