@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.37 is published and installed with the launchd convergence fix accepted on the Mini; preview.36 remains the latest physical MacBook/real-task package, while the source-only Worker Intake heartbeat fix, ordinary browser-only Relay and final physical gates remain open
+Status: preview.38 is published and installed with fresh Hermes/OpenClaw evidence and an authenticated physical MacBook review/download/logout receipt; the source-only Host-machine Session Fleet correction, ordinary browser-only Relay and final physical gates remain open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -11,12 +11,12 @@ physical evidence and cannot be closed by mock output.
 
 | # | Requirement | Current evidence | Status |
 |---|---|---|---|
-| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.37` publishes five provenance/checksum/archive/bootstrap assets from exact commit `6a87e048b7a8e40f5d33c50983c7d0c482804ffc`. Two candidates were byte-equal; Candidate, Draft and public downloads matched in separate directories; isolated Candidate, Draft and public-network install/start/status/stop receipts passed. The real preview.36-to-preview.37 upgrade preserved data and recorded a verified pre-update backup. A receipt from another physical Mac remains missing. | Passed locally; external evidence required |
-| 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | Installed preview.37 serves the managed production UI/API/ledger/knowledge stack and passed a real `load -> unload -> load` Host-only service roundtrip. Both Hermes/OpenClaw LaunchAgents returned and wrote fresh task-pull evidence. Intake-blocked polls currently leave the Fleet heartbeat projection stale; the bounded source fix is verified but requires a later package. | Host passed locally; Worker status correction pending package |
+| 1 | Clean Host installs from a versioned asset without cloning | GitHub prerelease `v1.6.0-private-host-preview.38` publishes five provenance/checksum/archive/bootstrap assets from exact commit `ee3d36c9ae4f123261893376fff012e36fc8a973`. Two candidates were byte-equal; Candidate, Draft and public downloads matched in separate directories; isolated Candidate, Draft and public-network install/start/status/stop receipts passed. The real preview.37-to-preview.38 upgrade preserved data and recorded verified manual plus automatic pre-update backups. A receipt from another clean physical Mac remains missing. | Passed locally; external evidence required |
+| 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | Installed preview.38 serves the managed production UI/API/ledger/knowledge stack and both LaunchAgents emit bounded heartbeats. The first readback showed two execution-capacity Workers, but both became stale after 90 seconds because Host-machine Sessions have no enrollment parent and preview.38 Fleet ignored the current scoped observation. A source fix and integration regression pass; packaging and sustained real readback remain open. A separate near-full volume incident recovered without deleting authority data or backups. | Host passed locally; Worker projection package and storage guards open |
 | 3 | Browser-only second computer opens the stable per-Host HTTPS console, pairs and authenticates | A physical MacBook authenticated through the advanced Tailscale HTTPS profile with only the dedicated browser Console and no AgentOps project or Runtime dependency. The ordinary path still requires a deployed L4 Relay, Host-side TLS, one-time pairing and a physical Console with no Tailscale/VPN client. | Passed on advanced profile; ordinary Relay evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, `private_host_owner_browser_handoff_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, setup-code authority, role/session separation and CSRF/Origin checks. The physical MacBook received HTTP 401 for protected workspace reads and task creation before login, then again for dashboard, approved artifact and Host-receipt downloads after UI logout. | Passed locally and on physical advanced client |
-| 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | The preview.35 MacBook flow submitted job `wfjob_ec747fe27ab2`, approved its low-risk delivery, reviewed memory/Evaluation/Audit and downloaded the approved artifact plus Host receipt. The same physical Console then retested preview.36: marker `tsk_570cb03937f6` wrote only bounded marker evidence, and confirmed OpenClaw job `wfjob_9940b1e6ea15` completed run `run_gw_c8d2ad1aa845`; its Run page rendered Evaluation/Audit entry points and UI logout made protected Dashboard readback return 401. | Real advanced-client workflow and current-package retest passed; ordinary Relay open |
-| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | Preview.36 completed Host-local run `run_gw_ed42f579d487` and physical-MacBook run `run_gw_c8d2ad1aa845`. Both used the negated read-only wording class and produced zero external-write PreparedActions. Preview.37 changed Host service convergence only; no Runtime task was executed during its maintenance window. | Passed on latest real-task/physical package; repeat after Worker heartbeat package |
+| 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | The preview.38 MacBook dedicated Console authenticated as Owner, rendered current Hermes run `run_gw_c835b4dab9a9` and OpenClaw run `run_gw_be0e8275670f` with Evaluation/Runtime/Approval/Audit entry points, approved exactly those two low-risk deliveries by Task ID, and downloaded one approved Artifact. It then logged out and the same browser received HTTP 401 for protected Dashboard metrics. The preview.35 receipt remains the disconnect/reconnect and Host-receipt history. | Current-package advanced-client review passed; ordinary Relay open |
+| 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | Installed preview.38 completed Host-local Hermes run `run_gw_c835b4dab9a9` and OpenClaw run `run_gw_be0e8275670f`. Each produced a tool call, passing Evaluation, 15 Runtime Events, 12 Audit rows, two Artifacts, two Memory candidates, a delivery Approval and a verified plan-evidence manifest; the physical MacBook then reviewed and approved both deliveries. | Passed on current Host package and physical advanced client |
 | 7 | Browser or Relay disconnect does not stop Host Worker or lose/duplicate task | `PRIVATE_HOST_CONSOLE_DISCONNECT_ACCEPTANCE.md` covers Host-local Session loss. The physical MacBook dedicated browser was also closed while `run_gw_edfe2753846f` was running; the Host completed it, reconnect showed the same job/task/run, and bounded readback found exactly one workflow job and one run. Deployed-Relay interruption evidence remains missing. | Passed on Host and physical browser disconnect; deployed Relay evidence required |
 | 8 | Host restart preserves ledger and knowledge state | `PRIVATE_HOST_RESTART_PERSISTENCE_ACCEPTANCE.md` covers Session, task and a 194-document local Markdown/FTS index remaining searchable after managed restart. | Passed locally |
 | 9 | Backup and restore pass on isolated database | `PRIVATE_HOST_BACKUP_RESTORE_ACCEPTANCE.md` covers strict manifest/hash/schema/integrity/foreign-key checks, atomic replacement and access revocation. | Passed locally |
@@ -813,7 +813,99 @@ logout/reboot service proof remain open. The same-Host private-HTTPS Owner
 receipt does not substitute for those physical gates, and no external evidence
 is synthesized. This is a prerelease, not the final RC.
 
-## Current Preview 37
+## Current Preview 38
+
+- Tag: `v1.6.0-private-host-preview.38`
+- Exact commit: `ee3d36c9ae4f123261893376fff012e36fc8a973`
+- Push CI: passed at the exact commit (`29677587281`)
+- Pull-request CI: passed at the exact commit (`29677588369`)
+- Release: `https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/v1.6.0-private-host-preview.38`
+- Provenance asset SHA-256: `c12fa8352545ac33bbff7227c94938065336558bd23ca88bcb50046290cf0a82`
+- SHA-256 manifest asset: `0714a3bb68f285db7ce7c36f91ddaff27993754241f11b87deb54891d894b6e3`
+- Tar archive: `43c0dcb4190316841400d26d734b7f70f4ddf7afd267099b34b3d25981255500`
+- Zip archive: `733d703251f40f53b3cbc6415809272b826662ee7c2778d879ff9334692c4d09`
+- Release-consumer bootstrap: `75854f364502722eb24d5a7df3c0fc26685bf25acae6d5926e4c6396d16bd812`
+
+preview.38 packages the Intake-blocked Worker heartbeat emission and
+workspace-scoped sampling corrections discovered on preview.37. Both
+exact-head CI runs and the strict release gates passed. Two clean candidates
+were byte-equal. All five Candidate, Draft and public assets matched
+byte-for-byte, and isolated Candidate, Draft and public-network consumers each
+completed no-repository install/start/status/stop with exact version and commit
+readback. GitHub could not dispatch the branch-only release workflow because it
+is absent from the default branch, so the already documented manual
+Draft-to-public path performed the same two consumer gates.
+
+Before real maintenance, only stopped AgentOps test directories under
+`/private/tmp` were removed; no historical backup or authority ledger was
+deleted. A fresh preview.37 backup passed hash, schema, integrity and
+foreign-key verification. Both Worker LaunchAgents and the Host LaunchAgent
+were explicitly unloaded. The public installer created its own verified
+pre-update backup, preserved Host data, recorded preview.37 as the previous
+version and bound `current` to preview.38 at the exact release commit.
+
+The preview.38 Host returned health `ready`, Human login remained available,
+Tailscale Serve stayed configured and Funnel remained disabled. Both service
+Workers returned with new processes. Against the same Intake-blocked queue that
+left preview.37 stale, Fleet now reported `ready`, two execution-capacity
+Workers and zero stale service Workers without invoking either model.
+
+That first readback did not cross the full freshness window. A later sample
+beyond 90 seconds reported zero execution capacity and two stale service
+Workers while both launchd processes and loop iterations remained current.
+Host-machine Sessions have no parent enrollment token; their same-state
+heartbeats refreshed the workspace-scoped observation every 60 seconds but did
+not amplify the 15-minute Runtime/Audit ledger sample. Preview.38 Fleet read the
+historical event rather than the current observation. The source follow-up now
+uses the current `(workspace_id, agent_id)` observation and an isolated real
+Host-machine Session regression passes, but a later package and sustained real
+readback are required. Preview.38 is not credited with sustained Fleet
+freshness.
+
+Separately, after all package and real-runtime acceptance steps, the Host volume later fell
+to roughly 115 MiB free. The backend PID and loopback listener remained, but
+health responses became unusable and both launchd Workers exited nonzero. A
+fixed-clock regression then proved that the 60-second Worker cadence, real idle
+backoff and 90-second Fleet freshness window contain no periodic stale gap.
+Only one unreferenced stopped AgentOps test directory under `/private/tmp` was
+removed; no database, historical backup, credential, Runtime evidence or
+Tailscale configuration was touched. APFS reclaimed more than one GiB, Host
+health returned HTTP 200 and the first Fleet readback returned to two
+execution-capacity service Workers. Extended observation reproduced the
+independent projection defect while health stayed HTTP 200. This is a recovery
+receipt, not a storage-pressure or sustained-heartbeat acceptance claim.
+
+An Owner-authenticated, explicitly confirmed customer workflow then completed
+real Hermes run `run_gw_c835b4dab9a9` and real OpenClaw run
+`run_gw_be0e8275670f`. Each run has one tool call, one passing Evaluation, 15
+Runtime Events, 12 bounded Audit rows, two Artifacts, two Memory candidates,
+one delivery Approval and one passing plan-evidence manifest. No delivery
+decision is inferred from Runtime completion, and no raw prompt/response,
+credential, private origin, Worker log, private message, transcript or database
+content was retained.
+
+A physical MacBook reached the upgraded private HTTPS Workspace and used a
+temporary dedicated Chrome profile with `--no-proxy-server` through a
+loopback-only SSH/CDP tunnel. It authenticated as Owner without exposing the
+credential, rendered both current Run pages with Evaluation, Runtime, Approval
+and Audit entry points, and approved exactly the two new low-risk deliveries by
+Task ID. One approved Artifact downloaded to a temporary directory with size
+811 bytes and SHA-256
+`3dbe03f31d9c42ffb15f53f18b9b85e010d0d85d7370b89174a788f903e9f6b9`;
+its body was not read. UI logout then made the same browser's protected
+Dashboard request return HTTP 401. The dedicated profile, download and tunnel
+were removed without touching normal Chrome.
+
+Deployed Relay/DNS/TLS, no-Tailscale browser pairing, deployed-Relay
+interruption, current-package physical browser disconnect/reconnect, Host
+logout/reboot recovery, another-Mac clean installation and a bounded backup
+retention/prune command, Host free-space preflight and bounded Host log rotation
+remain open. The Host-machine Session heartbeat observation package is also
+open.
+
+The current preview therefore remains a prerelease.
+
+## Superseded Preview 37
 
 - Tag: `v1.6.0-private-host-preview.37`
 - Exact commit: `6a87e048b7a8e40f5d33c50983c7d0c482804ffc`

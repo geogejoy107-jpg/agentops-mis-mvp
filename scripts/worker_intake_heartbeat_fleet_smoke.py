@@ -122,6 +122,7 @@ def main() -> int:
         os.environ["AGENTOPS_LIVE_RUNTIME_DISABLED"] = "true"
         os.environ["AGENTOPS_SKIP_SEED_EXPORTS"] = "1"
         os.environ["AGENTOPS_WORKER_RUNTIME_DIR"] = str(Path(tmp) / "worker-runtime")
+        os.environ["AGENTOPS_API_KEY"] = "worker-heartbeat-machine-fixture"
 
         import server
         from agentops_mis_cli import worker
@@ -378,6 +379,10 @@ def main() -> int:
                 "UPDATE agent_gateway_sessions SET last_used_at=? WHERE session_id=?",
                 (stale_at, other_session.get("session_id")),
             )
+            conn.execute(
+                "UPDATE agent_gateway_heartbeat_observations SET updated_at=? WHERE workspace_id=? AND agent_id=?",
+                (stale_at, "workspace-other", client.agent_id),
+            )
             conn.commit()
             scoped_fleet = server.worker_remote_fleet_summary(conn)
             scoped_status = server.worker_status(conn, refresh_runtime=False)
@@ -481,6 +486,89 @@ def main() -> int:
         require(concurrent_pull_after["audit_logs"] - concurrent_pull_before["audit_logs"] == 1,
                 f"concurrent task.pull Audit amplification: {concurrent_pull_after}", failures)
 
+        machine_agent_id = "agt_worker_host_machine_session"
+        machine_headers = {
+            "Authorization": "Bearer worker-heartbeat-machine-fixture",
+            "X-AgentOps-Agent-Id": machine_agent_id,
+            "X-AgentOps-Workspace-Id": "local-demo",
+        }
+        with server.db() as conn:
+            machine_session, machine_session_status = server.agent_gateway_create_session(
+                conn,
+                machine_headers,
+                {"scopes": worker_scopes, "ttl_sec": 900},
+            )
+            conn.commit()
+        machine_client = AuthenticatedHeartbeatClient(
+            server,
+            machine_session.get("session_token") or "",
+            agent_id=machine_agent_id,
+        )
+        first_machine_heartbeat = machine_client.post("/api/agent-gateway/heartbeat", {
+            "workspace_id": "local-demo",
+            "agent_id": machine_agent_id,
+            "status": "idle",
+            "summary": "Host machine Session heartbeat smoke.",
+            "runtime_type": "openclaw",
+        })
+        stale_history_at = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat()
+        with server.db() as conn:
+            machine_session_row = conn.execute(
+                "SELECT parent_token_id FROM agent_gateway_sessions WHERE session_id=?",
+                (machine_session.get("session_id"),),
+            ).fetchone()
+            conn.execute(
+                "UPDATE runtime_events SET created_at=? WHERE event_type='agent.heartbeat' AND agent_id=?",
+                (stale_history_at, machine_agent_id),
+            )
+            conn.commit()
+            machine_fleet_from_observation = server.worker_remote_fleet_summary(conn)
+            conn.execute(
+                "UPDATE agent_gateway_heartbeat_observations SET updated_at=? WHERE workspace_id=? AND agent_id=?",
+                (stale_history_at, "local-demo", machine_agent_id),
+            )
+            conn.commit()
+            machine_stale_fleet = server.worker_remote_fleet_summary(conn)
+
+        machine_worker_from_observation = next((
+            item for item in (machine_fleet_from_observation.get("service_workers") or [])
+            if item.get("agent_id") == machine_agent_id and item.get("workspace_id") == "local-demo"
+        ), {})
+        machine_worker_stale = next((
+            item for item in (machine_stale_fleet.get("service_workers") or [])
+            if item.get("agent_id") == machine_agent_id and item.get("workspace_id") == "local-demo"
+        ), {})
+        second_machine_heartbeat = machine_client.post("/api/agent-gateway/heartbeat", {
+            "workspace_id": "local-demo",
+            "agent_id": machine_agent_id,
+            "status": "idle",
+            "summary": "Host machine Session heartbeat smoke.",
+            "runtime_type": "openclaw",
+        })
+        with server.db() as conn:
+            machine_recovered_fleet = server.worker_remote_fleet_summary(conn)
+        machine_worker_recovered = next((
+            item for item in (machine_recovered_fleet.get("service_workers") or [])
+            if item.get("agent_id") == machine_agent_id and item.get("workspace_id") == "local-demo"
+        ), {})
+        machine_heartbeat_evidence = heartbeat_counts(server, machine_agent_id)
+        require(machine_session_status == 201 and machine_session.get("session_id"),
+                "Host machine Session setup failed", failures)
+        require(machine_session_row and machine_session_row["parent_token_id"] is None,
+                "Host machine Session unexpectedly received an enrollment parent", failures)
+        require(first_machine_heartbeat.get("ledger_recorded") is True,
+                "first Host machine heartbeat missed ledger evidence", failures)
+        require(machine_worker_from_observation.get("heartbeat_state") == "fresh",
+                f"fresh scoped observation did not override stale history: {machine_worker_from_observation}", failures)
+        require(machine_worker_stale.get("heartbeat_state") == "stale",
+                f"expired scoped observation did not become stale: {machine_worker_stale}", failures)
+        require(second_machine_heartbeat.get("ledger_recorded") is False,
+                "same-state Host machine heartbeat was not coalesced", failures)
+        require(machine_worker_recovered.get("heartbeat_state") == "fresh",
+                f"coalesced Host machine heartbeat did not restore Fleet freshness: {machine_worker_recovered}", failures)
+        require(machine_heartbeat_evidence == {"runtime_events": 1, "audit_logs": 1},
+                f"Host machine heartbeat amplified historical evidence: {machine_heartbeat_evidence}", failures)
+
         output = {
             "ok": not failures,
             "operation": "worker_intake_heartbeat_fleet_smoke",
@@ -497,6 +585,11 @@ def main() -> int:
             "service_worker_heartbeat_state": service_worker.get("heartbeat_state"),
             "active_session_count": remote_worker.get("active_session_count"),
             "deduplicated_execution_capacity_workers": deduplicated_status.get("execution_capacity_workers"),
+            "host_machine_session_parent_omitted": bool(machine_session_row and machine_session_row["parent_token_id"] is None),
+            "host_machine_observation_state": machine_worker_from_observation.get("heartbeat_state"),
+            "host_machine_expired_observation_state": machine_worker_stale.get("heartbeat_state"),
+            "host_machine_recovered_state": machine_worker_recovered.get("heartbeat_state"),
+            "host_machine_second_heartbeat_ledger_recorded": second_machine_heartbeat.get("ledger_recorded"),
             "cross_workspace_states": {
                 workspace_id: item.get("heartbeat_state")
                 for workspace_id, item in scoped_service_workers.items()

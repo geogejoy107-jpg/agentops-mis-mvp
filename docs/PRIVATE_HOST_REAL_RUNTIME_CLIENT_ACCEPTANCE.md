@@ -264,3 +264,43 @@ deployed-Relay interruption, Host reboot or another-Mac installation. No raw
 prompt/response, credential, Session/CSRF value, private origin, browser
 storage, Worker log, private message, transcript or database content was
 retained.
+
+## Exact-Package Preview 38 Host-Local Result
+
+The installed `v1.6.0-private-host-preview.38` package at exact commit
+`ee3d36c9ae4f123261893376fff012e36fc8a973` completed two fresh,
+Owner-authenticated and explicitly confirmed customer tasks. Both asked the
+real Runtime to review the AgentOps MIS Workspace and return three actionable
+Chinese improvements while prohibiting file writes and external services.
+
+| Adapter | Task | Run | Plan evidence | Result |
+|---|---|---|---|---|
+| Hermes | `tsk_customer_worker_task_hermes_hermes_worker_20260719152548_20260719072548673410` | `run_gw_c835b4dab9a9` | `pem_da01eaeea65a518a` | Completed |
+| OpenClaw | `tsk_customer_worker_task_openclaw_openclaw_worker_20260719152623_20260719072623508530` | `run_gw_be0e8275670f` | `pem_16c802e45dcbd6d9` | Completed |
+
+Each run wrote one tool call, one passing Evaluation, 15 Runtime Events, 12
+bounded Audit rows, two Artifacts, two reviewable Memory candidates, one
+delivery Approval and one passing plan-evidence manifest. The client returned
+`ok=true`, `human_session_used=true` and no failures for both adapters. Delivery
+approval IDs `ap_customer_worker_delivery_run_gw_c835b4dab9a9` and
+`ap_customer_worker_delivery_run_gw_be0e8275670f` were created; this receipt
+does not claim that a human accepted either delivery.
+
+This closes the current-package Host-local real-Runtime repeat required after
+the Worker heartbeat package. It does not close the later-discovered sustained
+Fleet projection gap for Host-machine Sessions; that source correction still
+requires a later exact package. The physical MacBook dedicated Console then
+authenticated as Owner, rendered both new Run pages with Evaluation, Runtime,
+Approval and Audit entry points, and approved exactly these two deliveries by
+Task ID. It downloaded one approved Artifact to a temporary directory without
+reading its body; the file was 811 bytes with SHA-256
+`3dbe03f31d9c42ffb15f53f18b9b85e010d0d85d7370b89174a788f903e9f6b9`.
+After UI logout, the same browser's protected Dashboard request returned HTTP
+401. The temporary browser profile, download and SSH/CDP tunnel were removed
+without touching normal Chrome.
+
+This is the current-package authenticated physical-browser review receipt. It
+does not repeat the preview.35 disconnect/reconnect flow and does not close the
+ordinary no-Tailscale Relay, Host reboot or another-Mac gates. No raw prompt,
+raw response, credential, private origin, Worker log, private message, full
+transcript or database content was retained.

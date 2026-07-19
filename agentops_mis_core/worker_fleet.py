@@ -335,6 +335,7 @@ def build_worker_remote_fleet_summary(
     sessions: list[dict[str, Any]],
     agents_by_id: dict[str, dict[str, Any]],
     heartbeats_by_agent: dict[str, dict[str, Any]] | None = None,
+    heartbeats_by_worker: dict[tuple[str, str], dict[str, Any]] | None = None,
     now_dt: dt.datetime | None = None,
     service_heartbeat_timeout_sec: int = 90,
 ) -> dict[str, Any]:
@@ -383,6 +384,7 @@ def build_worker_remote_fleet_summary(
     never_seen_enrollments = [item for item in remote_workers if item.get("heartbeat_state") == "never_seen"]
     fresh_enrollments = [item for item in remote_workers if item.get("heartbeat_state") == "fresh"]
     heartbeats_by_agent = heartbeats_by_agent or {}
+    heartbeats_by_worker = heartbeats_by_worker or {}
     now_dt = now_dt or dt.datetime.now(dt.timezone.utc)
     service_workers = []
     active_worker_count_by_agent: dict[str, int] = {}
@@ -392,6 +394,7 @@ def build_worker_remote_fleet_summary(
         agent = agents_by_id.get(agent_id) or {}
         session = execution_session_by_worker.get((workspace_id, agent_id)) or {}
         heartbeat = heartbeats_by_agent.get(agent_id) or {}
+        scoped_heartbeat = heartbeats_by_worker.get((workspace_id, agent_id)) or {}
         enrollment_heartbeats = [
             enrollment.get("last_heartbeat_at")
             for enrollment in enrollments
@@ -408,6 +411,7 @@ def build_worker_remote_fleet_summary(
             value
             for value in [
                 *enrollment_heartbeats,
+                scoped_heartbeat.get("last_heartbeat_at") or scoped_heartbeat.get("updated_at"),
                 unscoped_heartbeat,
             ]
             if value

@@ -73,9 +73,11 @@ python3 -m py_compile \
   agentops_mis_cli/worker.py \
   agentops_mis_core/worker_fleet.py \
   scripts/worker_intake_auto_plan_smoke.py \
-  scripts/worker_intake_heartbeat_fleet_smoke.py
+  scripts/worker_intake_heartbeat_fleet_smoke.py \
+  scripts/worker_service_heartbeat_cadence_smoke.py
 python3 scripts/worker_intake_auto_plan_smoke.py
 python3 scripts/worker_intake_heartbeat_fleet_smoke.py
+python3 -B scripts/worker_service_heartbeat_cadence_smoke.py
 python3 scripts/operator_loop_supervision_consumption_smoke.py
 python3 scripts/operator_task_intake_smoke.py --isolated-fixture
 python3 scripts/secret_scan_smoke.py
@@ -112,9 +114,69 @@ The smoke also proves that a read-only Session can pull safely without becoming
 execution capacity, and that two workspaces using the same Agent ID each create
 their own first heartbeat sampling record.
 
+The fixed-clock cadence smoke independently exercises the default 60-second
+request interval together with the real idle backoff. It checks 250 Fleet
+samples across five heartbeat requests, observes a maximum 65-second request
+gap against the 90-second service freshness window, and finds zero periodic
+stale windows. It also proves that the exact 90-second boundary remains fresh
+and that an actually expired heartbeat becomes stale immediately after that
+boundary. It starts no service and reads no database or credential.
+
 ## Package Boundary
 
-The real finding is bound to installed preview.37. The corrective code is
-source-only until a later exact-commit package is built, published, installed
-and the same service Worker fleet readback becomes fresh. Preview.37 must not
-be credited with this correction.
+The real finding remains bound to installed preview.37 and preview.37 is not
+credited with the correction.
+
+The corrective package is
+`v1.6.0-private-host-preview.38` at exact commit
+`ee3d36c9ae4f123261893376fff012e36fc8a973`. Candidate, Draft and public assets
+were byte-equal, isolated consumers passed, and the real Mini upgraded with
+verified manual and automatic pre-update backups.
+
+After both preview.38 Worker LaunchAgents returned, the same Intake-blocked
+queue produced authenticated heartbeats without invoking Hermes or OpenClaw.
+The first Fleet readback changed from preview.37's zero execution-capacity and
+two stale service Workers to status `ready`, two execution-capacity service
+Workers and zero stale service Workers. The later real model runs are recorded
+separately and are not used to manufacture heartbeat freshness.
+
+Extended observation crossed the 90-second Fleet freshness threshold and found
+both service Workers stale again while their processes, task pulls and loop
+iterations remained current. The local Host Workers use short-lived Sessions
+minted from the Host machine credential, so those Sessions have no parent
+enrollment token. Their 60-second same-state heartbeats updated the
+workspace-scoped `agent_gateway_heartbeat_observations` row but intentionally
+did not add another 15-minute Runtime Event. Preview.38 Fleet projection read
+the enrollment timestamp plus historical Runtime Event, but not the current
+observation timestamp. Preview.38 therefore receives credit for the
+Intake-blocked heartbeat emission fix, not sustained Host-machine Session Fleet
+liveness.
+
+The source follow-up now reads the current observation by
+`(workspace_id, agent_id)` before falling back to unscoped historical evidence.
+The isolated integration test uses a real unparented Host-machine Session and
+proves that a coalesced second heartbeat restores Fleet freshness without
+adding another Runtime Event or Audit row. This source correction requires a
+later exact package and real observation beyond two heartbeat cycles.
+
+## Post-Acceptance Storage Pressure Finding
+
+After the package and real-runtime acceptance was complete, the Host volume
+later fell to roughly 115 MiB free. The backend process and listening socket
+remained present, but health requests stopped returning a usable response and
+both launchd Workers exited with a nonzero status. This availability failure
+temporarily obscured the separate Host-machine Session projection defect.
+
+Only an unreferenced, stopped AgentOps test directory under
+`/private/tmp` was removed; no Host database, historical backup, credential,
+Runtime evidence or Tailscale configuration was changed. APFS then reclaimed
+more than one GiB, Host health returned HTTP 200, and both Workers returned as
+two execution-capacity service Workers with zero stale service Workers on the
+initial readback. The extended readback then reproduced the 90-second
+projection defect while Host health stayed HTTP 200, proving that storage
+pressure and heartbeat projection were independent findings.
+
+This recovery does not close the storage-resilience gate. A bounded backup
+retention/prune command, Host free-space preflight and bounded Host log rotation
+remain required before final RC. Neither the initial Fleet recovery nor the
+disk-space recovery is presented as sustained Host acceptance.

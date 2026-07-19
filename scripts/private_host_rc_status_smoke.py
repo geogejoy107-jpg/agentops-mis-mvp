@@ -12,10 +12,11 @@ SECOND_DEVICE = ROOT / "docs" / "PRIVATE_HOST_SECOND_DEVICE_ACCEPTANCE.md"
 SERVICE_UPGRADE = ROOT / "docs" / "PRIVATE_HOST_SERVICE_UPGRADE_MIGRATION_ACCEPTANCE.md"
 REAL_RUNTIME = ROOT / "docs" / "PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md"
 WORKER_INTAKE_HEARTBEAT = ROOT / "docs" / "PRIVATE_HOST_WORKER_INTAKE_HEARTBEAT_ACCEPTANCE.md"
+WORKER_HEARTBEAT_CADENCE = ROOT / "scripts" / "worker_service_heartbeat_cadence_smoke.py"
 
-VERSION = "1.6.0-private-host-preview.37"
+VERSION = "1.6.0-private-host-preview.38"
 TAG = f"v{VERSION}"
-COMMIT = "6a87e048b7a8e40f5d33c50983c7d0c482804ffc"
+COMMIT = "ee3d36c9ae4f123261893376fff012e36fc8a973"
 RELEASE_URL = f"https://github.com/geogejoy107-jpg/agentops-mis-mvp/releases/tag/{TAG}"
 PHYSICAL_VERSION = "1.6.0-private-host-preview.36"
 PHYSICAL_TAG = f"v{PHYSICAL_VERSION}"
@@ -24,10 +25,10 @@ LEGACY_PHYSICAL_VERSION = "1.6.0-private-host-preview.35"
 LEGACY_PHYSICAL_TAG = f"v{LEGACY_PHYSICAL_VERSION}"
 LEGACY_PHYSICAL_COMMIT = "6424ec144013517b21438cd7e528c6db106a0a5e"
 CHECKSUMS = {
-    "provenance": "6db23e6b8f2a089b3fb7918f6b8515cddf12b408a49a0fe2f4e792bdc3a500a3",
-    "manifest": "f2130ce98798c99a798f196f0ab6598b892616dcf5842d70e620e84f92d87824",
-    "tar": "45f4919959970ae60e3b7dce69cd61903c13fc7839193e2c2342ecea4f7036ad",
-    "zip": "78bbdda1f372e4f6d7721c6763477f9ac0565619384d4505a9fa24b0938e89a0",
+    "provenance": "c12fa8352545ac33bbff7227c94938065336558bd23ca88bcb50046290cf0a82",
+    "manifest": "0714a3bb68f285db7ce7c36f91ddaff27993754241f11b87deb54891d894b6e3",
+    "tar": "43c0dcb4190316841400d26d734b7f70f4ddf7afd267099b34b3d25981255500",
+    "zip": "733d703251f40f53b3cbc6415809272b826662ee7c2778d879ff9334692c4d09",
     "bootstrap": "75854f364502722eb24d5a7df3c0fc26685bf25acae6d5926e4c6396d16bd812",
 }
 
@@ -55,26 +56,33 @@ def main() -> int:
     runtime = REAL_RUNTIME.read_text(encoding="utf-8")
     worker_intake_heartbeat = WORKER_INTAKE_HEARTBEAT.read_text(encoding="utf-8")
     rc_headings = [line for line in rc.splitlines() if line.startswith("## Current Preview ")]
-    current_rc = heading_section(rc, "Current Preview 37")
+    current_rc = heading_section(rc, "Current Preview 38")
+    second_preview38_physical = heading_section(second, "Preview 38 Authenticated MacBook Review")
     second_preview36_host = heading_section(second, "Preview 36 Host Staging")
     second_preview36_physical = heading_section(second, "Preview 36 Physical MacBook Retest")
     second_preview35_physical = heading_section(second, "Preview 35 Authenticated MacBook Evidence")
+    service_preview38 = heading_section(service_upgrade, "Preview 38 Release And Real Upgrade")
     service_preview37 = heading_section(service_upgrade, "Preview 37 Release And Real Upgrade")
     service_preview36 = heading_section(service_upgrade, "Preview 36 Release And Real Upgrade")
+    runtime_preview38 = heading_section(runtime, "Exact-Package Preview 38 Host-Local Result")
     runtime_preview36_host = heading_section(runtime, "Exact-Package Preview 36 Negated Read-Only Result")
     runtime_preview36_physical = heading_section(runtime, "Exact-Package Preview 36 Physical MacBook Result")
     normalized_current_rc = " ".join(current_rc.split())
     normalized_second = " ".join(second.split())
+    normalized_second_preview38_physical = " ".join(second_preview38_physical.split())
     normalized_second_preview36_physical = " ".join(second_preview36_physical.split())
     normalized_second_preview35_physical = " ".join(second_preview35_physical.split())
+    normalized_service_preview38 = " ".join(service_preview38.split())
     normalized_service_preview37 = " ".join(service_preview37.split())
     normalized_service_preview36 = " ".join(service_preview36.split())
     normalized_runtime = " ".join(runtime.split())
+    normalized_runtime_preview38 = " ".join(runtime_preview38.split())
     normalized_runtime_preview36_host = " ".join(runtime_preview36_host.split())
     normalized_worker_intake_heartbeat = " ".join(worker_intake_heartbeat.split())
 
     require(len(rc_headings) == 1, "RC document must name exactly one Current Preview", failures)
-    require("## Current Preview 37" in rc, "preview.37 must be the current RC prerelease", failures)
+    require("## Current Preview 38" in rc, "preview.38 must be the current RC prerelease", failures)
+    require("## Superseded Preview 37" in rc, "preview.37 Worker finding must be preserved as superseded history", failures)
     require("## Superseded Preview 36" in rc, "preview.36 physical evidence must be preserved as superseded history", failures)
     require("## Superseded Preview 35" in rc, "preview.35 physical evidence must be preserved as superseded history", failures)
     require("## Superseded Preview 31" in rc, "preview.31 must be preserved as superseded history", failures)
@@ -92,7 +100,7 @@ def main() -> int:
     require("## Superseded Preview 19" in rc, "preview.19 must be preserved as superseded history", failures)
     require("## Superseded Preview 12" in rc, "preview.12 must be marked superseded", failures)
     require(TAG in current_rc and VERSION in current_rc, "current version/tag missing from current RC section", failures)
-    require(COMMIT in current_rc and COMMIT in service_preview37,
+    require(COMMIT in current_rc and COMMIT in service_preview38,
             "exact release commit missing from current acceptance evidence", failures)
     require(RELEASE_URL in current_rc, "public prerelease URL missing from current RC section", failures)
     for label, checksum in CHECKSUMS.items():
@@ -102,24 +110,31 @@ def main() -> int:
         "deployed Relay/DNS/TLS",
         "no-Tailscale browser pairing",
         "deployed-Relay interruption",
-        "Worker Intake heartbeat correction package",
-        "current-package real Runtime readback",
+        "current-package physical browser disconnect/reconnect",
         "Host logout/reboot recovery",
         "another-Mac clean installation",
+        "backup retention/prune command",
+        "Host free-space preflight",
+        "bounded Host log rotation",
+        "Host-machine Session heartbeat observation package",
     )
     for marker in open_gate_markers:
         require(marker.lower() in normalized_current_rc.lower(), f"open external gate is no longer explicit in current RC section: {marker}", failures)
     require("The current preview therefore remains a prerelease." in current_rc,
             "current preview must not claim final RC", failures)
-    require(TAG in service_preview37 and COMMIT in service_preview37,
-            "preview.37 service-upgrade receipt is not exact-package bound", failures)
-    require("Candidate, Draft and public-network consumers each completed no-repository" in normalized_service_preview37,
-            "preview.37 separate release-consumer receipt missing", failures)
-    require("preserved Host data" in normalized_service_preview37
-            and "real service roundtrip" in normalized_service_preview37,
-            "preview.37 data/service convergence receipt missing", failures)
-    require("Funnel remained disabled" in normalized_service_preview37,
-            "preview.37 upgrade must preserve the private transport boundary", failures)
+    require(TAG in service_preview38 and COMMIT in service_preview38,
+            "preview.38 service-upgrade receipt is not exact-package bound", failures)
+    require("Candidate, Draft and public-network consumers each completed no-repository" in normalized_service_preview38,
+            "preview.38 separate release-consumer receipt missing", failures)
+    require("preserved Host data" in normalized_service_preview38
+            and "two execution-capacity service Workers" in normalized_service_preview38,
+            "preview.38 data/Worker convergence receipt missing", failures)
+    require("Funnel remained disabled" in normalized_service_preview38,
+            "preview.38 upgrade must preserve the private transport boundary", failures)
+    require("zero stale service Workers" in normalized_service_preview38
+            and "not sustained acceptance" in normalized_service_preview38
+            and "later exact package" in normalized_service_preview38,
+            "preview.38 initial heartbeat readback or source-only boundary is incomplete", failures)
     require("requires a later package" in normalized_service_preview37
             and "not attributed to preview.37" in normalized_service_preview37,
             "preview.37 source-only Worker correction boundary missing", failures)
@@ -128,6 +143,21 @@ def main() -> int:
             "Worker heartbeat request and ledger cadence contract missing", failures)
     require("failure is returned to the Worker loop" in normalized_worker_intake_heartbeat,
             "Worker heartbeat rejection observability contract missing", failures)
+    require(TAG in worker_intake_heartbeat and COMMIT in worker_intake_heartbeat,
+            "Worker heartbeat exact-package acceptance is missing", failures)
+    require("two execution-capacity service Workers" in normalized_worker_intake_heartbeat
+            and "not sustained Host-machine Session Fleet liveness" in normalized_worker_intake_heartbeat
+            and "later exact package" in normalized_worker_intake_heartbeat,
+            "Worker heartbeat real finding or package boundary is missing", failures)
+    require(WORKER_HEARTBEAT_CADENCE.is_file(),
+            "Worker heartbeat cadence regression is missing", failures)
+    require("250 Fleet" in worker_intake_heartbeat
+            and "zero periodic" in normalized_worker_intake_heartbeat
+            and "115 MiB" in worker_intake_heartbeat,
+            "post-acceptance storage-pressure finding or cadence evidence is missing", failures)
+    require("storage-pressure or sustained-heartbeat acceptance claim" in normalized_current_rc
+            and "no database, historical backup, credential" in normalized_current_rc,
+            "preview.38 storage recovery boundary is missing", failures)
 
     require(
         "Status: advanced Tailscale physical browser workflow partially accepted" in second
@@ -142,6 +172,17 @@ def main() -> int:
     )
     require("Automated browser runtimes outside the Host tailnet are not accepted as a substitute." in normalized_second,
             "physical evidence anti-substitution boundary missing", failures)
+    require("## Preview 38 Authenticated MacBook Review" in second,
+            "preview.38 physical MacBook review receipt missing", failures)
+    require(TAG in second_preview38_physical and COMMIT in second_preview38_physical,
+            "preview.38 physical MacBook receipt is not exact-package bound", failures)
+    require("run_gw_c835b4dab9a9" in second_preview38_physical
+            and "run_gw_be0e8275670f" in second_preview38_physical,
+            "preview.38 physical Run review is incomplete", failures)
+    require("3dbe03f31d9c42ffb15f53f18b9b85e010d0d85d7370b89174a788f903e9f6b9"
+            in second_preview38_physical
+            and "protected Dashboard request returned HTTP 401" in normalized_second_preview38_physical,
+            "preview.38 physical approval/download/logout proof missing", failures)
     require("## Preview 36 Host Staging" in second,
             "preview.36 Host staging receipt missing", failures)
     require(PHYSICAL_TAG in second_preview36_host and PHYSICAL_COMMIT in second_preview36_host,
@@ -195,6 +236,21 @@ def main() -> int:
             "Hermes Human Approval Wall state is no longer explicit", failures)
     require("No raw prompt, raw response, credential, private message, full transcript or database content was retained" in normalized_runtime,
             "preview.35 Runtime privacy boundary missing", failures)
+    require(TAG in runtime_preview38 and COMMIT in runtime_preview38,
+            "preview.38 Runtime receipt is not exact-package bound", failures)
+    require("run_gw_c835b4dab9a9" in runtime_preview38
+            and "run_gw_be0e8275670f" in runtime_preview38
+            and "pem_da01eaeea65a518a" in runtime_preview38
+            and "pem_16c802e45dcbd6d9" in runtime_preview38,
+            "preview.38 Hermes/OpenClaw Runtime evidence is incomplete", failures)
+    require("15 Runtime Events" in normalized_runtime_preview38
+            and "12 bounded Audit rows" in normalized_runtime_preview38
+            and "does not claim that a human accepted either delivery" in normalized_runtime_preview38,
+            "preview.38 bounded evidence or Human decision boundary missing", failures)
+    require("current-package authenticated physical-browser review receipt" in normalized_runtime_preview38,
+            "preview.38 physical browser review boundary missing", failures)
+    require("does not repeat the preview.35 disconnect/reconnect flow" in normalized_runtime_preview38,
+            "preview.38 must not synthesize current-package disconnect evidence", failures)
     require(PHYSICAL_TAG in runtime_preview36_host and PHYSICAL_COMMIT in runtime_preview36_host,
             "preview.36 Runtime receipt is not exact-package bound", failures)
     require("run_gw_ed42f579d487" in runtime_preview36_host
@@ -223,6 +279,13 @@ def main() -> int:
         "exact_commit": COMMIT,
         "checksums_recorded": len(CHECKSUMS),
         "local_receipts": [
+            "preview38_release_asset_install",
+            "preview38_service_upgrade_migration",
+            "preview38_worker_heartbeat_initial_readback",
+            "worker_machine_session_observation_source_fix",
+            "preview38_hermes_real_runtime",
+            "preview38_openclaw_real_runtime",
+            "preview38_physical_macbook_https_reachability",
             "preview37_release_asset_install",
             "preview37_service_upgrade_migration",
             "preview37_launchd_convergence",

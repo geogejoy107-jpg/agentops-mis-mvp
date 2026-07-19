@@ -435,3 +435,34 @@ disconnect/reconnect, deliberate review and approved downloads. The overall
 second-device protocol remains partial. Ordinary customer acceptance still
 requires a browser-only deployed Relay with no Tailscale client, Host
 logout/reboot recovery and another clean Mac install.
+
+## Preview 38 Authenticated MacBook Review
+
+The physical MacBook dedicated Console authenticated to installed
+`v1.6.0-private-host-preview.38` at exact commit
+`ee3d36c9ae4f123261893376fff012e36fc8a973` through the preserved advanced
+Tailscale HTTPS profile. The temporary Chrome profile used
+`--no-proxy-server` and a loopback-only SSH/CDP tunnel; normal Chrome, network
+settings and the `codex-resume` terminal were not touched.
+
+The Owner Session rendered current Hermes run `run_gw_c835b4dab9a9` and
+OpenClaw run `run_gw_be0e8275670f`. Both pages exposed the expected Evaluation,
+Runtime, Approval and Audit entry points. The browser then opened the Approval
+Inbox and approved exactly the two new low-risk deliveries by their full Task
+IDs; each matching card lost its approval action and displayed the approved
+state.
+
+The OpenClaw Task page exposed two approved Artifact download controls. One
+download completed in a private temporary directory. Only its size and hash
+were inspected: 811 bytes and SHA-256
+`3dbe03f31d9c42ffb15f53f18b9b85e010d0d85d7370b89174a788f903e9f6b9`.
+The file body and name were omitted. UI logout restored the login surface, and
+the same browser's next protected Dashboard request returned HTTP 401. The
+temporary profile, download directory and tunnel were removed.
+
+This advances the authenticated physical receipt to the current package. It
+does not repeat the preview.35 browser-disconnect timing proof, install
+AgentOps or a Runtime on the MacBook, or close the ordinary no-Tailscale Relay,
+deployed-Relay interruption, Host reboot and another-Mac gates. No credential,
+Cookie, Session/CSRF value, private origin, raw prompt/response, task body,
+Worker log, private message, transcript or database content was retained.

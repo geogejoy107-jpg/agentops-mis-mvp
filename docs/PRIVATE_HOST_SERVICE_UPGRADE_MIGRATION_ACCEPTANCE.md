@@ -155,3 +155,51 @@ boundary are recorded in
 `PRIVATE_HOST_WORKER_INTAKE_HEARTBEAT_ACCEPTANCE.md`; it requires a later
 package and is not attributed to preview.37. No model task ran during the
 maintenance window.
+
+## Preview 38 Release And Real Upgrade
+
+`v1.6.0-private-host-preview.38` was published from exact commit
+`ee3d36c9ae4f123261893376fff012e36fc8a973`. Push CI `29677587281` and
+pull-request CI `29677588369` passed Backend deterministic smokes and the
+production UI build. Two candidate builds were byte-equal. Five Candidate,
+Draft and public assets matched in separate directories, and isolated
+Candidate, Draft and public-network consumers each completed no-repository
+install/start/status/stop with exact provenance readback. The release used the
+documented manual Draft-to-public path because the release workflow is not on
+the repository default branch.
+
+Only stopped AgentOps test directories under `/private/tmp` were removed before
+maintenance; no historical backup or authority ledger was deleted. A fresh
+preview.37 backup passed hash, schema, integrity and foreign-key verification.
+Both Worker LaunchAgents and the Host LaunchAgent were explicitly unloaded and
+independently observed absent. The public installer retained its automatic
+backup gate, created another verified pre-update backup, preserved Host data,
+recorded preview.37 as the previous version and bound `current` to preview.38
+at the exact release commit.
+
+The preview.38 Host LaunchAgent loaded successfully. An immediate status read
+occurred before process readiness, but independent launchd and port checks
+observed the active process and the next bounded status read returned health
+`ready`; no crash or retry was hidden. Human login remained ready, Tailscale
+Serve stayed configured and Funnel remained disabled.
+
+Both independently managed Worker LaunchAgents then returned with active
+processes. Against the same Intake-blocked queue that made preview.37 appear
+stale, preview.38 reported Fleet status `ready`, two execution-capacity service
+Workers and zero stale service Workers without invoking a model. A subsequent
+Owner-authenticated workflow explicitly invoked both real adapters and
+completed Hermes run `run_gw_c835b4dab9a9` plus OpenClaw run
+`run_gw_be0e8275670f`, each with passing Evaluation and verified plan-evidence
+closure. No raw model content, credential, private origin, Worker log, private
+message, transcript or database content was retained.
+
+That first Fleet result was not sustained acceptance. A later readback beyond
+the 90-second freshness threshold reported both service Workers stale while
+their launchd processes and loop iterations remained current. The Host-machine
+Sessions have no parent enrollment token; same-state heartbeats update the
+workspace-scoped observation on every request while historical Runtime/Audit
+evidence remains sampled at 15 minutes. Preview.38 projected the historical
+event but not the current observation. The source correction now consumes the
+scoped observation and has deterministic integration coverage, but it requires
+a later exact package and real multi-cycle readback. Preview.38 is not credited
+with sustained service-Worker freshness.

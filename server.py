@@ -4715,6 +4715,7 @@ def worker_remote_fleet_summary(conn) -> dict:
     })
     agents_by_id = {}
     heartbeats_by_agent = {}
+    heartbeats_by_worker = {}
     if remote_agent_ids:
         placeholders = ",".join("?" for _ in remote_agent_ids)
         agents_by_id = {
@@ -4734,11 +4735,21 @@ def worker_remote_fleet_summary(conn) -> dict:
                 tuple(remote_agent_ids),
             ).fetchall())
         }
+        heartbeats_by_worker = {
+            (row["workspace_id"], row["agent_id"]): row
+            for row in rows_to_dicts(conn.execute(
+                f"""SELECT workspace_id,agent_id,updated_at AS last_heartbeat_at
+                FROM agent_gateway_heartbeat_observations
+                WHERE agent_id IN ({placeholders})""",
+                tuple(remote_agent_ids),
+            ).fetchall())
+        }
     return build_worker_remote_fleet_summary(
         enrollments=enrollments,
         sessions=sessions,
         agents_by_id=agents_by_id,
         heartbeats_by_agent=heartbeats_by_agent,
+        heartbeats_by_worker=heartbeats_by_worker,
     )
 
 
