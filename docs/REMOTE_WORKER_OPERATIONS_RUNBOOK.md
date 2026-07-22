@@ -154,9 +154,13 @@ agentops-worker \
   --poll-interval 5 \
   --max-tasks 0 \
   --continue-on-error \
-  --write-state \
-  --jsonl-log
+  --write-state
 ```
+
+Long-running services use MIS heartbeat/state and omit per-poll JSONL stdout by
+default so idle workers cannot grow an unbounded service log. Add
+`--jsonl-log` only for a bounded foreground diagnostic session whose output is
+actively collected or rotated.
 
 If the remote machine will execute Hermes or OpenClaw, run preflight first and
 then add `--confirm-run` only after the operator confirms that the runtime is

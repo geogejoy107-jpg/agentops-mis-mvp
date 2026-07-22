@@ -4519,7 +4519,7 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
     ]
     confirm_flag = " --confirm-run" if adapter in {"hermes", "openclaw", "codex"} else ""
     run_once = f"agentops-worker --once --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900"
-    worker_loop_flags = "--use-session --session-ttl-sec 900 --session-refresh-margin-sec 60 --poll-interval 5 --idle-backoff-max 30 --error-backoff-max 30 --backoff-factor 2 --adapter-max-attempts 1 --adapter-retry-delay-sec 1 --max-tasks 0 --continue-on-error --max-errors 5 --write-state --jsonl-log"
+    worker_loop_flags = "--use-session --session-ttl-sec 900 --session-refresh-margin-sec 60 --poll-interval 5 --idle-backoff-max 30 --error-backoff-max 30 --backoff-factor 2 --adapter-max-attempts 1 --adapter-retry-delay-sec 1 --max-tasks 0 --continue-on-error --max-errors 5 --write-state"
     run_loop = f"agentops-worker --adapter {adapter}{confirm_flag} {worker_loop_flags}"
     start_check = f"agentops operator start-check --adapter {adapter} --limit 8 --agent-id {shlex.quote(safe_agent_id)}"
     loop_launch_brief = f"agentops operator loop-launch-packet --brief --adapter {adapter} --limit 8 --agent-id {shlex.quote(safe_agent_id)}"
@@ -16625,6 +16625,7 @@ def read_worker_daemon(adapter: str, include_log: bool = False) -> dict:
         "last_error": state.get("last_error"),
         "last_result": state.get("last_result"),
         "continue_on_error": bool(state.get("continue_on_error")),
+        "jsonl_log": bool(meta.get("jsonl_log") if meta.get("jsonl_log") is not None else state.get("jsonl_log")),
     }
     if include_log:
         payload["log_tail"] = tail_text(log_path, 80)
@@ -16831,7 +16832,6 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
         str(max(int(body.get("max_errors") or 5), 1)),
         "--state-path",
         str(worker_runtime_path(adapter, "state.json")),
-        "--jsonl-log",
     ]
     for status in status_filters:
         cmd.extend(["--status", status])
@@ -16881,6 +16881,7 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
         "management_mode": "daemon_api",
         "cmd": [part if "key" not in part.lower() and "token" not in part.lower() else "[REDACTED]" for part in cmd],
         "continue_on_error": True,
+        "jsonl_log": False,
         "max_errors": max(int(body.get("max_errors") or 5), 1),
         "state_path": str(worker_runtime_path(adapter, "state.json")),
         "enforce_intake": enforce_intake,
@@ -17339,7 +17340,7 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
             "--session-refresh-margin-sec 60 --poll-interval 5 "
             "--idle-backoff-max 30 --error-backoff-max 30 --backoff-factor 2 "
             f"--adapter-max-attempts {adapter_max_attempts} --adapter-retry-delay-sec {adapter_retry_delay:g} "
-            "--max-tasks 0 --continue-on-error --max-errors 5 --write-state --jsonl-log"
+            "--max-tasks 0 --continue-on-error --max-errors 5 --write-state"
         )
         return {
             "schema": "agentops-worker-connection-policy-v1",
@@ -17373,7 +17374,8 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
                 "continue_on_error": True,
                 "max_errors": 5,
                 "state_written": True,
-                "jsonl_log": True,
+                "jsonl_log": False,
+                "foreground_jsonl_opt_in": True,
                 "os_service_relaunch": "launchd KeepAlive=true or systemd Restart=always when operator installs/loads the generated service template",
             },
             "operator_checks": {
@@ -22350,6 +22352,52 @@ def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = 
     }
 
 
+def local_service_worker_identity(
+    conn: sqlite3.Connection,
+    worker_payload: dict,
+    adapter: str,
+    workspace_id: str = "local-demo",
+) -> dict:
+    """Select only a canonical local service identity already visible in this workspace."""
+    adapter = adapter if adapter in {"hermes", "openclaw"} else "mock"
+    daemon_id = f"agt_worker_daemon_{adapter}"
+    local_stack_id = f"agt_worker_local_stack_{adapter}"
+    workers = worker_payload.get("workers") if isinstance(worker_payload.get("workers"), list) else []
+    eligible_statuses = {"idle", "running", "paused", "error"}
+    eligible = {
+        str(item.get("agent_id") or ""): item
+        for item in workers
+        if isinstance(item, dict)
+        and item.get("runtime_type") == adapter
+        and item.get("status") in eligible_statuses
+    }
+    if normalize_workspace_id(workspace_id) == "local-demo":
+        for row in conn.execute(
+            "SELECT agent_id,runtime_type,status FROM agents WHERE agent_id IN (?,?)",
+            (local_stack_id, daemon_id),
+        ).fetchall():
+            item = dict(row)
+            if item.get("runtime_type") == adapter and item.get("status") in eligible_statuses:
+                eligible[item["agent_id"]] = item
+    if local_stack_id in eligible:
+        return {
+            "agent_id": local_stack_id,
+            "source": "registered_local_stack_worker",
+            "registered": True,
+        }
+    if daemon_id in eligible:
+        return {
+            "agent_id": daemon_id,
+            "source": "registered_daemon_worker",
+            "registered": True,
+        }
+    return {
+        "agent_id": daemon_id,
+        "source": "default_daemon_identity",
+        "registered": False,
+    }
+
+
 def local_readiness(
     conn: sqlite3.Connection,
     headers,
@@ -22665,8 +22713,15 @@ def local_readiness(
         if recommended_adapter == "mock" or "--confirm-run" in str(candidate_start_worker_command)
         else fallback_start_worker_command
     )
-    service_control_command = f"agentops worker service-control --manager launchd --action restart --adapter {recommended_adapter} --agent-id agt_worker_daemon_{recommended_adapter}"
-    service_control_verify_command = f"agentops worker service-check --manager launchd --adapter {recommended_adapter} --agent-id agt_worker_daemon_{recommended_adapter}"
+    recommended_service_identity = local_service_worker_identity(
+        conn,
+        worker,
+        recommended_adapter,
+        workspace_id,
+    )
+    recommended_service_agent_id = recommended_service_identity["agent_id"]
+    service_control_command = f"agentops worker service-control --manager launchd --action restart --adapter {recommended_adapter} --agent-id {recommended_service_agent_id}"
+    service_control_verify_command = f"agentops worker service-check --manager launchd --adapter {recommended_adapter} --agent-id {recommended_service_agent_id}"
     service_control_action_signature = stable_hash(
         "local_readiness.service_control_preview:"
         f"{recommended_adapter}:{service_control_command}:{service_control_verify_command}"
@@ -22852,12 +22907,14 @@ def local_readiness(
         for receipt in receipt_lookup_rows:
             receipt_command = str(receipt.get("action_command") or "").strip()
             receipt_action_hash = str(receipt.get("action_hash") or "").strip()
-            if command and (receipt_command == command or receipt_action_hash == command_hash):
+            receipt_signature = str(receipt.get("action_signature") or "").strip()
+            command_match = bool(command and (receipt_command == command or receipt_action_hash == command_hash))
+            signature_match = bool(action_signature and receipt_signature == action_signature)
+            if command_match and (not action_signature or signature_match):
                 matched = receipt
                 match = "current"
                 break
-            receipt_signature = str(receipt.get("action_signature") or "").strip()
-            if action_signature and receipt_signature == action_signature:
+            if command_match or signature_match:
                 stale_candidate = stale_candidate or receipt
         if matched is None and stale_candidate:
             matched = stale_candidate
@@ -22957,9 +23014,10 @@ def local_readiness(
             "readback_verification_status": "passed" if verified else checked_status,
         }
 
-    def service_control_command_set(adapter: str, *, scoped: bool) -> dict:
-        command = f"agentops worker service-control --manager launchd --action restart --adapter {adapter} --agent-id agt_worker_daemon_{adapter}"
-        verify_command = f"agentops worker service-check --manager launchd --adapter {adapter} --agent-id agt_worker_daemon_{adapter}"
+    def service_control_command_set(adapter: str, *, scoped: bool, service_identity: dict) -> dict:
+        service_agent_id = service_identity["agent_id"]
+        command = f"agentops worker service-control --manager launchd --action restart --adapter {adapter} --agent-id {service_agent_id}"
+        verify_command = f"agentops worker service-check --manager launchd --adapter {adapter} --agent-id {service_agent_id}"
         action_signature = stable_hash(
             "local_readiness.service_control_preview:"
             f"{adapter}:{command}:{verify_command}"
@@ -22975,6 +23033,9 @@ def local_readiness(
             "--source", source,
         ]
         return {
+            "agent_id": service_agent_id,
+            "agent_identity_source": service_identity["source"],
+            "agent_registered": service_identity["registered"],
             "command": command,
             "verify_command": verify_command,
             "action_signature": action_signature,
@@ -22993,10 +23054,14 @@ def local_readiness(
         readback_status = service_control_readback_status(receipt_state)
         ready = readback_status["service_control_readback_verified"]
         verify_command = command_set["verify_command"]
+        service_agent_id = command_set["agent_id"]
         return {
         "operation": "local_service_managed_loop_readiness",
         "status": "ready" if ready else "attention",
         "adapter": adapter,
+        "agent_id": service_agent_id,
+        "agent_identity_source": command_set["agent_identity_source"],
+        "agent_registered": command_set["agent_registered"],
         "manager": "launchd",
         "install_preview_available": True,
         "install_confirm_available": True,
@@ -23025,12 +23090,12 @@ def local_readiness(
         "active_loop_status": "active" if readback_status["service_active_loop_ready"] else ("not_loaded" if ready else "unverified"),
         "checked_status": readback_status["checked_status"],
         "commands": {
-            "service_install_preview": f"agentops worker service-install --manager launchd --adapter {adapter} --agent-id agt_worker_daemon_{adapter}{' --confirm-run' if adapter in {'hermes', 'openclaw'} else ''}",
-            "service_install_confirm": f"agentops worker service-install --manager launchd --adapter {adapter} --agent-id agt_worker_daemon_{adapter}{' --confirm-run' if adapter in {'hermes', 'openclaw'} else ''} --confirm-install",
+            "service_install_preview": f"agentops worker service-install --manager launchd --adapter {adapter} --agent-id {service_agent_id}{' --confirm-run' if adapter in {'hermes', 'openclaw'} else ''}",
+            "service_install_confirm": f"agentops worker service-install --manager launchd --adapter {adapter} --agent-id {service_agent_id}{' --confirm-run' if adapter in {'hermes', 'openclaw'} else ''} --confirm-install",
             "service_check": verify_command,
             "service_control_preview": command_set["command"],
-            "service_control_load_confirm": f"agentops worker service-control --manager launchd --action load --adapter {adapter} --agent-id agt_worker_daemon_{adapter} --confirm-control",
-            "service_control_restart_confirm": f"agentops worker service-control --manager launchd --action restart --adapter {adapter} --agent-id agt_worker_daemon_{adapter} --confirm-control",
+            "service_control_load_confirm": f"agentops worker service-control --manager launchd --action load --adapter {adapter} --agent-id {service_agent_id} --confirm-control",
+            "service_control_restart_confirm": f"agentops worker service-control --manager launchd --action restart --adapter {adapter} --agent-id {service_agent_id} --confirm-control",
             "record_verified_receipt": command_set["receipt_verify_record_command"],
             "record_control_readback": " ".join(shlex.quote(str(part)) for part in [
                 "agentops", "operator", "record-control-readback",
@@ -23081,6 +23146,9 @@ def local_readiness(
     }
 
     recommended_command_set = {
+        "agent_id": recommended_service_agent_id,
+        "agent_identity_source": recommended_service_identity["source"],
+        "agent_registered": recommended_service_identity["registered"],
         "command": service_control_command,
         "verify_command": service_control_verify_command,
         "action_signature": service_control_action_signature,
@@ -23094,7 +23162,16 @@ def local_readiness(
     for adapter_name in ["hermes", "openclaw"]:
         if adapter_name == recommended_adapter:
             continue
-        command_set = service_control_command_set(adapter_name, scoped=True)
+        command_set = service_control_command_set(
+            adapter_name,
+            scoped=True,
+            service_identity=local_service_worker_identity(
+                conn,
+                worker,
+                adapter_name,
+                workspace_id,
+            ),
+        )
         synthetic_step = {
             "step_id": "preview_worker_service_control",
             "command": command_set["command"],
@@ -23769,12 +23846,14 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         for receipt in receipt_lookup_rows:
             receipt_command = str(receipt.get("action_command") or "").strip()
             receipt_action_hash = str(receipt.get("action_hash") or "").strip()
-            if command and (receipt_command == command or receipt_action_hash == command_hash):
+            receipt_signature = str(receipt.get("action_signature") or "").strip()
+            command_match = bool(command and (receipt_command == command or receipt_action_hash == command_hash))
+            signature_match = bool(action_signature and receipt_signature == action_signature)
+            if command_match and (not action_signature or signature_match):
                 match = "current"
                 matched = receipt
                 break
-            receipt_signature = str(receipt.get("action_signature") or "").strip()
-            if action_signature and receipt_signature == action_signature:
+            if command_match or signature_match:
                 stale_candidate = stale_candidate or receipt
         else:
             matched = stale_candidate
@@ -30362,6 +30441,18 @@ def operator_loop_bootstrap_with_manager(command: str, manager: str) -> str:
     return command
 
 
+def operator_loop_bootstrap_with_service_agent(command: str, adapter: str, agent_id: str) -> str:
+    command = str(command or "").strip()
+    daemon_id = f"agt_worker_daemon_{adapter}"
+    local_stack_id = f"agt_worker_local_stack_{adapter}"
+    if not command or agent_id not in {daemon_id, local_stack_id}:
+        return command
+    for stale_id in (daemon_id, local_stack_id):
+        command = command.replace(f"--agent-id {stale_id}", f"--agent-id {agent_id}")
+        command = command.replace(f"--agent-id={stale_id}", f"--agent-id={agent_id}")
+    return command
+
+
 def operator_loop_bootstrap_command_map(
     start_check: dict,
     supervision_item: dict,
@@ -30387,17 +30478,22 @@ def operator_loop_bootstrap_command_map(
     loop_commands = loop_driver_entry.get("commands") if isinstance(loop_driver_entry.get("commands"), dict) else {}
     service_closure = supervision_item.get("service_closure") if isinstance(supervision_item.get("service_closure"), dict) else {}
     service_loop_commands = service_managed_loop.get("commands") if isinstance(service_managed_loop.get("commands"), dict) else {}
+    default_service_agent_id = f"agt_worker_daemon_{adapter}"
+    local_stack_service_agent_id = f"agt_worker_local_stack_{adapter}"
+    service_agent_id = str(service_managed_loop.get("agent_id") or "")
+    if service_agent_id not in {default_service_agent_id, local_stack_service_agent_id}:
+        service_agent_id = default_service_agent_id
     service_check = (
         admission_commands.get("service_check")
         or managed_commands.get("service_check")
         or service_loop_commands.get("service_check")
-        or f"agentops worker service-check --manager {manager} --adapter {adapter} --agent-id agt_worker_daemon_{adapter}"
+        or f"agentops worker service-check --manager {manager} --adapter {adapter} --agent-id {service_agent_id}"
     )
     service_install_preview = (
         manager_install.get("preview_command")
         or service_install.get("preview_command")
         or admission_commands.get("service_install_preview")
-        or f"agentops worker service-install --manager {manager} --adapter {adapter} --agent-id agt_worker_daemon_{adapter}"
+        or f"agentops worker service-install --manager {manager} --adapter {adapter} --agent-id {service_agent_id}"
     )
     service_install_confirm = (
         manager_install.get("confirm_command")
@@ -30408,7 +30504,7 @@ def operator_loop_bootstrap_command_map(
     service_control_load = (
         managed_commands.get("service_control_load_confirm")
         or service_loop_commands.get("service_control_load_confirm")
-        or f"agentops worker service-control --manager {manager} --action load --adapter {adapter} --agent-id agt_worker_daemon_{adapter} --confirm-control"
+        or f"agentops worker service-control --manager {manager} --action load --adapter {adapter} --agent-id {service_agent_id} --confirm-control"
     )
     service_closure_record = " ".join(shlex.quote(str(part)) for part in [
         "agentops",
@@ -30427,6 +30523,10 @@ def operator_loop_bootstrap_command_map(
     service_install_preview = operator_loop_bootstrap_with_manager(service_install_preview, manager)
     service_install_confirm = operator_loop_bootstrap_with_manager(service_install_confirm, manager)
     service_control_load = operator_loop_bootstrap_with_manager(service_control_load, manager)
+    service_check = operator_loop_bootstrap_with_service_agent(service_check, adapter, service_agent_id)
+    service_install_preview = operator_loop_bootstrap_with_service_agent(service_install_preview, adapter, service_agent_id)
+    service_install_confirm = operator_loop_bootstrap_with_service_agent(service_install_confirm, adapter, service_agent_id)
+    service_control_load = operator_loop_bootstrap_with_service_agent(service_control_load, adapter, service_agent_id)
     if service_path:
         service_check = operator_loop_bootstrap_append_option(service_check, "--service-path", service_path)
         service_install_preview = operator_loop_bootstrap_append_option(service_install_preview, "--service-path", service_path)

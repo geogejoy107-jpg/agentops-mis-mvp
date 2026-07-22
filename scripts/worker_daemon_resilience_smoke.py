@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify local worker daemon state, log evidence, and bounded error recovery."""
+"""Verify local worker daemon state, quiet diagnostics, and bounded error recovery."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import argparse
 import datetime as dt
 import json
 import math
+import os
 import subprocess
 import sys
 import time
@@ -102,7 +103,7 @@ def server_daemon_smoke(base_url: str, run_stamp: str) -> dict:
         "task_id": task_id,
         "workspace_id": "local-demo",
         "title": "worker daemon resilience smoke task",
-        "description": "Verify daemon state and JSONL log evidence while processing a normal MIS task.",
+        "description": "Verify bounded daemon state telemetry while processing a normal MIS task.",
         "owner_agent_id": agent_id,
         "status": "planned",
         "priority": "high",
@@ -133,11 +134,11 @@ def server_daemon_smoke(base_url: str, run_stamp: str) -> dict:
     require(int(daemon.get("processed") or 0) >= 1, f"daemon state did not record processed count: {daemon}")
     require(int(daemon.get("iterations") or 0) >= 1, f"daemon state did not record iterations: {daemon}")
     require(daemon.get("continue_on_error") is True, f"daemon did not report continue_on_error: {daemon}")
+    require(daemon.get("jsonl_log") is False, f"API-started daemon should keep per-poll JSONL disabled: {daemon}")
 
     status, logs = http_json("GET", base_url, "/api/workers/local/logs?adapter=mock")
     require(status == 200, f"log endpoint failed: {status} {logs}")
-    tail = ((logs.get("daemon") or {}).get("log_tail") or [])
-    require(any("worker.iteration" in line for line in tail), "daemon log tail did not include JSONL worker.iteration")
+    require((logs.get("daemon") or {}).get("jsonl_log") is False, f"daemon log read model lost quiet-mode evidence: {logs}")
 
     return {
         "task_id": task_id,
@@ -146,12 +147,15 @@ def server_daemon_smoke(base_url: str, run_stamp: str) -> dict:
         "iterations": daemon.get("iterations"),
         "status": daemon.get("status"),
         "worker_status": daemon.get("worker_status"),
-        "log_jsonl": True,
+        "log_jsonl": False,
+        "state_telemetry": True,
     }
 
 
 def direct_error_recovery_smoke(run_stamp: str) -> dict:
-    state_path = ROOT / ".agentops_runtime" / "workers" / f"resilience-smoke-{run_stamp}.state.json"
+    state_dir = Path(os.environ.get("AGENTOPS_WORKER_RUNTIME_DIR") or (ROOT / ".agentops_runtime" / "workers"))
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_dir / f"resilience-smoke-{run_stamp}.state.json"
     if state_path.exists():
         state_path.unlink()
     cmd = [

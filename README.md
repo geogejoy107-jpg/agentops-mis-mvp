@@ -595,7 +595,7 @@ agentops doctor
 agentops worker preflight --adapter mock --agent-id agt_worker_local
 agentops-worker preflight --adapter mock --agent-id agt_worker_local
 agentops-worker --once --adapter mock --agent-id agt_worker_local
-agentops-worker --adapter mock --poll-interval 5 --max-tasks 0 --continue-on-error --write-state --jsonl-log
+agentops-worker --adapter mock --poll-interval 5 --max-tasks 0 --continue-on-error --write-state
 agentops-worker service-template --manager launchd --adapter mock --agent-id agt_worker_local > ~/Library/LaunchAgents/local.agentops.worker.agt_worker_local.plist
 agentops-worker service-install --manager launchd --adapter mock --agent-id agt_worker_local
 agentops-worker service-install --manager launchd --adapter mock --agent-id agt_worker_local --confirm-install
@@ -655,7 +655,7 @@ python3 scripts/agent_worker.py \
 
 ```bash
 python3 scripts/agent_worker.py --adapter mock --poll-interval 5 --max-tasks 10
-python3 scripts/agent_worker.py --adapter mock --poll-interval 5 --max-tasks 0 --continue-on-error --max-errors 5 --write-state --jsonl-log
+python3 scripts/agent_worker.py --adapter mock --poll-interval 5 --max-tasks 0 --continue-on-error --max-errors 5 --write-state
 ```
 
 浏览器派发：

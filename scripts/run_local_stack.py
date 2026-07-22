@@ -200,7 +200,6 @@ def worker_command(adapter: str, poll_interval: float, confirm_live_workers: boo
         "0",
         "--continue-on-error",
         "--write-state",
-        "--jsonl-log",
     ]
     if adapter in LIVE_ADAPTERS and confirm_live_workers:
         command.append("--confirm-run")

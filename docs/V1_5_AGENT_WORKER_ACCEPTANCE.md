@@ -2042,3 +2042,79 @@ streak returned exactly 30 seconds with no overflow. This source fix is not
 retroactive evidence for the already-running preview.29 Worker processes. A
 new versioned package, explicit Worker service restart and fresh real adapter
 task are still required before claiming installed closure.
+
+## 2026-07-22 Private Host OpenClaw Commander Dogfood
+
+Codex used the installed Private Host as an MIS commander and delegated one
+bounded, read-only product review task to the separately configured real
+OpenClaw Runtime. This was not a Codex model switch and did not use the
+browser-only Human Workspace mutation route. The task was created, planned,
+retrieved, claimed, executed and recorded through Agent Gateway authority.
+
+```text
+task: tsk_dogfood_openclaw_p1_20260722T105525Z
+task status after delivery-review request: waiting_approval
+run: run_gw_8bf447f335f9
+runtime: openclaw
+plan: plan_80193ccd7b87f073
+plan-evidence manifest: pem_1505188534d20dae
+manifest status: verified
+runtime event: rte_bb4982bcc1e5
+audit: aud_1c491af58256
+delivery approval: ap_gw_4440d60621ec
+delivery decision: pending
+evidence: tool call 1, evaluation 1, artifact 1, memory candidate 1
+adapter attempts: 1
+```
+
+The first machine-token attempt against the Human Workspace workflow correctly
+returned `human_auth_required` before creating a Runtime run. Re-dispatching
+through Agent Gateway succeeded. No raw prompt, raw response, credential,
+private message or transcript was retained in this acceptance record.
+
+This dogfood also exposed two installed-service defects that must remain visible
+until a new package is installed:
+
+- local readiness generated service commands for `agt_worker_daemon_*`, while
+  the installed Host services use `agt_worker_local_stack_*`;
+- Preview38 service templates emit a full JSON result on every idle poll, and
+  their unbounded stdout files filled the low-space Host volume, producing
+  repeated launchd exit code `120`.
+
+The source fix selects only a canonical registered local-stack identity, even
+before it owns a task and while it is paused or reporting an error, and
+propagates it through service check/install/control, start-check, admission and
+loop-bootstrap commands. Service-control receipts now match the command/hash
+and the current action signature together; a same-command receipt with a stale
+signature cannot satisfy the current gate. The two installed Worker services were temporarily
+unloaded and only their generated diagnostic logs were cleared without reading
+their contents. Host and Runtime gateway configuration remain intact, and
+bounded one-shot Agent Gateway execution remains available. This is not yet
+installed-service closure and is not Hermes live evidence.
+
+Generated service templates, API-started daemons, remote launch packets and the
+managed local stack now keep heartbeat/state observability but omit per-poll
+JSONL stdout by default. `--jsonl-log` remains an explicit bounded foreground diagnostic mode;
+an output `OSError` or broken pipe disables further JSONL writes without
+stopping task polling. Long-running workers retain only a bounded recent-result
+window (20 results for an unlimited daemon, at most 100 for a finite batch) and
+report `results_seen` plus `results_omitted` on exit, so idle polling cannot
+grow process memory without bound. Session refresh history is independently
+bounded to the newest 20 entries, and any result that explicitly returns
+`ok:false` makes the final Worker outcome fail even when it did not claim a
+task; intentional approval and intake pauses remain successful only when they
+explicitly return `ok:true`.
+
+Source verification, without a real Runtime call:
+
+```text
+python3 scripts/worker_service_output_resilience_smoke.py
+python3 scripts/worker_daemon_resilience_smoke.py --base-url <isolated_server_url>
+python3 scripts/local_readiness_smoke.py --isolated-fixture
+python3 scripts/operator_start_check_smoke.py
+python3 scripts/operator_start_check_api_smoke.py --isolated-fixture
+python3 scripts/agentops_worker_local_config_smoke.py
+python3 scripts/agentops_worker_package_smoke.py
+python3 scripts/run_local_stack_smoke.py
+python3 scripts/module_boundary_smoke.py
+```

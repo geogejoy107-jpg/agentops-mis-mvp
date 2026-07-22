@@ -141,6 +141,7 @@ def smoke(base_url: str, stamp: str) -> dict:
                 "tasks:read",
                 "tasks:claim",
                 "runs:write",
+                "runtime_events:write",
                 "toolcalls:write",
                 "artifacts:write",
                 "memories:propose",

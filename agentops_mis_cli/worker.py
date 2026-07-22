@@ -465,13 +465,21 @@ def session_needs_refresh(session_info: dict | None, refresh_margin_sec: float) 
     return session_seconds_remaining(session_info) <= max(float(refresh_margin_sec or 0), 0.0)
 
 
+def append_worker_session_history(history: list[dict], session: dict, limit: int = 20) -> int:
+    history.append(session)
+    overflow = max(len(history) - max(int(limit or 1), 1), 0)
+    if overflow:
+        del history[:overflow]
+    return overflow
+
+
 def ensure_worker_session(client: AgentOpsClient, args, state: WorkerState, parent_api_key: str, session_info: dict | None, session_history: list[dict]) -> dict:
     if not session_needs_refresh(session_info, args.session_refresh_margin_sec):
         return session_info or {}
     state.update(status="refreshing_session" if session_info else "minting_session")
     next_session = mint_worker_session(client, args, parent_api_key=parent_api_key)
-    session_history.append(next_session)
-    refresh_count = max(len(session_history) - 1, 0)
+    append_worker_session_history(session_history, next_session)
+    refresh_count = int(state.data.get("session_refresh_count") or 0) + (1 if session_info else 0)
     state.update(
         status="session_ready",
         session_id=next_session.get("session_id"),
@@ -1183,9 +1191,38 @@ def create_worker_external_write_gate(
     }
 
 
-def emit_jsonl(args, payload: dict):
-    if args.jsonl_log:
+def emit_jsonl(args, payload: dict) -> bool:
+    if not args.jsonl_log or getattr(args, "_jsonl_log_disabled", False):
+        return False
+    try:
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
+        return True
+    except (BrokenPipeError, OSError):
+        args._jsonl_log_disabled = True
+        try:
+            sys.stdout = open(os.devnull, "w", encoding="utf-8")
+        except OSError:
+            pass
+        return False
+
+
+def worker_result_history_limit(args) -> int:
+    if getattr(args, "once", False):
+        return 1
+    max_tasks = max(int(getattr(args, "max_tasks", 0) or 0), 0)
+    return min(max(max_tasks, 20), 100) if max_tasks else 20
+
+
+def append_worker_result(history: list[dict], result: dict, limit: int) -> int:
+    history.append(result)
+    overflow = max(len(history) - max(int(limit or 1), 1), 0)
+    if overflow:
+        del history[:overflow]
+    return overflow
+
+
+def worker_result_failed(result: dict) -> bool:
+    return result.get("ok") is False
 
 
 def worker_heartbeat(client: AgentOpsClient, args, status: str, summary: str, *, force: bool = False) -> dict:
@@ -3098,7 +3135,6 @@ def build_worker_command(args) -> list[str]:
         "0",
         "--continue-on-error",
         "--write-state",
-        "--jsonl-log",
     ]
     api_key_placeholder = str(args.api_key_placeholder or "").strip()
     if getattr(args, "use_session", False) or getattr(args, "credential_source", "direct") == "local_config" or api_key_placeholder not in {"", DEFAULT_API_KEY_PLACEHOLDER}:
@@ -3883,6 +3919,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     processed = 0
     results = []
+    results_seen = 0
+    results_omitted = 0
+    result_failed_seen = False
+    once_result_failed = False
+    result_history_limit = worker_result_history_limit(args)
     registered = False
     fatal_failure = False
     session_info = None
@@ -3907,7 +3948,10 @@ def main(argv: list[str] | None = None) -> int:
                 registered = True
             state.update(status="polling")
             result = process_one_task(client, args)
-            results.append(result)
+            results_omitted += append_worker_result(results, result, result_history_limit)
+            results_seen += 1
+            result_failed_seen = result_failed_seen or worker_result_failed(result)
+            once_result_failed = once_result_failed or bool(args.once and result.get("ok") is False)
             state.record_result(result)
             emit_jsonl(args, {"event": "worker.iteration", "ok": True, "result": result, "state": state.data})
             if result.get("processed"):
@@ -3930,7 +3974,10 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             error = state.record_error(exc)
             result = {"processed": False, "ok": False, **error}
-            results.append(result)
+            results_omitted += append_worker_result(results, result, result_history_limit)
+            results_seen += 1
+            result_failed_seen = True
+            once_result_failed = once_result_failed or bool(args.once)
             safe_worker_heartbeat(client, args, "error", error["error_message"], force=True)
             emit_jsonl(args, {"event": "worker.error", "ok": False, "error": error, "state": state.data})
             if args.once or not args.continue_on_error:
@@ -3946,12 +3993,25 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(sleep_sec)
     final_ok = (
         not fatal_failure
-        and all(item.get("ok", True) for item in results if item.get("processed"))
-        and not any(item.get("ok") is False for item in results if args.once)
+        and not result_failed_seen
+        and not once_result_failed
     )
     final_status = "stopped" if SHOULD_STOP else "completed" if final_ok else "failed"
     state.stop(final_status)
-    print(json_dumps({"ok": final_ok, "processed": processed, "results": results, "state": state.data, "session": session_info or {"token_omitted": True}, "sessions": session_history}))
+    session_total = int(state.data.get("session_refresh_count") or 0) + (1 if session_info else 0)
+    print(json_dumps({
+        "ok": final_ok,
+        "processed": processed,
+        "results": results,
+        "results_seen": results_seen,
+        "results_omitted": results_omitted,
+        "result_history_limit": result_history_limit,
+        "state": state.data,
+        "session": session_info or {"token_omitted": True},
+        "sessions": session_history,
+        "sessions_seen": session_total,
+        "sessions_omitted": max(session_total - len(session_history), 0),
+    }))
     return 0 if final_ok else 1
 
 
