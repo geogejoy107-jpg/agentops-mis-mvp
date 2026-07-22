@@ -24685,10 +24685,18 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
 
 def operator_evidence_report(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
+    authority_workspace = None
+    if isinstance(auth_ctx, dict) and (
+        agent_gateway_is_bound_auth(auth_ctx)
+        or auth_ctx.get("mode") == "human_session"
+    ):
+        authority_workspace = auth_ctx.get("workspace_id")
     workspace_id = normalize_workspace_id(
-        (auth_ctx or {}).get("workspace_id")
+        authority_workspace
         or headers.get("X-AgentOps-Workspace-Id")
-        or (qs.get("workspace_id") or ["local-demo"])[0]
+        or (qs.get("workspace_id") or [None])[0]
+        or (auth_ctx or {}).get("workspace_id")
+        or "local-demo"
     )
     limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 50)
     run_id = (qs.get("run_id") or [None])[0]

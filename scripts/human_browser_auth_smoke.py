@@ -1096,7 +1096,7 @@ def main() -> int:
                 "/api/workflows/customer-delivery-board?limit=50",
                 "/api/workflows/hermes-openclaw-loop?limit=50",
                 "/api/operator/action-plan?limit=30",
-                "/api/operator/evidence-report?limit=30",
+                f"/api/operator/evidence-report?workspace_id={other_workspace}&limit=30",
                 "/api/operator/loop-audit?limit=30",
                 "/api/operator/handoff?limit=12",
                 "/api/operator/start-check?adapter=mock&limit=8",
