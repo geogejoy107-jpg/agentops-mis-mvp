@@ -2,13 +2,15 @@
 
 ## Result
 
-PASS for a confirmed, one-shot real Hermes task through the installed local
-AgentOps Host. This is real runtime evidence, not a mock, dry-run, or fixed
-health probe.
+PASS for both a confirmed one-shot task and an unattended launchd-managed real
+Hermes task through the installed local AgentOps Host. This is real runtime
+evidence, not a mock, dry-run, or fixed health probe.
 
-The acceptance does not yet prove that a launchd-managed Hermes Worker loop is
-installed and supervised. That remains a separate service receipt/readback
-gate.
+Codex created the unattended MIS task but did not invoke the Worker process.
+The persistent Worker pulled the task, created and verified its Agent Plan,
+called the Agnesfallback Hermes profile, and wrote the governed result back to
+MIS. The remaining service receipt/readback is intentionally a Human Session
+gate: a machine API key cannot attest its own operating-system control action.
 
 ## Runtime Shape
 
@@ -20,6 +22,10 @@ gate.
 - `/v1/models`: HTTP 200
 - Real execution confirmation: explicit `--confirm-run`
 - Worker session: short-lived, scoped Agent Gateway session
+- Gateway LaunchAgent: `ai.hermes.gateway-agnesfallback`
+- Worker LaunchAgent: `local.agentops.worker.agt_worker_daemon_hermes`
+- Worker credential source: private local AgentOps config; no token in plist
+- Worker Hermes target: explicit `http://127.0.0.1:8643` in the private plist
 
 The API-only profile explicitly disables its Discord adapter so it does not
 compete with the default Hermes gateway for the same messaging credential. Its
@@ -69,28 +75,99 @@ one audit row, and verified plan evidence. The adapter completed on its first
 attempt. Only a redacted 200-character output summary and hashes entered the
 ledger; raw prompt/response and credentials were omitted.
 
+### Unattended service task
+
+| Object | Evidence |
+| --- | --- |
+| Task | `tsk_dogfood_hermes_service_20260722T125818Z`, completed |
+| Run | `run_gw_4ed2c6654050`, completed |
+| Agent | `agt_worker_daemon_hermes` |
+| Agent Plan | `plan_c656cf5e8f7b48e8`, verified |
+| Plan evidence | `pem_dc23cceea63b4653`, verified |
+| Evaluation | `eval_gw_run_gw_4ed2c6654050_rule`, pass |
+| Runtime event | `rte_5c7b6eb87a68` |
+| Artifact | `art_gw_run_gw_4ed2c6654050_agent_worker_result_codex` |
+| Memory candidate | `mem_gw_5df6bb17c0059b51` |
+
+This task completed in 29,164 ms on adapter attempt 1. It produced a bounded
+architecture review that assigned command/integration work to Codex,
+governance and ledger authority to MIS, and independent model execution to
+Hermes/OpenClaw. It performed no external write and required no approval.
+
+The first service run exposed an actual queue starvation defect: an older
+intake-blocked task at the queue head hid an eligible assigned task because the
+Worker pulled only one candidate. The Worker now requests a bounded 50-item
+candidate window; the server still applies Agent Plan/intake policy and returns
+only eligible work. Regression coverage places a blocked unassigned task ahead
+of the assigned task.
+
+### Canonical service identity task
+
+After migrating the Worker to the canonical LaunchAgent label and restarting
+it through the supported service-control command, a second task completed
+without a one-shot Worker invocation:
+
+| Object | Evidence |
+| --- | --- |
+| Task | `tsk_dogfood_hermes_canonical_20260722T1315Z`, completed |
+| Run | `run_gw_3c649a3a0c8e`, completed in 13,319 ms |
+| Agent | `agt_worker_daemon_hermes` |
+| Agent Plan | `plan_c23c1e3d91cde315` |
+| Plan evidence | `pem_fa3dd92dc686b752`, verified |
+| Tool call | `tc_gw_685b379a4082`, completed |
+| Evaluation | `eval_gw_run_gw_3c649a3a0c8e_rule`, pass |
+| Runtime event | `rte_66a9e89f70f7` |
+| Artifact | `art_gw_run_gw_3c649a3a0c8e_agent_worker_result` |
+| Audit | `aud_88b167bccabe` |
+| Memory candidate | `mem_gw_a35aece5c5149683` |
+
+The Worker found the task, auto-planned it, executed one real Hermes attempt,
+and recorded 1 tool call, 1 evaluation, 1 artifact, 1 memory candidate, 8
+runtime events, 8 audit rows, and a verified manifest. The bounded answer was a
+three-step customer acceptance checklist. No external write or approval was
+required.
+
+The run's knowledge retrieval diagnostics remained `attention` (`recall@5`
+0.2 and MRR 0.2) even though the method, runtime, and rule evaluation passed.
+That is a retrieval-quality follow-up; it does not invalidate the unattended
+execution proof.
+
 ## Companion OpenClaw Evidence
 
-The same installed Host previously completed a real OpenClaw task:
+The same installed Host also ran an independently supervised OpenClaw Worker:
 
-- task `tsk_68dafc084ada`
-- run `run_gw_53b043f16632`
-- agent `agt_worker_local_stack_openclaw`
+| Object | Evidence |
+| --- | --- |
+| Worker service | `local.agentops.worker.agt_worker_daemon_openclaw` |
+| Task | `tsk_dogfood_openclaw_service_20260722T1352Z`, completed |
+| Run | `run_gw_fa17de22b53d`, completed in 11,358 ms |
+| Agent | `agt_worker_daemon_openclaw` |
+| Agent Plan | `plan_76cc2fab45fb22ee` |
+| Plan evidence | `pem_6dc9cf22b732e6bf`, verified |
+| Tool call | `tc_gw_940b877458e0`, completed |
+| Evaluation | `eval_gw_run_gw_fa17de22b53d_rule`, pass |
+| Runtime event | `rte_7b5558e0b9ce` |
+| Artifact | `art_gw_run_gw_fa17de22b53d_agent_worker_result` |
+| Audit | `aud_4645baab0682` |
+| Memory candidate | `mem_gw_66e6979d9404c82b` |
 
-Together, these two runs prove that Codex can act as commander while MIS
-dispatches governed work to two independently configured local model runtimes.
+The persistent OpenClaw Worker pulled the assigned task and completed one real
+adapter attempt without a one-shot Worker invocation. Its bounded review gave
+a conditional pass and independently identified retrieval quality and service
+governance follow-ups. It performed no external write and required no
+approval. Together, the Hermes and OpenClaw service runs prove that Codex can
+act as commander while MIS dispatches governed work to two independently
+configured local model runtimes.
 
 ## Remaining Product Gate
 
-The Hermes one-shot task is product-usable, but the run's supervision readback
-correctly remained `attention` for the service-managed loop. Product-level
-unattended operation still requires:
+The unattended execution path is now real and locally usable. These narrower
+promotion gates remain:
 
-1. install or package the Agnesfallback API-only gateway as a bounded local service;
-2. install the Hermes Worker service against port 8643;
-3. record an exact service-control receipt and verified readback;
-4. run a second MIS task through that continuously supervised Worker;
-5. upgrade the installed Host from Preview 38 to the current source release once the local storage floor is satisfied.
+1. record the exact Worker service-control receipt and control readback from an
+   authenticated Owner/Operator browser session;
+2. install the same source behavior in the packaged Host release after the
+   local storage floor permits a Preview 39 upgrade.
 
 ## Safety
 

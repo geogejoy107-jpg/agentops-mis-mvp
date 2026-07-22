@@ -23,10 +23,14 @@ DEFAULT_DB = Path(os.environ.get("AGENTOPS_DB_PATH") or (ROOT / "agentops_mis.db
 DEFAULT_BACKUP_DIR = ROOT / ".agentops_runtime" / "backups"
 BACKUP_FILE_PATTERN = re.compile(r"^agentops-mis-(\d{8}T\d{6})(\d{6})?Z\.sqlite$")
 MANIFEST_FILE_PATTERN = re.compile(r"^agentops-mis-(\d{8}T\d{6})(\d{6})?Z\.manifest\.json$")
+BACKUP_SIDECAR_PATTERN = re.compile(
+    r"^(agentops-mis-(\d{8}T\d{6})(\d{6})?Z)\.sqlite-(wal|shm)$"
+)
 BACKUP_PRUNE_DEFAULT_KEEP = 5
 BACKUP_PRUNE_MIN_KEEP = 2
 BACKUP_PRUNE_OUTPUT_LIMIT = 100
 BACKUP_MANIFEST_MAX_BYTES = 1024 * 1024
+BACKUP_SIDECAR_MAX_BYTES = 1024 * 1024
 COUNT_TABLES = [
     "agents",
     "tasks",
@@ -60,7 +64,10 @@ def sha256_file(path: Path) -> str:
 
 
 def connect_readonly(path: Path) -> sqlite3.Connection:
-    uri = f"file:{path}?mode=ro"
+    # Backups are complete immutable snapshots. SQLite may otherwise create
+    # zero-byte WAL and shared-memory sidecars merely while verifying a WAL-mode
+    # database, causing retention inventory drift on every read.
+    uri = f"{path.resolve().as_uri()}?mode=ro&immutable=1"
     return sqlite3.connect(uri, uri=True)
 
 
@@ -251,6 +258,7 @@ def backup_inventory(backup_dir: Path) -> tuple[list[dict], dict | None]:
 
     sqlite_entries: dict[str, Path] = {}
     manifest_entries: dict[str, Path] = {}
+    sidecar_entries: dict[str, dict[str, Path]] = {}
     try:
         entries = sorted(backup_dir.iterdir(), key=lambda path: path.name)
     except OSError:
@@ -270,10 +278,15 @@ def backup_inventory(backup_dir: Path) -> tuple[list[dict], dict | None]:
             }
         backup_match = BACKUP_FILE_PATTERN.fullmatch(entry.name)
         manifest_match = MANIFEST_FILE_PATTERN.fullmatch(entry.name)
+        sidecar_match = BACKUP_SIDECAR_PATTERN.fullmatch(entry.name)
         if backup_match:
             sqlite_entries[entry.stem] = entry
         elif manifest_match:
             manifest_entries[entry.name.removesuffix(".manifest.json")] = entry
+        elif sidecar_match:
+            backup_id = sidecar_match.group(1)
+            sidecar_kind = sidecar_match.group(4)
+            sidecar_entries.setdefault(backup_id, {})[sidecar_kind] = entry
         else:
             return [], {
                 "ok": False,
@@ -294,6 +307,15 @@ def backup_inventory(backup_dir: Path) -> tuple[list[dict], dict | None]:
             "missing_backup_count": len(missing_backups),
             "missing_backup_labels_truncated": len(missing_backups) > BACKUP_PRUNE_OUTPUT_LIMIT,
         }
+    orphan_sidecars = sorted(set(sidecar_entries) - set(sqlite_entries))
+    if orphan_sidecars:
+        return [], {
+            "ok": False,
+            "error": "backup_inventory_orphan_sidecar",
+            "orphan_sidecar_labels": orphan_sidecars[:BACKUP_PRUNE_OUTPUT_LIMIT],
+            "orphan_sidecar_count": len(orphan_sidecars),
+            "orphan_sidecar_labels_truncated": len(orphan_sidecars) > BACKUP_PRUNE_OUTPUT_LIMIT,
+        }
 
     inventory: list[dict] = []
     for backup_id in sorted(sqlite_entries):
@@ -308,6 +330,41 @@ def backup_inventory(backup_dir: Path) -> tuple[list[dict], dict | None]:
                 "error": "backup_inventory_entry_unreadable",
                 "entry_label": backup_id,
             }
+        sidecars_before: dict[str, tuple[Path, os.stat_result]] = {}
+        for sidecar_kind, sidecar_path in sorted((sidecar_entries.get(backup_id) or {}).items()):
+            try:
+                sidecar_before = sidecar_path.stat(follow_symlinks=False)
+            except OSError:
+                return [], {
+                    "ok": False,
+                    "error": "backup_inventory_entry_unreadable",
+                    "entry_label": backup_id,
+                    "sidecar_kind": sidecar_kind,
+                }
+            if not stat.S_ISREG(sidecar_before.st_mode):
+                return [], {
+                    "ok": False,
+                    "error": "backup_inventory_entry_not_regular",
+                    "entry_label": backup_id,
+                    "sidecar_kind": sidecar_kind,
+                }
+            if sidecar_before.st_size > BACKUP_SIDECAR_MAX_BYTES:
+                return [], {
+                    "ok": False,
+                    "error": "backup_sidecar_too_large",
+                    "entry_label": backup_id,
+                    "sidecar_kind": sidecar_kind,
+                    "maximum_sidecar_bytes": BACKUP_SIDECAR_MAX_BYTES,
+                }
+            if sidecar_kind == "wal" and sidecar_before.st_size != 0:
+                return [], {
+                    "ok": False,
+                    "error": "backup_wal_not_empty",
+                    "entry_label": backup_id,
+                    "sidecar_kind": sidecar_kind,
+                    "sidecar_content_omitted": True,
+                }
+            sidecars_before[sidecar_kind] = (sidecar_path, sidecar_before)
         if not stat.S_ISREG(backup_before.st_mode) or not stat.S_ISREG(manifest_before.st_mode):
             return [], {
                 "ok": False,
@@ -334,6 +391,32 @@ def backup_inventory(backup_dir: Path) -> tuple[list[dict], dict | None]:
                 "error": "backup_inventory_entry_unreadable",
                 "entry_label": backup_id,
             }
+        sidecar_files: list[dict] = []
+        sidecars_stable = True
+        for sidecar_kind, (sidecar_path, sidecar_before) in sorted(sidecars_before.items()):
+            try:
+                sidecar_after = sidecar_path.stat(follow_symlinks=False)
+                sidecar_sha256 = sha256_file(sidecar_path)
+            except OSError:
+                return [], {
+                    "ok": False,
+                    "error": "backup_inventory_entry_unreadable",
+                    "entry_label": backup_id,
+                    "sidecar_kind": sidecar_kind,
+                }
+            sidecars_stable = sidecars_stable and (
+                (sidecar_before.st_dev, sidecar_before.st_ino, sidecar_before.st_mode,
+                 sidecar_before.st_size, sidecar_before.st_mtime_ns)
+                == (sidecar_after.st_dev, sidecar_after.st_ino, sidecar_after.st_mode,
+                    sidecar_after.st_size, sidecar_after.st_mtime_ns)
+                and stat.S_ISREG(sidecar_after.st_mode)
+            )
+            sidecar_files.append({
+                "kind": sidecar_kind,
+                "file": sidecar_path.name,
+                "size_bytes": sidecar_after.st_size,
+                "sha256": sidecar_sha256,
+            })
         stable = (
             (backup_before.st_dev, backup_before.st_ino, backup_before.st_mode, backup_before.st_size, backup_before.st_mtime_ns)
             == (backup_after.st_dev, backup_after.st_ino, backup_after.st_mode, backup_after.st_size, backup_after.st_mtime_ns)
@@ -341,6 +424,7 @@ def backup_inventory(backup_dir: Path) -> tuple[list[dict], dict | None]:
             == (manifest_after.st_dev, manifest_after.st_ino, manifest_after.st_mode, manifest_after.st_size, manifest_after.st_mtime_ns)
             and stat.S_ISREG(backup_after.st_mode)
             and stat.S_ISREG(manifest_after.st_mode)
+            and sidecars_stable
         )
         if status != 0 or verification.get("ok") is not True:
             return [], {
@@ -364,7 +448,13 @@ def backup_inventory(backup_dir: Path) -> tuple[list[dict], dict | None]:
             "timestamp_key": timestamp_key,
             "backup_size_bytes": backup_after.st_size,
             "manifest_size_bytes": manifest_after.st_size,
-            "pair_size_bytes": backup_after.st_size + manifest_after.st_size,
+            "sidecar_files": sidecar_files,
+            "sidecar_size_bytes": sum(int(item["size_bytes"]) for item in sidecar_files),
+            "pair_size_bytes": (
+                backup_after.st_size
+                + manifest_after.st_size
+                + sum(int(item["size_bytes"]) for item in sidecar_files)
+            ),
             "backup_sha256": verification["backup_sha256"],
             "manifest_sha256": manifest_sha256,
         })
@@ -512,11 +602,18 @@ def prune_backups(args: argparse.Namespace) -> tuple[dict, int]:
         quarantine.mkdir(mode=0o700)
         quarantine_created = True
         for item in candidate_items:
-            for key in ("backup_file", "manifest_file"):
-                source = backup_dir / item[key]
+            files_to_move = [
+                (item["backup_file"], item["backup_sha256"]),
+                (item["manifest_file"], item["manifest_sha256"]),
+                *[
+                    (sidecar["file"], sidecar["sha256"])
+                    for sidecar in item.get("sidecar_files") or []
+                ],
+            ]
+            for file_name, expected_hash in files_to_move:
+                source = backup_dir / file_name
                 if source.is_symlink() or not source.is_file():
                     raise OSError("candidate changed before quarantine")
-                expected_hash = item["backup_sha256"] if key == "backup_file" else item["manifest_sha256"]
                 if not secrets_compare(sha256_file(source), expected_hash):
                     raise OSError("candidate hash changed before quarantine")
                 destination = quarantine / source.name

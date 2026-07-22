@@ -926,12 +926,16 @@ hard minimum of two complete SQLite/manifest pairs. A write requires both
 `--confirm-prune` and the exact hash of the current full-inventory plan; a new
 backup invalidates the old hash. Confirmed deletion is lifecycle-locked and
 uses a same-volume private quarantine with rollback before cleanup. The
-isolated 21-check smoke proves fresh-Host zero-write planning, deterministic
-planning, exact confirmation,
-lock serialization, protected DB/secret/log/version preservation, and
-fail-closed behavior for unknown, missing, symlinked or tampered inventory.
-No real Host backup was read or deleted. This is source-level evidence only;
-preview.38 is not credited until the exact package passes the same gate.
+isolated 24-check smoke proves fresh-Host zero-write planning, deterministic
+planning, exact confirmation, lock serialization, protected
+DB/secret/log/version preservation, and fail-closed behavior for unknown,
+missing, symlinked or tampered inventory. It also proves that verified
+zero-WAL sidecars move with their backup pair, while orphan sidecars and
+non-empty WAL files fail closed. Backup verification now uses an immutable
+read-only SQLite connection so inspection cannot create new WAL/SHM files.
+This remains source-level package evidence until the exact package passes the
+same gate; the 2026-07-22 installed-Host retention receipt is recorded
+separately below.
 
 The next source-only slice adds bounded stopped-Host log rotation.
 `agentops host log-rotate` defaults to a metadata-only plan with an 8 MiB
@@ -983,6 +987,19 @@ health returned HTTP 200 and the first Fleet readback returned to two
 execution-capacity service Workers. Extended observation reproduced the
 independent projection defect while health stayed HTTP 200. This is a recovery
 receipt, not a storage-pressure or sustained-heartbeat acceptance claim.
+
+On 2026-07-22 the corrected source retention command was dogfooded against the
+real local Host backup inventory without reading backup rows. The dry-run
+verified 62 complete backup groups, retained the newest five, bound 57
+candidates and 2,625,702,995 reclaimable bytes to plan hash
+`489521b87e7c84a559f01f154a3f1aab09509fe9218a8d86f9c45061fa327093`.
+Exact confirmation removed 57 groups and 228 bound files through the private
+quarantine path. A second dry-run reported inventory=5, candidates=0 and zero
+reclaimable bytes; the retained directory was 473 MiB. Data-volume free space
+rose from 723 MiB to 3.2 GiB and `agentops host status` remained ready. The
+authority ledger, secret store, installed version, Runtime evidence and backup
+contents were not read or changed. This closes the source-command real-Host
+dogfood receipt only; the exact-package retention gate below remains open.
 
 An Owner-authenticated, explicitly confirmed customer workflow then completed
 real Hermes run `run_gw_c835b4dab9a9` and real OpenClaw run

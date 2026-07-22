@@ -86,7 +86,13 @@ def create_sqlite(path: Path, marker: str) -> None:
     path.chmod(0o600)
 
 
-def create_verified_pair(fixture: dict, index: int, *, directory: Path | None = None) -> dict:
+def create_verified_pair(
+    fixture: dict,
+    index: int,
+    *,
+    directory: Path | None = None,
+    with_sidecars: bool = False,
+) -> dict:
     backup_dir = directory or fixture["backups"]
     backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     stamp = f"20260722T000000{index:06d}Z"
@@ -97,14 +103,30 @@ def create_verified_pair(fixture: dict, index: int, *, directory: Path | None = 
     manifest = agentops_local_backup.backup_manifest(database, fixture["database"], stamp)
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     manifest_path.chmod(0o600)
+    sidecars: list[Path] = []
+    if with_sidecars:
+        wal_path = Path(f"{database}-wal")
+        shm_path = Path(f"{database}-shm")
+        wal_path.write_bytes(b"")
+        shm_path.write_bytes(b"\0" * 32768)
+        wal_path.chmod(0o600)
+        shm_path.chmod(0o600)
+        sidecars = [wal_path, shm_path]
     timestamp = 1_700_000_000 + index
     os.utime(database, (timestamp, timestamp))
     os.utime(manifest_path, (timestamp, timestamp))
+    for sidecar in sidecars:
+        os.utime(sidecar, (timestamp, timestamp))
     return {
         "id": backup_id,
         "database": database,
         "manifest": manifest_path,
-        "bytes": database.stat().st_size + manifest_path.stat().st_size,
+        "sidecars": sidecars,
+        "bytes": (
+            database.stat().st_size
+            + manifest_path.stat().st_size
+            + sum(sidecar.stat().st_size for sidecar in sidecars)
+        ),
     }
 
 
@@ -459,6 +481,79 @@ def exercise_fresh_host(root: Path, failures: list[str], evidence: dict[str, boo
     )
 
 
+def exercise_verified_sidecar_inventory(root: Path, failures: list[str], evidence: dict[str, bool]) -> None:
+    fixture = create_fixture(root / "verified-sidecars", pair_count=0)
+    fixture["pairs"] = [
+        create_verified_pair(fixture, index, with_sidecars=True)
+        for index in range(1, 8)
+    ]
+    before = snapshot_flat_directory(fixture["backups"])
+    protected_before = snapshot_protected(fixture)
+    preview_process, preview = run_host(fixture["env"], "backup-prune")
+    after_preview = snapshot_flat_directory(fixture["backups"])
+    plan_hash = str(preview.get("plan_hash") or "")
+    confirm_process, confirmed = run_host(
+        fixture["env"],
+        "backup-prune",
+        "--confirm-prune",
+        "--plan-hash",
+        plan_hash,
+    )
+    remaining = snapshot_flat_directory(fixture["backups"])
+    expected_remaining = {pair["id"] for pair in fixture["pairs"][-DEFAULT_KEEP:]}
+    remaining_ids = {
+        normalize_backup_id(name)
+        for name in remaining
+        if name.endswith(".sqlite")
+    }
+    retained_sidecars = {
+        name.removesuffix(".sqlite-wal").removesuffix(".sqlite-shm")
+        for name in remaining
+        if name.endswith(".sqlite-wal") or name.endswith(".sqlite-shm")
+    }
+    record(
+        failures,
+        evidence,
+        "verified_zero_wal_sidecars_prune_with_backup_pair",
+        preview_process.returncode == 0
+        and valid_dry_run_contract(preview, fixture["pairs"], keep=DEFAULT_KEEP)
+        and after_preview == before
+        and confirm_process.returncode == 0
+        and is_prune_payload(confirmed, ok=True)
+        and confirmed.get("deleted_count") == 2
+        and confirmed.get("deleted_file_count") == 8
+        and remaining_ids == expected_remaining
+        and retained_sidecars == expected_remaining
+        and len(remaining) == DEFAULT_KEEP * 4
+        and snapshot_protected(fixture) == protected_before
+        and output_is_safe(preview_process.stdout + preview_process.stderr + confirm_process.stdout + confirm_process.stderr, fixture),
+    )
+
+    active_wal = create_fixture(root / "active-wal-sidecar", pair_count=0)
+    active_wal["pairs"] = [
+        create_verified_pair(active_wal, index, with_sidecars=True)
+        for index in range(1, 7)
+    ]
+    Path(f"{active_wal['pairs'][0]['database']}-wal").write_bytes(b"uncheckpointed")
+    expect_rejected_without_mutation(
+        active_wal,
+        failures,
+        evidence,
+        "nonempty_wal_sidecar_fails_closed",
+    )
+
+    orphan = create_fixture(root / "orphan-sidecar", pair_count=6)
+    orphan_path = orphan["backups"] / "agentops-mis-20260722T235959999999Z.sqlite-shm"
+    orphan_path.write_bytes(b"\0" * 32768)
+    orphan_path.chmod(0o600)
+    expect_rejected_without_mutation(
+        orphan,
+        failures,
+        evidence,
+        "orphan_sidecar_fails_closed",
+    )
+
+
 def exercise_invalid_inventory(root: Path, failures: list[str], evidence: dict[str, bool]) -> None:
     unsafe_permissions = create_fixture(root / "unsafe-permissions", pair_count=6)
     unsafe_permissions["backups"].chmod(0o755)
@@ -619,6 +714,7 @@ def main() -> int:
             root = Path(temporary)
             exercise_valid_inventory(root, failures, evidence)
             exercise_fresh_host(root, failures, evidence)
+            exercise_verified_sidecar_inventory(root, failures, evidence)
             exercise_invalid_inventory(root, failures, evidence)
             exercise_bounded_output(root, failures, evidence)
             exercise_quarantine_rollback(root, failures, evidence)
