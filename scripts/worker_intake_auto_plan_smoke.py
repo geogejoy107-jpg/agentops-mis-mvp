@@ -39,10 +39,11 @@ class AutoPlanClient:
     agent_id = "agt_worker_auto_plan_openclaw"
     api_key = ""
 
-    def __init__(self, *, risk_level: str = "low", plan_id: str | None = None, reject_heartbeat: bool = False) -> None:
+    def __init__(self, *, risk_level: str = "low", plan_id: str | None = None, reject_heartbeat: bool = False, unassigned_head: bool = False) -> None:
         self.risk_level = risk_level
         self.plan_id = plan_id
         self.reject_heartbeat = reject_heartbeat
+        self.unassigned_head = unassigned_head
         self.gets: list[tuple[str, dict | None]] = []
         self.posts: list[tuple[str, dict]] = []
 
@@ -50,25 +51,40 @@ class AutoPlanClient:
         self.gets.append((path, query))
         if path == "/api/agent-gateway/tasks/pull":
             failed = ["verified_agent_plan"] if self.plan_id else ["agent_plan", "verified_agent_plan", "knowledge_retrieval", "base_reference"]
+            blocked_tasks = []
+            if self.unassigned_head:
+                blocked_tasks.append({
+                    "task_id": "tsk_unassigned_head",
+                    "title": "Unassigned queue head",
+                    "status": "planned",
+                    "priority": "low",
+                    "risk_level": "low",
+                    "assigned_adapter": None,
+                    "assigned_agent_ids": [],
+                    "plan_id": None,
+                    "failed_gate_ids": ["assigned_agent", "agent_plan"],
+                    "token_omitted": True,
+                })
+            blocked_tasks.append(
+                {
+                    "task_id": "tsk_worker_auto_plan_smoke",
+                    "title": "Auto plan smoke",
+                    "status": "planned",
+                    "priority": "medium",
+                    "risk_level": self.risk_level,
+                    "assigned_adapter": "openclaw",
+                    "assigned_agent_ids": [self.agent_id],
+                    "plan_id": self.plan_id,
+                    "failed_gate_ids": failed,
+                    "token_omitted": True,
+                }
+            )
             return {
                 "tasks": [],
                 "intake": {
-                    "blocked": 1,
+                    "blocked": len(blocked_tasks),
                     "next_actions": ["agentops knowledge search \"Auto plan smoke\" --limit 10"],
-                    "blocked_tasks": [
-                        {
-                            "task_id": "tsk_worker_auto_plan_smoke",
-                            "title": "Auto plan smoke",
-                            "status": "planned",
-                            "priority": "medium",
-                            "risk_level": self.risk_level,
-                            "assigned_adapter": "openclaw",
-                            "assigned_agent_ids": [self.agent_id],
-                            "plan_id": self.plan_id,
-                            "failed_gate_ids": failed,
-                            "token_omitted": True,
-                        }
-                    ],
+                    "blocked_tasks": blocked_tasks,
                     "token_omitted": True,
                 },
             }
@@ -188,6 +204,25 @@ def run_existing_verify_case(failures: list[str]) -> dict:
     return result
 
 
+def run_unassigned_head_case(failures: list[str]) -> dict:
+    args = worker.build_parser().parse_args(["--once", "--adapter", "openclaw", "--confirm-run"])
+    client = AutoPlanClient(risk_level="low", unassigned_head=True)
+    result = worker.process_one_task(client, args)
+    pull_queries = [query for path, query in client.gets if path == "/api/agent-gateway/tasks/pull"]
+    require(result.get("reason") == "intake_auto_planned", f"unassigned queue head blocked assigned task: {result}", failures)
+    require(result.get("task_id") == "tsk_worker_auto_plan_smoke", f"wrong blocked task selected behind unassigned head: {result}", failures)
+    require(
+        bool(pull_queries) and pull_queries[0].get("limit") == worker.WORKER_PULL_CANDIDATE_LIMIT,
+        f"Worker did not request a bounded candidate window: {pull_queries}",
+        failures,
+    )
+    return {
+        "reason": result.get("reason"),
+        "task_id": result.get("task_id"),
+        "pull_candidate_limit": pull_queries[0].get("limit") if pull_queries else None,
+    }
+
+
 def run_intake_reuse_helper_case(failures: list[str]) -> dict:
     client = AutoPlanClient(risk_level="low", plan_id="plan_existing_auto_plan_smoke")
     plan_id, verified = worker.verified_intake_plan_for_task(client, {
@@ -273,6 +308,7 @@ def main() -> int:
             f"Worker state compatibility fields missing: {state_shape}", failures)
     create_result = run_auto_create_case(failures)
     verify_result = run_existing_verify_case(failures)
+    unassigned_head_result = run_unassigned_head_case(failures)
     reuse_result = run_intake_reuse_helper_case(failures)
     high_risk_result = run_high_risk_case(failures)
     disabled_result = run_auto_plan_disabled_case(failures)
@@ -281,6 +317,7 @@ def main() -> int:
     serialized = json.dumps({
         "create": create_result,
         "verify": verify_result,
+        "unassigned_head": unassigned_head_result,
         "reuse": reuse_result,
         "high_risk": high_risk_result,
         "disabled": disabled_result,
@@ -294,6 +331,8 @@ def main() -> int:
         "operation": "worker_intake_auto_plan_smoke",
         "auto_create_reason": create_result.get("reason"),
         "existing_verify_reason": verify_result.get("reason"),
+        "unassigned_head_reason": unassigned_head_result.get("reason"),
+        "pull_candidate_limit": unassigned_head_result.get("pull_candidate_limit"),
         "intake_reuse_plan_id": reuse_result.get("plan_id"),
         "high_risk_reason": high_risk_result.get("reason"),
         "disabled_auto_plan_reason": disabled_result.get("reason"),

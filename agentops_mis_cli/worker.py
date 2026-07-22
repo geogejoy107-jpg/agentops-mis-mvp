@@ -59,6 +59,7 @@ DEFAULT_HERMES_GATEWAY_URL = "http://127.0.0.1:8642"
 DEFAULT_HERMES_MODEL = "hermes-agent"
 DEFAULT_HERMES_MAX_TOKENS = int(os.environ.get("HERMES_MAX_TOKENS", "512"))
 DEFAULT_OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
+WORKER_PULL_CANDIDATE_LIMIT = 50
 WORKER_SECRET_BOUNDARY_VERSION = "trusted_worker_client_v1"
 DEFAULT_CONFIG_PATH = Path(os.environ.get("AGENTOPS_CONFIG", "~/.agentops/config.json")).expanduser()
 LOCAL_CONFIG_WORKER_SESSION_SCOPES = (
@@ -2516,7 +2517,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     pull_query = {
         "agent_id": client.agent_id,
         "workspace_id": client.workspace_id,
-        "limit": 1,
+        "limit": WORKER_PULL_CANDIDATE_LIMIT,
         "status": args.status,
         "enforce_intake": "true" if args.enforce_intake else "false",
     }
