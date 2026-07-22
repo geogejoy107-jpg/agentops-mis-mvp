@@ -67,6 +67,38 @@ Mock execution verifies deterministic protocol behavior only. Product-level
 Hermes/OpenClaw evidence requires a current exact Host package, an explicitly
 authorized task and a real persistent Worker run.
 
+## Real Runtime Dogfood
+
+On 2026-07-23, exact clean source commit `0057efa` was started on loopback with
+an isolated SQLite ledger. The explicitly confirmed customer-worker workflow
+then ran once through the existing local Agnesfallback Hermes gateway and once
+through the existing local OpenClaw runtime. These were real model executions,
+not mock adapters or fixed health probes.
+
+| Adapter | Run | Verified plan evidence | Context evidence |
+| --- | --- | --- | --- |
+| Hermes | `run_gw_bf22d6248d0d` | `pem_080256cb29ea9d8f` | 8 blocks consumed; packet hash recorded; body omitted |
+| OpenClaw | `run_gw_3df926a574bb` | `pem_310347c0ca466082` | 8 blocks consumed; packet hash recorded; body omitted |
+
+Each run created one Tool Call and Evaluation, two Artifacts, two reviewable
+Memory candidates, one customer-delivery Approval, 15 Runtime Events and 12
+Audit rows. Operator Evidence reported retrieval status `ready`, Recall@5
+`1.0`, MRR `1.0`, verified Plan Evidence, and
+`context_body_not_persisted:true`. Raw prompts, raw responses and credentials
+were omitted.
+
+The Agent outputs described an isolated source Host, so the administrator
+rejected both generated Memory candidates instead of promoting temporary
+service observations into project authority. The customer-delivery approvals
+were also rejected because this was an internal acceptance run, not an
+approved customer publication. After those decisions both Operator Evidence
+reports were `ready` with no failed checks; the Runs correctly became
+`blocked`, meaning execution evidence is complete while delivery is forbidden.
+
+This receipt is source-level dogfood. The isolated database remains outside the
+repository and does not replace an installed exact-package or second-device
+acceptance gate.
+
 ## Known Limitations
 
 - Summaries are local FTS/redaction output, not semantic embeddings.
