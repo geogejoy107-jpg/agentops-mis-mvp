@@ -321,6 +321,25 @@ agentops host log-rotate \
 agentops host start
 ```
 
+如果预览针对 `launchd.log` 返回
+`host_log_inventory_permissions_unsafe`，不要手工修改或读取日志。先通过受管
+Service 安装边界预览并确认权限修复，再重新生成轮转计划：
+
+```bash
+agentops host service-check
+agentops host service-install --overwrite
+agentops host service-install --overwrite --confirm-install
+agentops host log-rotate
+```
+
+该修复只接受当前用户拥有的普通单链接文件和 `0700` 日志目录；它通过已打开的
+文件描述符把模式收紧到 `0600`，验证命名 inode 未变化，并保持既有日志字节不变。
+软链、hardlink、错误 owner 或不安全目录会失败关闭。完成后再执行上面的
+`stop -> log-rotate --confirm-rotate -> start`，不得复用修复前的 plan hash。
+`log-rotate` 只会把候选修复引导到只读 `service-check`。只有 `service-check` 输出
+`service_log_repair_available: true` 时才执行受管修复命令；若为
+`manual_recovery_required: true`，必须先核查文件身份，不得反复确认或直接 `chmod`。
+
 默认阈值为 8 MiB、保留 5 个历史文件；阈值硬下限为 1 MiB，历史数量范围为
 2 至 20。预览只读取目录和文件元数据，不打印路径或日志正文。确认操作必须持有
 Host lifecycle lock，并在整个操作期间持有与 local stack 相同的私有 runtime lock；

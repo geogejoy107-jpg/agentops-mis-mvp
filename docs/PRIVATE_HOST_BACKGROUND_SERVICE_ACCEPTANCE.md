@@ -31,6 +31,13 @@ agentops host service-remove --confirm-remove
 - Install, launchctl control and removal are preview-only by default.
 - Install writes `~/Library/LaunchAgents/dev.agentops.mis.private-host.plist`
   only after `--confirm-install`; writing does not load the service.
+- The same confirmed install creates an empty owner-only `launchd.log` with
+  mode `0600`, or tightens an existing owner-owned regular single-link file to
+  `0600` without reading or changing its bytes. Dry-run reports the required
+  action without mutation.
+- A symlink, non-regular file, hardlink, wrong owner or unsafe log directory
+  blocks installation. Load and restart are also blocked until the launchd log
+  passes the private-file gate; unload remains available for recovery.
 - The file is mode `0600` and contains only Host/install paths plus
   `PYTHONPATH`. It contains no machine key, Admin key, setup code, browser
   Session, CSRF value or Runtime credential.
@@ -66,10 +73,43 @@ git diff --check
 
 The isolated smoke uses a temporary Host home, service path and fake launchctl
 state. It proves dry-run install, confirmed write, exact host-only arguments,
-private mode, credential omission, read-only check, dry-run control, confirmed
+private plist and launchd-log modes, legacy launchd-log permission repair with
+content identity preserved, unsafe symlink refusal, credential omission,
+read-only check, dry-run control, confirmed
 load/restart/unload, duplicate-load idempotency, loaded-removal blocking,
 confirmed removal, exact previous-definition migration, loaded previous-service
 blocking and unknown/same-label/credential/path-edited overwrite rejection.
+
+## Preview 39 Log Permission Finding
+
+On 2026-07-22, the installed preview.39 Host exposed a real package gap through
+the product's metadata-only commands. `agentops host logs` reported an active
+Host log of 51,388,825 bytes. `agentops host log-rotate` then failed closed with
+`host_log_inventory_permissions_unsafe` for `launchd.log`. A metadata-only stat
+confirmed that the Host log directory was owner-private and `host.log` was
+`0600`, but launchd had created its 12,955,332-byte output file as `0644`.
+No log content was read.
+
+The source correction makes service installation own this boundary before
+launchctl does: it creates or identity-checks the expected log through an
+anchored private directory descriptor, applies `0600` through the open file
+descriptor, verifies the named inode is unchanged, and only then writes the
+managed plist. Existing `0644` files are repairable only when they are regular,
+owned by the current user and have one link. The isolated service smoke proves
+fresh creation, zero-write preview, byte-preserving repair, symlink refusal,
+load blocking before repair and a successful log-rotation preview after repair.
+`log-rotate` routes a repair candidate only to the read-only `service-check`;
+`service-check` advertises the managed repair command only for that verified
+repairable state and a compatible managed service definition.
+Unsafe identities or an unknown service definition require manual recovery and
+never receive an automatic mutation command. The same boundary now requires an
+exact owner-owned `0600` plist in a non-group/world-writable user-owned parent;
+fresh install may create its missing private parent.
+
+This is source evidence. Preview.39 remains correctly blocked from rotation;
+the release gate stays open until the correction is packaged, installed, the
+real metadata-only plan succeeds, and an explicit stopped-Host rotation plus
+restart is recorded.
 
 ## Upgrade Migration Contract
 

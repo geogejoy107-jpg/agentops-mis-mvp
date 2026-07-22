@@ -3067,6 +3067,20 @@ def _cmd_log_rotate_unlocked(args) -> int:
     payload["authority_ledger_unchanged"] = True
     payload["secret_store_unchanged"] = True
     payload["launchd_log_content_identity_preserved"] = True
+    if (
+        payload.get("error") == "host_log_inventory_permissions_unsafe"
+        and payload.get("entry_label") == "launchd.log"
+    ):
+        service_log = inspect_host_service_log()
+        repair_candidate = bool(
+            service_log.get("ok") is True
+            and service_log.get("preparation_required") is True
+        )
+        payload["service_log_repair_candidate"] = repair_candidate
+        payload["service_check_required"] = repair_candidate
+        payload["manual_recovery_required"] = not repair_candidate
+        if repair_candidate:
+            payload["next_action"] = "agentops host service-check"
     emit(payload)
     return status
 
@@ -3403,6 +3417,7 @@ def inspect_host_service(path: Path, *, timeout: int = 5) -> dict:
     safe_regular_file = bool(exists and not path.is_symlink() and path.is_file())
     file_owned_by_user = False
     mode_exact_private = False
+    parent_directory_exists = False
     parent_directory_safe = False
     try:
         if safe_regular_file:
@@ -3410,6 +3425,7 @@ def inspect_host_service(path: Path, *, timeout: int = 5) -> dict:
             file_owned_by_user = metadata.st_uid == os.getuid()
             mode_exact_private = stat.S_IMODE(metadata.st_mode) == 0o600
         parent_metadata = path.parent.lstat()
+        parent_directory_exists = True
         parent_directory_safe = bool(
             not path.parent.is_symlink()
             and stat.S_ISDIR(parent_metadata.st_mode)
@@ -3453,7 +3469,15 @@ def inspect_host_service(path: Path, *, timeout: int = 5) -> dict:
         and not token_like_detected
     )
     return {
-        "ok": bool(safe_regular_file and parse_ok and exact_definition and mode_private and not token_like_detected),
+        "ok": bool(
+            safe_regular_file
+            and parse_ok
+            and exact_definition
+            and file_owned_by_user
+            and mode_exact_private
+            and parent_directory_safe
+            and not token_like_detected
+        ),
         "operation": "host_service_check",
         "manager": "launchd",
         "label": HOST_SERVICE_LABEL,
@@ -3468,6 +3492,7 @@ def inspect_host_service(path: Path, *, timeout: int = 5) -> dict:
             "file_owned_by_user": file_owned_by_user,
             "mode_private": mode_private,
             "mode_exact_private": mode_exact_private,
+            "parent_directory_exists": parent_directory_exists,
             "parent_directory_safe": parent_directory_safe,
             "token_like_detected": token_like_detected,
             "raw_content_omitted": True,
@@ -3482,9 +3507,51 @@ def inspect_host_service(path: Path, *, timeout: int = 5) -> dict:
     }
 
 
+def host_service_log_repair_available(service_check: dict, service_log: dict) -> bool:
+    service_file = (
+        service_check.get("service_file")
+        if isinstance(service_check.get("service_file"), dict)
+        else {}
+    )
+    service_definition_compatible = bool(
+        service_check.get("ok") is True
+        or service_check.get("legacy_migration_ready") is True
+        or (
+            service_file.get("exists") is False
+            and (
+                service_file.get("parent_directory_exists") is False
+                or service_file.get("parent_directory_safe") is True
+            )
+        )
+    )
+    return bool(
+        service_definition_compatible
+        and service_log.get("ok") is True
+        and service_log.get("preparation_required") is True
+    )
+
+
 def cmd_service_check(args) -> int:
     require_initialized()
     payload = inspect_host_service(host_service_path(args.service_path), timeout=args.timeout)
+    service_log = inspect_host_service_log()
+    log_rotation_ready = bool(
+        service_log.get("ok") is True
+        and service_log.get("mode_private") is True
+    )
+    repair_available = host_service_log_repair_available(payload, service_log)
+    payload["service_log"] = service_log
+    payload["log_rotation_ready"] = log_rotation_ready
+    payload["service_log_repair_available"] = repair_available
+    payload["manual_recovery_required"] = bool(
+        not log_rotation_ready and not repair_available
+    )
+    payload["maintenance_status"] = "ready" if log_rotation_ready else "attention"
+    payload["maintenance_next_action"] = (
+        "agentops host service-install --overwrite"
+        if repair_available
+        else None
+    )
     emit(payload)
     return 0 if payload["ok"] else 1
 
@@ -3508,6 +3575,134 @@ def _atomic_write_service(path: Path, content: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def inspect_host_service_log() -> dict:
+    log_path = paths()["logs"] / "launchd.log"
+    result = {
+        "ok": False,
+        "operation": "host_service_log_preflight",
+        "present": False,
+        "mode_private": False,
+        "single_link_regular_file": False,
+        "preparation_required": False,
+        "planned_action": None,
+        "content_omitted": True,
+        "path_omitted": True,
+        "token_omitted": True,
+    }
+    try:
+        parent = log_path.parent.lstat()
+    except FileNotFoundError:
+        return {**result, "error": "host_service_log_directory_missing"}
+    except OSError:
+        return {**result, "error": "host_service_log_directory_unreadable"}
+    if (
+        log_path.parent.is_symlink()
+        or not stat.S_ISDIR(parent.st_mode)
+        or parent.st_uid != os.getuid()
+        or stat.S_IMODE(parent.st_mode) != 0o700
+    ):
+        return {**result, "error": "host_service_log_directory_unsafe"}
+    try:
+        metadata = log_path.lstat()
+    except FileNotFoundError:
+        return {
+            **result,
+            "ok": True,
+            "preparation_required": True,
+            "planned_action": "create_private_log",
+        }
+    except OSError:
+        return {**result, "error": "host_service_log_unreadable"}
+    safe_file = bool(
+        not log_path.is_symlink()
+        and stat.S_ISREG(metadata.st_mode)
+        and metadata.st_uid == os.getuid()
+        and metadata.st_nlink == 1
+    )
+    if not safe_file:
+        return {
+            **result,
+            "present": True,
+            "error": "host_service_log_unsafe",
+        }
+    mode_private = stat.S_IMODE(metadata.st_mode) == 0o600
+    return {
+        **result,
+        "ok": True,
+        "present": True,
+        "mode_private": mode_private,
+        "single_link_regular_file": True,
+        "preparation_required": not mode_private,
+        "planned_action": None if mode_private else "tighten_permissions",
+    }
+
+
+def prepare_host_service_log() -> dict:
+    before = inspect_host_service_log()
+    if before.get("ok") is not True:
+        raise RuntimeError(str(before.get("error") or "host_service_log_preflight_failed"))
+    log_path = paths()["logs"] / "launchd.log"
+    parent_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    parent_fd = os.open(log_path.parent, parent_flags)
+    descriptor = -1
+    created = False
+    try:
+        parent = os.fstat(parent_fd)
+        if (
+            not stat.S_ISDIR(parent.st_mode)
+            or parent.st_uid != os.getuid()
+            or stat.S_IMODE(parent.st_mode) != 0o700
+        ):
+            raise RuntimeError("host_service_log_directory_changed")
+        try:
+            descriptor = os.open(
+                log_path.name,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=parent_fd,
+            )
+        except FileNotFoundError:
+            descriptor = os.open(
+                log_path.name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+                dir_fd=parent_fd,
+            )
+            created = True
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != os.getuid()
+            or opened.st_nlink != 1
+        ):
+            raise RuntimeError("host_service_log_changed")
+        os.fchmod(descriptor, 0o600)
+        secured = os.fstat(descriptor)
+        named = os.stat(log_path.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            secured.st_dev != named.st_dev
+            or secured.st_ino != named.st_ino
+            or not stat.S_ISREG(named.st_mode)
+            or named.st_uid != os.getuid()
+            or named.st_nlink != 1
+            or stat.S_IMODE(named.st_mode) != 0o600
+        ):
+            raise RuntimeError("host_service_log_identity_changed")
+        os.fsync(parent_fd)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        os.close(parent_fd)
+    after = inspect_host_service_log()
+    if after.get("ok") is not True or after.get("mode_private") is not True:
+        raise RuntimeError("host_service_log_prepare_verification_failed")
+    return {
+        **after,
+        "prepared": True,
+        "created": created,
+        "permissions_tightened": bool(before.get("present") and not before.get("mode_private")),
+    }
+
+
 def cmd_service_install(args) -> int:
     require_initialized()
     path = host_service_path(args.service_path)
@@ -3517,6 +3712,7 @@ def cmd_service_install(args) -> int:
     legacy_owned = bool(before["service_file"].get("legacy_owned_definition"))
     legacy_migration_ready = bool(before.get("legacy_migration_ready"))
     service_loaded = bool(before["service_state"].get("loaded"))
+    service_log = inspect_host_service_log()
     owned_for_overwrite = bool(before["ok"] or legacy_owned)
     overwrite_allowed = bool(
         not exists_before
@@ -3531,6 +3727,11 @@ def cmd_service_install(args) -> int:
     blockers = []
     if path.is_symlink():
         blockers.append("service_path_is_symlink")
+    if (
+        before["service_file"].get("parent_directory_exists") is True
+        and before["service_file"].get("parent_directory_safe") is not True
+    ):
+        blockers.append("service_parent_directory_unsafe")
     if exists_before and not args.overwrite:
         blockers.append("service_file_exists")
     if exists_before and args.overwrite and not owned_for_overwrite:
@@ -3541,13 +3742,30 @@ def cmd_service_install(args) -> int:
         blockers.append("launchctl_state_unverified")
     if any(prefix.encode("ascii") in template for prefix in ("agthost_", "agtadmin_", "agtok_", "agtsess_", "ntn_", "sk-")):
         blockers.append("token_like_content_detected")
+    if service_log.get("ok") is not True:
+        blockers.append(str(service_log.get("error") or "host_service_log_preflight_failed"))
     wrote = False
     if args.confirm_install and overwrite_allowed and not blockers:
-        _atomic_write_service(path, template)
-        wrote = True
+        try:
+            service_log = prepare_host_service_log()
+        except (OSError, RuntimeError):
+            blockers.append("host_service_log_prepare_failed")
+        if not blockers:
+            _atomic_write_service(path, template)
+            wrote = True
     after = inspect_host_service(path, timeout=args.timeout) if wrote else before
     dry_run = not args.confirm_install
     ok = bool((dry_run and not blockers) or (wrote and after["ok"]))
+    if wrote:
+        next_action = "agentops host service-control --action load"
+    elif not blockers:
+        next_action = "Re-run with --confirm-install after reviewing this preview."
+    elif blockers == ["service_file_exists"] and (before["ok"] or legacy_migration_ready):
+        next_action = "agentops host service-install --overwrite"
+    elif "legacy_service_still_loaded" in blockers:
+        next_action = "agentops host service-control --action unload"
+    else:
+        next_action = None
     emit({
         "ok": ok,
         "operation": "host_service_install",
@@ -3561,15 +3779,13 @@ def cmd_service_install(args) -> int:
         "legacy_migration_ready": legacy_migration_ready,
         "service_path": str(path),
         "service_file_mode": "0600" if wrote else None,
+        "service_log": service_log,
         "template_hash": hashlib.sha256(template).hexdigest(),
         "template_bytes": len(template),
         "service_check": after,
         "blockers": blockers,
-        "next_action": (
-            "agentops host service-control --action load"
-            if wrote
-            else "Re-run with --confirm-install after reviewing this preview."
-        ),
+        "next_action": next_action,
+        "manual_recovery_required": bool(blockers and not next_action),
         "service_loaded": service_loaded,
         "host_only": True,
         "workers": [],
@@ -3599,6 +3815,7 @@ def cmd_service_control(args) -> int:
     loaded = bool(state["loaded"])
     legacy_owned = bool(checked["service_file"].get("legacy_owned_definition"))
     legacy_unload = bool(args.action == "unload" and legacy_owned and loaded)
+    service_log = inspect_host_service_log()
     commands = host_service_control_commands(path, args.action, loaded=loaded)
     blockers = []
     if not checked["ok"] and not legacy_unload:
@@ -3611,6 +3828,11 @@ def cmd_service_control(args) -> int:
         blockers.append("service_not_loaded")
     if args.action == "load" and not loaded and managed_host_running():
         blockers.append("unmanaged_host_already_running")
+    if args.action in {"load", "restart"} and (
+        service_log.get("ok") is not True
+        or service_log.get("mode_private") is not True
+    ):
+        blockers.append("host_service_log_not_private")
     dry_run = not args.confirm_control
     results = []
     if args.confirm_control and not blockers:
@@ -3657,6 +3879,7 @@ def cmd_service_control(args) -> int:
         "dry_run": dry_run,
         "confirmed_control": bool(args.confirm_control),
         "service_path": str(path),
+        "service_log": service_log,
         "legacy_unload": legacy_unload,
         "service_loaded_before": loaded,
         "service_state_after": state_after,

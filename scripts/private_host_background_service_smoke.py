@@ -117,6 +117,21 @@ def main() -> int:
         )
         require(installed.get("wrote") is True, "confirmed install did not write the service file", failures)
         require(service_path.exists() and service_path.stat().st_mode & 0o077 == 0, "service file is not mode 0600", failures)
+        launchd_log = host_home / "logs" / "launchd.log"
+        require(
+            launchd_log.is_file()
+            and launchd_log.stat().st_mode & 0o777 == 0o600
+            and launchd_log.stat().st_nlink == 1
+            and launchd_log.stat().st_size == 0,
+            "confirmed install did not create an empty private launchd log",
+            failures,
+        )
+        require(
+            installed.get("service_log", {}).get("created") is True
+            and installed.get("service_log", {}).get("mode_private") is True,
+            "confirmed install did not report private launchd log preparation",
+            failures,
+        )
         require("agthost_" not in installed_output and "agtadmin_" not in installed_output, "confirmed install output exposed a Host credential", failures)
         service = service_path.read_text(encoding="utf-8")
         require("<string>start</string>" in service and "<string>--foreground</string>" in service and "<string>--no-workers</string>" in service, "Host command is not host-only", failures)
@@ -134,6 +149,144 @@ def main() -> int:
         _, checked, _ = run(env, "service-check", "--service-path", str(service_path))
         require(checked.get("ok") is True, f"installed service check failed: {checked}", failures)
         require(checked.get("service_state", {}).get("loaded") is False, "service unexpectedly loaded during install", failures)
+
+        service_path.chmod(0o400)
+        _, non_writable_service, _ = run(
+            env,
+            "service-check",
+            "--service-path",
+            str(service_path),
+            expected=(1,),
+        )
+        require(
+            non_writable_service.get("ok") is False
+            and non_writable_service.get("service_file", {}).get("exact_managed_definition") is True
+            and non_writable_service.get("service_file", {}).get("mode_exact_private") is False,
+            "exact service definition bypassed the required 0600 mode",
+            failures,
+        )
+        service_path.chmod(0o600)
+
+        launchd_marker = b"existing launchd log fixture\n"
+        launchd_log.write_bytes(launchd_marker)
+        launchd_log.chmod(0o644)
+        _, repair_preview, _ = run(
+            env,
+            "service-install",
+            "--service-path",
+            str(service_path),
+            "--overwrite",
+        )
+        require(
+            repair_preview.get("service_log", {}).get("planned_action") == "tighten_permissions"
+            and launchd_log.stat().st_mode & 0o777 == 0o644,
+            "service install preview did not report the legacy launchd log repair without mutating it",
+            failures,
+        )
+        _, maintenance_check, _ = run(env, "service-check", "--service-path", str(service_path))
+        require(
+            maintenance_check.get("ok") is True
+            and maintenance_check.get("log_rotation_ready") is False
+            and maintenance_check.get("maintenance_status") == "attention"
+            and maintenance_check.get("maintenance_next_action") == "agentops host service-install --overwrite",
+            "service check did not expose the bounded launchd log repair action",
+            failures,
+        )
+        _, blocked_rotation, _ = run(env, "log-rotate", expected=(1,))
+        require(
+            blocked_rotation.get("error") == "host_log_inventory_permissions_unsafe"
+            and blocked_rotation.get("entry_label") == "launchd.log"
+            and blocked_rotation.get("service_log_repair_candidate") is True
+            and blocked_rotation.get("service_check_required") is True
+            and blocked_rotation.get("next_action") == "agentops host service-check",
+            "blocked log rotation did not route repair through the read-only service check",
+            failures,
+        )
+        _, unsafe_log_load_refused, _ = run(
+            env,
+            "service-control",
+            "--action",
+            "load",
+            "--service-path",
+            str(service_path),
+            "--confirm-control",
+            expected=(1,),
+        )
+        require(
+            "host_service_log_not_private" in (unsafe_log_load_refused.get("blockers") or [])
+            and not launchctl_state.exists(),
+            "service control loaded a Host before its launchd log was private",
+            failures,
+        )
+        _, repaired, _ = run(
+            env,
+            "service-install",
+            "--service-path",
+            str(service_path),
+            "--overwrite",
+            "--confirm-install",
+        )
+        require(
+            repaired.get("service_log", {}).get("permissions_tightened") is True
+            and launchd_log.stat().st_mode & 0o777 == 0o600
+            and launchd_log.read_bytes() == launchd_marker,
+            "confirmed install did not tighten launchd log permissions without changing content",
+            failures,
+        )
+        _, rotation_ready, _ = run(env, "log-rotate")
+        require(
+            rotation_ready.get("ok") is True
+            and rotation_ready.get("rotation_required") is False,
+            f"service install did not leave the log inventory rotation-ready: {rotation_ready}",
+            failures,
+        )
+
+        outside_log = temp / "outside-launchd.log"
+        outside_log.write_bytes(launchd_marker)
+        outside_log.chmod(0o600)
+        launchd_log.unlink()
+        launchd_log.symlink_to(outside_log)
+        _, unsafe_log_refused, _ = run(
+            env,
+            "service-install",
+            "--service-path",
+            str(service_path),
+            "--overwrite",
+            "--confirm-install",
+            expected=(1,),
+        )
+        require(
+            "host_service_log_unsafe" in (unsafe_log_refused.get("blockers") or [])
+            and launchd_log.is_symlink()
+            and outside_log.read_bytes() == launchd_marker,
+            "service install did not fail closed on a symlinked launchd log",
+            failures,
+        )
+        _, unsafe_log_check, _ = run(env, "service-check", "--service-path", str(service_path))
+        require(
+            unsafe_log_check.get("maintenance_status") == "attention"
+            and unsafe_log_check.get("service_log_repair_available") is False
+            and unsafe_log_check.get("manual_recovery_required") is True
+            and unsafe_log_check.get("maintenance_next_action") is None,
+            "service check advertised automatic repair for an unsafe launchd log identity",
+            failures,
+        )
+        launchd_log.unlink()
+        outside_log.chmod(0o644)
+        os.link(outside_log, launchd_log)
+        _, hardlinked_log_rotation, _ = run(env, "log-rotate", expected=(1,))
+        require(
+            hardlinked_log_rotation.get("error") == "host_log_inventory_permissions_unsafe"
+            and hardlinked_log_rotation.get("service_log_repair_candidate") is False
+            and hardlinked_log_rotation.get("manual_recovery_required") is True
+            and hardlinked_log_rotation.get("next_action") is None,
+            "log rotation advertised automatic repair for a hardlinked launchd log",
+            failures,
+        )
+        launchd_log.unlink()
+        outside_log.unlink()
+        launchd_log.write_bytes(launchd_marker)
+        launchd_log.chmod(0o600)
 
         unavailable_env = {**env, "AGENTOPS_LAUNCHCTL_BIN": str(temp / "missing-launchctl")}
         _, unverified_control, _ = run(
@@ -259,6 +412,23 @@ def main() -> int:
 
         service_path.parent.mkdir(parents=True, exist_ok=True)
         service_path.write_text("unmanaged service", encoding="utf-8")
+        service_path.chmod(0o600)
+        launchd_log.chmod(0o644)
+        _, unmanaged_check, _ = run(
+            env,
+            "service-check",
+            "--service-path",
+            str(service_path),
+            expected=(1,),
+        )
+        require(
+            unmanaged_check.get("service_log_repair_available") is False
+            and unmanaged_check.get("manual_recovery_required") is True
+            and unmanaged_check.get("maintenance_next_action") is None,
+            "service check advertised log repair through an unowned service definition",
+            failures,
+        )
+        launchd_log.chmod(0o600)
         _, refused, _ = run(
             env,
             "service-install",
@@ -269,6 +439,12 @@ def main() -> int:
             expected=(1,),
         )
         require("existing_service_not_owned" in (refused.get("blockers") or []), "unmanaged service overwrite did not fail closed", failures)
+        require(
+            refused.get("next_action") is None
+            and refused.get("manual_recovery_required") is True,
+            "unmanaged service overwrite advertised an unsafe automatic next action",
+            failures,
+        )
         require(service_path.read_text(encoding="utf-8") == "unmanaged service", "unmanaged service file was overwritten", failures)
 
         write_private_service(service_path, previous_service)
@@ -470,6 +646,8 @@ def main() -> int:
         "explicit_control_confirmation": True,
         "host_only_no_workers": True,
         "credential_material_omitted": True,
+        "launchd_log_private_preparation_covered": True,
+        "launchd_log_repair_and_load_gate_covered": True,
         "unmanaged_file_overwrite_blocked": True,
         "previous_managed_service_migration_covered": True,
         "previous_managed_service_unload_only_control_covered": True,

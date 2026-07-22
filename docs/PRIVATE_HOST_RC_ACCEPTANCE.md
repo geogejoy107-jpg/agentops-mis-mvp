@@ -1048,6 +1048,19 @@ and installed-product receipt pass. Live automatic rotation also remains open
 until the Host stack has one sole-writer log sink instead of inherited child
 file descriptors.
 
+The installed preview.39 metadata-only plan subsequently found the concrete
+package blocker: `host.log` had reached 51,388,825 bytes, while launchd had
+created its 12,955,332-byte preserved output file as mode `0644`. The private
+directory and active Host log were otherwise correctly `0700` and `0600`.
+Rotation therefore failed closed with
+`host_log_inventory_permissions_unsafe`; no log content was read and no file
+was changed. The follow-up source makes `service-install` create or safely
+tighten the launchd log to `0600`, preserves existing bytes, rejects unsafe
+file identities, and blocks load/restart until the log is private. Its isolated
+service regression passes, but the installed-product rotation gate remains
+open until the next exact package repairs the real file and completes the
+stopped-Host plan/confirm/restart receipt.
+
 Separately, after all package and real-runtime acceptance steps, the Host volume later fell
 to roughly 115 MiB free. The backend PID and loopback listener remained, but
 health responses became unusable and both launchd Workers exited nonzero. A

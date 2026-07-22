@@ -12,6 +12,7 @@ SECOND_DEVICE = ROOT / "docs" / "PRIVATE_HOST_SECOND_DEVICE_ACCEPTANCE.md"
 SERVICE_UPGRADE = ROOT / "docs" / "PRIVATE_HOST_SERVICE_UPGRADE_MIGRATION_ACCEPTANCE.md"
 REAL_RUNTIME = ROOT / "docs" / "PRIVATE_HOST_REAL_RUNTIME_CLIENT_ACCEPTANCE.md"
 WORKER_INTAKE_HEARTBEAT = ROOT / "docs" / "PRIVATE_HOST_WORKER_INTAKE_HEARTBEAT_ACCEPTANCE.md"
+HUMAN_SERVICE_RECEIPT = ROOT / "docs" / "PRIVATE_HOST_HUMAN_SERVICE_RECEIPT_ACCEPTANCE.md"
 WORKER_HEARTBEAT_CADENCE = ROOT / "scripts" / "worker_service_heartbeat_cadence_smoke.py"
 
 VERSION = "1.6.0-private-host-preview.39"
@@ -58,6 +59,7 @@ def main() -> int:
     service_upgrade = SERVICE_UPGRADE.read_text(encoding="utf-8")
     runtime = REAL_RUNTIME.read_text(encoding="utf-8")
     worker_intake_heartbeat = WORKER_INTAKE_HEARTBEAT.read_text(encoding="utf-8")
+    human_service_receipt = HUMAN_SERVICE_RECEIPT.read_text(encoding="utf-8")
     rc_headings = [line for line in rc.splitlines() if line.startswith("## Current Preview ")]
     current_rc = heading_section(rc, "Current Preview 39")
     previous_rc = heading_section(rc, "Superseded Preview 38")
@@ -88,6 +90,7 @@ def main() -> int:
     normalized_runtime_preview38 = " ".join(runtime_preview38.split())
     normalized_runtime_preview36_host = " ".join(runtime_preview36_host.split())
     normalized_worker_intake_heartbeat = " ".join(worker_intake_heartbeat.split())
+    normalized_human_service_receipt = " ".join(human_service_receipt.split())
 
     require(len(rc_headings) == 1, "RC document must name exactly one Current Preview", failures)
     require("## Current Preview 39" in rc, "preview.39 must be the current RC prerelease", failures)
@@ -122,7 +125,6 @@ def main() -> int:
         "deployed-Relay interruption",
         "current-package physical browser disconnect/reconnect",
         "current-package physical browser review",
-        "authenticated Human Session service-control receipt",
         "Host logout/reboot recovery",
         "another-Mac clean installation",
         "bounded Host log rotation",
@@ -284,6 +286,15 @@ def main() -> int:
             and "approximately 2.63 GB" in normalized_current_rc
             and "Codex, OpenClaw and Docker state was not deleted" in normalized_current_rc,
             "preview.39 storage recovery or retention boundary is missing", failures)
+    require(
+        "passed on the installed preview.39 Host" in normalized_human_service_receipt
+        and "oar_9f5d96f32445" in human_service_receipt
+        and "oar_225da0adaa7f" in human_service_receipt
+        and "No service-control or Runtime execution was performed"
+        in normalized_human_service_receipt,
+        "preview.39 authenticated Human Session service receipt is incomplete",
+        failures,
+    )
 
     require(
         "Status: advanced Tailscale physical browser workflow partially accepted" in second
@@ -420,6 +431,7 @@ def main() -> int:
             "preview39_sustained_worker_session_observation",
             "preview39_hermes_persistent_real_runtime",
             "preview39_openclaw_persistent_real_runtime",
+            "preview39_authenticated_human_service_receipt",
             "preview38_release_asset_install",
             "preview38_service_upgrade_migration",
             "preview38_worker_heartbeat_initial_readback",

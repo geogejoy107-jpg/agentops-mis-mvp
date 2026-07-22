@@ -14739,10 +14739,11 @@ def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
             "token_omitted": True,
         }, 400
     job_body = {key: value for key, value in body.items() if key != "idempotency_key"}
+    # Authenticated actor identity belongs in audit evidence, not request semantics.
     canonical_request = {
         key: value
         for key, value in job_body.items()
-        if key not in {"base_url", "_base_url"}
+        if key not in {"actor_id", "base_url", "_base_url"}
     }
     request_hash = stable_hash(canonical_request)
     job_id = (
