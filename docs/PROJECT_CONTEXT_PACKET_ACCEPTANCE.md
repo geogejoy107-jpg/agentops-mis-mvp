@@ -57,6 +57,42 @@ task-bound context packet, and runs a Mock Worker. It must prove that the Worker
 used both bounded knowledge and approved Memory while the unique Memory marker
 is absent from Tool, Evaluation, Audit and returned Worker evidence.
 
+## Workspace Memory Authority Amendment
+
+Every Memory row now has an explicit `workspace_id`. Existing task-bound rows
+inherit the task workspace through an idempotent schema migration; legacy
+taskless rows stay conservatively in `local-demo` until an administrator moves
+them through a future explicit workflow. SQLite authority triggers also enforce
+the task workspace for direct legacy writers that bypass the Python helper.
+
+Context Packet sharing follows these rules:
+
+- approved `project` and `org` Memory is shared with scoped Agents in the same
+  workspace, including a different Agent working on a different task;
+- approved `task` Memory remains constrained by task/Agent visibility;
+- candidate, rejected, stale and superseded Memory never becomes model context;
+- no Memory crosses a workspace boundary;
+- another Agent or workspace cannot reuse a `memory_id` to overwrite an
+  existing candidate or reviewed Memory.
+
+The isolated Worker acceptance now creates a second Agent, task and short-lived
+Session in the same workspace plus a third Agent in another workspace. It proves
+approved project/org sharing, candidate exclusion, cross-workspace isolation and
+source-ref/prompt/response/transcript/token omission. The migration acceptance
+upgrades a database without `memories.workspace_id` twice and verifies the
+backfill, index, triggers and idempotent migration row:
+
+```bash
+python3 scripts/memory_workspace_authority_migration_smoke.py
+python3 scripts/worker_knowledge_evidence_consumption_smoke.py
+python3 scripts/human_browser_auth_smoke.py
+```
+
+Installed preview.40 predates this amendment. Its earlier OpenClaw run proved
+that versioned Knowledge reached the real runtime, but the scoped Session did
+not receive approved Memory. A later exact package and fresh real-runtime run
+are required before attributing workspace Memory sharing to the installed Host.
+
 Local verification on 2026-07-23 passed all commands above. The retrieval
 quality fixture reported Recall@5 `1.0` and MRR `1.0`; the gateway scope smoke
 proved that Context Packet summaries stay inside the bound workspace and that
@@ -105,4 +141,6 @@ acceptance gate.
 - The current packet is bounded text, not a long-term automatic compaction
   policy for Codex/OpenClaw session archives.
 - Old Hosts expose evidence-only retrieval until upgraded.
+- Installed preview.40 does not yet include workspace-authoritative Memory
+  sharing; source-level acceptance is not an installed-product claim.
 - Physical second-device acceptance remains a separate Private Host gate.

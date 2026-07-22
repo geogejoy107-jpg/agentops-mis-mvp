@@ -130,6 +130,14 @@ def secret_leak_labels(text: str) -> list[str]:
     return labels
 
 
+def approved_memory_blocks(packet: dict) -> list[dict]:
+    return [
+        block
+        for block in (packet.get("context_blocks") or [])
+        if block.get("source_type") == "approved_memory"
+    ]
+
+
 def run_worker(base_url: str, token: str, workspace: str, agent_id: str, task_id: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.update({
@@ -184,8 +192,13 @@ def main() -> int:
     )
     suffix = stamp()
     workspace = f"ws_worker_knowledge_{suffix}"
+    other_workspace = f"ws_worker_knowledge_other_{suffix}"
     agent_id = f"agt_worker_knowledge_{suffix}"
+    consumer_agent_id = f"agt_worker_knowledge_consumer_{suffix}"
+    other_workspace_agent_id = f"agt_worker_knowledge_other_{suffix}"
     token_id = None
+    consumer_token_id = None
+    other_workspace_token_id = None
     no_knowledge_token_id = None
     proc: subprocess.Popen[str] | None = None
     with tempfile.TemporaryDirectory(prefix="agentops-worker-knowledge-") as tmp:
@@ -293,6 +306,206 @@ def main() -> int:
             outputs.append(raw)
             require(status == 200 and approved_memory.get("review_status") == "approved", f"memory approve failed: {status} {approved_memory}", failures)
 
+            org_context_marker = f"APPROVED_ORG_CONTEXT_{suffix}"
+            status, proposed_org_memory, raw = http_json(base_url, "/api/agent-gateway/memories/propose", "POST", {
+                "workspace_id": workspace,
+                "agent_id": agent_id,
+                "task_id": task_id,
+                "scope": "org",
+                "memory_type": "policy",
+                "canonical_text": (
+                    f"{org_context_marker}: all workers in this workspace must consume only human-approved "
+                    "organizational memory and retain bounded provenance identifiers."
+                ),
+                "source_type": "manual",
+                "source_ref": f"worker-org-context-smoke:{suffix}",
+                "confidence": 0.96,
+            }, token=token, workspace=workspace)
+            outputs.append(raw)
+            approved_org_memory_id = (proposed_org_memory.get("memory") or {}).get("memory_id")
+            require(status in {200, 201} and bool(approved_org_memory_id), f"org memory propose failed: {status} {proposed_org_memory}", failures)
+            require((proposed_org_memory.get("memory") or {}).get("workspace_id") == workspace, f"org memory workspace binding missing: {proposed_org_memory}", failures)
+            status, approved_org_memory, raw = http_json(
+                base_url,
+                f"/api/memories/{approved_org_memory_id}/approve",
+                "POST",
+                {},
+            )
+            outputs.append(raw)
+            require(status == 200 and approved_org_memory.get("review_status") == "approved", f"org memory approve failed: {status} {approved_org_memory}", failures)
+            require(approved_org_memory.get("workspace_id") == workspace, f"approved org memory workspace binding missing: {approved_org_memory}", failures)
+
+            candidate_context_marker = f"CANDIDATE_CONTEXT_MUST_NOT_SHARE_{suffix}"
+            status, proposed_candidate_memory, raw = http_json(base_url, "/api/agent-gateway/memories/propose", "POST", {
+                "workspace_id": workspace,
+                "agent_id": agent_id,
+                "task_id": task_id,
+                "scope": "project",
+                "memory_type": "project_context",
+                "canonical_text": (
+                    f"{candidate_context_marker}: this unreviewed candidate must remain private to review "
+                    "and must never enter another Agent Session Context Packet."
+                ),
+                "source_type": "manual",
+                "source_ref": f"worker-candidate-context-smoke:{suffix}",
+                "confidence": 0.91,
+            }, token=token, workspace=workspace)
+            outputs.append(raw)
+            candidate_memory = proposed_candidate_memory.get("memory") or {}
+            candidate_memory_id = candidate_memory.get("memory_id")
+            require(status in {200, 201} and bool(candidate_memory_id), f"candidate memory propose failed: {status} {proposed_candidate_memory}", failures)
+            require(candidate_memory.get("review_status") == "candidate", f"candidate memory status changed before review: {candidate_memory}", failures)
+            require(candidate_memory.get("workspace_id") == workspace, f"candidate memory workspace binding missing: {candidate_memory}", failures)
+
+            require((proposed_memory.get("memory") or {}).get("workspace_id") == workspace, f"project memory workspace binding missing: {proposed_memory}", failures)
+            require(approved_memory.get("workspace_id") == workspace, f"approved project memory workspace binding missing: {approved_memory}", failures)
+            approved_workspace_memory_ids = {approved_memory_id, approved_org_memory_id}
+
+            consumer_parent_scopes = ["agents:write", "tasks:create", "tasks:read", "knowledge:read", "memories:propose"]
+            status, consumer_enrollment, _raw = http_json(base_url, "/api/agent-gateway/enrollment/create", "POST", {
+                "workspace_id": workspace,
+                "agent_id": consumer_agent_id,
+                "name": "Worker Knowledge Context Consumer Smoke",
+                "runtime_type": "mock",
+                "scopes": consumer_parent_scopes,
+                "ttl_days": 1,
+            })
+            require(status == 201, f"consumer enrollment failed: {status} {consumer_enrollment}", failures)
+            consumer_token = consumer_enrollment.get("token")
+            consumer_token_id = consumer_enrollment.get("token_id")
+            require(bool(consumer_token), f"consumer token missing: {consumer_enrollment}", failures)
+
+            consumer_task_terms = f"{approved_context_marker} {org_context_marker} {candidate_context_marker}"
+            status, consumer_task, raw = http_json(base_url, "/api/agent-gateway/tasks", "POST", {
+                "workspace_id": workspace,
+                "title": f"Consume reviewed workspace memory {suffix}",
+                "description": f"Use reviewed project and org context matching {consumer_task_terms}.",
+                "acceptance_criteria": "Another scoped Agent Session receives approved workspace memory but no candidate memory.",
+                "risk_level": "low",
+            }, token=consumer_token, workspace=workspace)
+            outputs.append(raw)
+            consumer_task_id = consumer_task.get("task_id")
+            require(status == 201 and bool(consumer_task_id), f"consumer task create failed: {status} {consumer_task}", failures)
+
+            status, foreign_task_proposal, raw = http_json(base_url, "/api/agent-gateway/memories/propose", "POST", {
+                "workspace_id": workspace,
+                "agent_id": consumer_agent_id,
+                "task_id": task_id,
+                "scope": "task",
+                "memory_type": "project_context",
+                "canonical_text": "A different Agent must not attach Memory to a task it cannot access.",
+                "source_type": "manual",
+            }, token=consumer_token, workspace=workspace)
+            outputs.append(raw)
+            require(status == 403 and foreign_task_proposal.get("error") == "forbidden", f"another agent attached memory to a foreign task: {status} {foreign_task_proposal}", failures)
+
+            status, consumer_session, _raw = http_json(base_url, "/api/agent-gateway/session/create", "POST", {
+                "ttl_sec": 300,
+                "scopes": ["tasks:read", "knowledge:read"],
+            }, token=consumer_token)
+            require(status == 201, f"consumer session create failed: {status} {consumer_session}", failures)
+            consumer_session_token = consumer_session.get("session_token")
+            require(bool(consumer_session_token), f"consumer session token missing: {consumer_session}", failures)
+            require(set(consumer_session.get("scopes") or []) == {"tasks:read", "knowledge:read"}, f"consumer session was not narrowly scoped: {consumer_session}", failures)
+
+            status, candidate_conflict, raw = http_json(base_url, "/api/agent-gateway/memories/propose", "POST", {
+                "workspace_id": workspace,
+                "agent_id": consumer_agent_id,
+                "memory_id": candidate_memory_id,
+                "scope": "project",
+                "memory_type": "project_context",
+                "canonical_text": "Another agent must not overwrite an existing candidate memory identifier.",
+                "source_type": "manual",
+            }, token=consumer_token, workspace=workspace)
+            outputs.append(raw)
+            require(status == 409 and candidate_conflict.get("error") == "memory_id_conflict", f"another agent overwrote a candidate memory: {status} {candidate_conflict}", failures)
+
+            status, consumer_context, raw = http_json(
+                base_url,
+                "/api/agent-gateway/knowledge/context-packet",
+                token=consumer_session_token,
+                workspace=workspace,
+                query={"task_id": consumer_task_id, "adapter": "mock", "limit": 5, "memory_limit": 5},
+            )
+            outputs.append(raw)
+            consumer_memory_blocks = approved_memory_blocks(consumer_context)
+            consumer_memory_ids = {block.get("memory_id") for block in consumer_memory_blocks}
+            consumer_context_text = "\n".join(str(block.get("summary") or "") for block in consumer_memory_blocks)
+            require(status == 200 and consumer_context.get("operation") == "knowledge_project_context_packet", f"consumer context packet failed: {status} {consumer_context}", failures)
+            require(consumer_context.get("workspace_id") == workspace, f"consumer context workspace mismatch: {consumer_context}", failures)
+            require((consumer_context.get("task_context") or {}).get("task_id") == consumer_task_id, f"consumer context was not bound to the second task: {consumer_context}", failures)
+            require(approved_workspace_memory_ids.issubset(consumer_memory_ids), f"approved project/org memory was not shared within workspace: {consumer_memory_blocks}", failures)
+            require(approved_context_marker in consumer_context_text and org_context_marker in consumer_context_text, f"approved workspace memory summaries missing: {consumer_memory_blocks}", failures)
+            require(candidate_memory_id not in consumer_memory_ids and candidate_context_marker not in consumer_context_text, f"candidate memory leaked to another agent/task: {consumer_memory_blocks}", failures)
+            require(all("source_ref" not in block and block.get("source_ref_omitted") is True for block in consumer_memory_blocks), f"consumer context leaked memory source refs: {consumer_memory_blocks}", failures)
+            consumer_context_safety = consumer_context.get("safety") or {}
+            require(consumer_context_safety.get("raw_prompt_omitted") is True and consumer_context_safety.get("raw_response_omitted") is True, f"consumer context prompt/response omission missing: {consumer_context_safety}", failures)
+            require(consumer_context_safety.get("raw_transcript_omitted") is True and consumer_context_safety.get("token_omitted") is True, f"consumer context transcript/token omission missing: {consumer_context_safety}", failures)
+
+            status, other_enrollment, _raw = http_json(base_url, "/api/agent-gateway/enrollment/create", "POST", {
+                "workspace_id": other_workspace,
+                "agent_id": other_workspace_agent_id,
+                "name": "Worker Knowledge Foreign Workspace Smoke",
+                "runtime_type": "mock",
+                "scopes": consumer_parent_scopes,
+                "ttl_days": 1,
+            })
+            require(status == 201, f"other-workspace enrollment failed: {status} {other_enrollment}", failures)
+            other_workspace_token = other_enrollment.get("token")
+            other_workspace_token_id = other_enrollment.get("token_id")
+            require(bool(other_workspace_token), f"other-workspace token missing: {other_enrollment}", failures)
+
+            status, other_task, raw = http_json(base_url, "/api/agent-gateway/tasks", "POST", {
+                "workspace_id": other_workspace,
+                "title": f"Reject foreign workspace memory {suffix}",
+                "description": f"Attempt retrieval for foreign markers {consumer_task_terms} without crossing workspace authority.",
+                "acceptance_criteria": "No project, org, or candidate memory from another workspace is visible.",
+                "risk_level": "low",
+            }, token=other_workspace_token, workspace=other_workspace)
+            outputs.append(raw)
+            other_task_id = other_task.get("task_id")
+            require(status == 201 and bool(other_task_id), f"other-workspace task create failed: {status} {other_task}", failures)
+
+            status, cross_workspace_conflict, raw = http_json(base_url, "/api/agent-gateway/memories/propose", "POST", {
+                "workspace_id": other_workspace,
+                "agent_id": other_workspace_agent_id,
+                "memory_id": approved_memory_id,
+                "scope": "project",
+                "memory_type": "project_context",
+                "canonical_text": "A foreign workspace must not overwrite an approved memory identifier.",
+                "source_type": "manual",
+            }, token=other_workspace_token, workspace=other_workspace)
+            outputs.append(raw)
+            require(status == 409 and cross_workspace_conflict.get("error") == "memory_id_conflict", f"foreign workspace overwrote an approved memory: {status} {cross_workspace_conflict}", failures)
+
+            status, other_session, _raw = http_json(base_url, "/api/agent-gateway/session/create", "POST", {
+                "ttl_sec": 300,
+                "scopes": ["tasks:read", "knowledge:read"],
+            }, token=other_workspace_token)
+            require(status == 201, f"other-workspace session create failed: {status} {other_session}", failures)
+            other_session_token = other_session.get("session_token")
+            require(bool(other_session_token), f"other-workspace session token missing: {other_session}", failures)
+
+            status, other_context, raw = http_json(
+                base_url,
+                "/api/agent-gateway/knowledge/context-packet",
+                token=other_session_token,
+                workspace=other_workspace,
+                query={"task_id": other_task_id, "adapter": "mock", "limit": 5, "memory_limit": 5},
+            )
+            outputs.append(raw)
+            other_memory_blocks = approved_memory_blocks(other_context)
+            other_memory_ids = {block.get("memory_id") for block in other_memory_blocks}
+            other_context_text = "\n".join(str(block.get("summary") or "") for block in other_memory_blocks)
+            require(status == 200 and other_context.get("workspace_id") == other_workspace, f"other-workspace context failed: {status} {other_context}", failures)
+            require(not approved_workspace_memory_ids.intersection(other_memory_ids), f"approved memory crossed workspace boundary: {other_memory_blocks}", failures)
+            require(candidate_memory_id not in other_memory_ids, f"candidate memory crossed workspace boundary: {other_memory_blocks}", failures)
+            require(all(marker not in other_context_text for marker in (approved_context_marker, org_context_marker, candidate_context_marker)), f"foreign workspace memory summary leaked: {other_memory_blocks}", failures)
+            require(all("source_ref" not in block for block in other_context.get("context_blocks") or []), f"other-workspace context leaked source refs: {other_context}", failures)
+            other_context_safety = other_context.get("safety") or {}
+            require(other_context_safety.get("raw_prompt_omitted") is True and other_context_safety.get("raw_response_omitted") is True, f"other-workspace prompt/response omission missing: {other_context_safety}", failures)
+            require(other_context_safety.get("raw_transcript_omitted") is True and other_context_safety.get("token_omitted") is True, f"other-workspace transcript/token omission missing: {other_context_safety}", failures)
+
             status, context_packet, raw = http_json(
                 base_url,
                 "/api/agent-gateway/knowledge/context-packet",
@@ -308,6 +521,8 @@ def main() -> int:
             require(bool(context_packet.get("packet_hash")), f"context packet hash missing: {context_packet}", failures)
             require(any(block.get("source_type") == "knowledge_summary" and block.get("summary") for block in context_blocks), f"versioned knowledge summary missing: {context_blocks}", failures)
             require(any(block.get("source_type") == "approved_memory" and block.get("memory_id") == approved_memory_id and approved_context_marker in str(block.get("summary") or "") for block in context_blocks), f"approved memory summary missing: {context_blocks}", failures)
+            require(any(block.get("source_type") == "approved_memory" and block.get("memory_id") == approved_org_memory_id and org_context_marker in str(block.get("summary") or "") for block in context_blocks), f"approved org memory summary missing: {context_blocks}", failures)
+            require(not any(block.get("memory_id") == candidate_memory_id or candidate_context_marker in str(block.get("summary") or "") for block in context_blocks), f"candidate memory entered source context packet: {context_blocks}", failures)
             require(int(context_packet.get("context_chars") or 0) <= int((context_packet.get("limits") or {}).get("total_chars") or 0), f"context packet exceeded total bound: {context_packet}", failures)
             context_safety = context_packet.get("safety") or {}
             require(context_safety.get("read_only") is True and context_safety.get("raw_transcript_omitted") is True, f"context safety proof missing: {context_safety}", failures)
@@ -561,6 +776,16 @@ def main() -> int:
         except Exception as exc:
             failures.append(f"unexpected exception: {type(exc).__name__}: {exc}")
         finally:
+            if other_workspace_token_id:
+                try:
+                    http_json(base_url, "/api/agent-gateway/enrollment/revoke", "POST", {"token_id": other_workspace_token_id})
+                except Exception:
+                    pass
+            if consumer_token_id:
+                try:
+                    http_json(base_url, "/api/agent-gateway/enrollment/revoke", "POST", {"token_id": consumer_token_id})
+                except Exception:
+                    pass
             if no_knowledge_token_id:
                 try:
                     http_json(base_url, "/api/agent-gateway/enrollment/revoke", "POST", {"token_id": no_knowledge_token_id})
@@ -583,7 +808,14 @@ def main() -> int:
         "ok": not failures,
         "operation": "worker_knowledge_evidence_consumption_smoke",
         "workspace_id": workspace,
+        "other_workspace_id": other_workspace,
         "agent_id": agent_id,
+        "consumer_agent_id": consumer_agent_id,
+        "workspace_memory_contract": {
+            "approved_project_org_shared_with_scoped_session": not failures,
+            "candidate_not_shared": not failures,
+            "cross_workspace_hidden": not failures,
+        },
         "failures": failures,
         "token_omitted": True,
     }

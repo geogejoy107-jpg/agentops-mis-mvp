@@ -454,6 +454,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "memory_workspace_authority_migration",
+        "command": "python3 scripts/memory_workspace_authority_migration_smoke.py",
+        "summary": "Legacy task-bound memories inherit task workspace authority exactly once while taskless legacy rows remain conservatively local-demo.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "approval_semantics_boundary",
         "command": "python3 scripts/approval_semantics_boundary_smoke.py",
         "summary": "Approval semantics keep role separation and do not collapse generic ledger approval into exact prepared-action execution claims.",
@@ -474,7 +480,7 @@ TEST_COMMANDS = [
     {
         "id": "worker_knowledge_evidence_consumption",
         "command": "python3 scripts/worker_knowledge_evidence_consumption_smoke.py",
-        "summary": "Agent worker consumes compact Knowledge Retrieval Evidence before adapter execution and records only packet/query hashes, retrieval ids, paths, source hashes and metrics in MIS evidence.",
+        "summary": "Agent worker consumes compact versioned Knowledge and same-workspace approved project/org Memory before adapter execution while candidate and cross-workspace Memory remain excluded; MIS records bounded hashes, identifiers and metrics only.",
         "ci_step": "Offline safety smokes",
     },
     {

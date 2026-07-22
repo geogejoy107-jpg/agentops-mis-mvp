@@ -201,6 +201,7 @@ SERVER_STARTED_AT_EPOCH = time.time()
 SQLITE_SCHEMA_BASELINE_ID = "2026-06-22-v1.5-sqlite-reliability"
 WORKSPACE_AGENT_MEMBERSHIP_MIGRATION_ID = "2026-07-22-workspace-agent-membership-authority"
 AGENT_PLAN_APPROVAL_SUBJECT_MIGRATION_ID = "2026-07-22-agent-plan-approval-subject-authority"
+MEMORY_WORKSPACE_AUTHORITY_MIGRATION_ID = "2026-07-23-memory-workspace-authority"
 STATIC_DIR = ROOT / "static"
 ARTIFACTS_DIR = ROOT / "artifacts"
 RUNTIME_DIR = ROOT / ".agentops_runtime"
@@ -1571,6 +1572,7 @@ CREATE TABLE IF NOT EXISTS prepared_action_execution_leases (
 
 CREATE TABLE IF NOT EXISTS memories (
     memory_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
     scope TEXT NOT NULL CHECK(scope IN ('task','project','org')),
     memory_type TEXT NOT NULL CHECK(memory_type IN ('policy','sop','decision','commitment','risk','failure_case','project_context','customer_preference','agent_lesson','artifact_summary','loop_record')),
     canonical_text TEXT NOT NULL,
@@ -2394,6 +2396,7 @@ def memories_table_sql(table_name: str = "memories") -> str:
     return f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
             memory_id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL DEFAULT 'local-demo',
             scope TEXT NOT NULL CHECK(scope IN ('task','project','org')),
             memory_type TEXT NOT NULL CHECK(memory_type IN ('policy','sop','decision','commitment','risk','failure_case','project_context','customer_preference','agent_lesson','artifact_summary','loop_record')),
             canonical_text TEXT NOT NULL,
@@ -2423,6 +2426,9 @@ def ensure_memory_type_schema(conn: sqlite3.Connection):
     existing_sql = str(row["sql"] or "") if row else ""
     if not existing_sql or "'loop_record'" in existing_sql:
         return
+    source_columns = {
+        column["name"] for column in conn.execute("PRAGMA table_info(memories)").fetchall()
+    }
     columns = [
         "memory_id",
         "scope",
@@ -2442,6 +2448,8 @@ def ensure_memory_type_schema(conn: sqlite3.Connection):
         "created_at",
         "updated_at",
     ]
+    if "workspace_id" in source_columns:
+        columns.insert(1, "workspace_id")
     column_sql = ", ".join(columns)
     backup_table = "memories_before_loop_record"
     conn.execute("DROP TABLE IF EXISTS memories_before_loop_record")
@@ -2449,6 +2457,38 @@ def ensure_memory_type_schema(conn: sqlite3.Connection):
     conn.execute(memories_table_sql("memories"))
     conn.execute(f"INSERT INTO memories({column_sql}) SELECT {column_sql} FROM {backup_table}")
     conn.execute(f"DROP TABLE {backup_table}")
+
+
+def ensure_memory_workspace_authority_migration(conn: sqlite3.Connection) -> None:
+    if conn.execute(
+        "SELECT 1 FROM schema_migrations WHERE migration_id=?",
+        (MEMORY_WORKSPACE_AUTHORITY_MIGRATION_ID,),
+    ).fetchone():
+        return
+    with sqlite_atomic_write(conn, "memory_workspace_authority_migration"):
+        if conn.execute(
+            "SELECT 1 FROM schema_migrations WHERE migration_id=?",
+            (MEMORY_WORKSPACE_AUTHORITY_MIGRATION_ID,),
+        ).fetchone():
+            return
+        conn.execute(
+            """UPDATE memories
+               SET workspace_id=COALESCE(
+                   (SELECT COALESCE(t.workspace_id,'local-demo')
+                    FROM tasks t WHERE t.task_id=memories.task_id),
+                   NULLIF(workspace_id,''),
+                   'local-demo'
+               )"""
+        )
+        conn.execute(
+            """INSERT INTO schema_migrations(migration_id,description,applied_at)
+               VALUES(?,?,?)""",
+            (
+                MEMORY_WORKSPACE_AUTHORITY_MIGRATION_ID,
+                "Bind every memory to a workspace; task-bound rows inherit task authority and legacy taskless rows remain local-demo.",
+                now_iso(),
+            ),
+        )
 
 
 def ensure_workspace_agent_membership_migration(conn: sqlite3.Connection) -> None:
@@ -2578,6 +2618,8 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_memory_type_schema(conn)
     ensure_column(conn, "tasks", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
     ensure_column(conn, "runs", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
+    ensure_column(conn, "memories", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
+    ensure_memory_workspace_authority_migration(conn)
     ensure_column(conn, "runs", "agent_plan_id", "agent_plan_id TEXT")
     ensure_column(conn, "runs", "plan_hash", "plan_hash TEXT")
     ensure_column(conn, "runtime_connectors", "trust_status", "trust_status TEXT NOT NULL DEFAULT 'trusted'")
@@ -2673,6 +2715,39 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_action_leases_status ON prepared_action_execution_leases(status, started_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(review_status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id, review_status, scope)")
+    conn.execute("""CREATE TRIGGER IF NOT EXISTS trg_memories_workspace_from_task_insert
+        AFTER INSERT ON memories
+        WHEN NEW.task_id IS NOT NULL
+         AND EXISTS (SELECT 1 FROM tasks WHERE task_id=NEW.task_id)
+         AND COALESCE(NEW.workspace_id,'local-demo') IS NOT (
+             SELECT COALESCE(workspace_id,'local-demo') FROM tasks WHERE task_id=NEW.task_id
+         )
+        BEGIN
+            UPDATE memories
+            SET workspace_id=(SELECT COALESCE(workspace_id,'local-demo') FROM tasks WHERE task_id=NEW.task_id)
+            WHERE memory_id=NEW.memory_id;
+        END""")
+    conn.execute("""CREATE TRIGGER IF NOT EXISTS trg_memories_workspace_from_task_update
+        AFTER UPDATE OF task_id,workspace_id ON memories
+        WHEN NEW.task_id IS NOT NULL
+         AND EXISTS (SELECT 1 FROM tasks WHERE task_id=NEW.task_id)
+         AND COALESCE(NEW.workspace_id,'local-demo') IS NOT (
+             SELECT COALESCE(workspace_id,'local-demo') FROM tasks WHERE task_id=NEW.task_id
+         )
+        BEGIN
+            UPDATE memories
+            SET workspace_id=(SELECT COALESCE(workspace_id,'local-demo') FROM tasks WHERE task_id=NEW.task_id)
+            WHERE memory_id=NEW.memory_id;
+        END""")
+    conn.execute("""CREATE TRIGGER IF NOT EXISTS trg_task_workspace_to_memories
+        AFTER UPDATE OF workspace_id ON tasks
+        WHEN COALESCE(NEW.workspace_id,'local-demo') IS NOT COALESCE(OLD.workspace_id,'local-demo')
+        BEGIN
+            UPDATE memories
+            SET workspace_id=COALESCE(NEW.workspace_id,'local-demo')
+            WHERE task_id=NEW.task_id;
+        END""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_documents_workspace ON knowledge_documents(workspace_id, access_level)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_doc ON knowledge_chunks(doc_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_workspace ON knowledge_chunks(workspace_id, access_level)")
@@ -3341,7 +3416,21 @@ def upsert_evaluation(conn, row: dict, actor_id="adapter-import") -> str:
     return "updated" if before else "created"
 
 
+def memory_workspace_authority(conn: sqlite3.Connection, row: dict) -> str:
+    task_id = str(row.get("task_id") or "").strip()
+    if task_id:
+        task = conn.execute(
+            "SELECT workspace_id FROM tasks WHERE task_id=?",
+            (task_id,),
+        ).fetchone()
+        if task:
+            return normalize_workspace_id(task["workspace_id"] or "local-demo")
+    return normalize_workspace_id(row.get("workspace_id") or "local-demo")
+
+
 def upsert_memory_candidate(conn, row: dict, actor_id="adapter-import") -> str:
+    row = dict(row)
+    row["workspace_id"] = memory_workspace_authority(conn, row)
     before = conn.execute("SELECT * FROM memories WHERE memory_id=?", (row["memory_id"],)).fetchone()
     if before:
         if actor_id == "openclaw-import":
@@ -3349,7 +3438,7 @@ def upsert_memory_candidate(conn, row: dict, actor_id="adapter-import") -> str:
         if row_unchanged(before, row, {"created_at", "updated_at", "ttl_review_due_at"}):
             return "unchanged"
         conn.execute(
-            """UPDATE memories SET scope=:scope, memory_type=:memory_type, canonical_text=:canonical_text,
+            """UPDATE memories SET workspace_id=:workspace_id, scope=:scope, memory_type=:memory_type, canonical_text=:canonical_text,
             source_type=:source_type, source_ref=:source_ref, project_id=:project_id, task_id=:task_id,
             agent_id=:agent_id, confidence=:confidence, review_status=:review_status, owner_user_id=:owner_user_id,
             ttl_review_due_at=:ttl_review_due_at, supersedes_memory_id=:supersedes_memory_id,
@@ -3359,8 +3448,8 @@ def upsert_memory_candidate(conn, row: dict, actor_id="adapter-import") -> str:
         action = "memory.update"
     else:
         conn.execute(
-            """INSERT INTO memories(memory_id,scope,memory_type,canonical_text,source_type,source_ref,project_id,task_id,agent_id,confidence,review_status,owner_user_id,ttl_review_due_at,supersedes_memory_id,access_tags,created_at,updated_at)
-            VALUES(:memory_id,:scope,:memory_type,:canonical_text,:source_type,:source_ref,:project_id,:task_id,:agent_id,:confidence,:review_status,:owner_user_id,:ttl_review_due_at,:supersedes_memory_id,:access_tags,:created_at,:updated_at)""",
+            """INSERT INTO memories(memory_id,workspace_id,scope,memory_type,canonical_text,source_type,source_ref,project_id,task_id,agent_id,confidence,review_status,owner_user_id,ttl_review_due_at,supersedes_memory_id,access_tags,created_at,updated_at)
+            VALUES(:memory_id,:workspace_id,:scope,:memory_type,:canonical_text,:source_type,:source_ref,:project_id,:task_id,:agent_id,:confidence,:review_status,:owner_user_id,:ttl_review_due_at,:supersedes_memory_id,:access_tags,:created_at,:updated_at)""",
             row,
         )
         action = "memory.propose"
@@ -4334,8 +4423,8 @@ def human_workspace_object_visible(
               AND (ap.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?2)
               AND (COALESCE(ap.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?2)
               AND (ap.run_id IS NOT NULL OR COALESCE(ap.task_id,r.task_id) IS NOT NULL)""",
-        "memory": """SELECT 1 FROM memories m JOIN tasks t ON t.task_id=m.task_id
-            WHERE m.memory_id=? AND COALESCE(t.workspace_id,'local-demo')=?""",
+        "memory": """SELECT 1 FROM memories m
+            WHERE m.memory_id=? AND COALESCE(m.workspace_id,'local-demo')=?""",
         "evaluation": """SELECT 1 FROM evaluations e JOIN runs r ON r.run_id=e.run_id
             WHERE e.evaluation_id=? AND COALESCE(r.workspace_id,'local-demo')=?""",
         "artifact": """SELECT 1 FROM artifacts a
@@ -4441,10 +4530,15 @@ def agent_gateway_memory_visibility_clause(memory_alias: str | None, task_alias:
         return "1=1", []
     task_id_col = sql_ref(memory_alias, "task_id")
     memory_agent_col = sql_ref(memory_alias, "agent_id")
+    workspace_col = sql_ref(memory_alias, "workspace_id")
+    review_status_col = sql_ref(memory_alias, "review_status")
+    scope_col = sql_ref(memory_alias, "scope")
     task_clause, task_params = agent_gateway_task_visibility_clause(task_alias, ident, auth_ctx)
     return (
-        f"(({task_id_col} IS NOT NULL AND {task_clause}) OR ({task_id_col} IS NULL AND {memory_agent_col}=?) OR {memory_agent_col}=?)",
-        [*task_params, ident["agent_id"], ident["agent_id"]],
+        f"(({workspace_col}=? AND {review_status_col}='approved' AND {scope_col} IN ('project','org')) "
+        f"OR ({task_id_col} IS NOT NULL AND {task_clause}) "
+        f"OR ({task_id_col} IS NULL AND {memory_agent_col}=?) OR {memory_agent_col}=?)",
+        [ident["workspace_id"], *task_params, ident["agent_id"], ident["agent_id"]],
     )
 
 
@@ -6198,7 +6292,7 @@ def agent_gateway_get_approval(conn: sqlite3.Connection, approval_id: str, heade
 def agent_gateway_list_memories(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 200)
-    where = ["COALESCE(t.workspace_id,'local-demo')=?"]
+    where = ["COALESCE(m.workspace_id,'local-demo')=?"]
     params: list = [ident["workspace_id"]]
     if "task_id" in qs:
         task_id = qs["task_id"][0]
@@ -7135,7 +7229,7 @@ def _project_context_memory_rows(
     limit: int,
 ) -> list[dict]:
     ident = agent_gateway_identity(headers or {}, qs={"workspace_id": [workspace_id]}, auth_ctx=auth_ctx)
-    where = ["m.review_status='approved'", "COALESCE(t.workspace_id,'local-demo')=?"]
+    where = ["m.review_status='approved'", "COALESCE(m.workspace_id,'local-demo')=?"]
     params: list = [workspace_id]
     visibility_sql, visibility_params = agent_gateway_memory_visibility_clause("m", "t", ident, auth_ctx)
     if visibility_sql != "1=1":
@@ -9811,6 +9905,7 @@ def operator_receipt_failure_memory_candidate(conn: sqlite3.Connection, body: di
     due = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=30)).isoformat()
     memory_row = {
         "memory_id": memory_id,
+        "workspace_id": workspace_id,
         "scope": "project",
         "memory_type": "failure_case",
         "canonical_text": canonical_text,
@@ -11392,25 +11487,44 @@ def agent_gateway_request_approval(conn, body) -> tuple[dict, int]:
     return {"approval": row}, 201
 
 
-def agent_gateway_memory_propose(conn, body) -> tuple[dict, int]:
+def agent_gateway_memory_propose(conn, body, auth_ctx=None) -> tuple[dict, int]:
     agent_id = body.get("agent_id")
     task_id = body.get("task_id")
     text = body.get("canonical_text") or body.get("text")
     if not agent_id or not text:
         return {"error": "agent_id and canonical_text are required"}, 400
-    ident = agent_gateway_identity({}, body)
+    ident = agent_gateway_identity({}, body, auth_ctx=auth_ctx)
     if body.get("run_id"):
-        _run, access_error = ensure_run_access(conn, body["run_id"], ident)
+        run, access_error = ensure_run_access(conn, body["run_id"], ident)
         if access_error:
             return access_error
+        if task_id and task_id != run["task_id"]:
+            return {"error": "forbidden", "message": "Memory task_id must match the target run."}, 403
+        task_id = run["task_id"]
     elif task_id:
-        task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
-        if task and row_workspace(task) != ident["workspace_id"]:
-            return workspace_forbidden("task", task_id, ident["workspace_id"], row_workspace(task))
+        _task, access_error = agent_gateway_task_read_access(conn, task_id, ident, auth_ctx)
+        if access_error:
+            return access_error
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
     memory_id = body.get("memory_id") or stable_id("mem_gw", agent_id, task_id or "project", stable_hash(text)[:12])
+    existing_memory = conn.execute(
+        "SELECT workspace_id,task_id,agent_id,review_status FROM memories WHERE memory_id=?",
+        (memory_id,),
+    ).fetchone()
+    if existing_memory and (
+        normalize_workspace_id(existing_memory["workspace_id"] or "local-demo") != ident["workspace_id"]
+        or (existing_memory["task_id"] or "") != (task_id or "")
+        or (existing_memory["agent_id"] or "") != agent_id
+        or existing_memory["review_status"] != "candidate"
+    ):
+        return {
+            "error": "memory_id_conflict",
+            "message": "The requested memory_id is not an editable candidate owned by this agent in this workspace.",
+            "token_omitted": True,
+        }, 409
     row = {
         "memory_id": memory_id,
+        "workspace_id": ident["workspace_id"],
         "scope": coerce_choice(body.get("scope"), {"task", "project", "org"}, "project"),
         "memory_type": coerce_choice(body.get("memory_type"), VALID_MEMORY_TYPES, "artifact_summary"),
         "canonical_text": redact_text(text, 360),
@@ -12509,8 +12623,8 @@ def agent_gateway_audit_entity_anchor(
         "approvals": """SELECT COALESCE(ap.task_id,r.task_id) AS task_id,ap.run_id,
             r.workspace_id,ap.requested_by_agent_id AS anchor_agent_id
             FROM approvals ap LEFT JOIN runs r ON r.run_id=ap.run_id WHERE ap.approval_id=?""",
-        "memories": """SELECT m.task_id,NULL AS run_id,t.workspace_id,m.agent_id AS anchor_agent_id
-            FROM memories m LEFT JOIN tasks t ON t.task_id=m.task_id WHERE m.memory_id=?""",
+        "memories": """SELECT m.task_id,NULL AS run_id,m.workspace_id,m.agent_id AS anchor_agent_id
+            FROM memories m WHERE m.memory_id=?""",
         "evaluations": """SELECT e.task_id,e.run_id,r.workspace_id,e.agent_id AS anchor_agent_id
             FROM evaluations e LEFT JOIN runs r ON r.run_id=e.run_id WHERE e.evaluation_id=?""",
         "artifacts": """SELECT COALESCE(a.task_id,r.task_id) AS task_id,a.run_id,
@@ -15952,16 +16066,12 @@ def human_review_queue(conn, limit: int = 20, *, ident: dict | None = None, auth
             "(ap.run_id IS NOT NULL OR COALESCE(ap.task_id,r.task_id) IS NOT NULL)",
         ])
         approval_params.extend([workspace_id, workspace_id])
-        memory_where.append("COALESCE(t.workspace_id,'local-demo')=?")
+        memory_where.append("COALESCE(m.workspace_id,'local-demo')=?")
         memory_params.append(workspace_id)
         eval_case_where.append("COALESCE(c.workspace_id,t.workspace_id,'local-demo')=?")
         eval_case_params.append(workspace_id)
         failed_eval_where.append("COALESCE(ecr.workspace_id,c.workspace_id,t.workspace_id,'local-demo')=?")
         failed_eval_params.append(workspace_id)
-        if human_scoped:
-            # Memories have no direct workspace column. A human tenant view only
-            # admits task-bound rows whose workspace authority can be proven.
-            memory_where.append("m.task_id IS NOT NULL")
         if bound_agent:
             approval_visibility_sql, approval_visibility_params = agent_gateway_approval_visibility_clause(
                 "ap",
@@ -16043,7 +16153,7 @@ def human_review_queue(conn, limit: int = 20, *, ident: dict | None = None, auth
         [*approval_params, per_lane_limit],
     ).fetchall())
     memories = rows_to_dicts(conn.execute(
-        f"""SELECT m.memory_id, m.scope, m.memory_type, m.canonical_text, m.source_type, m.source_ref,
+        f"""SELECT m.memory_id, m.workspace_id, m.scope, m.memory_type, m.canonical_text, m.source_type, m.source_ref,
                   m.project_id, m.task_id, m.agent_id, m.confidence, m.review_status, m.access_tags,
                   m.created_at, m.updated_at
            FROM memories m
@@ -18703,16 +18813,15 @@ def commander_project_board(
         artifact["title"] = commander_safe_text(artifact.get("title"), 160)
     memory_candidate_count = scalar_count(
         conn,
-        """SELECT COUNT(*) FROM memories m LEFT JOIN tasks t ON t.task_id=m.task_id
-        WHERE COALESCE(t.workspace_id,'')=? AND m.review_status='candidate'""",
+        """SELECT COUNT(*) FROM memories m
+        WHERE COALESCE(m.workspace_id,'local-demo')=? AND m.review_status='candidate'""",
         (workspace_id,),
     )
     memory_review_counts = {
         str(row["review_status"]): int(row["count"] or 0)
         for row in conn.execute(
             """SELECT m.review_status, COUNT(*) AS count FROM memories m
-            LEFT JOIN tasks t ON t.task_id=m.task_id
-            WHERE COALESCE(t.workspace_id,'')=? GROUP BY m.review_status""",
+            WHERE COALESCE(m.workspace_id,'local-demo')=? GROUP BY m.review_status""",
             (workspace_id,),
         ).fetchall()
     }
@@ -21888,8 +21997,7 @@ def commander_integration_inbox(
         """SELECT m.memory_id, m.task_id, m.agent_id, m.review_status, m.memory_type, m.canonical_text,
                   m.source_ref, m.created_at, m.updated_at
         FROM memories m
-        LEFT JOIN tasks t ON t.task_id=m.task_id
-        WHERE COALESCE(t.workspace_id,'')=?
+        WHERE COALESCE(m.workspace_id,'local-demo')=?
           AND (m.review_status IN ('candidate','stale') OR (m.ttl_review_due_at IS NOT NULL AND m.ttl_review_due_at<?))
         ORDER BY m.updated_at DESC
         LIMIT ?""",
@@ -21951,8 +22059,7 @@ def commander_integration_inbox(
     memory_review_total = commander_count(
         conn,
         """SELECT COUNT(*) FROM memories m
-        LEFT JOIN tasks t ON t.task_id=m.task_id
-        WHERE COALESCE(t.workspace_id,'')=?
+        WHERE COALESCE(m.workspace_id,'local-demo')=?
           AND (m.review_status IN ('candidate','stale') OR (m.ttl_review_due_at IS NOT NULL AND m.ttl_review_due_at<?))""",
         (workspace_id, now_iso()),
     )
@@ -22760,9 +22867,9 @@ def local_readiness(
               AND (a.run_id IS NOT NULL OR COALESCE(a.task_id,r.task_id) IS NOT NULL)""",
             (workspace_id, workspace_id),
         ),
-        "memories": scalar_count(conn, "SELECT COUNT(*) FROM memories m JOIN tasks t ON t.task_id=m.task_id WHERE COALESCE(t.workspace_id,'local-demo')=?", (workspace_id,)),
-        "memory_candidates": scalar_count(conn, "SELECT COUNT(*) FROM memories m JOIN tasks t ON t.task_id=m.task_id WHERE COALESCE(t.workspace_id,'local-demo')=? AND m.review_status='candidate'", (workspace_id,)),
-        "approved_memories": scalar_count(conn, "SELECT COUNT(*) FROM memories m JOIN tasks t ON t.task_id=m.task_id WHERE COALESCE(t.workspace_id,'local-demo')=? AND m.review_status='approved'", (workspace_id,)),
+        "memories": scalar_count(conn, "SELECT COUNT(*) FROM memories m WHERE COALESCE(m.workspace_id,'local-demo')=?", (workspace_id,)),
+        "memory_candidates": scalar_count(conn, "SELECT COUNT(*) FROM memories m WHERE COALESCE(m.workspace_id,'local-demo')=? AND m.review_status='candidate'", (workspace_id,)),
+        "approved_memories": scalar_count(conn, "SELECT COUNT(*) FROM memories m WHERE COALESCE(m.workspace_id,'local-demo')=? AND m.review_status='approved'", (workspace_id,)),
         "knowledge_documents": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_documents WHERE workspace_id IN ('global', ?)", (workspace_id,)),
         "knowledge_chunks": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_chunks WHERE workspace_id IN ('global', ?)", (workspace_id,)),
         "knowledge_chunk_fts_rows": scalar_count(
@@ -34633,8 +34740,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/memories":
                 if human_workspace:
                     rows = conn.execute(
-                        """SELECT m.* FROM memories m JOIN tasks t ON t.task_id=m.task_id
-                        WHERE COALESCE(t.workspace_id,'local-demo')=? ORDER BY m.created_at DESC""",
+                        """SELECT m.* FROM memories m
+                        WHERE COALESCE(m.workspace_id,'local-demo')=? ORDER BY m.created_at DESC""",
                         (human_workspace,),
                     ).fetchall()
                 else:
@@ -34643,8 +34750,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/memories/export":
                 if human_workspace:
                     rows = conn.execute(
-                        """SELECT m.* FROM memories m JOIN tasks t ON t.task_id=m.task_id
-                        WHERE COALESCE(t.workspace_id,'local-demo')=? ORDER BY m.created_at DESC""",
+                        """SELECT m.* FROM memories m
+                        WHERE COALESCE(m.workspace_id,'local-demo')=? ORDER BY m.created_at DESC""",
                         (human_workspace,),
                     ).fetchall()
                 else:
@@ -34744,8 +34851,8 @@ class Handler(BaseHTTPRequestHandler):
                               AND (ap.run_id IS NOT NULL OR COALESCE(ap.task_id,r.task_id) IS NOT NULL)
                         ))
                         OR (entity_type='memories' AND entity_id IN (
-                            SELECT m.memory_id FROM memories m JOIN tasks t ON t.task_id=m.task_id
-                            WHERE COALESCE(t.workspace_id,'local-demo')=?
+                            SELECT m.memory_id FROM memories m
+                            WHERE COALESCE(m.workspace_id,'local-demo')=?
                         ))
                         OR (entity_type='evaluations' AND entity_id IN (
                             SELECT e.evaluation_id FROM evaluations e JOIN runs r ON r.run_id=e.run_id
@@ -35294,7 +35401,7 @@ class Handler(BaseHTTPRequestHandler):
                     action_id = path_segment(path, -2)
                     payload, status = agent_gateway_fail_prepared_action_execution(conn, action_id, body)
                 elif path == "/api/agent-gateway/memories/propose":
-                    payload, status = agent_gateway_memory_propose(conn, body)
+                    payload, status = agent_gateway_memory_propose(conn, body, auth_ctx)
                 elif path == "/api/agent-gateway/evaluations/submit":
                     payload, status = agent_gateway_eval_submit(conn, body)
                 elif path == "/api/agent-gateway/audit":
@@ -36272,8 +36379,8 @@ def dashboard_metrics(conn, workspace_id: str | None = None):
             (workspace_id, workspace_id),
         ).fetchone()[0]
         stale_memories = conn.execute(
-            """SELECT COUNT(*) FROM memories m JOIN tasks t ON t.task_id=m.task_id
-            WHERE COALESCE(t.workspace_id,'local-demo')=?
+            """SELECT COUNT(*) FROM memories m
+            WHERE COALESCE(m.workspace_id,'local-demo')=?
               AND (m.review_status='stale' OR m.ttl_review_due_at < ?)""",
             (workspace_id, now_iso()),
         ).fetchone()[0]

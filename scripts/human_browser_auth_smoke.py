@@ -937,8 +937,8 @@ def main() -> int:
                     "SELECT COUNT(*) FROM tasks WHERE COALESCE(workspace_id,'local-demo')='local-demo'"
                 ).fetchone()[0]
                 local_memory_count = fixture_conn.execute(
-                    """SELECT COUNT(*) FROM memories m JOIN tasks t ON t.task_id=m.task_id
-                    WHERE COALESCE(t.workspace_id,'local-demo')='local-demo'"""
+                    """SELECT COUNT(*) FROM memories
+                    WHERE COALESCE(workspace_id,'local-demo')='local-demo'"""
                 ).fetchone()[0]
                 local_run_count = fixture_conn.execute(
                     "SELECT COUNT(*) FROM runs WHERE COALESCE(workspace_id,'local-demo')='local-demo'"
