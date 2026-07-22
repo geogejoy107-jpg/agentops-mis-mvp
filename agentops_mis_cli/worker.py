@@ -196,6 +196,12 @@ class WorkerCredentialError(RuntimeError):
         self.code = code
 
 
+class WorkerServiceConfigError(RuntimeError):
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
 def load_local_config_api_key(args) -> str:
     if str(getattr(args, "api_key", "") or ""):
         raise WorkerCredentialError("local_config_conflicts_with_direct_api_key")
@@ -3116,6 +3122,30 @@ def resolve_worker_entrypoint(args) -> list[str]:
     return [sys.executable, "-m", "agentops_mis_cli.worker"]
 
 
+def normalize_service_hermes_gateway_url(value: object) -> str:
+    configured = str(value or "").strip()
+    if not configured:
+        return ""
+    try:
+        parsed = urlparse(configured)
+        _ = parsed.port
+    except (TypeError, ValueError) as exc:
+        raise WorkerServiceConfigError("invalid_hermes_gateway_url") from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+        or any(character.isspace() for character in configured)
+    ):
+        raise WorkerServiceConfigError("invalid_hermes_gateway_url")
+    return configured.rstrip("/")
+
+
 def service_env_values(args) -> dict[str, str]:
     env_values = {
         "AGENTOPS_BASE_URL": args.base_url,
@@ -3132,6 +3162,12 @@ def service_env_values(args) -> dict[str, str]:
     api_key_placeholder = str(args.api_key_placeholder or "").strip()
     if credential_source == "direct" and api_key_placeholder and api_key_placeholder != DEFAULT_API_KEY_PLACEHOLDER:
         env_values["AGENTOPS_API_KEY"] = api_key_placeholder
+    if args.adapter == "hermes":
+        hermes_gateway_url = normalize_service_hermes_gateway_url(
+            getattr(args, "hermes_gateway_url", "")
+        )
+        if hermes_gateway_url:
+            env_values["HERMES_GATEWAY_URL"] = hermes_gateway_url
     return env_values
 
 
@@ -3249,6 +3285,7 @@ def build_service_template_parser() -> argparse.ArgumentParser:
     parser.add_argument("--credential-source", choices=["direct", "local_config"], default="direct")
     parser.add_argument("--config-path", default=str(DEFAULT_CONFIG_PATH))
     parser.add_argument("--worker-command", default="", help="Worker executable command for service templates. Defaults to installed agentops-worker or python -m fallback.")
+    parser.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", ""), help="Persist an explicit credential-free Hermes HTTP(S) base URL for a Hermes service.")
     return parser
 
 
@@ -3505,7 +3542,28 @@ def run_service_check(argv: list[str]) -> int:
 def install_service_file(args) -> dict:
     label = args.label or service_label(args.agent_id)
     service_path = Path(args.service_path).expanduser() if args.service_path else default_service_path(args.manager, args.agent_id, label)
-    template = render_service_template_for_args(args)
+    try:
+        template = render_service_template_for_args(args)
+    except WorkerServiceConfigError as exc:
+        return {
+            "ok": False,
+            "provider": "agentops-worker",
+            "command": "agentops-worker service-install",
+            "manager": args.manager,
+            "dry_run": not bool(args.confirm_install),
+            "confirmed_install": bool(args.confirm_install),
+            "wrote": False,
+            "agent_id": args.agent_id,
+            "workspace_id": args.workspace_id,
+            "adapter": args.adapter,
+            "service_path": str(service_path),
+            "error": exc.code,
+            "setup_hints": ["Use a credential-free http(s) Hermes base URL without a path, query, or fragment."],
+            "live_execution_performed": False,
+            "service_loaded": False,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        }
     token_like_detected = bool(re.search(r"(agtok_|agtsess_|sk-|ntn_)", template))
     exists_before = service_path.exists()
     safe_to_write = not token_like_detected and (not exists_before or bool(args.overwrite))
@@ -3605,6 +3663,7 @@ def build_service_install_parser() -> argparse.ArgumentParser:
     parser.add_argument("--credential-source", choices=["direct", "local_config"], default="direct")
     parser.add_argument("--config-path", default=str(DEFAULT_CONFIG_PATH))
     parser.add_argument("--worker-command", default="", help="Worker executable command for service templates. Defaults to installed agentops-worker or python -m fallback.")
+    parser.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", ""), help="Persist an explicit credential-free Hermes HTTP(S) base URL for a Hermes service.")
     parser.add_argument("--service-path", default="")
     parser.add_argument("--confirm-install", action="store_true", help="Write the service file. Default is dry-run.")
     parser.add_argument("--overwrite", action="store_true", help="Replace an existing service file after local review.")
@@ -3752,7 +3811,17 @@ def run_service_control(argv: list[str]) -> int:
 
 def render_service_template(argv: list[str]) -> int:
     args = build_service_template_parser().parse_args(argv)
-    sys.stdout.write(render_service_template_for_args(args))
+    try:
+        template = render_service_template_for_args(args)
+    except WorkerServiceConfigError as exc:
+        print(json_dumps({
+            "ok": False,
+            "error": exc.code,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        }), file=sys.stderr)
+        return 2
+    sys.stdout.write(template)
     return 0
 
 

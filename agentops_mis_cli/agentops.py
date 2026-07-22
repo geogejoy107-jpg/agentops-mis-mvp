@@ -5417,6 +5417,7 @@ def cmd_worker_service_install(args, client: AgentOpsClient) -> dict:
         credential_source=args.credential_source,
         config_path=args.config_path,
         worker_command=args.worker_command or "",
+        hermes_gateway_url=args.hermes_gateway_url or "",
         service_path=args.service_path or "",
         confirm_install=bool(args.confirm_install),
         overwrite=bool(args.overwrite),
@@ -6710,6 +6711,7 @@ def build_parser() -> argparse.ArgumentParser:
     worker_service_install.add_argument("--credential-source", choices=["direct", "local_config"], default="direct")
     worker_service_install.add_argument("--config-path", default=str(CONFIG_PATH))
     worker_service_install.add_argument("--worker-command", default="", help="Worker executable command for service templates. Defaults to installed agentops-worker or python -m fallback.")
+    worker_service_install.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", ""), help="Persist an explicit credential-free Hermes HTTP(S) base URL for a Hermes service.")
     worker_service_install.add_argument("--service-path", default="")
     worker_service_install.add_argument("--confirm-install", action="store_true", help="Write the service file. Default is dry-run.")
     worker_service_install.add_argument("--overwrite", action="store_true")

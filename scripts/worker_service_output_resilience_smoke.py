@@ -36,6 +36,20 @@ def service_args(manager: str) -> argparse.Namespace:
     ])
 
 
+def hermes_service_args(manager: str) -> argparse.Namespace:
+    return worker.build_service_template_parser().parse_args([
+        "--manager",
+        manager,
+        "--adapter",
+        "hermes",
+        "--agent-id",
+        "agt_worker_service_output_hermes_smoke",
+        "--confirm-run",
+        "--hermes-gateway-url",
+        "http://127.0.0.1:8643/",
+    ])
+
+
 def function_source(path: Path, function_name: str) -> str:
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -57,6 +71,10 @@ def main() -> int:
         require("--write-state" in rendered, f"{manager} service lost bounded state output", failures)
         require("--jsonl-log" not in rendered, f"{manager} service enables unbounded per-poll JSONL", failures)
         require("--confirm-run" in rendered, f"{manager} service lost live confirmation gate", failures)
+    hermes_launchd = worker.render_launchd_template(hermes_service_args("launchd"))
+    hermes_systemd = worker.render_systemd_template(hermes_service_args("systemd"))
+    require("HERMES_GATEWAY_URL" in hermes_launchd and "http://127.0.0.1:8643" in hermes_launchd, "launchd Hermes gateway target missing", failures)
+    require("HERMES_GATEWAY_URL=http://127.0.0.1:8643" in hermes_systemd, "systemd Hermes gateway target missing", failures)
 
     gateway_launch = function_source(ROOT / "server.py", "agent_gateway_launch_steps")
     worker_policy = function_source(ROOT / "server.py", "worker_adapter_readiness")
