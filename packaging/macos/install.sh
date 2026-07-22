@@ -22,6 +22,7 @@ if sys.version_info < (3, 10):
 PY
 
 python3 - "$BUNDLE_DIR" "$INSTALL_ROOT" "$BIN_DIR" "$DATA_ROOT" "$APP_DIR" "$INSTALL_APP" <<'PY'
+import atexit
 import json
 import fcntl
 import hashlib
@@ -50,11 +51,168 @@ if not version or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRS
     raise SystemExit("invalid bundle version")
 target = install_root / "versions" / version
 app_bundle = app_dir / "AgentOps MIS.app"
+production_min_free_bytes = 2 * 1024 * 1024 * 1024
 launcher_marker_payload = {
     "schema_version": 1,
     "product": "AgentOps MIS Private Host Launcher",
     "managed": True,
 }
+
+
+def existing_filesystem_path(path):
+    candidate = path.expanduser().absolute()
+    while not candidate.exists() and candidate.parent != candidate:
+        candidate = candidate.parent
+    if candidate.is_file():
+        candidate = candidate.parent
+    return candidate
+
+
+def configured_minimum_free_bytes():
+    raw = os.environ.get("AGENTOPS_HOST_MIN_FREE_BYTES", "").strip()
+    if not raw:
+        return production_min_free_bytes, None
+    try:
+        requested = int(raw)
+    except ValueError:
+        return production_min_free_bytes, "invalid_threshold"
+    if requested < production_min_free_bytes:
+        return production_min_free_bytes, "threshold_below_production_floor"
+    return requested, None
+
+
+def observed_free_bytes(filesystem_path, volume_key):
+    raw_override = os.environ.get("AGENTOPS_BUNDLE_INSTALLER_TEST_FREE_BYTES", "").strip()
+    if raw_override:
+        actual = int(shutil.disk_usage(existing_filesystem_path(filesystem_path)).free)
+        if os.environ.get("AGENTOPS_BUNDLE_INSTALLER_TEST_MODE") != "1":
+            return actual, False, "test_override_requires_test_mode"
+        try:
+            simulated = int(raw_override)
+        except ValueError:
+            return actual, False, "invalid_test_free_space_override"
+        if simulated < 0:
+            return actual, False, "invalid_test_free_space_override"
+        if simulated > actual:
+            return actual, False, "test_free_space_override_may_not_increase_capacity"
+        if test_storage_fixture:
+            return actual, False, "conflicting_test_storage_overrides"
+        return simulated, True, None
+    if test_storage_fixture:
+        return test_storage_devices[volume_key]["free_bytes"], True, None
+    return int(shutil.disk_usage(filesystem_path).free), False, None
+
+
+def fail_storage_preflight(record):
+    raise SystemExit(json.dumps({
+        **record,
+        "ok": False,
+        "operation": "host_bundle_storage_preflight",
+        "read_only": True,
+        "network_used": False,
+        "database_content_read": False,
+        "credentials_read": False,
+        "token_omitted": True,
+    }, sort_keys=True))
+
+
+test_storage_fixture = False
+test_storage_paths = {}
+test_storage_devices = {}
+raw_test_storage = os.environ.get("AGENTOPS_BUNDLE_INSTALLER_TEST_STORAGE_JSON", "").strip()
+if raw_test_storage:
+    if os.environ.get("AGENTOPS_BUNDLE_INSTALLER_TEST_MODE") != "1":
+        fail_storage_preflight({
+            "filesystem_path": "",
+            "free_bytes": None,
+            "required_bytes": production_min_free_bytes,
+            "minimum_free_bytes": production_min_free_bytes,
+            "planned_write_bytes": 0,
+            "status": "test_storage_fixture_requires_test_mode",
+            "test_override_applied": False,
+            "target_kinds": [],
+        })
+    test_storage_payload = None
+    try:
+        test_storage_payload = json.loads(raw_test_storage)
+        test_storage_records = test_storage_payload.get("paths")
+    except (AttributeError, json.JSONDecodeError):
+        test_storage_records = None
+    if (
+        not isinstance(test_storage_payload, dict)
+        or test_storage_payload.get("schema_version") != 1
+        or not isinstance(test_storage_records, list)
+        or not test_storage_records
+    ):
+        fail_storage_preflight({
+            "filesystem_path": "",
+            "free_bytes": None,
+            "required_bytes": production_min_free_bytes,
+            "minimum_free_bytes": production_min_free_bytes,
+            "planned_write_bytes": 0,
+            "status": "invalid_test_storage_fixture",
+            "test_override_applied": False,
+            "target_kinds": [],
+        })
+    for test_record in test_storage_records:
+        try:
+            raw_path = str(test_record["path"])
+            path = Path(raw_path)
+            device_id = str(test_record["device_id"])
+            free_bytes = int(test_record["free_bytes"])
+            storage_role = str(test_record["storage_role"])
+        except (KeyError, TypeError, ValueError):
+            fail_storage_preflight({
+                "filesystem_path": "",
+                "free_bytes": None,
+                "required_bytes": production_min_free_bytes,
+                "minimum_free_bytes": production_min_free_bytes,
+                "planned_write_bytes": 0,
+                "status": "invalid_test_storage_fixture",
+                "test_override_applied": False,
+                "target_kinds": [],
+            })
+        if (
+            not path.is_absolute()
+            or not device_id
+            or len(device_id) > 120
+            or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for char in device_id)
+            or free_bytes < 0
+            or storage_role not in {"install", "data", "bin", "app"}
+        ):
+            fail_storage_preflight({
+                "filesystem_path": raw_path,
+                "free_bytes": None,
+                "required_bytes": production_min_free_bytes,
+                "minimum_free_bytes": production_min_free_bytes,
+                "planned_write_bytes": 0,
+                "status": "invalid_test_storage_fixture",
+                "test_override_applied": False,
+                "target_kinds": [],
+            })
+        normalized_path = str(path.absolute())
+        volume_key = ("test", device_id)
+        prior_device = test_storage_devices.get(volume_key)
+        if prior_device and prior_device["free_bytes"] != free_bytes:
+            fail_storage_preflight({
+                "filesystem_path": normalized_path,
+                "free_bytes": None,
+                "required_bytes": production_min_free_bytes,
+                "minimum_free_bytes": production_min_free_bytes,
+                "planned_write_bytes": 0,
+                "status": "inconsistent_test_storage_fixture",
+                "test_override_applied": False,
+                "target_kinds": [],
+            })
+        test_storage_devices[volume_key] = {
+            "free_bytes": free_bytes,
+            "storage_roles": set((prior_device or {}).get("storage_roles") or ()) | {storage_role},
+        }
+        test_storage_paths[normalized_path] = {
+            "volume_key": volume_key,
+            "storage_role": storage_role,
+        }
+    test_storage_fixture = True
 
 if install_app:
     home = Path.home().resolve()
@@ -81,42 +239,6 @@ if install_app:
         if app_bundle.is_symlink() or not app_bundle.is_dir() or launcher_marker.is_symlink() or existing_launcher_marker != launcher_marker_payload:
             raise SystemExit("existing AgentOps MIS application ownership cannot be verified")
 
-lock_path = data_root.parent / ".agentops-mis-host-lifecycle.lock"
-lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-lock_descriptor = os.open(
-    lock_path,
-    os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
-    0o600,
-)
-lock_metadata = os.fstat(lock_descriptor)
-if not stat.S_ISREG(lock_metadata.st_mode):
-    os.close(lock_descriptor)
-    raise SystemExit("Host lifecycle lock is not a regular file; install refused")
-os.fchmod(lock_descriptor, 0o600)
-try:
-    fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-except BlockingIOError:
-    os.close(lock_descriptor)
-    raise SystemExit("Host lifecycle operation is active; install refused")
-
-pid_path = data_root / "run" / "host.pid.json"
-if pid_path.is_file():
-    try:
-        pid_payload = json.loads(pid_path.read_text(encoding="utf-8"))
-        pid = int(pid_payload.get("pid") or 0) if isinstance(pid_payload, dict) else 0
-    except (OSError, ValueError, json.JSONDecodeError):
-        raise SystemExit("cannot verify Host process state; update refused")
-    if pid <= 0:
-        raise SystemExit("invalid managed Host PID record; update refused")
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        pass
-    except PermissionError:
-        raise SystemExit("cannot verify Host process state; update refused")
-    else:
-        raise SystemExit("AgentOps MIS Host is running; stop it before installing an update")
-
 def digest(path):
     value = hashlib.sha256()
     with path.open("rb") as handle:
@@ -125,6 +247,7 @@ def digest(path):
     return value.hexdigest()
 
 declared = set()
+verified_bundle_bytes = manifest_path.stat().st_size
 for record in manifest.get("files", []):
     relative = Path(str(record["path"]))
     if relative.is_absolute() or ".." in relative.parts:
@@ -132,9 +255,11 @@ for record in manifest.get("files", []):
     source = bundle / relative
     if not source.is_file():
         raise SystemExit(f"missing bundle file: {relative}")
-    if source.stat().st_size != int(record["size"]) or digest(source) != record["sha256"]:
+    record_size = int(record["size"])
+    if source.stat().st_size != record_size or digest(source) != record["sha256"]:
         raise SystemExit(f"bundle integrity check failed: {relative}")
     declared.add(relative.as_posix())
+    verified_bundle_bytes += record_size
 
 actual = {
     path.relative_to(bundle).as_posix()
@@ -199,14 +324,151 @@ for candidate, module in ((shim, "agentops_mis_cli"), (worker_shim, "agentops_mi
             raise SystemExit(f"existing {candidate.name} shim ownership cannot be verified")
 if target.exists():
     raise SystemExit(f"version is already installed: {version}")
+database = data_root / "data" / "agentops_mis.db"
+database_wal = Path(str(database) + "-wal")
+backup_dir = data_root / "backups"
+backup_source_bytes = 0
+if old_current and database.is_file():
+    if database.is_symlink():
+        raise SystemExit("unsafe symlinked Host database; update refused")
+    if backup_dir.is_symlink() or (backup_dir.exists() and not backup_dir.is_dir()):
+        raise SystemExit("unsafe Host backup directory; update refused")
+    if database_wal.is_symlink():
+        raise SystemExit("unsafe symlinked Host database WAL; update refused")
+    backup_source_bytes = database.stat().st_size
+    if database_wal.is_file():
+        backup_source_bytes += database_wal.stat().st_size
+minimum_free_bytes, threshold_error = configured_minimum_free_bytes()
+volume_requirements = {}
+
+
+def reserve_volume(path, planned_write_bytes, target_kind):
+    requested_path = path.expanduser().absolute()
+    if test_storage_fixture:
+        test_observation = test_storage_paths.get(str(requested_path))
+        if not test_observation:
+            fail_storage_preflight({
+                "filesystem_path": str(requested_path),
+                "free_bytes": None,
+                "required_bytes": minimum_free_bytes + planned_write_bytes,
+                "status": "test_storage_fixture_path_missing",
+                "test_override_applied": False,
+                "target_kinds": [target_kind],
+            })
+        filesystem_path = requested_path
+        volume_key = test_observation["volume_key"]
+        storage_roles = set(test_storage_devices[volume_key]["storage_roles"])
+    else:
+        filesystem_path = existing_filesystem_path(requested_path)
+        storage_roles = set()
+        try:
+            volume_key = filesystem_path.stat().st_dev
+        except OSError:
+            fail_storage_preflight({
+                "filesystem_path": str(filesystem_path),
+                "free_bytes": None,
+                "required_bytes": minimum_free_bytes + planned_write_bytes,
+                "status": "storage_unavailable",
+                "test_override_applied": False,
+                "target_kinds": [target_kind],
+            })
+    entry = volume_requirements.setdefault(volume_key, {
+        "filesystem_path": filesystem_path,
+        "planned_write_bytes": 0,
+        "target_kinds": set(),
+        "storage_roles": set(),
+    })
+    entry["planned_write_bytes"] += planned_write_bytes
+    entry["target_kinds"].add(target_kind)
+    entry["storage_roles"].update(storage_roles)
+
+
+reserve_volume(install_root, max(1, verified_bundle_bytes * 2), "install")
+shim_write_bytes = sum(
+    len(shim_content(module).encode("utf-8"))
+    for module in ("agentops_mis_cli", "agentops_mis_cli.worker")
+)
+reserve_volume(bin_dir, max(4096, shim_write_bytes * 2), "bin")
+reserve_volume(data_root.parent, 4096, "data")
+if install_app:
+    bundled_launcher = bundle / "payload" / "packaging" / "macos" / "launcher.py"
+    if not bundled_launcher.is_file():
+        raise SystemExit("release lacks the managed macOS launcher")
+    launcher_write_bytes = max(64 * 1024, bundled_launcher.stat().st_size * 2 + 64 * 1024)
+    reserve_volume(app_dir, launcher_write_bytes, "app")
+if backup_source_bytes:
+    reserve_volume(backup_dir, backup_source_bytes * 2, "backup")
+
+storage_preflight = []
+for volume_key, requirement in volume_requirements.items():
+    filesystem_path = requirement["filesystem_path"]
+    planned_write_bytes = int(requirement["planned_write_bytes"])
+    required_bytes = minimum_free_bytes + planned_write_bytes
+    try:
+        free_bytes, test_override_applied, override_error = observed_free_bytes(filesystem_path, volume_key)
+    except OSError:
+        free_bytes, test_override_applied, override_error = None, False, "storage_unavailable"
+    status = threshold_error or override_error
+    if status is None:
+        status = "ready" if free_bytes is not None and free_bytes >= required_bytes else "insufficient_free_space"
+    record = {
+        "filesystem_path": str(filesystem_path),
+        "free_bytes": free_bytes,
+        "required_bytes": required_bytes,
+        "minimum_free_bytes": minimum_free_bytes,
+        "planned_write_bytes": planned_write_bytes,
+        "target_kinds": sorted(requirement["target_kinds"]),
+        "storage_roles": sorted(requirement["storage_roles"]),
+        "status": status,
+        "test_override_applied": test_override_applied,
+        "token_omitted": True,
+    }
+    storage_preflight.append(record)
+    if status != "ready":
+        fail_storage_preflight(record)
+
+lock_path = data_root.parent / ".agentops-mis-host-lifecycle.lock"
+lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+lock_descriptor = os.open(
+    lock_path,
+    os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+    0o600,
+)
+lock_metadata = os.fstat(lock_descriptor)
+if not stat.S_ISREG(lock_metadata.st_mode):
+    os.close(lock_descriptor)
+    raise SystemExit("Host lifecycle lock is not a regular file; install refused")
+os.fchmod(lock_descriptor, 0o600)
+try:
+    fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    os.close(lock_descriptor)
+    raise SystemExit("Host lifecycle operation is active; install refused")
+
+pid_path = data_root / "run" / "host.pid.json"
+if pid_path.is_file():
+    try:
+        pid_payload = json.loads(pid_path.read_text(encoding="utf-8"))
+        pid = int(pid_payload.get("pid") or 0) if isinstance(pid_payload, dict) else 0
+    except (OSError, ValueError, json.JSONDecodeError):
+        raise SystemExit("cannot verify Host process state; update refused")
+    if pid <= 0:
+        raise SystemExit("invalid managed Host PID record; update refused")
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        raise SystemExit("cannot verify Host process state; update refused")
+    else:
+        raise SystemExit("AgentOps MIS Host is running; stop it before installing an update")
+
 pre_update_backup = None
 if old_current:
-    database = data_root / "data" / "agentops_mis.db"
     backup_utility = old_current / "scripts" / "agentops_local_backup.py"
     if database.is_file():
         if not backup_utility.is_file():
             raise SystemExit("installed version lacks the required pre-update backup utility")
-        backup_dir = data_root / "backups"
         process = subprocess.run(
             [
                 sys.executable,
@@ -229,6 +491,42 @@ if old_current:
         if process.returncode != 0 or backup_payload.get("ok") is not True:
             raise SystemExit("verified pre-update ledger backup failed")
         pre_update_backup = backup_payload.get("backup_path")
+
+shim_existed_before = {
+    shim: shim.exists(),
+    worker_shim: worker_shim.exists(),
+}
+app_existed_before = app_bundle.exists()
+install_transaction = {"committed": False}
+
+
+def rollback_uncommitted_install():
+    if install_transaction["committed"]:
+        return
+    for candidate, existed in shim_existed_before.items():
+        if not existed:
+            try:
+                candidate.unlink(missing_ok=True)
+            except OSError:
+                pass
+    if install_app and not app_existed_before and app_bundle.exists():
+        try:
+            shutil.rmtree(app_bundle)
+        except OSError:
+            pass
+    try:
+        (install_root / ".agentops-mis-install.json.next").unlink(missing_ok=True)
+    except OSError:
+        pass
+    current_points_to_target = current.is_symlink() and current.resolve() == target.resolve()
+    if target.exists() and not current_points_to_target:
+        try:
+            shutil.rmtree(target)
+        except OSError:
+            pass
+
+
+atexit.register(rollback_uncommitted_install)
 target.parent.mkdir(parents=True, exist_ok=True)
 stage = Path(tempfile.mkdtemp(prefix=f".install-{version}-", dir=target.parent))
 try:
@@ -242,19 +540,11 @@ finally:
 def atomic_symlink(link, destination):
     temporary = link.with_name(link.name + ".next")
     temporary.unlink(missing_ok=True)
-    temporary.symlink_to(destination)
-    os.replace(temporary, link)
-
-if not install_marker.exists():
-    marker_stage = install_root / ".agentops-mis-install.json.next"
-    marker_stage.write_text(json.dumps(expected_install_marker, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    marker_stage.chmod(0o600)
-    os.replace(marker_stage, install_marker)
-install_marker.chmod(0o600)
-
-if old_current and old_current != target:
-    atomic_symlink(previous, old_current)
-atomic_symlink(current, target)
+    try:
+        temporary.symlink_to(destination)
+        os.replace(temporary, link)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 bin_dir.mkdir(parents=True, exist_ok=True)
 
@@ -364,6 +654,19 @@ if install_app:
         if stage_parent.exists():
             shutil.rmtree(stage_parent)
 
+if not install_marker.exists():
+    marker_stage = install_root / ".agentops-mis-install.json.next"
+    marker_stage.write_text(json.dumps(expected_install_marker, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    marker_stage.chmod(0o600)
+    os.replace(marker_stage, install_marker)
+install_marker.chmod(0o600)
+
+if old_current and old_current != target:
+    atomic_symlink(previous, old_current)
+atomic_symlink(current, target)
+install_transaction["committed"] = True
+atexit.unregister(rollback_uncommitted_install)
+
 fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
 os.close(lock_descriptor)
 
@@ -380,6 +683,8 @@ print(json.dumps({
     "launcher": str(app_bundle) if install_app else None,
     "launcher_installed": launcher_installed,
     "launcher_starts_live_workers": False,
+    "storage_preflight": storage_preflight,
     "user_data_preserved": True,
+    "token_omitted": True,
 }, indent=2, sort_keys=True))
 PY

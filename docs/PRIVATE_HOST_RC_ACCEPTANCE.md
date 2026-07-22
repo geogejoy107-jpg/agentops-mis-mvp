@@ -902,6 +902,24 @@ Call, Prepared Action, membership, Run/Task state, Runtime Event or Audit
 survives. These are deterministic source-level receipts only and are not
 attributed to installed preview.38.
 
+The same unreleased source slice now includes a bounded Host storage preflight.
+`agentops host storage-preflight` is initialization-independent and reports only
+the checked filesystem path, free/required bytes, status and omission metadata;
+it reads no ledger content, credential or network. The packaged macOS installer
+copied by `build_private_host_bundle.py` applies the same 2 GiB production floor
+before either a new version stage or a pre-update backup, adds conservative
+version and SQLite database-plus-WAL backup reserves, and checks separate
+install/data/backup/bin/App volumes independently. The check precedes lifecycle
+lock creation, and `current` is the final commit after CLI/App writes.
+`AGENTOPS_HOST_MIN_FREE_BYTES` may raise but cannot lower the floor. A
+TEST_MODE-only per-path/device capacity fixture makes both positive and negative
+installer tests independent of host free space; production use of that fixture
+fails before any write, while the legacy scalar override may only reduce actual
+capacity. The deterministic smoke proves low space leaves the lifecycle lock,
+current version, target version and backup directory untouched. This is
+source-only evidence: preview.38 is not credited, and an exact-package
+install/upgrade receipt on adequate storage remains open.
+
 Separately, after all package and real-runtime acceptance steps, the Host volume later fell
 to roughly 115 MiB free. The backend PID and loopback listener remained, but
 health responses became unusable and both launchd Workers exited nonzero. A

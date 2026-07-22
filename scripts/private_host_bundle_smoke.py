@@ -29,6 +29,7 @@ BUILDER = ROOT / "scripts" / "build_private_host_bundle.py"
 FORBIDDEN_NAMES = {".git", ".agentops_runtime", "__pycache__", "artifacts", "node_modules", "logs"}
 FORBIDDEN_SUFFIXES = {".db", ".sqlite", ".sqlite3", ".log", ".pyc", ".pyo"}
 ACTIVE_HOSTS: list[tuple[Path, dict[str, str]]] = []
+TEST_STORAGE_FREE_BYTES = 8 * 1024 * 1024 * 1024
 
 
 def digest(path: Path) -> str:
@@ -120,6 +121,28 @@ def forbidden(path: str) -> bool:
         or rel.suffix.lower() in FORBIDDEN_SUFFIXES
         or "sample_export" in rel.name.lower()
     )
+
+
+def deterministic_storage_fixture(install_root: Path, host_home: Path, bin_dir: Path, app_dir: Path) -> str:
+    paths = {
+        "install": [install_root],
+        "data": [host_home.parent, host_home / "backups"],
+        "bin": [bin_dir],
+        "app": [app_dir],
+    }
+    return json.dumps({
+        "schema_version": 1,
+        "paths": [
+            {
+                "path": str(path.absolute()),
+                "device_id": f"bundle-{role}-device",
+                "free_bytes": TEST_STORAGE_FREE_BYTES,
+                "storage_role": role,
+            }
+            for role, role_paths in paths.items()
+            for path in role_paths
+        ],
+    }, sort_keys=True)
 
 
 def extract_bundle(tar_path: Path, destination: Path) -> Path:
@@ -237,6 +260,12 @@ def main() -> int:
             "AGENTOPS_APP_DIR": str(app_dir),
             "AGENTOPS_HOST_HOME": str(host_data),
             "AGENTOPS_BUNDLE_INSTALLER_TEST_MODE": "1",
+            "AGENTOPS_BUNDLE_INSTALLER_TEST_STORAGE_JSON": deterministic_storage_fixture(
+                install_root,
+                host_data,
+                bin_dir,
+                app_dir,
+            ),
         }
         host_data.parent.mkdir(parents=True)
         lifecycle_lock = host_data.parent / ".agentops-mis-host-lifecycle.lock"

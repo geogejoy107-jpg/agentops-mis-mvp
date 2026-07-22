@@ -18,6 +18,8 @@ INSTALLER = ROOT / "packaging" / "macos" / "install.sh"
 UNINSTALLER = ROOT / "packaging" / "macos" / "uninstall.sh"
 LAUNCHER_SOURCE = ROOT / "packaging" / "macos" / "launcher.py"
 VERSION = "0.0.0-launcher-smoke"
+TEST_STORAGE_ENV = "AGENTOPS_BUNDLE_INSTALLER_TEST_STORAGE_JSON"
+TEST_STORAGE_FREE_BYTES = (2 * 1024 * 1024 * 1024) + (64 * 1024 * 1024)
 
 
 def digest(path: Path) -> str:
@@ -104,7 +106,7 @@ def make_bundle(destination: Path) -> Path:
 
 
 def environment(home: Path) -> dict[str, str]:
-    return {
+    values = {
         **os.environ,
         "HOME": str(home),
         "AGENTOPS_APP_DIR": str(home / "Applications"),
@@ -113,6 +115,38 @@ def environment(home: Path) -> dict[str, str]:
         "AGENTOPS_HOST_HOME": str(home / ".agentops" / "host"),
         "AGENTOPS_INSTALL_ROOT": str(home / ".local" / "share" / "agentops-mis"),
     }
+    managed_paths = {
+        "install": Path(values["AGENTOPS_INSTALL_ROOT"]),
+        "data": Path(values["AGENTOPS_HOST_HOME"]),
+        "bin": Path(values["AGENTOPS_BIN_DIR"]),
+        "app": Path(values["AGENTOPS_APP_DIR"]),
+    }
+    values[TEST_STORAGE_ENV] = json.dumps({
+        "schema_version": 1,
+        "paths": [
+            {
+                "path": str(path.absolute()),
+                "device_id": f"launcher-{role}-device",
+                "free_bytes": TEST_STORAGE_FREE_BYTES,
+                "storage_role": role,
+            }
+            for role, path in managed_paths.items()
+        ] + [
+            {
+                "path": str((managed_paths["data"].parent).absolute()),
+                "device_id": "launcher-data-device",
+                "free_bytes": TEST_STORAGE_FREE_BYTES,
+                "storage_role": "data",
+            },
+            {
+                "path": str((managed_paths["data"] / "backups").absolute()),
+                "device_id": "launcher-data-device",
+                "free_bytes": TEST_STORAGE_FREE_BYTES,
+                "storage_role": "data",
+            },
+        ],
+    }, sort_keys=True)
+    return values
 
 
 def read_calls(host_home: Path) -> list[list[str]]:
@@ -128,8 +162,44 @@ def main() -> int:
         home = temp / "clean home with $shell ' quote"
         env = environment(home)
         installed = run(["sh", str(bundle / "install.sh")], env=env)
+        if installed.returncode != 0:
+            try:
+                storage_error = json.loads(installed.stderr.splitlines()[-1])
+            except (IndexError, json.JSONDecodeError):
+                storage_error = {}
+            require(
+                not (
+                    storage_error.get("operation") == "host_bundle_storage_preflight"
+                    and storage_error.get("test_override_applied") is not True
+                ),
+                "installer ignored the deterministic test-only storage fixture",
+                installed,
+            )
         require(installed.returncode == 0, "launcher fixture install failed", installed)
         install_payload = json.loads(installed.stdout)
+        storage_preflight = install_payload.get("storage_preflight")
+        require(isinstance(storage_preflight, list), "installer omitted deterministic storage evidence")
+        storage_roles: set[str] = set()
+        for record in storage_preflight:
+            if not isinstance(record, dict) or record.get("status") != "ready":
+                continue
+            roles = record.get("storage_roles")
+            if not isinstance(roles, list):
+                roles = [record.get("storage_role")]
+            storage_roles.update(role for role in roles if isinstance(role, str))
+            for target_kind in record.get("target_kinds") or []:
+                if target_kind in {"data", "backup"}:
+                    storage_roles.add("data")
+                elif target_kind in {"install", "bin", "app"}:
+                    storage_roles.add(target_kind)
+        require(
+            {"install", "data", "bin", "app"}.issubset(storage_roles),
+            "installer did not budget every managed launcher volume",
+        )
+        require(
+            all(record.get("test_override_applied") is True for record in storage_preflight),
+            "launcher smoke did not use deterministic test-only storage observations",
+        )
         app = home / "Applications" / "AgentOps MIS.app"
         executable = app / "Contents" / "MacOS" / "agentops-mis-launcher"
         resources = app / "Contents" / "Resources"
@@ -241,6 +311,8 @@ def main() -> int:
             "installed_host_service_uninstall_rejected": True,
             "partial_host_state_rejected": True,
             "uninstall_preserved_host_data": True,
+            "deterministic_storage_fixture": True,
+            "storage_roles": sorted(storage_roles),
             "real_runtime_called": False,
         }, indent=2, sort_keys=True))
     return 0

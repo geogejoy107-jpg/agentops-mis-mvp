@@ -17,6 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILDER = ROOT / "scripts" / "build_private_host_bundle.py"
+TEST_STORAGE_FREE_BYTES = 8 * 1024 * 1024 * 1024
 
 
 def run(command: list[str], *, env: dict[str, str]) -> subprocess.CompletedProcess:
@@ -45,6 +46,28 @@ def require(condition: bool, message: str, process: subprocess.CompletedProcess 
             f"stdout_bytes={len(process.stdout)}, stderr_bytes={len(process.stderr)})"
         )
     raise RuntimeError(message + detail)
+
+
+def deterministic_storage_fixture(install_root: Path, host_home: Path, bin_dir: Path, app_dir: Path) -> str:
+    paths = {
+        "install": [install_root],
+        "data": [host_home.parent, host_home / "backups"],
+        "bin": [bin_dir],
+        "app": [app_dir],
+    }
+    return json.dumps({
+        "schema_version": 1,
+        "paths": [
+            {
+                "path": str(path.absolute()),
+                "device_id": f"consumer-{role}-device",
+                "free_bytes": TEST_STORAGE_FREE_BYTES,
+                "storage_role": role,
+            }
+            for role, role_paths in paths.items()
+            for path in role_paths
+        ],
+    }, sort_keys=True)
 
 
 def main() -> int:
@@ -172,6 +195,12 @@ def main() -> int:
             "AGENTOPS_INSTALLER_TEST_MODE": "1",
             "AGENTOPS_INSTALLER_TEST_RELEASE_DIR": str(output),
             "AGENTOPS_BUNDLE_INSTALLER_TEST_MODE": "1",
+            "AGENTOPS_BUNDLE_INSTALLER_TEST_STORAGE_JSON": deterministic_storage_fixture(
+                install_root,
+                host_home,
+                bin_dir,
+                home / "Applications",
+            ),
         }
         installed = run(
             ["sh", str(bootstrap), "--tag", f"v{version}", "--init", "--start", "--port", str(free_port())],

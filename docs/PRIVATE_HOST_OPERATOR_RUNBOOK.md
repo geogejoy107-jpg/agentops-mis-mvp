@@ -157,6 +157,13 @@ agentops host version
 该 unsigned developer preview 需要主机已有 Python 3.10+；安装过程不联网，
 不安装 Node、Git、Hermes、OpenClaw 或 Tailscale。安装器会再次按
 `manifest.json` 校验每个文件，拒绝篡改、遗漏、未声明文件和路径穿越。
+安装器还会在写入新版本或创建 pre-update 账本备份之前执行存储门禁：每个
+相关文件系统必须在保留至少 `2147483648` bytes（2 GiB）余量后，仍能容纳
+新版本的保守双份写入预算；升级时还会把 SQLite 主文件与 `-wal` 一并计入
+pre-update backup 的双份预算。安装目录、数据/备份目录、CLI 目录和 App 目录
+位于不同文件系统时分别检查。任一检查失败都不会创建 lifecycle lock、新版本、
+pre-update backup 或切换 `current`；CLI/App 写入完成后才把 `current` 作为最后
+提交点，提交前失败会保持旧版本并清理不可重试的新 target。
 默认程序位于 `~/.local/share/agentops-mis`，数据位于
 `~/.agentops/host`。操控端电脑不执行本节，它只需要浏览器。
 
@@ -376,6 +383,7 @@ checklist 只用于现场操作提醒，必须标记 `non_authoritative:true`；
 ```bash
 agentops host status
 agentops host doctor
+agentops host storage-preflight
 agentops host logs
 agentops host restart
 agentops host stop
@@ -385,6 +393,9 @@ agentops host backup-verify
 
 - `status`：查看受管进程、版本、端口和组件状态，不输出 workspace 私密数据。
 - `doctor`：做只读诊断，并给出可操作修复建议；不得静默修改网络或 Runtime。
+- `storage-preflight`：无需初始化 Host，只读取目标文件系统容量元数据，返回
+  `filesystem_path`、`free_bytes`、`required_bytes` 和 `status`；不读取账本内容、
+  credential 或网络，且始终返回 `token_omitted:true`。
 - `logs`：查看脱敏后的 Host 日志。
 - `restart`：只重启该 Host 拥有的进程，保留账本和知识状态。
 - `stop`：停止 Host 服务和受管 Worker，不删除 DB、知识库、配置或备份。
@@ -429,9 +440,25 @@ agentops host start
 agentops host stop
 agentops host version
 agentops host update --check
+agentops host storage-preflight
 ```
 
-`update --check` 是离线只读检查，不会访问 GitHub 或自动下载。管理员下载并校验更高版本的 bundle 后，运行该 bundle 自带的 `install.sh`。安装器在 Host PID 存活时拒绝升级；如已有账本，会先用旧版本工具创建并校验 pre-update 备份，失败则拒绝升级。随后将新版本写入临时目录，原子切换 `current`，并保留 `previous` 指针；`~/.agentops/host` 数据目录不随程序版本移动。
+`update --check` 和 `storage-preflight` 都是离线只读检查，不会访问 GitHub 或
+自动下载。默认最低余量是 2 GiB；管理员只能通过
+`AGENTOPS_HOST_MIN_FREE_BYTES` 把门槛调高，低于 2 GiB、非法值或容量不可读都会
+fail closed。管理员下载并校验更高版本的 bundle 后，运行该 bundle 自带的
+`install.sh`。安装器在 Host PID 存活时拒绝升级；随后先执行与 CLI 同底线的
+文件系统检查，如已有账本，再用旧版本工具创建并校验 pre-update 备份，失败则
+拒绝升级。通过后才将新版本写入临时目录，原子切换 `current`，并保留
+`previous` 指针；`~/.agentops/host` 数据目录不随程序版本移动。
+
+CI 的正向/失败夹具使用
+`AGENTOPS_BUNDLE_INSTALLER_TEST_STORAGE_JSON` 为隔离临时路径声明虚拟 device
+和容量；安装器只会在显式 `AGENTOPS_BUNDLE_INSTALLER_TEST_MODE=1` 时解析它，
+正常安装出现该变量会在任何写入前 fail closed。旧的
+`AGENTOPS_BUNDLE_INSTALLER_TEST_FREE_BYTES` 即使在 TEST_MODE 中也只能降低真实
+可用空间，不能抬高容量。两者都不能降低生产调用的 2 GiB 底线，不属于运维配置，
+正常安装和运维不要设置这些测试变量。
 
 如新版本启动验收失败，保持 Host 停止并执行：
 
@@ -539,7 +566,7 @@ agentops host restart
 只有以下证据同时存在，才能把本手册描述为正式可用流程：
 
 - 版本化 Host 安装资产及 SHA-256；
-- `init/start/status/doctor/logs/stop/restart/console-url/tailscale-preview` 的命令 smoke；
+- `init/start/status/storage-preflight/doctor/logs/stop/restart/console-url/tailscale-preview` 的命令 smoke；
 - 生产 UI 同源服务，不依赖运行时 Node/Vite；
 - 第二电脑仅凭系统浏览器和一次性配对完成认证与客户任务闭环，不安装 Tailscale/VPN；
 - 未认证读取、错误角色、CSRF、错误 Origin 和撤销 Session 均 fail closed；

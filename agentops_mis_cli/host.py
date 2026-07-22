@@ -41,6 +41,8 @@ BACKUP_UTILITY = ROOT / "scripts" / "agentops_local_backup.py"
 DEFAULT_UI_DIST = ROOT / "ui" / "start-building-app" / "dist"
 MACOS_TAILSCALE_BIN = Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
 HOST_STOP_GRACE_SECONDS = 20
+HOST_STORAGE_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024
+HOST_STORAGE_MIN_FREE_ENV = "AGENTOPS_HOST_MIN_FREE_BYTES"
 HOST_SERVICE_LABEL = "dev.agentops.mis.private-host"
 HOST_SERVICE_STATE_CONVERGENCE_ATTEMPTS = 4
 HOST_SERVICE_STATE_CONVERGENCE_DELAY_SECONDS = 0.1
@@ -97,6 +99,89 @@ def local_urlopen(request, *, timeout: float):
 
 def host_home() -> Path:
     return Path(os.environ.get("AGENTOPS_HOST_HOME") or (Path.home() / ".agentops" / "host")).expanduser().resolve()
+
+
+def host_install_root() -> Path:
+    configured = os.environ.get("AGENTOPS_INSTALL_ROOT")
+    return Path(configured).expanduser().resolve() if configured else (
+        ROOT.parent.parent if ROOT.parent.name == "versions" else ROOT
+    )
+
+
+def _existing_filesystem_path(path: Path) -> Path:
+    candidate = path.expanduser().absolute()
+    while not candidate.exists() and candidate.parent != candidate:
+        candidate = candidate.parent
+    if candidate.is_file():
+        candidate = candidate.parent
+    return candidate
+
+
+def host_storage_preflight(
+    *,
+    target_path: Path | None = None,
+    minimum_free_bytes: int | None = None,
+    reserve_bytes: int = 0,
+    disk_usage=None,
+    environ: dict[str, str] | None = None,
+) -> dict:
+    environment = os.environ if environ is None else environ
+    raw_minimum = minimum_free_bytes
+    if raw_minimum is None:
+        raw_minimum = environment.get(HOST_STORAGE_MIN_FREE_ENV)
+
+    threshold_error = None
+    if raw_minimum in (None, ""):
+        effective_minimum = HOST_STORAGE_MIN_FREE_BYTES
+    else:
+        try:
+            requested_minimum = int(str(raw_minimum).strip())
+        except (TypeError, ValueError):
+            requested_minimum = HOST_STORAGE_MIN_FREE_BYTES
+            threshold_error = "invalid_threshold"
+        if requested_minimum < HOST_STORAGE_MIN_FREE_BYTES:
+            effective_minimum = HOST_STORAGE_MIN_FREE_BYTES
+            threshold_error = "threshold_below_production_floor"
+        else:
+            effective_minimum = requested_minimum
+
+    try:
+        reserve = int(reserve_bytes)
+    except (TypeError, ValueError):
+        reserve = 0
+        threshold_error = threshold_error or "invalid_reserve"
+    if reserve < 0:
+        reserve = 0
+        threshold_error = threshold_error or "invalid_reserve"
+
+    requested_path = (target_path or host_install_root()).expanduser().absolute()
+    filesystem_path = _existing_filesystem_path(requested_path)
+    required_bytes = effective_minimum + reserve
+    free_bytes = None
+    status = threshold_error
+    try:
+        usage = (disk_usage or shutil.disk_usage)(filesystem_path)
+        free_bytes = int(usage.free)
+    except (OSError, TypeError, ValueError):
+        status = status or "storage_unavailable"
+    if status is None:
+        status = "ready" if free_bytes is not None and free_bytes >= required_bytes else "insufficient_free_space"
+
+    return {
+        "ok": status == "ready",
+        "operation": "host_storage_preflight",
+        "filesystem_path": str(filesystem_path),
+        "free_bytes": free_bytes,
+        "required_bytes": required_bytes,
+        "minimum_free_bytes": effective_minimum,
+        "reserve_bytes": reserve,
+        "status": status,
+        "read_only": True,
+        "network_used": False,
+        "database_content_read": False,
+        "credentials_read": False,
+        "token_omitted": True,
+    }
 
 
 def paths() -> dict[str, Path]:
@@ -2691,6 +2776,12 @@ def cmd_status(_args) -> int:
     return 0 if running and readiness["reachable"] else 1
 
 
+def cmd_storage_preflight(args) -> int:
+    payload = host_storage_preflight(minimum_free_bytes=args.minimum_free_bytes)
+    emit(payload)
+    return 0 if payload["ok"] else 1
+
+
 def _cmd_stop_unlocked(_args) -> int:
     p = paths()
     record = read_json(p["pid"])
@@ -2972,10 +3063,7 @@ def cmd_restore(args) -> int:
 
 
 def install_state() -> dict:
-    configured = os.environ.get("AGENTOPS_INSTALL_ROOT")
-    install_root = Path(configured).expanduser().resolve() if configured else (
-        ROOT.parent.parent if ROOT.parent.name == "versions" else ROOT
-    )
+    install_root = host_install_root()
     current = install_root / "current"
     previous = install_root / "previous"
 
@@ -4040,6 +4128,16 @@ def build_parser() -> argparse.ArgumentParser:
     restart.set_defaults(handler=cmd_restart)
     status = sub.add_parser("status", help="Show redacted host, health and private-network status.")
     status.set_defaults(handler=cmd_status)
+    storage_preflight = sub.add_parser(
+        "storage-preflight",
+        help="Check Host install-volume free space without reading the ledger, credentials, or network.",
+    )
+    storage_preflight.add_argument(
+        "--minimum-free-bytes",
+        type=int,
+        help="Raise the minimum free-space requirement; values below the production floor fail closed.",
+    )
+    storage_preflight.set_defaults(handler=cmd_storage_preflight)
     doctor = sub.add_parser("doctor", help="Check private files, UI bundle and Tailscale readiness.")
     doctor.set_defaults(handler=cmd_doctor)
     logs = sub.add_parser("logs", help="Show log metadata without printing raw host output.")
