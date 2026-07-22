@@ -29,6 +29,7 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -197,6 +198,8 @@ DB_PATH = Path(os.environ.get("AGENTOPS_DB_PATH") or (ROOT / "agentops_mis.db"))
 SERVER_STARTED_AT = dt.datetime.now(dt.timezone.utc)
 SERVER_STARTED_AT_EPOCH = time.time()
 SQLITE_SCHEMA_BASELINE_ID = "2026-06-22-v1.5-sqlite-reliability"
+WORKSPACE_AGENT_MEMBERSHIP_MIGRATION_ID = "2026-07-22-workspace-agent-membership-authority"
+AGENT_PLAN_APPROVAL_SUBJECT_MIGRATION_ID = "2026-07-22-agent-plan-approval-subject-authority"
 STATIC_DIR = ROOT / "static"
 ARTIFACTS_DIR = ROOT / "artifacts"
 RUNTIME_DIR = ROOT / ".agentops_runtime"
@@ -436,6 +439,48 @@ def db(timeout_seconds: float = 30) -> sqlite3.Connection:
     return conn
 
 
+class AtomicApiRollback(Exception):
+    def __init__(self, payload: dict, status: int):
+        super().__init__(str(payload.get("error") or "atomic_api_rollback"))
+        self.payload = payload
+        self.status = status
+
+
+@contextmanager
+def sqlite_atomic_write(conn: sqlite3.Connection, name: str):
+    savepoint = "sp_" + re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_")[:48]
+    nested = conn.in_transaction
+    if nested:
+        conn.execute(f"SAVEPOINT {savepoint}")
+    else:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except Exception:
+        if nested:
+            conn.execute(f"ROLLBACK TO {savepoint}")
+            conn.execute(f"RELEASE {savepoint}")
+        else:
+            conn.rollback()
+        raise
+    else:
+        if nested:
+            conn.execute(f"RELEASE {savepoint}")
+        else:
+            conn.commit()
+
+
+def atomic_api_write(conn: sqlite3.Connection, name: str, operation):
+    try:
+        with sqlite_atomic_write(conn, name):
+            payload, status = operation()
+            if status >= 400:
+                raise AtomicApiRollback(payload, status)
+            return payload, status
+    except AtomicApiRollback as exc:
+        return exc.payload, exc.status
+
+
 def rows_to_dicts(rows):
     return [dict(r) for r in rows]
 
@@ -469,15 +514,19 @@ def private_host_artifact_download(
         return {"error": "artifact_not_found"}, 404
 
     artifact = conn.execute(
-        """SELECT a.*,COALESCE(a.task_id,r.task_id) AS effective_task_id,
-                  COALESCE(t.workspace_id,r.workspace_id,'local-demo') AS workspace_id
+        """SELECT a.*,COALESCE(a.task_id,r.task_id) AS effective_task_id
            FROM artifacts a
            LEFT JOIN runs r ON r.run_id=a.run_id
            LEFT JOIN tasks t ON t.task_id=COALESCE(a.task_id,r.task_id)
            WHERE a.artifact_id=?""",
         (artifact_id,),
     ).fetchone()
-    if not artifact or normalize_workspace_id(artifact["workspace_id"]) != normalize_workspace_id(human_context.get("workspace_id")):
+    if not artifact or not human_workspace_object_visible(
+        conn,
+        human_context,
+        "artifact",
+        artifact_id,
+    ):
         return {"error": "artifact_not_found"}, 404
 
     run_id = artifact["run_id"]
@@ -1369,6 +1418,15 @@ CREATE TABLE IF NOT EXISTS agents (
     FOREIGN KEY(owner_user_id) REFERENCES users(user_id)
 );
 
+CREATE TABLE IF NOT EXISTS workspace_agent_memberships (
+    workspace_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'human-created',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(workspace_id, agent_id),
+    FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS tasks (
     task_id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL DEFAULT 'local-demo',
@@ -1451,6 +1509,9 @@ CREATE TABLE IF NOT EXISTS approvals (
     approver_user_id TEXT,
     decision TEXT NOT NULL CHECK(decision IN ('pending','approved','rejected','expired')),
     reason TEXT,
+    subject_type TEXT,
+    subject_id TEXT,
+    subject_hash TEXT,
     expires_at TEXT,
     created_at TEXT NOT NULL,
     decided_at TEXT,
@@ -1801,6 +1862,16 @@ CREATE TABLE IF NOT EXISTS agent_gateway_heartbeat_observations (
     FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
 );
 
+CREATE TABLE IF NOT EXISTS agent_gateway_session_heartbeat_observations (
+    session_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(session_id) REFERENCES agent_gateway_sessions(session_id),
+    FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS agent_gateway_enrollment_requests (
     request_id TEXT PRIMARY KEY,
     approval_id TEXT NOT NULL,
@@ -2086,6 +2157,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id
 CREATE INDEX IF NOT EXISTS idx_runtime_events_connector ON runtime_events(runtime_connector_id);
 CREATE INDEX IF NOT EXISTS idx_agent_gateway_tokens_agent ON agent_gateway_tokens(agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_gateway_tokens_status ON agent_gateway_tokens(status);
+CREATE INDEX IF NOT EXISTS idx_agent_gateway_session_heartbeat_worker
+ON agent_gateway_session_heartbeat_observations(workspace_id,agent_id,updated_at);
 CREATE INDEX IF NOT EXISTS idx_connectors_base ON connectors(base_id);
 CREATE INDEX IF NOT EXISTS idx_sync_events_connector ON sync_events(connector_id);
 CREATE INDEX IF NOT EXISTS idx_external_links_internal ON external_object_links(internal_object_type, internal_object_id);
@@ -2376,6 +2449,114 @@ def ensure_memory_type_schema(conn: sqlite3.Connection):
     conn.execute(f"DROP TABLE {backup_table}")
 
 
+def ensure_workspace_agent_membership_migration(conn: sqlite3.Connection) -> None:
+    if conn.execute(
+        "SELECT 1 FROM schema_migrations WHERE migration_id=?",
+        (WORKSPACE_AGENT_MEMBERSHIP_MIGRATION_ID,),
+    ).fetchone():
+        return
+    with sqlite_atomic_write(conn, "workspace_agent_membership_migration"):
+        if conn.execute(
+            "SELECT 1 FROM schema_migrations WHERE migration_id=?",
+            (WORKSPACE_AGENT_MEMBERSHIP_MIGRATION_ID,),
+        ).fetchone():
+            return
+        applied_at = now_iso()
+        conn.execute(
+            """INSERT OR IGNORE INTO workspace_agent_memberships(
+                workspace_id,agent_id,source,created_at
+            )
+            SELECT 'local-demo',a.agent_id,'legacy-local-backfill',COALESCE(a.created_at,?)
+            FROM agents a
+            WHERE NOT EXISTS (
+                SELECT 1 FROM workspace_agent_memberships wam
+                WHERE wam.agent_id=a.agent_id
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM tasks t
+                WHERE (t.owner_agent_id=a.agent_id OR agentops_json_array_contains(t.collaborator_agent_ids,a.agent_id))
+                  AND COALESCE(t.workspace_id,'local-demo')<>'local-demo'
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM runs r
+                WHERE r.agent_id=a.agent_id
+                  AND COALESCE(r.workspace_id,'local-demo')<>'local-demo'
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM agent_plans ap
+                WHERE ap.agent_id=a.agent_id
+                  AND COALESCE(ap.workspace_id,'local-demo')<>'local-demo'
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM agent_gateway_tokens tok
+                WHERE tok.agent_id=a.agent_id
+                  AND COALESCE(tok.workspace_id,'local-demo')<>'local-demo'
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM agent_gateway_sessions s
+                WHERE s.agent_id=a.agent_id
+                  AND COALESCE(s.workspace_id,'local-demo')<>'local-demo'
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM agent_gateway_enrollment_requests er
+                WHERE er.agent_id=a.agent_id
+                  AND COALESCE(er.workspace_id,'local-demo')<>'local-demo'
+            )""",
+            (applied_at,),
+        )
+        conn.execute(
+            """INSERT INTO schema_migrations(migration_id,description,applied_at)
+            VALUES(?,?,?)""",
+            (
+                WORKSPACE_AGENT_MEMBERSHIP_MIGRATION_ID,
+                "Backfill legacy local Agents that have no non-local workspace authority evidence.",
+                applied_at,
+            ),
+        )
+
+
+def ensure_agent_plan_approval_subject_migration(conn: sqlite3.Connection) -> None:
+    if conn.execute(
+        "SELECT 1 FROM schema_migrations WHERE migration_id=?",
+        (AGENT_PLAN_APPROVAL_SUBJECT_MIGRATION_ID,),
+    ).fetchone():
+        return
+    with sqlite_atomic_write(conn, "agent_plan_approval_subject_migration"):
+        if conn.execute(
+            "SELECT 1 FROM schema_migrations WHERE migration_id=?",
+            (AGENT_PLAN_APPROVAL_SUBJECT_MIGRATION_ID,),
+        ).fetchone():
+            return
+        for plan in conn.execute(
+            "SELECT * FROM agent_plans WHERE plan_hash IS NULL OR TRIM(plan_hash)=''"
+        ).fetchall():
+            conn.execute(
+                "UPDATE agent_plans SET plan_hash=? WHERE plan_id=?",
+                (compute_agent_plan_hash(plan), plan["plan_id"]),
+            )
+        conn.execute(
+            """UPDATE approvals
+            SET subject_type='agent_plan',
+                subject_id=(SELECT ap.plan_id FROM agent_plans ap WHERE ap.approval_id=approvals.approval_id),
+                subject_hash=(SELECT ap.plan_hash FROM agent_plans ap WHERE ap.approval_id=approvals.approval_id)
+            WHERE COALESCE(subject_type,'')=''
+              AND COALESCE(subject_id,'')=''
+              AND COALESCE(subject_hash,'')=''
+              AND EXISTS (
+                  SELECT 1 FROM agent_plans ap
+                  WHERE ap.approval_id=approvals.approval_id
+              )"""
+        )
+        conn.execute(
+            "INSERT INTO schema_migrations(migration_id,description,applied_at) VALUES(?,?,?)",
+            (
+                AGENT_PLAN_APPROVAL_SUBJECT_MIGRATION_ID,
+                "Bind legacy Agent Plan approvals to an explicit immutable subject type, id, and plan hash.",
+                now_iso(),
+            ),
+        )
+
+
 def ensure_schema_migrations(conn: sqlite3.Connection):
     conn.execute(
         """CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -2415,6 +2596,9 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "agent_plans", "approval_id", "approval_id TEXT")
     ensure_column(conn, "agent_plans", "approved_by_user_id", "approved_by_user_id TEXT")
     ensure_column(conn, "agent_plans", "approved_at", "approved_at TEXT")
+    ensure_column(conn, "approvals", "subject_type", "subject_type TEXT")
+    ensure_column(conn, "approvals", "subject_id", "subject_id TEXT")
+    ensure_column(conn, "approvals", "subject_hash", "subject_hash TEXT")
     ensure_column(conn, "plan_evidence_manifests", "plan_hash", "plan_hash TEXT")
     ensure_column(conn, "plan_evidence_manifests", "verification_result_hash", "verification_result_hash TEXT")
     ensure_column(conn, "knowledge_documents", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'global'")
@@ -2473,6 +2657,9 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     conn.execute("UPDATE prepared_action_execution_leases SET expires_at=started_at WHERE expires_at IS NULL OR expires_at='' ")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_workspace_agent_memberships_agent ON workspace_agent_memberships(agent_id, workspace_id)")
+    ensure_workspace_agent_membership_migration(conn)
+    ensure_agent_plan_approval_subject_migration(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_agent_plan ON runs(agent_plan_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_workflow_jobs_status ON workflow_jobs(status, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_plans_workspace ON agent_plans(workspace_id, created_at)")
@@ -3039,9 +3226,11 @@ def upsert_agent(conn, row: dict, actor_id="adapter-import") -> str:
 
 
 def upsert_task(conn, row: dict, actor_id="adapter-import") -> str:
-    row.setdefault("workspace_id", "local-demo")
+    row["workspace_id"] = normalize_workspace_id(row.get("workspace_id") or "local-demo")
     before = conn.execute("SELECT * FROM tasks WHERE task_id=?", (row["task_id"],)).fetchone()
     if before:
+        if row_workspace(before) != row["workspace_id"]:
+            raise ValueError("task_workspace_conflict")
         if row_unchanged(before, row, {"created_at", "updated_at"}):
             return "unchanged"
         conn.execute(
@@ -4081,6 +4270,113 @@ def normalize_workspace_id(value) -> str:
     return normalized or "local-demo"
 
 
+def human_session_workspace(auth_context: dict | None) -> str | None:
+    if not isinstance(auth_context, dict) or auth_context.get("mode") != "human_session":
+        return None
+    return normalize_workspace_id(auth_context.get("workspace_id") or "local-demo")
+
+
+def agent_workspace_visibility_sql(
+    agent_alias: str = "a",
+    workspace_placeholder: str = "?",
+) -> str:
+    agent_id = f"{agent_alias}.agent_id"
+    workspace = workspace_placeholder
+    return f"""(
+        EXISTS (SELECT 1 FROM workspace_agent_memberships wam
+            WHERE wam.agent_id={agent_id} AND wam.workspace_id={workspace})
+        OR EXISTS (SELECT 1 FROM tasks t
+            WHERE t.owner_agent_id={agent_id} AND COALESCE(t.workspace_id,'local-demo')={workspace})
+        OR EXISTS (SELECT 1 FROM tasks t
+            WHERE agentops_json_array_contains(t.collaborator_agent_ids, {agent_id})
+              AND COALESCE(t.workspace_id,'local-demo')={workspace})
+        OR EXISTS (SELECT 1 FROM runs r
+            WHERE r.agent_id={agent_id} AND COALESCE(r.workspace_id,'local-demo')={workspace})
+        OR EXISTS (SELECT 1 FROM agent_plans ap
+            WHERE ap.agent_id={agent_id} AND COALESCE(ap.workspace_id,'local-demo')={workspace})
+        OR EXISTS (SELECT 1 FROM agent_gateway_tokens tok
+            WHERE tok.agent_id={agent_id} AND COALESCE(tok.workspace_id,'local-demo')={workspace})
+        OR EXISTS (SELECT 1 FROM agent_gateway_sessions s
+            WHERE s.agent_id={agent_id} AND COALESCE(s.workspace_id,'local-demo')={workspace})
+        OR EXISTS (SELECT 1 FROM agent_gateway_enrollment_requests er
+            WHERE er.agent_id={agent_id} AND COALESCE(er.workspace_id,'local-demo')={workspace})
+    )"""
+
+
+def human_workspace_object_visible(
+    conn: sqlite3.Connection,
+    auth_context: dict | None,
+    object_type: str,
+    object_id: str | None,
+) -> bool:
+    workspace_id = human_session_workspace(auth_context)
+    if not workspace_id:
+        return True
+    object_id = str(object_id or "").strip()
+    if not object_id:
+        return False
+    queries = {
+        "agent": f"""SELECT 1 FROM agents a WHERE a.agent_id=?
+            AND {agent_workspace_visibility_sql('a', '?2')}""",
+        "task": "SELECT 1 FROM tasks WHERE task_id=? AND COALESCE(workspace_id,'local-demo')=?",
+        "run": "SELECT 1 FROM runs WHERE run_id=? AND COALESCE(workspace_id,'local-demo')=?",
+        "tool_call": """SELECT 1 FROM tool_calls tc JOIN runs r ON r.run_id=tc.run_id
+            WHERE tc.tool_call_id=? AND COALESCE(r.workspace_id,'local-demo')=?""",
+        "approval": """SELECT 1 FROM approvals ap
+            LEFT JOIN runs r ON r.run_id=ap.run_id
+            LEFT JOIN tasks t ON t.task_id=COALESCE(ap.task_id,r.task_id)
+            WHERE ap.approval_id=?
+              AND (ap.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?2)
+              AND (COALESCE(ap.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?2)
+              AND (ap.run_id IS NOT NULL OR COALESCE(ap.task_id,r.task_id) IS NOT NULL)""",
+        "memory": """SELECT 1 FROM memories m JOIN tasks t ON t.task_id=m.task_id
+            WHERE m.memory_id=? AND COALESCE(t.workspace_id,'local-demo')=?""",
+        "evaluation": """SELECT 1 FROM evaluations e JOIN runs r ON r.run_id=e.run_id
+            WHERE e.evaluation_id=? AND COALESCE(r.workspace_id,'local-demo')=?""",
+        "artifact": """SELECT 1 FROM artifacts a
+            LEFT JOIN runs r ON r.run_id=a.run_id
+            LEFT JOIN tasks t ON t.task_id=COALESCE(a.task_id,r.task_id)
+            WHERE a.artifact_id=?
+              AND (a.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?2)
+              AND (COALESCE(a.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?2)
+              AND (a.run_id IS NOT NULL OR COALESCE(a.task_id,r.task_id) IS NOT NULL)""",
+        "agent_plan": "SELECT 1 FROM agent_plans WHERE plan_id=? AND COALESCE(workspace_id,'local-demo')=?",
+        "evaluation_case": """SELECT 1 FROM evaluation_case_candidates
+            WHERE case_id=? AND COALESCE(workspace_id,'local-demo')=?""",
+        "evaluation_case_run": """SELECT 1 FROM evaluation_case_runs
+            WHERE case_run_id=? AND COALESCE(workspace_id,'local-demo')=?""",
+    }
+    sql = queries.get(object_type)
+    if not sql:
+        return False
+    return conn.execute(sql, (object_id, workspace_id)).fetchone() is not None
+
+
+def human_workspace_not_found(object_type: str) -> tuple[dict, int]:
+    return {
+        "error": "not found",
+        "message": f"{object_type.replace('_', ' ').title()} was not found in the Human Session workspace.",
+    }, 404
+
+
+def bind_human_workspace_body(
+    auth_context: dict | None,
+    body: dict,
+) -> tuple[dict | None, tuple[dict, int] | None]:
+    workspace_id = human_session_workspace(auth_context)
+    if not workspace_id:
+        return body, None
+    requested_workspace = normalize_workspace_id(body.get("workspace_id") or workspace_id)
+    if requested_workspace != workspace_id:
+        return None, ({
+            "error": "human_workspace_forbidden",
+            "message": "The Human Session cannot write to another workspace.",
+        }, 403)
+    bound = dict(body)
+    bound["workspace_id"] = workspace_id
+    return bound, None
+
+
 def workspace_forbidden(entity_type: str, entity_id: str, requested_workspace: str, actual_workspace: str) -> tuple[dict, int]:
     return {
         "error": "forbidden",
@@ -4652,8 +4948,14 @@ def agent_gateway_token_heartbeat_state(row, now_dt: dt.datetime | None = None) 
     return "stale" if stale else "fresh"
 
 
-def agent_gateway_enrollment_rows(conn) -> list[dict]:
-    rows = rows_to_dicts(conn.execute("SELECT token_id,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at FROM agent_gateway_tokens ORDER BY created_at DESC LIMIT 200").fetchall())
+def agent_gateway_enrollment_rows(conn, workspace_id: str | None = None) -> list[dict]:
+    if workspace_id:
+        rows = rows_to_dicts(conn.execute(
+            "SELECT token_id,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at FROM agent_gateway_tokens WHERE workspace_id=? ORDER BY created_at DESC LIMIT 200",
+            (normalize_workspace_id(workspace_id),),
+        ).fetchall())
+    else:
+        rows = rows_to_dicts(conn.execute("SELECT token_id,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at FROM agent_gateway_tokens ORDER BY created_at DESC LIMIT 200").fetchall())
     now_dt = dt.datetime.now(dt.timezone.utc)
     for row in rows:
         scopes = parse_scope_list(row.get("scopes_json"))
@@ -4680,19 +4982,26 @@ def agent_gateway_session_state(row, now_dt: dt.datetime | None = None) -> str:
     if status != "active":
         return status or "inactive"
     expires_at = row.get("expires_at") if hasattr(row, "get") else row["expires_at"]
-    try:
-        if expires_at and dt.datetime.fromisoformat(expires_at) < now_dt:
-            return "expired"
-    except Exception:
-        return status
+    expires_dt = parse_iso_datetime(expires_at)
+    if expires_dt is None:
+        return "invalid_expiry"
+    if expires_dt.astimezone(dt.timezone.utc) <= now_dt.astimezone(dt.timezone.utc):
+        return "expired"
     return "active"
 
 
-def agent_gateway_session_rows(conn) -> list[dict]:
-    rows = rows_to_dicts(conn.execute(
-        """SELECT session_id,parent_token_id,workspace_id,agent_id,scopes_json,status,created_at,expires_at,revoked_at,last_used_at
-        FROM agent_gateway_sessions ORDER BY created_at DESC LIMIT 200"""
-    ).fetchall())
+def agent_gateway_session_rows(conn, workspace_id: str | None = None) -> list[dict]:
+    if workspace_id:
+        rows = rows_to_dicts(conn.execute(
+            """SELECT session_id,parent_token_id,workspace_id,agent_id,scopes_json,status,created_at,expires_at,revoked_at,last_used_at
+            FROM agent_gateway_sessions WHERE workspace_id=? ORDER BY created_at DESC LIMIT 200""",
+            (normalize_workspace_id(workspace_id),),
+        ).fetchall())
+    else:
+        rows = rows_to_dicts(conn.execute(
+            """SELECT session_id,parent_token_id,workspace_id,agent_id,scopes_json,status,created_at,expires_at,revoked_at,last_used_at
+            FROM agent_gateway_sessions ORDER BY created_at DESC LIMIT 200"""
+        ).fetchall())
     now_dt = dt.datetime.now(dt.timezone.utc)
     for row in rows:
         row["scopes"] = parse_scope_list(row.get("scopes_json"))
@@ -4705,17 +5014,17 @@ def agent_gateway_public_session_rows(conn) -> list[dict]:
     return [public_remote_session(row) for row in agent_gateway_session_rows(conn)]
 
 
-def worker_remote_fleet_summary(conn) -> dict:
-    enrollments = agent_gateway_enrollment_rows(conn)
-    sessions = agent_gateway_session_rows(conn)
+def worker_remote_fleet_summary(conn, workspace_id: str | None = None) -> dict:
+    normalized_workspace = normalize_workspace_id(workspace_id) if workspace_id else None
+    enrollments = agent_gateway_enrollment_rows(conn, normalized_workspace)
+    sessions = agent_gateway_session_rows(conn, normalized_workspace)
     remote_agent_ids = sorted({
         row.get("agent_id")
         for row in [*enrollments, *sessions]
         if row.get("agent_id")
     })
     agents_by_id = {}
-    heartbeats_by_agent = {}
-    heartbeats_by_worker = {}
+    heartbeats_by_session = {}
     if remote_agent_ids:
         placeholders = ",".join("?" for _ in remote_agent_ids)
         agents_by_id = {
@@ -4725,31 +5034,25 @@ def worker_remote_fleet_summary(conn) -> dict:
                 tuple(remote_agent_ids),
             ).fetchall())
         }
-        heartbeats_by_agent = {
-            row["agent_id"]: row
+        observation_where = f"agent_id IN ({placeholders})"
+        observation_params: tuple[Any, ...] = tuple(remote_agent_ids)
+        if normalized_workspace:
+            observation_where += " AND workspace_id=?"
+            observation_params = (*observation_params, normalized_workspace)
+        heartbeats_by_session = {
+            row["session_id"]: row
             for row in rows_to_dicts(conn.execute(
-                f"""SELECT agent_id, MAX(created_at) AS last_heartbeat_at
-                FROM runtime_events
-                WHERE event_type='agent.heartbeat' AND agent_id IN ({placeholders})
-                GROUP BY agent_id""",
-                tuple(remote_agent_ids),
-            ).fetchall())
-        }
-        heartbeats_by_worker = {
-            (row["workspace_id"], row["agent_id"]): row
-            for row in rows_to_dicts(conn.execute(
-                f"""SELECT workspace_id,agent_id,updated_at AS last_heartbeat_at
-                FROM agent_gateway_heartbeat_observations
-                WHERE agent_id IN ({placeholders})""",
-                tuple(remote_agent_ids),
+                f"""SELECT session_id,workspace_id,agent_id,status,updated_at AS last_heartbeat_at
+                FROM agent_gateway_session_heartbeat_observations
+                WHERE {observation_where}""",
+                observation_params,
             ).fetchall())
         }
     return build_worker_remote_fleet_summary(
         enrollments=enrollments,
         sessions=sessions,
         agents_by_id=agents_by_id,
-        heartbeats_by_agent=heartbeats_by_agent,
-        heartbeats_by_worker=heartbeats_by_worker,
+        heartbeats_by_session=heartbeats_by_session,
     )
 
 
@@ -4964,16 +5267,24 @@ def security_production_readiness(conn: sqlite3.Connection, headers) -> dict:
     }
 
 
-def agent_gateway_revoke_enrollment(conn, body) -> tuple[dict, int]:
+def agent_gateway_revoke_enrollment(
+    conn,
+    body,
+    *,
+    workspace_id: str | None = None,
+) -> tuple[dict, int]:
     token_id = body.get("token_id")
     agent_id = body.get("agent_id")
     if not token_id and not agent_id:
         return {"error": "token_id or agent_id is required"}, 400
     where = "token_id=?" if token_id else "agent_id=? AND status='active'"
-    param = token_id or agent_id
-    before = rows_to_dicts(conn.execute(f"SELECT token_id,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at FROM agent_gateway_tokens WHERE {where}", (param,)).fetchall())
+    params: list[Any] = [token_id or agent_id]
+    if workspace_id:
+        where += " AND workspace_id=?"
+        params.append(normalize_workspace_id(workspace_id))
+    before = rows_to_dicts(conn.execute(f"SELECT token_id,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at FROM agent_gateway_tokens WHERE {where}", params).fetchall())
     now = now_iso()
-    conn.execute(f"UPDATE agent_gateway_tokens SET status='revoked', revoked_at=? WHERE {where}", (now, param))
+    conn.execute(f"UPDATE agent_gateway_tokens SET status='revoked', revoked_at=? WHERE {where}", (now, *params))
     revoked_session_ids: list[str] = []
     for row in before:
         sessions = rows_to_dicts(conn.execute(
@@ -5109,6 +5420,21 @@ def agent_gateway_heartbeat_locked(conn, body, agent_id: str) -> tuple[dict, int
             (recorded_at, recorded_at, body.get("_auth_token_id")),
         )
     workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    requested_session_id = str(body.get("_auth_session_id") or "").strip() or None
+    session_id = None
+    if requested_session_id:
+        session_row = conn.execute(
+            """SELECT session_id,workspace_id,agent_id,status,expires_at
+            FROM agent_gateway_sessions WHERE session_id=?""",
+            (requested_session_id,),
+        ).fetchone()
+        if (
+            session_row
+            and session_row["workspace_id"] == workspace_id
+            and session_row["agent_id"] == agent_id
+            and agent_gateway_session_state(session_row) == "active"
+        ):
+            session_id = requested_session_id
     previous_observation = conn.execute(
         "SELECT status,last_ledger_at FROM agent_gateway_heartbeat_observations WHERE workspace_id=? AND agent_id=?",
         (workspace_id, agent_id),
@@ -5131,6 +5457,17 @@ def agent_gateway_heartbeat_locked(conn, body, agent_id: str) -> tuple[dict, int
             updated_at=excluded.updated_at""",
         (workspace_id, agent_id, status, last_ledger_at, recorded_at),
     )
+    if session_id:
+        conn.execute(
+            """INSERT INTO agent_gateway_session_heartbeat_observations(
+                session_id,workspace_id,agent_id,status,updated_at
+            ) VALUES(?,?,?,?,?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                status=excluded.status,
+                updated_at=excluded.updated_at
+            WHERE workspace_id=excluded.workspace_id AND agent_id=excluded.agent_id""",
+            (session_id, workspace_id, agent_id, status, recorded_at),
+        )
     if ledger_due:
         runtime_event(conn, "rtc_agent_gateway_local", "agent.heartbeat", status, agent_id=agent_id, output_summary=body.get("summary") or "Heartbeat recorded.")
         audit(
@@ -5152,6 +5489,7 @@ def agent_gateway_heartbeat_locked(conn, body, agent_id: str) -> tuple[dict, int
         "status": status,
         "recorded_at": recorded_at,
         "ledger_recorded": ledger_due,
+        "session_observation_recorded": bool(session_id),
         "ledger_interval_sec": AGENT_GATEWAY_HEARTBEAT_LEDGER_INTERVAL_SEC,
     }, 200
 
@@ -5313,6 +5651,64 @@ def agent_gateway_pull_tasks(conn, qs, headers, auth_ctx=None) -> tuple[dict, in
     }, 200
 
 
+def create_human_agent_api(conn, body: dict, human_context: dict | None) -> tuple[dict, int]:
+    return atomic_api_write(
+        conn,
+        "create_human_agent",
+        lambda: create_human_agent_api_locked(conn, body, human_context),
+    )
+
+
+def create_human_agent_api_locked(conn, body: dict, human_context: dict | None) -> tuple[dict, int]:
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    agent_id = body.get("agent_id") or new_id("agt")
+    if conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (agent_id,)).fetchone():
+        return {
+            "error": "agent_id_conflict",
+            "message": "The requested agent_id is already registered.",
+            "token_omitted": True,
+        }, 409
+    now = now_iso()
+    row = {
+        "agent_id": agent_id,
+        "name": body.get("name", "New Agent"),
+        "role": body.get("role", "Worker"),
+        "description": body.get("description", ""),
+        "runtime_type": body.get("runtime_type", "mock"),
+        "model_provider": body.get("model_provider", "mock-provider"),
+        "model_name": body.get("model_name", "mock-model"),
+        "status": body.get("status", "idle"),
+        "permission_level": body.get("permission_level", "standard"),
+        "allowed_tools": json.dumps(body.get("allowed_tools", ["browser.search"]), ensure_ascii=False),
+        "budget_limit_usd": float(body.get("budget_limit_usd", 5.0)),
+        "owner_user_id": body.get("owner_user_id", "usr_founder"),
+        "created_at": now,
+        "updated_at": now,
+    }
+    conn.execute(
+        """INSERT INTO agents(agent_id,name,role,description,runtime_type,model_provider,model_name,status,permission_level,allowed_tools,budget_limit_usd,owner_user_id,created_at,updated_at)
+        VALUES(:agent_id,:name,:role,:description,:runtime_type,:model_provider,:model_name,:status,:permission_level,:allowed_tools,:budget_limit_usd,:owner_user_id,:created_at,:updated_at)""",
+        row,
+    )
+    conn.execute(
+        """INSERT INTO workspace_agent_memberships(workspace_id,agent_id,source,created_at)
+        VALUES(?,?,?,?)""",
+        (workspace_id, agent_id, "human-created", now),
+    )
+    audit(
+        conn,
+        "user",
+        (human_context or {}).get("account_id") or "usr_founder",
+        "agent.create",
+        "agents",
+        agent_id,
+        None,
+        row,
+        {"workspace_id": workspace_id},
+    )
+    return {**row, "workspace_id": workspace_id}, 201
+
+
 def create_task_api(conn, body: dict) -> tuple[dict, int]:
     now = now_iso()
     title = redact_text(body.get("title") or "New MIS task", 160)
@@ -5344,9 +5740,17 @@ def create_task_api(conn, body: dict) -> tuple[dict, int]:
 
     task_id = body.get("task_id") or new_id("tsk")
     before = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    requested_workspace = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    if before and row_workspace(before) != requested_workspace:
+        return {
+            "error": "task_id_conflict",
+            "message": "The requested task_id already belongs to another workspace.",
+            "task_id": task_id,
+            "token_omitted": True,
+        }, 409
     row = {
         "task_id": task_id,
-        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workspace_id": requested_workspace,
         "title": title,
         "description": description,
         "requester_id": redact_text(body.get("requester_id") or "usr_customer_demo", 120),
@@ -5581,7 +5985,7 @@ def agent_gateway_get_run_graph(conn: sqlite3.Connection, run_id: str, headers, 
     _run, access_error = agent_gateway_run_read_access(conn, run_id, ident, auth_ctx)
     if access_error:
         return access_error
-    data = run_graph(conn, run_id)
+    data = run_graph(conn, run_id, workspace_id=ident["workspace_id"])
     if not data:
         return {"error": "not found"}, 404
     data.update({"provider": "agent_gateway", "operation": "run_graph", "workspace_id": ident["workspace_id"], "gateway_scope": agent_gateway_scope_metadata(ident, auth_ctx), "token_omitted": True})
@@ -5603,8 +6007,12 @@ def agent_gateway_get_run_evidence_graph(conn: sqlite3.Connection, run_id: str, 
 def agent_gateway_list_artifacts(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 200)
-    where = ["COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?"]
-    params: list = [ident["workspace_id"]]
+    where = [
+        "(a.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)",
+        "(COALESCE(a.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)",
+        "(a.run_id IS NOT NULL OR COALESCE(a.task_id,r.task_id) IS NOT NULL)",
+    ]
+    params: list = [ident["workspace_id"], ident["workspace_id"]]
     if "task_id" in qs:
         task_id = qs["task_id"][0]
         _task, access_error = agent_gateway_task_read_access(conn, task_id, ident, auth_ctx)
@@ -5639,8 +6047,12 @@ def agent_gateway_list_artifacts(conn: sqlite3.Connection, qs: dict, headers, au
 def agent_gateway_list_approvals(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 200)
-    where = ["COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?"]
-    params: list = [ident["workspace_id"]]
+    where = [
+        "(ap.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)",
+        "(COALESCE(ap.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)",
+        "(ap.run_id IS NOT NULL OR COALESCE(ap.task_id,r.task_id) IS NOT NULL)",
+    ]
+    params: list = [ident["workspace_id"], ident["workspace_id"]]
     if "task_id" in qs:
         task_id = qs["task_id"][0]
         _task, access_error = agent_gateway_task_read_access(conn, task_id, ident, auth_ctx)
@@ -6174,7 +6586,10 @@ def fts_query(raw: str) -> str:
 
 
 def knowledge_visibility_filter(auth_ctx=None) -> tuple[str, list[str], dict]:
-    if auth_ctx and agent_gateway_is_bound_auth(auth_ctx):
+    if auth_ctx and (
+        agent_gateway_is_bound_auth(auth_ctx)
+        or auth_ctx.get("mode") == "human_session"
+    ):
         workspace_id = normalize_workspace_id(auth_ctx.get("workspace_id") or "local-demo")
         return (
             " AND (kd.workspace_id='global' OR kd.workspace_id=?)",
@@ -6549,9 +6964,23 @@ def knowledge_retrieval_evidence_packet(conn: sqlite3.Connection, qs: dict, head
     baseline_limit = bounded_int((qs.get("baseline_limit") or ["5"])[0], 5, 1, 10)
     search_auth_ctx = auth_ctx if auth_ctx is not None else {}
     counts = {
-        "knowledge_documents": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_documents"),
-        "knowledge_chunks": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_chunks"),
-        "knowledge_chunk_fts_rows": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_chunk_fts"),
+        "knowledge_documents": scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM knowledge_documents WHERE workspace_id IN ('global', ?)",
+            (workspace_id,),
+        ),
+        "knowledge_chunks": scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM knowledge_chunks WHERE workspace_id IN ('global', ?)",
+            (workspace_id,),
+        ),
+        "knowledge_chunk_fts_rows": scalar_count(
+            conn,
+            """SELECT COUNT(*) FROM knowledge_chunk_fts fts
+            JOIN knowledge_chunks kc ON kc.chunk_id=fts.chunk_id
+            WHERE kc.workspace_id IN ('global', ?)""",
+            (workspace_id,),
+        ),
         "workspace_documents": scalar_count(
             conn,
             "SELECT COUNT(*) FROM knowledge_documents WHERE workspace_id IN ('global', ?)",
@@ -6852,16 +7281,124 @@ def verify_agent_plan_row(row: sqlite3.Row | dict, conn: sqlite3.Connection | No
     )
 
 
-def insert_or_keep_agent_plan_approval(conn: sqlite3.Connection, approval_row: dict) -> dict:
-    existing = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_row["approval_id"],)).fetchone()
+APPROVAL_AUTHORITY_FIELDS = ("task_id", "run_id", "tool_call_id", "requested_by_agent_id")
+AGENT_PLAN_APPROVAL_SUBJECT_FIELDS = ("subject_type", "subject_id", "subject_hash")
+
+
+def approval_authority_matches(existing: sqlite3.Row | dict, expected: dict) -> bool:
+    return all(
+        str(row_field(existing, field) or "") == str(expected.get(field) or "")
+        for field in APPROVAL_AUTHORITY_FIELDS
+    )
+
+
+def agent_plan_approval_subject_matches(existing: sqlite3.Row | dict, expected: dict) -> bool:
+    return approval_authority_matches(existing, expected) and all(
+        str(row_field(existing, field) or "") == str(expected.get(field) or "")
+        for field in AGENT_PLAN_APPROVAL_SUBJECT_FIELDS
+    )
+
+
+def approval_id_conflict_payload(approval_id: str, message: str) -> dict:
+    return {
+        "error": "approval_id_conflict",
+        "approval_id": approval_id,
+        "message": message,
+        "token_omitted": True,
+    }
+
+
+def insert_or_keep_authority_approval(
+    conn: sqlite3.Connection,
+    approval_row: dict,
+    *,
+    conflict_message: str,
+) -> tuple[dict | None, tuple[dict, int] | None]:
+    approval_row = {
+        **approval_row,
+        "subject_type": approval_row.get("subject_type"),
+        "subject_id": approval_row.get("subject_id"),
+        "subject_hash": approval_row.get("subject_hash"),
+    }
+    approval_id = approval_row["approval_id"]
+    existing = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
     if existing:
-        return dict(existing)
-    conn.execute(
-        """INSERT INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
-        VALUES(:approval_id,:task_id,:run_id,:tool_call_id,:requested_by_agent_id,:approver_user_id,:decision,:reason,:expires_at,:created_at,:decided_at)""",
+        if not approval_authority_matches(existing, approval_row):
+            return None, (approval_id_conflict_payload(approval_id, conflict_message), 409)
+        return dict(existing), None
+    inserted = conn.execute(
+        """INSERT OR IGNORE INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,subject_type,subject_id,subject_hash,expires_at,created_at,decided_at)
+        VALUES(:approval_id,:task_id,:run_id,:tool_call_id,:requested_by_agent_id,:approver_user_id,:decision,:reason,:subject_type,:subject_id,:subject_hash,:expires_at,:created_at,:decided_at)""",
         approval_row,
     )
-    return approval_row
+    if inserted.rowcount == 1:
+        return approval_row, None
+    concurrent = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+    if not concurrent or not approval_authority_matches(concurrent, approval_row):
+        return None, (approval_id_conflict_payload(approval_id, conflict_message), 409)
+    return dict(concurrent), None
+
+
+def insert_or_keep_agent_plan_approval(
+    conn: sqlite3.Connection,
+    approval_row: dict,
+) -> tuple[dict | None, tuple[dict, int] | None]:
+    existing = conn.execute(
+        "SELECT * FROM approvals WHERE approval_id=?",
+        (approval_row["approval_id"],),
+    ).fetchone()
+    if existing and not agent_plan_approval_subject_matches(existing, approval_row):
+        return None, (
+            approval_id_conflict_payload(
+                approval_row["approval_id"],
+                "Agent Plan approval_id is not bound to this exact Agent Plan subject and hash.",
+            ),
+            409,
+        )
+    return insert_or_keep_authority_approval(
+        conn,
+        approval_row,
+        conflict_message="Agent Plan approval_id is already bound to another task, run, tool call, or Agent.",
+    )
+
+
+def validate_agent_plan_approval_binding(
+    conn: sqlite3.Connection,
+    plan: sqlite3.Row | dict,
+    approval: sqlite3.Row | dict,
+) -> tuple[dict, int] | None:
+    plan_id = row_field(plan, "plan_id")
+    task_id = row_field(plan, "task_id")
+    run_id = row_field(plan, "run_id") or stable_id("run_plan_approval", plan_id)
+    expected = {
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": None,
+        "requested_by_agent_id": row_field(plan, "agent_id"),
+        "subject_type": "agent_plan",
+        "subject_id": plan_id,
+        "subject_hash": row_field(plan, "plan_hash") or compute_agent_plan_hash(plan),
+    }
+    approval_id = row_field(approval, "approval_id")
+    conflict = not task_id or not run_id or not agent_plan_approval_subject_matches(approval, expected)
+    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone() if task_id else None
+    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone() if run_id else None
+    plan_workspace = normalize_workspace_id(row_field(plan, "workspace_id"))
+    if (
+        not task
+        or not run
+        or row_workspace(task) != plan_workspace
+        or row_workspace(run) != plan_workspace
+        or run["task_id"] != task_id
+        or run["agent_id"] != row_field(plan, "agent_id")
+    ):
+        conflict = True
+    if not conflict:
+        return None
+    return approval_id_conflict_payload(
+        approval_id,
+        "Agent Plan approval authority does not match the immutable plan task, run, Agent, and workspace binding.",
+    ), 409
 
 
 def ensure_agent_plan_approval_run(conn: sqlite3.Connection, row: sqlite3.Row | dict) -> str | None:
@@ -6920,6 +7457,14 @@ def verify_agent_plan(conn: sqlite3.Connection, plan_id: str, headers=None, auth
 
 
 def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dict, int]:
+    return atomic_api_write(
+        conn,
+        "agent_gateway_create_agent_plan",
+        lambda: agent_gateway_create_agent_plan_locked(conn, body),
+    )
+
+
+def agent_gateway_create_agent_plan_locked(conn: sqlite3.Connection, body) -> tuple[dict, int]:
     ident = agent_gateway_identity({}, body)
     agent_id = ident["agent_id"]
     if not agent_id:
@@ -6930,7 +7475,15 @@ def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dic
         run, access_error = ensure_run_access(conn, run_id, ident)
         if access_error:
             return access_error
-        task_id = task_id or run["task_id"]
+        if task_id and task_id != run["task_id"]:
+            return {
+                "error": "agent_plan_run_task_mismatch",
+                "message": "Agent Plan task_id must match the task bound to run_id.",
+                "task_id": task_id,
+                "run_task_id": run["task_id"],
+                "token_omitted": True,
+            }, 409
+        task_id = run["task_id"]
     elif task_id:
         task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
         if not task:
@@ -6979,6 +7532,12 @@ def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dic
         "updated_at": now_iso(),
     }
     row["plan_hash"] = compute_agent_plan_hash(row)
+    if conn.execute("SELECT 1 FROM agent_plans WHERE plan_id=?", (row["plan_id"],)).fetchone():
+        return {
+            "error": "agent_plan_id_conflict",
+            "message": "The requested plan_id is already registered.",
+            "token_omitted": True,
+        }, 409
     approval_row = None
     if row["approval_required"] and row["status"] == "submitted":
         approval_row = build_agent_plan_pending_approval(
@@ -7003,7 +7562,9 @@ def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dic
         approval_row["run_id"] = ensure_agent_plan_approval_run(conn, row)
         if not approval_row.get("task_id") or not approval_row.get("run_id"):
             return build_agent_plan_approval_anchor_required_response(plan_id=row["plan_id"]), 400
-        approval_row = insert_or_keep_agent_plan_approval(conn, approval_row)
+        approval_row, approval_error = insert_or_keep_agent_plan_approval(conn, approval_row)
+        if approval_error:
+            return approval_error
         audit(conn, "agent", agent_id, "agent_gateway.agent_plan_approval_request", "approvals", approval_row["approval_id"], None, approval_row, {"plan_id": row["plan_id"], "plan_hash": row["plan_hash"], "token_omitted": True})
     audit(conn, "agent", agent_id, "agent_gateway.agent_plan_create", "agent_plans", row["plan_id"], None, row, {"raw_omitted": True, "plan_hash": row["plan_hash"]})
     runtime_event(conn, "rtc_agent_gateway_local", "agent_plan.create", "completed", run_id=run_id, task_id=task_id, agent_id=agent_id, output_summary=f"Agent plan {row['plan_id']} submitted with plan_hash={row['plan_hash'][:12]}.")
@@ -7040,11 +7601,62 @@ def agent_plan_transition_actor(conn: sqlite3.Connection, headers, body) -> tupl
     }, None
 
 
-def transition_agent_plan(conn: sqlite3.Connection, plan_id: str, decision: str, headers, body) -> tuple[dict, int]:
+def approval_ledger_user_id(conn: sqlite3.Connection, actor_id: str | None) -> str | None:
+    candidate = str(actor_id or "").strip()
+    if candidate and conn.execute(
+        "SELECT 1 FROM users WHERE user_id=?",
+        (candidate,),
+    ).fetchone():
+        return candidate
+    if conn.execute("SELECT 1 FROM users WHERE user_id='usr_founder'").fetchone():
+        return "usr_founder"
+    return None
+
+
+def transition_agent_plan(
+    conn: sqlite3.Connection,
+    plan_id: str,
+    decision: str,
+    headers,
+    body,
+    *,
+    actor_override: dict | None = None,
+) -> tuple[dict, int]:
+    return atomic_api_write(
+        conn,
+        "transition_agent_plan",
+        lambda: transition_agent_plan_locked(
+            conn,
+            plan_id,
+            decision,
+            headers,
+            body,
+            actor_override=actor_override,
+        ),
+    )
+
+
+def transition_agent_plan_locked(
+    conn: sqlite3.Connection,
+    plan_id: str,
+    decision: str,
+    headers,
+    body,
+    *,
+    actor_override: dict | None = None,
+) -> tuple[dict, int]:
     decision = coerce_choice(decision, {"approved", "rejected"}, "rejected")
-    actor, actor_error = agent_plan_transition_actor(conn, headers, body or {})
-    if actor_error:
-        return actor_error
+    if actor_override is None:
+        actor, actor_error = agent_plan_transition_actor(conn, headers, body or {})
+        if actor_error:
+            return actor_error
+    else:
+        actor = {
+            "actor_type": coerce_choice(actor_override.get("actor_type"), {"user", "admin", "policy"}, "user"),
+            "actor_id": redact_text(actor_override.get("actor_id") or "usr_founder", 120),
+            "workspace_id": normalize_workspace_id(actor_override.get("workspace_id")),
+            "auth_mode": redact_text(actor_override.get("auth_mode") or "human_session", 80),
+        }
     plan = conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
     if not plan:
         return {"error": "agent plan not found"}, 404
@@ -7089,29 +7701,32 @@ def transition_agent_plan(conn: sqlite3.Connection, plan_id: str, decision: str,
             }, 200
     now = now_iso()
     approval_id = before.get("approval_id") or stable_id("ap_plan", plan_id)
+    approval_user_id = approval_ledger_user_id(conn, actor["actor_id"])
     approval_row = {
         "approval_id": approval_id,
         "task_id": before.get("task_id") or stable_id("tsk_plan_approval", plan_id),
         "run_id": ensure_agent_plan_approval_run(conn, before) or before.get("run_id") or stable_id("run_plan_approval", plan_id),
         "tool_call_id": None,
         "requested_by_agent_id": before.get("agent_id"),
-        "approver_user_id": actor["actor_id"],
+        "approver_user_id": approval_user_id,
         "decision": decision,
         "reason": redact_text(body.get("reason") or f"Agent Plan {decision}: {plan_id} hash={(before.get('plan_hash') or '')[:12]}", 500),
+        "subject_type": "agent_plan",
+        "subject_id": plan_id,
+        "subject_hash": before.get("plan_hash") or compute_agent_plan_hash(before),
         "expires_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7)).isoformat(),
         "created_at": now,
         "decided_at": now,
     }
-    insert_or_keep_agent_plan_approval(conn, approval_row)
+    stored_approval, approval_error = insert_or_keep_agent_plan_approval(conn, approval_row)
+    if approval_error:
+        return approval_error
     conn.execute(
         """UPDATE approvals
-        SET task_id=?, run_id=?, tool_call_id=NULL, requested_by_agent_id=?, approver_user_id=?, decision=?, reason=?, decided_at=?
+        SET approver_user_id=?, decision=?, reason=?, decided_at=?
         WHERE approval_id=?""",
         (
-            approval_row["task_id"],
-            approval_row["run_id"],
-            approval_row["requested_by_agent_id"],
-            approval_row["approver_user_id"],
+            approval_user_id,
             approval_row["decision"],
             approval_row["reason"],
             approval_row["decided_at"],
@@ -7164,6 +7779,9 @@ def apply_agent_plan_approval_decision(conn: sqlite3.Connection, approval: sqlit
     if not plan:
         return None, None
     before = dict(plan)
+    binding_error = validate_agent_plan_approval_binding(conn, before, approval)
+    if binding_error:
+        return None, binding_error
     if before["status"] == "superseded":
         return None, (build_agent_plan_not_transitionable_response(
             plan_id=before["plan_id"],
@@ -7223,6 +7841,82 @@ def apply_agent_plan_approval_decision(conn: sqlite3.Connection, approval: sqlit
         "verification_result_hash": after.get("verification_result_hash") or verification_hash,
         "token_omitted": True,
     }, None
+
+
+def decide_agent_plan_approval(
+    conn: sqlite3.Connection,
+    approval: sqlite3.Row | dict,
+    decision: str,
+    *,
+    actor_id: str = "usr_founder",
+) -> tuple[dict, int] | None:
+    approval_id = row_field(approval, "approval_id")
+    if not conn.execute(
+        "SELECT 1 FROM agent_plans WHERE approval_id=?",
+        (approval_id,),
+    ).fetchone():
+        return None
+    return atomic_api_write(
+        conn,
+        "decide_agent_plan_approval",
+        lambda: decide_agent_plan_approval_locked(
+            conn,
+            approval_id,
+            decision,
+            actor_id=actor_id,
+        ),
+    )
+
+
+def decide_agent_plan_approval_locked(
+    conn: sqlite3.Connection,
+    approval_id: str,
+    decision: str,
+    *,
+    actor_id: str,
+) -> tuple[dict, int]:
+    current = conn.execute(
+        "SELECT * FROM approvals WHERE approval_id=?",
+        (approval_id,),
+    ).fetchone()
+    if not current:
+        return {"error": "not found"}, 404
+    agent_plan_decision, agent_plan_error = apply_agent_plan_approval_decision(
+        conn,
+        current,
+        decision,
+        actor_id=actor_id,
+    )
+    if agent_plan_error:
+        return agent_plan_error
+    if not agent_plan_decision:
+        return {"error": "agent plan approval not found", "token_omitted": True}, 404
+    conn.execute(
+        "UPDATE approvals SET decision=?, decided_at=? WHERE approval_id=?",
+        (decision, now_iso(), approval_id),
+    )
+    after = conn.execute(
+        "SELECT * FROM approvals WHERE approval_id=?",
+        (approval_id,),
+    ).fetchone()
+    audit(
+        conn,
+        "user",
+        actor_id,
+        f"approval.{decision}",
+        "approvals",
+        approval_id,
+        dict(current),
+        dict(after),
+        {
+            "agent_plan_id": agent_plan_decision["agent_plan"]["plan_id"],
+            "token_omitted": True,
+        },
+    )
+    return build_agent_plan_approval_decision_response(
+        approval=after,
+        agent_plan_decision=agent_plan_decision,
+    ), 200
 
 
 def load_plan_evidence_manifest(conn: sqlite3.Connection, manifest_id: str, ident: dict, auth_ctx=None) -> tuple[sqlite3.Row | None, tuple[dict, int] | None]:
@@ -9783,6 +10477,16 @@ def agent_gateway_run_heartbeat(conn, run_id: str, body) -> tuple[dict, int]:
 
 
 def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
+    if body.get("prepare_action"):
+        return atomic_api_write(
+            conn,
+            "agent_gateway_record_tool_call_with_prepared_action",
+            lambda: agent_gateway_record_tool_call_locked(conn, body),
+        )
+    return agent_gateway_record_tool_call_locked(conn, body)
+
+
+def agent_gateway_record_tool_call_locked(conn, body) -> tuple[dict, int]:
     run_id = body.get("run_id")
     ident = agent_gateway_identity({}, body)
     run, access_error = ensure_run_access(conn, run_id, ident)
@@ -9890,7 +10594,9 @@ def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
             "reason": body.get("approval_reason") or body.get("reason") or f"Prepared action required for {risk} risk tool call {tool_name}.",
             "approver_user_id": body.get("approver_user_id") or "usr_founder",
         }
-        prepared_action_payload, _prepared_status = agent_gateway_prepare_action(conn, prepare_body)
+        prepared_action_payload, prepared_status = agent_gateway_prepare_action(conn, prepare_body)
+        if prepared_status >= 400:
+            return prepared_action_payload, prepared_status
     response = {"tool_call": row, "outcome": outcome}
     if prepared_action_payload:
         response.update(build_prepared_action_prepare_response_fields(prepared_action_payload))
@@ -10058,6 +10764,14 @@ def agent_gateway_fail_prepared_action_execution(conn: sqlite3.Connection, actio
 
 
 def agent_gateway_prepare_action(conn, body) -> tuple[dict, int]:
+    return atomic_api_write(
+        conn,
+        "agent_gateway_prepare_action",
+        lambda: agent_gateway_prepare_action_locked(conn, body),
+    )
+
+
+def agent_gateway_prepare_action_locked(conn, body) -> tuple[dict, int]:
     run_id = body.get("run_id")
     ident = agent_gateway_identity({}, body)
     run, access_error = ensure_run_access(conn, run_id, ident)
@@ -10106,8 +10820,16 @@ def agent_gateway_prepare_action(conn, body) -> tuple[dict, int]:
         }, 200
     created_at = now_iso()
     expires_at = body.get("expires_at") or (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)).isoformat()
+    action_id = body.get("action_id") or stable_id("pa", run_id, idempotency_key)
+    if conn.execute("SELECT 1 FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone():
+        return {
+            "error": "prepared_action_id_conflict",
+            "action_id": action_id,
+            "message": "The requested action_id is already bound to another prepared action.",
+            "token_omitted": True,
+        }, 409
     row = {
-        "action_id": body.get("action_id") or stable_id("pa", run_id, idempotency_key),
+        "action_id": action_id,
         "workspace_id": row_workspace(run),
         "task_id": run["task_id"],
         "run_id": run_id,
@@ -10148,11 +10870,19 @@ def agent_gateway_prepare_action(conn, body) -> tuple[dict, int]:
         "created_at": created_at,
         "decided_at": None,
     }
-    conn.execute(
-        """INSERT INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
-        VALUES(:approval_id,:task_id,:run_id,:tool_call_id,:requested_by_agent_id,:approver_user_id,:decision,:reason,:expires_at,:created_at,:decided_at)""",
+    if conn.execute("SELECT 1 FROM approvals WHERE approval_id=?", (approval_id,)).fetchone():
+        return approval_id_conflict_payload(
+            approval_id,
+            "Prepared Action approval_id is already bound to another approval request.",
+        ), 409
+    stored_approval, approval_error = insert_or_keep_authority_approval(
+        conn,
         approval,
+        conflict_message="Prepared Action approval_id is already bound to another task, run, tool call, or Agent.",
     )
+    if approval_error:
+        return approval_error
+    approval = stored_approval
     conn.execute(
         """INSERT INTO prepared_actions(action_id,workspace_id,task_id,run_id,tool_call_id,approval_id,requested_by_agent_id,action_type,normalized_args_json,target_resource,risk_level,policy_version,checkpoint_json,action_hash,idempotency_key,status,provider_side_effect_id,result_summary,created_at,approved_at,consumed_at,expires_at)
         VALUES(:action_id,:workspace_id,:task_id,:run_id,:tool_call_id,:approval_id,:requested_by_agent_id,:action_type,:normalized_args_json,:target_resource,:risk_level,:policy_version,:checkpoint_json,:action_hash,:idempotency_key,:status,:provider_side_effect_id,:result_summary,:created_at,:approved_at,:consumed_at,:expires_at)""",
@@ -10330,6 +11060,25 @@ def agent_gateway_request_approval(conn, body) -> tuple[dict, int]:
     if access_error:
         return access_error
     approval_id = body.get("approval_id") or new_id("ap_gw")
+    existing_approval = conn.execute(
+        "SELECT * FROM approvals WHERE approval_id=?",
+        (approval_id,),
+    ).fetchone()
+    if existing_approval:
+        if (
+            existing_approval["run_id"] != run_id
+            or existing_approval["task_id"] != run["task_id"]
+        ):
+            return {
+                "error": "approval_id_conflict",
+                "message": "The requested approval_id is already bound to another run.",
+                "token_omitted": True,
+            }, 409
+        return {
+            "approval": dict(existing_approval),
+            "idempotent_replay": True,
+            "token_omitted": True,
+        }, 200
     tool_call_id = body.get("tool_call_id")
     if body.get("task_id") and body.get("task_id") != run["task_id"]:
         return {"error": "forbidden", "message": "Approval task_id must match the target run."}, 403
@@ -10353,11 +11102,30 @@ def agent_gateway_request_approval(conn, body) -> tuple[dict, int]:
         "created_at": now_iso(),
         "decided_at": None,
     }
-    conn.execute(
-        """INSERT OR REPLACE INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
+    inserted_approval = conn.execute(
+        """INSERT OR IGNORE INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
         VALUES(:approval_id,:task_id,:run_id,:tool_call_id,:requested_by_agent_id,:approver_user_id,:decision,:reason,:expires_at,:created_at,:decided_at)""",
         row,
     )
+    if inserted_approval.rowcount != 1:
+        concurrent_approval = conn.execute(
+            "SELECT * FROM approvals WHERE approval_id=?",
+            (approval_id,),
+        ).fetchone()
+        if not concurrent_approval or (
+            concurrent_approval["run_id"] != run_id
+            or concurrent_approval["task_id"] != run["task_id"]
+        ):
+            return {
+                "error": "approval_id_conflict",
+                "message": "The requested approval_id is already bound to another run.",
+                "token_omitted": True,
+            }, 409
+        return {
+            "approval": dict(concurrent_approval),
+            "idempotent_replay": True,
+            "token_omitted": True,
+        }, 200
     conn.execute("UPDATE runs SET approval_required=1, status='waiting_approval' WHERE run_id=?", (run_id,))
     conn.execute("UPDATE tasks SET status='waiting_approval', updated_at=? WHERE task_id=?", (now_iso(), row["task_id"]))
     runtime_event(conn, "rtc_agent_gateway_local", "approval.request", "waiting_approval", run_id=run_id, task_id=row["task_id"], agent_id=row["requested_by_agent_id"], output_summary=reason)
@@ -11332,6 +12100,25 @@ def agent_gateway_record_artifact(conn, body) -> tuple[dict, int]:
     if access_error:
         return access_error
     artifact_id = body.get("artifact_id") or stable_id("art_gw", run_id, body.get("title") or body.get("artifact_type") or "artifact")
+    existing_artifact = conn.execute(
+        "SELECT * FROM artifacts WHERE artifact_id=?",
+        (artifact_id,),
+    ).fetchone()
+    if existing_artifact:
+        if (
+            existing_artifact["run_id"] != run_id
+            or existing_artifact["task_id"] != run["task_id"]
+        ):
+            return {
+                "error": "artifact_id_conflict",
+                "message": "The requested artifact_id is already bound to another run.",
+                "token_omitted": True,
+            }, 409
+        return {
+            "artifact": dict(existing_artifact),
+            "idempotent_replay": True,
+            "token_omitted": True,
+        }, 200
     row = {
         "artifact_id": artifact_id,
         "task_id": run["task_id"],
@@ -11343,11 +12130,30 @@ def agent_gateway_record_artifact(conn, body) -> tuple[dict, int]:
         "content_hash": redact_text(body.get("content_hash"), 128) or None,
         "created_at": body.get("created_at") or now_iso(),
     }
-    conn.execute(
-        """INSERT OR REPLACE INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,content_hash,created_at)
+    inserted_artifact = conn.execute(
+        """INSERT OR IGNORE INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,content_hash,created_at)
         VALUES(:artifact_id,:task_id,:run_id,:artifact_type,:title,:uri,:summary,:content_hash,:created_at)""",
         row,
     )
+    if inserted_artifact.rowcount != 1:
+        concurrent_artifact = conn.execute(
+            "SELECT * FROM artifacts WHERE artifact_id=?",
+            (artifact_id,),
+        ).fetchone()
+        if not concurrent_artifact or (
+            concurrent_artifact["run_id"] != run_id
+            or concurrent_artifact["task_id"] != run["task_id"]
+        ):
+            return {
+                "error": "artifact_id_conflict",
+                "message": "The requested artifact_id is already bound to another run.",
+                "token_omitted": True,
+            }, 409
+        return {
+            "artifact": dict(concurrent_artifact),
+            "idempotent_replay": True,
+            "token_omitted": True,
+        }, 200
     metadata = safe_json_metadata({
         "workspace_id": ident["workspace_id"],
         "content_hash": body.get("content_hash"),
@@ -11424,20 +12230,147 @@ def agent_gateway_record_runtime_event(conn, body, auth_ctx=None) -> tuple[dict,
     }, 201
 
 
-def agent_gateway_emit_audit(conn, body) -> tuple[dict, int]:
-    agent_id = body.get("agent_id") or "agent-gateway"
-    if body.get("run_id"):
-        ident = agent_gateway_identity({}, body)
-        _run, access_error = ensure_run_access(conn, body["run_id"], ident)
+def agent_gateway_audit_entity_anchor(
+    conn: sqlite3.Connection,
+    entity_type: str,
+    entity_id: str,
+) -> sqlite3.Row | None:
+    queries = {
+        "tasks": """SELECT task_id,NULL AS run_id,workspace_id,owner_agent_id AS anchor_agent_id
+            FROM tasks WHERE task_id=?""",
+        "runs": """SELECT task_id,run_id,workspace_id,agent_id AS anchor_agent_id
+            FROM runs WHERE run_id=?""",
+        "tool_calls": """SELECT r.task_id,r.run_id,r.workspace_id,tc.agent_id AS anchor_agent_id
+            FROM tool_calls tc JOIN runs r ON r.run_id=tc.run_id WHERE tc.tool_call_id=?""",
+        "approvals": """SELECT COALESCE(ap.task_id,r.task_id) AS task_id,ap.run_id,
+            r.workspace_id,ap.requested_by_agent_id AS anchor_agent_id
+            FROM approvals ap LEFT JOIN runs r ON r.run_id=ap.run_id WHERE ap.approval_id=?""",
+        "memories": """SELECT m.task_id,NULL AS run_id,t.workspace_id,m.agent_id AS anchor_agent_id
+            FROM memories m LEFT JOIN tasks t ON t.task_id=m.task_id WHERE m.memory_id=?""",
+        "evaluations": """SELECT e.task_id,e.run_id,r.workspace_id,e.agent_id AS anchor_agent_id
+            FROM evaluations e LEFT JOIN runs r ON r.run_id=e.run_id WHERE e.evaluation_id=?""",
+        "artifacts": """SELECT COALESCE(a.task_id,r.task_id) AS task_id,a.run_id,
+            r.workspace_id,NULL AS anchor_agent_id
+            FROM artifacts a LEFT JOIN runs r ON r.run_id=a.run_id WHERE a.artifact_id=?""",
+        "agent_plans": """SELECT task_id,run_id,workspace_id,agent_id AS anchor_agent_id
+            FROM agent_plans WHERE plan_id=?""",
+        "evaluation_case_candidates": """SELECT task_id,run_id,workspace_id,agent_id AS anchor_agent_id
+            FROM evaluation_case_candidates WHERE case_id=?""",
+        "evaluation_case_runs": """SELECT r.task_id,ecr.run_id,ecr.workspace_id,
+            ecr.created_by_agent_id AS anchor_agent_id
+            FROM evaluation_case_runs ecr JOIN runs r ON r.run_id=ecr.run_id WHERE ecr.case_run_id=?""",
+        "agent_gateway_tokens": """SELECT NULL AS task_id,NULL AS run_id,workspace_id,agent_id AS anchor_agent_id
+            FROM agent_gateway_tokens WHERE token_id=?""",
+        "agent_gateway_sessions": """SELECT NULL AS task_id,NULL AS run_id,workspace_id,agent_id AS anchor_agent_id
+            FROM agent_gateway_sessions WHERE session_id=?""",
+        "agent_gateway_enrollment_requests": """SELECT task_id,run_id,workspace_id,agent_id AS anchor_agent_id
+            FROM agent_gateway_enrollment_requests WHERE request_id=?""",
+        "private_host_acceptance_receipts": """SELECT task_id,run_id,workspace_id,NULL AS anchor_agent_id
+            FROM private_host_acceptance_receipts WHERE receipt_id=?""",
+        "prepared_actions": """SELECT task_id,run_id,workspace_id,requested_by_agent_id AS anchor_agent_id
+            FROM prepared_actions WHERE action_id=?""",
+    }
+    query = queries.get(entity_type)
+    if not query:
+        return None
+    return conn.execute(query, (entity_id,)).fetchone()
+
+
+def agent_gateway_emit_audit(conn, body, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity({}, body, auth_ctx=auth_ctx)
+    agent_id = ident["agent_id"] or "agent-gateway"
+    entity_type = redact_text(body.get("entity_type") or "agent_gateway", 80)
+    entity_type = {
+        "task": "tasks",
+        "run": "runs",
+        "tool_call": "tool_calls",
+        "approval": "approvals",
+        "memory": "memories",
+        "evaluation": "evaluations",
+        "artifact": "artifacts",
+        "agent_plan": "agent_plans",
+        "evaluation_case_candidate": "evaluation_case_candidates",
+        "evaluation_case_run": "evaluation_case_runs",
+        "agent_gateway_token": "agent_gateway_tokens",
+        "agent_gateway_session": "agent_gateway_sessions",
+        "agent_gateway_enrollment_request": "agent_gateway_enrollment_requests",
+        "private_host_acceptance_receipt": "private_host_acceptance_receipts",
+        "prepared_action": "prepared_actions",
+        "agent": "agents",
+    }.get(entity_type, entity_type)
+    entity_id = redact_text(body.get("entity_id") or body.get("run_id") or agent_id, 160)
+    known_entity_types = {
+        "tasks", "runs", "tool_calls", "approvals", "memories", "evaluations",
+        "artifacts", "agent_plans", "evaluation_case_candidates",
+        "evaluation_case_runs", "agent_gateway_tokens", "agent_gateway_sessions",
+        "agent_gateway_enrollment_requests", "private_host_acceptance_receipts",
+        "prepared_actions",
+    }
+    anchor = agent_gateway_audit_entity_anchor(conn, entity_type, entity_id)
+    if entity_type in known_entity_types and not anchor:
+        return {"error": "audit_entity_not_found", "token_omitted": True}, 404
+    if entity_type == "agents":
+        if entity_id != agent_id:
+            return {"error": "forbidden", "message": "Agent cannot emit Audit for another Agent.", "token_omitted": True}, 403
+        anchor_task_id = None
+        anchor_run_id = None
+    elif anchor:
+        if not anchor["workspace_id"] and not anchor["task_id"] and not anchor["run_id"]:
+            return {
+                "error": "audit_entity_authority_unbound",
+                "message": "Audit entity has no workspace, task, or run authority anchor.",
+                "token_omitted": True,
+            }, 403
+        anchor_workspace = normalize_workspace_id(anchor["workspace_id"] or ident["workspace_id"])
+        if anchor_workspace != ident["workspace_id"]:
+            return workspace_forbidden("audit entity", entity_id, ident["workspace_id"], anchor_workspace)
+        anchor_task_id = anchor["task_id"]
+        anchor_run_id = anchor["run_id"]
+        if entity_type in {
+            "agent_plans", "agent_gateway_tokens", "agent_gateway_sessions",
+            "agent_gateway_enrollment_requests", "prepared_actions",
+        } and anchor["anchor_agent_id"] and anchor["anchor_agent_id"] != agent_id:
+            return {"error": "forbidden", "message": "Agent cannot emit Audit for another Agent's authority object.", "token_omitted": True}, 403
+    else:
+        anchor_task_id = body.get("task_id")
+        anchor_run_id = body.get("run_id")
+        if not anchor_task_id and not anchor_run_id:
+            return {
+                "error": "audit_authority_anchor_required",
+                "message": "Custom Audit entities require an authorized task_id or run_id anchor.",
+                "token_omitted": True,
+            }, 400
+
+    requested_task_id = body.get("task_id")
+    requested_run_id = body.get("run_id")
+    if requested_task_id and anchor_task_id and requested_task_id != anchor_task_id:
+        return {"error": "forbidden", "message": "Audit task_id does not match its authority object.", "token_omitted": True}, 403
+    if requested_run_id and anchor_run_id and requested_run_id != anchor_run_id:
+        return {"error": "forbidden", "message": "Audit run_id does not match its authority object.", "token_omitted": True}, 403
+    task_id = anchor_task_id or requested_task_id
+    run_id = anchor_run_id or requested_run_id
+    if run_id:
+        run, access_error = agent_gateway_run_read_access(conn, run_id, ident, auth_ctx)
         if access_error:
             return access_error
-    entity_type = body.get("entity_type") or "agent_gateway"
-    entity_id = body.get("entity_id") or body.get("run_id") or agent_id
+        if task_id and run["task_id"] != task_id:
+            return {"error": "forbidden", "message": "Audit task_id and run_id authority disagree.", "token_omitted": True}, 403
+        task_id = run["task_id"]
+    if task_id:
+        _task, access_error = agent_gateway_task_read_access(conn, task_id, ident, auth_ctx)
+        if access_error:
+            return access_error
     action = body.get("action") or "agent_gateway.audit_emit"
-    metadata = safe_json_metadata(body.get("metadata") or {})
-    audit_id = audit(conn, "agent", agent_id, redact_text(action, 160), redact_text(entity_type, 80), redact_text(entity_id, 160), None, safe_json_metadata(body.get("after") or {"status": "emitted"}), metadata)
-    runtime_event(conn, "rtc_agent_gateway_local", "audit.emit", "completed", run_id=body.get("run_id"), task_id=body.get("task_id"), agent_id=agent_id, output_summary=f"Audit emitted: {redact_text(action, 120)}")
-    return {"emitted": True, "audit_id": audit_id, "entity_type": entity_type, "entity_id": entity_id}, 201
+    metadata = safe_json_metadata({
+        **(body.get("metadata") or {}),
+        "workspace_id": ident["workspace_id"],
+        "authority_task_id": task_id,
+        "authority_run_id": run_id,
+        "token_omitted": True,
+    })
+    audit_id = audit(conn, "agent", agent_id, redact_text(action, 160), entity_type, entity_id, None, safe_json_metadata(body.get("after") or {"status": "emitted"}), metadata)
+    runtime_event(conn, "rtc_agent_gateway_local", "audit.emit", "completed", run_id=run_id, task_id=task_id, agent_id=agent_id, output_summary=f"Audit emitted: {redact_text(action, 120)}")
+    return {"emitted": True, "audit_id": audit_id, "entity_type": entity_type, "entity_id": entity_id, "token_omitted": True}, 201
 
 
 def runtime_probe_action_args(provider: str, mode: str, connector_id: str, prompt_hash: str, target_resource: str) -> dict:
@@ -14233,10 +15166,27 @@ def customer_projects_index(conn, limit: int = 25) -> dict:
     }
 
 
-def customer_delivery_board(conn, limit: int = 12) -> dict:
+def customer_delivery_board(
+    conn,
+    limit: int = 12,
+    *,
+    workspace_id: str | None = None,
+) -> dict:
     limit = max(1, min(int(limit or 12), 50))
+    artifact_scope = """(
+        a.artifact_type IN ('customer_worker_result', 'customer_delivery_report', 'customer_project_report')
+        OR a.artifact_id LIKE 'art_customer_%'
+        OR a.artifact_id LIKE 'art_kb_bot_delivery_%'
+    )"""
+    artifact_params: list = []
+    if workspace_id:
+        workspace_id = normalize_workspace_id(workspace_id)
+        artifact_scope += """ AND (a.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)
+        AND (COALESCE(a.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)
+        AND (a.run_id IS NOT NULL OR COALESCE(a.task_id,r.task_id) IS NOT NULL)"""
+        artifact_params.extend([workspace_id, workspace_id])
     artifact_rows = rows_to_dicts(conn.execute(
-        """SELECT
+        f"""SELECT
             a.*,
             t.title AS task_title,
             t.status AS task_status,
@@ -14248,15 +15198,12 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
             r.output_summary AS run_output_summary,
             r.created_at AS run_created_at
         FROM artifacts a
-        LEFT JOIN tasks t ON t.task_id = a.task_id
         LEFT JOIN runs r ON r.run_id = a.run_id
-        WHERE
-            a.artifact_type IN ('customer_worker_result', 'customer_delivery_report', 'customer_project_report')
-            OR a.artifact_id LIKE 'art_customer_%'
-            OR a.artifact_id LIKE 'art_kb_bot_delivery_%'
+        LEFT JOIN tasks t ON t.task_id = COALESCE(a.task_id,r.task_id)
+        WHERE {artifact_scope}
         ORDER BY a.created_at DESC
         LIMIT ?""",
-        (limit,),
+        (*artifact_params, limit),
     ).fetchall())
     deliveries: list[dict] = []
     seen_worker_run_ids: set[str] = set()
@@ -14290,10 +15237,15 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
         project_task_ids: list[str] = []
         project_run_ids: list[str] = []
         if project_id:
+            project_task_sql = "SELECT task_id FROM tasks WHERE task_id LIKE ?"
+            project_task_params: list = [f"tsk_kb_bot_{project_id}_%"]
+            if workspace_id:
+                project_task_sql += " AND COALESCE(workspace_id,'local-demo')=?"
+                project_task_params.append(workspace_id)
             project_task_ids = [
                 row["task_id"] for row in conn.execute(
-                    "SELECT task_id FROM tasks WHERE task_id LIKE ? ORDER BY task_id",
-                    (f"tsk_kb_bot_{project_id}_%",),
+                    project_task_sql + " ORDER BY task_id",
+                    project_task_params,
                 ).fetchall()
             ]
             if project_task_ids:
@@ -14536,18 +15488,40 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
     }
 
 
-def hermes_openclaw_loop_readback(conn, loop_id: str | None = None, limit: int = 10) -> dict:
+def hermes_openclaw_loop_readback(
+    conn,
+    loop_id: str | None = None,
+    limit: int = 10,
+    *,
+    workspace_id: str | None = None,
+) -> dict:
     loop_id = redact_text(loop_id or "", 120)
     limit = max(1, min(int(limit or 10), 50))
+    artifact_scope = ""
+    artifact_scope_params: list = []
+    if workspace_id:
+        workspace_id = normalize_workspace_id(workspace_id)
+        artifact_scope = """ AND (a.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)
+        AND (COALESCE(a.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)
+        AND (a.run_id IS NOT NULL OR COALESCE(a.task_id,r.task_id) IS NOT NULL)"""
+        artifact_scope_params.extend([workspace_id, workspace_id])
     if loop_id:
         artifacts = rows_to_dicts(conn.execute(
-            "SELECT * FROM artifacts WHERE uri=? OR uri LIKE ? ORDER BY created_at DESC",
-            (f"loop://{loop_id}", f"loop://{loop_id}/%"),
+            f"""SELECT a.* FROM artifacts a
+            LEFT JOIN runs r ON r.run_id=a.run_id
+            LEFT JOIN tasks t ON t.task_id=COALESCE(a.task_id,r.task_id)
+            WHERE (a.uri=? OR a.uri LIKE ?){artifact_scope}
+            ORDER BY a.created_at DESC""",
+            (f"loop://{loop_id}", f"loop://{loop_id}/%", *artifact_scope_params),
         ).fetchall())
     else:
         artifacts = rows_to_dicts(conn.execute(
-            "SELECT * FROM artifacts WHERE uri LIKE 'loop://%' ORDER BY created_at DESC LIMIT ?",
-            (limit,),
+            f"""SELECT a.* FROM artifacts a
+            LEFT JOIN runs r ON r.run_id=a.run_id
+            LEFT JOIN tasks t ON t.task_id=COALESCE(a.task_id,r.task_id)
+            WHERE a.uri LIKE 'loop://%'{artifact_scope}
+            ORDER BY a.created_at DESC LIMIT ?""",
+            (*artifact_scope_params, limit),
         ).fetchall())
     run_ids = sorted({row.get("run_id") for row in artifacts if row.get("run_id")})
     task_ids = sorted({row.get("task_id") for row in artifacts if row.get("task_id")})
@@ -14685,9 +15659,15 @@ def run_hermes_openclaw_loop_workflow(body: dict, host_header: str | None = None
 def human_review_queue(conn, limit: int = 20, *, ident: dict | None = None, auth_ctx: dict | None = None) -> dict:
     limit = max(1, min(int(limit or 20), 100))
     per_lane_limit = max(limit, 10)
-    scoped = agent_gateway_is_bound_auth(auth_ctx)
+    bound_agent = agent_gateway_is_bound_auth(auth_ctx)
+    human_scoped = bool(isinstance(auth_ctx, dict) and auth_ctx.get("mode") == "human_session")
+    scoped = bound_agent or human_scoped
     ident = ident or {}
-    workspace_id = normalize_workspace_id(ident.get("workspace_id") or "local-demo")
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or ident.get("workspace_id")
+        or "local-demo"
+    )
     agent_id = str(ident.get("agent_id") or "")
     approval_where = ["ap.decision='pending'"]
     approval_params: list = []
@@ -14698,21 +15678,41 @@ def human_review_queue(conn, limit: int = 20, *, ident: dict | None = None, auth
     failed_eval_where = ["ecr.pass_fail='fail'", "ecr.review_status IN ('open','investigating')"]
     failed_eval_params: list = []
     if scoped:
-        approval_visibility_sql, approval_visibility_params = agent_gateway_approval_visibility_clause("ap", "r", "t", {"workspace_id": workspace_id, "agent_id": agent_id}, auth_ctx)
-        memory_visibility_sql, memory_visibility_params = agent_gateway_memory_visibility_clause("m", "t", {"workspace_id": workspace_id, "agent_id": agent_id}, auth_ctx)
         approval_where.extend([
-            "COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?",
-            approval_visibility_sql,
+            "(ap.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)",
+            "(COALESCE(ap.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)",
+            "(ap.run_id IS NOT NULL OR COALESCE(ap.task_id,r.task_id) IS NOT NULL)",
         ])
-        approval_params.extend([workspace_id, *approval_visibility_params])
-        memory_where.extend([
-            "COALESCE(t.workspace_id,'local-demo')=?",
-            memory_visibility_sql,
-        ])
-        memory_params.extend([workspace_id, *memory_visibility_params])
-        eval_case_where.extend([
-            "COALESCE(c.workspace_id,t.workspace_id,'local-demo')=?",
-            """(
+        approval_params.extend([workspace_id, workspace_id])
+        memory_where.append("COALESCE(t.workspace_id,'local-demo')=?")
+        memory_params.append(workspace_id)
+        eval_case_where.append("COALESCE(c.workspace_id,t.workspace_id,'local-demo')=?")
+        eval_case_params.append(workspace_id)
+        failed_eval_where.append("COALESCE(ecr.workspace_id,c.workspace_id,t.workspace_id,'local-demo')=?")
+        failed_eval_params.append(workspace_id)
+        if human_scoped:
+            # Memories have no direct workspace column. A human tenant view only
+            # admits task-bound rows whose workspace authority can be proven.
+            memory_where.append("m.task_id IS NOT NULL")
+        if bound_agent:
+            approval_visibility_sql, approval_visibility_params = agent_gateway_approval_visibility_clause(
+                "ap",
+                "r",
+                "t",
+                {"workspace_id": workspace_id, "agent_id": agent_id},
+                auth_ctx,
+            )
+            memory_visibility_sql, memory_visibility_params = agent_gateway_memory_visibility_clause(
+                "m",
+                "t",
+                {"workspace_id": workspace_id, "agent_id": agent_id},
+                auth_ctx,
+            )
+            approval_where.append(approval_visibility_sql)
+            approval_params.extend(approval_visibility_params)
+            memory_where.append(memory_visibility_sql)
+            memory_params.extend(memory_visibility_params)
+            eval_case_where.append("""(
                 c.task_id IS NULL
                 OR t.owner_agent_id=?
                 OR agentops_json_array_contains(t.collaborator_agent_ids, ?)
@@ -14720,12 +15720,9 @@ def human_review_queue(conn, limit: int = 20, *, ident: dict | None = None, auth
                 OR t.owner_agent_id=''
                 OR c.agent_id=?
                 OR c.created_by_agent_id=?
-            )""",
-        ])
-        eval_case_params.extend([workspace_id, agent_id, agent_id, agent_id, agent_id])
-        failed_eval_where.extend([
-            "COALESCE(ecr.workspace_id,c.workspace_id,t.workspace_id,'local-demo')=?",
-            """(
+            )""")
+            eval_case_params.extend([agent_id, agent_id, agent_id, agent_id])
+            failed_eval_where.append("""(
                 c.task_id IS NULL
                 OR t.owner_agent_id=?
                 OR agentops_json_array_contains(t.collaborator_agent_ids, ?)
@@ -14734,9 +15731,8 @@ def human_review_queue(conn, limit: int = 20, *, ident: dict | None = None, auth
                 OR c.agent_id=?
                 OR c.created_by_agent_id=?
                 OR ecr.created_by_agent_id=?
-            )""",
-        ])
-        failed_eval_params.extend([workspace_id, agent_id, agent_id, agent_id, agent_id, agent_id])
+            )""")
+            failed_eval_params.extend([agent_id, agent_id, agent_id, agent_id, agent_id])
     approval_where_sql = " AND ".join(approval_where)
     memory_where_sql = " AND ".join(memory_where)
     eval_case_where_sql = " AND ".join(eval_case_where)
@@ -14815,18 +15811,26 @@ def human_review_queue(conn, limit: int = 20, *, ident: dict | None = None, auth
            LIMIT ?""",
         [*failed_eval_params, per_lane_limit],
     ).fetchall())
-    delivery_board = customer_delivery_board(conn, min(per_lane_limit, 50))
+    delivery_board = customer_delivery_board(
+        conn,
+        min(per_lane_limit, 50),
+        workspace_id=workspace_id if scoped else None,
+    )
     delivery_focus = [
         row for row in delivery_board.get("deliveries", [])
         if row.get("status") in {"waiting_approval", "needs_attention", "ready"}
     ][:per_lane_limit]
-    synthesis_lifecycle = commander_synthesis_lifecycle(conn, limit=min(per_lane_limit, 10))
+    synthesis_lifecycle = commander_synthesis_lifecycle(
+        conn,
+        limit=min(per_lane_limit, 10),
+        workspace_id=workspace_id if scoped else None,
+    )
     synthesis_recent = synthesis_lifecycle.get("recent") or []
     synthesis_action_focus = [
         row for row in synthesis_recent
         if row.get("status") in {"approved_not_promoted", "memory_pending_review", "needs_review_gate"}
     ][:per_lane_limit]
-    if scoped:
+    if bound_agent:
         def review_row_visible(row: dict) -> bool:
             task_id = row.get("task_id")
             run_id = row.get("run_id")
@@ -16073,7 +17077,7 @@ def parse_iso_datetime(value: str | None) -> dt.datetime | None:
     if not value:
         return None
     try:
-        parsed = dt.datetime.fromisoformat(str(value))
+        parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         if parsed.tzinfo is None:
             return parsed.replace(tzinfo=dt.timezone.utc)
         return parsed
@@ -16081,11 +17085,21 @@ def parse_iso_datetime(value: str | None) -> dt.datetime | None:
         return None
 
 
-def worker_stuck_tasks(conn, threshold_sec: int = 900, limit: int = 25) -> list[dict]:
+def worker_stuck_tasks(
+    conn,
+    threshold_sec: int = 900,
+    limit: int = 25,
+    workspace_id: str | None = None,
+) -> list[dict]:
     threshold_sec = max(int(threshold_sec or 900), 30)
     limit = min(max(int(limit or 25), 1), 100)
     now_dt = dt.datetime.now(dt.timezone.utc)
     cutoff = now_dt - dt.timedelta(seconds=threshold_sec)
+    workspace_clause = ""
+    params: list[Any] = []
+    if workspace_id:
+        workspace_clause = " AND COALESCE(workspace_id,'local-demo')=?"
+        params.append(normalize_workspace_id(workspace_id))
     tasks = rows_to_dicts(conn.execute(
         """SELECT * FROM tasks
         WHERE status='running' AND (
@@ -16094,8 +17108,8 @@ def worker_stuck_tasks(conn, threshold_sec: int = 900, limit: int = 25) -> list[
             OR owner_agent_id LIKE 'agt_launch_%'
             OR owner_agent_id LIKE 'agt_customer_worker_%'
         )
-        ORDER BY updated_at ASC LIMIT ?""",
-        (limit,),
+        """ + workspace_clause + " ORDER BY updated_at ASC LIMIT ?",
+        (*params, limit),
     ).fetchall())
     stuck = []
     for task in tasks:
@@ -16118,11 +17132,22 @@ def worker_stuck_tasks(conn, threshold_sec: int = 900, limit: int = 25) -> list[
     return stuck
 
 
-def release_worker_task(conn, body: dict) -> tuple[dict, int]:
+def release_worker_task(
+    conn,
+    body: dict,
+    *,
+    workspace_id: str | None = None,
+) -> tuple[dict, int]:
     task_id = body.get("task_id")
     if not task_id:
         return {"error": "task_id is required"}, 400
-    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    if workspace_id:
+        task = conn.execute(
+            "SELECT * FROM tasks WHERE task_id=? AND COALESCE(workspace_id,'local-demo')=?",
+            (task_id, normalize_workspace_id(workspace_id)),
+        ).fetchone()
+    else:
+        task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
     if not task:
         return {"error": "task not found"}, 404
     if task["status"] != "running" and not body.get("force"):
@@ -16147,12 +17172,17 @@ def release_worker_task(conn, body: dict) -> tuple[dict, int]:
     return {"released": True, "task": after, "released_runs": [run["run_id"] for run in running_runs], "token_omitted": True}, 200
 
 
-def worker_stale_never_seen_enrollments(conn, enrollment_age_sec: int = 900, limit: int = 25) -> list[dict]:
+def worker_stale_never_seen_enrollments(
+    conn,
+    enrollment_age_sec: int = 900,
+    limit: int = 25,
+    workspace_id: str | None = None,
+) -> list[dict]:
     enrollment_age_sec = max(int(enrollment_age_sec or 900), 0)
     limit = min(max(int(limit or 25), 1), 100)
     now_dt = dt.datetime.now(dt.timezone.utc)
     cutoff = now_dt - dt.timedelta(seconds=enrollment_age_sec)
-    rows = agent_gateway_enrollment_rows(conn)
+    rows = agent_gateway_enrollment_rows(conn, workspace_id=workspace_id)
     stale: list[dict] = []
     for row in rows:
         if row.get("status") != "active" or row.get("heartbeat_state") != "never_seen":
@@ -16170,12 +17200,17 @@ def worker_stale_never_seen_enrollments(conn, enrollment_age_sec: int = 900, lim
     return stale
 
 
-def worker_stale_heartbeat_enrollments(conn, heartbeat_age_sec: int = 900, limit: int = 25) -> list[dict]:
+def worker_stale_heartbeat_enrollments(
+    conn,
+    heartbeat_age_sec: int = 900,
+    limit: int = 25,
+    workspace_id: str | None = None,
+) -> list[dict]:
     heartbeat_age_sec = max(int(heartbeat_age_sec or 900), 0)
     limit = min(max(int(limit or 25), 1), 100)
     now_dt = dt.datetime.now(dt.timezone.utc)
     cutoff = now_dt - dt.timedelta(seconds=heartbeat_age_sec)
-    rows = agent_gateway_enrollment_rows(conn)
+    rows = agent_gateway_enrollment_rows(conn, workspace_id=workspace_id)
     stale: list[dict] = []
     for row in rows:
         if row.get("status") != "active" or row.get("heartbeat_state") != "stale":
@@ -16193,7 +17228,13 @@ def worker_stale_heartbeat_enrollments(conn, heartbeat_age_sec: int = 900, limit
     return stale
 
 
-def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False) -> tuple[dict, int]:
+def worker_fleet_hygiene(
+    conn,
+    body: dict | None = None,
+    *,
+    apply: bool = False,
+    workspace_id: str | None = None,
+) -> tuple[dict, int]:
     body = body or {}
     threshold_raw = body.get("threshold_sec")
     enrollment_age_raw = body.get("enrollment_age_sec")
@@ -16201,9 +17242,20 @@ def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False)
     threshold_sec = max(int(threshold_raw if threshold_raw is not None else 900), 30)
     enrollment_age_sec = max(int(enrollment_age_raw if enrollment_age_raw is not None else 900), 0)
     limit = min(max(int(limit_raw if limit_raw is not None else 25), 1), 100)
-    stuck_tasks = worker_stuck_tasks(conn, threshold_sec, limit)
-    stale_enrollments = worker_stale_never_seen_enrollments(conn, enrollment_age_sec, limit)
-    stale_heartbeat_enrollments = worker_stale_heartbeat_enrollments(conn, enrollment_age_sec, limit)
+    workspace_id = normalize_workspace_id(workspace_id) if workspace_id else None
+    stuck_tasks = worker_stuck_tasks(conn, threshold_sec, limit, workspace_id=workspace_id)
+    stale_enrollments = worker_stale_never_seen_enrollments(
+        conn,
+        enrollment_age_sec,
+        limit,
+        workspace_id=workspace_id,
+    )
+    stale_heartbeat_enrollments = worker_stale_heartbeat_enrollments(
+        conn,
+        enrollment_age_sec,
+        limit,
+        workspace_id=workspace_id,
+    )
     plan = build_worker_fleet_hygiene_plan(
         stuck_tasks=stuck_tasks,
         stale_enrollments=stale_enrollments,
@@ -16226,7 +17278,7 @@ def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False)
         payload, status = release_worker_task(conn, {
             "task_id": task["task_id"],
             "reason": body.get("release_reason") or "fleet_hygiene_cleanup",
-        })
+        }, workspace_id=workspace_id)
         if status == 200:
             released.append({"task_id": task["task_id"], "released_runs": payload.get("released_runs", [])})
         else:
@@ -16240,7 +17292,11 @@ def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False)
         seen_token_ids.add(token_id)
         enrollments_to_revoke.append(enrollment)
     for enrollment in enrollments_to_revoke:
-        payload, status = agent_gateway_revoke_enrollment(conn, {"token_id": enrollment["token_id"]})
+        payload, status = agent_gateway_revoke_enrollment(
+            conn,
+            {"token_id": enrollment["token_id"]},
+            workspace_id=workspace_id,
+        )
         if status == 200:
             revoked.append(public_worker_revoked_enrollment(enrollment, sessions_revoked=payload.get("sessions_revoked", 0)))
         else:
@@ -16562,35 +17618,101 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
     }
 
 
-def worker_status(conn, refresh_runtime: bool = True) -> dict:
-    worker_agents = rows_to_dicts(conn.execute(
-        """SELECT * FROM agents
-        WHERE agent_id LIKE 'agt_worker_%' OR allowed_tools LIKE '%agent_worker%'
-        ORDER BY updated_at DESC LIMIT 25"""
-    ).fetchall())
-    worker_runs = rows_to_dicts(conn.execute(
-        """SELECT * FROM runs
-        WHERE agent_id LIKE 'agt_worker_%' OR delegation_id LIKE 'worker:%'
-        ORDER BY created_at DESC LIMIT 25"""
-    ).fetchall())
-    worker_tasks = rows_to_dicts(conn.execute(
-        """SELECT * FROM tasks
-        WHERE owner_agent_id LIKE 'agt_worker_%'
-        ORDER BY created_at DESC LIMIT 25"""
-    ).fetchall())
-    worker_events = rows_to_dicts(conn.execute(
-        """SELECT * FROM runtime_events
-        WHERE agent_id LIKE 'agt_worker_%' OR event_type IN ('task.pull','task.claim','run.start','run.heartbeat','tool_call.record','evaluation.submit','audit.emit')
-        ORDER BY created_at DESC LIMIT 40"""
-    ).fetchall())
+def worker_status(
+    conn,
+    refresh_runtime: bool = True,
+    workspace_id: str | None = None,
+) -> dict:
+    normalized_workspace = normalize_workspace_id(workspace_id) if workspace_id else None
+    if normalized_workspace:
+        worker_agents = rows_to_dicts(conn.execute(
+            """SELECT a.* FROM agents a
+            WHERE (a.agent_id LIKE 'agt_worker_%' OR a.allowed_tools LIKE '%agent_worker%')
+              AND (
+                EXISTS (
+                    SELECT 1 FROM tasks t
+                    WHERE COALESCE(t.workspace_id,'local-demo')=? AND t.owner_agent_id=a.agent_id
+                )
+                OR EXISTS (
+                    SELECT 1 FROM runs r
+                    WHERE COALESCE(r.workspace_id,'local-demo')=? AND r.agent_id=a.agent_id
+                )
+                OR EXISTS (
+                    SELECT 1 FROM agent_gateway_tokens tok
+                    WHERE tok.workspace_id=? AND tok.agent_id=a.agent_id
+                )
+                OR EXISTS (
+                    SELECT 1 FROM agent_gateway_sessions sess
+                    WHERE sess.workspace_id=? AND sess.agent_id=a.agent_id
+                )
+              )
+            ORDER BY a.updated_at DESC LIMIT 25""",
+            (normalized_workspace,) * 4,
+        ).fetchall())
+        worker_runs = rows_to_dicts(conn.execute(
+            """SELECT * FROM runs
+            WHERE COALESCE(workspace_id,'local-demo')=?
+              AND (agent_id LIKE 'agt_worker_%' OR delegation_id LIKE 'worker:%')
+            ORDER BY created_at DESC LIMIT 25""",
+            (normalized_workspace,),
+        ).fetchall())
+        worker_tasks = rows_to_dicts(conn.execute(
+            """SELECT * FROM tasks
+            WHERE COALESCE(workspace_id,'local-demo')=? AND owner_agent_id LIKE 'agt_worker_%'
+            ORDER BY created_at DESC LIMIT 25""",
+            (normalized_workspace,),
+        ).fetchall())
+        worker_events = rows_to_dicts(conn.execute(
+            """SELECT e.* FROM runtime_events e
+            LEFT JOIN runs r ON r.run_id=e.run_id
+            LEFT JOIN tasks t ON t.task_id=COALESCE(e.task_id,r.task_id)
+            WHERE (e.agent_id LIKE 'agt_worker_%' OR e.event_type IN ('task.pull','task.claim','run.start','run.heartbeat','tool_call.record','evaluation.submit','audit.emit'))
+              AND (r.run_id IS NOT NULL OR t.task_id IS NOT NULL)
+              AND COALESCE(r.workspace_id,t.workspace_id,'local-demo')=?
+            ORDER BY e.created_at DESC LIMIT 40""",
+            (normalized_workspace,),
+        ).fetchall())
+    else:
+        worker_agents = rows_to_dicts(conn.execute(
+            """SELECT * FROM agents
+            WHERE agent_id LIKE 'agt_worker_%' OR allowed_tools LIKE '%agent_worker%'
+            ORDER BY updated_at DESC LIMIT 25"""
+        ).fetchall())
+        worker_runs = rows_to_dicts(conn.execute(
+            """SELECT * FROM runs
+            WHERE agent_id LIKE 'agt_worker_%' OR delegation_id LIKE 'worker:%'
+            ORDER BY created_at DESC LIMIT 25"""
+        ).fetchall())
+        worker_tasks = rows_to_dicts(conn.execute(
+            """SELECT * FROM tasks
+            WHERE owner_agent_id LIKE 'agt_worker_%'
+            ORDER BY created_at DESC LIMIT 25"""
+        ).fetchall())
+        worker_events = rows_to_dicts(conn.execute(
+            """SELECT * FROM runtime_events
+            WHERE agent_id LIKE 'agt_worker_%' OR event_type IN ('task.pull','task.claim','run.start','run.heartbeat','tool_call.record','evaluation.submit','audit.emit')
+            ORDER BY created_at DESC LIMIT 40"""
+        ).fetchall())
+    if normalized_workspace:
+        for agent in worker_agents:
+            agent["workspace_id"] = normalized_workspace
     for event in worker_events:
         for key in ("input_summary", "output_summary", "error_message", "metadata_json"):
             if event.get(key):
                 event[key] = redact_full_text(event[key])
-    daemons = worker_daemon_status(include_log=False)
-    stuck_tasks = worker_stuck_tasks(conn)
-    remote_fleet = worker_remote_fleet_summary(conn)
-    stuck_workflow_jobs = workflow_stuck_jobs(conn, threshold_sec=900, limit=5)
+    daemons = (
+        worker_daemon_status(include_log=False)
+        if not normalized_workspace or normalized_workspace == "local-demo"
+        else []
+    )
+    stuck_tasks = worker_stuck_tasks(conn, workspace_id=normalized_workspace)
+    remote_fleet = worker_remote_fleet_summary(conn, normalized_workspace)
+    stuck_workflow_jobs = workflow_stuck_jobs(
+        conn,
+        threshold_sec=900,
+        limit=5,
+        workspace_id=normalized_workspace,
+    )
     adapter_readiness = worker_adapter_readiness(conn, refresh=refresh_runtime)
     return build_worker_status_payload(
         worker_agents=worker_agents,
@@ -16605,18 +17727,58 @@ def worker_status(conn, refresh_runtime: bool = True) -> dict:
     )
 
 
-def worker_fleet_view(conn) -> dict:
-    daemons = worker_daemon_status(include_log=False)
-    remote_fleet = worker_remote_fleet_summary(conn)
+def worker_fleet_view(conn, workspace_id: str | None = None) -> dict:
+    normalized_workspace = normalize_workspace_id(workspace_id) if workspace_id else None
+    daemons = (
+        worker_daemon_status(include_log=False)
+        if not normalized_workspace or normalized_workspace == "local-demo"
+        else []
+    )
+    remote_fleet = worker_remote_fleet_summary(conn, normalized_workspace)
     adapter_readiness = worker_adapter_readiness(conn, refresh=False).get("summary") or {}
-    stuck_tasks = worker_stuck_tasks(conn)
-    stuck_workflow_jobs = workflow_stuck_jobs(conn, threshold_sec=900, limit=5)
-    worker_agents = rows_to_dicts(conn.execute(
-        """SELECT agent_id,name,role,runtime_type,status,updated_at
-        FROM agents
-        WHERE agent_id LIKE 'agt_worker_%' OR allowed_tools LIKE '%agent_worker%'
-        ORDER BY updated_at DESC LIMIT 50"""
-    ).fetchall())
+    stuck_tasks = worker_stuck_tasks(conn, workspace_id=normalized_workspace)
+    stuck_workflow_jobs = workflow_stuck_jobs(
+        conn,
+        threshold_sec=900,
+        limit=5,
+        workspace_id=normalized_workspace,
+    )
+    if normalized_workspace:
+        worker_agents = rows_to_dicts(conn.execute(
+            """SELECT a.agent_id,a.name,a.role,a.runtime_type,a.status,a.updated_at
+            FROM agents a
+            WHERE (a.agent_id LIKE 'agt_worker_%' OR a.allowed_tools LIKE '%agent_worker%')
+              AND (
+                EXISTS (
+                    SELECT 1 FROM tasks t
+                    WHERE COALESCE(t.workspace_id,'local-demo')=? AND t.owner_agent_id=a.agent_id
+                )
+                OR EXISTS (
+                    SELECT 1 FROM runs r
+                    WHERE COALESCE(r.workspace_id,'local-demo')=? AND r.agent_id=a.agent_id
+                )
+                OR EXISTS (
+                    SELECT 1 FROM agent_gateway_tokens tok
+                    WHERE tok.workspace_id=? AND tok.agent_id=a.agent_id
+                )
+                OR EXISTS (
+                    SELECT 1 FROM agent_gateway_sessions sess
+                    WHERE sess.workspace_id=? AND sess.agent_id=a.agent_id
+                )
+              )
+            ORDER BY a.updated_at DESC LIMIT 50""",
+            (normalized_workspace,) * 4,
+        ).fetchall())
+    else:
+        worker_agents = rows_to_dicts(conn.execute(
+            """SELECT agent_id,name,role,runtime_type,status,updated_at
+            FROM agents
+            WHERE agent_id LIKE 'agt_worker_%' OR allowed_tools LIKE '%agent_worker%'
+            ORDER BY updated_at DESC LIMIT 50"""
+        ).fetchall())
+    if normalized_workspace:
+        for agent in worker_agents:
+            agent["workspace_id"] = normalized_workspace
     return build_worker_fleet_view(
         daemons=daemons,
         remote_fleet=remote_fleet,
@@ -16627,16 +17789,28 @@ def worker_fleet_view(conn) -> dict:
     )
 
 
-def demo_readiness(conn: sqlite3.Connection, headers) -> dict:
-    local = local_readiness(conn, headers)
+def demo_readiness(
+    conn: sqlite3.Connection,
+    headers,
+    workspace_id: str | None = None,
+) -> dict:
+    workspace_id = normalize_workspace_id(
+        workspace_id or headers.get("X-AgentOps-Workspace-Id") or "local-demo"
+    )
+    local = local_readiness(conn, headers, workspace_id=workspace_id)
     conn.rollback()
     security = security_production_readiness(conn, headers)
     conn.rollback()
-    fleet = worker_fleet_view(conn)
+    fleet = worker_fleet_view(conn, workspace_id)
     conn.rollback()
-    inbox = commander_integration_inbox(conn, headers, {"bucket": ["ready_for_review"], "limit": ["5"]})
+    inbox = commander_integration_inbox(
+        conn,
+        headers,
+        {"bucket": ["ready_for_review"], "limit": ["5"]},
+        workspace_id=workspace_id,
+    )
     conn.rollback()
-    board = commander_project_board(conn, headers)
+    board = commander_project_board(conn, headers, workspace_id=workspace_id)
     conn.rollback()
     evidence = local.get("evidence") or {}
     live_acceptance = local.get("live_acceptance_readiness") or {}
@@ -16821,6 +17995,7 @@ def demo_readiness(conn: sqlite3.Connection, headers) -> dict:
         "operation": "v1_5_demo_readiness",
         "status": "ready" if demo_ready else "attention",
         "demo_ready": demo_ready,
+        "workspace_id": workspace_id,
         "production_ready": bool(security.get("production_ready")),
         "summary": {
             "shot_count": len(shots),
@@ -16865,10 +18040,22 @@ def scalar_count(conn: sqlite3.Connection, sql: str, params=()) -> int:
     return int((row[0] if row else 0) or 0)
 
 
-def status_counts(conn: sqlite3.Connection, table: str, valid_statuses: set[str] | None = None) -> dict:
+def status_counts(
+    conn: sqlite3.Connection,
+    table: str,
+    valid_statuses: set[str] | None = None,
+    *,
+    workspace_id: str | None = None,
+) -> dict:
     if table not in {"tasks", "runs", "workflow_jobs"}:
         return {}
-    rows = rows_to_dicts(conn.execute(f"SELECT status, COUNT(*) AS count FROM {table} GROUP BY status").fetchall())
+    if workspace_id:
+        rows = rows_to_dicts(conn.execute(
+            f"SELECT status, COUNT(*) AS count FROM {table} WHERE COALESCE(workspace_id,'local-demo')=? GROUP BY status",
+            (normalize_workspace_id(workspace_id),),
+        ).fetchall())
+    else:
+        rows = rows_to_dicts(conn.execute(f"SELECT status, COUNT(*) AS count FROM {table} GROUP BY status").fetchall())
     counts = {str(row.get("status") or "unknown"): int(row.get("count") or 0) for row in rows}
     if valid_statuses:
         for status in valid_statuses:
@@ -16876,17 +18063,29 @@ def status_counts(conn: sqlite3.Connection, table: str, valid_statuses: set[str]
     return dict(sorted(counts.items()))
 
 
-def safe_commander_readiness_snapshot(conn: sqlite3.Connection, headers) -> tuple[dict, dict]:
+def safe_commander_readiness_snapshot(
+    conn: sqlite3.Connection,
+    headers,
+    workspace_id: str | None = None,
+) -> tuple[dict, dict]:
     readiness: dict = {}
     worker: dict = {}
+    workspace_id = normalize_workspace_id(
+        workspace_id or headers.get("X-AgentOps-Workspace-Id") or "local-demo"
+    )
     try:
-        readiness = local_readiness(conn, headers, refresh_runtime=False)
+        readiness = local_readiness(
+            conn,
+            headers,
+            refresh_runtime=False,
+            workspace_id=workspace_id,
+        )
     except Exception as exc:
         readiness = {"status": "unknown", "error": redact_text(str(exc), 160)}
     finally:
         conn.rollback()
     try:
-        worker = worker_status(conn, refresh_runtime=False)
+        worker = worker_status(conn, refresh_runtime=False, workspace_id=workspace_id)
     except Exception as exc:
         worker = {"status": "unknown", "error": redact_text(str(exc), 160)}
     finally:
@@ -17164,12 +18363,20 @@ def commander_repo_map(qs=None, headers=None) -> dict:
     }
 
 
-def commander_project_board(conn: sqlite3.Connection, headers, qs=None) -> dict:
+def commander_project_board(
+    conn: sqlite3.Connection,
+    headers,
+    qs=None,
+    *,
+    workspace_id: str | None = None,
+) -> dict:
     qs = qs or {}
-    readiness, worker = safe_commander_readiness_snapshot(conn, headers)
+    workspace_id = normalize_workspace_id(
+        workspace_id or headers.get("X-AgentOps-Workspace-Id") or "local-demo"
+    )
+    readiness, worker = safe_commander_readiness_snapshot(conn, headers, workspace_id)
     adapter_payload = worker_adapter_readiness(conn, refresh=False)
     conn.rollback()
-    workspace_id = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo")
     live_acceptance = live_acceptance_readiness(conn, workspace_id)
     live_acceptance_summary = live_acceptance.get("summary") or {}
     project_id = commander_safe_text((qs.get("project_id") or [""])[0], 120)
@@ -17196,33 +18403,74 @@ def commander_project_board(conn: sqlite3.Connection, headers, qs=None) -> dict:
             plan_id=plan_id or None,
         )
 
-    task_counts = status_counts(conn, "tasks", VALID_TASK_STATUSES)
-    run_counts = status_counts(conn, "runs")
-    workflow_counts = status_counts(conn, "workflow_jobs", {"queued", "running", "completed", "failed"})
-    active_workflow_jobs = scalar_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE status IN ('queued','running')")
-    stuck_jobs = workflow_stuck_jobs(conn, threshold_sec=900, limit=10)
+    task_counts = status_counts(conn, "tasks", VALID_TASK_STATUSES, workspace_id=workspace_id)
+    run_counts = status_counts(conn, "runs", workspace_id=workspace_id)
+    workflow_counts = status_counts(
+        conn,
+        "workflow_jobs",
+        {"queued", "running", "completed", "failed"},
+        workspace_id=workspace_id,
+    )
+    active_workflow_jobs = scalar_count(
+        conn,
+        "SELECT COUNT(*) FROM workflow_jobs WHERE COALESCE(workspace_id,'local-demo')=? AND status IN ('queued','running')",
+        (workspace_id,),
+    )
+    stuck_jobs = workflow_stuck_jobs(conn, threshold_sec=900, limit=10, workspace_id=workspace_id)
     recent_artifact_rows = rows_to_dicts(conn.execute(
-        """SELECT artifact_id, task_id, run_id, artifact_type, title, created_at
-        FROM artifacts
-        ORDER BY created_at DESC
+        """SELECT a.artifact_id, a.task_id, a.run_id, a.artifact_type, a.title, a.created_at
+        FROM artifacts a
+        LEFT JOIN runs r ON r.run_id=a.run_id
+        LEFT JOIN tasks t ON t.task_id=COALESCE(a.task_id,r.task_id)
+        WHERE (a.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)
+          AND (COALESCE(a.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)
+          AND (a.run_id IS NOT NULL OR COALESCE(a.task_id,r.task_id) IS NOT NULL)
+        ORDER BY a.created_at DESC
         LIMIT 8"""
+        , (workspace_id, workspace_id)
     ).fetchall())
     for artifact in recent_artifact_rows:
         artifact["title"] = commander_safe_text(artifact.get("title"), 160)
-    memory_candidate_count = scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='candidate'")
+    memory_candidate_count = scalar_count(
+        conn,
+        """SELECT COUNT(*) FROM memories m LEFT JOIN tasks t ON t.task_id=m.task_id
+        WHERE COALESCE(t.workspace_id,'')=? AND m.review_status='candidate'""",
+        (workspace_id,),
+    )
     memory_review_counts = {
         str(row["review_status"]): int(row["count"] or 0)
-        for row in conn.execute("SELECT review_status, COUNT(*) AS count FROM memories GROUP BY review_status").fetchall()
+        for row in conn.execute(
+            """SELECT m.review_status, COUNT(*) AS count FROM memories m
+            LEFT JOIN tasks t ON t.task_id=m.task_id
+            WHERE COALESCE(t.workspace_id,'')=? GROUP BY m.review_status""",
+            (workspace_id,),
+        ).fetchall()
     }
-    pending_approval_count = scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='pending'")
-    synthesis_lifecycle = commander_synthesis_lifecycle(conn, limit=5)
+    pending_approval_count = scalar_count(
+        conn,
+        """SELECT COUNT(*) FROM approvals ap
+        LEFT JOIN runs r ON r.run_id=ap.run_id
+        LEFT JOIN tasks t ON t.task_id=COALESCE(ap.task_id,r.task_id)
+        WHERE ap.decision='pending'
+          AND (ap.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)
+          AND (COALESCE(ap.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)
+          AND (ap.run_id IS NOT NULL OR COALESCE(ap.task_id,r.task_id) IS NOT NULL)""",
+        (workspace_id, workspace_id),
+    )
+    synthesis_lifecycle = commander_synthesis_lifecycle(
+        conn,
+        limit=5,
+        workspace_id=workspace_id,
+    )
     synthesis_summary = synthesis_lifecycle.get("summary") or {}
 
     recent_tasks = rows_to_dicts(conn.execute(
         """SELECT task_id, title, status, owner_agent_id, priority, risk_level, created_at
         FROM tasks
+        WHERE COALESCE(workspace_id,'local-demo')=?
         ORDER BY created_at DESC
         LIMIT 12"""
+        , (workspace_id,)
     ).fetchall())
     recent_work_packages = []
     for task in recent_tasks:
@@ -19595,24 +20843,74 @@ def commander_count(conn: sqlite3.Connection, sql: str, params=()) -> int:
     return int((conn.execute(sql, params).fetchone() or [0])[0] or 0)
 
 
-def commander_synthesis_lifecycle(conn: sqlite3.Connection, limit: int = 5) -> dict:
+def commander_synthesis_lifecycle(
+    conn: sqlite3.Connection,
+    limit: int = 5,
+    *,
+    workspace_id: str | None = None,
+) -> dict:
     limit = max(1, min(int(limit or 5), 25))
-    summary = {
-        "synthesis_artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts WHERE artifact_type='commander_synthesis_report'"),
-        "pending_reviews": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='pending' AND approval_id LIKE 'ap_cmd_synthesis%'"),
-        "approved_reviews": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='approved' AND approval_id LIKE 'ap_cmd_synthesis%'"),
-        "rejected_reviews": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='rejected' AND approval_id LIKE 'ap_cmd_synthesis%'"),
-        "promoted_memory_candidates": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE source_ref IN (SELECT artifact_id FROM artifacts WHERE artifact_type='commander_synthesis_report')"),
-        "promoted_delivery_artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts WHERE artifact_type='customer_delivery_report' AND artifact_id LIKE 'art_customer_cmd_synthesis_%'"),
-    }
-    rows = rows_to_dicts(conn.execute(
-        """SELECT artifact_id, task_id, run_id, title, summary, created_at
-        FROM artifacts
-        WHERE artifact_type='commander_synthesis_report'
-        ORDER BY created_at DESC
-        LIMIT ?""",
-        (limit,),
-    ).fetchall())
+    if workspace_id:
+        workspace_id = normalize_workspace_id(workspace_id)
+        artifact_scope = """(
+            EXISTS (SELECT 1 FROM tasks t WHERE t.task_id=a.task_id AND COALESCE(t.workspace_id,'local-demo')=?)
+            OR EXISTS (SELECT 1 FROM runs r WHERE r.run_id=a.run_id AND COALESCE(r.workspace_id,'local-demo')=?)
+        )"""
+        approval_scope = """EXISTS (
+            SELECT 1 FROM runs r JOIN tasks t ON t.task_id=r.task_id
+            WHERE r.run_id=ap.run_id AND COALESCE(r.workspace_id,t.workspace_id,'local-demo')=?
+        )"""
+        summary = {
+            "synthesis_artifacts": scalar_count(
+                conn,
+                f"SELECT COUNT(*) FROM artifacts a WHERE a.artifact_type='commander_synthesis_report' AND {artifact_scope}",
+                (workspace_id, workspace_id),
+            ),
+            "pending_reviews": scalar_count(conn, f"SELECT COUNT(*) FROM approvals ap WHERE ap.decision='pending' AND ap.approval_id LIKE 'ap_cmd_synthesis%' AND {approval_scope}", (workspace_id,)),
+            "approved_reviews": scalar_count(conn, f"SELECT COUNT(*) FROM approvals ap WHERE ap.decision='approved' AND ap.approval_id LIKE 'ap_cmd_synthesis%' AND {approval_scope}", (workspace_id,)),
+            "rejected_reviews": scalar_count(conn, f"SELECT COUNT(*) FROM approvals ap WHERE ap.decision='rejected' AND ap.approval_id LIKE 'ap_cmd_synthesis%' AND {approval_scope}", (workspace_id,)),
+            "promoted_memory_candidates": scalar_count(
+                conn,
+                f"""SELECT COUNT(*) FROM memories m WHERE m.source_ref IN (
+                    SELECT a.artifact_id FROM artifacts a
+                    WHERE a.artifact_type='commander_synthesis_report' AND {artifact_scope}
+                )""",
+                (workspace_id, workspace_id),
+            ),
+            "promoted_delivery_artifacts": scalar_count(
+                conn,
+                f"""SELECT COUNT(*) FROM artifacts a
+                WHERE a.artifact_type='customer_delivery_report'
+                  AND a.artifact_id LIKE 'art_customer_cmd_synthesis_%'
+                  AND {artifact_scope}""",
+                (workspace_id, workspace_id),
+            ),
+        }
+        rows = rows_to_dicts(conn.execute(
+            f"""SELECT a.artifact_id, a.task_id, a.run_id, a.title, a.summary, a.created_at
+            FROM artifacts a
+            WHERE a.artifact_type='commander_synthesis_report' AND {artifact_scope}
+            ORDER BY a.created_at DESC
+            LIMIT ?""",
+            (workspace_id, workspace_id, limit),
+        ).fetchall())
+    else:
+        summary = {
+            "synthesis_artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts WHERE artifact_type='commander_synthesis_report'"),
+            "pending_reviews": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='pending' AND approval_id LIKE 'ap_cmd_synthesis%'"),
+            "approved_reviews": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='approved' AND approval_id LIKE 'ap_cmd_synthesis%'"),
+            "rejected_reviews": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='rejected' AND approval_id LIKE 'ap_cmd_synthesis%'"),
+            "promoted_memory_candidates": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE source_ref IN (SELECT artifact_id FROM artifacts WHERE artifact_type='commander_synthesis_report')"),
+            "promoted_delivery_artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts WHERE artifact_type='customer_delivery_report' AND artifact_id LIKE 'art_customer_cmd_synthesis_%'"),
+        }
+        rows = rows_to_dicts(conn.execute(
+            """SELECT artifact_id, task_id, run_id, title, summary, created_at
+            FROM artifacts
+            WHERE artifact_type='commander_synthesis_report'
+            ORDER BY created_at DESC
+            LIMIT ?""",
+            (limit,),
+        ).fetchall())
     recent = []
     for row in rows:
         artifact_id = row.get("artifact_id")
@@ -20050,8 +21348,17 @@ def commander_inbox_item(bucket: str, row: dict, title: str, recommended_action:
     }
 
 
-def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> dict:
+def commander_integration_inbox(
+    conn: sqlite3.Connection,
+    headers,
+    qs=None,
+    *,
+    workspace_id: str | None = None,
+) -> dict:
     qs = qs or {}
+    workspace_id = normalize_workspace_id(
+        workspace_id or headers.get("X-AgentOps-Workspace-Id") or "local-demo"
+    )
 
     def query_value(name: str, default: str = "") -> str:
         value = qs.get(name, default)
@@ -20093,7 +21400,8 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
                   (SELECT artifact_id FROM artifacts a WHERE a.run_id=r.run_id ORDER BY a.created_at DESC LIMIT 1) AS artifact_id
         FROM runs r
         JOIN tasks t ON t.task_id=r.task_id
-        WHERE r.status='completed'
+        WHERE COALESCE(r.workspace_id,t.workspace_id,'local-demo')=?
+          AND r.status='completed'
           AND (r.approval_required=1 OR t.status='waiting_approval'
                OR EXISTS (SELECT 1 FROM approvals ap WHERE ap.run_id=r.run_id AND ap.decision='pending'))
           AND (EXISTS (SELECT 1 FROM artifacts a WHERE a.run_id=r.run_id)
@@ -20101,7 +21409,7 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
                OR EXISTS (SELECT 1 FROM audit_logs al WHERE al.entity_type='runs' AND al.entity_id=r.run_id))
         ORDER BY r.created_at DESC
         LIMIT ?""",
-        (per_bucket_limit,),
+        (workspace_id, per_bucket_limit),
     ).fetchall())
     for row in ready_run_rows:
         add(commander_inbox_item(
@@ -20119,14 +21427,15 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
         FROM workflow_jobs j
         LEFT JOIN tasks t ON t.task_id=j.result_task_id
         LEFT JOIN runs r ON r.run_id=j.result_run_id
-        WHERE j.status='completed'
+        WHERE COALESCE(j.workspace_id,'local-demo')=?
+          AND j.status='completed'
           AND j.result_artifact_id IS NOT NULL
           AND (t.status='waiting_approval'
                OR EXISTS (SELECT 1 FROM approvals ap WHERE ap.task_id=j.result_task_id AND ap.decision='pending')
                OR EXISTS (SELECT 1 FROM approvals ap WHERE ap.run_id=j.result_run_id AND ap.decision='pending'))
         ORDER BY j.updated_at DESC
         LIMIT ?""",
-        (per_bucket_limit,),
+        (workspace_id, per_bucket_limit),
     ).fetchall())
     for row in ready_job_rows:
         add(commander_inbox_item(
@@ -20141,10 +21450,11 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
         """SELECT job_id, workflow_type, status, title, result_task_id, result_run_id, result_artifact_id,
                   adapter, created_at, started_at, updated_at
         FROM workflow_jobs
-        WHERE status IN ('queued','running') AND updated_at>=?
+        WHERE COALESCE(workspace_id,'local-demo')=?
+          AND status IN ('queued','running') AND updated_at>=?
         ORDER BY updated_at ASC
         LIMIT ?""",
-        (cutoff_iso, per_bucket_limit),
+        (workspace_id, cutoff_iso, per_bucket_limit),
     ).fetchall())
     for row in running_job_rows:
         add(commander_inbox_item(
@@ -20158,10 +21468,11 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
     running_task_rows = rows_to_dicts(conn.execute(
         """SELECT task_id, title, status, owner_agent_id, created_at, updated_at
         FROM tasks
-        WHERE status='running' AND updated_at>=?
+        WHERE COALESCE(workspace_id,'local-demo')=?
+          AND status='running' AND updated_at>=?
         ORDER BY updated_at ASC
         LIMIT ?""",
-        (cutoff_iso, per_bucket_limit),
+        (workspace_id, cutoff_iso, per_bucket_limit),
     ).fetchall())
     for row in running_task_rows:
         add(commander_inbox_item(
@@ -20177,10 +21488,11 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
                   COALESCE(r.started_at, r.created_at) AS updated_at, t.title AS task_title, t.owner_agent_id
         FROM runs r
         JOIN tasks t ON t.task_id=r.task_id
-        WHERE r.status IN ('queued','running') AND COALESCE(r.started_at, r.created_at)>=?
+        WHERE COALESCE(r.workspace_id,t.workspace_id,'local-demo')=?
+          AND r.status IN ('queued','running') AND COALESCE(r.started_at, r.created_at)>=?
         ORDER BY COALESCE(r.started_at, r.created_at) ASC
         LIMIT ?""",
-        (cutoff_iso, per_bucket_limit),
+        (workspace_id, cutoff_iso, per_bucket_limit),
     ).fetchall())
     for row in running_run_rows:
         add(commander_inbox_item(
@@ -20195,10 +21507,10 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
         """SELECT job_id, workflow_type, status, title, result_task_id, result_run_id, result_artifact_id,
                   error_message, created_at, started_at, completed_at, updated_at
         FROM workflow_jobs
-        WHERE status='failed'
+        WHERE COALESCE(workspace_id,'local-demo')=? AND status='failed'
         ORDER BY updated_at DESC
         LIMIT ?""",
-        (per_bucket_limit,),
+        (workspace_id, per_bucket_limit),
     ).fetchall())
     for row in blocked_job_rows:
         add(commander_inbox_item(
@@ -20212,10 +21524,10 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
     blocked_task_rows = rows_to_dicts(conn.execute(
         """SELECT task_id, title, status, owner_agent_id, created_at, updated_at
         FROM tasks
-        WHERE status IN ('blocked','failed')
+        WHERE COALESCE(workspace_id,'local-demo')=? AND status IN ('blocked','failed')
         ORDER BY updated_at DESC
         LIMIT ?""",
-        (per_bucket_limit,),
+        (workspace_id, per_bucket_limit),
     ).fetchall())
     for row in blocked_task_rows:
         add(commander_inbox_item(
@@ -20231,10 +21543,11 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
                   COALESCE(r.ended_at, r.created_at) AS updated_at, t.title AS task_title, t.owner_agent_id
         FROM runs r
         JOIN tasks t ON t.task_id=r.task_id
-        WHERE r.status IN ('blocked','failed')
+        WHERE COALESCE(r.workspace_id,t.workspace_id,'local-demo')=?
+          AND r.status IN ('blocked','failed')
         ORDER BY COALESCE(r.ended_at, r.created_at) DESC
         LIMIT ?""",
-        (per_bucket_limit,),
+        (workspace_id, per_bucket_limit),
     ).fetchall())
     for row in blocked_run_rows:
         add(commander_inbox_item(
@@ -20249,10 +21562,11 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
         """SELECT job_id, workflow_type, status, title, result_task_id, result_run_id, result_artifact_id,
                   created_at, started_at, updated_at
         FROM workflow_jobs
-        WHERE status IN ('queued','running') AND updated_at<?
+        WHERE COALESCE(workspace_id,'local-demo')=?
+          AND status IN ('queued','running') AND updated_at<?
         ORDER BY updated_at ASC
         LIMIT ?""",
-        (cutoff_iso, per_bucket_limit),
+        (workspace_id, cutoff_iso, per_bucket_limit),
     ).fetchall())
     for row in stale_job_rows:
         add(commander_inbox_item(
@@ -20266,10 +21580,10 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
     stale_task_rows = rows_to_dicts(conn.execute(
         """SELECT task_id, title, status, owner_agent_id, created_at, updated_at
         FROM tasks
-        WHERE status='running' AND updated_at<?
+        WHERE COALESCE(workspace_id,'local-demo')=? AND status='running' AND updated_at<?
         ORDER BY updated_at ASC
         LIMIT ?""",
-        (cutoff_iso, per_bucket_limit),
+        (workspace_id, cutoff_iso, per_bucket_limit),
     ).fetchall())
     for row in stale_task_rows:
         add(commander_inbox_item(
@@ -20285,10 +21599,11 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
                   COALESCE(r.started_at, r.created_at) AS updated_at, t.title AS task_title, t.owner_agent_id
         FROM runs r
         JOIN tasks t ON t.task_id=r.task_id
-        WHERE r.status IN ('queued','running') AND COALESCE(r.started_at, r.created_at)<?
+        WHERE COALESCE(r.workspace_id,t.workspace_id,'local-demo')=?
+          AND r.status IN ('queued','running') AND COALESCE(r.started_at, r.created_at)<?
         ORDER BY COALESCE(r.started_at, r.created_at) ASC
         LIMIT ?""",
-        (cutoff_iso, per_bucket_limit),
+        (workspace_id, cutoff_iso, per_bucket_limit),
     ).fetchall())
     for row in stale_run_rows:
         add(commander_inbox_item(
@@ -20300,13 +21615,15 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
         ))
 
     memory_rows = rows_to_dicts(conn.execute(
-        """SELECT memory_id, task_id, agent_id, review_status, memory_type, canonical_text,
-                  source_ref, created_at, updated_at
-        FROM memories
-        WHERE review_status IN ('candidate','stale') OR (ttl_review_due_at IS NOT NULL AND ttl_review_due_at<?)
-        ORDER BY updated_at DESC
+        """SELECT m.memory_id, m.task_id, m.agent_id, m.review_status, m.memory_type, m.canonical_text,
+                  m.source_ref, m.created_at, m.updated_at
+        FROM memories m
+        LEFT JOIN tasks t ON t.task_id=m.task_id
+        WHERE COALESCE(t.workspace_id,'')=?
+          AND (m.review_status IN ('candidate','stale') OR (m.ttl_review_due_at IS NOT NULL AND m.ttl_review_due_at<?))
+        ORDER BY m.updated_at DESC
         LIMIT ?""",
-        (now_iso(), per_bucket_limit),
+        (workspace_id, now_iso(), per_bucket_limit),
     ).fetchall())
     for row in memory_rows:
         item = commander_inbox_item(
@@ -20328,39 +21645,46 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
         """SELECT COUNT(*)
         FROM runs r
         JOIN tasks t ON t.task_id=r.task_id
-        WHERE r.status='completed'
+        WHERE COALESCE(r.workspace_id,t.workspace_id,'local-demo')=?
+          AND r.status='completed'
           AND (r.approval_required=1 OR t.status='waiting_approval'
                OR EXISTS (SELECT 1 FROM approvals ap WHERE ap.run_id=r.run_id AND ap.decision='pending'))
           AND (EXISTS (SELECT 1 FROM artifacts a WHERE a.run_id=r.run_id)
                OR EXISTS (SELECT 1 FROM evaluations e WHERE e.run_id=r.run_id)
-               OR EXISTS (SELECT 1 FROM audit_logs al WHERE al.entity_type='runs' AND al.entity_id=r.run_id))"""
+               OR EXISTS (SELECT 1 FROM audit_logs al WHERE al.entity_type='runs' AND al.entity_id=r.run_id))""",
+        (workspace_id,),
     )
     ready_total += commander_count(
         conn,
         """SELECT COUNT(*)
         FROM workflow_jobs j
         LEFT JOIN tasks t ON t.task_id=j.result_task_id
-        WHERE j.status='completed'
+        WHERE COALESCE(j.workspace_id,'local-demo')=?
+          AND j.status='completed'
           AND j.result_artifact_id IS NOT NULL
           AND (t.status='waiting_approval'
                OR EXISTS (SELECT 1 FROM approvals ap WHERE ap.task_id=j.result_task_id AND ap.decision='pending')
-               OR EXISTS (SELECT 1 FROM approvals ap WHERE ap.run_id=j.result_run_id AND ap.decision='pending'))"""
+               OR EXISTS (SELECT 1 FROM approvals ap WHERE ap.run_id=j.result_run_id AND ap.decision='pending'))""",
+        (workspace_id,),
     )
 
-    still_running_total = commander_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE status IN ('queued','running') AND updated_at>=?", (cutoff_iso,))
-    still_running_total += commander_count(conn, "SELECT COUNT(*) FROM tasks WHERE status='running' AND updated_at>=?", (cutoff_iso,))
-    still_running_total += commander_count(conn, "SELECT COUNT(*) FROM runs WHERE status IN ('queued','running') AND COALESCE(started_at, created_at)>=?", (cutoff_iso,))
+    still_running_total = commander_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE COALESCE(workspace_id,'local-demo')=? AND status IN ('queued','running') AND updated_at>=?", (workspace_id, cutoff_iso))
+    still_running_total += commander_count(conn, "SELECT COUNT(*) FROM tasks WHERE COALESCE(workspace_id,'local-demo')=? AND status='running' AND updated_at>=?", (workspace_id, cutoff_iso))
+    still_running_total += commander_count(conn, "SELECT COUNT(*) FROM runs WHERE COALESCE(workspace_id,'local-demo')=? AND status IN ('queued','running') AND COALESCE(started_at, created_at)>=?", (workspace_id, cutoff_iso))
 
-    blocked_total = commander_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE status='failed'")
-    blocked_total += commander_count(conn, "SELECT COUNT(*) FROM tasks WHERE status IN ('blocked','failed')")
-    blocked_total += commander_count(conn, "SELECT COUNT(*) FROM runs WHERE status IN ('blocked','failed')")
-    late_total = commander_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE status IN ('queued','running') AND updated_at<?", (cutoff_iso,))
-    late_total += commander_count(conn, "SELECT COUNT(*) FROM tasks WHERE status='running' AND updated_at<?", (cutoff_iso,))
-    late_total += commander_count(conn, "SELECT COUNT(*) FROM runs WHERE status IN ('queued','running') AND COALESCE(started_at, created_at)<?", (cutoff_iso,))
+    blocked_total = commander_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE COALESCE(workspace_id,'local-demo')=? AND status='failed'", (workspace_id,))
+    blocked_total += commander_count(conn, "SELECT COUNT(*) FROM tasks WHERE COALESCE(workspace_id,'local-demo')=? AND status IN ('blocked','failed')", (workspace_id,))
+    blocked_total += commander_count(conn, "SELECT COUNT(*) FROM runs WHERE COALESCE(workspace_id,'local-demo')=? AND status IN ('blocked','failed')", (workspace_id,))
+    late_total = commander_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE COALESCE(workspace_id,'local-demo')=? AND status IN ('queued','running') AND updated_at<?", (workspace_id, cutoff_iso))
+    late_total += commander_count(conn, "SELECT COUNT(*) FROM tasks WHERE COALESCE(workspace_id,'local-demo')=? AND status='running' AND updated_at<?", (workspace_id, cutoff_iso))
+    late_total += commander_count(conn, "SELECT COUNT(*) FROM runs WHERE COALESCE(workspace_id,'local-demo')=? AND status IN ('queued','running') AND COALESCE(started_at, created_at)<?", (workspace_id, cutoff_iso))
     memory_review_total = commander_count(
         conn,
-        "SELECT COUNT(*) FROM memories WHERE review_status IN ('candidate','stale') OR (ttl_review_due_at IS NOT NULL AND ttl_review_due_at<?)",
-        (now_iso(),),
+        """SELECT COUNT(*) FROM memories m
+        LEFT JOIN tasks t ON t.task_id=m.task_id
+        WHERE COALESCE(t.workspace_id,'')=?
+          AND (m.review_status IN ('candidate','stale') OR (m.ttl_review_due_at IS NOT NULL AND m.ttl_review_due_at<?))""",
+        (workspace_id, now_iso()),
     )
     bucket_totals = {
         "ready_for_review": ready_total,
@@ -20390,7 +21714,7 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
         "status": status,
         "token_omitted": True,
         "live_execution_performed": False,
-        "workspace_id": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+        "workspace_id": workspace_id,
         "threshold_sec": threshold_sec,
         "filter": {
             "bucket": bucket_filter or "all",
@@ -20421,15 +21745,25 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> d
     }
 
 
-def recent_closed_loop_run_count(conn: sqlite3.Connection, limit: int = 250) -> int:
+def recent_closed_loop_run_count(
+    conn: sqlite3.Connection,
+    workspace_id: str | None = None,
+    limit: int = 250,
+) -> int:
+    workspace_clause = ""
+    params: list[Any] = []
+    if workspace_id:
+        workspace_clause = " AND COALESCE(r.workspace_id,'local-demo')=?"
+        params.append(normalize_workspace_id(workspace_id))
     candidate_rows = conn.execute(
         """SELECT r.run_id FROM runs r
         WHERE EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.run_id=r.run_id)
           AND EXISTS (SELECT 1 FROM evaluations e WHERE e.run_id=r.run_id)
           AND EXISTS (SELECT 1 FROM artifacts a WHERE a.run_id=r.run_id)
+        """ + workspace_clause + """
         ORDER BY r.created_at DESC
         LIMIT ?""",
-        (limit,),
+        (*params, limit),
     ).fetchall()
     count = 0
     for row in candidate_rows:
@@ -21016,7 +22350,15 @@ def local_harness_proof_readiness(conn: sqlite3.Connection, workspace_id: str = 
     }
 
 
-def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = True) -> dict:
+def local_readiness(
+    conn: sqlite3.Connection,
+    headers,
+    refresh_runtime: bool = True,
+    workspace_id: str | None = None,
+) -> dict:
+    workspace_id = normalize_workspace_id(
+        workspace_id or headers.get("X-AgentOps-Workspace-Id") or "local-demo"
+    )
     gateway, gateway_status_code = agent_gateway_status(conn, headers)
     running_instance = running_instance_identity()
     security = security_production_readiness(conn, headers)
@@ -21028,12 +22370,19 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         and not bool(security_startup.get("failures"))
         and not (production_requested and not production_ready)
     )
-    worker = worker_status(conn, refresh_runtime=refresh_runtime)
+    worker = worker_status(
+        conn,
+        refresh_runtime=refresh_runtime,
+        workspace_id=workspace_id,
+    )
     adapter_summary = worker.get("adapter_readiness") or {}
     adapter_payload = worker_adapter_readiness(conn, refresh=refresh_runtime)
-    synthesis_lifecycle = commander_synthesis_lifecycle(conn, limit=3)
+    synthesis_lifecycle = commander_synthesis_lifecycle(
+        conn,
+        limit=3,
+        workspace_id=workspace_id,
+    )
     synthesis_summary = synthesis_lifecycle.get("summary") or {}
-    workspace_id = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo")
     live_acceptance = live_acceptance_readiness(conn, workspace_id)
     live_summary = live_acceptance.get("summary") or {}
     local_harness_proof = local_harness_proof_readiness(conn, workspace_id)
@@ -21042,7 +22391,7 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         conn,
         {"q": ["AgentOps MIS local worker knowledge retrieval evidence"], "limit": ["5"], "baseline_limit": ["5"]},
         headers,
-        auth_ctx={},
+        auth_ctx={"mode": "human_session", "workspace_id": workspace_id},
     )
     knowledge_evidence_metrics = knowledge_evidence.get("metrics") or {}
     docs = [
@@ -21054,21 +22403,43 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
     ]
     doc_status = [{"id": doc_id, "path": str(path.relative_to(ROOT)), "exists": path.exists()} for doc_id, path in docs]
     evidence = {
-        "tasks": scalar_count(conn, "SELECT COUNT(*) FROM tasks"),
-        "planned_tasks": scalar_count(conn, "SELECT COUNT(*) FROM tasks WHERE status IN ('planned','backlog')"),
-        "completed_tasks": scalar_count(conn, "SELECT COUNT(*) FROM tasks WHERE status='completed'"),
-        "runs": scalar_count(conn, "SELECT COUNT(*) FROM runs"),
-        "completed_runs": scalar_count(conn, "SELECT COUNT(*) FROM runs WHERE status='completed'"),
-        "tool_calls": scalar_count(conn, "SELECT COUNT(*) FROM tool_calls"),
-        "evaluations": scalar_count(conn, "SELECT COUNT(*) FROM evaluations"),
-        "audit_logs": scalar_count(conn, "SELECT COUNT(*) FROM audit_logs"),
-        "artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts"),
-        "memories": scalar_count(conn, "SELECT COUNT(*) FROM memories"),
-        "memory_candidates": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='candidate'"),
-        "approved_memories": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='approved'"),
-        "knowledge_documents": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_documents"),
-        "knowledge_chunks": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_chunks"),
-        "knowledge_chunk_fts_rows": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_chunk_fts"),
+        "tasks": scalar_count(conn, "SELECT COUNT(*) FROM tasks WHERE COALESCE(workspace_id,'local-demo')=?", (workspace_id,)),
+        "planned_tasks": scalar_count(conn, "SELECT COUNT(*) FROM tasks WHERE COALESCE(workspace_id,'local-demo')=? AND status IN ('planned','backlog')", (workspace_id,)),
+        "completed_tasks": scalar_count(conn, "SELECT COUNT(*) FROM tasks WHERE COALESCE(workspace_id,'local-demo')=? AND status='completed'", (workspace_id,)),
+        "runs": scalar_count(conn, "SELECT COUNT(*) FROM runs WHERE COALESCE(workspace_id,'local-demo')=?", (workspace_id,)),
+        "completed_runs": scalar_count(conn, "SELECT COUNT(*) FROM runs WHERE COALESCE(workspace_id,'local-demo')=? AND status='completed'", (workspace_id,)),
+        "tool_calls": scalar_count(conn, "SELECT COUNT(*) FROM tool_calls tc JOIN runs r ON r.run_id=tc.run_id WHERE COALESCE(r.workspace_id,'local-demo')=?", (workspace_id,)),
+        "evaluations": scalar_count(conn, "SELECT COUNT(*) FROM evaluations e JOIN runs r ON r.run_id=e.run_id WHERE COALESCE(r.workspace_id,'local-demo')=?", (workspace_id,)),
+        "audit_logs": scalar_count(
+            conn,
+            """SELECT COUNT(DISTINCT al.audit_id) FROM audit_logs al
+            LEFT JOIN tasks t ON t.task_id=al.entity_id
+            LEFT JOIN runs r ON r.run_id=al.entity_id
+            WHERE COALESCE(t.workspace_id,r.workspace_id,'')=?""",
+            (workspace_id,),
+        ),
+        "artifacts": scalar_count(
+            conn,
+            """SELECT COUNT(*) FROM artifacts a
+            LEFT JOIN runs r ON r.run_id=a.run_id
+            LEFT JOIN tasks t ON t.task_id=COALESCE(a.task_id,r.task_id)
+            WHERE (a.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)
+              AND (COALESCE(a.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)
+              AND (a.run_id IS NOT NULL OR COALESCE(a.task_id,r.task_id) IS NOT NULL)""",
+            (workspace_id, workspace_id),
+        ),
+        "memories": scalar_count(conn, "SELECT COUNT(*) FROM memories m JOIN tasks t ON t.task_id=m.task_id WHERE COALESCE(t.workspace_id,'local-demo')=?", (workspace_id,)),
+        "memory_candidates": scalar_count(conn, "SELECT COUNT(*) FROM memories m JOIN tasks t ON t.task_id=m.task_id WHERE COALESCE(t.workspace_id,'local-demo')=? AND m.review_status='candidate'", (workspace_id,)),
+        "approved_memories": scalar_count(conn, "SELECT COUNT(*) FROM memories m JOIN tasks t ON t.task_id=m.task_id WHERE COALESCE(t.workspace_id,'local-demo')=? AND m.review_status='approved'", (workspace_id,)),
+        "knowledge_documents": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_documents WHERE workspace_id IN ('global', ?)", (workspace_id,)),
+        "knowledge_chunks": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_chunks WHERE workspace_id IN ('global', ?)", (workspace_id,)),
+        "knowledge_chunk_fts_rows": scalar_count(
+            conn,
+            """SELECT COUNT(*) FROM knowledge_chunk_fts fts
+            JOIN knowledge_chunks kc ON kc.chunk_id=fts.chunk_id
+            WHERE kc.workspace_id IN ('global', ?)""",
+            (workspace_id,),
+        ),
         "knowledge_workspace_documents": scalar_count(
             conn,
             "SELECT COUNT(*) FROM knowledge_documents WHERE workspace_id IN ('global', ?)",
@@ -21079,11 +22450,40 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
             "SELECT COUNT(*) FROM knowledge_chunks WHERE workspace_id IN ('global', ?)",
             (workspace_id,),
         ),
-        "pending_approvals": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='pending'"),
-        "approvals": scalar_count(conn, "SELECT COUNT(*) FROM approvals"),
-        "workflow_jobs": scalar_count(conn, "SELECT COUNT(*) FROM workflow_jobs"),
-        "customer_worker_artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts WHERE artifact_type='customer_worker_result'"),
-        "closed_loop_runs": recent_closed_loop_run_count(conn),
+        "pending_approvals": scalar_count(
+            conn,
+            """SELECT COUNT(*) FROM approvals ap
+            LEFT JOIN runs r ON r.run_id=ap.run_id
+            LEFT JOIN tasks t ON t.task_id=COALESCE(ap.task_id,r.task_id)
+            WHERE ap.decision='pending'
+              AND (ap.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)
+              AND (COALESCE(ap.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)
+              AND (ap.run_id IS NOT NULL OR COALESCE(ap.task_id,r.task_id) IS NOT NULL)""",
+            (workspace_id, workspace_id),
+        ),
+        "approvals": scalar_count(
+            conn,
+            """SELECT COUNT(*) FROM approvals ap
+            LEFT JOIN runs r ON r.run_id=ap.run_id
+            LEFT JOIN tasks t ON t.task_id=COALESCE(ap.task_id,r.task_id)
+            WHERE (ap.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)
+              AND (COALESCE(ap.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)
+              AND (ap.run_id IS NOT NULL OR COALESCE(ap.task_id,r.task_id) IS NOT NULL)""",
+            (workspace_id, workspace_id),
+        ),
+        "workflow_jobs": scalar_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE COALESCE(workspace_id,'local-demo')=?", (workspace_id,)),
+        "customer_worker_artifacts": scalar_count(
+            conn,
+            """SELECT COUNT(*) FROM artifacts a
+            LEFT JOIN runs r ON r.run_id=a.run_id
+            LEFT JOIN tasks t ON t.task_id=COALESCE(a.task_id,r.task_id)
+            WHERE a.artifact_type='customer_worker_result'
+              AND (a.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)
+              AND (COALESCE(a.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)
+              AND (a.run_id IS NOT NULL OR COALESCE(a.task_id,r.task_id) IS NOT NULL)""",
+            (workspace_id, workspace_id),
+        ),
+        "closed_loop_runs": recent_closed_loop_run_count(conn, workspace_id),
         "commander_synthesis_artifacts": int(synthesis_summary.get("synthesis_artifacts") or 0),
         "commander_synthesis_pending_reviews": int(synthesis_summary.get("pending_reviews") or 0),
         "commander_synthesis_approved_reviews": int(synthesis_summary.get("approved_reviews") or 0),
@@ -23283,9 +24683,13 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
     }
 
 
-def operator_evidence_report(conn: sqlite3.Connection, headers, qs=None) -> dict:
+def operator_evidence_report(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
-    workspace_id = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or (qs.get("workspace_id") or ["local-demo"])[0])
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or headers.get("X-AgentOps-Workspace-Id")
+        or (qs.get("workspace_id") or ["local-demo"])[0]
+    )
     limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 50)
     run_id = (qs.get("run_id") or [None])[0]
     task_id = (qs.get("task_id") or [None])[0]
@@ -23327,24 +24731,54 @@ def operator_evidence_report(conn: sqlite3.Connection, headers, qs=None) -> dict
     }
 
 
-def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
+def operator_action_plan(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 30)
-    workspace_id = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo")
-    review = human_review_queue(conn, limit=max(limit, 12))
-    fleet = worker_fleet_view(conn)
+    effective_headers = headers
+    if isinstance(auth_ctx, dict) and (
+        agent_gateway_is_bound_auth(auth_ctx)
+        or auth_ctx.get("mode") == "human_session"
+    ):
+        effective_headers = dict(headers)
+        effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
+        if auth_ctx.get("agent_id"):
+            effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id")
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or effective_headers.get("X-AgentOps-Workspace-Id")
+        or "local-demo"
+    )
+    review = human_review_queue(
+        conn,
+        limit=max(limit, 12),
+        ident={
+            "workspace_id": workspace_id,
+            "agent_id": (auth_ctx or {}).get("agent_id") or effective_headers.get("X-AgentOps-Agent-Id") or "",
+        },
+        auth_ctx=auth_ctx,
+    )
+    fleet = worker_fleet_view(conn, workspace_id)
     adapter_readiness = worker_adapter_readiness(conn, refresh=False)
-    delivery_board = customer_delivery_board(conn, limit=max(limit, 8))
-    inbox = commander_integration_inbox(conn, headers, {"bucket": ["all"], "limit": [str(max(limit, 12))]})
+    delivery_board = customer_delivery_board(
+        conn,
+        limit=max(limit, 8),
+        workspace_id=workspace_id if auth_ctx else None,
+    )
+    inbox = commander_integration_inbox(
+        conn,
+        effective_headers,
+        {"bucket": ["all"], "limit": [str(max(limit, 12))]},
+        workspace_id=workspace_id,
+    )
     remediation_loop = evaluation_case_remediation_loop(conn, workspace_id, limit=max(limit, 8))
     evidence_gaps = operator_execution_evidence_gaps(conn, workspace_id, limit=max(limit, 8))
     task_intake = operator_task_intake_checklist(conn, workspace_id, limit=max(limit, 8))
     dispatch_evidence = operator_dispatch_evidence_lane(conn, workspace_id, limit=max(limit, 8))
-    local_readiness_snapshot = local_readiness(conn, headers)
-    security_readiness_snapshot = security_production_readiness(conn, headers)
+    local_readiness_snapshot = local_readiness(conn, effective_headers, workspace_id=workspace_id)
+    security_readiness_snapshot = security_production_readiness(conn, effective_headers)
     security_gates = security_readiness_snapshot.get("gates") or []
     local_write_guard_gate = next((gate for gate in security_gates if gate.get("id") == "local_ui_write_guard"), {})
-    action_receipts = list_operator_action_receipts(conn, {"limit": [str(max(limit, 8))], "workspace_id": [workspace_id]}, headers)
+    action_receipts = list_operator_action_receipts(conn, {"limit": [str(max(limit, 8))], "workspace_id": [workspace_id]}, effective_headers)
     action_receipt_summary = action_receipts.get("summary") or {}
     receipt_failure_memory = operator_receipt_failure_memory_lane(conn, workspace_id, min_failures=2, limit=max(limit, 8))
     receipt_failure_memory_summary = receipt_failure_memory.get("summary") or {}
@@ -23522,7 +24956,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
 
     loop_supervision = operator_loop_supervision(
         conn,
-        headers,
+        effective_headers,
         {
             "limit": [str(min(max(limit, 2), 8))],
             "adapter": ["hermes", "openclaw"],
@@ -24581,12 +26015,30 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     }
 
 
-def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
+def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 30)
-    workspace_id = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    effective_headers = headers
+    if isinstance(auth_ctx, dict) and (
+        agent_gateway_is_bound_auth(auth_ctx)
+        or auth_ctx.get("mode") == "human_session"
+    ):
+        effective_headers = dict(headers)
+        effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
+        if auth_ctx.get("agent_id"):
+            effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id")
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or effective_headers.get("X-AgentOps-Workspace-Id")
+        or "local-demo"
+    )
     loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
-    action_plan = operator_action_plan(conn, headers, {"limit": [str(limit)]})
+    action_plan = operator_action_plan(
+        conn,
+        effective_headers,
+        {"limit": [str(limit)]},
+        auth_ctx,
+    )
     summary = action_plan.get("summary") or {}
     task_intake = action_plan.get("task_intake") or {}
     intake_summary = task_intake.get("summary") or {}
@@ -24600,7 +26052,12 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     receipt_failure_memory_summary = receipt_failure_memory.get("summary") or {}
     receipt_coverage = action_plan.get("receipt_coverage") or {}
     source_status = action_plan.get("source_status") or {}
-    loop_readback = hermes_openclaw_loop_readback(conn, loop_id=loop_id or None, limit=limit)
+    loop_readback = hermes_openclaw_loop_readback(
+        conn,
+        loop_id=loop_id or None,
+        limit=limit,
+        workspace_id=workspace_id if auth_ctx else None,
+    )
     loop_summary = loop_readback.get("summary") or {}
     loop_scoped = bool(loop_id and int(loop_summary.get("runs") or 0) > 0)
     loop_plans = loop_readback.get("agent_plans") or []
@@ -25391,12 +26848,18 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     evidence_task_id = redact_text((qs.get("task_id") or [""])[0], 160)
     evidence_run_id = redact_text((qs.get("run_id") or [""])[0], 160)
     effective_headers = headers
-    if agent_gateway_is_bound_auth(auth_ctx):
+    if agent_gateway_is_bound_auth(auth_ctx) or human_session_workspace(auth_ctx):
         effective_headers = dict(headers)
         effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
-        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
-    loop_audit = operator_loop_audit(conn, effective_headers, {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]})
-    action_plan = operator_action_plan(conn, effective_headers, {"limit": [str(limit)]})
+        if agent_gateway_is_bound_auth(auth_ctx):
+            effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+    loop_audit = operator_loop_audit(
+        conn,
+        effective_headers,
+        {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]},
+        auth_ctx,
+    )
+    action_plan = operator_action_plan(conn, effective_headers, {"limit": [str(limit)]}, auth_ctx)
     evidence_report_qs = {"limit": [str(min(limit, 8))]}
     evidence_report_command_parts = ["agentops", "operator", "evidence-report"]
     if evidence_run_id:
@@ -25406,7 +26869,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         evidence_report_qs["task_id"] = [evidence_task_id]
         evidence_report_command_parts.extend(["--task-id", evidence_task_id])
     evidence_report_command_parts.extend(["--limit", str(min(limit, 8))])
-    evidence_report = operator_evidence_report(conn, effective_headers, evidence_report_qs)
+    evidence_report = operator_evidence_report(conn, effective_headers, evidence_report_qs, auth_ctx)
     workspace_id = normalize_workspace_id(loop_audit.get("workspace_id") or action_plan.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
     action_package = loop_audit.get("action_package") or {}
     action_package_items = action_package.get("items") or []
@@ -26455,10 +27918,11 @@ def operator_loop_self_check(conn: sqlite3.Connection, headers, qs=None, auth_ct
     limit = bounded_int((qs.get("limit") or ["12"])[0], 12, 1, 30)
     loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
     effective_headers = headers
-    if agent_gateway_is_bound_auth(auth_ctx):
+    if agent_gateway_is_bound_auth(auth_ctx) or human_session_workspace(auth_ctx):
         effective_headers = dict(headers)
         effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
-        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+        if agent_gateway_is_bound_auth(auth_ctx):
+            effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
     handoff = operator_handoff(conn, effective_headers, {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]}, auth_ctx)
     work_order = handoff.get("work_order") or {}
     advance_loop = work_order.get("advance_loop") or {}
@@ -26680,18 +28144,36 @@ def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -
     limit = bounded_int((qs.get("limit") or ["12"])[0], 12, 1, 30)
     loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
     effective_headers = headers
-    if agent_gateway_is_bound_auth(auth_ctx):
+    if isinstance(auth_ctx, dict) and (
+        agent_gateway_is_bound_auth(auth_ctx)
+        or auth_ctx.get("mode") == "human_session"
+    ):
         effective_headers = dict(headers)
         effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
-        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+        if auth_ctx.get("agent_id"):
+            effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id")
+
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or effective_headers.get("X-AgentOps-Workspace-Id")
+        or "local-demo"
+    )
 
     handoff = operator_handoff(conn, effective_headers, {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]}, auth_ctx)
-    local = local_readiness(conn, effective_headers)
+    local = local_readiness(conn, effective_headers, workspace_id=workspace_id)
     security = security_production_readiness(conn, effective_headers)
     security_gates = security.get("gates") or []
     local_write_guard_gate = next((gate for gate in security_gates if gate.get("id") == "local_ui_write_guard"), {})
-    worker = worker_status(conn)
-    review = human_review_queue(conn, limit)
+    worker = worker_status(conn, workspace_id=workspace_id)
+    review = human_review_queue(
+        conn,
+        limit,
+        ident={
+            "workspace_id": workspace_id,
+            "agent_id": (auth_ctx or {}).get("agent_id") or effective_headers.get("X-AgentOps-Agent-Id") or "",
+        },
+        auth_ctx=auth_ctx,
+    )
     action_plan_source = ((handoff.get("sources") or {}).get("action_plan") or {})
     action_plan_summary = action_plan_source.get("summary") or {}
 
@@ -26979,7 +28461,7 @@ def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx
         or "local-demo"
     )
     readiness = worker_adapter_readiness(conn, refresh=False)
-    fleet = worker_fleet_view(conn)
+    fleet = worker_fleet_view(conn, workspace_id)
     readiness_summary = readiness.get("summary") or {}
     adapters = readiness.get("adapters") or {}
     fleet_summary = fleet.get("summary") or {}
@@ -27259,7 +28741,12 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
     if not requested_agent_id:
         requested_agent_id = redact_text((auth_ctx or {}).get("agent_id") or effective_headers.get("X-AgentOps-Agent-Id") or "", 120)
 
-    local = local_readiness(conn, effective_headers, refresh_runtime=False)
+    local = local_readiness(
+        conn,
+        effective_headers,
+        refresh_runtime=False,
+        workspace_id=workspace_id,
+    )
     worker_readiness = worker_adapter_readiness(conn, refresh=False)
     runtime_doctor_qs = {"limit": [str(limit)], "loop_id": [loop_id] if loop_id else []}
     if qs.get("base_url"):
@@ -27884,10 +29371,11 @@ def build_agent_loop_handoff_consumer(
 def operator_agent_loop_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     effective_headers = headers
-    if agent_gateway_is_bound_auth(auth_ctx):
+    if agent_gateway_is_bound_auth(auth_ctx) or human_session_workspace(auth_ctx):
         effective_headers = dict(headers)
         effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
-        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+        if agent_gateway_is_bound_auth(auth_ctx):
+            effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
     workspace_id = normalize_workspace_id(
         (auth_ctx or {}).get("workspace_id")
         or effective_headers.get("X-AgentOps-Workspace-Id")
@@ -27916,7 +29404,12 @@ def operator_agent_loop_handoff(conn: sqlite3.Connection, headers, qs=None, auth
         handoff_mode = "full"
     handoff_mode = "full" if handoff_mode == "full" else "lightweight"
     include_codex = str((qs.get("include_codex") or ["true"])[0]).strip().lower() not in {"0", "false", "no", "off"}
-    local = local_readiness(conn, effective_headers, refresh_runtime=False)
+    local = local_readiness(
+        conn,
+        effective_headers,
+        refresh_runtime=False,
+        workspace_id=workspace_id,
+    )
     current_code = agent_loop_handoff_current_code_summary(local)
     live_required = [adapter for adapter in adapters if adapter in {"hermes", "openclaw"}] or ["hermes", "openclaw"]
     live_acceptance = live_acceptance_readiness(conn, workspace_id, freshness_hours=freshness_hours, limit=limit)
@@ -29619,20 +31112,36 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
     limit = bounded_int((qs.get("limit") or ["12"])[0], 12, 1, 30)
     project_filter = commander_safe_text((qs.get("project_id") or [""])[0], 120)
     effective_headers = headers
-    if agent_gateway_is_bound_auth(auth_ctx):
+    if isinstance(auth_ctx, dict) and (
+        agent_gateway_is_bound_auth(auth_ctx)
+        or auth_ctx.get("mode") == "human_session"
+    ):
         effective_headers = dict(headers)
         effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
-        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+        if auth_ctx.get("agent_id"):
+            effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id")
     workspace_id = normalize_workspace_id(effective_headers.get("X-AgentOps-Workspace-Id") or "local-demo")
 
-    action_plan = operator_action_plan(conn, effective_headers, {"limit": [str(limit)]})
+    action_plan = operator_action_plan(conn, effective_headers, {"limit": [str(limit)]}, auth_ctx)
     action_plan_summary = action_plan.get("summary") or {}
     action_plan_actions = action_plan.get("actions") or []
-    worker = worker_status(conn)
+    worker = worker_status(conn, workspace_id=workspace_id)
     worker_health = worker.get("fleet_health") or {}
-    review = human_review_queue(conn, limit=max(limit, 12))
+    review = human_review_queue(
+        conn,
+        limit=max(limit, 12),
+        ident={
+            "workspace_id": workspace_id,
+            "agent_id": (auth_ctx or {}).get("agent_id") or effective_headers.get("X-AgentOps-Agent-Id") or "",
+        },
+        auth_ctx=auth_ctx,
+    )
     review_summary = review.get("summary") or {}
-    delivery = customer_delivery_board(conn, limit=max(limit, 8))
+    delivery = customer_delivery_board(
+        conn,
+        limit=max(limit, 8),
+        workspace_id=workspace_id if auth_ctx else None,
+    )
     delivery_summary = delivery.get("summary") or {}
     commander_qs = {"limit": [str(max(limit, 12))]}
     if project_filter:
@@ -29647,11 +31156,12 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
                   t.title AS task_title, t.priority AS task_priority, t.risk_level AS task_risk_level
            FROM runs r
            LEFT JOIN tasks t ON t.task_id=r.task_id
-           WHERE COALESCE(r.workspace_id,t.workspace_id,'local-demo')=?
+           WHERE COALESCE(r.workspace_id,'local-demo')=?
+             AND (r.task_id IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)
              AND r.status IN ('failed','blocked','waiting_approval')
            ORDER BY COALESCE(r.ended_at,r.created_at,r.started_at) DESC
            LIMIT ?""",
-        (workspace_id, limit),
+        (workspace_id, workspace_id, limit),
     ).fetchall())
     blocked_runs = [
         {
@@ -29679,11 +31189,13 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
            FROM approvals ap
            LEFT JOIN runs r ON r.run_id=ap.run_id
            LEFT JOIN tasks t ON t.task_id=COALESCE(ap.task_id,r.task_id)
-           WHERE COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?
-             AND ap.decision='pending'
+           WHERE ap.decision='pending'
+             AND (ap.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)
+             AND (COALESCE(ap.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)
+             AND (ap.run_id IS NOT NULL OR COALESCE(ap.task_id,r.task_id) IS NOT NULL)
            ORDER BY ap.created_at DESC
            LIMIT ?""",
-        (workspace_id, limit),
+        (workspace_id, workspace_id, limit),
     ).fetchall())
     pending_approvals = [
         {
@@ -30946,13 +32458,36 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
     }, 201
 
 
-def run_graph(conn, run_id: str) -> dict | None:
-    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+def run_graph(
+    conn,
+    run_id: str,
+    *,
+    workspace_id: str | None = None,
+) -> dict | None:
+    run_sql = "SELECT * FROM runs WHERE run_id=?"
+    run_params: list[Any] = [run_id]
+    if workspace_id:
+        workspace_id = normalize_workspace_id(workspace_id)
+        run_sql += " AND COALESCE(workspace_id,'local-demo')=?"
+        run_params.append(workspace_id)
+    run = conn.execute(run_sql, run_params).fetchone()
     if not run:
         return None
-    parent = conn.execute("SELECT * FROM runs WHERE run_id=?", (run["parent_run_id"],)).fetchone() if run["parent_run_id"] else None
-    children = rows_to_dicts(conn.execute("SELECT * FROM runs WHERE parent_run_id=? ORDER BY created_at", (run_id,)).fetchall())
-    siblings = rows_to_dicts(conn.execute("SELECT * FROM runs WHERE delegation_id=? AND run_id<>? ORDER BY created_at", (run["delegation_id"], run_id)).fetchall()) if run["delegation_id"] else []
+    workspace_clause = " AND COALESCE(workspace_id,'local-demo')=?" if workspace_id else ""
+    parent_params = [run["parent_run_id"], *([workspace_id] if workspace_id else [])]
+    child_params = [run_id, *([workspace_id] if workspace_id else [])]
+    parent = conn.execute(
+        "SELECT * FROM runs WHERE run_id=?" + workspace_clause,
+        parent_params,
+    ).fetchone() if run["parent_run_id"] else None
+    children = rows_to_dicts(conn.execute(
+        "SELECT * FROM runs WHERE parent_run_id=?" + workspace_clause + " ORDER BY created_at",
+        child_params,
+    ).fetchall())
+    siblings = rows_to_dicts(conn.execute(
+        "SELECT * FROM runs WHERE delegation_id=? AND run_id<>?" + workspace_clause + " ORDER BY created_at",
+        [run["delegation_id"], run_id, *([workspace_id] if workspace_id else [])],
+    ).fetchall()) if run["delegation_id"] else []
     return {"run": dict(run), "parent": dict(parent) if parent else None, "children": children, "siblings_by_delegation": siblings}
 
 
@@ -31052,26 +32587,46 @@ def work_delivery_graph_for_run(conn: sqlite3.Connection, run: sqlite3.Row | dic
     }
 
 
-def agent_performance(conn, agent_id: str) -> dict | None:
+def agent_performance(
+    conn,
+    agent_id: str,
+    *,
+    workspace_id: str | None = None,
+) -> dict | None:
     agent = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
     if not agent:
         return None
+    run_scope = ""
+    run_scope_params: list = []
+    if workspace_id:
+        workspace_id = normalize_workspace_id(workspace_id)
+        visibility_sql = agent_workspace_visibility_sql("a")
+        if not conn.execute(
+            f"SELECT 1 FROM agents a WHERE a.agent_id=? AND {visibility_sql}",
+            (agent_id,) + (workspace_id,) * 8,
+        ).fetchone():
+            return None
+        run_scope = " AND COALESCE(workspace_id,'local-demo')=?"
+        run_scope_params.append(workspace_id)
     row = conn.execute(
-        """SELECT COUNT(*) total_runs,
+        f"""SELECT COUNT(*) total_runs,
         SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) completed_runs,
         SUM(CASE WHEN status IN ('failed','blocked') THEN 1 ELSE 0 END) failures,
         AVG(duration_ms) avg_duration_ms,
         COALESCE(SUM(cost_usd),0) total_cost_usd,
         SUM(CASE WHEN approval_required=1 THEN 1 ELSE 0 END) approval_required_count
-        FROM runs WHERE agent_id=?""",
-        (agent_id,),
+        FROM runs WHERE agent_id=?{run_scope}""",
+        (agent_id, *run_scope_params),
     ).fetchone()
     total = row["total_runs"] or 0
     errors = rows_to_dicts(conn.execute(
-        "SELECT error_type, COUNT(*) count FROM runs WHERE agent_id=? AND error_type IS NOT NULL GROUP BY error_type ORDER BY count DESC LIMIT 5",
-        (agent_id,),
+        f"SELECT error_type, COUNT(*) count FROM runs WHERE agent_id=?{run_scope} AND error_type IS NOT NULL GROUP BY error_type ORDER BY count DESC LIMIT 5",
+        (agent_id, *run_scope_params),
     ).fetchall())
-    recent = rows_to_dicts(conn.execute("SELECT * FROM runs WHERE agent_id=? ORDER BY created_at DESC LIMIT 10", (agent_id,)).fetchall())
+    recent = rows_to_dicts(conn.execute(
+        f"SELECT * FROM runs WHERE agent_id=?{run_scope} ORDER BY created_at DESC LIMIT 10",
+        (agent_id, *run_scope_params),
+    ).fetchall())
     return {
         "agent": dict(agent),
         "total_runs": total,
@@ -31697,6 +33252,7 @@ class Handler(BaseHTTPRequestHandler):
                     payload, status = auth_error
                     return self.send_json(payload, status)
                 self._human_auth_context = context
+            human_workspace = human_session_workspace(self._human_auth_context)
             if path == "/api/human-auth/sessions":
                 if not human_auth.required():
                     return self.send_json({"error": "human_auth_disabled", "message": "Human authentication is not enabled."}, 409)
@@ -31730,10 +33286,17 @@ class Handler(BaseHTTPRequestHandler):
                     conn.rollback()
                     return self.send_json(auth_error, auth_status)
                 if path == "/api/agent-gateway/host-workers/status":
-                    payload = worker_status(conn, refresh_runtime=False)
+                    payload = worker_status(
+                        conn,
+                        refresh_runtime=False,
+                        workspace_id=(auth_ctx or {}).get("workspace_id"),
+                    )
                     operation = "host_worker_status"
                 elif path == "/api/agent-gateway/host-workers/fleet":
-                    payload = worker_fleet_view(conn)
+                    payload = worker_fleet_view(
+                        conn,
+                        workspace_id=(auth_ctx or {}).get("workspace_id"),
+                    )
                     operation = "host_worker_fleet"
                 elif path == "/api/agent-gateway/host-workers/adapter-readiness":
                     payload = worker_adapter_readiness(conn, refresh=False)
@@ -31744,13 +33307,22 @@ class Handler(BaseHTTPRequestHandler):
                     payload = {
                         "provider": "agentops-worker",
                         "threshold_sec": max(threshold, 30),
-                        "stuck_tasks": worker_stuck_tasks(conn, threshold, limit),
+                        "stuck_tasks": worker_stuck_tasks(
+                            conn,
+                            threshold,
+                            limit,
+                            workspace_id=(auth_ctx or {}).get("workspace_id"),
+                        ),
                     }
                     operation = "host_worker_stuck_tasks"
                 conn.rollback()
                 return self.send_json(host_worker_machine_read_payload(payload, auth_ctx, operation))
             if path == "/api/local/readiness":
-                payload = local_readiness(conn, self.headers)
+                payload = local_readiness(
+                    conn,
+                    self.headers,
+                    workspace_id=(self._human_auth_context or {}).get("workspace_id"),
+                )
                 conn.commit()
                 return self.send_json(payload)
             if path == "/api/command-center/overview":
@@ -31773,16 +33345,25 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/action-plan":
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 payload = cached_read_model(
                     "operator_action_plan",
                     qs,
                     self.headers,
-                    lambda: operator_action_plan(conn, self.headers, qs),
+                    lambda: operator_action_plan(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
                 )
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/loop-audit":
-                payload = operator_loop_audit(conn, self.headers, qs)
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                payload = operator_loop_audit(conn, self.headers, qs, auth_ctx)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/loop-control":
@@ -31799,11 +33380,16 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/evidence-report":
+                auth_ctx, auth_error = self.route_auth_context(conn, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 payload = cached_read_model(
                     "operator_evidence_report",
                     qs,
                     self.headers,
-                    lambda: operator_evidence_report(conn, self.headers, qs),
+                    lambda: operator_evidence_report(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
                 )
                 conn.rollback()
                 return self.send_json(payload)
@@ -32080,11 +33666,20 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/demo/readiness":
-                payload = demo_readiness(conn, self.headers)
+                payload = demo_readiness(
+                    conn,
+                    self.headers,
+                    workspace_id=(self._human_auth_context or {}).get("workspace_id"),
+                )
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/commander/project-board":
-                payload = commander_project_board(conn, self.headers, qs)
+                payload = commander_project_board(
+                    conn,
+                    self.headers,
+                    qs,
+                    workspace_id=(self._human_auth_context or {}).get("workspace_id"),
+                )
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/commander/repo-map":
@@ -32104,7 +33699,12 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/commander/integration-inbox":
-                payload = commander_integration_inbox(conn, self.headers, qs)
+                payload = commander_integration_inbox(
+                    conn,
+                    self.headers,
+                    qs,
+                    workspace_id=(self._human_auth_context or {}).get("workspace_id"),
+                )
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/agent-gateway/enrollments":
@@ -32402,28 +34002,65 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agents":
-                rows = conn.execute("SELECT * FROM agents ORDER BY created_at DESC").fetchall()
+                if human_workspace:
+                    visibility_sql = agent_workspace_visibility_sql("a")
+                    rows = conn.execute(
+                        f"SELECT a.* FROM agents a WHERE {visibility_sql} ORDER BY a.created_at DESC",
+                        (human_workspace,) * 8,
+                    ).fetchall()
+                else:
+                    rows = conn.execute("SELECT * FROM agents ORDER BY created_at DESC").fetchall()
                 return self.send_json(rows_to_dicts(rows))
             if path.startswith("/api/agents/") and path.endswith("/performance"):
                 agent_id = path.split("/")[-2]
-                data = agent_performance(conn, agent_id)
+                data = agent_performance(conn, agent_id, workspace_id=human_workspace)
                 if not data:
                     return self.send_json({"error": "not found"}, 404)
                 return self.send_json(data)
             if path.startswith("/api/agents/"):
                 agent_id = path.split("/")[-1]
                 agent = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
-                if not agent:
+                if not agent or (
+                    human_workspace
+                    and not human_workspace_object_visible(
+                        conn,
+                        self._human_auth_context,
+                        "agent",
+                        agent_id,
+                    )
+                ):
                     return self.send_json({"error": "not found"}, 404)
-                runs = rows_to_dicts(conn.execute("SELECT * FROM runs WHERE agent_id=? ORDER BY created_at DESC", (agent_id,)).fetchall())
-                tasks = rows_to_dicts(conn.execute("SELECT * FROM tasks WHERE owner_agent_id=? ORDER BY created_at DESC", (agent_id,)).fetchall())
+                run_sql = "SELECT * FROM runs WHERE agent_id=?"
+                task_sql = """SELECT * FROM tasks
+                    WHERE (owner_agent_id=? OR agentops_json_array_contains(collaborator_agent_ids, ?))"""
+                run_params: list = [agent_id]
+                task_params: list = [agent_id, agent_id]
+                if human_workspace:
+                    run_sql += " AND COALESCE(workspace_id,'local-demo')=?"
+                    task_sql += " AND COALESCE(workspace_id,'local-demo')=?"
+                    run_params.append(human_workspace)
+                    task_params.append(human_workspace)
+                runs = rows_to_dicts(conn.execute(run_sql + " ORDER BY created_at DESC", run_params).fetchall())
+                tasks = rows_to_dicts(conn.execute(task_sql + " ORDER BY created_at DESC", task_params).fetchall())
                 return self.send_json({"agent": dict(agent), "runs": runs, "tasks": tasks})
             if path == "/api/tasks":
-                rows = conn.execute("SELECT * FROM tasks ORDER BY created_at DESC").fetchall()
+                if human_workspace:
+                    rows = conn.execute(
+                        "SELECT * FROM tasks WHERE COALESCE(workspace_id,'local-demo')=? ORDER BY created_at DESC",
+                        (human_workspace,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute("SELECT * FROM tasks ORDER BY created_at DESC").fetchall()
                 return self.send_json(rows_to_dicts(rows))
             if path.startswith("/api/tasks/") and "/" not in path[len("/api/tasks/"):].strip("/"):
                 task_id = path.split("/")[-1]
-                task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+                if human_workspace:
+                    task = conn.execute(
+                        "SELECT * FROM tasks WHERE task_id=? AND COALESCE(workspace_id,'local-demo')=?",
+                        (task_id, human_workspace),
+                    ).fetchone()
+                else:
+                    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
                 if not task:
                     return self.send_json({"error": "not found"}, 404)
                 data = {"task": dict(task)}
@@ -32433,6 +34070,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(data)
             if path == "/api/runs":
                 where, params = [], []
+                if human_workspace:
+                    where.append("COALESCE(workspace_id,'local-demo')=?"); params.append(human_workspace)
                 if "task_id" in qs:
                     where.append("task_id=?"); params.append(qs["task_id"][0])
                 if "agent_id" in qs:
@@ -32448,22 +34087,41 @@ class Handler(BaseHTTPRequestHandler):
                     params=params,
                 ))
             if path == "/api/runs/export":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runs ORDER BY created_at DESC").fetchall()))
+                if human_workspace:
+                    rows = conn.execute(
+                        "SELECT * FROM runs WHERE COALESCE(workspace_id,'local-demo')=? ORDER BY created_at DESC",
+                        (human_workspace,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute("SELECT * FROM runs ORDER BY created_at DESC").fetchall()
+                return self.send_json(rows_to_dicts(rows))
             if path.startswith("/api/runs/") and path.endswith("/graph"):
                 run_id = path.split("/")[-2]
-                data = run_graph(conn, run_id)
+                if not human_workspace_object_visible(conn, self._human_auth_context, "run", run_id):
+                    payload, status = human_workspace_not_found("run")
+                    return self.send_json(payload, status)
+                data = run_graph(conn, run_id, workspace_id=human_workspace)
                 if not data:
                     return self.send_json({"error": "not found"}, 404)
                 return self.send_json(data)
             if path.startswith("/api/runs/") and path.endswith("/evidence-graph"):
                 run_id = path.split("/")[-2]
+                if not human_workspace_object_visible(conn, self._human_auth_context, "run", run_id):
+                    payload, status = human_workspace_not_found("run")
+                    return self.send_json(payload, status)
                 data = run_evidence_graph(conn, run_id)
                 if not data:
                     return self.send_json({"error": "not found"}, 404)
                 return self.send_json(data)
             if path.startswith("/api/runs/"):
                 run_id = path.split("/")[-1]
-                run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+                if human_workspace:
+                    run = conn.execute(
+                        "SELECT * FROM runs WHERE run_id=? AND COALESCE(workspace_id,'local-demo')=?",
+                        (run_id, human_workspace),
+                    ).fetchone()
+                else:
+                    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
                 if not run:
                     return self.send_json({"error": "not found"}, 404)
                 return self.send_json({
@@ -32477,6 +34135,8 @@ class Handler(BaseHTTPRequestHandler):
                 })
             if path == "/api/tool-calls":
                 where, params = [], []
+                if human_workspace:
+                    where.append("run_id IN (SELECT run_id FROM runs WHERE COALESCE(workspace_id,'local-demo')=?)"); params.append(human_workspace)
                 if "run_id" in qs:
                     where.append("run_id=?"); params.append(qs["run_id"][0])
                 if "agent_id" in qs:
@@ -32492,30 +34152,86 @@ class Handler(BaseHTTPRequestHandler):
                     params=params,
                 ))
             if path == "/api/knowledge/search":
-                payload, status = knowledge_search(conn, dict(qs), self.headers)
+                payload, status = knowledge_search(
+                    conn,
+                    dict(qs),
+                    self.headers,
+                    auth_ctx=self._human_auth_context,
+                )
                 conn.commit()
                 return self.send_json(payload, status)
             if path in {"/api/knowledge/evidence-packet", "/api/knowledge/retrieval-evidence-packet"}:
-                payload, status = knowledge_retrieval_evidence_packet(conn, dict(qs), self.headers, auth_ctx={})
+                payload, status = knowledge_retrieval_evidence_packet(
+                    conn,
+                    dict(qs),
+                    self.headers,
+                    auth_ctx=self._human_auth_context,
+                )
                 conn.rollback()
                 return self.send_json(payload, status)
             if path == "/api/agent-plans":
-                payload, status = list_agent_plans(conn, dict(qs), self.headers)
+                query = dict(qs)
+                if human_workspace:
+                    query["workspace_id"] = [human_workspace]
+                payload, status = list_agent_plans(conn, query, self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/approvals":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM approvals ORDER BY created_at DESC").fetchall()))
+                if human_workspace:
+                    rows = conn.execute(
+                        """SELECT ap.* FROM approvals ap
+                        LEFT JOIN runs r ON r.run_id=ap.run_id
+                        LEFT JOIN tasks t ON t.task_id=COALESCE(ap.task_id,r.task_id)
+                        WHERE (ap.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)
+                          AND (COALESCE(ap.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)
+                          AND (ap.run_id IS NOT NULL OR COALESCE(ap.task_id,r.task_id) IS NOT NULL)
+                        ORDER BY ap.created_at DESC""",
+                        (human_workspace, human_workspace),
+                    ).fetchall()
+                else:
+                    rows = conn.execute("SELECT * FROM approvals ORDER BY created_at DESC").fetchall()
+                return self.send_json(rows_to_dicts(rows))
             if path == "/api/memories":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM memories ORDER BY created_at DESC").fetchall()))
+                if human_workspace:
+                    rows = conn.execute(
+                        """SELECT m.* FROM memories m JOIN tasks t ON t.task_id=m.task_id
+                        WHERE COALESCE(t.workspace_id,'local-demo')=? ORDER BY m.created_at DESC""",
+                        (human_workspace,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute("SELECT * FROM memories ORDER BY created_at DESC").fetchall()
+                return self.send_json(rows_to_dicts(rows))
             if path == "/api/memories/export":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM memories ORDER BY created_at DESC").fetchall()))
+                if human_workspace:
+                    rows = conn.execute(
+                        """SELECT m.* FROM memories m JOIN tasks t ON t.task_id=m.task_id
+                        WHERE COALESCE(t.workspace_id,'local-demo')=? ORDER BY m.created_at DESC""",
+                        (human_workspace,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute("SELECT * FROM memories ORDER BY created_at DESC").fetchall()
+                return self.send_json(rows_to_dicts(rows))
             if path == "/api/evaluations":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM evaluations ORDER BY created_at DESC").fetchall()))
+                if human_workspace:
+                    rows = conn.execute(
+                        """SELECT e.* FROM evaluations e JOIN runs r ON r.run_id=e.run_id
+                        WHERE COALESCE(r.workspace_id,'local-demo')=? ORDER BY e.created_at DESC""",
+                        (human_workspace,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute("SELECT * FROM evaluations ORDER BY created_at DESC").fetchall()
+                return self.send_json(rows_to_dicts(rows))
             if path == "/api/evaluation-cases":
-                payload, status = list_evaluation_case_candidates(conn, dict(qs), self.headers)
+                query = dict(qs)
+                if human_workspace:
+                    query["workspace_id"] = [human_workspace]
+                payload, status = list_evaluation_case_candidates(conn, query, self.headers)
                 return self.send_json(payload, status)
             if path == "/api/evaluation-case-runs":
-                payload, status = list_evaluation_case_runs(conn, dict(qs), self.headers)
+                query = dict(qs)
+                if human_workspace:
+                    query["workspace_id"] = [human_workspace]
+                payload, status = list_evaluation_case_runs(conn, query, self.headers)
                 return self.send_json(payload, status)
             receipt_download_match = re.fullmatch(r"/api/host/acceptance-receipts/([^/]+)/download", path)
             if receipt_download_match:
@@ -32551,8 +34267,85 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_download(payload["payload"], payload["content_type"], payload["filename"])
             if path == "/api/artifacts":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM artifacts ORDER BY created_at DESC").fetchall()))
+                if human_workspace:
+                    rows = conn.execute(
+                        """SELECT a.* FROM artifacts a
+                        LEFT JOIN runs r ON r.run_id=a.run_id
+                        LEFT JOIN tasks t ON t.task_id=COALESCE(a.task_id,r.task_id)
+                        WHERE (a.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)
+                          AND (COALESCE(a.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)
+                          AND (a.run_id IS NOT NULL OR COALESCE(a.task_id,r.task_id) IS NOT NULL)
+                        ORDER BY a.created_at DESC""",
+                        (human_workspace, human_workspace),
+                    ).fetchall()
+                else:
+                    rows = conn.execute("SELECT * FROM artifacts ORDER BY created_at DESC").fetchall()
+                return self.send_json(rows_to_dicts(rows))
             if path == "/api/audit":
+                audit_where = ""
+                audit_params: list = []
+                if human_workspace:
+                    audit_where = f"""(
+                        (entity_type='tasks' AND entity_id IN (
+                            SELECT task_id FROM tasks WHERE COALESCE(workspace_id,'local-demo')=?
+                        ))
+                        OR (entity_type='runs' AND entity_id IN (
+                            SELECT run_id FROM runs WHERE COALESCE(workspace_id,'local-demo')=?
+                        ))
+                        OR (entity_type='tool_calls' AND entity_id IN (
+                            SELECT tc.tool_call_id FROM tool_calls tc JOIN runs r ON r.run_id=tc.run_id
+                            WHERE COALESCE(r.workspace_id,'local-demo')=?
+                        ))
+                        OR (entity_type='approvals' AND entity_id IN (
+                            SELECT ap.approval_id FROM approvals ap
+                            LEFT JOIN runs r ON r.run_id=ap.run_id
+                            LEFT JOIN tasks t ON t.task_id=COALESCE(ap.task_id,r.task_id)
+                            WHERE (ap.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)
+                              AND (COALESCE(ap.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)
+                              AND (ap.run_id IS NOT NULL OR COALESCE(ap.task_id,r.task_id) IS NOT NULL)
+                        ))
+                        OR (entity_type='memories' AND entity_id IN (
+                            SELECT m.memory_id FROM memories m JOIN tasks t ON t.task_id=m.task_id
+                            WHERE COALESCE(t.workspace_id,'local-demo')=?
+                        ))
+                        OR (entity_type='evaluations' AND entity_id IN (
+                            SELECT e.evaluation_id FROM evaluations e JOIN runs r ON r.run_id=e.run_id
+                            WHERE COALESCE(r.workspace_id,'local-demo')=?
+                        ))
+                        OR (entity_type='artifacts' AND entity_id IN (
+                            SELECT a.artifact_id FROM artifacts a
+                            LEFT JOIN runs r ON r.run_id=a.run_id
+                            LEFT JOIN tasks t ON t.task_id=COALESCE(a.task_id,r.task_id)
+                            WHERE (a.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)
+                              AND (COALESCE(a.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)
+                              AND (a.run_id IS NOT NULL OR COALESCE(a.task_id,r.task_id) IS NOT NULL)
+                        ))
+                        OR (entity_type='agent_plans' AND entity_id IN (
+                            SELECT plan_id FROM agent_plans WHERE COALESCE(workspace_id,'local-demo')=?
+                        ))
+                        OR (entity_type='evaluation_case_candidates' AND entity_id IN (
+                            SELECT case_id FROM evaluation_case_candidates WHERE COALESCE(workspace_id,'local-demo')=?
+                        ))
+                        OR (entity_type='evaluation_case_runs' AND entity_id IN (
+                            SELECT case_run_id FROM evaluation_case_runs WHERE COALESCE(workspace_id,'local-demo')=?
+                        ))
+                        OR (entity_type='agent_gateway_tokens' AND entity_id IN (
+                            SELECT token_id FROM agent_gateway_tokens WHERE COALESCE(workspace_id,'local-demo')=?
+                        ))
+                        OR (entity_type='agent_gateway_sessions' AND entity_id IN (
+                            SELECT session_id FROM agent_gateway_sessions WHERE COALESCE(workspace_id,'local-demo')=?
+                        ))
+                        OR (entity_type='agent_gateway_enrollment_requests' AND entity_id IN (
+                            SELECT request_id FROM agent_gateway_enrollment_requests WHERE COALESCE(workspace_id,'local-demo')=?
+                        ))
+                        OR (entity_type='private_host_acceptance_receipts' AND entity_id IN (
+                            SELECT receipt_id FROM private_host_acceptance_receipts WHERE workspace_id=?
+                        ))
+                        OR (entity_type='prepared_actions' AND entity_id IN (
+                            SELECT action_id FROM prepared_actions WHERE COALESCE(workspace_id,'local-demo')=?
+                        ))
+                    )"""
+                    audit_params = [human_workspace] * 17
                 return self.send_json(ledger_page_response(
                     conn,
                     operation="audit_logs_list",
@@ -32562,16 +34355,32 @@ class Handler(BaseHTTPRequestHandler):
                     qs=qs,
                     default_limit=200,
                     max_limit=500,
+                    where=audit_where,
+                    params=audit_params,
                 ))
             if path == "/api/review/queue":
                 limit = int((qs.get("limit") or ["20"])[0])
-                return self.send_json(human_review_queue(conn, limit))
+                human_context = self._human_auth_context
+                return self.send_json(human_review_queue(
+                    conn,
+                    limit,
+                    ident={
+                        "workspace_id": (human_context or {}).get("workspace_id") or "local-demo",
+                        "agent_id": "",
+                    },
+                    auth_ctx=human_context,
+                ))
             if path == "/api/dashboard/metrics":
+                human_context = self._human_auth_context
                 return self.send_json(cached_read_model(
                     "dashboard_metrics",
                     qs,
                     self.headers,
-                    lambda: dashboard_metrics(conn),
+                    lambda: dashboard_metrics(
+                        conn,
+                        workspace_id=(human_context or {}).get("workspace_id"),
+                    ),
+                    human_context,
                 ))
             if path == "/api/runtime-connectors":
                 refresh_runtime_connectors(conn)
@@ -32579,11 +34388,27 @@ class Handler(BaseHTTPRequestHandler):
                 rows = conn.execute("SELECT * FROM runtime_connectors ORDER BY provider, connector_type, profile_name").fetchall()
                 return self.send_json([runtime_connector_public_row(row) for row in rows])
             if path == "/api/runtime-events":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runtime_events ORDER BY created_at DESC LIMIT 200").fetchall()))
+                if human_workspace:
+                    rows = conn.execute(
+                        """SELECT re.* FROM runtime_events re
+                        WHERE re.task_id IN (SELECT task_id FROM tasks WHERE COALESCE(workspace_id,'local-demo')=?)
+                           OR re.run_id IN (SELECT run_id FROM runs WHERE COALESCE(workspace_id,'local-demo')=?)
+                        ORDER BY re.created_at DESC LIMIT 200""",
+                        (human_workspace, human_workspace),
+                    ).fetchall()
+                else:
+                    rows = conn.execute("SELECT * FROM runtime_events ORDER BY created_at DESC LIMIT 200").fetchall()
+                return self.send_json(rows_to_dicts(rows))
             if path == "/api/workers/status":
-                return self.send_json(worker_status(conn))
+                return self.send_json(worker_status(
+                    conn,
+                    workspace_id=(self._human_auth_context or {}).get("workspace_id"),
+                ))
             if path == "/api/workers/fleet":
-                return self.send_json(worker_fleet_view(conn))
+                return self.send_json(worker_fleet_view(
+                    conn,
+                    workspace_id=(self._human_auth_context or {}).get("workspace_id"),
+                ))
             if path == "/api/workers/adapter-readiness":
                 payload = worker_adapter_readiness(conn)
                 conn.commit()
@@ -32591,16 +34416,31 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/workers/stuck-tasks":
                 threshold = int((qs.get("threshold_sec") or ["900"])[0])
                 limit = int((qs.get("limit") or ["25"])[0])
-                return self.send_json({"provider": "agentops-worker", "threshold_sec": max(threshold, 30), "stuck_tasks": worker_stuck_tasks(conn, threshold, limit), "token_omitted": True})
+                return self.send_json({
+                    "provider": "agentops-worker",
+                    "threshold_sec": max(threshold, 30),
+                    "stuck_tasks": worker_stuck_tasks(
+                        conn,
+                        threshold,
+                        limit,
+                        workspace_id=(self._human_auth_context or {}).get("workspace_id"),
+                    ),
+                    "token_omitted": True,
+                })
             if path == "/api/workers/fleet/hygiene":
                 threshold = int((qs.get("threshold_sec") or ["900"])[0])
                 enrollment_age = int((qs.get("enrollment_age_sec") or ["900"])[0])
                 limit = int((qs.get("limit") or ["25"])[0])
+                workspace_id = normalize_workspace_id(
+                    (self._human_auth_context or {}).get("workspace_id")
+                    or self.headers.get("X-AgentOps-Workspace-Id")
+                    or "local-demo"
+                )
                 payload, status = worker_fleet_hygiene(conn, {
                     "threshold_sec": threshold,
                     "enrollment_age_sec": enrollment_age,
                     "limit": limit,
-                }, apply=False)
+                }, apply=False, workspace_id=workspace_id)
                 return self.send_json(payload, status)
             if path == "/api/workers/local/logs":
                 adapter = coerce_choice((qs.get("adapter") or ["mock"])[0], {"mock", "hermes", "openclaw"}, "mock")
@@ -32713,11 +34553,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"templates": customer_task_templates(), "safe_defaults": {"raw_documents_stored": False, "credentials_stored": False, "external_upload_requires_approval": True}})
             if path == "/api/workflows/customer-delivery-board":
                 limit = int((qs.get("limit") or ["12"])[0])
-                return self.send_json(customer_delivery_board(conn, limit))
+                return self.send_json(customer_delivery_board(
+                    conn,
+                    limit,
+                    workspace_id=(self._human_auth_context or {}).get("workspace_id"),
+                ))
             if path == "/api/workflows/hermes-openclaw-loop":
                 limit = int((qs.get("limit") or ["10"])[0])
                 loop_id = (qs.get("loop_id") or [""])[0]
-                return self.send_json(hermes_openclaw_loop_readback(conn, loop_id, limit))
+                return self.send_json(hermes_openclaw_loop_readback(
+                    conn,
+                    loop_id,
+                    limit,
+                    workspace_id=(self._human_auth_context or {}).get("workspace_id"),
+                ))
             if path == "/api/workflows/customer-projects":
                 limit = int((qs.get("limit") or ["25"])[0])
                 return self.send_json(customer_projects_index(conn, limit))
@@ -32940,6 +34789,8 @@ class Handler(BaseHTTPRequestHandler):
                 auth_ctx, auth_error = self.route_auth_context(conn, required_scope)
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                body.pop("_auth_token_id", None)
+                body.pop("_auth_session_id", None)
                 if agent_gateway_is_bound_auth(auth_ctx):
                     requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
                     if requested_header_workspace != auth_ctx["workspace_id"]:
@@ -33008,7 +34859,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/agent-gateway/evaluations/submit":
                     payload, status = agent_gateway_eval_submit(conn, body)
                 elif path == "/api/agent-gateway/audit":
-                    payload, status = agent_gateway_emit_audit(conn, body)
+                    payload, status = agent_gateway_emit_audit(conn, body, auth_ctx)
                 else:
                     return self.send_json({"error": "unknown agent gateway endpoint"}, 404)
                 conn.commit()
@@ -33026,6 +34877,21 @@ class Handler(BaseHTTPRequestHandler):
                 if local_write_auth_error:
                     payload, status = local_write_auth_error
                     conn.rollback()
+                    return self.send_json(payload, status)
+            human_workspace = human_session_workspace(human_context)
+            human_headers = self.headers
+            if human_workspace:
+                human_headers = dict(self.headers)
+                human_headers["X-AgentOps-Workspace-Id"] = human_workspace
+            if human_workspace and path.startswith((
+                "/api/commander/",
+                "/api/operator/",
+                "/api/workflows/",
+                "/api/workers/",
+            )):
+                body, workspace_error = bind_human_workspace_body(human_context, body)
+                if workspace_error:
+                    payload, status = workspace_error
                     return self.send_json(payload, status)
             relay_confirm_match = re.fullmatch(
                 r"/api/host/relay/transitions/([A-Za-z0-9._:-]{1,160})/confirm",
@@ -33156,12 +35022,44 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path.startswith("/api/agent-plans/") and path.endswith("/approve"):
                 plan_id = path.split("/")[-2]
-                payload, status = transition_agent_plan(conn, plan_id, "approved", self.headers, body)
+                if not human_workspace_object_visible(conn, human_context, "agent_plan", plan_id):
+                    payload, status = human_workspace_not_found("agent_plan")
+                    return self.send_json(payload, status)
+                human_plan_actor = ({
+                    "actor_type": "user",
+                    "actor_id": human_context.get("account_id") or "usr_founder",
+                    "workspace_id": human_workspace or "local-demo",
+                    "auth_mode": human_context.get("mode") or "human_session",
+                } if human_context else None)
+                payload, status = transition_agent_plan(
+                    conn,
+                    plan_id,
+                    "approved",
+                    self.headers,
+                    body,
+                    actor_override=human_plan_actor,
+                )
                 conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/agent-plans/") and path.endswith("/reject"):
                 plan_id = path.split("/")[-2]
-                payload, status = transition_agent_plan(conn, plan_id, "rejected", self.headers, body)
+                if not human_workspace_object_visible(conn, human_context, "agent_plan", plan_id):
+                    payload, status = human_workspace_not_found("agent_plan")
+                    return self.send_json(payload, status)
+                human_plan_actor = ({
+                    "actor_type": "user",
+                    "actor_id": human_context.get("account_id") or "usr_founder",
+                    "workspace_id": human_workspace or "local-demo",
+                    "auth_mode": human_context.get("mode") or "human_session",
+                } if human_context else None)
+                payload, status = transition_agent_plan(
+                    conn,
+                    plan_id,
+                    "rejected",
+                    self.headers,
+                    body,
+                    actor_override=human_plan_actor,
+                )
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/knowledge/index":
@@ -33169,102 +35067,120 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json({"provider": "agentops-knowledge", "operation": "knowledge_index", **payload, "token_omitted": True}, 200)
             if path == "/api/commander/work-packages/plan":
-                payload, status = commander_plan_work_packages(conn, body, self.headers)
+                payload, status = commander_plan_work_packages(conn, body, human_headers)
                 conn.commit()
                 clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/commander/work-packages/dispatch-batch":
-                payload, status = submit_commander_work_package_dispatch_jobs(conn, body, self.headers)
+                payload, status = submit_commander_work_package_dispatch_jobs(conn, body, human_headers)
                 clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/commander/work-packages/synthesize":
-                payload, status = commander_synthesize_work_packages(conn, body, self.headers)
+                payload, status = commander_synthesize_work_packages(conn, body, human_headers)
                 clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/commander/work-packages/synthesis/promote":
-                payload, status = commander_promote_synthesis(conn, body, self.headers)
+                artifact_id = body.get("artifact_id")
+                if artifact_id and not human_workspace_object_visible(
+                    conn, human_context, "artifact", artifact_id
+                ):
+                    payload, status = human_workspace_not_found("artifact")
+                    return self.send_json(payload, status)
+                payload, status = commander_promote_synthesis(conn, body, human_headers)
                 clear_read_model_cache()
                 return self.send_json(payload, status)
             if path.startswith("/api/commander/work-packages/") and path.endswith("/coding-workspace/cleanup"):
                 task_id = path.split("/")[-3]
-                payload, status = commander_cleanup_coding_workspace(conn, task_id, body, self.headers)
+                if not human_workspace_object_visible(conn, human_context, "task", task_id):
+                    payload, status = human_workspace_not_found("task")
+                    return self.send_json(payload, status)
+                payload, status = commander_cleanup_coding_workspace(conn, task_id, body, human_headers)
                 conn.commit()
                 clear_read_model_cache()
                 return self.send_json(payload, status)
             if path.startswith("/api/commander/work-packages/") and path.endswith("/coding-workspace"):
                 task_id = path.split("/")[-2]
-                payload, status = commander_prepare_coding_workspace(conn, task_id, body, self.headers)
+                if not human_workspace_object_visible(conn, human_context, "task", task_id):
+                    payload, status = human_workspace_not_found("task")
+                    return self.send_json(payload, status)
+                payload, status = commander_prepare_coding_workspace(conn, task_id, body, human_headers)
                 conn.commit()
                 clear_read_model_cache()
                 return self.send_json(payload, status)
             if path.startswith("/api/commander/work-packages/") and path.endswith("/coding-evidence"):
                 task_id = path.split("/")[-2]
-                payload, status = commander_record_coding_evidence(conn, task_id, body, self.headers)
+                if not human_workspace_object_visible(conn, human_context, "task", task_id):
+                    payload, status = human_workspace_not_found("task")
+                    return self.send_json(payload, status)
+                payload, status = commander_record_coding_evidence(conn, task_id, body, human_headers)
                 conn.commit()
                 clear_read_model_cache()
                 return self.send_json(payload, status)
             if path.startswith("/api/commander/work-packages/") and path.endswith("/dispatch"):
                 task_id = path.split("/")[-2]
-                payload, status = commander_dispatch_work_package(conn, task_id, body, self.headers)
+                if not human_workspace_object_visible(conn, human_context, "task", task_id):
+                    payload, status = human_workspace_not_found("task")
+                    return self.send_json(payload, status)
+                payload, status = commander_dispatch_work_package(conn, task_id, body, human_headers)
                 conn.commit()
                 clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/operator/execution-evidence/remediation-task":
-                payload, status = operator_execution_evidence_remediation_task(conn, body, self.headers)
+                run_id = body.get("run_id")
+                if run_id and not human_workspace_object_visible(
+                    conn, human_context, "run", run_id
+                ):
+                    payload, status = human_workspace_not_found("run")
+                    return self.send_json(payload, status)
+                payload, status = operator_execution_evidence_remediation_task(conn, body, human_headers)
                 conn.commit()
                 clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/operator/execution-evidence/close-gap":
-                payload, status = operator_close_execution_evidence_gap(conn, body, self.headers)
+                run_id = body.get("run_id")
+                if run_id and not human_workspace_object_visible(
+                    conn, human_context, "run", run_id
+                ):
+                    payload, status = human_workspace_not_found("run")
+                    return self.send_json(payload, status)
+                payload, status = operator_close_execution_evidence_gap(conn, body, human_headers)
                 conn.commit()
                 clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/operator/action-receipts":
-                payload, status = record_operator_action_receipt(conn, body, self.headers)
+                payload, status = record_operator_action_receipt(conn, body, human_headers)
                 conn.commit()
                 clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/operator/action-receipts/control-readback":
-                payload, status = record_operator_action_control_readback(conn, body, self.headers)
+                payload, status = record_operator_action_control_readback(conn, body, human_headers)
                 conn.commit()
                 clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/operator/receipt-failure-memories/propose":
-                payload, status = operator_receipt_failure_memory_candidate(conn, body, self.headers)
+                payload, status = operator_receipt_failure_memory_candidate(conn, body, human_headers)
                 conn.commit()
                 clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/operator/action-receipts/failure-memory":
-                payload, status = operator_receipt_failure_memory_candidate(conn, body, self.headers)
+                payload, status = operator_receipt_failure_memory_candidate(conn, body, human_headers)
                 conn.commit()
                 clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/agents":
-                agent_id = body.get("agent_id") or new_id("agt")
-                now = now_iso()
-                row = {
-                    "agent_id": agent_id,
-                    "name": body.get("name", "New Agent"),
-                    "role": body.get("role", "Worker"),
-                    "description": body.get("description", ""),
-                    "runtime_type": body.get("runtime_type", "mock"),
-                    "model_provider": body.get("model_provider", "mock-provider"),
-                    "model_name": body.get("model_name", "mock-model"),
-                    "status": body.get("status", "idle"),
-                    "permission_level": body.get("permission_level", "standard"),
-                    "allowed_tools": json.dumps(body.get("allowed_tools", ["browser.search"]), ensure_ascii=False),
-                    "budget_limit_usd": float(body.get("budget_limit_usd", 5.0)),
-                    "owner_user_id": body.get("owner_user_id", "usr_founder"),
-                    "created_at": now,
-                    "updated_at": now,
-                }
-                conn.execute("""INSERT INTO agents(agent_id,name,role,description,runtime_type,model_provider,model_name,status,permission_level,allowed_tools,budget_limit_usd,owner_user_id,created_at,updated_at)
-                    VALUES(:agent_id,:name,:role,:description,:runtime_type,:model_provider,:model_name,:status,:permission_level,:allowed_tools,:budget_limit_usd,:owner_user_id,:created_at,:updated_at)""", row)
-                audit(conn, "user", "usr_founder", "agent.create", "agents", agent_id, None, row, {})
+                bound_body, workspace_error = bind_human_workspace_body(human_context, body)
+                if workspace_error:
+                    payload, status = workspace_error
+                    return self.send_json(payload, status)
+                payload, status = create_human_agent_api(conn, bound_body, human_context)
                 conn.commit()
-                return self.send_json(row, 201)
+                return self.send_json(payload, status)
             if path == "/api/tasks":
-                payload, status = create_task_api(conn, body)
+                bound_body, workspace_error = bind_human_workspace_body(human_context, body)
+                if workspace_error:
+                    payload, status = workspace_error
+                    return self.send_json(payload, status)
+                payload, status = create_task_api(conn, bound_body)
                 conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/runtime-connectors/") and path.endswith("/trust"):
@@ -33273,16 +35189,26 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/mock-runs/start":
+                task_id = body.get("task_id") or "tsk_competitor"
+                if not human_workspace_object_visible(conn, human_context, "task", task_id):
+                    payload, status = human_workspace_not_found("task")
+                    return self.send_json(payload, status)
                 result = start_mock_run(conn, body)
                 conn.commit()
                 return self.send_json(result, 201)
             if path.startswith("/api/mock-runs/") and path.endswith("/complete"):
                 run_id = path.split("/")[-2]
+                if not human_workspace_object_visible(conn, human_context, "run", run_id):
+                    payload, status = human_workspace_not_found("run")
+                    return self.send_json(payload, status)
                 ok = complete_run(conn, run_id, "user", "usr_founder")
                 conn.commit()
                 return self.send_json({"completed": ok, "run_id": run_id})
             if path.endswith("/request-approval") and path.startswith("/api/tool-calls/"):
                 tc_id = path.split("/")[-2]
+                if not human_workspace_object_visible(conn, human_context, "tool_call", tc_id):
+                    payload, status = human_workspace_not_found("tool_call")
+                    return self.send_json(payload, status)
                 tc = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (tc_id,)).fetchone()
                 if not tc:
                     return self.send_json({"error": "not found"}, 404)
@@ -33295,18 +35221,43 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"approval_id": approval_id}, 201)
             if path.startswith("/api/approvals/") and path.endswith("/approve"):
                 approval_id = path.split("/")[-2]
-                return self.decide_approval(conn, approval_id, "approved")
+                if not human_workspace_object_visible(conn, human_context, "approval", approval_id):
+                    payload, status = human_workspace_not_found("approval")
+                    return self.send_json(payload, status)
+                return self.decide_approval(
+                    conn,
+                    approval_id,
+                    "approved",
+                    human_context=human_context,
+                )
             if path.startswith("/api/approvals/") and path.endswith("/reject"):
                 approval_id = path.split("/")[-2]
-                return self.decide_approval(conn, approval_id, "rejected")
+                if not human_workspace_object_visible(conn, human_context, "approval", approval_id):
+                    payload, status = human_workspace_not_found("approval")
+                    return self.send_json(payload, status)
+                return self.decide_approval(
+                    conn,
+                    approval_id,
+                    "rejected",
+                    human_context=human_context,
+                )
             if path.startswith("/api/memories/") and path.endswith("/approve"):
                 memory_id = path.split("/")[-2]
+                if not human_workspace_object_visible(conn, human_context, "memory", memory_id):
+                    payload, status = human_workspace_not_found("memory")
+                    return self.send_json(payload, status)
                 return self.review_memory(conn, memory_id, "approved")
             if path.startswith("/api/memories/") and path.endswith("/reject"):
                 memory_id = path.split("/")[-2]
+                if not human_workspace_object_visible(conn, human_context, "memory", memory_id):
+                    payload, status = human_workspace_not_found("memory")
+                    return self.send_json(payload, status)
                 return self.review_memory(conn, memory_id, "rejected")
             if path == "/api/evaluations/run-rule-check":
                 run_id = body.get("run_id")
+                if not human_workspace_object_visible(conn, human_context, "run", run_id):
+                    payload, status = human_workspace_not_found("run")
+                    return self.send_json(payload, status)
                 run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
                 if not run:
                     return self.send_json({"error": "run not found"}, 404)
@@ -33315,28 +35266,62 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json({"created": True})
             if path == "/api/evaluation-cases/propose":
-                payload, status = propose_evaluation_case_candidate(conn, body, self.headers)
+                bound_body, workspace_error = bind_human_workspace_body(human_context, body)
+                if workspace_error:
+                    payload, status = workspace_error
+                    return self.send_json(payload, status)
+                for object_type, field in (
+                    ("evaluation", "evaluation_id"),
+                    ("artifact", "artifact_id"),
+                    ("run", "run_id"),
+                    ("task", "task_id"),
+                ):
+                    if bound_body.get(field) and not human_workspace_object_visible(
+                        conn,
+                        human_context,
+                        object_type,
+                        bound_body.get(field),
+                    ):
+                        payload, status = human_workspace_not_found(object_type)
+                        return self.send_json(payload, status)
+                payload, status = propose_evaluation_case_candidate(conn, bound_body, self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/evaluation-cases/run":
-                payload, status = run_evaluation_cases(conn, body, self.headers)
+                bound_body, workspace_error = bind_human_workspace_body(human_context, body)
+                if workspace_error:
+                    payload, status = workspace_error
+                    return self.send_json(payload, status)
+                payload, status = run_evaluation_cases(conn, bound_body, self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/evaluation-case-runs/") and path.endswith("/remediation-task"):
                 case_run_id = path.split("/")[-2]
+                if not human_workspace_object_visible(conn, human_context, "evaluation_case_run", case_run_id):
+                    payload, status = human_workspace_not_found("evaluation_case_run")
+                    return self.send_json(payload, status)
                 payload, status = evaluation_case_run_remediation_task(conn, case_run_id, body, self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/evaluation-case-runs/") and path.endswith("/review"):
                 case_run_id = path.split("/")[-2]
+                if not human_workspace_object_visible(conn, human_context, "evaluation_case_run", case_run_id):
+                    payload, status = human_workspace_not_found("evaluation_case_run")
+                    return self.send_json(payload, status)
                 payload, status = review_evaluation_case_run(conn, case_run_id, body, self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/evaluation-cases/") and path.endswith("/approve"):
                 case_id = path.split("/")[-2]
+                if not human_workspace_object_visible(conn, human_context, "evaluation_case", case_id):
+                    payload, status = human_workspace_not_found("evaluation_case")
+                    return self.send_json(payload, status)
                 return self.review_evaluation_case(conn, case_id, "approved")
             if path.startswith("/api/evaluation-cases/") and path.endswith("/reject"):
                 case_id = path.split("/")[-2]
+                if not human_workspace_object_visible(conn, human_context, "evaluation_case", case_id):
+                    payload, status = human_workspace_not_found("evaluation_case")
+                    return self.send_json(payload, status)
                 return self.review_evaluation_case(conn, case_id, "rejected")
             if path == "/api/workflows/local-brief":
                 return self.send_json(run_local_ai_brief(conn, body), 201)
@@ -33369,8 +35354,12 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status = submit_customer_worker_task_job(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workflows/hermes-openclaw-loop":
-                body["_base_url"] = body.get("base_url") or f"http://{self.headers.get('Host')}"
-                payload, status = run_hermes_openclaw_loop_workflow(body, self.headers.get("Host"))
+                bound_body, workspace_error = bind_human_workspace_body(human_context, body)
+                if workspace_error:
+                    payload, status = workspace_error
+                    return self.send_json(payload, status)
+                bound_body["_base_url"] = bound_body.get("base_url") or f"http://{self.headers.get('Host')}"
+                payload, status = run_hermes_openclaw_loop_workflow(bound_body, self.headers.get("Host"))
                 return self.send_json(payload, status)
             if path == "/api/workflows/kb-bot-project":
                 body.setdefault("base_url", f"http://{self.headers.get('Host', '127.0.0.1:8787')}")
@@ -33429,11 +35418,28 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status = restart_local_worker_daemon(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workers/tasks/release":
-                payload, status = release_worker_task(conn, body)
+                workspace_id = normalize_workspace_id(
+                    (human_context or {}).get("workspace_id")
+                    or body.get("workspace_id")
+                    or self.headers.get("X-AgentOps-Workspace-Id")
+                    or "local-demo"
+                )
+                payload, status = release_worker_task(conn, body, workspace_id=workspace_id)
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/workers/fleet/hygiene":
-                payload, status = worker_fleet_hygiene(conn, body, apply=bool(body.get("apply")))
+                workspace_id = normalize_workspace_id(
+                    (human_context or {}).get("workspace_id")
+                    or body.get("workspace_id")
+                    or self.headers.get("X-AgentOps-Workspace-Id")
+                    or "local-demo"
+                )
+                payload, status = worker_fleet_hygiene(
+                    conn,
+                    body,
+                    apply=bool(body.get("apply")),
+                    workspace_id=workspace_id,
+                )
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/integrations/openclaw/import":
@@ -33495,8 +35501,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_patch_api(self, path, body):
         with db() as conn:
+            human_context = None
             if human_auth.required():
-                _context, auth_error = human_auth.request_auth(conn, self.headers, path, "PATCH")
+                human_context, auth_error = human_auth.request_auth(conn, self.headers, path, "PATCH")
                 if auth_error:
                     payload, status = auth_error
                     conn.rollback()
@@ -33509,6 +35516,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(payload, status)
             if path.startswith("/api/tasks/") and path.endswith("/status"):
                 task_id = path.split("/")[-2]
+                if not human_workspace_object_visible(conn, human_context, "task", task_id):
+                    payload, status = human_workspace_not_found("task")
+                    return self.send_json(payload, status)
                 before = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
                 status = body.get("status")
                 conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", (status, now_iso(), task_id))
@@ -33518,6 +35528,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(dict(after))
             if path.startswith("/api/tasks/") and path.endswith("/assign"):
                 task_id = path.split("/")[-2]
+                if not human_workspace_object_visible(conn, human_context, "task", task_id):
+                    payload, status = human_workspace_not_found("task")
+                    return self.send_json(payload, status)
                 before = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
                 agent_id = body.get("owner_agent_id")
                 conn.execute("UPDATE tasks SET owner_agent_id=?, updated_at=? WHERE task_id=?", (agent_id, now_iso(), task_id))
@@ -33527,7 +35540,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(dict(after))
         return self.send_json({"error": "unknown endpoint"}, 404)
 
-    def decide_approval(self, conn, approval_id, decision):
+    def decide_approval(self, conn, approval_id, decision, human_context=None):
+        actor_id = (human_context or {}).get("account_id") or "usr_founder"
         before = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
         if not before:
             return self.send_json({"error": "not found"}, 404)
@@ -33639,21 +35653,19 @@ class Handler(BaseHTTPRequestHandler):
                 prepared_action=action_after,
                 decision=decision,
             ))
-        agent_plan_decision, agent_plan_error = apply_agent_plan_approval_decision(conn, before, decision)
-        if agent_plan_error:
-            payload, status = agent_plan_error
-            audit(conn, "user", "usr_founder", "approval.blocked_agent_plan_transition", "approvals", approval_id, dict(before), dict(before), payload)
+        agent_plan_result = decide_agent_plan_approval(
+            conn,
+            before,
+            decision,
+            actor_id=actor_id,
+        )
+        if agent_plan_result is not None:
+            payload, status = agent_plan_result
+            if status < 400:
+                return self.send_json(payload, status)
+            audit(conn, "user", actor_id, "approval.blocked_agent_plan_transition", "approvals", approval_id, dict(before), dict(before), payload)
             conn.commit()
             return self.send_json(payload, status)
-        if agent_plan_decision:
-            conn.execute("UPDATE approvals SET decision=?, decided_at=? WHERE approval_id=?", (decision, now_iso(), approval_id))
-            after = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
-            audit(conn, "user", "usr_founder", f"approval.{decision}", "approvals", approval_id, dict(before), dict(after), {"agent_plan_id": agent_plan_decision["agent_plan"]["plan_id"], "token_omitted": True})
-            conn.commit()
-            return self.send_json(build_agent_plan_approval_decision_response(
-                approval=after,
-                agent_plan_decision=agent_plan_decision,
-            ))
         conn.execute("UPDATE approvals SET decision=?, decided_at=? WHERE approval_id=?", (decision, now_iso(), approval_id))
         if before["tool_call_id"]:
             tool_before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (before["tool_call_id"],)).fetchone()
@@ -33776,41 +35788,140 @@ def start_mock_run(conn, body):
     return {"run_id": run_id, "tool_calls": tool_calls, "approval_required": bool(high_risk), "high_risk_tool_calls": high_risk}
 
 
-def dashboard_metrics(conn):
-    agents_total = conn.execute("SELECT COUNT(*) FROM agents").fetchone()[0]
-    agents_running = conn.execute("SELECT COUNT(*) FROM agents WHERE status='running'").fetchone()[0]
-    total_cost = conn.execute("SELECT COALESCE(SUM(cost_usd),0) FROM runs").fetchone()[0]
-    completed = conn.execute("SELECT COUNT(*) FROM tasks WHERE status='completed'").fetchone()[0]
-    failed = conn.execute("SELECT COUNT(*) FROM tasks WHERE status IN ('failed','blocked')").fetchone()[0]
-    tasks_total = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
-    avg_cost = conn.execute("SELECT COALESCE(AVG(cost_usd),0) FROM runs WHERE status='completed'").fetchone()[0]
-    pending_approvals = conn.execute("SELECT COUNT(*) FROM approvals WHERE decision='pending'").fetchone()[0]
-    stale_memories = conn.execute("SELECT COUNT(*) FROM memories WHERE review_status='stale' OR ttl_review_due_at < ?", (now_iso(),)).fetchone()[0]
-    task_status = rows_to_dicts(conn.execute("SELECT status, COUNT(*) AS count FROM tasks GROUP BY status").fetchall())
-    top_cost_agents = rows_to_dicts(conn.execute("SELECT a.agent_id, a.name, ROUND(COALESCE(SUM(r.cost_usd),0),3) AS cost_usd FROM agents a LEFT JOIN runs r ON a.agent_id=r.agent_id GROUP BY a.agent_id ORDER BY cost_usd DESC LIMIT 5").fetchall())
-    top_failing_agents = rows_to_dicts(conn.execute("SELECT a.agent_id, a.name, SUM(CASE WHEN r.status IN ('failed','blocked') THEN 1 ELSE 0 END) AS failures FROM agents a LEFT JOIN runs r ON a.agent_id=r.agent_id GROUP BY a.agent_id ORDER BY failures DESC LIMIT 5").fetchall())
-    recent_runs = rows_to_dicts(conn.execute("SELECT * FROM runs ORDER BY created_at DESC LIMIT 20").fetchall())
-    openclaw_counts = dict(conn.execute(
-        """SELECT
-        (SELECT COUNT(*) FROM agents WHERE runtime_type='openclaw') AS agents,
-        (SELECT COUNT(*) FROM tasks WHERE task_id LIKE 'tsk_oc_cron_%') AS cron_tasks,
-        (SELECT COUNT(*) FROM tasks WHERE task_id LIKE 'tsk_oc_cron_%' AND status='planned') AS enabled_cron_tasks,
-        (SELECT COUNT(*) FROM runs WHERE run_id LIKE 'run_oc_cron_%') AS cron_runs,
-        (SELECT COUNT(*) FROM runs WHERE runtime_type='openclaw' AND status='failed') AS failed_runs,
-        (SELECT COUNT(*) FROM evaluations WHERE evaluation_id LIKE 'eval_gate_run_oc_%' AND pass_fail='fail') AS failed_quality_gates"""
-    ).fetchone())
-    agent_performance_summary = rows_to_dicts(conn.execute(
-        """SELECT a.agent_id, a.name, a.runtime_type, COUNT(r.run_id) AS total_runs,
-        ROUND(CASE WHEN COUNT(r.run_id)=0 THEN 0 ELSE 1.0 * SUM(CASE WHEN r.status='completed' THEN 1 ELSE 0 END) / COUNT(r.run_id) END, 3) AS success_rate,
-        CAST(COALESCE(AVG(r.duration_ms),0) AS INTEGER) AS avg_duration_ms,
-        ROUND(COALESCE(SUM(r.cost_usd),0), 4) AS total_cost_usd,
-        SUM(CASE WHEN r.status IN ('failed','blocked') THEN 1 ELSE 0 END) AS failures,
-        SUM(CASE WHEN r.approval_required=1 THEN 1 ELSE 0 END) AS approval_required_count
-        FROM agents a LEFT JOIN runs r ON a.agent_id=r.agent_id
-        GROUP BY a.agent_id
-        ORDER BY total_runs DESC, success_rate DESC
-        LIMIT 8"""
-    ).fetchall())
+def dashboard_metrics(conn, workspace_id: str | None = None):
+    scoped = bool(workspace_id)
+    workspace_id = normalize_workspace_id(workspace_id) if scoped else None
+    if scoped:
+        visibility_sql = agent_workspace_visibility_sql("a")
+        agents_total = conn.execute(
+            f"SELECT COUNT(*) FROM agents a WHERE {visibility_sql}",
+            (workspace_id,) * 8,
+        ).fetchone()[0]
+        workspace_fleet = worker_remote_fleet_summary(conn, workspace_id)
+        agents_running = int(workspace_fleet.get("ready_service_workers") or 0)
+        total_cost = conn.execute(
+            "SELECT COALESCE(SUM(cost_usd),0) FROM runs WHERE COALESCE(workspace_id,'local-demo')=?",
+            (workspace_id,),
+        ).fetchone()[0]
+        completed = conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE COALESCE(workspace_id,'local-demo')=? AND status='completed'",
+            (workspace_id,),
+        ).fetchone()[0]
+        failed = conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE COALESCE(workspace_id,'local-demo')=? AND status IN ('failed','blocked')",
+            (workspace_id,),
+        ).fetchone()[0]
+        tasks_total = conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE COALESCE(workspace_id,'local-demo')=?",
+            (workspace_id,),
+        ).fetchone()[0]
+        avg_cost = conn.execute(
+            "SELECT COALESCE(AVG(cost_usd),0) FROM runs WHERE COALESCE(workspace_id,'local-demo')=? AND status='completed'",
+            (workspace_id,),
+        ).fetchone()[0]
+        pending_approvals = conn.execute(
+            """SELECT COUNT(*) FROM approvals ap
+            LEFT JOIN runs r ON r.run_id=ap.run_id
+            LEFT JOIN tasks t ON t.task_id=COALESCE(ap.task_id,r.task_id)
+            WHERE ap.decision='pending'
+              AND (ap.run_id IS NULL OR COALESCE(r.workspace_id,'local-demo')=?)
+              AND (COALESCE(ap.task_id,r.task_id) IS NULL OR COALESCE(t.workspace_id,'local-demo')=?)
+              AND (ap.run_id IS NOT NULL OR COALESCE(ap.task_id,r.task_id) IS NOT NULL)""",
+            (workspace_id, workspace_id),
+        ).fetchone()[0]
+        stale_memories = conn.execute(
+            """SELECT COUNT(*) FROM memories m JOIN tasks t ON t.task_id=m.task_id
+            WHERE COALESCE(t.workspace_id,'local-demo')=?
+              AND (m.review_status='stale' OR m.ttl_review_due_at < ?)""",
+            (workspace_id, now_iso()),
+        ).fetchone()[0]
+        task_status = rows_to_dicts(conn.execute(
+            """SELECT status, COUNT(*) AS count FROM tasks
+            WHERE COALESCE(workspace_id,'local-demo')=? GROUP BY status""",
+            (workspace_id,),
+        ).fetchall())
+        top_cost_agents = rows_to_dicts(conn.execute(
+            """SELECT a.agent_id, a.name, ROUND(COALESCE(SUM(r.cost_usd),0),3) AS cost_usd
+            FROM agents a JOIN runs r ON a.agent_id=r.agent_id
+            WHERE COALESCE(r.workspace_id,'local-demo')=?
+            GROUP BY a.agent_id ORDER BY cost_usd DESC LIMIT 5""",
+            (workspace_id,),
+        ).fetchall())
+        top_failing_agents = rows_to_dicts(conn.execute(
+            """SELECT a.agent_id, a.name,
+            SUM(CASE WHEN r.status IN ('failed','blocked') THEN 1 ELSE 0 END) AS failures
+            FROM agents a JOIN runs r ON a.agent_id=r.agent_id
+            WHERE COALESCE(r.workspace_id,'local-demo')=?
+            GROUP BY a.agent_id ORDER BY failures DESC LIMIT 5""",
+            (workspace_id,),
+        ).fetchall())
+        recent_runs = rows_to_dicts(conn.execute(
+            """SELECT * FROM runs WHERE COALESCE(workspace_id,'local-demo')=?
+            ORDER BY created_at DESC LIMIT 20""",
+            (workspace_id,),
+        ).fetchall())
+        openclaw_counts = dict(conn.execute(
+            """SELECT
+            (SELECT COUNT(DISTINCT r.agent_id) FROM runs r JOIN agents a ON a.agent_id=r.agent_id
+             WHERE COALESCE(r.workspace_id,'local-demo')=? AND a.runtime_type='openclaw') AS agents,
+            (SELECT COUNT(*) FROM tasks WHERE COALESCE(workspace_id,'local-demo')=? AND task_id LIKE 'tsk_oc_cron_%') AS cron_tasks,
+            (SELECT COUNT(*) FROM tasks WHERE COALESCE(workspace_id,'local-demo')=? AND task_id LIKE 'tsk_oc_cron_%' AND status='planned') AS enabled_cron_tasks,
+            (SELECT COUNT(*) FROM runs WHERE COALESCE(workspace_id,'local-demo')=? AND run_id LIKE 'run_oc_cron_%') AS cron_runs,
+            (SELECT COUNT(*) FROM runs WHERE COALESCE(workspace_id,'local-demo')=? AND runtime_type='openclaw' AND status='failed') AS failed_runs,
+            (SELECT COUNT(*) FROM evaluations e JOIN runs r ON r.run_id=e.run_id
+             WHERE COALESCE(r.workspace_id,'local-demo')=? AND e.evaluation_id LIKE 'eval_gate_run_oc_%' AND e.pass_fail='fail') AS failed_quality_gates""",
+            (workspace_id,) * 6,
+        ).fetchone())
+        agent_performance_summary = rows_to_dicts(conn.execute(
+            """SELECT a.agent_id, a.name, a.runtime_type, COUNT(r.run_id) AS total_runs,
+            ROUND(CASE WHEN COUNT(r.run_id)=0 THEN 0 ELSE 1.0 * SUM(CASE WHEN r.status='completed' THEN 1 ELSE 0 END) / COUNT(r.run_id) END, 3) AS success_rate,
+            CAST(COALESCE(AVG(r.duration_ms),0) AS INTEGER) AS avg_duration_ms,
+            ROUND(COALESCE(SUM(r.cost_usd),0), 4) AS total_cost_usd,
+            SUM(CASE WHEN r.status IN ('failed','blocked') THEN 1 ELSE 0 END) AS failures,
+            SUM(CASE WHEN r.approval_required=1 THEN 1 ELSE 0 END) AS approval_required_count
+            FROM agents a
+            LEFT JOIN runs r ON a.agent_id=r.agent_id AND COALESCE(r.workspace_id,'local-demo')=?1
+            WHERE """ + agent_workspace_visibility_sql("a", "?1") + """
+            GROUP BY a.agent_id
+            ORDER BY total_runs DESC, success_rate DESC
+            LIMIT 8""",
+            (workspace_id,),
+        ).fetchall())
+    else:
+        agents_total = conn.execute("SELECT COUNT(*) FROM agents").fetchone()[0]
+        agents_running = conn.execute("SELECT COUNT(*) FROM agents WHERE status='running'").fetchone()[0]
+        total_cost = conn.execute("SELECT COALESCE(SUM(cost_usd),0) FROM runs").fetchone()[0]
+        completed = conn.execute("SELECT COUNT(*) FROM tasks WHERE status='completed'").fetchone()[0]
+        failed = conn.execute("SELECT COUNT(*) FROM tasks WHERE status IN ('failed','blocked')").fetchone()[0]
+        tasks_total = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+        avg_cost = conn.execute("SELECT COALESCE(AVG(cost_usd),0) FROM runs WHERE status='completed'").fetchone()[0]
+        pending_approvals = conn.execute("SELECT COUNT(*) FROM approvals WHERE decision='pending'").fetchone()[0]
+        stale_memories = conn.execute("SELECT COUNT(*) FROM memories WHERE review_status='stale' OR ttl_review_due_at < ?", (now_iso(),)).fetchone()[0]
+        task_status = rows_to_dicts(conn.execute("SELECT status, COUNT(*) AS count FROM tasks GROUP BY status").fetchall())
+        top_cost_agents = rows_to_dicts(conn.execute("SELECT a.agent_id, a.name, ROUND(COALESCE(SUM(r.cost_usd),0),3) AS cost_usd FROM agents a LEFT JOIN runs r ON a.agent_id=r.agent_id GROUP BY a.agent_id ORDER BY cost_usd DESC LIMIT 5").fetchall())
+        top_failing_agents = rows_to_dicts(conn.execute("SELECT a.agent_id, a.name, SUM(CASE WHEN r.status IN ('failed','blocked') THEN 1 ELSE 0 END) AS failures FROM agents a LEFT JOIN runs r ON a.agent_id=r.agent_id GROUP BY a.agent_id ORDER BY failures DESC LIMIT 5").fetchall())
+        recent_runs = rows_to_dicts(conn.execute("SELECT * FROM runs ORDER BY created_at DESC LIMIT 20").fetchall())
+        openclaw_counts = dict(conn.execute(
+            """SELECT
+            (SELECT COUNT(*) FROM agents WHERE runtime_type='openclaw') AS agents,
+            (SELECT COUNT(*) FROM tasks WHERE task_id LIKE 'tsk_oc_cron_%') AS cron_tasks,
+            (SELECT COUNT(*) FROM tasks WHERE task_id LIKE 'tsk_oc_cron_%' AND status='planned') AS enabled_cron_tasks,
+            (SELECT COUNT(*) FROM runs WHERE run_id LIKE 'run_oc_cron_%') AS cron_runs,
+            (SELECT COUNT(*) FROM runs WHERE runtime_type='openclaw' AND status='failed') AS failed_runs,
+            (SELECT COUNT(*) FROM evaluations WHERE evaluation_id LIKE 'eval_gate_run_oc_%' AND pass_fail='fail') AS failed_quality_gates"""
+        ).fetchone())
+        agent_performance_summary = rows_to_dicts(conn.execute(
+            """SELECT a.agent_id, a.name, a.runtime_type, COUNT(r.run_id) AS total_runs,
+            ROUND(CASE WHEN COUNT(r.run_id)=0 THEN 0 ELSE 1.0 * SUM(CASE WHEN r.status='completed' THEN 1 ELSE 0 END) / COUNT(r.run_id) END, 3) AS success_rate,
+            CAST(COALESCE(AVG(r.duration_ms),0) AS INTEGER) AS avg_duration_ms,
+            ROUND(COALESCE(SUM(r.cost_usd),0), 4) AS total_cost_usd,
+            SUM(CASE WHEN r.status IN ('failed','blocked') THEN 1 ELSE 0 END) AS failures,
+            SUM(CASE WHEN r.approval_required=1 THEN 1 ELSE 0 END) AS approval_required_count
+            FROM agents a LEFT JOIN runs r ON a.agent_id=r.agent_id
+            GROUP BY a.agent_id
+            ORDER BY total_runs DESC, success_rate DESC
+            LIMIT 8"""
+        ).fetchall())
     openclaw_runtime = openclaw_status()
     hermes_runtime = hermes_status()
     notion_runtime = notion_config()
@@ -33818,9 +35929,9 @@ def dashboard_metrics(conn):
         {
             "provider": "openclaw",
             "status": "ready" if openclaw_runtime["config_exists"] else "missing_config",
-            "agents": openclaw_runtime["agents_count"],
-            "cron_jobs": openclaw_runtime["cron_jobs_count"],
-            "run_files": openclaw_runtime["cron_run_files_count"],
+            "agents": openclaw_counts["agents"] if scoped else openclaw_runtime["agents_count"],
+            "cron_jobs": openclaw_counts["cron_tasks"] if scoped else openclaw_runtime["cron_jobs_count"],
+            "run_files": openclaw_counts["cron_runs"] if scoped else openclaw_runtime["cron_run_files_count"],
         },
         {
             "provider": "hermes",
@@ -33836,8 +35947,10 @@ def dashboard_metrics(conn):
         },
     ]
     return {
+        "workspace_id": workspace_id,
         "agents_total": agents_total,
         "agents_running": agents_running,
+        "tasks_total": tasks_total,
         "tasks_completed_total": completed,
         "total_cost_usd": round(total_cost, 3),
         "avg_task_cost_usd": round(avg_cost or 0, 3),

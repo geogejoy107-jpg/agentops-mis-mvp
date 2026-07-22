@@ -199,7 +199,27 @@ their launchd processes and loop iterations remained current. The Host-machine
 Sessions have no parent enrollment token; same-state heartbeats update the
 workspace-scoped observation on every request while historical Runtime/Audit
 evidence remains sampled at 15 minutes. Preview.38 projected the historical
-event but not the current observation. The source correction now consumes the
-scoped observation and has deterministic integration coverage, but it requires
-a later exact package and real multi-cycle readback. Preview.38 is not credited
-with sustained service-Worker freshness.
+event but not the current observation. The source correction now binds that
+workspace-scoped observation to the exact selected full-scope execution
+Session, keeps per-Agent ledger sampling separate from per-Session liveness,
+makes missing/mismatched selected-Session evidence fail closed, prevents a
+heartbeat-only Session from replacing or refreshing execution liveness,
+removes enrollment/unscoped Runtime Event freshness fallback, scopes Human and
+Host Fleet reads, treats global Agent status as non-authoritative, selects the
+newest fresh execution-ready Session before concurrent non-ready or stale
+Sessions, preserves one deduplicated capacity while reporting mixed-Session
+degradation, and normalizes mixed-offset Session timestamps to UTC. Human Fleet hygiene, task
+release, Local/Demo Readiness, Commander read models, Review Queue, Customer
+Delivery Board and Operator Action Plan/Command Center/Health are also bound
+to the authenticated Human Session workspace. Core Agent/task/run/tool/
+approval/memory/Evaluation/artifact reads, graphs/exports, Dashboard metrics,
+knowledge results and bounded Operator handoff aggregates use the same authority;
+cross-workspace details and writes fail closed, including Task-ID rebinding and
+Agent Gateway Artifact/Approval ID collisions. The Agent registry remains
+Host-global, with explicit membership for Human-created Agents and authoritative
+owner/collaborator/run/Gateway projections. Audit tenancy authorizes exact
+`(entity_type, entity_id)` pairs and remains fail-closed until a later hosted
+schema adds first-class immutable workspace ownership to every Audit row.
+Deterministic integration coverage
+passes, but the correction requires a later exact package and real multi-cycle
+readback. Preview.38 is not credited with sustained service-Worker freshness.

@@ -143,6 +143,116 @@ def main() -> int:
             "Worker heartbeat request and ledger cadence contract missing", failures)
     require("failure is returned to the Worker loop" in normalized_worker_intake_heartbeat,
             "Worker heartbeat rejection observability contract missing", failures)
+    require(
+        "Fleet liveness is bound to the selected full-scope execution Session."
+        in worker_intake_heartbeat,
+        "Session-bound Fleet liveness contract missing",
+        failures,
+    )
+    require(
+        "heartbeat-only Session cannot keep an execution Session fresh"
+        in normalized_worker_intake_heartbeat
+        and "No enrollment or unscoped Runtime Event fallback is used"
+        in normalized_worker_intake_heartbeat,
+        "Fleet Session isolation or fail-closed fallback contract missing",
+        failures,
+    )
+    require(
+        "Human and Host Fleet reads are workspace-scoped"
+        in normalized_worker_intake_heartbeat
+        and "Mixed-offset Session timestamps are normalized to UTC"
+        in normalized_worker_intake_heartbeat,
+        "Fleet workspace isolation or UTC ordering contract missing",
+        failures,
+    )
+    require(
+        "Global `agents.status` is descriptive registration state"
+        in normalized_worker_intake_heartbeat
+        and "newly minted but unobserved Session cannot shadow a healthy Worker"
+        in normalized_worker_intake_heartbeat,
+        "Fleet capacity authority or concurrent-Session selection contract missing",
+        failures,
+    )
+    require(
+        "Human Fleet hygiene preview/apply" in normalized_worker_intake_heartbeat
+        and "Commander Project Board/Inbox" in normalized_worker_intake_heartbeat
+        and "Review Queue" in normalized_worker_intake_heartbeat
+        and "Customer Delivery Board" in normalized_worker_intake_heartbeat
+        and "Operator Action Plan/Command Center/Health" in normalized_worker_intake_heartbeat
+        and "task, run," in normalized_worker_intake_heartbeat
+        and "approval, memory, artifact" in normalized_worker_intake_heartbeat
+        and "neither returned nor mutated" in normalized_worker_intake_heartbeat,
+        "Human workspace-scoped Worker, review and delivery boundary missing",
+        failures,
+    )
+    require(
+        "core Agent/task/run/tool-call/" in normalized_worker_intake_heartbeat
+        and "Cross-workspace object IDs fail closed as `404`"
+        in normalized_worker_intake_heartbeat
+        and "not a claim of complete hosted multi-tenancy"
+        in normalized_worker_intake_heartbeat,
+        "Human core read/write workspace authority or its hosted limitation is missing",
+        failures,
+    )
+    require(
+        "Run graph parent/child/delegation traversal is scoped at the query itself"
+        in normalized_worker_intake_heartbeat
+        and "task and run links disagree on workspace fail closed"
+        in normalized_worker_intake_heartbeat,
+        "related-run graph or conflicting authority-link fail-closed contract missing",
+        failures,
+    )
+    require(
+        "Human Commander/Operator/workflow/Worker mutations receive a server-bound workspace body and header"
+        in normalized_worker_intake_heartbeat
+        and "reject foreign task, artifact or run IDs before any ledger or local workspace side effect"
+        in normalized_worker_intake_heartbeat,
+        "Human Commander/Operator mutation authority contract missing",
+        failures,
+    )
+    require(
+        "newest fresh execution-ready" in normalized_worker_intake_heartbeat
+        and "mixed healthy/non-ready replicas retain one deduplicated Worker capacity"
+        in normalized_worker_intake_heartbeat
+        and "Fleet `attention`" in normalized_worker_intake_heartbeat,
+        "mixed execution Session selection or degraded Fleet evidence contract missing",
+        failures,
+    )
+    require(
+        "exact selected full-scope execution Session" in normalized_current_rc
+        and "missing or mismatched observations fail closed" in normalized_current_rc,
+        "current RC does not record the hardened Session-bound source boundary",
+        failures,
+    )
+    require(
+        "starts with the preview.38 per-Agent heartbeat table"
+        in normalized_worker_intake_heartbeat
+        and "does not promote historical evidence into current capacity"
+        in normalized_worker_intake_heartbeat,
+        "preview.38 heartbeat schema migration boundary missing",
+        failures,
+    )
+    require(
+        "15-minute per-Agent ledger sampling row is not Fleet freshness authority"
+        in normalized_worker_intake_heartbeat,
+        "per-Agent ledger sampling regained Fleet freshness authority",
+        failures,
+    )
+    require(
+        "Fresh `paused`, `error`, or `disabled` heartbeats remain observable"
+        in normalized_worker_intake_heartbeat
+        and "contribute zero execution capacity" in normalized_worker_intake_heartbeat,
+        "non-capacity heartbeat states are not locked into RC acceptance",
+        failures,
+    )
+    require(
+        "After a preview.38 schema upgrade, Fleet remains `never_seen`"
+        in normalized_worker_intake_heartbeat
+        and "authenticated execution Session sends its first heartbeat"
+        in normalized_worker_intake_heartbeat,
+        "legacy upgrade first-heartbeat requirement missing",
+        failures,
+    )
     require(TAG in worker_intake_heartbeat and COMMIT in worker_intake_heartbeat,
             "Worker heartbeat exact-package acceptance is missing", failures)
     require("two execution-capacity service Workers" in normalized_worker_intake_heartbeat
@@ -282,7 +392,7 @@ def main() -> int:
             "preview38_release_asset_install",
             "preview38_service_upgrade_migration",
             "preview38_worker_heartbeat_initial_readback",
-            "worker_machine_session_observation_source_fix",
+            "worker_session_bound_observation_source_fix",
             "preview38_hermes_real_runtime",
             "preview38_openclaw_real_runtime",
             "preview38_physical_macbook_https_reachability",

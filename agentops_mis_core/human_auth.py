@@ -567,6 +567,12 @@ def request_auth(conn, headers, path: str, method: str) -> tuple[dict | None, tu
     context, error = auth_context(conn, headers)
     if error:
         return None, (error, 401)
+    requested_workspace = (headers.get("X-AgentOps-Workspace-Id") or "").strip()
+    if requested_workspace and requested_workspace != context["workspace_id"]:
+        return None, ({
+            "error": "human_workspace_forbidden",
+            "message": "The human session cannot access another workspace.",
+        }, 403)
     role = required_role(path, method)
     if ROLE_RANK.get(context["role"], 0) < ROLE_RANK[role]:
         return None, ({

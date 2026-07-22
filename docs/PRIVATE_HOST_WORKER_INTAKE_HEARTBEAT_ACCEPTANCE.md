@@ -50,10 +50,44 @@ post-run paths.
   relabels every successful loop iteration as a remote heartbeat.
 - No run starts, Runtime adapter executes, approval changes or task mutation is
   introduced.
-- Fleet liveness is keyed by `(workspace_id, agent_id)`. Enrollment and Session
-  activity cannot make the same Agent ID in another workspace appear fresh;
-  an older unscoped Runtime Event is only a fallback when the Agent has one
-  active workspace.
+- Fleet liveness is bound to the selected full-scope execution Session. The
+  current workspace-scoped observation must carry that exact internal Session
+  ID; a missing or mismatched Session observation fails closed as `never_seen`.
+  No enrollment or unscoped Runtime Event fallback is used for service-Worker
+  liveness.
+- Human and Host Fleet reads are workspace-scoped. A heartbeat-only Session
+  cannot keep an execution Session fresh, and the same Agent ID in another
+  workspace cannot lend liveness or ledger rows to the current workspace.
+- Human Fleet hygiene preview/apply, direct task release, Local/Demo Readiness,
+  Commander Project Board/Inbox, Review Queue, Customer Delivery Board,
+  Operator Action Plan/Command Center/Health and readiness knowledge search use
+  the Human Session workspace as authority. Another workspace's task, run,
+  enrollment, approval, memory, artifact or aggregate evidence is neither
+  returned nor mutated.
+- The same Human Session authority covers core Agent/task/run/tool-call/
+  approval/memory/Evaluation/artifact lists and details, run graphs and exports,
+  Dashboard metrics, knowledge results, and bounded Operator handoff,
+  start-check, loop-audit and loop-self-check aggregates. Cross-workspace object
+  IDs fail closed as `404`; caller-supplied workspace headers and write bodies
+  cannot override the Session workspace. Run graph parent/child/delegation
+  traversal is scoped at the query itself, and artifact/approval rows whose
+  task and run links disagree on workspace fail closed instead of trusting the
+  first non-empty link. A caller cannot reuse another workspace's `task_id` to
+  move or overwrite that Task; Agent Gateway Artifact and Approval IDs are
+  immutable across Runs and return `409` on a conflicting reuse.
+- Human Commander/Operator/workflow/Worker mutations receive a server-bound
+  workspace body and header. Commander task dispatch/coding operations,
+  synthesis promotion and execution-evidence remediation reject foreign task,
+  artifact or run IDs before any ledger or local workspace side effect.
+- This is a Private Host workspace boundary, not a claim of complete hosted
+  multi-tenancy. The Agent registry remains Host-global; Human-created Agents
+  receive an explicit `workspace_agent_memberships` row, while task owner,
+  collaborator, run and Agent Gateway enrollment/Session references provide the
+  remaining workspace projection. Audit reads authorize exact
+  `(entity_type, entity_id)` pairs instead of a type-blind ID union, and can omit
+  historical rows that have no authoritative workspace link. A future hosted
+  schema still needs immutable first-class `workspace_id` on Audit plus full
+  membership lifecycle and RBAC enforcement.
 - Only an active Session whose scopes match the real local-config Worker
   closed-loop policy is projected as service execution capacity. This includes
   registration, heartbeat, plan/evidence, knowledge, task claim, run,
@@ -63,7 +97,21 @@ post-run paths.
   treated as heartbeat.
 - Heartbeat sampling state is also keyed by `(workspace_id, agent_id)`, so the
   same Agent ID in two workspaces receives independent bounded Runtime/Audit
-  evidence.
+  evidence. This 15-minute evidence cadence is not the Fleet freshness
+  authority.
+- Mixed-offset Session timestamps are normalized to UTC. When multiple active
+  full-scope Sessions exist, Fleet first selects the newest fresh execution-ready
+  (`idle`/`running`) Session, then a fresh non-ready Session, then a stale
+  observed Session, and finally an unobserved Session. A newly minted but
+  unobserved Session cannot shadow a healthy Worker; a newer
+  `paused`/`error`/`disabled` replica cannot shadow healthy capacity;
+  mixed healthy/non-ready replicas retain one deduplicated Worker capacity while
+  surfacing degraded Session counts and Fleet `attention`.
+- Global `agents.status` is descriptive registration state, not process or
+  execution-capacity evidence. A service Worker contributes capacity only when
+  its selected Session heartbeat is fresh and reports `idle` or `running`;
+  fresh `paused`, `error`, or `disabled` status remains visible but contributes
+  zero capacity.
 
 ## Verification
 
@@ -80,9 +128,25 @@ python3 scripts/worker_intake_heartbeat_fleet_smoke.py
 python3 -B scripts/worker_service_heartbeat_cadence_smoke.py
 python3 scripts/operator_loop_supervision_consumption_smoke.py
 python3 scripts/operator_task_intake_smoke.py --isolated-fixture
+python3 -B scripts/human_browser_auth_smoke.py
+python3 -B scripts/workspace_isolation_smoke.py --base-url <isolated-loopback-server>
 python3 scripts/secret_scan_smoke.py
 git diff --check
 ```
+
+The 2026-07-22 workspace-authority regression adds adversarial collision
+coverage. The Human smoke proves that a foreign `task_id` takeover returns
+`409`, Audit filtering does not leak a foreign Run audit when a local Task has
+the same ID, and both explicit Human-created membership and collaborator-only
+Agent projection survive list/detail/performance/Dashboard reads. The dual
+workspace Agent Gateway smoke proves conflicting Artifact and Approval IDs
+return `409` and the original workspace rows remain unchanged. It also rejects
+known-entity and custom-entity Audit writes anchored to the other workspace,
+while preserving authorized collaborator Audit emission. Commander plan,
+dispatch, batch, synthesis, Project Board and Integration Inbox smokes, plus
+Operator receipt, handoff, start-check and loop-self-check smokes, pass against
+temporary SQLite/loopback fixtures. These are deterministic authority and
+control-plane tests; they do not claim a fresh Hermes/OpenClaw live execution.
 
 The focused smoke covers four early-return paths: automatic plan creation,
 existing plan verification, high-risk refusal and explicitly disabled
@@ -152,12 +216,29 @@ observation timestamp. Preview.38 therefore receives credit for the
 Intake-blocked heartbeat emission fix, not sustained Host-machine Session Fleet
 liveness.
 
-The source follow-up now reads the current observation by
-`(workspace_id, agent_id)` before falling back to unscoped historical evidence.
-The isolated integration test uses a real unparented Host-machine Session and
-proves that a coalesced second heartbeat restores Fleet freshness without
-adding another Runtime Event or Audit row. This source correction requires a
-later exact package and real observation beyond two heartbeat cycles.
+The source follow-up keeps the 15-minute `(workspace_id, agent_id)` sampling
+row separate from the Session-keyed
+`agent_gateway_session_heartbeat_observations` liveness table and accepts only
+the row for the selected full-scope execution Session. The 15-minute per-Agent
+ledger sampling row is not Fleet freshness authority. The isolated integration
+test uses a real unparented Host-machine Session and proves that a coalesced
+second heartbeat restores Fleet freshness without adding another Runtime Event
+or Audit row. It also proves that a heartbeat-only Session cannot replace or
+refresh the execution Session's observation, while a missing observation for
+the selected execution Session fails closed as `never_seen`. Another
+workspace's Agent/task/run/event/stuck-task rows stay out of the current Worker
+read model. The fixed-clock test selects the actually newer Session across
+mixed ISO offsets after UTC normalization. Fresh `paused`, `error`, or
+`disabled` heartbeats remain observable but contribute zero execution
+capacity. This source correction requires a later exact package and real
+observation beyond two heartbeat cycles.
+
+The migration fixture starts with the preview.38 per-Agent heartbeat table and
+one populated sampling row. Schema initialization preserves that row, creates
+an empty Session-keyed liveness table, and does not promote historical evidence
+into current capacity. After a preview.38 schema upgrade, Fleet remains
+`never_seen` until the selected authenticated execution Session sends its first
+heartbeat.
 
 ## Post-Acceptance Storage Pressure Finding
 

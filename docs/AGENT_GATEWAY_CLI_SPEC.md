@@ -1025,11 +1025,10 @@ Emits a structured audit event for important state transitions.
 
 ```bash
 agentops audit emit \
-  --actor-type agent \
-  --actor-id agt_kb_researcher \
   --action connector.plan_created \
-  --entity-type task \
-  --entity-id tsk_kb_setup
+  --entity-type tasks \
+  --entity-id tsk_kb_setup \
+  --task-id tsk_kb_setup
 ```
 
 Maps to `audit_logs`.
@@ -2437,6 +2436,9 @@ Writes:
 ### `POST /api/agent-gateway/audit`
 
 Emits a direct audit event for state transitions that do not fit another endpoint.
+Known ledger entities derive their workspace/task/run authority from the stored
+object. Custom entity types must include an authorized `task_id` or `run_id`;
+the Gateway rejects unbound or cross-workspace audit writes.
 
 Writes:
 

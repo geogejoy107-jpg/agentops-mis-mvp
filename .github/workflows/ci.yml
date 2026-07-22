@@ -15,6 +15,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  worker-python-compatibility:
+    name: Worker compatibility (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile Worker compatibility surface
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            server.py \
+            agentops_mis_cli/worker.py \
+            agentops_mis_core/worker_fleet.py \
+            scripts/worker_service_heartbeat_cadence_smoke.py \
+            scripts/worker_intake_heartbeat_fleet_smoke.py
+
+      - name: Run Worker compatibility smokes
+        run: |
+          set -euo pipefail
+          timeout 120s python3 scripts/worker_service_heartbeat_cadence_smoke.py
+          timeout 120s python3 scripts/worker_intake_heartbeat_fleet_smoke.py
+
   backend-deterministic:
     name: Backend deterministic smokes
     runs-on: ubuntu-latest
@@ -58,6 +93,8 @@ jobs:
           timeout 120s python3 scripts/sqlite_concurrency_smoke.py
           timeout 120s python3 scripts/audit_chain_concurrency_smoke.py
           timeout 120s python3 scripts/migration_rollback_smoke.py
+          timeout 120s python3 scripts/workspace_agent_membership_migration_smoke.py
+          timeout 120s python3 scripts/agent_plan_approval_subject_migration_smoke.py
           timeout 120s python3 scripts/run_local_stack_smoke.py
           timeout 120s python3 scripts/worker_process_identity_smoke.py
           timeout 120s python3 scripts/production_ui_host_smoke.py
@@ -175,7 +212,6 @@ jobs:
           timeout 120s python3 scripts/knowledge_retrieval_quality_smoke.py
           timeout 120s python3 scripts/worker_knowledge_evidence_consumption_smoke.py
           timeout 120s python3 scripts/worker_intake_auto_plan_smoke.py
-          timeout 120s python3 scripts/worker_intake_heartbeat_fleet_smoke.py
           timeout 120s python3 scripts/worker_loop_supervision_soft_gate_smoke.py
           timeout 120s python3 scripts/worker_prompt_profile_smoke.py
           timeout 120s python3 scripts/work_delivery_graph_readback_smoke.py

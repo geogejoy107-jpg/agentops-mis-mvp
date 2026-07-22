@@ -1468,7 +1468,12 @@ def main() -> int:
         enrollments=[remote_enrollment],
         sessions=[remote_session],
         agents_by_id={"agt_worker_remote_smoke": {"name": "Remote Smoke Worker", "runtime_type": "mock", "status": "idle"}},
-        heartbeats_by_agent={"agt_worker_remote_smoke": {"last_heartbeat_at": "2026-06-22T00:00:20+00:00"}},
+        heartbeats_by_session={
+            "fixture_remote_session_ref": {
+                "last_heartbeat_at": "2026-06-22T00:00:20+00:00",
+                "status": "idle",
+            },
+        },
         now_dt=dt.datetime(2026, 6, 22, 0, 0, 30, tzinfo=dt.timezone.utc),
     )
     service_only_summary = build_worker_remote_fleet_summary(
@@ -1488,8 +1493,11 @@ def main() -> int:
                 "status": "idle",
             },
         },
-        heartbeats_by_agent={
-            "agt_worker_service_smoke": {"last_heartbeat_at": "2026-06-22T00:00:20+00:00"},
+        heartbeats_by_session={
+            "fixture_service_session_ref": {
+                "last_heartbeat_at": "2026-06-22T00:00:20+00:00",
+                "status": "idle",
+            },
         },
         now_dt=dt.datetime(2026, 6, 22, 0, 0, 30, tzinfo=dt.timezone.utc),
     )

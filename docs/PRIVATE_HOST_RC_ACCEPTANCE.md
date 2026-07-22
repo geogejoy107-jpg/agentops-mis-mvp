@@ -857,10 +857,50 @@ Host-machine Sessions have no parent enrollment token; their same-state
 heartbeats refreshed the workspace-scoped observation every 60 seconds but did
 not amplify the 15-minute Runtime/Audit ledger sample. Preview.38 Fleet read the
 historical event rather than the current observation. The source follow-up now
-uses the current `(workspace_id, agent_id)` observation and an isolated real
-Host-machine Session regression passes, but a later package and sustained real
-readback are required. Preview.38 is not credited with sustained Fleet
-freshness.
+binds the current workspace observation to the exact selected full-scope
+execution Session. Human and Host Fleet reads are workspace-scoped;
+heartbeat-only Sessions cannot lend liveness; missing or mismatched
+observations fail closed; and no enrollment or unscoped Runtime Event fallback
+controls service freshness. Global Agent status is not capacity evidence, a
+new unobserved Session cannot shadow a healthy observed Session, and
+`paused`/`error`/`disabled` heartbeats contribute zero capacity. A healthy
+Session is selected ahead of a newer non-ready replica; mixed replicas retain
+one deduplicated capacity while Fleet reports degraded Session evidence and
+`attention`. Human Fleet
+hygiene, task release, Local/Demo Readiness, Commander read models, Review
+Queue, Customer Delivery Board and Operator Action Plan/Command Center/Health
+are bound to the authenticated Human Session workspace. Dual-workspace HTTP
+coverage proves that task/run/approval/memory/artifact references from another
+workspace are not returned. The same contract covers core Agent/task/run/tool/
+Evaluation/artifact lists and details, run graphs/exports, Dashboard metrics,
+knowledge results, and bounded Operator handoff/start-check/loop aggregates;
+cross-workspace details and mutations fail closed. Task IDs cannot be rebound
+across workspaces, and conflicting Agent Gateway Artifact/Approval IDs return
+`409` without replacing the original ledger row. This does not yet claim hosted
+multi-tenancy: the Agent registry is Host-global with explicit membership for
+Human-created Agents plus authoritative owner/collaborator/run/Gateway
+projections. Audit workspace visibility uses exact `(entity_type, entity_id)`
+pairs and remains an undercount-safe bridge until immutable first-class Audit
+workspace ownership is added. Isolated Host-machine Session, mixed-offset UTC and
+dual-workspace regressions pass, but a later package and sustained real readback
+are required. Preview.38 is not credited with sustained Fleet freshness.
+
+The same unreleased source slice now gives legacy Host Agents an idempotent
+`local-demo` membership backfill only when no non-local Task, Run, Agent Plan or
+Gateway authority evidence exists. Human Agent creation writes the Agent,
+membership and Audit in one transaction, and Dashboard performance includes
+visible zero-run membership, collaborator and Plan-only Agents in their
+authoritative workspace. Agent Plan approvals bind
+an explicit subject type, Plan ID and Plan hash in addition to immutable
+task/run/tool/Agent authority; an ordinary same-authority Approval cannot be
+reused as a Plan decision. Run/task mismatch, cross-workspace or reused
+Approval IDs return `409`, and Tool Call plus Prepared Action creation now
+rolls back as one unit. Private Host Human Sessions can decide a visible Plan
+without machine credentials while the real Human Account remains in the Plan
+and Audit trail. Fault-injection tests prove no partial Plan, Approval, Tool
+Call, Prepared Action, membership, Run/Task state, Runtime Event or Audit
+survives. These are deterministic source-level receipts only and are not
+attributed to installed preview.38.
 
 Separately, after all package and real-runtime acceptance steps, the Host volume later fell
 to roughly 115 MiB free. The backend PID and loopback listener remained, but

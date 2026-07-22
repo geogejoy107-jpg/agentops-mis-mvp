@@ -81,6 +81,7 @@ def main() -> int:
             heartbeat, heartbeat_status = server.agent_gateway_heartbeat(conn, {
                 "workspace_id": "local-demo",
                 "agent_id": agent_id,
+                "_auth_session_id": "sess_service_presence_smoke",
                 "status": "idle",
                 "summary": "Service Worker presence smoke heartbeat.",
                 "runtime_type": "hermes",
