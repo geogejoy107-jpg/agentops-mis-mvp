@@ -183,6 +183,8 @@ GET  /api/knowledge/search?q=approval&limit=10&refresh=true
 POST /api/knowledge/index
 GET  /api/agent-gateway/knowledge/search?q=approval&limit=10
 POST /api/agent-gateway/knowledge/index
+GET  /api/knowledge/context-packet?task_id=<task_id>&adapter=hermes
+GET  /api/agent-gateway/knowledge/context-packet?task_id=<task_id>&adapter=hermes
 ```
 
 The local indexer reads Markdown from the repo root, `docs/`, and `knowledge/`.
@@ -217,6 +219,17 @@ index refresh uses `POST /api/agent-gateway/knowledge/index` and requires
 `knowledge:write`. Bound Agent Gateway tokens can see only `global` knowledge
 plus documents whose `workspace_id` matches the token workspace; workspace header
 or query spoofing returns `403`.
+
+The evidence packet and context packet have different jobs. The existing
+`knowledge/evidence-packet` proves retrieval quality and provenance while
+omitting all excerpts. `knowledge/context-packet` adds a bounded transient
+model-input layer: at most eight redacted knowledge summaries, at most five
+human-approved canonical Memory summaries, and at most 6000 combined
+characters. It never scans conversation JSONL, logs, attachments, env files or
+raw customer folders. Its response binds every summary to a document/chunk or
+approved `memory_id` and a summary hash. Workers may place those summaries in a
+single model call, but Tool Call, Evaluation and Audit evidence records only
+the packet hash, source IDs, block hashes/counts and omission proof.
 
 ## Commander Repo Map
 

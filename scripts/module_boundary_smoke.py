@@ -904,6 +904,12 @@ def main() -> int:
         None,
         {
             "requires_prepared_action_for_external_write": True,
+            "knowledge_context_consumed": True,
+            "knowledge_context_contract_version": "project-context-packet-v1",
+            "knowledge_context_packet_hash": "sha256:fixture",
+            "knowledge_context_block_count": 2,
+            "knowledge_context_block_hashes": ["sha256:block"],
+            "knowledge_context_approved_memory_ids": ["mem_smoke"],
             "knowledge_retrieval_task_context": {
                 "task_id": "tsk_smoke",
                 "query_source": "task_id",

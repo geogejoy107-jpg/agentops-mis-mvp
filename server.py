@@ -7120,6 +7120,255 @@ def knowledge_retrieval_evidence_packet(conn: sqlite3.Connection, qs: dict, head
     }, 200
 
 
+def _project_context_memory_rows(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    task_id: str | None,
+    query: str,
+    headers,
+    auth_ctx,
+    limit: int,
+) -> list[dict]:
+    ident = agent_gateway_identity(headers or {}, qs={"workspace_id": [workspace_id]}, auth_ctx=auth_ctx)
+    where = ["m.review_status='approved'", "COALESCE(t.workspace_id,'local-demo')=?"]
+    params: list = [workspace_id]
+    visibility_sql, visibility_params = agent_gateway_memory_visibility_clause("m", "t", ident, auth_ctx)
+    if visibility_sql != "1=1":
+        where.append(visibility_sql)
+        params.extend(visibility_params)
+    rows = rows_to_dicts(conn.execute(
+        """SELECT m.memory_id, m.scope, m.memory_type, m.canonical_text,
+                  m.source_type, m.task_id, m.agent_id, m.confidence,
+                  m.review_status, m.updated_at
+           FROM memories m
+           LEFT JOIN tasks t ON t.task_id=m.task_id
+           WHERE """ + " AND ".join(where) + " ORDER BY m.updated_at DESC LIMIT 50",
+        params,
+    ).fetchall())
+    query_terms = [term.casefold() for term in re.findall(r"[\w\u4e00-\u9fff]+", query or "", flags=re.UNICODE)[:12]]
+
+    def score(row: dict) -> tuple[int, int, str]:
+        text = str(row.get("canonical_text") or "").casefold()
+        term_hits = sum(1 for term in query_terms if term and term in text)
+        task_match = int(bool(task_id) and row.get("task_id") == task_id)
+        return task_match, term_hits, str(row.get("updated_at") or "")
+
+    rows.sort(key=score, reverse=True)
+    return rows[:limit]
+
+
+def _project_context_knowledge_blocks(
+    conn: sqlite3.Connection,
+    results: list[dict],
+    *,
+    per_block_chars: int,
+    total_chars: int,
+) -> tuple[list[dict], int]:
+    blocks: list[dict] = []
+    used_chars = 0
+    for result in results:
+        if used_chars >= total_chars:
+            break
+        summary_row = None
+        if result.get("chunk_id"):
+            summary_row = conn.execute(
+                "SELECT content_summary FROM knowledge_chunks WHERE chunk_id=? AND doc_id=?",
+                (result.get("chunk_id"), result.get("doc_id")),
+            ).fetchone()
+        if not summary_row:
+            summary_row = conn.execute(
+                "SELECT content_summary FROM knowledge_documents WHERE doc_id=?",
+                (result.get("doc_id"),),
+            ).fetchone()
+        summary = redact_text(summary_row["content_summary"] if summary_row else "", per_block_chars)
+        remaining = max(total_chars - used_chars, 0)
+        summary = summary[:remaining].strip()
+        if not summary:
+            continue
+        block = {
+            "context_id": stable_id("kctx", result.get("retrieval_id"), result.get("source_hash")),
+            "source_type": "knowledge_summary",
+            "authority": "versioned_project_knowledge",
+            "retrieval_id": result.get("retrieval_id"),
+            "doc_id": result.get("doc_id"),
+            "chunk_id": result.get("chunk_id"),
+            "path": result.get("path"),
+            "title": result.get("title"),
+            "heading_path": result.get("chunk_heading_path") or result.get("heading_path"),
+            "source_hash": result.get("source_hash"),
+            "summary": summary,
+            "summary_hash": stable_hash(summary),
+            "summary_chars": len(summary),
+            "raw_source_body_omitted": True,
+            "raw_transcript_omitted": True,
+            "token_omitted": True,
+        }
+        blocks.append(block)
+        used_chars += len(summary)
+    return blocks, used_chars
+
+
+def knowledge_project_context_packet(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=None) -> tuple[dict, int]:
+    """Return bounded, reviewed context for transient model use plus compact provenance."""
+    headers = headers or {}
+    qs = qs or {}
+    evidence, evidence_status = knowledge_retrieval_evidence_packet(conn, qs, headers, auth_ctx)
+    if evidence_status != 200:
+        return {
+            **evidence,
+            "operation": "knowledge_project_context_packet",
+            "version": "v1",
+            "context_blocks": [],
+            "context_block_count": 0,
+            "context_available": False,
+        }, evidence_status
+
+    workspace_id = normalize_workspace_id(evidence.get("workspace_id") or "local-demo")
+    task_context = evidence.get("task_context") if isinstance(evidence.get("task_context"), dict) else {}
+    task_id = str(task_context.get("task_id") or "").strip() or None
+    adapter = knowledge_retrieval_query_value(qs, "adapter", "runtime_type")
+    query = redact_text(
+        knowledge_retrieval_query_value(qs, "q", "query", default="READ PLAN RETRIEVE COMPARE VERIFY RECORD"),
+        240,
+    )
+    if task_id:
+        task_row = conn.execute(
+            """SELECT task_id, workspace_id, title, description, acceptance_criteria,
+                      risk_level, owner_agent_id
+               FROM tasks WHERE task_id=? AND workspace_id=?""",
+            (task_id, workspace_id),
+        ).fetchone()
+        if task_row:
+            query = knowledge_task_query(dict(task_row), adapter=adapter)
+
+    limit = bounded_int((qs.get("limit") or ["5"])[0], 5, 1, 8)
+    memory_limit = bounded_int((qs.get("memory_limit") or ["3"])[0], 3, 0, 5)
+    per_block_chars = bounded_int((qs.get("block_chars") or ["480"])[0], 480, 120, 800)
+    total_chars = bounded_int((qs.get("max_chars") or ["4000"])[0], 4000, 600, 6000)
+    primary_payload, _primary_status = knowledge_search(
+        conn,
+        {"q": [query], "limit": [str(limit)]},
+        headers,
+        auth_ctx=auth_ctx if auth_ctx is not None else {},
+    )
+    knowledge_blocks, used_chars = _project_context_knowledge_blocks(
+        conn,
+        list(primary_payload.get("results") or [])[:limit],
+        per_block_chars=per_block_chars,
+        total_chars=total_chars,
+    )
+
+    memory_blocks: list[dict] = []
+    if memory_limit and used_chars < total_chars:
+        memory_rows = _project_context_memory_rows(
+            conn,
+            workspace_id=workspace_id,
+            task_id=task_id,
+            query=query,
+            headers=headers,
+            auth_ctx=auth_ctx,
+            limit=memory_limit,
+        )
+        for row in memory_rows:
+            remaining = max(total_chars - used_chars, 0)
+            summary = redact_text(row.get("canonical_text"), min(per_block_chars, remaining)).strip()
+            if not summary:
+                continue
+            memory_blocks.append({
+                "context_id": stable_id("mctx", row.get("memory_id"), row.get("updated_at")),
+                "source_type": "approved_memory",
+                "authority": "human_reviewed_canonical_memory",
+                "memory_id": row.get("memory_id"),
+                "memory_type": row.get("memory_type"),
+                "scope": row.get("scope"),
+                "task_id": row.get("task_id"),
+                "confidence": row.get("confidence"),
+                "review_status": "approved",
+                "summary": summary,
+                "summary_hash": stable_hash(summary),
+                "summary_chars": len(summary),
+                "source_ref_omitted": True,
+                "raw_source_body_omitted": True,
+                "raw_transcript_omitted": True,
+                "token_omitted": True,
+            })
+            used_chars += len(summary)
+            if used_chars >= total_chars:
+                break
+
+    context_blocks = [*memory_blocks, *knowledge_blocks]
+    context_binding = [{
+        "context_id": block.get("context_id"),
+        "source_type": block.get("source_type"),
+        "retrieval_id": block.get("retrieval_id"),
+        "memory_id": block.get("memory_id"),
+        "summary_hash": block.get("summary_hash"),
+    } for block in context_blocks]
+    evidence_binding = {
+        "query_hash": evidence.get("query_hash"),
+        "metrics": evidence.get("metrics") or {},
+        "retrieval_ids": [row.get("retrieval_id") for row in ((evidence.get("primary_search") or {}).get("results") or [])],
+        "source_hashes": [row.get("source_hash") for row in ((evidence.get("primary_search") or {}).get("results") or [])],
+    }
+    packet_hash = stable_hash({
+        "version": "v1",
+        "workspace_id": workspace_id,
+        "task_context": task_context,
+        "evidence": evidence_binding,
+        "context": context_binding,
+    })
+    return {
+        "provider": "agentops-knowledge",
+        "operation": "knowledge_project_context_packet",
+        "version": "v1",
+        "status": "ready" if context_blocks else "attention",
+        "workspace_id": workspace_id,
+        "task_context": task_context,
+        "query_hash": evidence.get("query_hash"),
+        "query_omitted": True,
+        "counts": evidence.get("counts") or {},
+        "metrics": evidence.get("metrics") or {},
+        "primary_search": evidence.get("primary_search") or {},
+        "evidence_status": evidence.get("status"),
+        "evidence_packet_hash": stable_hash(evidence_binding),
+        "packet_hash": packet_hash,
+        "context_blocks": context_blocks,
+        "context_block_count": len(context_blocks),
+        "context_available": bool(context_blocks),
+        "knowledge_block_count": len(knowledge_blocks),
+        "approved_memory_count": len(memory_blocks),
+        "approved_memory_ids": [block.get("memory_id") for block in memory_blocks if block.get("memory_id")],
+        "context_chars": sum(int(block.get("summary_chars") or 0) for block in context_blocks),
+        "limits": {
+            "knowledge_blocks": limit,
+            "approved_memories": memory_limit,
+            "per_block_chars": per_block_chars,
+            "total_chars": total_chars,
+        },
+        "contract": "read-only bounded project context for transient model input; combines redacted versioned-knowledge summaries with human-approved canonical memories while ledger evidence stores only ids and hashes",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "task_mutated": False,
+            "run_mutated": False,
+            "tool_mutated": False,
+            "live_execution_performed": False,
+            "external_network": False,
+            "raw_query_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_source_body_omitted": True,
+            "raw_transcript_omitted": True,
+            "source_ref_omitted": True,
+            "bounded_redacted_context": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }, 200
+
+
 def list_agent_plans(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers or {}, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 100)
@@ -24514,6 +24763,12 @@ def operator_run_worker_knowledge_retrieval(conn: sqlite3.Connection, run_id: st
             "packet_hash": args.get("knowledge_retrieval_packet_hash"),
             "query_hash": args.get("knowledge_retrieval_query_hash"),
             "retrieval_status": args.get("knowledge_retrieval_status"),
+            "context_required": bool(args.get("knowledge_context_contract_version")),
+            "context_consumed": bool(args.get("knowledge_context_consumed")),
+            "context_contract_version": args.get("knowledge_context_contract_version"),
+            "context_packet_hash": args.get("knowledge_context_packet_hash"),
+            "context_block_count": int(args.get("knowledge_context_block_count") or 0),
+            "approved_memory_ids": args.get("knowledge_context_approved_memory_ids") if isinstance(args.get("knowledge_context_approved_memory_ids"), list) else [],
             "retrieval_ids": args.get("knowledge_retrieval_ids") if isinstance(args.get("knowledge_retrieval_ids"), list) else [],
             "source_hashes": args.get("knowledge_retrieval_source_hashes") if isinstance(args.get("knowledge_retrieval_source_hashes"), list) else [],
             "paths": args.get("knowledge_retrieval_paths") if isinstance(args.get("knowledge_retrieval_paths"), list) else [],
@@ -24527,6 +24782,8 @@ def operator_run_worker_knowledge_retrieval(conn: sqlite3.Connection, run_id: st
                 "query_omitted": omissions.get("query_omitted") is True,
                 "snippet_omitted": omissions.get("snippet_omitted") is True,
                 "raw_content_omitted": omissions.get("raw_content_omitted") is True,
+                "context_body_not_persisted": not bool(args.get("knowledge_context_contract_version")) or omissions.get("context_body_not_persisted") is True,
+                "raw_transcript_omitted": not bool(args.get("knowledge_context_contract_version")) or omissions.get("raw_transcript_omitted") is True,
                 "raw_prompt_omitted": omissions.get("raw_prompt_omitted") is True,
                 "raw_response_omitted": omissions.get("raw_response_omitted") is True,
                 "token_omitted": omissions.get("token_omitted") is True,
@@ -24540,6 +24797,11 @@ def operator_run_worker_knowledge_retrieval(conn: sqlite3.Connection, run_id: st
         if item.get("consumed")
         and item.get("packet_hash")
         and item.get("query_hash")
+        and (not item.get("context_required") or (
+            item.get("context_consumed")
+            and item.get("context_packet_hash")
+            and int(item.get("context_block_count") or 0) > 0
+        ))
         and all((item.get("omissions") or {}).values())
     ]
     unavailable_items = [item for item in items if item.get("retrieval_status") == "unavailable"]
@@ -24560,6 +24822,9 @@ def operator_run_worker_knowledge_retrieval(conn: sqlite3.Connection, run_id: st
         "missing_tool_calls": max(len(items) - len(ready_items), 0),
         "packet_hashes": [item.get("packet_hash") for item in ready_items if item.get("packet_hash")],
         "query_hashes": [item.get("query_hash") for item in ready_items if item.get("query_hash")],
+        "context_packet_hashes": [item.get("context_packet_hash") for item in ready_items if item.get("context_packet_hash")],
+        "context_block_count": sum(int(item.get("context_block_count") or 0) for item in ready_items),
+        "approved_memory_ids": sorted({memory_id for item in ready_items for memory_id in (item.get("approved_memory_ids") or [])}),
         "retrieval_ids": [rid for item in ready_items for rid in (item.get("retrieval_ids") or [])],
         "source_hashes": [source_hash for item in ready_items for source_hash in (item.get("source_hashes") or [])],
         "paths": [path for item in ready_items for path in (item.get("paths") or [])],
@@ -24567,6 +24832,8 @@ def operator_run_worker_knowledge_retrieval(conn: sqlite3.Connection, run_id: st
         "raw_query_omitted": True,
         "snippet_omitted": True,
         "raw_content_omitted": True,
+        "context_body_not_persisted": True,
+        "raw_transcript_omitted": True,
         "raw_prompt_omitted": True,
         "raw_response_omitted": True,
         "token_omitted": True,
@@ -34011,6 +34278,22 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status = knowledge_retrieval_evidence_packet(conn, query, self.headers, auth_ctx)
                 conn.rollback()
                 return self.send_json(payload, status)
+            if path == "/api/agent-gateway/knowledge/context-packet":
+                auth_ctx, auth_error = self.route_auth_context(conn, "knowledge:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                query = dict(qs)
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                    requested_workspace = requested_workspace_from_qs(query, auth_ctx["workspace_id"])
+                    if requested_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot read project context from another workspace."}, 403)
+                    query["workspace_id"] = [auth_ctx["workspace_id"]]
+                payload, status = knowledge_project_context_packet(conn, query, self.headers, auth_ctx)
+                conn.rollback()
+                return self.send_json(payload, status)
             if path == "/api/agent-gateway/agent-plans":
                 auth_ctx, auth_error = self.route_auth_context(conn, "agent_plans:read")
                 if auth_error:
@@ -34292,6 +34575,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path in {"/api/knowledge/evidence-packet", "/api/knowledge/retrieval-evidence-packet"}:
                 payload, status = knowledge_retrieval_evidence_packet(
+                    conn,
+                    dict(qs),
+                    self.headers,
+                    auth_ctx=self._human_auth_context,
+                )
+                conn.rollback()
+                return self.send_json(payload, status)
+            if path == "/api/knowledge/context-packet":
+                payload, status = knowledge_project_context_packet(
                     conn,
                     dict(qs),
                     self.headers,

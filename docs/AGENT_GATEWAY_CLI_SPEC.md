@@ -182,6 +182,31 @@ The Agent Gateway route requires `knowledge:read`. Packet reads are non-mutating
 they do not refresh the index, pull tasks, start runs, write tool calls, or call
 Hermes/OpenClaw.
 
+### `agentops knowledge context-packet`
+
+Returns the bounded project context that an Agent can actually use, rather than
+only proof that retrieval happened. It combines redacted summaries from the
+versioned Knowledge Index with canonical text from human-approved Memory rows.
+Full transcripts, raw document bodies, prompts, responses, source refs and
+credentials remain excluded.
+
+```bash
+agentops knowledge context-packet \
+  --task-id <task_id> \
+  --adapter hermes \
+  --limit 5 \
+  --memory-limit 3 \
+  --max-chars 4000
+```
+
+`agentops-worker` requests this packet first. New-context servers make bounded
+context consumption a Worker quality gate. For compatibility, a Worker can
+still read the older evidence-only endpoint from an older Host, but it labels
+that path as legacy evidence and cannot claim that the model consumed project
+explanations. Context summaries are transient model input; persisted
+Tool/Evaluation/Audit rows contain only IDs, hashes, counts and
+`context_body_not_persisted:true`.
+
 ### `agentops agent register`
 
 Registers or updates an AI digital employee identity.
@@ -2558,6 +2583,7 @@ Current endpoint scope map:
 | `POST /api/agent-gateway/artifacts` | `artifacts:write` |
 | `GET /api/agent-gateway/knowledge/search` | `knowledge:read` |
 | `GET /api/agent-gateway/knowledge/evidence-packet` | `knowledge:read` |
+| `GET /api/agent-gateway/knowledge/context-packet` | `knowledge:read` |
 | `GET /api/agent-gateway/knowledge/retrieval-evidence-packet` | `knowledge:read` |
 | `POST /api/agent-gateway/knowledge/index` | `knowledge:write` |
 | `GET /api/agent-gateway/agent-plans` | `agent_plans:read` |

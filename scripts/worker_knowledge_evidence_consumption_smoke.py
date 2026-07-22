@@ -17,8 +17,13 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from agentops_mis_cli.worker import context_packet_endpoint_missing
+
+
 WORKER = ROOT / "scripts" / "agent_worker.py"
 SERVER = ROOT / "server.py"
 SECRET_PATTERNS = [
@@ -167,6 +172,16 @@ def db_json_field(db_path: Path, sql: str, params: tuple = ()) -> list:
 def main() -> int:
     failures: list[str] = []
     outputs: list[str] = []
+    require(
+        context_packet_endpoint_missing(RuntimeError("GET /api/agent-gateway/knowledge/context-packet failed: 404 {}")),
+        "legacy context endpoint absence was not recognized",
+        failures,
+    )
+    require(
+        not context_packet_endpoint_missing(RuntimeError("GET /api/agent-gateway/knowledge/context-packet failed: 500 {}")),
+        "context endpoint server errors must not silently downgrade to evidence-only mode",
+        failures,
+    )
     suffix = stamp()
     workspace = f"ws_worker_knowledge_{suffix}"
     agent_id = f"agt_worker_knowledge_{suffix}"
@@ -251,6 +266,53 @@ def main() -> int:
             task_id = task.get("task_id")
             require(status == 201 and bool(task_id), f"task create failed: {status} {task}", failures)
 
+            approved_context_marker = f"APPROVED_CONTEXT_{suffix}"
+            status, proposed_memory, raw = http_json(base_url, "/api/agent-gateway/memories/propose", "POST", {
+                "workspace_id": workspace,
+                "agent_id": agent_id,
+                "task_id": task_id,
+                "scope": "project",
+                "memory_type": "project_context",
+                "canonical_text": (
+                    f"{approved_context_marker}: workers must use bounded reviewed project context, "
+                    "while tool, evaluation and audit records retain only source identifiers and hashes."
+                ),
+                "source_type": "manual",
+                "source_ref": f"worker-context-smoke:{suffix}",
+                "confidence": 0.94,
+            }, token=token, workspace=workspace)
+            outputs.append(raw)
+            approved_memory_id = (proposed_memory.get("memory") or {}).get("memory_id")
+            require(status in {200, 201} and bool(approved_memory_id), f"memory propose failed: {status} {proposed_memory}", failures)
+            status, approved_memory, raw = http_json(
+                base_url,
+                f"/api/memories/{approved_memory_id}/approve",
+                "POST",
+                {},
+            )
+            outputs.append(raw)
+            require(status == 200 and approved_memory.get("review_status") == "approved", f"memory approve failed: {status} {approved_memory}", failures)
+
+            status, context_packet, raw = http_json(
+                base_url,
+                "/api/agent-gateway/knowledge/context-packet",
+                token=token,
+                workspace=workspace,
+                query={"task_id": task_id, "adapter": "mock", "limit": 5, "memory_limit": 3},
+            )
+            outputs.append(raw)
+            context_blocks = context_packet.get("context_blocks") or []
+            require(status == 200 and context_packet.get("operation") == "knowledge_project_context_packet", f"context packet failed: {status} {context_packet}", failures)
+            require(context_packet.get("version") == "v1", f"context packet version missing: {context_packet}", failures)
+            require(context_packet.get("context_available", True) is not False and int(context_packet.get("context_block_count") or 0) > 0, f"context packet empty: {context_packet}", failures)
+            require(bool(context_packet.get("packet_hash")), f"context packet hash missing: {context_packet}", failures)
+            require(any(block.get("source_type") == "knowledge_summary" and block.get("summary") for block in context_blocks), f"versioned knowledge summary missing: {context_blocks}", failures)
+            require(any(block.get("source_type") == "approved_memory" and block.get("memory_id") == approved_memory_id and approved_context_marker in str(block.get("summary") or "") for block in context_blocks), f"approved memory summary missing: {context_blocks}", failures)
+            require(int(context_packet.get("context_chars") or 0) <= int((context_packet.get("limits") or {}).get("total_chars") or 0), f"context packet exceeded total bound: {context_packet}", failures)
+            context_safety = context_packet.get("safety") or {}
+            require(context_safety.get("read_only") is True and context_safety.get("raw_transcript_omitted") is True, f"context safety proof missing: {context_safety}", failures)
+            require(all("source_ref" not in block for block in context_blocks), f"context packet leaked source refs: {context_blocks}", failures)
+
             worker = run_worker(base_url, token, workspace, agent_id, task_id or "")
             outputs.extend([worker.stdout, worker.stderr])
             require(worker.returncode == 0, f"worker failed: {worker.returncode} {worker.stderr or worker.stdout}", failures)
@@ -261,6 +323,11 @@ def main() -> int:
             worker_evidence = result.get("knowledge_retrieval_evidence") or {}
             require(bool(run_id and plan_id), f"worker result missing run/plan: {worker_payload}", failures)
             require(worker_evidence.get("consumed") is True, f"worker result did not consume evidence: {worker_evidence}", failures)
+            require(worker_evidence.get("context_consumed") is True, f"worker result did not consume bounded context: {worker_evidence}", failures)
+            require(worker_evidence.get("context_contract_version") == "v1", f"worker context contract missing: {worker_evidence}", failures)
+            require(bool(worker_evidence.get("context_packet_hash")), f"worker context packet hash missing: {worker_evidence}", failures)
+            require(int(worker_evidence.get("context_block_count") or 0) > 0, f"worker context block count missing: {worker_evidence}", failures)
+            require(approved_memory_id in (worker_evidence.get("approved_memory_ids") or []), f"worker context missing approved memory id: {worker_evidence}", failures)
             require(bool(worker_evidence.get("packet_hash")), f"worker result missing packet hash: {worker_evidence}", failures)
             require(bool(worker_evidence.get("query_hash")), f"worker result missing query hash: {worker_evidence}", failures)
             require(worker_evidence.get("query_omitted") is True, f"worker result query should be omitted: {worker_evidence}", failures)
@@ -291,6 +358,11 @@ def main() -> int:
             eval_row = (run_detail.get("evaluations") or [{}])[0]
             rubric = parse_json_field(eval_row.get("rubric_json") or eval_row.get("rubric"))
             require(tool_args.get("knowledge_retrieval_evidence_consumed") is True, f"tool args missing consumption proof: {tool_args}", failures)
+            require(tool_args.get("knowledge_context_consumed") is True, f"tool args missing context consumption proof: {tool_args}", failures)
+            require(tool_args.get("knowledge_context_contract_version") == "v1", f"tool args missing context contract: {tool_args}", failures)
+            require(bool(tool_args.get("knowledge_context_packet_hash")), f"tool args missing context packet hash: {tool_args}", failures)
+            require(int(tool_args.get("knowledge_context_block_count") or 0) > 0, f"tool args missing context block count: {tool_args}", failures)
+            require(approved_memory_id in (tool_args.get("knowledge_context_approved_memory_ids") or []), f"tool args missing approved memory id: {tool_args}", failures)
             require(bool(tool_args.get("knowledge_retrieval_packet_hash")), f"tool args missing packet hash: {tool_args}", failures)
             require(bool(tool_args.get("knowledge_retrieval_query_hash")), f"tool args missing query hash: {tool_args}", failures)
             tool_task_context = tool_args.get("knowledge_retrieval_task_context") or {}
@@ -298,6 +370,7 @@ def main() -> int:
             require(tool_task_context.get("task_text_omitted") is True, f"tool task context should omit text: {tool_task_context}", failures)
             require((tool_args.get("knowledge_retrieval_omissions") or {}).get("raw_prompt_omitted") is True, f"tool args omission proof missing: {tool_args}", failures)
             require(rubric.get("knowledge_retrieval_evidence_consumed") is True, f"eval rubric missing consumption proof: {rubric}", failures)
+            require(rubric.get("requires_project_context_packet") is True and rubric.get("knowledge_context_consumed") is True, f"eval rubric missing context quality gate: {rubric}", failures)
             require(bool(rubric.get("knowledge_retrieval_packet_hash")), f"eval rubric missing packet hash: {rubric}", failures)
             rubric_task_context = rubric.get("knowledge_retrieval_task_context") or {}
             require(rubric_task_context.get("task_id") == task_id, f"eval rubric missing task context: {rubric_task_context}", failures)
@@ -308,6 +381,8 @@ def main() -> int:
             audit_match = next((item for item in audit_rows if item.get("action") == "agent_worker.task_processed" and item.get("entity_id") == run_id), {})
             audit_meta = parse_json_field(audit_match.get("metadata_json"))
             require(audit_meta.get("knowledge_retrieval_evidence_consumed") is True, f"audit metadata missing consumption proof: {audit_meta}", failures)
+            require(audit_meta.get("knowledge_context_consumed") is True, f"audit metadata missing context consumption proof: {audit_meta}", failures)
+            require(bool(audit_meta.get("knowledge_context_packet_hash")), f"audit metadata missing context packet hash: {audit_meta}", failures)
             require(bool(audit_meta.get("knowledge_retrieval_packet_hash")), f"audit metadata missing packet hash: {audit_meta}", failures)
             audit_task_context = audit_meta.get("knowledge_retrieval_task_context") or {}
             require(audit_task_context.get("task_id") == task_id, f"audit metadata missing task context: {audit_task_context}", failures)
@@ -327,6 +402,9 @@ def main() -> int:
             require(report_knowledge.get("status") == "ready", f"evidence report missing worker knowledge readiness: {report_knowledge}", failures)
             require(report_knowledge.get("consumed_tool_calls") == 1, f"evidence report consumed count wrong: {report_knowledge}", failures)
             require(bool(report_knowledge.get("packet_hashes")), f"evidence report missing packet hashes: {report_knowledge}", failures)
+            require(bool(report_knowledge.get("context_packet_hashes")), f"evidence report missing context packet hashes: {report_knowledge}", failures)
+            require(int(report_knowledge.get("context_block_count") or 0) > 0, f"evidence report missing context block count: {report_knowledge}", failures)
+            require(approved_memory_id in (report_knowledge.get("approved_memory_ids") or []), f"evidence report missing approved memory id: {report_knowledge}", failures)
             require(bool(report_knowledge.get("query_hashes")), f"evidence report missing query hashes: {report_knowledge}", failures)
             require(report_knowledge.get("raw_query_omitted") is True, f"evidence report raw query omission missing: {report_knowledge}", failures)
             require(report_knowledge.get("raw_content_omitted") is True, f"evidence report raw content omission missing: {report_knowledge}", failures)
@@ -339,6 +417,15 @@ def main() -> int:
             referenced_memories = db_json_field(db_path, "SELECT referenced_memories_json FROM agent_plans WHERE plan_id=?", (plan_id,))
             require(len(referenced_specs) >= 3, f"plan missing referenced specs: {referenced_specs}", failures)
             require(any(path in referenced_memories for path in worker_evidence.get("paths") or []), f"plan did not reference retrieved knowledge paths: {referenced_memories} evidence={worker_evidence}", failures)
+            require(approved_memory_id in referenced_memories, f"plan did not reference approved memory authority: {referenced_memories}", failures)
+
+            persisted_context_text = "\n".join([
+                json.dumps(tool_args, ensure_ascii=False),
+                json.dumps(rubric, ensure_ascii=False),
+                json.dumps(audit_meta, ensure_ascii=False),
+                json.dumps(worker_evidence, ensure_ascii=False),
+            ])
+            require(approved_context_marker not in persisted_context_text, "bounded context body leaked into worker ledger evidence", failures)
 
             scoped_payload = {
                 "worker_evidence": worker_evidence,
@@ -413,6 +500,7 @@ def main() -> int:
             require(bool(missing_run_id), f"missing-knowledge worker result missing run: {missing_worker_payload}", failures)
             require(missing_result.get("ok") is True, f"missing-knowledge adapter should still complete: {missing_result}", failures)
             require(missing_worker_evidence.get("consumed") is False, f"missing-knowledge evidence should not be consumed: {missing_worker_evidence}", failures)
+            require(missing_worker_evidence.get("context_consumed") is False, f"missing-knowledge context should not be consumed: {missing_worker_evidence}", failures)
             require(missing_worker_evidence.get("status") == "unavailable", f"missing-knowledge evidence should be unavailable: {missing_worker_evidence}", failures)
             require(missing_worker_evidence.get("raw_prompt_omitted") is True, f"missing-knowledge raw prompt omission missing: {missing_worker_evidence}", failures)
             missing_task_context = missing_worker_evidence.get("task_context") or {}

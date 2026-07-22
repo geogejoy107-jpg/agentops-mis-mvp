@@ -607,6 +607,27 @@ def build_task_prompt_bundle(task: dict, adapter: str | None = None) -> tuple[st
     knowledge = task.get("_knowledge_retrieval_evidence") or {}
     knowledge_paths = [redact_text(path, 120) for path in (knowledge.get("paths") or [])[:5]]
     knowledge_metrics = knowledge.get("metrics") or {}
+    prompt_context_blocks = knowledge.get("prompt_context_blocks") if isinstance(knowledge.get("prompt_context_blocks"), list) else []
+    prompt_context_lines: list[str] = []
+    for block in prompt_context_blocks[:8]:
+        if not isinstance(block, dict):
+            continue
+        source_type = redact_text(block.get("source_type") or "project_context", 40)
+        authority = redact_text(block.get("authority") or "reference", 60)
+        label = redact_text(block.get("title") or block.get("memory_type") or block.get("path") or block.get("context_id"), 120)
+        heading = redact_text(block.get("heading_path"), 120)
+        summary = redact_text(block.get("summary"), 800)
+        if not summary:
+            continue
+        location = f" / {heading}" if heading else ""
+        prompt_context_lines.append(f"- [{source_type}; {authority}] {label}{location}: {summary}")
+    bounded_project_context = (
+        "MIS 受治理项目上下文（仅用于本次模型调用，账本只记录来源 ID/hash，不保存下列摘要）：\n"
+        + "\n".join(prompt_context_lines)
+        + "\n"
+        if prompt_context_lines
+        else "MIS 受治理项目上下文：当前 Host 未提供可消费的受限摘要；不要仅凭文档路径推断内容。\n"
+    )
     knowledge_context = (
         "项目知识检索证据："
         f"status={redact_text(knowledge.get('packet_status') or knowledge.get('status') or 'unavailable', 60)}; "
@@ -615,7 +636,8 @@ def build_task_prompt_bundle(task: dict, adapter: str | None = None) -> tuple[st
         f"recall_at_5={knowledge_metrics.get('recall_at_5')}; "
         f"mrr={knowledge_metrics.get('mrr')}; "
         f"paths={', '.join(knowledge_paths) if knowledge_paths else 'none'}; "
-        "raw_query/snippet/content/prompt/response/token omitted.\n"
+        f"context_consumed={bool(prompt_context_lines)}; "
+        "raw_query/source_body/prompt/response/token omitted.\n"
     )
     loop = task.get("_loop_supervision_gate") if isinstance(task.get("_loop_supervision_gate"), dict) else {}
     service = loop.get("service_managed_loop") if isinstance(loop.get("service_managed_loop"), dict) else {}
@@ -698,6 +720,7 @@ def build_task_prompt_bundle(task: dict, adapter: str | None = None) -> tuple[st
         f"验收标准：{acceptance}\n"
         f"{profile_context}"
         f"{knowledge_context}"
+        f"{bounded_project_context}"
         f"{service_context}"
         f"{execution_fact_context}"
         f"{intake_plan_context}"
@@ -1349,6 +1372,10 @@ def build_worker_knowledge_query(task: dict, adapter: str | None = None) -> str:
     return redact_text(query, 240)
 
 
+def context_packet_endpoint_missing(exc: Exception) -> bool:
+    return "GET /api/agent-gateway/knowledge/context-packet failed: 404" in str(exc)
+
+
 def fetch_worker_knowledge_evidence(client: AgentOpsClient, task: dict, adapter: str | None = None) -> dict:
     task_id = str(task.get("task_id") or "").strip()
     query = build_worker_knowledge_query(task, adapter=adapter)
@@ -1362,13 +1389,23 @@ def fetch_worker_knowledge_evidence(client: AgentOpsClient, task: dict, adapter:
     else:
         packet_query["q"] = query
     try:
-        packet = client.get("/api/agent-gateway/knowledge/evidence-packet", packet_query)
+        try:
+            packet = client.get("/api/agent-gateway/knowledge/context-packet", packet_query)
+        except Exception as context_exc:
+            if not context_packet_endpoint_missing(context_exc):
+                raise
+            packet = client.get("/api/agent-gateway/knowledge/evidence-packet", packet_query)
         compact = compact_worker_knowledge_evidence(packet)
         if compact.get("knowledge_retrieval_evidence_consumed"):
             return compact
         try:
             indexed = client.post("/api/agent-gateway/knowledge/index", {"rebuild": False})
-            packet = client.get("/api/agent-gateway/knowledge/evidence-packet", packet_query)
+            try:
+                packet = client.get("/api/agent-gateway/knowledge/context-packet", packet_query)
+            except Exception as context_exc:
+                if not context_packet_endpoint_missing(context_exc):
+                    raise
+                packet = client.get("/api/agent-gateway/knowledge/evidence-packet", packet_query)
             compact = compact_worker_knowledge_evidence(packet)
             compact["knowledge_index_attempted"] = True
             compact["knowledge_index_status"] = indexed.get("status") or indexed.get("operation")
@@ -1395,6 +1432,9 @@ def fetch_worker_knowledge_evidence(client: AgentOpsClient, task: dict, adapter:
                 "token_omitted": True,
             },
             "knowledge_retrieval_evidence_consumed": False,
+            "knowledge_context_consumed": False,
+            "context_contract_version": None,
+            "prompt_context_blocks": [],
             "results": [],
             "retrieval_ids": [],
             "paths": [],
@@ -1426,6 +1466,40 @@ def compact_worker_knowledge_evidence(packet: dict) -> dict:
             "raw_prompt_omitted": True,
             "token_omitted": True,
         })
+    prompt_context_blocks = []
+    context_bindings = []
+    for block in (packet.get("context_blocks") or [])[:8]:
+        if not isinstance(block, dict):
+            continue
+        summary = redact_text(block.get("summary"), 800)
+        if not summary:
+            continue
+        safe_block = {
+            "context_id": block.get("context_id"),
+            "source_type": block.get("source_type"),
+            "authority": block.get("authority"),
+            "retrieval_id": block.get("retrieval_id"),
+            "memory_id": block.get("memory_id"),
+            "memory_type": block.get("memory_type"),
+            "path": block.get("path"),
+            "title": block.get("title"),
+            "heading_path": block.get("heading_path"),
+            "source_hash": block.get("source_hash"),
+            "summary": summary,
+            "summary_hash": block.get("summary_hash") or stable_hash(summary),
+            "raw_source_body_omitted": True,
+            "raw_transcript_omitted": True,
+            "token_omitted": True,
+        }
+        prompt_context_blocks.append(safe_block)
+        context_bindings.append({
+            "context_id": safe_block["context_id"],
+            "source_type": safe_block["source_type"],
+            "retrieval_id": safe_block["retrieval_id"],
+            "memory_id": safe_block["memory_id"],
+            "summary_hash": safe_block["summary_hash"],
+        })
+    context_contract_version = packet.get("version") if packet.get("operation") == "knowledge_project_context_packet" else None
     core = {
         "operation": "worker_knowledge_retrieval_evidence",
         "packet_operation": packet.get("operation"),
@@ -1445,6 +1519,12 @@ def compact_worker_knowledge_evidence(packet: dict) -> dict:
         "retrieval_ids": [row.get("retrieval_id") for row in rows if row.get("retrieval_id")],
         "paths": [row.get("path") for row in rows if row.get("path")],
         "source_hashes": [row.get("source_hash") for row in rows if row.get("source_hash")],
+        "context_contract_version": context_contract_version,
+        "context_packet_hash": packet.get("packet_hash") if context_contract_version else None,
+        "context_block_count": len(prompt_context_blocks),
+        "context_block_hashes": [row.get("summary_hash") for row in prompt_context_blocks if row.get("summary_hash")],
+        "approved_memory_ids": [row.get("memory_id") for row in prompt_context_blocks if row.get("source_type") == "approved_memory" and row.get("memory_id")],
+        "prompt_context_blocks": prompt_context_blocks,
         "results": rows,
         "raw_content_omitted": True,
         "raw_prompt_omitted": True,
@@ -1458,8 +1538,12 @@ def compact_worker_knowledge_evidence(packet: dict) -> dict:
         "query_hash": core["query_hash"],
         "metrics": core["metrics"],
         "results": rows,
+        "context_contract_version": context_contract_version,
+        "context_packet_hash": core["context_packet_hash"],
+        "context_bindings": context_bindings,
     })
     core["knowledge_retrieval_evidence_consumed"] = bool(rows)
+    core["knowledge_context_consumed"] = bool(prompt_context_blocks)
     return core
 
 
@@ -1665,6 +1749,7 @@ def create_worker_agent_plan(client: AgentOpsClient, task: dict, args, knowledge
         *[path for path in retrieved_paths if path.endswith(".md") and not path.startswith("knowledge/")],
     ])[:8]
     referenced_memories = unique_values([
+        *[memory_id for memory_id in (knowledge_evidence.get("approved_memory_ids") or []) if isinstance(memory_id, str)],
         "knowledge/shared/common_failures.md",
         *retrieved_paths,
     ])[:8]
@@ -2795,6 +2880,12 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "external_writes_supported": capability.get("external_writes_supported"),
             "hermes_max_tokens": args.hermes_max_tokens if args.adapter == "hermes" else None,
             "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+            "knowledge_context_consumed": bool(knowledge_evidence.get("knowledge_context_consumed")),
+            "knowledge_context_contract_version": knowledge_evidence.get("context_contract_version"),
+            "knowledge_context_packet_hash": knowledge_evidence.get("context_packet_hash"),
+            "knowledge_context_block_count": int(knowledge_evidence.get("context_block_count") or 0),
+            "knowledge_context_block_hashes": knowledge_evidence.get("context_block_hashes") or [],
+            "knowledge_context_approved_memory_ids": knowledge_evidence.get("approved_memory_ids") or [],
             "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
             "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
             "knowledge_retrieval_status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
@@ -2808,6 +2899,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
                 "query_omitted": True,
                 "snippet_omitted": True,
                 "raw_content_omitted": True,
+                "context_body_not_persisted": True,
+                "raw_transcript_omitted": True,
                 "raw_prompt_omitted": True,
                 "raw_response_omitted": True,
                 "token_omitted": True,
@@ -2829,7 +2922,12 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "error_type": result.error_type,
         "error_message": result.error_message,
     })
-    knowledge_gate_pass = bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed"))
+    knowledge_context_required = bool(knowledge_evidence.get("context_contract_version"))
+    knowledge_context_consumed = bool(knowledge_evidence.get("knowledge_context_consumed"))
+    knowledge_gate_pass = bool(
+        knowledge_evidence.get("knowledge_retrieval_evidence_consumed")
+        and (knowledge_context_consumed or not knowledge_context_required)
+    )
     knowledge_gate_status = (
         "pass"
         if knowledge_gate_pass
@@ -2839,7 +2937,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     )
     evaluation_pass = bool(result.ok and knowledge_gate_pass)
     if evaluation_pass:
-        evaluation_notes = "Worker adapter loop completed with compact knowledge retrieval evidence."
+        evaluation_notes = "Worker adapter loop completed with compact retrieval evidence and bounded project context."
     elif result.ok:
         evaluation_notes = "Worker adapter loop completed but failed quality gate: knowledge retrieval evidence was unavailable or missing."
     else:
@@ -2857,6 +2955,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "adapter": args.adapter,
             "requires_completed_run": True,
             "requires_knowledge_retrieval_evidence": True,
+            "requires_project_context_packet": knowledge_context_required,
             "prompt_profile_id": result.prompt_profile_id,
             "prompt_profile_version": result.prompt_profile_version,
             "prompt_profile_hash": result.prompt_profile_hash,
@@ -2879,6 +2978,12 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "read_only_runtime": capability.get("read_only_runtime") is True,
             "external_writes_supported": capability.get("external_writes_supported"),
             "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+            "knowledge_context_consumed": knowledge_context_consumed,
+            "knowledge_context_contract_version": knowledge_evidence.get("context_contract_version"),
+            "knowledge_context_packet_hash": knowledge_evidence.get("context_packet_hash"),
+            "knowledge_context_block_count": int(knowledge_evidence.get("context_block_count") or 0),
+            "knowledge_context_block_hashes": knowledge_evidence.get("context_block_hashes") or [],
+            "knowledge_context_approved_memory_ids": knowledge_evidence.get("approved_memory_ids") or [],
             "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
             "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
             "knowledge_retrieval_status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
@@ -2889,6 +2994,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
                 "query_omitted": True,
                 "snippet_omitted": True,
                 "raw_content_omitted": True,
+                "context_body_not_persisted": True,
+                "raw_transcript_omitted": True,
                 "raw_prompt_omitted": True,
                 "raw_response_omitted": True,
                 "token_omitted": True,
@@ -2964,6 +3071,12 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "worker_runtime_event_summary_recorded": bool(worker_runtime_event_id),
             "runtime_internal_tools_remain_opaque": capability.get("observation_level") == "ledger_summary_only",
             "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+            "knowledge_context_consumed": bool(knowledge_evidence.get("knowledge_context_consumed")),
+            "knowledge_context_contract_version": knowledge_evidence.get("context_contract_version"),
+            "knowledge_context_packet_hash": knowledge_evidence.get("context_packet_hash"),
+            "knowledge_context_block_count": int(knowledge_evidence.get("context_block_count") or 0),
+            "knowledge_context_block_hashes": knowledge_evidence.get("context_block_hashes") or [],
+            "knowledge_context_approved_memory_ids": knowledge_evidence.get("approved_memory_ids") or [],
             "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
             "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
             "knowledge_retrieval_status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
@@ -2976,6 +3089,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
                 "query_omitted": True,
                 "snippet_omitted": True,
                 "raw_content_omitted": True,
+                "context_body_not_persisted": True,
+                "raw_transcript_omitted": True,
                 "raw_prompt_omitted": True,
                 "raw_response_omitted": True,
                 "token_omitted": True,
@@ -3035,6 +3150,12 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "runtime_observation": result.runtime_observation or {},
         "knowledge_retrieval_evidence": {
             "consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+            "context_consumed": bool(knowledge_evidence.get("knowledge_context_consumed")),
+            "context_contract_version": knowledge_evidence.get("context_contract_version"),
+            "context_packet_hash": knowledge_evidence.get("context_packet_hash"),
+            "context_block_count": int(knowledge_evidence.get("context_block_count") or 0),
+            "context_block_hashes": knowledge_evidence.get("context_block_hashes") or [],
+            "approved_memory_ids": knowledge_evidence.get("approved_memory_ids") or [],
             "packet_hash": knowledge_evidence.get("packet_hash"),
             "query_hash": knowledge_evidence.get("query_hash"),
             "status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
@@ -3046,6 +3167,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "query_omitted": True,
             "snippet_omitted": True,
             "raw_content_omitted": True,
+            "context_body_not_persisted": True,
+            "raw_transcript_omitted": True,
             "raw_prompt_omitted": True,
             "raw_response_omitted": True,
             "token_omitted": True,

@@ -4482,6 +4482,18 @@ def cmd_knowledge_evidence_packet(args, client: AgentOpsClient) -> dict:
     })
 
 
+def cmd_knowledge_context_packet(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/agent-gateway/knowledge/context-packet", query={
+        "q": args.query,
+        "task_id": args.task_id,
+        "adapter": args.adapter,
+        "limit": args.limit,
+        "memory_limit": args.memory_limit,
+        "block_chars": args.block_chars,
+        "max_chars": args.max_chars,
+    })
+
+
 def cmd_agent_plan_create(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -6272,6 +6284,15 @@ def build_parser() -> argparse.ArgumentParser:
     knowledge_packet.add_argument("--limit", type=int, default=5)
     knowledge_packet.add_argument("--baseline-limit", type=int, default=5)
     knowledge_packet.set_defaults(handler="knowledge_evidence_packet")
+    knowledge_context = knowledge_sub.add_parser("context-packet", help="Read bounded project summaries and approved memories for transient model context.")
+    knowledge_context.add_argument("query", nargs="?", default="")
+    knowledge_context.add_argument("--task-id", default=None, help="Build context from an existing MIS task without returning raw task text.")
+    knowledge_context.add_argument("--adapter", default=None, help="Optional runtime adapter hint used for task-aware retrieval.")
+    knowledge_context.add_argument("--limit", type=int, default=5, help="Maximum versioned knowledge summaries (1-8).")
+    knowledge_context.add_argument("--memory-limit", type=int, default=3, help="Maximum approved canonical memories (0-5).")
+    knowledge_context.add_argument("--block-chars", type=int, default=480, help="Maximum characters per redacted summary (120-800).")
+    knowledge_context.add_argument("--max-chars", type=int, default=4000, help="Maximum combined context characters (600-6000).")
+    knowledge_context.set_defaults(handler="knowledge_context_packet")
 
     agent_plan = sub.add_parser("agent-plan", help="Agent work method plan commands.")
     agent_plan_sub = agent_plan.add_subparsers(dest="action", required=True)
@@ -6922,6 +6943,7 @@ HANDLERS = {
     "knowledge_search": cmd_knowledge_search,
     "knowledge_index": cmd_knowledge_index,
     "knowledge_evidence_packet": cmd_knowledge_evidence_packet,
+    "knowledge_context_packet": cmd_knowledge_context_packet,
     "agent_plan_create": cmd_agent_plan_create,
     "agent_plan_list": cmd_agent_plan_list,
     "agent_plan_get": cmd_agent_plan_get,

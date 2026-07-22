@@ -564,6 +564,7 @@ Hermes/OpenClaw 真实执行仍必须显式加 `--confirm-run`。
 ```bash
 python3 scripts/local_open_source_experiment_base_smoke.py
 ./scripts/agentops knowledge evidence-packet "open source experiment base" --limit 5
+./scripts/agentops knowledge context-packet --task-id <task_id> --adapter hermes --limit 5 --memory-limit 3
 ./scripts/agentops eval propose-case --source-type manual --title "Local experiment regression" --expectation "Experiment learnings must become reviewable MIS evidence before product adoption."
 ```
 
