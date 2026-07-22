@@ -131,6 +131,7 @@ jobs:
           timeout 120s python3 scripts/local_l4_relay_transport_smoke.py
           timeout 120s python3 scripts/private_host_relay_tls_smoke.py
           timeout 120s python3 scripts/local_fake_relay_tunnel_smoke.py
+          timeout 120s python3 scripts/relay_tunnel_single_owner_smoke.py
           timeout 120s python3 scripts/relay_persistent_epoch_smoke.py
           timeout 120s python3 scripts/relay_tls_authenticated_tunnel_smoke.py
           timeout 120s python3 scripts/relay_registration_publication_race_smoke.py

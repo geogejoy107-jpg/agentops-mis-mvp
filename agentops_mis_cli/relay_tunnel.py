@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import select
 import secrets
 import socket
 import ssl
@@ -30,6 +31,8 @@ MAX_REPLAY_EPOCHS = 64
 IO_TIMEOUT_SECONDS = 5.0
 PAIR_TIMEOUT_SECONDS = 5.0
 BUFFER_BYTES = 16 * 1024
+MAX_FORWARD_BUFFER_BYTES = 256 * 1024
+FORWARD_POLL_SECONDS = 0.1
 ZERO_ID = ""
 HEX_ID_LENGTH = 32
 _KINDS = {"register", "registered", "open", "data", "data_ready"}
@@ -263,76 +266,293 @@ class BoundedRelayMetadata:
 def _close_socket(stream: socket.socket | None) -> None:
     if stream is None:
         return
-    try:
-        stream.shutdown(socket.SHUT_RDWR)
-    except OSError:
-        pass
+    if not isinstance(stream, ssl.SSLSocket):
+        try:
+            stream.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
     try:
         stream.close()
     except OSError:
         pass
 
 
-def _pipe_direction(
-    source: socket.socket,
-    destination: socket.socket,
-    metadata: BoundedRelayMetadata,
-    direction: str,
-    outcomes: list[bool | None],
-    outcome_index: int,
-) -> None:
-    byte_count = 0
+def _close_owned_socket(stream: socket.socket, *, clean_tls: bool) -> bool:
+    if not clean_tls or not isinstance(stream, ssl.SSLSocket):
+        _close_socket(stream)
+        return True
+    deadline = time.monotonic() + min(IO_TIMEOUT_SECONDS, 2.0)
     try:
-        source.settimeout(IO_TIMEOUT_SECONDS)
-        destination.settimeout(IO_TIMEOUT_SECONDS)
+        stream.setblocking(False)
         while True:
-            chunk = source.recv(BUFFER_BYTES)
-            if not chunk:
+            try:
+                raw_stream = stream.unwrap()
+            except ssl.SSLWantReadError:
+                # close_notify has been queued. A direct close preserves it,
+                # while SHUT_RDWR can discard it and surface SSLEOFError.
+                stream.close()
+                return True
+            except ssl.SSLWantWriteError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    stream.close()
+                    return False
                 try:
-                    destination.shutdown(socket.SHUT_WR)
-                except OSError:
-                    pass
-                break
-            destination.sendall(chunk)
-            byte_count += len(chunk)
-    except (OSError, socket.timeout):
-        outcomes[outcome_index] = False
-        metadata.record("failed", direction, byte_count)
-    else:
-        outcomes[outcome_index] = True
-        metadata.record("forwarded", direction, byte_count)
+                    _, writable, _ = select.select(
+                        [],
+                        [stream],
+                        [],
+                        min(FORWARD_POLL_SECONDS, remaining),
+                    )
+                except (OSError, ValueError):
+                    stream.close()
+                    return False
+                if not writable:
+                    continue
+            except (ssl.SSLError, OSError):
+                stream.close()
+                return False
+            else:
+                _close_socket(raw_stream)
+                return True
+    except (OSError, ValueError):
+        try:
+            stream.close()
+        except OSError:
+            pass
+        return False
+
+
+def _ready_for(
+    operation_wait: str,
+    stream: socket.socket,
+    readable: list[socket.socket],
+    writable: list[socket.socket],
+) -> bool:
+    return stream in (readable if operation_wait == "read" else writable)
 
 
 def _forward_bidirectional(
     left: socket.socket,
     right: socket.socket,
     metadata: BoundedRelayMetadata,
+    *,
+    stop: threading.Event | None = None,
 ) -> bool:
-    outcomes: list[bool | None] = [None, None]
-    threads = (
-        threading.Thread(
-            target=_pipe_direction,
-            args=(left, right, metadata, "browser_to_host", outcomes, 0),
-            daemon=True,
-        ),
-        threading.Thread(
-            target=_pipe_direction,
-            args=(right, left, metadata, "host_to_browser", outcomes, 1),
-            daemon=True,
-        ),
-    )
-    for thread in threads:
-        thread.start()
-    deadline = time.monotonic() + IO_TIMEOUT_SECONDS * 2
-    for thread in threads:
-        thread.join(max(0.0, deadline - time.monotonic()))
-    _close_socket(left)
-    _close_socket(right)
-    for index, thread in enumerate(threads):
-        if thread.is_alive() and outcomes[index] is None:
-            outcomes[index] = False
-            metadata.record("failed", ("browser_to_host", "host_to_browser")[index])
-    return outcomes == [True, True]
+    to_left = bytearray()
+    to_right = bytearray()
+    left_read_open = True
+    right_read_open = True
+    left_write_open = True
+    right_write_open = True
+    left_read_wait = "read"
+    right_read_wait = "read"
+    left_write_wait = "write"
+    right_write_wait = "write"
+    browser_to_host_bytes = 0
+    host_to_browser_bytes = 0
+    failed = False
+    clean_tls = False
+    deadline = time.monotonic() + IO_TIMEOUT_SECONDS
+
+    try:
+        try:
+            left.setblocking(False)
+            right.setblocking(False)
+        except OSError:
+            failed = True
+        while not failed:
+            if stop is not None and stop.is_set():
+                failed = True
+                break
+
+            tls_close_requested = False
+            if not left_read_open and not to_right and right_write_open:
+                if isinstance(right, ssl.SSLSocket):
+                    tls_close_requested = True
+                else:
+                    try:
+                        right.shutdown(socket.SHUT_WR)
+                    except OSError:
+                        pass
+                    right_write_open = False
+            if not right_read_open and not to_left and left_write_open:
+                if isinstance(left, ssl.SSLSocket):
+                    tls_close_requested = True
+                else:
+                    try:
+                        left.shutdown(socket.SHUT_WR)
+                    except OSError:
+                        pass
+                    left_write_open = False
+
+            if not to_left and not to_right and (
+                (not left_read_open and not right_read_open) or tls_close_requested
+            ):
+                clean_tls = True
+                break
+            if (to_left and not left_write_open) or (to_right and not right_write_open):
+                failed = True
+                break
+
+            read_interest: list[socket.socket] = []
+            write_interest: list[socket.socket] = []
+
+            def add_interest(stream: socket.socket, wait_for: str) -> None:
+                target = read_interest if wait_for == "read" else write_interest
+                if stream not in target:
+                    target.append(stream)
+
+            if left_read_open and len(to_right) < MAX_FORWARD_BUFFER_BYTES:
+                add_interest(left, left_read_wait)
+            if right_read_open and len(to_left) < MAX_FORWARD_BUFFER_BYTES:
+                add_interest(right, right_read_wait)
+            if to_left and left_write_open:
+                add_interest(left, left_write_wait)
+            if to_right and right_write_open:
+                add_interest(right, right_write_wait)
+
+            left_pending = (
+                left_read_open
+                and isinstance(left, ssl.SSLSocket)
+                and left_read_wait == "read"
+                and left.pending() > 0
+            )
+            right_pending = (
+                right_read_open
+                and isinstance(right, ssl.SSLSocket)
+                and right_read_wait == "read"
+                and right.pending() > 0
+            )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or (not read_interest and not write_interest):
+                failed = True
+                break
+            try:
+                readable, writable, _ = select.select(
+                    read_interest,
+                    write_interest,
+                    [],
+                    0.0
+                    if left_pending or right_pending
+                    else min(FORWARD_POLL_SECONDS, remaining),
+                )
+            except (OSError, ValueError):
+                failed = True
+                break
+
+            activity = False
+            if (
+                left_read_open
+                and len(to_right) < MAX_FORWARD_BUFFER_BYTES
+                and (left_pending or _ready_for(left_read_wait, left, readable, writable))
+            ):
+                try:
+                    chunk = left.recv(
+                        min(BUFFER_BYTES, MAX_FORWARD_BUFFER_BYTES - len(to_right))
+                    )
+                except ssl.SSLWantReadError:
+                    left_read_wait = "read"
+                except ssl.SSLWantWriteError:
+                    left_read_wait = "write"
+                except BlockingIOError:
+                    left_read_wait = "read"
+                except (ssl.SSLEOFError, OSError):
+                    failed = True
+                else:
+                    left_read_wait = "read"
+                    if chunk:
+                        to_right.extend(chunk)
+                    else:
+                        left_read_open = False
+                    activity = True
+
+            if (
+                not failed
+                and right_read_open
+                and len(to_left) < MAX_FORWARD_BUFFER_BYTES
+                and (right_pending or _ready_for(right_read_wait, right, readable, writable))
+            ):
+                try:
+                    chunk = right.recv(
+                        min(BUFFER_BYTES, MAX_FORWARD_BUFFER_BYTES - len(to_left))
+                    )
+                except ssl.SSLWantReadError:
+                    right_read_wait = "read"
+                except ssl.SSLWantWriteError:
+                    right_read_wait = "write"
+                except BlockingIOError:
+                    right_read_wait = "read"
+                except (ssl.SSLEOFError, OSError):
+                    failed = True
+                else:
+                    right_read_wait = "read"
+                    if chunk:
+                        to_left.extend(chunk)
+                    else:
+                        right_read_open = False
+                    activity = True
+
+            if not failed and to_left and left_write_open and _ready_for(
+                left_write_wait, left, readable, writable
+            ):
+                try:
+                    sent = left.send(to_left)
+                except ssl.SSLWantReadError:
+                    left_write_wait = "read"
+                except ssl.SSLWantWriteError:
+                    left_write_wait = "write"
+                except BlockingIOError:
+                    left_write_wait = "write"
+                except (ssl.SSLError, OSError):
+                    failed = True
+                else:
+                    left_write_wait = "write"
+                    if sent:
+                        del to_left[:sent]
+                        host_to_browser_bytes += sent
+                        activity = True
+
+            if not failed and to_right and right_write_open and _ready_for(
+                right_write_wait, right, readable, writable
+            ):
+                try:
+                    sent = right.send(to_right)
+                except ssl.SSLWantReadError:
+                    right_write_wait = "read"
+                except ssl.SSLWantWriteError:
+                    right_write_wait = "write"
+                except BlockingIOError:
+                    right_write_wait = "write"
+                except (ssl.SSLError, OSError):
+                    failed = True
+                else:
+                    right_write_wait = "write"
+                    if sent:
+                        del to_right[:sent]
+                        browser_to_host_bytes += sent
+                        activity = True
+
+            if failed:
+                break
+            if activity:
+                deadline = time.monotonic() + IO_TIMEOUT_SECONDS
+    finally:
+        success = not failed and clean_tls and not to_left and not to_right
+        left_closed_cleanly = _close_owned_socket(left, clean_tls=success)
+        right_closed_cleanly = _close_owned_socket(right, clean_tls=success)
+        success = success and left_closed_cleanly and right_closed_cleanly
+        metadata.record(
+            "forwarded" if success else "failed",
+            "browser_to_host",
+            browser_to_host_bytes,
+        )
+        metadata.record(
+            "forwarded" if success else "failed",
+            "host_to_browser",
+            host_to_browser_bytes,
+        )
+    return success
 
 
 @dataclass
@@ -604,7 +824,12 @@ class LocalFakeRelay:
                     self._active_sockets.update((browser, data))
             if data is None:
                 raise RelayProtocolError("data_connection_timeout")
-            forwarded = _forward_bidirectional(browser, data, self.metadata)
+            forwarded = _forward_bidirectional(
+                browser,
+                data,
+                self.metadata,
+                stop=self._stop,
+            )
             self.metadata.record("closed" if forwarded else "failed", "data")
         except RelayProtocolError:
             with self._lock:
@@ -649,12 +874,9 @@ class LocalFakeRelay:
             control = self._control
             pending = list(self._pending.values())
             handshake_sockets = list(self._handshake_sockets)
-            active_sockets = list(self._active_sockets)
         _close_socket(control)
         for handshake_socket in handshake_sockets:
             _close_socket(handshake_socket)
-        for active_socket in active_sockets:
-            _close_socket(active_socket)
         for item in pending:
             _close_socket(item.browser)
             _close_socket(item.data)
@@ -831,7 +1053,12 @@ class HostTunnelConnector:
             ):
                 raise RelayProtocolError("data_registration_rejected")
             self.metadata.record("authenticated", "data")
-            forwarded = _forward_bidirectional(data, target, self.metadata)
+            forwarded = _forward_bidirectional(
+                data,
+                target,
+                self.metadata,
+                stop=self._stop,
+            )
             self.metadata.record("closed" if forwarded else "failed", "data")
         except (OSError, RelayProtocolError):
             self.metadata.record("rejected", "data")
@@ -861,10 +1088,12 @@ class HostTunnelConnector:
             control = self._control
             active_sockets = list(self._active_sockets)
             streams = list(self._streams)
-        _close_socket(control)
-        for stream_socket in active_sockets:
-            _close_socket(stream_socket)
         if self._thread is not None:
             self._thread.join(max(0.0, deadline - time.monotonic()))
         for stream in streams:
             stream.join(max(0.0, deadline - time.monotonic()))
+        if self._thread is not None and self._thread.is_alive():
+            _close_socket(control)
+        if any(stream.is_alive() for stream in streams):
+            for stream_socket in active_sockets:
+                _close_socket(stream_socket)

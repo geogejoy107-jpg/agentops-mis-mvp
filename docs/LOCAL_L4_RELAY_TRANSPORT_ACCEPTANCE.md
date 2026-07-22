@@ -27,6 +27,7 @@ Run:
 python3 scripts/local_l4_relay_transport_smoke.py
 python3 scripts/private_host_relay_tls_smoke.py
 python3 scripts/local_fake_relay_tunnel_smoke.py
+python3 scripts/relay_tunnel_single_owner_smoke.py
 python3 scripts/relay_persistent_epoch_smoke.py
 python3 scripts/relay_tls_authenticated_tunnel_smoke.py
 python3 scripts/relay_host_tls_proxy_smoke.py
@@ -114,6 +115,18 @@ Inside that outer tunnel, the browser verifies a different Host application
 certificate and completes an exact binary round trip with TLS terminating at
 the Host endpoint. Relay evidence remains payload-, key-, certificate-, path-,
 hostname- and port-free.
+
+`scripts/relay_tunnel_single_owner_smoke.py` makes the data-stream concurrency
+boundary deterministic. Both directions now share one nonblocking owner pump
+with a 256 KiB buffer bound per direction and a resettable five-second inactivity
+deadline. The same thread performs every read, write, half-close and final close
+for each stream; a stop event is observed on a 100 ms poll bound before an
+external fallback close is permitted. The fixture proves exact full-duplex bytes,
+truthful bounded metadata, bounded stop and zero cross-thread stream access. The
+authenticated nested-TLS fixture additionally passes repeated round trips on
+this pump. A TLS stream is never subjected to `SHUT_RDWR`; successful shutdown
+queues `close_notify` from the owning thread, avoiding the Linux/OpenSSL
+`SSLEOFError` race caused by concurrent read/write/shutdown ownership.
 
 `scripts/relay_host_tls_proxy_smoke.py` adds the Host-owned application TLS
 boundary as a reusable loopback-only component. It binds only literal
