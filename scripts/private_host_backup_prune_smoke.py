@@ -437,6 +437,28 @@ def exercise_valid_inventory(root: Path, failures: list[str], evidence: dict[str
     )
 
 
+def exercise_fresh_host(root: Path, failures: list[str], evidence: dict[str, bool]) -> None:
+    fixture = create_fixture(root / "fresh-host", pair_count=0)
+    fixture["backups"].rmdir()
+    protected_before = snapshot_protected(fixture)
+    process, payload = run_host(fixture["env"], "backup-prune")
+    record(
+        failures,
+        evidence,
+        "fresh_host_returns_empty_zero_write_plan",
+        process.returncode == 0
+        and is_prune_payload(payload, ok=True)
+        and payload.get("dry_run") is True
+        and payload.get("counts") == {"inventory": 0, "retained": 0, "candidates": 0}
+        and payload.get("inventory") == []
+        and payload.get("retained") == []
+        and payload.get("candidates") == []
+        and not fixture["backups"].exists()
+        and snapshot_protected(fixture) == protected_before
+        and output_is_safe((process.stdout or "") + (process.stderr or ""), fixture),
+    )
+
+
 def exercise_invalid_inventory(root: Path, failures: list[str], evidence: dict[str, bool]) -> None:
     unsafe_permissions = create_fixture(root / "unsafe-permissions", pair_count=6)
     unsafe_permissions["backups"].chmod(0o755)
@@ -596,6 +618,7 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix="agentops-host-backup-prune-") as temporary:
             root = Path(temporary)
             exercise_valid_inventory(root, failures, evidence)
+            exercise_fresh_host(root, failures, evidence)
             exercise_invalid_inventory(root, failures, evidence)
             exercise_bounded_output(root, failures, evidence)
             exercise_quarantine_rollback(root, failures, evidence)

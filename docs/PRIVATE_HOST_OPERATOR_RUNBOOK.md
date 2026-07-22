@@ -427,7 +427,7 @@ agentops host backup-prune \
   --plan-hash <上一条命令返回的 plan_hash>
 ```
 
-默认保留最新 5 份，硬下限为 2 份。预览会验证目录中的全部 SQLite/manifest 配对，并只返回有界的 inventory、retained、candidates、计数、可回收字节和 plan hash；不会打印账本行。任何新备份都会改变 plan hash，因此旧计划不能重放。只提供 hash 而未确认、只确认而缺少 hash、hash 不匹配、未知文件、缺少配对、软链或内容篡改都会失败关闭且不删除文件。
+默认保留最新 5 份，硬下限为 2 份。尚未产生备份的 fresh Host 会返回空计划且不创建目录。预览会验证目录中的全部 SQLite/manifest 配对，并只返回有界的 inventory、retained、candidates、计数、可回收字节和 plan hash；不会打印账本行。任何新备份都会改变 plan hash，因此旧计划不能重放。只提供 hash 而未确认、只确认而缺少 hash、hash 不匹配、未知文件、缺少配对、软链或内容篡改都会失败关闭且不删除文件。
 
 确认路径持有 Host lifecycle lock，并先把候选配对移动到同一文件系统的私有 quarantine；移动失败会尝试完整回滚，清理未完成则返回有界错误和 quarantine 标签，避免把部分成功伪装成完成。该命令不修改当前 DB、`secrets.json`、Host 日志或安装版本。仍应先保留独立的离机灾备，不能把本地 retention 当作灾难恢复副本。
 

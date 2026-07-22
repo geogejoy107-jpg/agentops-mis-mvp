@@ -236,7 +236,7 @@ def backup_inventory(backup_dir: Path) -> tuple[list[dict], dict | None]:
     if backup_dir.is_symlink():
         return [], {"ok": False, "error": "backup_directory_symlink"}
     if not backup_dir.exists():
-        return [], {"ok": False, "error": "backup_directory_not_found"}
+        return [], None
     if not backup_dir.is_dir():
         return [], {"ok": False, "error": "backup_directory_not_directory"}
     try:

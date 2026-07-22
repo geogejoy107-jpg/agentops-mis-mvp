@@ -926,7 +926,8 @@ hard minimum of two complete SQLite/manifest pairs. A write requires both
 `--confirm-prune` and the exact hash of the current full-inventory plan; a new
 backup invalidates the old hash. Confirmed deletion is lifecycle-locked and
 uses a same-volume private quarantine with rollback before cleanup. The
-isolated 20-check smoke proves deterministic planning, exact confirmation,
+isolated 21-check smoke proves fresh-Host zero-write planning, deterministic
+planning, exact confirmation,
 lock serialization, protected DB/secret/log/version preservation, and
 fail-closed behavior for unknown, missing, symlinked or tampered inventory.
 No real Host backup was read or deleted. This is source-level evidence only;
