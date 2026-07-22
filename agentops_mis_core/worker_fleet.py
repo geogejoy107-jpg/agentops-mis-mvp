@@ -489,6 +489,12 @@ def build_worker_remote_fleet_summary(
             )
             for session in execution_sessions
         ]
+        session_records = [
+            record for record in session_records
+            if record.get("reported_status") != "disabled"
+        ]
+        if not session_records:
+            continue
         selected = _select_service_session(session_records)
         selected_session = selected["session"]
         last_heartbeat_at = selected["last_heartbeat_at"]

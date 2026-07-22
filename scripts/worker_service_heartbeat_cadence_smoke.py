@@ -228,6 +228,23 @@ def main() -> int:
         require(unverified_agent_status.get("execution_capacity_workers") == 0,
                 f"global Agent status bypassed Session heartbeat authority: {unverified_agent_status}")
 
+        disabled_summary = worker_fleet.build_worker_remote_fleet_summary(
+            enrollments=[],
+            sessions=[session_fixture(worker_fleet, SESSION_ID, activity_offset_sec=0)],
+            agents_by_id={AGENT_ID: {"status": "running"}},
+            heartbeats_by_session={
+                SESSION_ID: {
+                    "last_heartbeat_at": BASE_TIME.isoformat(),
+                    "status": "disabled",
+                },
+            },
+            now_dt=BASE_TIME,
+        )
+        require(disabled_summary.get("service_worker_count") == 0,
+                f"disabled Worker retained service capacity or attention state: {disabled_summary}")
+        require(disabled_summary.get("stale_service_workers") == 0,
+                f"disabled Worker Session created stale Fleet pressure: {disabled_summary}")
+
         legacy_keyword_summary = worker_fleet.build_worker_remote_fleet_summary(
             enrollments=[],
             sessions=[{
@@ -320,7 +337,7 @@ def main() -> int:
                 activity_offset_sec=10,
             ),
         ]
-        for nonready_status in ("error", "paused", "disabled"):
+        for nonready_status in ("error", "paused"):
             mixed_status_summary = session_summary(
                 worker_fleet,
                 sessions=mixed_sessions,
@@ -557,7 +574,7 @@ def main() -> int:
         require(initial_fleet["worker"].get("last_heartbeat_at") == BASE_TIME.isoformat(),
                 f"Fleet did not select the scoped observation: {initial_fleet['worker']}")
         non_capacity_results: dict[str, dict[str, object]] = {}
-        for heartbeat_status in ("paused", "error", "disabled"):
+        for heartbeat_status in ("paused", "error"):
             non_capacity_fleet = fleet_at(
                 worker_fleet,
                 now_at=BASE_TIME,
@@ -590,6 +607,32 @@ def main() -> int:
                 "unavailable_workers": non_capacity_fleet["summary"].get("unavailable_service_workers"),
                 "fleet_view_capacity": view_summary.get("execution_capacity_workers"),
             }
+
+        disabled_beside_healthy = session_summary(
+            worker_fleet,
+            sessions=[
+                session_fixture(worker_fleet, "ags_disabled_terminal", activity_offset_sec=10),
+                session_fixture(worker_fleet, "ags_healthy_concurrent", activity_offset_sec=20),
+            ],
+            heartbeats_by_session={
+                "ags_disabled_terminal": {
+                    "last_heartbeat_at": (BASE_TIME + dt.timedelta(seconds=20)).isoformat(),
+                    "status": "disabled",
+                },
+                "ags_healthy_concurrent": {
+                    "last_heartbeat_at": (BASE_TIME + dt.timedelta(seconds=20)).isoformat(),
+                    "status": "idle",
+                },
+            },
+            now_at=BASE_TIME + dt.timedelta(seconds=20),
+        )
+        disabled_beside_healthy_worker = (disabled_beside_healthy.get("service_workers") or [{}])[0]
+        require(disabled_beside_healthy.get("service_worker_count") == 1,
+                f"terminal Session removed a concurrent healthy Worker: {disabled_beside_healthy}")
+        require(disabled_beside_healthy.get("ready_service_workers") == 1,
+                f"terminal Session removed concurrent execution capacity: {disabled_beside_healthy}")
+        require(disabled_beside_healthy_worker.get("degraded_session_count") == 0,
+                f"terminal Session polluted concurrent Worker degradation: {disabled_beside_healthy}")
         require(
             client.session_observations.get(SESSION_ID, {}).get("last_heartbeat_at")
             == client.posts[-1]["timestamp"],

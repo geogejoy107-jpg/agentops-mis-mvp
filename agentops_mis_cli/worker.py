@@ -1306,6 +1306,33 @@ def safe_worker_heartbeat(client: AgentOpsClient, args, status: str, summary: st
         return {"sent": False, "failed": True, "token_omitted": True}
 
 
+def release_worker_session(client: AgentOpsClient, session_info: dict | None) -> dict:
+    if not session_info or not session_info.get("session_id"):
+        return {
+            "attempted": False,
+            "revoked": False,
+            "session_id_omitted": True,
+            "token_omitted": True,
+        }
+    try:
+        response = client.post("/api/agent-gateway/session/revoke-self", {}, timeout=20)
+        return {
+            "attempted": True,
+            "revoked": response.get("revoked") is True,
+            "session_ref": response.get("session_ref"),
+            "session_id_omitted": True,
+            "token_omitted": True,
+        }
+    except Exception:
+        return {
+            "attempted": True,
+            "revoked": False,
+            "failed": True,
+            "session_id_omitted": True,
+            "token_omitted": True,
+        }
+
+
 def backoff_sleep(base_interval: float, cap: float, streak: int, factor: float) -> float:
     base = max(float(base_interval or 0), 0.0)
     if base <= 0:
@@ -4204,6 +4231,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     final_status = "stopped" if SHOULD_STOP else "completed" if final_ok else "failed"
     state.stop(final_status)
+    terminal_heartbeat = (
+        safe_worker_heartbeat(
+            client,
+            args,
+            "disabled",
+            "Worker process exited normally and released execution capacity.",
+            force=True,
+        )
+        if final_ok and registered
+        else {"sent": False, "preserved_error_status": not final_ok, "token_omitted": True}
+    )
+    session_cleanup = release_worker_session(client, session_info)
     session_total = int(state.data.get("session_refresh_count") or 0) + (1 if session_info else 0)
     print(json_dumps({
         "ok": final_ok,
@@ -4214,9 +4253,11 @@ def main(argv: list[str] | None = None) -> int:
         "result_history_limit": result_history_limit,
         "state": state.data,
         "session": session_info or {"token_omitted": True},
+        "session_cleanup": session_cleanup,
         "sessions": session_history,
         "sessions_seen": session_total,
         "sessions_omitted": max(session_total - len(session_history), 0),
+        "terminal_heartbeat": terminal_heartbeat,
     }))
     return 0 if final_ok else 1
 

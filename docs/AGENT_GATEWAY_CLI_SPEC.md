@@ -1581,6 +1581,17 @@ Maps to `POST /api/agent-gateway/session/revoke` and writes runtime/audit eviden
 The public response reports safe `session_refs` only and includes
 `session_id_omitted:true`.
 
+### Worker-owned graceful Session release
+
+`agentops-worker` calls `POST /api/agent-gateway/session/revoke-self` after a
+normally bounded run publishes its final `disabled` heartbeat. The route does
+not accept a caller-selected Session ID: only the currently authenticated
+short-lived Session can revoke itself. Enrollment tokens, local/global machine
+credentials and anonymous requests cannot use this route. The response exposes
+only a stable `session_ref` plus omission flags and writes runtime/audit
+evidence. This is an internal Worker lifecycle action, not a Human operator CLI
+command.
+
 ## API Endpoint Proposal
 
 All endpoints are under the existing local API server.
@@ -1600,6 +1611,7 @@ POST /api/agent-gateway/enrollment/revoke
 POST /api/agent-gateway/enrollment/rotate
 POST /api/agent-gateway/session/create
 POST /api/agent-gateway/session/revoke
+POST /api/agent-gateway/session/revoke-self
 POST /api/agent-gateway/register
 POST /api/agent-gateway/heartbeat
 GET  /api/agent-gateway/tasks
@@ -2548,6 +2560,7 @@ Current implementation:
 - Session-token auth rechecks the parent enrollment on every request. If the parent token is revoked, expired, missing, or no longer matches the session binding, the session fails closed.
 - `GET /api/agent-gateway/sessions` lists session metadata with safe refs only; it omits `session_hash`, raw token values, raw session ids, and raw parent token ids.
 - `POST /api/agent-gateway/session/revoke` revokes one session or all active sessions for an agent.
+- `POST /api/agent-gateway/session/revoke-self` lets only the currently authenticated active Session release itself without accepting a caller-selected Session ID.
 - Revoking an enrollment token also revokes active child sessions.
 - `GET /api/agent-gateway/enrollments` reports heartbeat freshness with safe `token_ref` values and omits raw token ids.
 - Revoked tokens report `heartbeat_state=revoked`, not `fresh` or `stale`.
@@ -2561,6 +2574,7 @@ Current endpoint scope map:
 | `POST /api/agent-gateway/session/create` | valid enrollment token or local API key |
 | `GET /api/agent-gateway/sessions` | admin/local authority |
 | `POST /api/agent-gateway/session/revoke` | admin/local authority |
+| `POST /api/agent-gateway/session/revoke-self` | current active short-lived Session; exact self only |
 | `GET /api/agent-gateway/host-workers/status` | Host machine credential only; `tasks:read` contract |
 | `GET /api/agent-gateway/host-workers/fleet` | Host machine credential only; `tasks:read` contract |
 | `GET /api/agent-gateway/host-workers/adapter-readiness` | Host machine credential only; `tasks:read` contract |

@@ -5440,6 +5440,61 @@ def agent_gateway_revoke_session(conn, body) -> tuple[dict, int]:
     }, 200
 
 
+def agent_gateway_revoke_own_session(conn, auth_ctx) -> tuple[dict, int]:
+    auth_ctx = auth_ctx or {}
+    if auth_ctx.get("mode") != "agent_session" or not auth_ctx.get("session_id"):
+        return {
+            "error": "session_auth_required",
+            "message": "Only the current short-lived Agent Gateway session can revoke itself.",
+            "session_id_omitted": True,
+            "token_omitted": True,
+        }, 403
+    session_id = str(auth_ctx["session_id"])
+    before = conn.execute(
+        """SELECT session_id,parent_token_id,workspace_id,agent_id,scopes_json,status,created_at,expires_at,revoked_at,last_used_at
+        FROM agent_gateway_sessions WHERE session_id=? AND workspace_id=? AND agent_id=?""",
+        (session_id, auth_ctx.get("workspace_id"), auth_ctx.get("agent_id")),
+    ).fetchone()
+    if not before or before["status"] != "active":
+        return {
+            "error": "session_not_active",
+            "message": "The current Agent Gateway session is not active.",
+            "session_id_omitted": True,
+            "token_omitted": True,
+        }, 409
+    now = now_iso()
+    conn.execute(
+        "UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE session_id=? AND status='active'",
+        (now, session_id),
+    )
+    session_ref = stable_id("session_ref", session_id)[-12:]
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "agent.session.self_revoke",
+        "completed",
+        agent_id=before["agent_id"],
+        output_summary=f"Released short-lived worker session ref {session_ref}.",
+    )
+    audit(
+        conn,
+        "agent",
+        before["agent_id"],
+        "agent_gateway.session_self_revoke",
+        "agent_gateway_sessions",
+        session_id,
+        dict(before),
+        {"status": "revoked", "revoked_at": now},
+        {"session_ref": session_ref, "session_id_omitted": True, "token_omitted": True},
+    )
+    return {
+        "revoked": True,
+        "session_ref": session_ref,
+        "session_id_omitted": True,
+        "token_omitted": True,
+    }, 200
+
+
 def agent_gateway_rotate_enrollment(conn, body) -> tuple[dict, int]:
     token_id = body.get("token_id")
     agent_id = body.get("agent_id")
@@ -35269,6 +35324,19 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(payload, status)
                 if path == "/api/agent-gateway/session/create":
                     payload, status = agent_gateway_create_session(conn, self.headers, body)
+                    conn.commit()
+                    return self.send_json(payload, status)
+                if path == "/api/agent-gateway/session/revoke-self":
+                    auth_ctx, auth_error = agent_gateway_auth_context(
+                        conn,
+                        self.headers,
+                        allow_session=True,
+                        record_usage=False,
+                    )
+                    if auth_error:
+                        conn.commit()
+                        return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                    payload, status = agent_gateway_revoke_own_session(conn, auth_ctx)
                     conn.commit()
                     return self.send_json(payload, status)
                 if path == "/api/agent-gateway/session/revoke":
