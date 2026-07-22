@@ -30,9 +30,22 @@ The fixed probes use constant, non-sensitive prompts:
 
 The stored ledger keeps prompt hashes and redacted short output summaries only.
 
+## v1.5 Governed Worker Path
+
+The v1.5 Agent Gateway worker can execute a bounded MIS task through an
+OpenAI-compatible Hermes profile after the human explicitly passes
+`--confirm-run`. This path is separate from the fixed connector probes: it
+creates and claims a normal MIS task, starts a run, calls the local runtime,
+and records tool-call, evaluation, audit, artifact, memory-candidate, Agent
+Plan, and plan-evidence rows. Full prompts, raw responses, credentials, and
+transcripts remain outside the ledger.
+
+The latest local Agnesfallback acceptance is recorded in
+[`HERMES_AGNESFALLBACK_MIS_DOGFOOD_2026_07_22.md`](HERMES_AGNESFALLBACK_MIS_DOGFOOD_2026_07_22.md).
+
 ## Non-Goals
 
 - No default `--yolo`.
-- No arbitrary prompt execution in v1.2.1/v1.4 local acceptance; only fixed probes are enabled.
+- No arbitrary prompt execution through the v1.2.1/v1.4 probe endpoints; only fixed probes are enabled there. The v1.5 worker accepts bounded MIS task summaries under its separate confirmation and ledger policy.
 - No background cron execution.
 - No remote deployment or public network binding.
