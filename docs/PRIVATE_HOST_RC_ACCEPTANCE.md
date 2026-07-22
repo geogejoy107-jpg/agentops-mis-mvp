@@ -937,15 +937,26 @@ The next source-only slice adds bounded stopped-Host log rotation.
 `agentops host log-rotate` defaults to a metadata-only plan with an 8 MiB
 threshold and five retained generations. The threshold has a 1 MiB production
 floor and retention is bounded from two through twenty files. A write requires
-both `--confirm-rotate` and the exact full-directory plan hash while holding the
-Host lifecycle lock; a running Host, stale plan, unsafe directory or file mode,
-symlink, hardlink, unknown `host.log.*` name, or generation gap fails closed.
-The transaction moves discard candidates into same-volume private quarantine,
-rotates only `host.log` and contiguous numbered generations, creates a new
-owner-only active file, rolls back pre-commit failure, and reports incomplete
-post-commit cleanup rather than claiming success. It neither reads log content
-nor changes the ledger, secret store, config, installed version or
-`launchd.log`. The isolated 33-check smoke uses only temporary sparse files; no
+both `--confirm-rotate` and the exact inventory/configuration plan hash while holding the
+Host lifecycle lock and the same private runtime lock held for the complete
+local-stack process lifetime; a running Host remains detectable even without a
+PID record. A stale plan, unsafe directory or file mode, symlink, hardlink,
+unknown `host.log.*` name, or generation gap fails closed. All mutation uses
+anchored directory descriptors. A complete owner-only staging directory is
+prepared with hard links, fsynced and committed through one kernel atomic
+directory exchange; a bounded private journal distinguishes and recovers
+pre-exchange interruption from post-exchange committed cleanup. It reports
+incomplete cleanup rather than claiming success, and Host startup fails closed
+until pending recovery is explicitly completed. It neither reads log content
+nor changes the ledger, secret store, config or installed version. The
+Rotation itself does not rewrite `launchd.log`: its inode, owner, mode, existing
+bytes and any launchd retry append are preserved, while size/mtime drift on that
+same inode is permitted during recovery and temporary hard links may update
+filesystem ctime. Post-exchange recovery accepts only an identity-matching
+subset of the journaled retired directory, so interruption during cleanup is
+idempotently completed. A failed pre-exchange cleanup retains its journal for
+the same explicit recovery path. The isolated 41-check rotation smoke and
+35-check process-lifetime runtime-lock smoke use only temporary files; no
 real Host log is read or rotated. Preview.38 is not credited, and the current
 `bounded Host log rotation` release gate remains open until an exact package
 and installed-product receipt pass. Live automatic rotation also remains open

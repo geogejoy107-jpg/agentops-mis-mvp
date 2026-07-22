@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agentops_mis_cli import host, host_log  # noqa: E402
+from agentops_mis_cli import host, host_log, runtime_lock  # noqa: E402
 
 
 MIB = 1024 * 1024
@@ -135,11 +135,13 @@ def create_fixture(
     version = host_home / "version.json"
     database = data / "agentops_mis.db"
     lifecycle_lock = host_home.parent / ".agentops-mis-host-lifecycle.lock"
+    host_runtime_lock = run / "host.runtime.lock"
     write_private(config, b'{"initialized_fixture":true}\n')
     write_private(secrets, b'{"private_fixture_only":true}\n')
     write_private(version, (PROTECTED_MARKER + ":version\n").encode("utf-8"))
     write_private(database, (PROTECTED_MARKER + ":database\n").encode("utf-8"))
     write_private(lifecycle_lock, b"")
+    write_private(host_runtime_lock, b"")
 
     markers: list[str] = []
     launchd_log = logs / "launchd.log"
@@ -173,6 +175,7 @@ def create_fixture(
         "database": database,
         "launchd_log": launchd_log,
         "pid": run / "host.pid.json",
+        "runtime_lock": host_runtime_lock,
     }
     return {
         "root": fixture_root,
@@ -439,6 +442,29 @@ def exercise_running_and_noop(root: Path, failures: list[str], evidence: dict[st
         plan_process.returncode == 0 and plan.get("rotation_required") is True,
     )
 
+    lock_only_running = create_fixture(root, "runtime-lock-running", active_size=MINIMUM_MAX_BYTES + 1)
+    lock_plan_process, lock_plan = run_host(
+        lock_only_running["env"], "log-rotate", "--max-bytes", str(MINIMUM_MAX_BYTES)
+    )
+    held_runtime_lock = runtime_lock.acquire_runtime_lock(lock_only_running["protected"]["runtime_lock"])
+    try:
+        expect_cli_rejection(
+            lock_only_running,
+            failures,
+            evidence,
+            "runtime_lock_blocks_confirmation_without_pid_record",
+            "host_running",
+            "--max-bytes",
+            str(MINIMUM_MAX_BYTES),
+            "--confirm-rotate",
+            "--plan-hash",
+            str(lock_plan.get("plan_hash") or "0" * 64),
+        )
+    finally:
+        runtime_lock.release_runtime_lock(held_runtime_lock)
+    if lock_plan_process.returncode != 0:
+        failures.append("runtime-lock fixture could not prepare a valid plan")
+
     invalid_pid = create_fixture(root, "invalid-pid", active_size=MINIMUM_MAX_BYTES + 1)
     invalid_plan_process, invalid_plan = run_host(
         invalid_pid["env"], "log-rotate", "--max-bytes", str(MINIMUM_MAX_BYTES)
@@ -617,7 +643,7 @@ def exercise_valid_rotation(root: Path, failures: list[str], evidence: dict[str,
         snapshot_protected(fixture) == protected_before
         and payload.get("authority_ledger_unchanged") is True
         and payload.get("secret_store_unchanged") is True
-        and payload.get("launchd_log_unchanged") is True,
+        and payload.get("launchd_log_content_identity_preserved") is True,
     )
     record(
         failures,
@@ -711,7 +737,7 @@ def exercise_invalid_inventory(root: Path, failures: list[str], evidence: dict[s
 def exercise_fault_rollback(root: Path, failures: list[str], evidence: dict[str, bool]) -> None:
     fixture = create_fixture(
         root,
-        "fault-rollback",
+        "pre-exchange-fault-rollback",
         active_size=MINIMUM_MAX_BYTES + 1,
         backup_count=4,
     )
@@ -720,20 +746,11 @@ def exercise_fault_rollback(root: Path, failures: list[str], evidence: dict[str,
     )
     logs_before = snapshot_directory(fixture["logs"])
     protected_before = snapshot_protected(fixture)
-    real_replace = os.replace
-    forward_calls = 0
-    failure_injected = False
-
-    def fail_third_move(source, destination):
-        nonlocal forward_calls, failure_injected
-        if not failure_injected:
-            forward_calls += 1
-            if forward_calls == 3:
-                failure_injected = True
-                raise OSError("injected fixture move failure")
-        return real_replace(source, destination)
-
-    with mock.patch.object(host_log.os, "replace", side_effect=fail_third_move):
+    with mock.patch.object(
+        host_log,
+        "_atomic_exchange",
+        side_effect=OSError("injected pre-exchange failure"),
+    ):
         payload, status_code = host_log.rotate_logs(
             fixture["logs"],
             max_bytes=MINIMUM_MAX_BYTES,
@@ -744,67 +761,317 @@ def exercise_fault_rollback(root: Path, failures: list[str], evidence: dict[str,
     record(
         failures,
         evidence,
-        "mid_rotation_failure_rolls_back_all_log_state",
+        "pre_exchange_failure_rolls_back_staging_and_journal",
         plan_error is None
-        and failure_injected
         and status_code == 1
         and payload.get("ok") is False
         and payload.get("error") == "host_log_rotation_failed"
         and payload.get("state_rolled_back") is True
+        and payload.get("replan_required") is True
         and snapshot_directory(fixture["logs"]) == logs_before
         and snapshot_protected(fixture) == protected_before
-        and not any(path.name.startswith(".agentops-log-rotate-quarantine-") for path in fixture["logs"].iterdir())
+        and not any(path.name.startswith(".agentops-log-rotate-") for path in fixture["home"].iterdir())
         and output_is_safe(json.dumps(payload, sort_keys=True), fixture),
     )
 
-    postcheck = create_fixture(
+    rollback_cleanup_failure = create_fixture(
         root,
-        "post-move-verification-rollback",
+        "rollback-cleanup-failure",
         active_size=MINIMUM_MAX_BYTES + 1,
         backup_count=2,
     )
-    postcheck_plan, postcheck_error = host_log.build_rotation_plan(
-        postcheck["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    rollback_cleanup_plan, rollback_cleanup_plan_error = host_log.build_rotation_plan(
+        rollback_cleanup_failure["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
     )
-    postcheck_logs_before = snapshot_directory(postcheck["logs"])
-    postcheck_protected_before = snapshot_protected(postcheck)
-    real_same_moved_file = host_log._same_moved_file
-    verification_calls = 0
-
-    def fail_first_post_move_verification(path, expected):
-        nonlocal verification_calls
-        verification_calls += 1
-        if verification_calls == 1:
-            return False
-        return real_same_moved_file(path, expected)
-
-    with mock.patch.object(
-        host_log,
-        "_same_moved_file",
-        side_effect=fail_first_post_move_verification,
+    with (
+        mock.patch.object(host_log, "_atomic_exchange", side_effect=OSError("injected exchange failure")),
+        mock.patch.object(host_log, "_cleanup_stage", side_effect=OSError("injected rollback cleanup failure")),
     ):
-        postcheck_payload, postcheck_status = host_log.rotate_logs(
-            postcheck["logs"],
+        rollback_cleanup_payload, rollback_cleanup_status = host_log.rotate_logs(
+            rollback_cleanup_failure["logs"],
             max_bytes=MINIMUM_MAX_BYTES,
             backups=2,
             confirm_rotate=True,
-            plan_hash=str(postcheck_plan.get("public", {}).get("plan_hash") or ""),
+            plan_hash=str(rollback_cleanup_plan.get("public", {}).get("plan_hash") or ""),
         )
+    rollback_pending, rollback_pending_status = host_log.rotate_logs(
+        rollback_cleanup_failure["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    rollback_recovered, rollback_recovered_status = host_log.rotate_logs(
+        rollback_cleanup_failure["logs"],
+        max_bytes=MINIMUM_MAX_BYTES,
+        backups=2,
+        confirm_rotate=True,
+    )
     record(
         failures,
         evidence,
-        "post_move_verification_failure_is_tracked_and_rolled_back",
-        postcheck_error is None
-        and verification_calls >= 2
-        and postcheck_status == 1
-        and postcheck_payload.get("error") == "host_log_rotation_failed"
-        and postcheck_payload.get("state_rolled_back") is True
-        and snapshot_directory(postcheck["logs"]) == postcheck_logs_before
-        and snapshot_protected(postcheck) == postcheck_protected_before
+        "failed_pre_exchange_cleanup_retains_recoverable_journal",
+        rollback_cleanup_plan_error is None
+        and rollback_cleanup_status == 1
+        and rollback_cleanup_payload.get("state_rolled_back") is False
+        and rollback_cleanup_payload.get("recovery_required") is True
+        and rollback_pending_status == 1
+        and rollback_pending.get("error") == "host_log_recovery_required"
+        and rollback_recovered_status == 2
+        and rollback_recovered.get("recovery_completed") is True
+        and rollback_recovered.get("recovery_state") == "rolled_back"
+        and host_log.start_gate(rollback_cleanup_failure["logs"]).get("ok") is True
         and not any(
-            path.name.startswith(".agentops-log-rotate-quarantine-")
-            for path in postcheck["logs"].iterdir()
+            path.name.startswith(".agentops-log-rotate-")
+            for path in rollback_cleanup_failure["home"].iterdir()
         ),
+    )
+
+    interrupted_before = create_fixture(
+        root,
+        "interrupted-before-exchange",
+        active_size=MINIMUM_MAX_BYTES + 1,
+        backup_count=2,
+    )
+    interrupted_before_plan, interrupted_before_error = host_log.build_rotation_plan(
+        interrupted_before["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    interrupted_before_logs = snapshot_directory(interrupted_before["logs"])
+    interrupted_before_protected = snapshot_protected(interrupted_before)
+    interrupted_before_raised = False
+    try:
+        with mock.patch.object(host_log, "_atomic_exchange", side_effect=KeyboardInterrupt):
+            host_log.rotate_logs(
+                interrupted_before["logs"],
+                max_bytes=MINIMUM_MAX_BYTES,
+                backups=2,
+                confirm_rotate=True,
+                plan_hash=str(interrupted_before_plan.get("public", {}).get("plan_hash") or ""),
+            )
+    except KeyboardInterrupt:
+        interrupted_before_raised = True
+    pending_before, pending_before_status = host_log.rotate_logs(
+        interrupted_before["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    with mock.patch.object(host, "emit") as blocked_start_emit:
+        blocked_start = host._host_log_start_preflight({"logs": interrupted_before["logs"]})
+    launchd_before_retry = interrupted_before["launchd_log"].lstat()
+    with interrupted_before["launchd_log"].open("ab") as launchd_handle:
+        launchd_handle.write(b"launchd retry during pending recovery\n")
+        launchd_handle.flush()
+        os.fsync(launchd_handle.fileno())
+    launchd_after_retry = interrupted_before["launchd_log"].lstat()
+    launchd_retry_digest = sha256(interrupted_before["launchd_log"])
+    recovered_before, recovered_before_status = host_log.rotate_logs(
+        interrupted_before["logs"],
+        max_bytes=MINIMUM_MAX_BYTES,
+        backups=2,
+        confirm_rotate=True,
+        plan_hash=str(interrupted_before_plan.get("public", {}).get("plan_hash") or ""),
+    )
+    launchd_after_recovery = interrupted_before["launchd_log"].lstat()
+    interrupted_before_logs["launchd.log"] = fingerprint(interrupted_before["launchd_log"])
+    interrupted_before_protected["launchd_log"] = fingerprint(interrupted_before["launchd_log"])
+    record(
+        failures,
+        evidence,
+        "pre_exchange_process_interruption_recovers_original_state",
+        interrupted_before_error is None
+        and interrupted_before_raised
+        and pending_before_status == 1
+        and pending_before.get("error") == "host_log_recovery_required"
+        and blocked_start is False
+        and blocked_start_emit.call_args.args[0].get("error") == "host_log_recovery_required"
+        and recovered_before_status == 2
+        and recovered_before.get("recovery_completed") is True
+        and recovered_before.get("recovery_state") == "rolled_back"
+        and snapshot_directory(interrupted_before["logs"]) == interrupted_before_logs
+        and snapshot_protected(interrupted_before) == interrupted_before_protected
+        and not any(path.name.startswith(".agentops-log-rotate-") for path in interrupted_before["home"].iterdir()),
+    )
+    record(
+        failures,
+        evidence,
+        "launchd_retry_append_survives_pending_rotation_recovery",
+        (launchd_before_retry.st_dev, launchd_before_retry.st_ino)
+        == (launchd_after_retry.st_dev, launchd_after_retry.st_ino)
+        == (launchd_after_recovery.st_dev, launchd_after_recovery.st_ino)
+        and launchd_after_recovery.st_nlink == 1
+        and launchd_after_recovery.st_size == launchd_after_retry.st_size
+        and sha256(interrupted_before["launchd_log"]) == launchd_retry_digest,
+    )
+
+    interrupted_after = create_fixture(
+        root,
+        "interrupted-after-exchange",
+        active_size=MINIMUM_MAX_BYTES + 1,
+        backup_count=2,
+    )
+    interrupted_after_plan, interrupted_after_error = host_log.build_rotation_plan(
+        interrupted_after["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    interrupted_after_protected = snapshot_protected(interrupted_after)
+    interrupted_after_raised = False
+    try:
+        with mock.patch.object(host_log, "_cleanup_stage", side_effect=KeyboardInterrupt):
+            host_log.rotate_logs(
+                interrupted_after["logs"],
+                max_bytes=MINIMUM_MAX_BYTES,
+                backups=2,
+                confirm_rotate=True,
+                plan_hash=str(interrupted_after_plan.get("public", {}).get("plan_hash") or ""),
+            )
+    except KeyboardInterrupt:
+        interrupted_after_raised = True
+    pending_after, pending_after_status = host_log.rotate_logs(
+        interrupted_after["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    recovered_after, recovered_after_status = host_log.rotate_logs(
+        interrupted_after["logs"],
+        max_bytes=MINIMUM_MAX_BYTES,
+        backups=2,
+        confirm_rotate=True,
+        plan_hash=str(interrupted_after_plan.get("public", {}).get("plan_hash") or ""),
+    )
+    record(
+        failures,
+        evidence,
+        "post_exchange_process_interruption_recovers_committed_state",
+        interrupted_after_error is None
+        and interrupted_after_raised
+        and pending_after_status == 1
+        and pending_after.get("error") == "host_log_recovery_required"
+        and recovered_after_status == 2
+        and recovered_after.get("recovery_completed") is True
+        and recovered_after.get("recovery_state") == "committed"
+        and interrupted_after["active"].stat().st_size == 0
+        and (interrupted_after["logs"] / "host.log.1").read_bytes()[:80].decode("utf-8").startswith(
+            f"{LOG_MARKER_PREFIX}:active"
+        )
+        and (interrupted_after["logs"] / "host.log.2").read_bytes()[:80].decode("utf-8").startswith(
+            f"{LOG_MARKER_PREFIX}:backup-1"
+        )
+        and snapshot_protected(interrupted_after) == interrupted_after_protected
+        and not any(path.name.startswith(".agentops-log-rotate-") for path in interrupted_after["home"].iterdir()),
+    )
+
+    interrupted_mid_cleanup = create_fixture(
+        root,
+        "interrupted-mid-cleanup",
+        active_size=MINIMUM_MAX_BYTES + 1,
+        backup_count=3,
+    )
+    mid_cleanup_plan, mid_cleanup_error = host_log.build_rotation_plan(
+        interrupted_mid_cleanup["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    mid_cleanup_raised = False
+
+    def interrupt_after_one_cleanup(parent_fd: int, stage_label: str) -> None:
+        stage_fd = host_log._open_directory_at(parent_fd, stage_label)
+        try:
+            snapshot = host_log._snapshot_directory_fd(stage_fd, allow_partial=True)
+            first = sorted(snapshot["entries"])[0]
+            os.unlink(first, dir_fd=stage_fd)
+            os.fsync(stage_fd)
+        finally:
+            os.close(stage_fd)
+        raise KeyboardInterrupt
+
+    try:
+        with mock.patch.object(host_log, "_cleanup_stage", side_effect=interrupt_after_one_cleanup):
+            host_log.rotate_logs(
+                interrupted_mid_cleanup["logs"],
+                max_bytes=MINIMUM_MAX_BYTES,
+                backups=2,
+                confirm_rotate=True,
+                plan_hash=str(mid_cleanup_plan.get("public", {}).get("plan_hash") or ""),
+            )
+    except KeyboardInterrupt:
+        mid_cleanup_raised = True
+    mid_cleanup_pending, mid_cleanup_pending_status = host_log.rotate_logs(
+        interrupted_mid_cleanup["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    mid_cleanup_recovered, mid_cleanup_recovered_status = host_log.rotate_logs(
+        interrupted_mid_cleanup["logs"],
+        max_bytes=MINIMUM_MAX_BYTES,
+        backups=2,
+        confirm_rotate=True,
+    )
+    record(
+        failures,
+        evidence,
+        "post_exchange_mid_cleanup_interruption_recovers_committed_state",
+        mid_cleanup_error is None
+        and mid_cleanup_raised
+        and mid_cleanup_pending_status == 1
+        and mid_cleanup_pending.get("error") == "host_log_recovery_required"
+        and mid_cleanup_recovered_status == 2
+        and mid_cleanup_recovered.get("recovery_completed") is True
+        and mid_cleanup_recovered.get("recovery_state") == "committed"
+        and interrupted_mid_cleanup["active"].stat().st_size == 0
+        and (interrupted_mid_cleanup["logs"] / "host.log.1").is_file()
+        and (interrupted_mid_cleanup["logs"] / "host.log.2").is_file()
+        and not any(
+            path.name.startswith(".agentops-log-rotate-")
+            for path in interrupted_mid_cleanup["home"].iterdir()
+        ),
+    )
+    record(
+        failures,
+        evidence,
+        "host_start_gate_reopens_only_after_rotation_recovery",
+        host_log.start_gate(interrupted_before["logs"]).get("ok") is True
+        and host_log.start_gate(interrupted_after["logs"]).get("ok") is True
+        and host_log.start_gate(interrupted_mid_cleanup["logs"]).get("ok") is True,
+    )
+
+    orphan_temporary = create_fixture(
+        root,
+        "orphan-journal-temporary",
+        active_size=MINIMUM_MAX_BYTES + 1,
+    )
+    orphan_label = ".agentops-log-rotate-journal.json.tmp-0123456789abcdef"
+    orphan_path = orphan_temporary["home"] / orphan_label
+    write_private(orphan_path, b"interrupted private metadata fixture\n")
+    pending_temp, pending_temp_status = host_log.rotate_logs(
+        orphan_temporary["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    recovered_temp, recovered_temp_status = host_log.rotate_logs(
+        orphan_temporary["logs"],
+        max_bytes=MINIMUM_MAX_BYTES,
+        backups=2,
+        confirm_rotate=True,
+    )
+    record(
+        failures,
+        evidence,
+        "orphan_journal_temporary_requires_confirmation_and_recovers",
+        pending_temp_status == 1
+        and pending_temp.get("error") == "host_log_recovery_required"
+        and recovered_temp_status == 2
+        and recovered_temp.get("recovery_completed") is True
+        and recovered_temp.get("recovery_state") == "journal_temporary_removed"
+        and not orphan_path.exists()
+        and output_is_safe(json.dumps(pending_temp) + json.dumps(recovered_temp), orphan_temporary),
+    )
+
+    unsafe_temporary = create_fixture(
+        root,
+        "unsafe-journal-temporary",
+        active_size=MINIMUM_MAX_BYTES + 1,
+    )
+    unsafe_path = unsafe_temporary["home"] / ".agentops-log-rotate-journal.json.tmp-fedcba9876543210"
+    write_private(unsafe_path, b"unsafe private metadata fixture\n")
+    unsafe_path.chmod(0o640)
+    unsafe_before = fingerprint(unsafe_path)
+    unsafe_payload, unsafe_status = host_log.rotate_logs(
+        unsafe_temporary["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    record(
+        failures,
+        evidence,
+        "unsafe_journal_temporary_fails_closed_without_cleanup",
+        unsafe_status == 1
+        and unsafe_payload.get("error") == "host_log_recovery_metadata_unverifiable"
+        and unsafe_path.exists()
+        and fingerprint(unsafe_path) == unsafe_before
+        and output_is_safe(json.dumps(unsafe_payload), unsafe_temporary),
     )
 
 

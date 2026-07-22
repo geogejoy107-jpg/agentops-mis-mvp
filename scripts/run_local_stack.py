@@ -24,6 +24,10 @@ from agentops_mis_cli.relay_connector_service import (  # noqa: E402
     RelayConnectorServiceError,
     load_connector_config,
 )
+from agentops_mis_cli.runtime_lock import (  # noqa: E402
+    acquire_runtime_lock,
+    release_runtime_lock,
+)
 
 
 UI_DIR = ROOT / "ui" / "start-building-app"
@@ -323,6 +327,11 @@ def main() -> int:
     parser.add_argument("--relay-epoch-state", type=Path)
     parser.add_argument("--relay-status", type=Path)
     parser.add_argument("--stack-ready-fd", type=int)
+    parser.add_argument(
+        "--runtime-lock",
+        type=Path,
+        help="Hold an exclusive lock in a private runtime directory for the stack lifetime.",
+    )
     args = parser.parse_args()
     if args.stack_ready_fd is not None and args.stack_ready_fd < 3:
         parser.error("--stack-ready-fd must be an inherited private descriptor")
@@ -357,8 +366,11 @@ def main() -> int:
     production_ui_dist = (args.ui_dist or (UI_DIR / "dist")).expanduser().resolve()
     processes: list[tuple[str, subprocess.Popen]] = []
     stack_ready_fd = args.stack_ready_fd
+    runtime_lock_fd: int | None = None
 
     try:
+        if args.runtime_lock is not None:
+            runtime_lock_fd = acquire_runtime_lock(args.runtime_lock)
         if args.production_ui:
             if args.build_ui:
                 if not UI_DIR.exists():
@@ -491,6 +503,7 @@ def main() -> int:
     finally:
         close_ready_fd(stack_ready_fd)
         terminate_processes(processes)
+        release_runtime_lock(runtime_lock_fd)
     return 0
 
 

@@ -323,13 +323,22 @@ agentops host start
 
 默认阈值为 8 MiB、保留 5 个历史文件；阈值硬下限为 1 MiB，历史数量范围为
 2 至 20。预览只读取目录和文件元数据，不打印路径或日志正文。确认操作必须持有
-Host lifecycle lock；若 Host 仍在运行则零写入拒绝，避免仍持有旧文件描述符的子进程
-继续写入已重命名文件。精确 plan hash 会绑定完整目录元数据、阈值和保留配置；
+Host lifecycle lock，并在整个操作期间持有与 local stack 相同的私有 runtime lock；
+即使 PID record 缺失，运行中的 Host 也会零写入拒绝。精确 plan hash 会绑定受管日志
+清单、`launchd.log` 身份、阈值和保留配置；只允许同一 `launchd.log` inode 的 size/mtime
+随 launchd 追加而前进；
 stale plan、权限异常、软链、hardlink、未知 `host.log.*` 或序号断档都会失败关闭。
-轮转只管理 `host.log` 与连续的 `host.log.1..N`，不修改 `launchd.log`、账本、
-secret、配置或版本。淘汰项先进入同卷私有 quarantine；提交前失败会回滚，提交后
-清理不完整会明确报错。运行中自动轮转要等 sole-writer 日志 sink 发布，不能用本命令
-的 rename 流程冒充。
+轮转只管理 `host.log` 与连续的 `host.log.1..N`，不修改账本、secret、配置或版本；
+轮转自身不改写 `launchd.log`；它的 inode、owner、mode 与既有字节保留，launchd 在
+恢复前追加的内容也保留，
+临时 hardlink 可能更新文件系统 ctime。
+实现通过目录 FD 锚定全部文件操作，在同卷私有 staging 中准备
+完整新目录，再用内核原子目录交换一次提交。交换前骤停保持旧目录；交换后骤停保持
+完整新目录。有界 journal 会让下一次 dry-run 显示 `recovery_required`，再次显式确认
+只完成收尾并要求重新生成计划；断电遗留的私有 journal 临时文件也按同一确认流程清理。
+若交换前的 staging 清理失败，journal 会保留，不能先删证据再留下孤儿目录。
+存在未完成轮转时 Host 启动会失败关闭。运行中自动轮转仍要等 sole-writer 日志 sink 发布，
+不能用本停机维护命令冒充。
 
 ## 5. 高级模式：Tailscale Serve 预览
 

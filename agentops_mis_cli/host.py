@@ -32,7 +32,7 @@ from agentops_mis_cli.relay_connector_service import (
     RelayConnectorServiceError,
     validate_connector_material,
 )
-from agentops_mis_cli import host_log, relay_control, relay_restart
+from agentops_mis_cli import host_log, relay_control, relay_restart, runtime_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -199,6 +199,7 @@ def paths() -> dict[str, Path]:
         "pid": home / "run" / "host.pid.json",
         "service_instance": home / "run" / "host.service-instance.json",
         "restart_socket": home / "run" / "host.restart.sock",
+        "runtime_lock": home / "run" / "host.runtime.lock",
         "ownership": home / ".agentops-host-data.json",
         "lifecycle_lock": home.parent / ".agentops-mis-host-lifecycle.lock",
         "relay": home / "relay",
@@ -1379,6 +1380,8 @@ def emit_host_worker_ownership_error(preflight: dict) -> int:
 def stack_command(config: dict, args, *, stack_ready_fd: int | None = None) -> list[str]:
     ui_dist, _managed = effective_ui_dist(config)
     host_paths = paths()
+    if host_log.start_gate(host_paths["logs"]).get("ok") is not True:
+        raise RuntimeError("Host log recovery is required before startup.")
     command = [
         sys.executable,
         str(STACK),
@@ -1397,6 +1400,8 @@ def stack_command(config: dict, args, *, stack_ready_fd: int | None = None) -> l
         str(host_paths["relay_epoch"]),
         "--relay-status",
         str(host_paths["relay_status"]),
+        "--runtime-lock",
+        str(host_paths["runtime_lock"]),
     ]
     if args.build_ui:
         command.append("--build-ui")
@@ -1414,12 +1419,36 @@ def stack_command(config: dict, args, *, stack_ready_fd: int | None = None) -> l
     return command
 
 
+def _host_log_start_preflight(p: dict[str, Path]) -> bool:
+    gate = host_log.start_gate(p["logs"])
+    if gate.get("ok") is True:
+        return True
+    recovery_ready = gate.get("error") == "host_log_recovery_required"
+    emit({
+        "ok": False,
+        "operation": "host_start",
+        "error": gate.get("error") or "host_log_recovery_metadata_unverifiable",
+        "recovery_required": True,
+        "next_action": (
+            "agentops host log-rotate --confirm-rotate"
+            if recovery_ready
+            else "agentops host log-rotate"
+        ),
+        "content_omitted": True,
+        "paths_omitted": True,
+        "token_omitted": True,
+    })
+    return False
+
+
 def _cmd_start_unlocked(args) -> int:
     p = paths()
     pid_record = read_json(p["pid"])
     pid = int(pid_record.get("pid") or 0)
     if process_alive(pid):
         emit({"ok": False, "operation": "host_start", "error": "already_running", "pid": pid, "token_omitted": True})
+        return 2
+    if not _host_log_start_preflight(p):
         return 2
     startup_recovery = _prepare_restart_receipt_recovery(p)
     config, secret_values = require_initialized()
@@ -1534,6 +1563,8 @@ def _launch_foreground_locked(args):
     pid = int(pid_record.get("pid") or 0)
     if process_alive(pid):
         emit({"ok": False, "operation": "host_start", "error": "already_running", "pid": pid, "token_omitted": True})
+        return None, p, 2
+    if not _host_log_start_preflight(p):
         return None, p, 2
     startup_recovery = _prepare_restart_receipt_recovery(p)
     config, secret_values = require_initialized()
@@ -2657,6 +2688,10 @@ def cmd_start(args) -> int:
                     p["ownership"].unlink(missing_ok=True)
                 emit({"ok": False, "operation": "host_start", "error": "already_running", "token_omitted": True})
                 return 2
+            if not _host_log_start_preflight(p):
+                if marker_created:
+                    p["ownership"].unlink(missing_ok=True)
+                return 2
             startup_recovery = _prepare_restart_receipt_recovery(p)
             config, secret_values = require_initialized()
             gate = _managed_launch_agent_gate(args)
@@ -2952,13 +2987,39 @@ def cmd_logs(_args) -> int:
 def _cmd_log_rotate_unlocked(args) -> int:
     require_initialized()
     p = paths()
-    pid_record_unsafe = p["pid"].is_symlink()
+    maintenance_lock_fd = None
+    if args.confirm_rotate:
+        try:
+            maintenance_lock_fd = runtime_lock.acquire_runtime_lock(p["runtime_lock"])
+        except runtime_lock.RuntimeLockError as exc:
+            running = exc.code == "held"
+            emit({
+                "ok": False,
+                "operation": "host_log_rotate",
+                "dry_run": False,
+                "error": "host_running" if running else "host_runtime_state_unverifiable",
+                "message": (
+                    "Stop the Host before confirming log rotation."
+                    if running
+                    else "The Host runtime lock could not be verified safely."
+                ),
+                "next_action": "agentops host stop" if running else "agentops host doctor",
+                "content_omitted": True,
+                "paths_omitted": True,
+                "token_omitted": True,
+            })
+            return 2
+    pid_exists = p["pid"].exists() or p["pid"].is_symlink()
+    pid_record = read_json(p["pid"])
+    pid_record_unsafe = p["pid"].is_symlink() or (pid_exists and not pid_record)
     try:
-        pid = int(read_json(p["pid"]).get("pid") or 0)
+        pid = int(pid_record.get("pid") or 0)
     except (TypeError, ValueError):
         pid = -1
         pid_record_unsafe = True
     if args.confirm_rotate and pid_record_unsafe:
+        runtime_lock.release_runtime_lock(maintenance_lock_fd)
+        maintenance_lock_fd = None
         emit({
             "ok": False,
             "operation": "host_log_rotate",
@@ -2971,6 +3032,8 @@ def _cmd_log_rotate_unlocked(args) -> int:
         return 2
     running = process_alive(pid)
     if args.confirm_rotate and running:
+        runtime_lock.release_runtime_lock(maintenance_lock_fd)
+        maintenance_lock_fd = None
         emit({
             "ok": False,
             "operation": "host_log_rotate",
@@ -2983,17 +3046,20 @@ def _cmd_log_rotate_unlocked(args) -> int:
             "token_omitted": True,
         })
         return 2
-    payload, status = host_log.rotate_logs(
-        p["logs"],
-        max_bytes=args.max_bytes,
-        backups=args.backups,
-        confirm_rotate=args.confirm_rotate,
-        plan_hash=args.plan_hash,
-    )
+    try:
+        payload, status = host_log.rotate_logs(
+            p["logs"],
+            max_bytes=args.max_bytes,
+            backups=args.backups,
+            confirm_rotate=args.confirm_rotate,
+            plan_hash=args.plan_hash,
+        )
+    finally:
+        runtime_lock.release_runtime_lock(maintenance_lock_fd)
     payload["host_running"] = running
     payload["authority_ledger_unchanged"] = True
     payload["secret_store_unchanged"] = True
-    payload["launchd_log_unchanged"] = True
+    payload["launchd_log_content_identity_preserved"] = True
     emit(payload)
     return status
 

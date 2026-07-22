@@ -96,6 +96,7 @@ jobs:
           timeout 120s python3 scripts/workspace_agent_membership_migration_smoke.py
           timeout 120s python3 scripts/agent_plan_approval_subject_migration_smoke.py
           timeout 120s python3 scripts/run_local_stack_smoke.py
+          timeout 120s python3 scripts/private_host_runtime_lock_smoke.py
           timeout 120s python3 scripts/worker_process_identity_smoke.py
           timeout 120s python3 scripts/production_ui_host_smoke.py
           timeout 120s python3 scripts/human_browser_auth_smoke.py
