@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import ast
 import io
 import json
 import os
@@ -11,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -42,6 +44,35 @@ except RuntimeError:
     raise SystemExit(3)
 release_runtime_lock(descriptor)
 print(json.dumps({"acquired": True, "released": True}))
+"""
+INHERITED_LOCK_CHILD = r"""
+import os
+import sys
+import time
+
+os.fstat(int(sys.argv[1]))
+print("CHILD_LOCK_READY", flush=True)
+time.sleep(2.0)
+"""
+CRASHING_LOCK_PARENT = r"""
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from scripts.run_local_stack import acquire_runtime_lock
+
+descriptor = acquire_runtime_lock(Path(sys.argv[1]))
+child = subprocess.Popen(
+    [sys.executable, "-c", sys.argv[2], str(descriptor)],
+    pass_fds=(descriptor,),
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+    text=True,
+)
+ready = child.stdout.readline().strip() if child.stdout is not None else ""
+print(json.dumps({"child_pid": child.pid, "ready": ready == "CHILD_LOCK_READY"}), flush=True)
+os._exit(0)
 """
 
 
@@ -163,6 +194,79 @@ def main() -> int:
         stack.release_runtime_lock(direct_descriptor)
         require(try_lock_in_child(lifecycle_lock).returncode == 0, "explicit release did not make the lock reusable")
 
+        inherited_parent = private_directory(root / "inherited-lifecycle")
+        inherited_lock = inherited_parent / "stack.lock"
+        crashing_parent = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                CRASHING_LOCK_PARENT,
+                str(inherited_lock),
+                INHERITED_LOCK_CHILD,
+            ],
+            cwd=ROOT,
+            env=child_environment(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        inherited_line = crashing_parent.stdout.readline() if crashing_parent.stdout is not None else ""
+        crashing_parent.wait(timeout=6)
+        try:
+            inherited_receipt = json.loads(inherited_line)
+        except (TypeError, ValueError):
+            inherited_receipt = {}
+        inherited_attempt = try_lock_in_child(inherited_lock)
+        require(
+            crashing_parent.returncode == 0 and inherited_receipt.get("ready") is True,
+            "crashing parent did not leave a verified lock-holding child",
+        )
+        require(
+            inherited_attempt.returncode == 3,
+            "runtime lock was released while a child survived its parent",
+        )
+        reacquired_after_child = inherited_attempt
+        child_deadline = time.monotonic() + 6.0
+        while time.monotonic() < child_deadline:
+            reacquired_after_child = try_lock_in_child(inherited_lock)
+            if reacquired_after_child.returncode == 0:
+                break
+            time.sleep(0.05)
+        require(
+            reacquired_after_child.returncode == 0,
+            "runtime lock was not released after the last inheriting child exited",
+        )
+
+        stack_tree = ast.parse(Path(stack.__file__).read_text(encoding="utf-8"))
+        popen_calls = [
+            node
+            for node in ast.walk(stack_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "subprocess"
+            and node.func.attr == "Popen"
+        ]
+        pass_fds_values = [
+            next((keyword.value for keyword in node.keywords if keyword.arg == "pass_fds"), None)
+            for node in popen_calls
+        ]
+        require(
+            len(popen_calls) == 4
+            and all(
+                isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name)
+                and value.func.id == "inherited_runtime_fds"
+                for value in pass_fds_values
+            ),
+            "a long-lived stack child does not inherit the runtime lock descriptor",
+        )
+        require(
+            stack.inherited_runtime_fds(None, 1, 2, True, -1) == ()
+            and stack.inherited_runtime_fds(7, 9) == (7, 9),
+            "runtime descriptor projection accepted an unsafe descriptor",
+        )
+
         mode_parent = private_directory(root / "bad-parent-mode")
         mode_parent.chmod(0o755)
         expect_rejected(mode_parent / "stack.lock", "runtime lock accepted a non-0700 parent")
@@ -268,6 +372,12 @@ def main() -> int:
                 "checks": check_count,
                 "exclusive": not any("second process" in item for item in failures),
                 "process_lifetime_held": not any("holder process" in item for item in failures),
+                "process_tree_lifetime_held": not any(
+                    "survived its parent" in item
+                    or "last inheriting child" in item
+                    or "does not inherit" in item
+                    for item in failures
+                ),
                 "released_and_reacquired": not any("reacquir" in item or "release" in item for item in failures),
                 "unsafe_paths_fail_closed": not any("accepted" in item for item in failures),
                 "child_process_started_on_rejection": False,

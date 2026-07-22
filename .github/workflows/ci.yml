@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   worker-python-compatibility:
-    name: Worker compatibility (Python ${{ matrix.python-version }})
+    name: Runtime compatibility (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -34,19 +34,27 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Compile Worker compatibility surface
+      - name: Compile runtime compatibility surface
         run: |
           set -euo pipefail
           python3 -m py_compile \
             server.py \
+            agentops_mis_cli/host.py \
+            agentops_mis_cli/host_log.py \
+            agentops_mis_cli/runtime_lock.py \
             agentops_mis_cli/worker.py \
             agentops_mis_core/worker_fleet.py \
+            scripts/run_local_stack.py \
+            scripts/private_host_runtime_lock_smoke.py \
+            scripts/private_host_log_rotation_smoke.py \
             scripts/worker_service_heartbeat_cadence_smoke.py \
             scripts/worker_intake_heartbeat_fleet_smoke.py
 
-      - name: Run Worker compatibility smokes
+      - name: Run runtime compatibility smokes
         run: |
           set -euo pipefail
+          timeout 120s python3 scripts/private_host_runtime_lock_smoke.py
+          timeout 120s python3 scripts/private_host_log_rotation_smoke.py
           timeout 120s python3 scripts/worker_service_heartbeat_cadence_smoke.py
           timeout 120s python3 scripts/worker_intake_heartbeat_fleet_smoke.py
 

@@ -962,15 +962,18 @@ def exercise_fault_rollback(root: Path, failures: list[str], evidence: dict[str,
     )
     mid_cleanup_raised = False
 
-    def interrupt_after_one_cleanup(parent_fd: int, stage_label: str) -> None:
-        stage_fd = host_log._open_directory_at(parent_fd, stage_label)
-        try:
-            snapshot = host_log._snapshot_directory_fd(stage_fd, allow_partial=True)
-            first = sorted(snapshot["entries"])[0]
-            os.unlink(first, dir_fd=stage_fd)
-            os.fsync(stage_fd)
-        finally:
-            os.close(stage_fd)
+    def interrupt_after_one_cleanup(
+        _parent_fd: int,
+        _stage_label: str,
+        *,
+        stage_fd: int,
+        expected_snapshot: dict | None,
+    ) -> None:
+        snapshot = host_log._snapshot_directory_fd(stage_fd, allow_partial=True)
+        assert expected_snapshot is not None
+        first = sorted(snapshot["entries"])[0]
+        os.unlink(first, dir_fd=stage_fd)
+        os.fsync(stage_fd)
         raise KeyboardInterrupt
 
     try:
@@ -1072,6 +1075,528 @@ def exercise_fault_rollback(root: Path, failures: list[str], evidence: dict[str,
         and unsafe_path.exists()
         and fingerprint(unsafe_path) == unsafe_before
         and output_is_safe(json.dumps(unsafe_payload), unsafe_temporary),
+    )
+
+    stage_swap_before_exchange = create_fixture(
+        root,
+        "stage-swap-before-exchange",
+        active_size=MINIMUM_MAX_BYTES + 1,
+        backup_count=2,
+    )
+    stage_swap_plan, stage_swap_plan_error = host_log.build_rotation_plan(
+        stage_swap_before_exchange["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    stage_swap_root_before = stage_swap_before_exchange["logs"].lstat()
+    stage_swap_active_before = fingerprint(stage_swap_before_exchange["active"])
+    original_exchange = host_log._atomic_exchange
+    stage_swap_replacement: Path | None = None
+
+    def replace_stage_before_exchange(
+        parent_fd: int,
+        left: str,
+        right: str,
+        *,
+        left_fd: int,
+        right_fd: int,
+    ) -> None:
+        nonlocal stage_swap_replacement
+        displaced = "displaced-stage-before-exchange"
+        os.rename(right, displaced, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        os.mkdir(right, mode=0o700, dir_fd=parent_fd)
+        stage_swap_replacement = stage_swap_before_exchange["home"] / right
+        original_exchange(
+            parent_fd,
+            left,
+            right,
+            left_fd=left_fd,
+            right_fd=right_fd,
+        )
+
+    with mock.patch.object(host_log, "_atomic_exchange", side_effect=replace_stage_before_exchange):
+        stage_swap_payload, stage_swap_status = host_log.rotate_logs(
+            stage_swap_before_exchange["logs"],
+            max_bytes=MINIMUM_MAX_BYTES,
+            backups=2,
+            confirm_rotate=True,
+            plan_hash=str(stage_swap_plan.get("public", {}).get("plan_hash") or ""),
+        )
+    record(
+        failures,
+        evidence,
+        "stage_replacement_before_exchange_is_not_exchanged_or_deleted",
+        stage_swap_plan_error is None
+        and stage_swap_status == 1
+        and stage_swap_payload.get("state_rolled_back") is False
+        and stage_swap_payload.get("recovery_required") is True
+        and (
+            stage_swap_before_exchange["logs"].lstat().st_dev,
+            stage_swap_before_exchange["logs"].lstat().st_ino,
+        )
+        == (stage_swap_root_before.st_dev, stage_swap_root_before.st_ino)
+        and fingerprint(stage_swap_before_exchange["active"])[-1] == stage_swap_active_before[-1]
+        and stage_swap_before_exchange["active"].lstat().st_nlink == 2
+        and stage_swap_replacement is not None
+        and stage_swap_replacement.is_dir(),
+    )
+
+    stage_swap_after_exchange = create_fixture(
+        root,
+        "stage-swap-after-exchange",
+        active_size=MINIMUM_MAX_BYTES + 1,
+        backup_count=2,
+    )
+    stage_cleanup_plan, stage_cleanup_plan_error = host_log.build_rotation_plan(
+        stage_swap_after_exchange["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    original_cleanup = host_log._cleanup_stage
+    stage_cleanup_replacement: Path | None = None
+
+    def replace_stage_before_cleanup(
+        parent_fd: int,
+        stage_label: str,
+        *,
+        stage_fd: int,
+        expected_snapshot: dict | None,
+    ) -> None:
+        nonlocal stage_cleanup_replacement
+        displaced = "displaced-stage-after-exchange"
+        os.rename(stage_label, displaced, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        os.mkdir(stage_label, mode=0o700, dir_fd=parent_fd)
+        stage_cleanup_replacement = stage_swap_after_exchange["home"] / stage_label
+        original_cleanup(
+            parent_fd,
+            stage_label,
+            stage_fd=stage_fd,
+            expected_snapshot=expected_snapshot,
+        )
+
+    with mock.patch.object(host_log, "_cleanup_stage", side_effect=replace_stage_before_cleanup):
+        stage_cleanup_payload, stage_cleanup_status = host_log.rotate_logs(
+            stage_swap_after_exchange["logs"],
+            max_bytes=MINIMUM_MAX_BYTES,
+            backups=2,
+            confirm_rotate=True,
+            plan_hash=str(stage_cleanup_plan.get("public", {}).get("plan_hash") or ""),
+        )
+    record(
+        failures,
+        evidence,
+        "stage_replacement_before_cleanup_is_not_deleted",
+        stage_cleanup_plan_error is None
+        and stage_cleanup_status == 1
+        and stage_cleanup_payload.get("error") == "host_log_rotation_cleanup_incomplete"
+        and stage_cleanup_payload.get("recovery_required") is True
+        and stage_cleanup_replacement is not None
+        and stage_cleanup_replacement.is_dir()
+        and (stage_swap_after_exchange["home"] / ".agentops-log-rotate-journal.json").is_file(),
+    )
+
+    recovery_stage_swap = create_fixture(
+        root,
+        "recovery-stage-swap",
+        active_size=MINIMUM_MAX_BYTES + 1,
+        backup_count=2,
+    )
+    recovery_stage_plan, recovery_stage_plan_error = host_log.build_rotation_plan(
+        recovery_stage_swap["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    recovery_stage_interrupted = False
+    try:
+        with mock.patch.object(host_log, "_cleanup_stage", side_effect=KeyboardInterrupt):
+            host_log.rotate_logs(
+                recovery_stage_swap["logs"],
+                max_bytes=MINIMUM_MAX_BYTES,
+                backups=2,
+                confirm_rotate=True,
+                plan_hash=str(recovery_stage_plan.get("public", {}).get("plan_hash") or ""),
+            )
+    except KeyboardInterrupt:
+        recovery_stage_interrupted = True
+    recovery_stage_replacement: Path | None = None
+
+    def replace_stage_during_recovery(
+        parent_fd: int,
+        stage_label: str,
+        *,
+        stage_fd: int,
+        expected_snapshot: dict | None,
+    ) -> None:
+        nonlocal recovery_stage_replacement
+        displaced = "displaced-stage-during-recovery"
+        os.rename(stage_label, displaced, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        os.mkdir(stage_label, mode=0o700, dir_fd=parent_fd)
+        recovery_stage_replacement = recovery_stage_swap["home"] / stage_label
+        original_cleanup(
+            parent_fd,
+            stage_label,
+            stage_fd=stage_fd,
+            expected_snapshot=expected_snapshot,
+        )
+
+    with mock.patch.object(host_log, "_cleanup_stage", side_effect=replace_stage_during_recovery):
+        recovery_stage_payload, recovery_stage_status = host_log.rotate_logs(
+            recovery_stage_swap["logs"],
+            max_bytes=MINIMUM_MAX_BYTES,
+            backups=2,
+            confirm_rotate=True,
+        )
+    record(
+        failures,
+        evidence,
+        "stage_replacement_during_recovery_is_not_deleted",
+        recovery_stage_plan_error is None
+        and recovery_stage_interrupted
+        and recovery_stage_status == 1
+        and recovery_stage_payload.get("error") == "host_log_recovery_failed"
+        and recovery_stage_replacement is not None
+        and recovery_stage_replacement.is_dir()
+        and (recovery_stage_swap["home"] / ".agentops-log-rotate-journal.json").is_file(),
+    )
+
+    journal_swap = create_fixture(
+        root,
+        "journal-swap-before-unlink",
+        active_size=MINIMUM_MAX_BYTES + 1,
+        backup_count=2,
+    )
+    journal_swap_plan, journal_swap_plan_error = host_log.build_rotation_plan(
+        journal_swap["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    original_unlink_bound = host_log._unlink_bound_regular
+    journal_replacement: Path | None = None
+
+    def replace_journal_before_unlink(parent_fd: int, name: str, expected: dict) -> None:
+        nonlocal journal_replacement
+        if name == ".agentops-log-rotate-journal.json" and journal_replacement is None:
+            displaced = "displaced-log-rotation-journal"
+            os.rename(name, displaced, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=parent_fd)
+            try:
+                os.write(descriptor, b'{"replacement_fixture":true}\n')
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            journal_replacement = journal_swap["home"] / name
+        original_unlink_bound(parent_fd, name, expected)
+
+    with mock.patch.object(host_log, "_unlink_bound_regular", side_effect=replace_journal_before_unlink):
+        journal_swap_payload, journal_swap_status = host_log.rotate_logs(
+            journal_swap["logs"],
+            max_bytes=MINIMUM_MAX_BYTES,
+            backups=2,
+            confirm_rotate=True,
+            plan_hash=str(journal_swap_plan.get("public", {}).get("plan_hash") or ""),
+        )
+    record(
+        failures,
+        evidence,
+        "journal_replacement_before_cleanup_is_not_deleted",
+        journal_swap_plan_error is None
+        and journal_swap_status == 1
+        and journal_swap_payload.get("error") == "host_log_rotation_cleanup_incomplete"
+        and journal_swap_payload.get("recovery_required") is True
+        and journal_replacement is not None
+        and journal_replacement.is_file(),
+    )
+
+    temporary_swap = create_fixture(
+        root,
+        "journal-temporary-swap",
+        active_size=MINIMUM_MAX_BYTES + 1,
+    )
+    temporary_swap_label = ".agentops-log-rotate-journal.json.tmp-abcdef0123456789"
+    temporary_swap_path = temporary_swap["home"] / temporary_swap_label
+    write_private(temporary_swap_path, b"original journal temporary fixture\n")
+    temporary_replacement_created = False
+
+    def replace_temporary_before_unlink(parent_fd: int, name: str, expected: dict) -> None:
+        nonlocal temporary_replacement_created
+        if name == temporary_swap_label and not temporary_replacement_created:
+            displaced = "displaced-log-rotation-temporary"
+            os.rename(name, displaced, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=parent_fd)
+            try:
+                os.write(descriptor, b"replacement journal temporary fixture\n")
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            temporary_replacement_created = True
+        original_unlink_bound(parent_fd, name, expected)
+
+    with mock.patch.object(host_log, "_unlink_bound_regular", side_effect=replace_temporary_before_unlink):
+        temporary_swap_payload, temporary_swap_status = host_log.rotate_logs(
+            temporary_swap["logs"],
+            max_bytes=MINIMUM_MAX_BYTES,
+            backups=2,
+            confirm_rotate=True,
+        )
+    record(
+        failures,
+        evidence,
+        "journal_temporary_replacement_is_not_deleted",
+        temporary_swap_status == 1
+        and temporary_swap_payload.get("error") == "host_log_recovery_failed"
+        and temporary_replacement_created
+        and temporary_swap_path.is_file(),
+    )
+
+    launchd_truncation = create_fixture(
+        root,
+        "launchd-truncation-during-recovery",
+        active_size=MINIMUM_MAX_BYTES + 1,
+        backup_count=2,
+    )
+    launchd_truncation_plan, launchd_truncation_error = host_log.build_rotation_plan(
+        launchd_truncation["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    launchd_truncation_interrupted = False
+    try:
+        with mock.patch.object(host_log, "_atomic_exchange", side_effect=KeyboardInterrupt):
+            host_log.rotate_logs(
+                launchd_truncation["logs"],
+                max_bytes=MINIMUM_MAX_BYTES,
+                backups=2,
+                confirm_rotate=True,
+                plan_hash=str(launchd_truncation_plan.get("public", {}).get("plan_hash") or ""),
+            )
+    except KeyboardInterrupt:
+        launchd_truncation_interrupted = True
+    launchd_before_truncate = launchd_truncation["launchd_log"].lstat()
+    with launchd_truncation["launchd_log"].open("r+b") as launchd_handle:
+        launchd_handle.truncate(max(0, launchd_before_truncate.st_size - 1))
+        launchd_handle.flush()
+        os.fsync(launchd_handle.fileno())
+    launchd_after_truncate = launchd_truncation["launchd_log"].lstat()
+    launchd_recovery_payload, launchd_recovery_status = host_log.rotate_logs(
+        launchd_truncation["logs"],
+        max_bytes=MINIMUM_MAX_BYTES,
+        backups=2,
+        confirm_rotate=True,
+    )
+    record(
+        failures,
+        evidence,
+        "launchd_truncation_during_recovery_fails_closed",
+        launchd_truncation_error is None
+        and launchd_truncation_interrupted
+        and (launchd_before_truncate.st_dev, launchd_before_truncate.st_ino)
+        == (launchd_after_truncate.st_dev, launchd_after_truncate.st_ino)
+        and launchd_after_truncate.st_size < launchd_before_truncate.st_size
+        and launchd_recovery_status == 1
+        and launchd_recovery_payload.get("error") == "host_log_recovery_state_unverifiable"
+        and host_log.start_gate(launchd_truncation["logs"]).get("ok") is False
+        and (launchd_truncation["home"] / ".agentops-log-rotate-journal.json").is_file(),
+    )
+
+    journal_update_swap = create_fixture(
+        root,
+        "journal-swap-during-update",
+        active_size=MINIMUM_MAX_BYTES + 1,
+        backup_count=2,
+    )
+    journal_update_plan, journal_update_plan_error = host_log.build_rotation_plan(
+        journal_update_swap["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    journal_update_logs_before = snapshot_directory(journal_update_swap["logs"])
+    original_regular_exchange = host_log._atomic_exchange_regular
+    journal_update_replacement: Path | None = None
+
+    def replace_journal_during_update(
+        parent_fd: int,
+        left: str,
+        right: str,
+        *,
+        left_fd: int,
+        right_fd: int,
+    ) -> None:
+        nonlocal journal_update_replacement
+        if journal_update_replacement is None:
+            displaced = "displaced-journal-during-update"
+            os.rename(right, displaced, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            descriptor = os.open(right, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=parent_fd)
+            try:
+                os.write(descriptor, b'{"replacement_fixture":true}\n')
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            journal_update_replacement = journal_update_swap["home"] / right
+        original_regular_exchange(
+            parent_fd,
+            left,
+            right,
+            left_fd=left_fd,
+            right_fd=right_fd,
+        )
+
+    with mock.patch.object(host_log, "_atomic_exchange_regular", side_effect=replace_journal_during_update):
+        journal_update_payload, journal_update_status = host_log.rotate_logs(
+            journal_update_swap["logs"],
+            max_bytes=MINIMUM_MAX_BYTES,
+            backups=2,
+            confirm_rotate=True,
+            plan_hash=str(journal_update_plan.get("public", {}).get("plan_hash") or ""),
+        )
+    record(
+        failures,
+        evidence,
+        "journal_replacement_during_update_is_not_overwritten_or_deleted",
+        journal_update_plan_error is None
+        and journal_update_status == 1
+        and journal_update_payload.get("state_rolled_back") is False
+        and journal_update_payload.get("recovery_required") is True
+        and snapshot_directory(journal_update_swap["logs"]) == journal_update_logs_before
+        and journal_update_replacement is not None
+        and journal_update_replacement.is_file(),
+    )
+
+    initial_journal_swap = create_fixture(
+        root,
+        "journal-swap-before-initial-publish",
+        active_size=MINIMUM_MAX_BYTES + 1,
+        backup_count=2,
+    )
+    initial_journal_plan, initial_journal_plan_error = host_log.build_rotation_plan(
+        initial_journal_swap["logs"], max_bytes=MINIMUM_MAX_BYTES, backups=2
+    )
+    original_noreplace = host_log._rename_noreplace
+    initial_journal_replacement: Path | None = None
+
+    def install_journal_before_initial_publish(parent_fd: int, source: str, destination: str) -> None:
+        nonlocal initial_journal_replacement
+        descriptor = os.open(
+            destination,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+            dir_fd=parent_fd,
+        )
+        try:
+            os.write(descriptor, b'{"replacement_fixture":true}\n')
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        initial_journal_replacement = initial_journal_swap["home"] / destination
+        original_noreplace(parent_fd, source, destination)
+
+    with mock.patch.object(host_log, "_rename_noreplace", side_effect=install_journal_before_initial_publish):
+        initial_journal_payload, initial_journal_status = host_log.rotate_logs(
+            initial_journal_swap["logs"],
+            max_bytes=MINIMUM_MAX_BYTES,
+            backups=2,
+            confirm_rotate=True,
+            plan_hash=str(initial_journal_plan.get("public", {}).get("plan_hash") or ""),
+        )
+    record(
+        failures,
+        evidence,
+        "journal_replacement_before_initial_publish_is_not_overwritten_or_deleted",
+        initial_journal_plan_error is None
+        and initial_journal_status == 1
+        and initial_journal_payload.get("state_rolled_back") is False
+        and initial_journal_payload.get("recovery_required") is True
+        and initial_journal_replacement is not None
+        and initial_journal_replacement.is_file(),
+    )
+
+    stage_member_swap = create_fixture(
+        root,
+        "stage-member-swap",
+        create_logs=False,
+    )
+    stage_member_label = ".agentops-log-rotate-stage-0123456789abcdef0123456789abcdef"
+    stage_member_path = stage_member_swap["home"] / stage_member_label
+    stage_member_path.mkdir(mode=0o700)
+    write_private(stage_member_path / "host.log", b"original stage member fixture\n")
+    stage_member_parent_fd = host_log._open_private_parent(stage_member_swap["home"])
+    stage_member_fd = host_log._open_directory_at(stage_member_parent_fd, stage_member_label)
+    stage_member_expected = host_log._snapshot_directory_fd(stage_member_fd, allow_partial=True)
+    original_snapshot_fd = host_log._snapshot_directory_fd
+    stage_member_replacement: tuple | None = None
+    stage_member_rejected = False
+
+    def replace_stage_member_after_snapshot(directory_fd: int, *, allow_partial: bool = False) -> dict:
+        nonlocal stage_member_replacement
+        snapshot = original_snapshot_fd(directory_fd, allow_partial=allow_partial)
+        if directory_fd == stage_member_fd and allow_partial and stage_member_replacement is None:
+            os.rename("host.log", "host.log.1", src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+            write_private(stage_member_path / "host.log", b"replacement stage member fixture\n")
+            stage_member_replacement = fingerprint(stage_member_path / "host.log")
+        return snapshot
+
+    try:
+        with mock.patch.object(host_log, "_snapshot_directory_fd", side_effect=replace_stage_member_after_snapshot):
+            host_log._cleanup_stage(
+                stage_member_parent_fd,
+                stage_member_label,
+                stage_fd=stage_member_fd,
+                expected_snapshot=stage_member_expected,
+            )
+    except OSError:
+        stage_member_rejected = True
+    finally:
+        os.close(stage_member_fd)
+        os.close(stage_member_parent_fd)
+    record(
+        failures,
+        evidence,
+        "stage_member_replacement_is_not_unlinked",
+        stage_member_rejected
+        and stage_member_replacement is not None
+        and stage_member_path.is_dir()
+        and (stage_member_path / "host.log").is_file()
+        and fingerprint(stage_member_path / "host.log") == stage_member_replacement,
+    )
+
+    stage_link_swap = create_fixture(
+        root,
+        "stage-member-link-swap",
+        create_logs=False,
+    )
+    stage_link_label = ".agentops-log-rotate-stage-fedcba9876543210fedcba9876543210"
+    stage_link_path = stage_link_swap["home"] / stage_link_label
+    stage_link_path.mkdir(mode=0o700)
+    write_private(stage_link_path / "host.log", b"stage member hardlink fixture\n")
+    stage_link_parent_fd = host_log._open_private_parent(stage_link_swap["home"])
+    stage_link_fd = host_log._open_directory_at(stage_link_parent_fd, stage_link_label)
+    stage_link_expected = host_log._snapshot_directory_fd(stage_link_fd, allow_partial=True)
+    stage_link_created = False
+    stage_link_rejected = False
+
+    def add_stage_member_link_after_snapshot(directory_fd: int, *, allow_partial: bool = False) -> dict:
+        nonlocal stage_link_created
+        snapshot = original_snapshot_fd(directory_fd, allow_partial=allow_partial)
+        if directory_fd == stage_link_fd and allow_partial and not stage_link_created:
+            os.link(
+                "host.log",
+                "bound-stage-member-copy",
+                src_dir_fd=directory_fd,
+                dst_dir_fd=stage_link_parent_fd,
+                follow_symlinks=False,
+            )
+            stage_link_created = True
+        return snapshot
+
+    try:
+        with mock.patch.object(host_log, "_snapshot_directory_fd", side_effect=add_stage_member_link_after_snapshot):
+            host_log._cleanup_stage(
+                stage_link_parent_fd,
+                stage_link_label,
+                stage_fd=stage_link_fd,
+                expected_snapshot=stage_link_expected,
+            )
+    except OSError:
+        stage_link_rejected = True
+    finally:
+        os.close(stage_link_fd)
+        os.close(stage_link_parent_fd)
+    record(
+        failures,
+        evidence,
+        "stage_member_link_count_change_is_not_unlinked",
+        stage_link_rejected
+        and stage_link_created
+        and (stage_link_path / "host.log").is_file()
+        and (stage_link_swap["home"] / "bound-stage-member-copy").is_file()
+        and (stage_link_path / "host.log").lstat().st_nlink == 2,
     )
 
 

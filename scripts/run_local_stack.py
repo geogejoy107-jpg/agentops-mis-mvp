@@ -116,6 +116,17 @@ def close_ready_fd(ready_fd: int | None) -> None:
         pass
 
 
+def inherited_runtime_fds(
+    runtime_lock_fd: int | None,
+    *additional_fds: int,
+) -> tuple[int, ...]:
+    return tuple(
+        descriptor
+        for descriptor in (runtime_lock_fd, *additional_fds)
+        if isinstance(descriptor, int) and not isinstance(descriptor, bool) and descriptor >= 3
+    )
+
+
 def signal_ready(ready_fd: int | None) -> None:
     if ready_fd is None:
         return
@@ -399,6 +410,7 @@ def main() -> int:
                 backend_command,
                 cwd=ROOT,
                 env=env,
+                pass_fds=inherited_runtime_fds(runtime_lock_fd),
             )
             processes.append(("backend", backend))
             wait_ready(lambda: gateway_ready(backend_url, gateway_api_key), f"backend on {backend_url}")
@@ -411,7 +423,7 @@ def main() -> int:
                         relay_connector_command(args, ready_write_fd),
                         cwd=ROOT,
                         env=projected_environment(env),
-                        pass_fds=(ready_write_fd,),
+                        pass_fds=inherited_runtime_fds(runtime_lock_fd, ready_write_fd),
                     )
                     processes.append(("relay-connector", relay_connector))
                 except Exception:
@@ -449,13 +461,19 @@ def main() -> int:
                     ["npm", "run", "dev", "--", "--host", args.ui_host, "--port", str(args.ui_port)],
                     cwd=UI_DIR,
                     env=auxiliary_env,
+                    pass_fds=inherited_runtime_fds(runtime_lock_fd),
                 )
                 processes.append(("ui", ui))
                 wait_ready(lambda: port_open(args.ui_port, args.ui_host), f"UI on {args.ui_host}:{args.ui_port}")
 
         for adapter in workers:
             worker_env = worker_environment(env, adapter)
-            worker = subprocess.Popen(worker_command(adapter, args.worker_poll_interval, args.confirm_live_workers), cwd=ROOT, env=worker_env)
+            worker = subprocess.Popen(
+                worker_command(adapter, args.worker_poll_interval, args.confirm_live_workers),
+                cwd=ROOT,
+                env=worker_env,
+                pass_fds=inherited_runtime_fds(runtime_lock_fd),
+            )
             processes.append((f"worker:{adapter}", worker))
             time.sleep(0.2)
             if worker.poll() is not None:

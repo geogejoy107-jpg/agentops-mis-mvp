@@ -251,6 +251,7 @@ def _read_private_bounded_json(path: Path, *, maximum_bytes: int = 16 * 1024) ->
             not stat.S_ISREG(metadata.st_mode)
             or metadata.st_uid != os.getuid()
             or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
             or metadata.st_size <= 0
             or metadata.st_size > maximum_bytes
         ):
@@ -3009,9 +3010,15 @@ def _cmd_log_rotate_unlocked(args) -> int:
                 "token_omitted": True,
             })
             return 2
-    pid_exists = p["pid"].exists() or p["pid"].is_symlink()
-    pid_record = read_json(p["pid"])
-    pid_record_unsafe = p["pid"].is_symlink() or (pid_exists and not pid_record)
+    try:
+        p["pid"].lstat()
+        pid_exists = True
+    except FileNotFoundError:
+        pid_exists = False
+    except OSError:
+        pid_exists = True
+    pid_record = _read_private_bounded_json(p["pid"], maximum_bytes=4096) or {}
+    pid_record_unsafe = pid_exists and not pid_record
     try:
         pid = int(pid_record.get("pid") or 0)
     except (TypeError, ValueError):

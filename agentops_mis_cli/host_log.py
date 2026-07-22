@@ -259,9 +259,24 @@ def _snapshot_entry_matches(name: str, actual: dict, expected: dict) -> bool:
     if not isinstance(actual, dict) or not isinstance(expected, dict):
         return False
     keys = ("device", "inode", "mode", "uid")
-    if name != "launchd.log":
-        keys += ("size_bytes", "mtime_ns")
-    return all(actual.get(key) == expected.get(key) for key in keys)
+    if not all(actual.get(key) == expected.get(key) for key in keys):
+        return False
+    if name == "launchd.log":
+        actual_size = actual.get("size_bytes")
+        expected_size = expected.get("size_bytes")
+        return bool(
+            isinstance(actual_size, int)
+            and isinstance(expected_size, int)
+            and actual_size >= expected_size
+        )
+    return all(actual.get(key) == expected.get(key) for key in ("size_bytes", "mtime_ns"))
+
+
+def _cleanup_entry_matches(name: str, actual: dict, expected: dict) -> bool:
+    return bool(
+        _snapshot_entry_matches(name, actual, expected)
+        and actual.get("links") == expected.get("links")
+    )
 
 
 def _snapshot_from_inventory(inventory: dict) -> dict:
@@ -411,6 +426,96 @@ def _directory_name_matches_fd(parent_fd: int, name: str, directory_fd: int) -> 
     )
 
 
+def _regular_identity(value: os.stat_result) -> dict:
+    return {
+        "device": int(value.st_dev),
+        "inode": int(value.st_ino),
+        "mode": stat.S_IMODE(value.st_mode),
+        "uid": int(value.st_uid),
+        "links": int(value.st_nlink),
+        "size_bytes": int(value.st_size),
+        "mtime_ns": int(value.st_mtime_ns),
+    }
+
+
+def _bound_regular_name_matches(parent_fd: int, name: str, expected: dict) -> bool:
+    if not isinstance(expected, dict):
+        return False
+    try:
+        value = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError:
+        return False
+    if (
+        not stat.S_ISREG(value.st_mode)
+        or value.st_uid != os.getuid()
+        or stat.S_IMODE(value.st_mode) != 0o600
+        or value.st_nlink != 1
+    ):
+        return False
+    actual = _regular_identity(value)
+    return all(
+        actual.get(key) == expected.get(key)
+        for key in ("device", "inode", "mode", "uid", "links", "size_bytes", "mtime_ns")
+    )
+
+
+def _regular_name_matches_fd(
+    parent_fd: int,
+    name: str,
+    descriptor: int,
+    *,
+    allowed_links: tuple[int, ...] = (1,),
+) -> bool:
+    try:
+        named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        opened = os.fstat(descriptor)
+    except OSError:
+        return False
+    if (
+        not stat.S_ISREG(named.st_mode)
+        or not stat.S_ISREG(opened.st_mode)
+        or named.st_uid != os.getuid()
+        or opened.st_uid != os.getuid()
+        or stat.S_IMODE(named.st_mode) != 0o600
+        or stat.S_IMODE(opened.st_mode) != 0o600
+        or named.st_nlink not in allowed_links
+        or opened.st_nlink not in allowed_links
+    ):
+        return False
+    return _regular_identity(named) == _regular_identity(opened)
+
+
+def _unlink_bound_regular(parent_fd: int, name: str, expected: dict) -> None:
+    descriptor = -1
+    try:
+        expected_links = expected.get("links") if isinstance(expected, dict) else None
+        if expected_links not in {1, 2}:
+            raise OSError("private metadata identity is invalid")
+        descriptor = os.open(
+            name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_fd,
+        )
+        opened = _regular_identity(os.fstat(descriptor))
+        if opened != expected or not _regular_name_matches_fd(
+            parent_fd,
+            name,
+            descriptor,
+            allowed_links=(expected_links,),
+        ):
+            raise OSError("private metadata name changed before cleanup")
+        os.unlink(name, dir_fd=parent_fd)
+        remaining = os.fstat(descriptor)
+        if (
+            (remaining.st_dev, remaining.st_ino) != (expected["device"], expected["inode"])
+            or remaining.st_nlink != expected_links - 1
+        ):
+            raise OSError("private metadata cleanup result is unverifiable")
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def _fsync_fd(descriptor: int) -> None:
     os.fsync(descriptor)
 
@@ -424,12 +529,18 @@ def _write_all(descriptor: int, data: bytes) -> None:
         offset += written
 
 
-def _write_journal(parent_fd: int, payload: dict) -> None:
+def _write_journal(
+    parent_fd: int,
+    payload: dict,
+    *,
+    expected_previous: dict | None = None,
+) -> dict:
     encoded = (json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n").encode("utf-8")
     if len(encoded) > HOST_LOG_ROTATE_JOURNAL_MAX_BYTES:
         raise OSError("log rotation journal too large")
     temporary = f"{_JOURNAL_NAME}.tmp-{secrets.token_hex(8)}"
     descriptor = -1
+    previous_fd = -1
     try:
         descriptor = os.open(
             temporary,
@@ -440,17 +551,64 @@ def _write_journal(parent_fd: int, payload: dict) -> None:
         os.fchmod(descriptor, 0o600)
         _write_all(descriptor, encoded)
         os.fsync(descriptor)
-        os.close(descriptor)
-        descriptor = -1
-        os.replace(temporary, _JOURNAL_NAME, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        temporary_identity = _regular_identity(os.fstat(descriptor))
+        if not _regular_name_matches_fd(parent_fd, temporary, descriptor):
+            raise OSError("log rotation journal temporary changed before publication")
+
+        if expected_previous is None:
+            _rename_noreplace(parent_fd, temporary, _JOURNAL_NAME)
+            if _exists_at(parent_fd, temporary) or not _regular_name_matches_fd(
+                parent_fd,
+                _JOURNAL_NAME,
+                descriptor,
+            ):
+                raise OSError("initial log rotation journal publication is unverifiable")
+        else:
+            previous_fd = os.open(
+                _JOURNAL_NAME,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=parent_fd,
+            )
+            previous_identity = _regular_identity(os.fstat(previous_fd))
+            if previous_identity != expected_previous or not _regular_name_matches_fd(
+                parent_fd,
+                _JOURNAL_NAME,
+                previous_fd,
+            ):
+                raise OSError("prior log rotation journal changed before update")
+            _atomic_exchange_regular(
+                parent_fd,
+                temporary,
+                _JOURNAL_NAME,
+                left_fd=descriptor,
+                right_fd=previous_fd,
+            )
+            _unlink_bound_regular(parent_fd, temporary, previous_identity)
+
         _fsync_fd(parent_fd)
+        journal_identity = _regular_identity(os.fstat(descriptor))
+        if journal_identity.get("links") != 1 or not _regular_name_matches_fd(
+            parent_fd,
+            _JOURNAL_NAME,
+            descriptor,
+        ):
+            raise OSError("log rotation journal identity changed during publication")
+        return journal_identity
     finally:
+        if descriptor >= 0 and _regular_name_matches_fd(
+            parent_fd,
+            temporary,
+            descriptor,
+            allowed_links=(1, 2),
+        ):
+            try:
+                _unlink_bound_regular(parent_fd, temporary, _regular_identity(os.fstat(descriptor)))
+            except FileNotFoundError:
+                pass
+        if previous_fd >= 0:
+            os.close(previous_fd)
         if descriptor >= 0:
             os.close(descriptor)
-        try:
-            os.unlink(temporary, dir_fd=parent_fd)
-        except FileNotFoundError:
-            pass
 
 
 def _read_journal(parent_fd: int) -> dict | None:
@@ -473,6 +631,7 @@ def _read_journal(parent_fd: int) -> dict | None:
             or value.st_size > HOST_LOG_ROTATE_JOURNAL_MAX_BYTES
         ):
             raise OSError("unsafe log rotation journal")
+        identity = _regular_identity(value)
         data = bytearray()
         while len(data) <= HOST_LOG_ROTATE_JOURNAL_MAX_BYTES:
             chunk = os.read(descriptor, min(16 * 1024, HOST_LOG_ROTATE_JOURNAL_MAX_BYTES + 1 - len(data)))
@@ -480,6 +639,12 @@ def _read_journal(parent_fd: int) -> dict | None:
                 break
             data.extend(chunk)
         payload = json.loads(bytes(data).decode("utf-8"))
+        if _regular_identity(os.fstat(descriptor)) != identity or not _regular_name_matches_fd(
+            parent_fd,
+            _JOURNAL_NAME,
+            descriptor,
+        ):
+            raise OSError("log rotation journal changed while reading")
     finally:
         os.close(descriptor)
     if (
@@ -494,6 +659,7 @@ def _read_journal(parent_fd: int) -> dict | None:
         raise OSError("invalid log rotation journal")
     if payload["phase"] == "prepared" and not isinstance(payload.get("new_snapshot"), dict):
         raise OSError("incomplete prepared log rotation journal")
+    payload["_journal_identity"] = identity
     return payload
 
 
@@ -508,9 +674,9 @@ def _stage_labels(parent_fd: int) -> list[str]:
     return sorted(labels)
 
 
-def _journal_temp_labels(parent_fd: int) -> list[str]:
+def _journal_temp_snapshot(parent_fd: int) -> dict[str, dict]:
     prefix = f"{_JOURNAL_NAME}.tmp-"
-    labels = []
+    entries = {}
     for name in os.listdir(parent_fd):
         if not name.startswith(prefix):
             continue
@@ -525,34 +691,53 @@ def _journal_temp_labels(parent_fd: int) -> list[str]:
             or value.st_size > HOST_LOG_ROTATE_JOURNAL_MAX_BYTES
         ):
             raise OSError("unsafe log rotation journal temporary")
-        labels.append(name)
-    if len(labels) > HOST_LOG_ROTATE_DIRECTORY_ENTRY_LIMIT:
+        entries[name] = _regular_identity(value)
+    if len(entries) > HOST_LOG_ROTATE_DIRECTORY_ENTRY_LIMIT:
         raise OSError("log rotation journal temporary limit exceeded")
-    return sorted(labels)
+    return {name: entries[name] for name in sorted(entries)}
 
 
-def _cleanup_journal_temps(parent_fd: int, labels: list[str]) -> None:
-    if _journal_temp_labels(parent_fd) != sorted(labels):
+def _journal_temp_labels(parent_fd: int) -> list[str]:
+    return list(_journal_temp_snapshot(parent_fd))
+
+
+def _cleanup_journal_temps(parent_fd: int, expected: dict[str, dict]) -> None:
+    if _journal_temp_snapshot(parent_fd) != expected:
         raise OSError("log rotation journal temporary set changed")
-    for label in labels:
-        os.unlink(label, dir_fd=parent_fd)
-    if labels:
+    for label, identity in expected.items():
+        _unlink_bound_regular(parent_fd, label, identity)
+    if expected:
         _fsync_fd(parent_fd)
 
 
-def _cleanup_stage(parent_fd: int, stage_label: str) -> None:
-    try:
-        stage_fd = _open_directory_at(parent_fd, stage_label)
-    except FileNotFoundError:
-        return
-    try:
-        snapshot = _snapshot_directory_fd(stage_fd, allow_partial=True)
-        for name in sorted(snapshot["entries"]):
-            os.unlink(name, dir_fd=stage_fd)
-        _fsync_fd(stage_fd)
-    finally:
-        os.close(stage_fd)
+def _cleanup_stage(
+    parent_fd: int,
+    stage_label: str,
+    *,
+    stage_fd: int,
+    expected_snapshot: dict | None,
+) -> None:
+    if not _directory_name_matches_fd(parent_fd, stage_label, stage_fd):
+        raise OSError("log rotation stage name changed before cleanup")
+    snapshot = _snapshot_directory_fd(stage_fd, allow_partial=True)
+    if expected_snapshot is not None and not _snapshot_subset_matches(
+        snapshot,
+        expected_snapshot,
+    ):
+        raise OSError("log rotation cleanup snapshot changed")
+    for name in sorted(snapshot["entries"]):
+        actual = _metadata_at(stage_fd, name, allowed_links=(1, 2))
+        if not _cleanup_entry_matches(name, actual, snapshot["entries"][name]):
+            raise OSError("log rotation stage member changed before cleanup")
+        os.unlink(name, dir_fd=stage_fd)
+    _fsync_fd(stage_fd)
+    if os.listdir(stage_fd):
+        raise OSError("log rotation stage changed during cleanup")
+    if not _directory_name_matches_fd(parent_fd, stage_label, stage_fd):
+        raise OSError("log rotation stage name changed during cleanup")
     os.rmdir(stage_label, dir_fd=parent_fd)
+    if _exists_at(parent_fd, stage_label):
+        raise OSError("log rotation stage still exists after cleanup")
     _fsync_fd(parent_fd)
 
 
@@ -567,21 +752,21 @@ def _inspect_pending_rotation(log_dir: Path) -> tuple[dict | None, dict | None]:
         try:
             journal = _read_journal(parent_fd)
             stages = _stage_labels(parent_fd)
-            journal_temps = _journal_temp_labels(parent_fd)
+            journal_temp_snapshot = _journal_temp_snapshot(parent_fd)
         except (OSError, UnicodeError, ValueError):
             return None, {"error": "host_log_recovery_metadata_unverifiable"}
         if journal is None:
             if stages:
                 return None, {"error": "host_log_orphan_stage"}
-            if journal_temps:
+            if journal_temp_snapshot:
                 return {
                     "recovery_kind": "journal_temps",
-                    "journal_temp_labels": journal_temps,
+                    "journal_temp_snapshot": journal_temp_snapshot,
                 }, None
             return None, None
         if any(stage != journal["stage_label"] for stage in stages):
             return None, {"error": "host_log_recovery_stage_conflict"}
-        journal["journal_temp_labels"] = journal_temps
+        journal["journal_temp_snapshot"] = journal_temp_snapshot
         return journal, None
     finally:
         os.close(parent_fd)
@@ -620,10 +805,19 @@ def start_gate(log_dir: Path) -> dict:
 def _recover_pending_rotation(log_dir: Path, journal: dict) -> tuple[dict, int]:
     parent_fd = -1
     current_fd = -1
+    stage_fd = -1
     try:
         parent_fd = _open_private_parent(log_dir.parent)
-        journal_temps = list(journal.get("journal_temp_labels") or [])
-        _cleanup_journal_temps(parent_fd, journal_temps)
+        journal_temp_snapshot = journal.get("journal_temp_snapshot") or {}
+        if not isinstance(journal_temp_snapshot, dict):
+            raise OSError("invalid log rotation journal temporary snapshot")
+        if journal.get("recovery_kind") != "journal_temps" and not _bound_regular_name_matches(
+            parent_fd,
+            _JOURNAL_NAME,
+            journal.get("_journal_identity") or {},
+        ):
+            raise OSError("log rotation journal name changed before recovery")
+        _cleanup_journal_temps(parent_fd, journal_temp_snapshot)
         if journal.get("recovery_kind") == "journal_temps":
             return {
                 "ok": False,
@@ -651,33 +845,67 @@ def _recover_pending_rotation(log_dir: Path, journal: dict) -> tuple[dict, int]:
                 confirmation_applied=True,
                 recovery_completed=False,
             )[0], 1
-        if new_matches:
-            if _exists_at(parent_fd, journal["stage_label"]):
-                stage_fd = _open_directory_at(parent_fd, journal["stage_label"])
-                try:
-                    old_stage = _snapshot_directory_fd(stage_fd, allow_partial=True)
-                finally:
-                    os.close(stage_fd)
-                if not _snapshot_subset_matches(old_stage, journal["old_snapshot"]):
+        expected_current = journal.get("new_snapshot") if new_matches else journal["old_snapshot"]
+        stage_expected = None
+        if _exists_at(parent_fd, journal["stage_label"]):
+            stage_fd = _open_directory_at(parent_fd, journal["stage_label"])
+            stage_snapshot = _snapshot_directory_fd(stage_fd, allow_partial=True)
+            if new_matches:
+                stage_expected = journal["old_snapshot"]
+            elif journal.get("phase") == "prepared":
+                stage_expected = journal.get("new_snapshot")
+            else:
+                stage_directory = journal.get("stage_directory") or {}
+                actual_directory = stage_snapshot.get("directory") or {}
+                if not isinstance(stage_directory, dict) or any(
+                    actual_directory.get(key) != stage_directory.get(key)
+                    for key in ("device", "inode", "mode", "uid")
+                ):
                     return _error(
                         "host_log_recovery_state_unverifiable",
                         dry_run=False,
                         confirmation_applied=True,
                         recovery_completed=False,
                     )[0], 1
-            elif any(item["links"] != 1 for item in current["entries"].values()):
+                stage_expected = stage_snapshot
+            if not _snapshot_subset_matches(stage_snapshot, stage_expected or {}):
                 return _error(
                     "host_log_recovery_state_unverifiable",
                     dry_run=False,
                     confirmation_applied=True,
                     recovery_completed=False,
                 )[0], 1
-        _cleanup_stage(parent_fd, journal["stage_label"])
-        os.unlink(_JOURNAL_NAME, dir_fd=parent_fd)
-        _fsync_fd(parent_fd)
+            _cleanup_stage(
+                parent_fd,
+                journal["stage_label"],
+                stage_fd=stage_fd,
+                expected_snapshot=stage_expected,
+            )
+        elif new_matches and any(item["links"] != 1 for item in current["entries"].values()):
+            return _error(
+                "host_log_recovery_state_unverifiable",
+                dry_run=False,
+                confirmation_applied=True,
+                recovery_completed=False,
+            )[0], 1
+
+        if (
+            not _directory_name_matches_fd(parent_fd, log_dir.name, current_fd)
+            or _exists_at(parent_fd, journal["stage_label"])
+        ):
+            raise OSError("recovered log namespace changed before journal cleanup")
         current_after = _snapshot_directory_fd(current_fd)
-        if any(item["links"] != 1 for item in current_after["entries"].values()):
-            raise OSError("recovered logs retain unexpected links")
+        if (
+            not _snapshot_matches(current_after, expected_current or {})
+            or any(item["links"] != 1 for item in current_after["entries"].values())
+        ):
+            raise OSError("recovered logs could not be verified")
+        _unlink_bound_regular(
+            parent_fd,
+            _JOURNAL_NAME,
+            journal.get("_journal_identity") or {},
+        )
+        _fsync_fd(parent_fd)
         return {
             "ok": False,
             "operation": "host_log_rotate",
@@ -699,6 +927,8 @@ def _recover_pending_rotation(log_dir: Path, journal: dict) -> tuple[dict, int]:
             failure_detail_omitted=True,
         )[0], 1
     finally:
+        if stage_fd >= 0:
+            os.close(stage_fd)
         if current_fd >= 0:
             os.close(current_fd)
         if parent_fd >= 0:
@@ -745,7 +975,27 @@ def _create_empty_active(directory_fd: int) -> dict:
     return created
 
 
-def _atomic_exchange(parent_fd: int, left: str, right: str) -> None:
+def _rename_noreplace(parent_fd: int, source: str, destination: str) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin":
+        function = getattr(libc, "renameatx_np", None)
+        flags = 4
+    elif sys.platform.startswith("linux"):
+        function = getattr(libc, "renameat2", None)
+        flags = 1
+    else:
+        function = None
+        flags = 0
+    if function is None:
+        raise OSError("no-clobber rename unavailable")
+    function.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    function.restype = ctypes.c_int
+    if function(parent_fd, os.fsencode(source), parent_fd, os.fsencode(destination), flags) != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
+
+
+def _rename_exchange(parent_fd: int, left: str, right: str) -> None:
     libc = ctypes.CDLL(None, use_errno=True)
     left_bytes = os.fsencode(left)
     right_bytes = os.fsencode(right)
@@ -764,6 +1014,44 @@ def _atomic_exchange(parent_fd: int, left: str, right: str) -> None:
         raise OSError(error_number, os.strerror(error_number))
 
 
+def _atomic_exchange_regular(
+    parent_fd: int,
+    left: str,
+    right: str,
+    *,
+    left_fd: int,
+    right_fd: int,
+) -> None:
+    if not _regular_name_matches_fd(parent_fd, left, left_fd):
+        raise OSError("left private metadata name changed before atomic exchange")
+    if not _regular_name_matches_fd(parent_fd, right, right_fd):
+        raise OSError("right private metadata name changed before atomic exchange")
+    _rename_exchange(parent_fd, left, right)
+    if not _regular_name_matches_fd(parent_fd, left, right_fd):
+        raise OSError("left private metadata exchange result is unverifiable")
+    if not _regular_name_matches_fd(parent_fd, right, left_fd):
+        raise OSError("right private metadata exchange result is unverifiable")
+
+
+def _atomic_exchange(
+    parent_fd: int,
+    left: str,
+    right: str,
+    *,
+    left_fd: int,
+    right_fd: int,
+) -> None:
+    if not _directory_name_matches_fd(parent_fd, left, left_fd):
+        raise OSError("left directory name changed before atomic exchange")
+    if not _directory_name_matches_fd(parent_fd, right, right_fd):
+        raise OSError("right directory name changed before atomic exchange")
+    _rename_exchange(parent_fd, left, right)
+    if not _directory_name_matches_fd(parent_fd, left, right_fd):
+        raise OSError("left directory exchange result is unverifiable")
+    if not _directory_name_matches_fd(parent_fd, right, left_fd):
+        raise OSError("right directory exchange result is unverifiable")
+
+
 def _perform_atomic_rotation(log_dir: Path, plan: dict) -> tuple[dict, int]:
     public = plan["public"]
     inventory = plan["canonical"]["inventory"]
@@ -777,6 +1065,7 @@ def _perform_atomic_rotation(log_dir: Path, plan: dict) -> tuple[dict, int]:
     stage_created = False
     exchanged = False
     journal_written = False
+    journal_identity = None
     new_snapshot = None
     try:
         parent_fd = _open_private_parent(log_dir.parent)
@@ -797,11 +1086,20 @@ def _perform_atomic_rotation(log_dir: Path, plan: dict) -> tuple[dict, int]:
             "plan_hash": public["plan_hash"],
             "old_snapshot": old_snapshot,
         }
-        _write_journal(parent_fd, journal)
         journal_written = True
+        journal_identity = _write_journal(parent_fd, journal)
         os.mkdir(stage_label, mode=0o700, dir_fd=parent_fd)
         stage_created = True
         stage_fd = _open_directory_at(parent_fd, stage_label)
+        journal = {
+            **journal,
+            "stage_directory": _directory_metadata(os.fstat(stage_fd)),
+        }
+        journal_identity = _write_journal(
+            parent_fd,
+            journal,
+            expected_previous=journal_identity,
+        )
         _create_empty_active(stage_fd)
         _link_expected(logs_fd, "host.log", stage_fd, "host.log.1", metadata_by_label["host.log"])
         for item in inventory["backups"]:
@@ -817,13 +1115,19 @@ def _perform_atomic_rotation(log_dir: Path, plan: dict) -> tuple[dict, int]:
             "phase": "prepared",
             "new_snapshot": new_snapshot,
         }
-        _write_journal(parent_fd, journal)
+        journal_identity = _write_journal(
+            parent_fd,
+            journal,
+            expected_previous=journal_identity,
+        )
 
-        if not _directory_name_matches_fd(parent_fd, log_dir.name, logs_fd):
-            raise OSError("log directory name changed before exchange")
-        if not _directory_name_matches_fd(parent_fd, stage_label, stage_fd):
-            raise OSError("log rotation stage name changed before exchange")
-        _atomic_exchange(parent_fd, log_dir.name, stage_label)
+        _atomic_exchange(
+            parent_fd,
+            log_dir.name,
+            stage_label,
+            left_fd=logs_fd,
+            right_fd=stage_fd,
+        )
         exchanged = True
         _fsync_fd(parent_fd)
         if not _directory_name_matches_fd(parent_fd, log_dir.name, stage_fd):
@@ -833,16 +1137,26 @@ def _perform_atomic_rotation(log_dir: Path, plan: dict) -> tuple[dict, int]:
         if not _snapshot_matches(_snapshot_directory_fd(stage_fd), new_snapshot):
             raise OSError("atomic log exchange did not publish prepared state")
 
-        _cleanup_stage(parent_fd, stage_label)
+        _cleanup_stage(
+            parent_fd,
+            stage_label,
+            stage_fd=logs_fd,
+            expected_snapshot=old_snapshot,
+        )
         stage_created = False
-        os.unlink(_JOURNAL_NAME, dir_fd=parent_fd)
-        journal_written = False
-        _fsync_fd(parent_fd)
+        if (
+            not _directory_name_matches_fd(parent_fd, log_dir.name, stage_fd)
+            or _exists_at(parent_fd, stage_label)
+        ):
+            raise OSError("published log namespace changed before journal cleanup")
         published = _snapshot_directory_fd(stage_fd)
         if not _snapshot_matches(published, new_snapshot) or any(
             item["links"] != 1 for item in published["entries"].values()
         ):
             raise OSError("published log state could not be verified")
+        _unlink_bound_regular(parent_fd, _JOURNAL_NAME, journal_identity or {})
+        journal_written = False
+        _fsync_fd(parent_fd)
         return {
             **public,
             "dry_run": False,
@@ -868,14 +1182,31 @@ def _perform_atomic_rotation(log_dir: Path, plan: dict) -> tuple[dict, int]:
             }, 1
         rollback_ok = True
         if stage_created and parent_fd >= 0:
-            try:
-                _cleanup_stage(parent_fd, stage_label)
-                stage_created = False
-            except OSError:
+            if stage_fd < 0:
                 rollback_ok = False
+            else:
+                try:
+                    rollback_snapshot = _snapshot_directory_fd(stage_fd, allow_partial=True)
+                    _cleanup_stage(
+                        parent_fd,
+                        stage_label,
+                        stage_fd=stage_fd,
+                        expected_snapshot=new_snapshot or rollback_snapshot,
+                    )
+                    stage_created = False
+                except OSError:
+                    rollback_ok = False
         if journal_written and parent_fd >= 0 and rollback_ok:
             try:
-                os.unlink(_JOURNAL_NAME, dir_fd=parent_fd)
+                current_after = _snapshot_directory_fd(logs_fd)
+                if (
+                    not _directory_name_matches_fd(parent_fd, log_dir.name, logs_fd)
+                    or _exists_at(parent_fd, stage_label)
+                    or not _snapshot_matches(current_after, old_snapshot)
+                    or any(item["links"] != 1 for item in current_after["entries"].values())
+                ):
+                    raise OSError("rolled back log namespace could not be verified")
+                _unlink_bound_regular(parent_fd, _JOURNAL_NAME, journal_identity or {})
                 journal_written = False
                 _fsync_fd(parent_fd)
             except OSError:

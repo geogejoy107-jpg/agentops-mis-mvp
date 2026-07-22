@@ -940,23 +940,31 @@ floor and retention is bounded from two through twenty files. A write requires
 both `--confirm-rotate` and the exact inventory/configuration plan hash while holding the
 Host lifecycle lock and the same private runtime lock held for the complete
 local-stack process lifetime; a running Host remains detectable even without a
-PID record. A stale plan, unsafe directory or file mode, symlink, hardlink,
+PID record because every long-lived backend, UI, Relay and Worker child inherits
+the same runtime-lock descriptor. A stale plan, unsafe directory or file mode, symlink, hardlink,
 unknown `host.log.*` name, or generation gap fails closed. All mutation uses
 anchored directory descriptors. A complete owner-only staging directory is
 prepared with hard links, fsynced and committed through one kernel atomic
-directory exchange; a bounded private journal distinguishes and recovers
+directory exchange. Stage members are identity-checked immediately before
+unlink. Initial journal publication uses native no-clobber rename and journal updates atomically
+exchange two already-open, identity-bound files; a bounded private journal distinguishes and recovers
 pre-exchange interruption from post-exchange committed cleanup. It reports
 incomplete cleanup rather than claiming success, and Host startup fails closed
 until pending recovery is explicitly completed. It neither reads log content
 nor changes the ledger, secret store, config or installed version. The
 Rotation itself does not rewrite `launchd.log`: its inode, owner, mode, existing
 bytes and any launchd retry append are preserved, while size/mtime drift on that
-same inode is permitted during recovery and temporary hard links may update
+same inode is permitted during recovery only when size is monotonic, while temporary hard links may update
 filesystem ctime. Post-exchange recovery accepts only an identity-matching
 subset of the journaled retired directory, so interruption during cleanup is
 idempotently completed. A failed pre-exchange cleanup retains its journal for
-the same explicit recovery path. The isolated 41-check rotation smoke and
-35-check process-lifetime runtime-lock smoke use only temporary files; no
+the same explicit recovery path. The owner-private `0700` Host namespace plus
+the lifecycle/runtime locks exclude cooperating writers; hostile same-UID
+namespace mutation is outside this local isolation boundary because portable
+POSIX has no inode-conditional unlink/rmdir primitive. The isolated 51-check
+rotation smoke and 40-check process-tree-lifetime runtime-lock smoke passed
+locally on macOS (including the `renameatx_np` path); CI runs them on the Python
+3.10/3.11 Linux compatibility matrix. They use only temporary files; no
 real Host log is read or rotated. Preview.38 is not credited, and the current
 `bounded Host log rotation` release gate remains open until an exact package
 and installed-product receipt pass. Live automatic rotation also remains open
