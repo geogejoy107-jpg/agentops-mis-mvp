@@ -920,6 +920,18 @@ current version, target version and backup directory untouched. This is
 source-only evidence: preview.38 is not credited, and an exact-package
 install/upgrade receipt on adequate storage remains open.
 
+The same unreleased source now adds bounded Host backup retention.
+`agentops host backup-prune` defaults to a verified dry-run with keep=5 and a
+hard minimum of two complete SQLite/manifest pairs. A write requires both
+`--confirm-prune` and the exact hash of the current full-inventory plan; a new
+backup invalidates the old hash. Confirmed deletion is lifecycle-locked and
+uses a same-volume private quarantine with rollback before cleanup. The
+isolated 20-check smoke proves deterministic planning, exact confirmation,
+lock serialization, protected DB/secret/log/version preservation, and
+fail-closed behavior for unknown, missing, symlinked or tampered inventory.
+No real Host backup was read or deleted. This is source-level evidence only;
+preview.38 is not credited until the exact package passes the same gate.
+
 Separately, after all package and real-runtime acceptance steps, the Host volume later fell
 to roughly 115 MiB free. The backend PID and loopback listener remained, but
 health responses became unusable and both launchd Workers exited nonzero. A
@@ -956,10 +968,10 @@ were removed without touching normal Chrome.
 
 Deployed Relay/DNS/TLS, no-Tailscale browser pairing, deployed-Relay
 interruption, current-package physical browser disconnect/reconnect, Host
-logout/reboot recovery, another-Mac clean installation and a bounded backup
-retention/prune command, Host free-space preflight and bounded Host log rotation
-remain open. The Host-machine Session heartbeat observation package is also
-open.
+logout/reboot recovery, another-Mac clean installation, an exact-package backup
+retention/prune command, exact-package Host free-space preflight, and bounded
+Host log rotation remain open. The Host-machine Session heartbeat observation
+package is also open.
 
 The current preview therefore remains a prerelease.
 

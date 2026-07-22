@@ -3008,6 +3008,36 @@ def cmd_backup_verify(args) -> int:
     return status
 
 
+def _cmd_backup_prune_unlocked(args) -> int:
+    require_initialized()
+    p = paths()
+    arguments = [
+        "prune",
+        "--backup-dir",
+        str(p["backups"]),
+        "--keep",
+        str(args.keep),
+    ]
+    if args.confirm_prune:
+        arguments.append("--confirm-prune")
+    if args.plan_hash:
+        arguments.extend(["--plan-hash", args.plan_hash])
+    payload, status = run_backup_utility(*arguments)
+    payload["operation"] = "host_backup_prune"
+    payload["authority_ledger_unchanged"] = True
+    payload["secret_store_included"] = False
+    payload["backup_content_omitted"] = True
+    emit(payload)
+    return status
+
+
+def cmd_backup_prune(args) -> int:
+    if not args.confirm_prune:
+        return _cmd_backup_prune_unlocked(args)
+    with lifecycle_lock():
+        return _cmd_backup_prune_unlocked(args)
+
+
 def _cmd_restore_unlocked(args) -> int:
     config, _secret_values = require_initialized()
     p = paths()
@@ -4147,6 +4177,11 @@ def build_parser() -> argparse.ArgumentParser:
     backup_verify = sub.add_parser("backup-verify", help="Verify the latest or selected Host backup without printing ledger rows.")
     backup_verify.add_argument("--backup")
     backup_verify.set_defaults(handler=cmd_backup_verify)
+    backup_prune = sub.add_parser("backup-prune", help="Preview or explicitly confirm verified Host backup retention.")
+    backup_prune.add_argument("--keep", type=int, default=5)
+    backup_prune.add_argument("--confirm-prune", action="store_true")
+    backup_prune.add_argument("--plan-hash", default="")
+    backup_prune.set_defaults(handler=cmd_backup_prune)
     restore = sub.add_parser("restore", help="Restore a verified ledger backup while the Host is stopped.")
     restore.add_argument("--backup", required=True)
     restore.add_argument("--confirm-restore", action="store_true")

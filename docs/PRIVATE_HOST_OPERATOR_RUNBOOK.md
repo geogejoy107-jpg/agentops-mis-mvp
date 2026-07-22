@@ -389,6 +389,7 @@ agentops host restart
 agentops host stop
 agentops host backup
 agentops host backup-verify
+agentops host backup-prune
 ```
 
 - `status`：查看受管进程、版本、端口和组件状态，不输出 workspace 私密数据。
@@ -401,6 +402,7 @@ agentops host backup-verify
 - `stop`：停止 Host 服务和受管 Worker，不删除 DB、知识库、配置或备份。
 - `backup`：通过 SQLite 在线备份 API 创建带 SHA-256 manifest 的本地账本备份；Host 可以继续运行。
 - `backup-verify`：只读校验最新或指定备份的 SHA-256 与 SQLite integrity，不打印账本行。
+- `backup-prune`：默认只生成保留计划；只有再次提交同一份计划的 hash 并显式确认，才删除已验证的旧备份配对。
 
 命令的精确参数、服务管理方式和退出码均以当前实现验收为准。发布前必须证明重启不丢状态、停止不误杀其他进程。
 
@@ -414,6 +416,20 @@ agentops host backup-verify
 ```
 
 默认备份目录为 `~/.agentops/host/backups`，目录权限为 `0700`，SQLite 备份和 manifest 权限为 `0600`。备份包含完整权威 SQLite 账本，包括 hash-only Session/Token 状态，因此仍须作为敏感文件保护；它不复制 `secrets.json`、Host 日志、PID、原始 Runtime 密钥或 raw prompt/response。
+
+清理旧备份必须先预览，再确认同一份计划：
+
+```bash
+agentops host backup-prune --keep 5
+agentops host backup-prune \
+  --keep 5 \
+  --confirm-prune \
+  --plan-hash <上一条命令返回的 plan_hash>
+```
+
+默认保留最新 5 份，硬下限为 2 份。预览会验证目录中的全部 SQLite/manifest 配对，并只返回有界的 inventory、retained、candidates、计数、可回收字节和 plan hash；不会打印账本行。任何新备份都会改变 plan hash，因此旧计划不能重放。只提供 hash 而未确认、只确认而缺少 hash、hash 不匹配、未知文件、缺少配对、软链或内容篡改都会失败关闭且不删除文件。
+
+确认路径持有 Host lifecycle lock，并先把候选配对移动到同一文件系统的私有 quarantine；移动失败会尝试完整回滚，清理未完成则返回有界错误和 quarantine 标签，避免把部分成功伪装成完成。该命令不修改当前 DB、`secrets.json`、Host 日志或安装版本。仍应先保留独立的离机灾备，不能把本地 retention 当作灾难恢复副本。
 
 恢复前必须停止 Host，并先校验选定备份：
 
