@@ -2917,6 +2917,47 @@ def cmd_restart(args) -> int:
     return start_code
 
 
+def host_doctor_next_actions(
+    *,
+    gates: list[dict],
+    tailscale: dict,
+    human_access: dict,
+    base_url: str,
+    ui_dist_managed: bool,
+) -> list[str]:
+    gate_state = {str(gate.get("id") or ""): bool(gate.get("ok")) for gate in gates}
+    actions: list[str] = []
+
+    def add_action(action: str) -> None:
+        if action not in actions:
+            actions.append(action)
+
+    if human_access.get("status") == "bootstrap_required":
+        actions.extend([
+            f"Open {base_url}/workspace on this Host to create the first Owner.",
+            "CLI recovery only: agentops host bootstrap-owner --confirm",
+        ])
+    elif human_access.get("status") == "host_stopped":
+        actions.append("Run agentops host start to verify human login readiness.")
+
+    if not gate_state.get("production_ui", False):
+        add_action(
+            "Repair or reinstall the Private Host package before starting the Host."
+            if ui_dist_managed
+            else "Run agentops host start --build-ui after providing the production UI bundle."
+        )
+    if not gate_state.get("stack_entrypoint", False):
+        add_action("Repair or reinstall the Private Host package before starting the Host.")
+
+    if not tailscale.get("installed"):
+        actions.append("Optional private Console: install and sign in to Tailscale on both devices.")
+    elif tailscale.get("backend_state") != "Running":
+        actions.append("Optional private Console: open Tailscale on this Host and sign in.")
+    elif not tailscale.get("dns_name"):
+        actions.append("Optional private Console: wait for this Host to receive its Tailscale DNS name.")
+    return actions
+
+
 def cmd_doctor(_args) -> int:
     config, _secret_values = require_initialized()
     p = paths()
@@ -2946,15 +2987,13 @@ def cmd_doctor(_args) -> int:
         running=running,
         reachable=bool(readiness["reachable"]),
     )
-    next_actions = [
-        "Run agentops host start --build-ui if the production UI gate is false.",
-        "Install and sign in to Tailscale on both devices before private publication.",
-    ]
-    if human_access["status"] == "bootstrap_required":
-        next_actions.insert(0, f"Open {base_url}/workspace on this Host to create the first Owner.")
-        next_actions.insert(1, "CLI recovery only: agentops host bootstrap-owner --confirm")
-    elif human_access["status"] == "host_stopped":
-        next_actions.insert(0, "Run agentops host start to verify human login readiness.")
+    next_actions = host_doctor_next_actions(
+        gates=gates,
+        tailscale=ts,
+        human_access=human_access,
+        base_url=base_url,
+        ui_dist_managed=ui_dist_managed,
+    )
     emit({
         "ok": all(gate["ok"] for gate in gates),
         "operation": "host_doctor",
