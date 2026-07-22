@@ -1507,7 +1507,10 @@ def _local_service_check_from_command(args, client: AgentOpsClient, command: str
 
 def _fast_service_closure_context(args, client: AgentOpsClient) -> dict:
     manager = args.service_check_manager or "launchd"
-    agent_id = args.service_check_agent_id or client.agent_id or f"agt_worker_daemon_{args.adapter}"
+    daemon_id = f"agt_worker_daemon_{args.adapter}"
+    local_stack_id = f"agt_worker_local_stack_{args.adapter}"
+    requested_agent_id = args.service_check_agent_id or client.agent_id or ""
+    agent_id = requested_agent_id if requested_agent_id in {daemon_id, local_stack_id} else daemon_id
     service_check_command = args.service_check_command or " ".join(shlex.quote(str(part)) for part in [
         "agentops",
         "worker",

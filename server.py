@@ -155,6 +155,7 @@ from agentops_mis_core.private_host_acceptance import (
     verify_acceptance_receipt,
 )
 from agentops_mis_core.worker_fleet import (
+    SERVICE_WORKER_READY_STATUSES,
     build_worker_remote_fleet_summary,
     build_worker_fleet_hygiene_plan,
     build_worker_fleet_view,
@@ -22363,6 +22364,22 @@ def local_service_worker_identity(
     daemon_id = f"agt_worker_daemon_{adapter}"
     local_stack_id = f"agt_worker_local_stack_{adapter}"
     workers = worker_payload.get("workers") if isinstance(worker_payload.get("workers"), list) else []
+    service_workers = worker_payload.get("service_workers") if isinstance(worker_payload.get("service_workers"), list) else []
+    fresh_service_ids = {
+        str(item.get("agent_id") or "")
+        for item in service_workers
+        if isinstance(item, dict)
+        and item.get("runtime_type") == adapter
+        and item.get("heartbeat_state") == "fresh"
+        and item.get("reported_status") in SERVICE_WORKER_READY_STATUSES
+    }
+    for service_agent_id in (local_stack_id, daemon_id):
+        if service_agent_id in fresh_service_ids:
+            return {
+                "agent_id": service_agent_id,
+                "source": "fresh_service_worker",
+                "registered": True,
+            }
     eligible_statuses = {"idle", "running", "paused", "error"}
     eligible = {
         str(item.get("agent_id") or ""): item
@@ -35005,6 +35022,9 @@ class Handler(BaseHTTPRequestHandler):
                 if workspace_error:
                     payload, status = workspace_error
                     return self.send_json(payload, status)
+                account_id = str((human_context or {}).get("account_id") or "").strip()
+                if account_id:
+                    body["actor_id"] = account_id
             relay_confirm_match = re.fullmatch(
                 r"/api/host/relay/transitions/([A-Za-z0-9._:-]{1,160})/confirm",
                 path,

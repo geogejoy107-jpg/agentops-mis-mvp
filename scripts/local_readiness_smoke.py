@@ -82,12 +82,15 @@ def http_json(base_url: str, path: str) -> tuple[int, dict]:
         return exc.code, body
 
 
-def http_post_json(base_url: str, path: str, payload: dict) -> tuple[int, dict]:
+def http_post_json(base_url: str, path: str, payload: dict, token: str | None = None) -> tuple[int, dict]:
     data = json.dumps(payload).encode("utf-8")
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(
         base_url.rstrip("/") + path,
         data=data,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
@@ -139,6 +142,60 @@ def seed_local_stack_service_workers(base_url: str) -> dict[str, str]:
     return expected
 
 
+def seed_fresh_daemon_service_workers(base_url: str) -> dict[str, str]:
+    service_scopes = [
+        "agents:write",
+        "agents:heartbeat",
+        "agent_plans:read",
+        "agent_plans:write",
+        "plan_evidence:read",
+        "plan_evidence:write",
+        "knowledge:read",
+        "knowledge:write",
+        "tasks:read",
+        "tasks:claim",
+        "runs:write",
+        "runtime_events:write",
+        "toolcalls:write",
+        "artifacts:write",
+        "memories:propose",
+        "evaluations:submit",
+        "audit:write",
+    ]
+    expected: dict[str, str] = {}
+    for adapter in ("hermes", "openclaw"):
+        agent_id = f"agt_worker_daemon_{adapter}"
+        status, enrollment = http_post_json(base_url, "/api/agent-gateway/enrollment/create", {
+            "workspace_id": "local-demo",
+            "agent_id": agent_id,
+            "name": f"Daemon {adapter.title()} Worker",
+            "runtime_type": adapter,
+            "scopes": service_scopes,
+            "ttl_days": 1,
+            "heartbeat_timeout_sec": 90,
+        })
+        require(status == 201 and enrollment.get("token"), f"{adapter} daemon enrollment failed: {status}")
+        status, session = http_post_json(
+            base_url,
+            "/api/agent-gateway/session/create",
+            {"ttl_sec": 900, "scopes": service_scopes},
+            token=enrollment["token"],
+        )
+        require(status == 201 and session.get("session_token"), f"{adapter} daemon session failed: {status}")
+        status, heartbeat = http_post_json(
+            base_url,
+            "/api/agent-gateway/heartbeat",
+            {"status": "idle", "summary": "Fresh daemon identity precedence fixture."},
+            token=session["session_token"],
+        )
+        require(
+            status == 200 and heartbeat.get("session_observation_recorded") is True,
+            f"{adapter} daemon heartbeat observation failed: {status}",
+        )
+        expected[adapter] = agent_id
+    return expected
+
+
 def validate_start_check_service_identity(base_url: str, expected: dict[str, str]) -> None:
     for adapter, expected_agent_id in expected.items():
         status, payload = http_json(base_url, f"/api/operator/start-check?adapter={adapter}&limit=4")
@@ -160,7 +217,12 @@ def validate_start_check_service_identity(base_url: str, expected: dict[str, str
         for command_name in ("service_check", "service_install_preview", "service_install_confirm", "service_control_load_confirm"):
             command = str(bootstrap_commands.get(command_name) or "")
             require(f"--agent-id {expected_agent_id}" in command, f"{adapter} loop-bootstrap {command_name} targets wrong identity: {command}")
-            require(f"--agent-id agt_worker_daemon_{adapter}" not in command, f"{adapter} loop-bootstrap retained stale daemon identity: {command}")
+            other_agent_id = (
+                f"agt_worker_local_stack_{adapter}"
+                if expected_agent_id == f"agt_worker_daemon_{adapter}"
+                else f"agt_worker_daemon_{adapter}"
+            )
+            require(f"--agent-id {other_agent_id}" not in command, f"{adapter} loop-bootstrap retained another service identity: {command}")
 
 
 def require(condition: bool, message: str) -> None:
@@ -475,8 +537,8 @@ def run_checks(base_url: str, *, exercise_writeback: bool = False, expected_serv
         validate(api_payload)
         for adapter, expected_agent_id in (expected_service_agents or {}).items():
             scoped_loop = (api_payload.get("service_managed_loops") or {}).get(adapter) or {}
-            require(scoped_loop.get("agent_id") == expected_agent_id, f"{adapter} did not select registered local-stack identity: {scoped_loop}")
-            require(scoped_loop.get("agent_identity_source") == "registered_local_stack_worker", f"{adapter} identity source mismatch: {scoped_loop}")
+            require(scoped_loop.get("agent_id") == expected_agent_id, f"{adapter} did not select fresh service identity: {scoped_loop}")
+            require(scoped_loop.get("agent_identity_source") == "fresh_service_worker", f"{adapter} identity source mismatch: {scoped_loop}")
             require(scoped_loop.get("agent_registered") is True, f"{adapter} registered identity proof missing: {scoped_loop}")
         if expected_service_agents:
             validate_start_check_service_identity(base_url, expected_service_agents)
@@ -521,7 +583,9 @@ def main() -> int:
             proc = start_isolated_server(tmp_path / "agentops_mis.db", port, tmp_path / "server.log")
             try:
                 wait_for_server(base_url)
-                expected_service_agents = seed_local_stack_service_workers(base_url)
+                registered_service_agents = seed_local_stack_service_workers(base_url)
+                validate_start_check_service_identity(base_url, registered_service_agents)
+                expected_service_agents = seed_fresh_daemon_service_workers(base_url)
                 return run_checks(
                     base_url,
                     exercise_writeback=True,

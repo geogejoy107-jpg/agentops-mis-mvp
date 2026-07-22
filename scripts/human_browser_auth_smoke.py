@@ -275,6 +275,7 @@ def main() -> int:
                 headers={"Origin": base_url},
             )
             csrf_token = str(payload.get("csrf_token") or "")
+            owner_account_id = str((payload.get("user") or {}).get("account_id") or "")
             set_cookie = response_headers.get("Set-Cookie", "")
             evidence["bootstrap"] = {
                 "status": status,
@@ -1547,6 +1548,74 @@ def main() -> int:
             evidence["operator_read"] = {"status": status, "provider": payload.get("provider")}
             if status != 200:
                 failures.append("authenticated owner could not read operator workspace API")
+
+            mutation_headers = {"X-AgentOps-CSRF": csrf_token, "Origin": base_url}
+            status, _headers, receipt_payload = request_json(
+                browser,
+                base_url + "/api/operator/action-receipts",
+                method="POST",
+                body={
+                    "actor_id": "usr_spoofed_human_receipt_actor",
+                    "action_command": "agentops worker service-control --manager launchd --adapter hermes --action restart",
+                    "verify_command": "agentops worker service-check --manager launchd --adapter hermes",
+                    "action_id": "human_session_actor_binding_fixture",
+                    "action_signature": "human-session-actor-binding-signature",
+                    "source": "human_browser_auth_smoke.actor_binding",
+                    "status": "verified",
+                    "result_summary": "Human Session actor binding fixture verified.",
+                },
+                headers=mutation_headers,
+            )
+            receipt_id = str((receipt_payload.get("receipt") or {}).get("receipt_id") or "")
+            readback_status, _headers, readback_payload = request_json(
+                browser,
+                base_url + "/api/operator/action-receipts/control-readback",
+                method="POST",
+                body={
+                    "actor_id": "usr_spoofed_human_readback_actor",
+                    "receipt_id": receipt_id,
+                    "source": "human_browser_auth_smoke.actor_binding.control_readback",
+                    "control_readback": {
+                        "before": {"selected_gate": "service_control_preview"},
+                        "after": {"selected_gate": "service_check_passed"},
+                        "self_check": {"server_executes_shell": False, "token_omitted": True},
+                        "token_omitted": True,
+                    },
+                },
+                headers=mutation_headers,
+            )
+            with sqlite3.connect(db_path) as actor_conn:
+                actor_rows = actor_conn.execute(
+                    """SELECT action,actor_id FROM audit_logs
+                       WHERE entity_id=? AND action IN (
+                           'operator.action_queue_receipt',
+                           'operator.action_queue_control_readback'
+                       ) ORDER BY created_at""",
+                    (receipt_id,),
+                ).fetchall()
+            bound_actions = {str(row[0]): str(row[1]) for row in actor_rows}
+            actor_bound = (
+                bool(owner_account_id)
+                and bound_actions.get("operator.action_queue_receipt") == owner_account_id
+                and bound_actions.get("operator.action_queue_control_readback") == owner_account_id
+            )
+            evidence["human_operator_actor_binding"] = {
+                "receipt_status": status,
+                "readback_status": readback_status,
+                "receipt_id_present": bool(receipt_id),
+                "session_actor_bound": actor_bound,
+                "spoofed_actor_rejected": all(
+                    actor not in {
+                        "usr_spoofed_human_receipt_actor",
+                        "usr_spoofed_human_readback_actor",
+                    }
+                    for actor in bound_actions.values()
+                ),
+                "token_omitted": receipt_payload.get("token_omitted") is True
+                and readback_payload.get("token_omitted") is True,
+            }
+            if status != 201 or readback_status != 201 or not receipt_id or not actor_bound:
+                failures.append("Human Session operator receipt actor was not bound to the authenticated account")
 
             status, _headers, payload = request_json(
                 browser,

@@ -170,13 +170,28 @@ Prepared Action rows, as expected for low-risk read-only work.
 No raw prompt, response, model body, credential, private message, transcript,
 Worker log or database row is retained in this receipt.
 
-## Remaining promotion gates
+## Authenticated Human Session receipt
 
-This document does not yet claim physical-client control acceptance. Promotion
-still requires:
+The installed preview.39 Host subsequently passed the bounded Owner Human
+Session service-control-preview receipt/readback gate. A preview-only pass made
+zero operator-ledger writes. An explicit `--confirm-record` pass then appended
+exactly one Action Receipt and one Control Readback for each of Hermes and
+OpenClaw after local read-only launchd service checks. Both services were
+present and loaded, the recorded actors matched the authenticated Owner
+context, logout succeeded and a subsequent protected read returned HTTP 401.
+No service-control or Runtime execution occurred. Exact bounded IDs and hashes
+are recorded in `PRIVATE_HOST_HUMAN_SERVICE_RECEIPT_ACCEPTANCE.md`.
 
-1. obtain the authenticated Human Session service-control receipt/readback;
-2. repeat the current-package browser acceptance from the physical MacBook.
+The source branch also adds fail-closed Human actor binding, fresh ready service
+identity precedence and unrelated-CLI-Agent rejection for fast service closure.
+Those corrections are covered by isolated regressions but are not claimed as
+installed preview.39 behavior; they require the next exact-package install.
+
+## Remaining promotion gate
+
+This document does not yet claim physical-client current-package acceptance.
+Promotion still requires repeating the browser acceptance from the physical
+MacBook against the current package.
 
 Raw prompts, responses, credentials, private messages, transcripts, Worker
 logs and database rows are outside this acceptance record.

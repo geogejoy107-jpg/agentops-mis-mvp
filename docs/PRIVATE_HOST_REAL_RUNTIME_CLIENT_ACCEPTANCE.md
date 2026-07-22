@@ -119,8 +119,23 @@ body access and external writes. No raw prompt, response, credential, private
 message, transcript, Worker log or database row is retained here.
 
 This closes current-package Host-local persistent Runtime execution. It does
-not replace the authenticated Human Session service-control receipt or the
-physical MacBook current-package browser acceptance.
+not replace the physical MacBook current-package browser acceptance.
+
+## Exact-Package Preview 39 Human Session Receipt
+
+After the persistent Runtime result, the installed preview.39 Host passed the
+separate Owner Human Session service-control-preview receipt/readback gate. The
+preview pass made zero operator-ledger writes. The explicit pass appended one
+Action Receipt and one Control Readback for each adapter after a local read-only
+launchd service check. Both checks found the service present and loaded; the
+recorded actor matched the authenticated Owner context, logout succeeded and a
+post-logout protected read returned HTTP 401.
+
+No service-control or Runtime invocation was performed by this gate. Exact
+bounded receipt/readback IDs and hashes are in
+`PRIVATE_HOST_HUMAN_SERVICE_RECEIPT_ACCEPTANCE.md`. Source-branch actor spoof
+resistance and fresh service identity precedence remain pending installation in
+the next exact package and are not attributed to preview.39.
 
 ## Exact-Package Preview 10 Approval-Wall Staging
 

@@ -1,6 +1,6 @@
 # Private Host Release Candidate Acceptance
 
-Status: preview.39 is published and installed with sustained Hermes/OpenClaw Fleet freshness and fresh real Runtime evidence; preview.38 remains the latest authenticated physical MacBook receipt, while ordinary browser-only Relay and current-package physical gates remain open
+Status: preview.39 is published and installed with sustained Hermes/OpenClaw Fleet freshness, fresh real Runtime evidence and an authenticated Host-local Human Session service receipt; preview.38 remains the latest physical MacBook receipt, while ordinary browser-only Relay and current-package physical gates remain open
 
 This matrix is the requirement-by-requirement completion record for
 `LOCAL_HOST_REMOTE_CONSOLE_SPEC.md`. A deterministic smoke proves only the
@@ -15,7 +15,7 @@ physical evidence and cannot be closed by mock output.
 | 2 | `agentops host start` serves production UI/API/ledger/knowledge and actionable worker state | Installed preview.39 serves the managed production UI/API/ledger/knowledge stack. Four Fleet samples spanning 105 seconds retained two fresh execution-capacity Workers and zero stale/unavailable services, closing the preview.38 regression. The real installer passed the 2 GiB storage floor and immutable backup gate. | Passed on installed package; reboot/log-rotation evidence open |
 | 3 | Browser-only second computer opens the stable per-Host HTTPS console, pairs and authenticates | A physical MacBook authenticated through the advanced Tailscale HTTPS profile with only the dedicated browser Console and no AgentOps project or Runtime dependency. The ordinary path still requires a deployed L4 Relay, Host-side TLS, one-time pairing and a physical Console with no Tailscale/VPN client. | Passed on advanced profile; ordinary Relay evidence required |
 | 4 | Unauthenticated UI/API data fails closed | `human_browser_auth_smoke.py`, `private_host_owner_browser_handoff_smoke.py`, artifact-download smoke and lifecycle acceptance cover anonymous denial, setup-code authority, role/session separation and CSRF/Origin checks. The physical MacBook received HTTP 401 for protected workspace reads and task creation before login, then again for dashboard, approved artifact and Host-receipt downloads after UI logout. | Passed locally and on physical advanced client |
-| 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | The preview.38 MacBook dedicated Console remains the latest physical Owner review/download/logout receipt. Preview.39 now has fresh Host-local Runtime and ledger closure, but its current-package physical review and Human Session service-control receipt remain open. | Last physical review passed on preview.38; preview.39 retest open |
+| 5 | Remote task, observation, approval, evaluation/audit review and approved artifact download | The preview.38 MacBook dedicated Console remains the latest physical Owner review/download/logout receipt. Preview.39 now has fresh Host-local Runtime and ledger closure plus an authenticated Owner Human Session service-control-preview receipt/readback. Its current-package physical review remains open. | Host-local Human receipt passed on preview.39; last physical review passed on preview.38; preview.39 physical retest open |
 | 6 | Explicitly confirmed Hermes/OpenClaw task writes complete bounded evidence | Persistent preview.39 services independently pulled metadata-only retention tasks and completed Hermes run `run_gw_0dfd8981a340` plus OpenClaw run `run_gw_a46813718b06`. Each produced one Tool Call, passing Evaluation, Artifact, Memory, eight Runtime Events, a quality-100 Agent Plan and verified plan-evidence manifest with zero Prepared Actions. | Passed on current Host package; physical current-package review open |
 | 7 | Browser or Relay disconnect does not stop Host Worker or lose/duplicate task | `PRIVATE_HOST_CONSOLE_DISCONNECT_ACCEPTANCE.md` covers Host-local Session loss. The physical MacBook dedicated browser was also closed while `run_gw_edfe2753846f` was running; the Host completed it, reconnect showed the same job/task/run, and bounded readback found exactly one workflow job and one run. Deployed-Relay interruption evidence remains missing. | Passed on Host and physical browser disconnect; deployed Relay evidence required |
 | 8 | Host restart preserves ledger and knowledge state | `PRIVATE_HOST_RESTART_PERSISTENCE_ACCEPTANCE.md` covers Session, task and a 194-document local Markdown/FTS index remaining searchable after managed restart. | Passed locally |
@@ -858,6 +858,21 @@ Action rows because the metadata-only retention review prohibited session-body
 access, deletion and external writes. No one-shot Worker command substituted
 for service execution.
 
+The installed package then passed the bounded authenticated Human Session
+service-control-preview receipt/readback gate. The preview pass made zero
+operator-ledger writes; explicit confirmation appended exactly one Action
+Receipt and one Control Readback for each adapter after local read-only launchd
+checks. Both services were present and loaded, actors matched the authenticated
+Owner context, logout succeeded and the protected post-logout read returned
+HTTP 401. No service-control or Runtime execution occurred. Exact bounded IDs
+and hashes are recorded in
+`PRIVATE_HOST_HUMAN_SERVICE_RECEIPT_ACCEPTANCE.md`.
+
+The source branch additionally hardens Human actor binding, fresh ready service
+identity selection and fast service-closure identity handling. These changes
+have isolated regression evidence but remain outside installed preview.39 until
+the next exact-package install.
+
 The exact package also passed the Host free-space preflight and backup
 retention/prune command gates. The earlier live prune retained five complete
 verified groups and reclaimed approximately 2.63 GB without deleting the live
@@ -867,10 +882,9 @@ OpenClaw and Docker state was not deleted.
 
 Open gates remain explicit: deployed Relay/DNS/TLS, no-Tailscale browser
 pairing, deployed-Relay interruption, current-package physical browser
-disconnect/reconnect, current-package physical browser review, authenticated
-Human Session service-control receipt, Host logout/reboot recovery,
-another-Mac clean installation, and bounded Host log rotation. The current
-preview therefore remains a prerelease.
+disconnect/reconnect, current-package physical browser review, Host
+logout/reboot recovery, another-Mac clean installation, and bounded Host log
+rotation. The current preview therefore remains a prerelease.
 
 ## Superseded Preview 38
 
