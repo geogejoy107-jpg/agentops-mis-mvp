@@ -61,6 +61,20 @@ def main() -> int:
         "live_api_run_evidence_graph_payload": "RunEvidenceGraphPayload",
         "live_api_run_evidence_graph_endpoint": "/evidence-graph",
         "live_api_run_evidence_graph_fallback": 'status: "unavailable"',
+        "run_detail_loads_scoped_evidence_report": 'loadOperatorEvidenceReport(1, { runId: id || "" })',
+        "run_detail_project_context_testid": 'data-testid="run-detail-project-context-receipt"',
+        "run_detail_project_context_title": "Project Context Receipt",
+        "run_detail_project_context_zh_title": "项目上下文收据",
+        "run_detail_context_block_count": "context_block_count",
+        "run_detail_approved_memory_ids": "approved_memory_ids",
+        "run_detail_context_body_omission": "context_body_not_persisted",
+        "run_detail_raw_transcript_omission": "raw_transcript_omitted",
+        "run_detail_memory_review_items": "memory_review?.items",
+        "run_detail_result_memory_id": "item.memory_id",
+        "run_detail_result_memory_source_ref": "item.source_ref",
+        "run_detail_memory_review_link": 'to="/workspace/memory"',
+        "live_api_evidence_report_run_filter": 'query.set("run_id", filters.runId)',
+        "live_api_context_packet_hashes": "context_packet_hashes",
     }
     for label, marker in expected_markers.items():
         if marker not in source_bundle:

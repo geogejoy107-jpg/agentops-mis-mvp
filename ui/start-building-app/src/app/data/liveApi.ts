@@ -2539,11 +2539,17 @@ export interface OperatorEvidenceReportRun {
     missing_tool_calls?: number;
     packet_hashes?: string[];
     query_hashes?: string[];
+    context_packet_hashes?: string[];
+    context_block_count?: number;
+    approved_memory_ids?: string[];
     retrieval_ids?: string[];
     source_hashes?: string[];
     paths?: string[];
     raw_query_omitted?: boolean;
+    snippet_omitted?: boolean;
     raw_content_omitted?: boolean;
+    context_body_not_persisted?: boolean;
+    raw_transcript_omitted?: boolean;
     raw_prompt_omitted?: boolean;
     raw_response_omitted?: boolean;
     token_omitted?: boolean;
@@ -6905,8 +6911,14 @@ export async function loadOperatorActionReceipts(limit = 8): Promise<OperatorAct
   };
 }
 
-export async function loadOperatorEvidenceReport(limit = 8): Promise<OperatorEvidenceReportPayload> {
-  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/evidence-report?limit=${encodeURIComponent(String(limit))}`, {
+export async function loadOperatorEvidenceReport(
+  limit = 8,
+  filters: { runId?: string; taskId?: string } = {},
+): Promise<OperatorEvidenceReportPayload> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (filters.runId) query.set("run_id", filters.runId);
+  if (filters.taskId) query.set("task_id", filters.taskId);
+  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/evidence-report?${query.toString()}`, {
     provider: "agentops-operator",
     operation: "operator_evidence_report",
     status: "unavailable",
@@ -6994,11 +7006,17 @@ export async function loadOperatorEvidenceReport(limit = 8): Promise<OperatorEvi
         missing_tool_calls: numberValue(workerKnowledgeRaw.missing_tool_calls, 0),
         packet_hashes: asArray<unknown>(workerKnowledgeRaw.packet_hashes).map(String).filter(Boolean),
         query_hashes: asArray<unknown>(workerKnowledgeRaw.query_hashes).map(String).filter(Boolean),
+        context_packet_hashes: asArray<unknown>(workerKnowledgeRaw.context_packet_hashes).map(String).filter(Boolean),
+        context_block_count: numberValue(workerKnowledgeRaw.context_block_count, 0),
+        approved_memory_ids: asArray<unknown>(workerKnowledgeRaw.approved_memory_ids).map(String).filter(Boolean),
         retrieval_ids: asArray<unknown>(workerKnowledgeRaw.retrieval_ids).map(String).filter(Boolean),
         source_hashes: asArray<unknown>(workerKnowledgeRaw.source_hashes).map(String).filter(Boolean),
         paths: asArray<unknown>(workerKnowledgeRaw.paths).map(String).filter(Boolean),
         raw_query_omitted: boolValue(workerKnowledgeRaw.raw_query_omitted),
+        snippet_omitted: boolValue(workerKnowledgeRaw.snippet_omitted),
         raw_content_omitted: boolValue(workerKnowledgeRaw.raw_content_omitted),
+        context_body_not_persisted: boolValue(workerKnowledgeRaw.context_body_not_persisted),
+        raw_transcript_omitted: boolValue(workerKnowledgeRaw.raw_transcript_omitted),
         raw_prompt_omitted: boolValue(workerKnowledgeRaw.raw_prompt_omitted),
         raw_response_omitted: boolValue(workerKnowledgeRaw.raw_response_omitted),
         token_omitted: boolValue(workerKnowledgeRaw.token_omitted),
