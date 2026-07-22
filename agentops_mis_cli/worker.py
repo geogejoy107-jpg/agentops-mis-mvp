@@ -2859,6 +2859,9 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "args": {
             "task_id": task_id,
             "adapter": args.adapter,
+            # The Host bounds metadata to its first 40 fields. Keep the secret
+            # boundary ahead of optional runtime/context evidence.
+            **secret_boundary,
             "prompt_hash": result.prompt_hash,
             "prompt_profile_id": result.prompt_profile_id,
             "prompt_profile_version": result.prompt_profile_version,
@@ -2906,7 +2909,6 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
                 "token_omitted": True,
             },
             "raw_omitted": True,
-            **secret_boundary,
         },
         "result_summary": result.output_summary,
     })
@@ -2953,6 +2955,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "rubric": {
             "gate": "worker_adapter_loop",
             "adapter": args.adapter,
+            **secret_boundary,
             "requires_completed_run": True,
             "requires_knowledge_retrieval_evidence": True,
             "requires_project_context_packet": knowledge_context_required,
@@ -3000,7 +3003,6 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
                 "raw_response_omitted": True,
                 "token_omitted": True,
             },
-            **secret_boundary,
         },
         "notes": evaluation_notes,
     })
@@ -3049,6 +3051,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "run_id": run_id,
         "metadata": {
             "adapter": args.adapter,
+            **secret_boundary,
             "ok": result.ok,
             "prompt_hash": result.prompt_hash,
             "prompt_profile_id": result.prompt_profile_id,
@@ -3095,7 +3098,6 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
                 "raw_response_omitted": True,
                 "token_omitted": True,
             },
-            **secret_boundary,
         },
     })
     audit_id = audit_payload.get("audit_id")

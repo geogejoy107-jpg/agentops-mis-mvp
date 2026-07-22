@@ -213,6 +213,7 @@ HERMES_HOME = Path.home() / ".hermes"
 OPENCLAW_BIN = Path("/opt/homebrew/bin/openclaw")
 READ_MODEL_CACHE_TTL_SEC = float(os.environ.get("AGENTOPS_READ_MODEL_CACHE_TTL_SEC", "2"))
 READ_MODEL_CACHE_MAX_ITEMS = int(os.environ.get("AGENTOPS_READ_MODEL_CACHE_MAX_ITEMS", "96"))
+AGENT_GATEWAY_EVIDENCE_METADATA_MAX_ITEMS = 64
 READ_MODEL_CACHE = ReadModelCache(ttl_sec=READ_MODEL_CACHE_TTL_SEC, max_items=READ_MODEL_CACHE_MAX_ITEMS)
 PRIVATE_HOST_RESTART_AUDIT_LOCK = threading.Lock()
 
@@ -3763,11 +3764,14 @@ def bounded_int(value, default: int, minimum: int, maximum: int) -> int:
     return min(max(parsed, minimum), maximum)
 
 
-def safe_json_metadata(value):
+def safe_json_metadata(value, item_limit=40):
     if isinstance(value, dict):
-        return {str(k)[:80]: safe_json_metadata(v) for k, v in list(value.items())[:40]}
+        return {
+            str(k)[:80]: safe_json_metadata(v)
+            for k, v in list(value.items())[:item_limit]
+        }
     if isinstance(value, list):
-        return [safe_json_metadata(item) for item in value[:40]]
+        return [safe_json_metadata(item) for item in value[:item_limit]]
     if isinstance(value, (int, float, bool)) or value is None:
         return value
     return redact_text(str(value), 240)
@@ -10748,7 +10752,12 @@ def agent_gateway_record_tool_call_locked(conn, body) -> tuple[dict, int]:
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
     tool_name = redact_text(body.get("tool_name") or "agent_gateway.note", 120)
     category = coerce_choice(body.get("tool_category"), VALID_TOOL_CATEGORIES, "custom")
-    args = safe_json_metadata(body.get("normalized_args_json") or body.get("args") or {"summary": body.get("args_summary") or "redacted"})
+    args = safe_json_metadata(
+        body.get("normalized_args_json")
+        or body.get("args")
+        or {"summary": body.get("args_summary") or "redacted"},
+        AGENT_GATEWAY_EVIDENCE_METADATA_MAX_ITEMS,
+    )
     risk = coerce_choice(body.get("risk_level") or ("high" if tool_name in RISKY_TOOLS else "low"), VALID_RISK_LEVELS, "low")
     external_side_effect_intent = tool_call_has_external_side_effect_intent(tool_name, category, body.get("target_resource"), args)
     if external_side_effect_intent and risk in {"low", "medium"}:
@@ -11435,7 +11444,12 @@ def agent_gateway_eval_submit(conn, body) -> tuple[dict, int]:
     score = float(body.get("score") if body.get("score") is not None else 1.0)
     score = max(0.0, min(score, 1.0))
     pass_fail = "pass" if body.get("pass_fail", "pass") == "pass" and score >= 0.5 else "fail"
-    rubric = safe_json_metadata(body.get("rubric") or body.get("rubric_json") or {"submitted_by": "agent_gateway"})
+    rubric = safe_json_metadata(
+        body.get("rubric")
+        or body.get("rubric_json")
+        or {"submitted_by": "agent_gateway"},
+        AGENT_GATEWAY_EVIDENCE_METADATA_MAX_ITEMS,
+    )
     row = {
         "evaluation_id": body.get("evaluation_id") or stable_id("eval_gw", run_id, body.get("evaluator_type") or "rule"),
         "task_id": run["task_id"],
@@ -12611,13 +12625,16 @@ def agent_gateway_emit_audit(conn, body, auth_ctx=None) -> tuple[dict, int]:
         if access_error:
             return access_error
     action = body.get("action") or "agent_gateway.audit_emit"
-    metadata = safe_json_metadata({
-        **(body.get("metadata") or {}),
-        "workspace_id": ident["workspace_id"],
-        "authority_task_id": task_id,
-        "authority_run_id": run_id,
-        "token_omitted": True,
-    })
+    metadata = safe_json_metadata(
+        {
+            **(body.get("metadata") or {}),
+            "workspace_id": ident["workspace_id"],
+            "authority_task_id": task_id,
+            "authority_run_id": run_id,
+            "token_omitted": True,
+        },
+        AGENT_GATEWAY_EVIDENCE_METADATA_MAX_ITEMS,
+    )
     audit_id = audit(conn, "agent", agent_id, redact_text(action, 160), entity_type, entity_id, None, safe_json_metadata(body.get("after") or {"status": "emitted"}), metadata)
     runtime_event(conn, "rtc_agent_gateway_local", "audit.emit", "completed", run_id=run_id, task_id=task_id, agent_id=agent_id, output_summary=f"Audit emitted: {redact_text(action, 120)}")
     return {"emitted": True, "audit_id": audit_id, "entity_type": entity_type, "entity_id": entity_id, "token_omitted": True}, 201
