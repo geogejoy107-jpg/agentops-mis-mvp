@@ -27,20 +27,24 @@ _PROXY_FAILURE_CODES = {
 _HANDSHAKE_FAILURE_KINDS = ("os_error", "tls_protocol", "unexpected_eof")
 
 
-def _clean_tls_shutdown(stream: ssl.SSLSocket) -> tuple[bool, socket.socket | None]:
+def _clean_tls_shutdown(
+    stream: ssl.SSLSocket,
+) -> tuple[bool, socket.socket | None, bool]:
     deadline = time.monotonic() + min(IO_TIMEOUT_SECONDS, 2.0)
     while time.monotonic() < deadline:
         try:
-            return True, stream.unwrap()
+            return True, stream.unwrap(), False
         except ssl.SSLWantReadError:
             # OpenSSL has sent our close_notify and is waiting for an optional
-            # peer acknowledgement. Browser closure does not require symmetry.
-            return True, None
+            # peer acknowledgement. Do not follow it with SHUT_RDWR: on Linux
+            # that can discard the queued alert and surface SSLEOFError to the
+            # browser even though every application byte was forwarded.
+            return True, None, True
         except ssl.SSLWantWriteError:
             select.select([], [stream], [], max(0.0, deadline - time.monotonic()))
         except (OSError, ssl.SSLError):
-            return False, None
-    return False, None
+            return False, None, False
+    return False, None, False
 
 
 def _perform_tls_handshake(
@@ -83,6 +87,7 @@ def _forward_tls_to_tcp(
     host_to_browser_bytes = 0
     failed = False
     raw_stream: socket.socket | None = None
+    tls_close_only = False
     deadline = time.monotonic() + IO_TIMEOUT_SECONDS
     tls_stream.setblocking(False)
     backend.setblocking(False)
@@ -197,7 +202,7 @@ def _forward_tls_to_tcp(
             and not to_browser
         )
         if success:
-            success, raw_stream = _clean_tls_shutdown(tls_stream)
+            success, raw_stream, tls_close_only = _clean_tls_shutdown(tls_stream)
         metadata.record(
             "forwarded" if success else "failed",
             "browser_to_host",
@@ -210,7 +215,15 @@ def _forward_tls_to_tcp(
         )
         return success
     finally:
-        _close_socket(raw_stream or tls_stream)
+        if raw_stream is not None:
+            _close_socket(raw_stream)
+        elif tls_close_only:
+            try:
+                tls_stream.close()
+            except OSError:
+                pass
+        else:
+            _close_socket(tls_stream)
         _close_socket(backend)
 
 
