@@ -95,6 +95,33 @@ This proves host-local authenticated dispatch and ledger closure. It does not
 yet prove access from a second physical computer, private-network HTTPS, or
 browser disconnect/reconnect behavior.
 
+## Exact-Package Preview 39 Persistent Worker Result
+
+The real Host upgraded to published
+`v1.6.0-private-host-preview.39` at exact commit
+`17801e3bbb20cdaec68e72f3e225ab5492d8f8e2`, preserved its authority ledger,
+and restored the independent Hermes/OpenClaw LaunchAgents. Four bounded Fleet
+samples spanning 105 seconds remained `ready` with two execution-capacity
+Workers and zero stale or unavailable service Workers.
+
+Two low-risk, metadata-only customer tasks then entered the normal queue and
+were consumed by the persistent services without a one-shot Worker command:
+
+| Adapter | Task | Run | Bounded evidence |
+| --- | --- | --- | --- |
+| Hermes | `tsk_preview39_hermes_retention_policy_20260722T1450Z` | `run_gw_0dfd8981a340` | 1 Tool Call, pass Evaluation, 1 Artifact, 1 Memory, 8 Runtime Events, verified Plan and manifest |
+| OpenClaw | `tsk_preview39_openclaw_retention_review_20260722T1450Z` | `run_gw_a46813718b06` | 1 Tool Call, pass Evaluation, 1 Artifact, 1 Memory, 8 Runtime Events, verified Plan and manifest |
+
+Both runs completed with no error. Their Agent Plans scored 100 and their
+plan-evidence manifests had no failed checks. Each task had zero Approval and
+zero Prepared Action rows because it explicitly prohibited deletion, session
+body access and external writes. No raw prompt, response, credential, private
+message, transcript, Worker log or database row is retained here.
+
+This closes current-package Host-local persistent Runtime execution. It does
+not replace the authenticated Human Session service-control receipt or the
+physical MacBook current-package browser acceptance.
+
 ## Exact-Package Preview 10 Approval-Wall Staging
 
 On exact commit `d7c2ec3a49347ed6899aff3c3406f922a7690279`, the installed

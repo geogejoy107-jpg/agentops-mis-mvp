@@ -223,3 +223,54 @@ schema adds first-class immutable workspace ownership to every Audit row.
 Deterministic integration coverage
 passes, but the correction requires a later exact package and real multi-cycle
 readback. Preview.38 is not credited with sustained service-Worker freshness.
+
+## Preview 39 Release And Real Upgrade
+
+`v1.6.0-private-host-preview.39` was published from exact commit
+`17801e3bbb20cdaec68e72f3e225ab5492d8f8e2`. Push CI `29927328480` and
+pull-request CI `29927329540` passed. Two candidate directories were
+byte-identical, all five Draft downloads matched, and a public-network consumer
+completed no-repository install/start/version/status/stop with exact provenance
+readback.
+
+Before the real upgrade, the independent Hermes and OpenClaw Worker
+LaunchAgents were explicitly unloaded. Stopping the Host process alone caused
+its `KeepAlive=true` LaunchAgent to relaunch it, so the product Host
+service-control boundary was then used to unload the authoritative service;
+independent launchd and process checks confirmed all three services absent.
+This distinction prevents a direct process stop from being misreported as a
+maintenance boundary.
+
+The public installer passed the real storage floor without a test override,
+created and verified a pre-update backup, preserved the authority ledger and
+Owner state, recorded preview.38 as the previous version and bound `current`
+to preview.39. Installed provenance resolves to the exact release commit. The
+real schema now contains the additive scoped Session heartbeat-observation
+table packaged by preview.39.
+
+The one-shot installer Host was stopped and the existing Host-only LaunchAgent
+was loaded again. It converged in one read and returned health `ready`; Human
+login remained ready, the managed UI resolved to preview.39, the existing
+private Tailscale Serve target remained exclusive on port 8443 and Funnel
+remained disabled. Both independent Worker LaunchAgents then loaded with active
+processes. The initial bounded Fleet read reported two execution-capacity
+Workers, zero stale Workers and a fresh execution-ready Session for each real
+adapter. Four bounded samples spanning 105 seconds remained `ready` with two
+execution-capacity Workers, zero stale Workers and zero unavailable Workers.
+Both selected Sessions remained `fresh_ready` with execution scope present.
+This closes the preview.38 post-90-second Fleet regression on the installed
+package.
+
+Two normal MIS tasks were then assigned to the persistent service identities;
+no one-shot Worker command was used. Hermes completed
+`run_gw_0dfd8981a340` and OpenClaw completed `run_gw_a46813718b06` after the
+services independently pulled their tasks. Each run had one Tool Call, one
+passing Evaluation, one Artifact, one Memory candidate, eight Runtime Events,
+a quality-100 verified Agent Plan and a verified plan-evidence manifest. Both
+had zero Approval and zero Prepared Action rows because the metadata-only
+retention review prohibited deletion and external writes. This closes the
+installed-package persistent Runtime gate without turning a service-control
+receipt into model-execution evidence.
+
+No raw model content, credential, private origin, Worker log, private message,
+transcript or database row is retained in this receipt.
