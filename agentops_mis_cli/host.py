@@ -32,7 +32,7 @@ from agentops_mis_cli.relay_connector_service import (
     RelayConnectorServiceError,
     validate_connector_material,
 )
-from agentops_mis_cli import relay_control, relay_restart
+from agentops_mis_cli import host_log, relay_control, relay_restart
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -2949,6 +2949,62 @@ def cmd_logs(_args) -> int:
     return 0 if p["log"].exists() else 1
 
 
+def _cmd_log_rotate_unlocked(args) -> int:
+    require_initialized()
+    p = paths()
+    pid_record_unsafe = p["pid"].is_symlink()
+    try:
+        pid = int(read_json(p["pid"]).get("pid") or 0)
+    except (TypeError, ValueError):
+        pid = -1
+        pid_record_unsafe = True
+    if args.confirm_rotate and pid_record_unsafe:
+        emit({
+            "ok": False,
+            "operation": "host_log_rotate",
+            "dry_run": False,
+            "error": "host_pid_record_unverifiable",
+            "content_omitted": True,
+            "paths_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
+    running = process_alive(pid)
+    if args.confirm_rotate and running:
+        emit({
+            "ok": False,
+            "operation": "host_log_rotate",
+            "dry_run": False,
+            "error": "host_running",
+            "message": "Stop the Host before confirming log rotation.",
+            "next_action": "agentops host stop",
+            "content_omitted": True,
+            "paths_omitted": True,
+            "token_omitted": True,
+        })
+        return 2
+    payload, status = host_log.rotate_logs(
+        p["logs"],
+        max_bytes=args.max_bytes,
+        backups=args.backups,
+        confirm_rotate=args.confirm_rotate,
+        plan_hash=args.plan_hash,
+    )
+    payload["host_running"] = running
+    payload["authority_ledger_unchanged"] = True
+    payload["secret_store_unchanged"] = True
+    payload["launchd_log_unchanged"] = True
+    emit(payload)
+    return status
+
+
+def cmd_log_rotate(args) -> int:
+    if not args.confirm_rotate:
+        return _cmd_log_rotate_unlocked(args)
+    with lifecycle_lock():
+        return _cmd_log_rotate_unlocked(args)
+
+
 def run_backup_utility(*arguments: str) -> tuple[dict, int]:
     if not BACKUP_UTILITY.is_file():
         return {"ok": False, "error": "backup_utility_missing"}, 1
@@ -4172,6 +4228,12 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.set_defaults(handler=cmd_doctor)
     logs = sub.add_parser("logs", help="Show log metadata without printing raw host output.")
     logs.set_defaults(handler=cmd_logs)
+    log_rotate = sub.add_parser("log-rotate", help="Preview or explicitly confirm bounded stopped-Host log rotation.")
+    log_rotate.add_argument("--max-bytes", type=int, default=host_log.HOST_LOG_ROTATE_DEFAULT_MAX_BYTES)
+    log_rotate.add_argument("--backups", type=int, default=host_log.HOST_LOG_ROTATE_DEFAULT_BACKUPS)
+    log_rotate.add_argument("--confirm-rotate", action="store_true")
+    log_rotate.add_argument("--plan-hash", default="")
+    log_rotate.set_defaults(handler=cmd_log_rotate)
     backup = sub.add_parser("backup", help="Create a verified SQLite authority-ledger backup while the Host may remain running.")
     backup.set_defaults(handler=cmd_backup)
     backup_verify = sub.add_parser("backup-verify", help="Verify the latest or selected Host backup without printing ledger rows.")

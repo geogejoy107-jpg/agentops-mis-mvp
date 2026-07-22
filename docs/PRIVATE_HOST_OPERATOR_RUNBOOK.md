@@ -309,6 +309,28 @@ agentops host logs
 
 日志输出必须经过脱敏。不得显示 setup code、密码、Session、CSRF、Agent token、模型密钥、完整 prompt/response 或任意数据库内容。需要持续观察时，以实现支持的参数为准，不要假定 `--follow` 已发布。
 
+当前源码还提供显式、停机状态下的有界轮转。先预览，再停止 Host，并确认同一份计划：
+
+```bash
+agentops host log-rotate
+agentops host stop
+agentops host log-rotate
+agentops host log-rotate \
+  --confirm-rotate \
+  --plan-hash <上一条命令返回的 plan_hash>
+agentops host start
+```
+
+默认阈值为 8 MiB、保留 5 个历史文件；阈值硬下限为 1 MiB，历史数量范围为
+2 至 20。预览只读取目录和文件元数据，不打印路径或日志正文。确认操作必须持有
+Host lifecycle lock；若 Host 仍在运行则零写入拒绝，避免仍持有旧文件描述符的子进程
+继续写入已重命名文件。精确 plan hash 会绑定完整目录元数据、阈值和保留配置；
+stale plan、权限异常、软链、hardlink、未知 `host.log.*` 或序号断档都会失败关闭。
+轮转只管理 `host.log` 与连续的 `host.log.1..N`，不修改 `launchd.log`、账本、
+secret、配置或版本。淘汰项先进入同卷私有 quarantine；提交前失败会回滚，提交后
+清理不完整会明确报错。运行中自动轮转要等 sole-writer 日志 sink 发布，不能用本命令
+的 rename 流程冒充。
+
 ## 5. 高级模式：Tailscale Serve 预览
 
 先只生成并审查预览：
@@ -385,6 +407,7 @@ agentops host status
 agentops host doctor
 agentops host storage-preflight
 agentops host logs
+agentops host log-rotate
 agentops host restart
 agentops host stop
 agentops host backup
@@ -398,6 +421,7 @@ agentops host backup-prune
   `filesystem_path`、`free_bytes`、`required_bytes` 和 `status`；不读取账本内容、
   credential 或网络，且始终返回 `token_omitted:true`。
 - `logs`：查看脱敏后的 Host 日志。
+- `log-rotate`：默认只生成有界轮转计划；停机后提交同一 plan hash 并显式确认才写入。
 - `restart`：只重启该 Host 拥有的进程，保留账本和知识状态。
 - `stop`：停止 Host 服务和受管 Worker，不删除 DB、知识库、配置或备份。
 - `backup`：通过 SQLite 在线备份 API 创建带 SHA-256 manifest 的本地账本备份；Host 可以继续运行。

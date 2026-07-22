@@ -933,6 +933,25 @@ fail-closed behavior for unknown, missing, symlinked or tampered inventory.
 No real Host backup was read or deleted. This is source-level evidence only;
 preview.38 is not credited until the exact package passes the same gate.
 
+The next source-only slice adds bounded stopped-Host log rotation.
+`agentops host log-rotate` defaults to a metadata-only plan with an 8 MiB
+threshold and five retained generations. The threshold has a 1 MiB production
+floor and retention is bounded from two through twenty files. A write requires
+both `--confirm-rotate` and the exact full-directory plan hash while holding the
+Host lifecycle lock; a running Host, stale plan, unsafe directory or file mode,
+symlink, hardlink, unknown `host.log.*` name, or generation gap fails closed.
+The transaction moves discard candidates into same-volume private quarantine,
+rotates only `host.log` and contiguous numbered generations, creates a new
+owner-only active file, rolls back pre-commit failure, and reports incomplete
+post-commit cleanup rather than claiming success. It neither reads log content
+nor changes the ledger, secret store, config, installed version or
+`launchd.log`. The isolated 33-check smoke uses only temporary sparse files; no
+real Host log is read or rotated. Preview.38 is not credited, and the current
+`bounded Host log rotation` release gate remains open until an exact package
+and installed-product receipt pass. Live automatic rotation also remains open
+until the Host stack has one sole-writer log sink instead of inherited child
+file descriptors.
+
 Separately, after all package and real-runtime acceptance steps, the Host volume later fell
 to roughly 115 MiB free. The backend PID and loopback listener remained, but
 health responses became unusable and both launchd Workers exited nonzero. A
