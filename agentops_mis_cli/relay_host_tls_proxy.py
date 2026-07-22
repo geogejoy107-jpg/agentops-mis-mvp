@@ -31,20 +31,50 @@ def _clean_tls_shutdown(
     stream: ssl.SSLSocket,
 ) -> tuple[bool, socket.socket | None, bool]:
     deadline = time.monotonic() + min(IO_TIMEOUT_SECONDS, 2.0)
+    close_notify_sent = False
     while time.monotonic() < deadline:
         try:
             return True, stream.unwrap(), False
         except ssl.SSLWantReadError:
-            # OpenSSL has sent our close_notify and is waiting for an optional
-            # peer acknowledgement. Do not follow it with SHUT_RDWR: on Linux
-            # that can discard the queued alert and surface SSLEOFError to the
-            # browser even though every application byte was forwarded.
-            return True, None, True
+            # OpenSSL has sent our close_notify. Give the peer time to read it
+            # and acknowledge before the tunnel data socket is closed; closing
+            # immediately can race the queued alert on slower Linux runners.
+            close_notify_sent = True
+            try:
+                readable, _, _ = select.select(
+                    [stream],
+                    [],
+                    [],
+                    max(0.0, deadline - time.monotonic()),
+                )
+            except (OSError, ValueError):
+                return False, None, True
+            if not readable:
+                return False, None, True
         except ssl.SSLWantWriteError:
-            select.select([], [stream], [], max(0.0, deadline - time.monotonic()))
+            try:
+                _, writable, _ = select.select(
+                    [],
+                    [stream],
+                    [],
+                    max(0.0, deadline - time.monotonic()),
+                )
+            except (OSError, ValueError):
+                return False, None, close_notify_sent
+            if not writable:
+                return False, None, close_notify_sent
+        except (ssl.SSLEOFError, ssl.SSLZeroReturnError):
+            # A peer is allowed to close its transport after consuming our
+            # close_notify without sending a reciprocal alert. The strict
+            # client smoke proves our alert was received; do not turn that
+            # one-way clean shutdown into a forwarding failure.
+            return close_notify_sent, None, close_notify_sent
         except (OSError, ssl.SSLError):
-            return False, None, False
-    return False, None, False
+            return False, None, close_notify_sent
+    # Receiving the peer's reciprocal close_notify is optional here. Once our
+    # alert has been queued and given the bounded drain window, close without
+    # SHUT_RDWR so Linux cannot discard it.
+    return close_notify_sent, None, close_notify_sent
 
 
 def _perform_tls_handshake(
