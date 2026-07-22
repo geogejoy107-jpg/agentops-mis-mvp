@@ -22722,10 +22722,12 @@ def local_readiness(
     recommended_service_agent_id = recommended_service_identity["agent_id"]
     service_control_command = f"agentops worker service-control --manager launchd --action restart --adapter {recommended_adapter} --agent-id {recommended_service_agent_id}"
     service_control_verify_command = f"agentops worker service-check --manager launchd --adapter {recommended_adapter} --agent-id {recommended_service_agent_id}"
-    service_control_action_signature = stable_hash(
-        "local_readiness.service_control_preview:"
-        f"{recommended_adapter}:{service_control_command}:{service_control_verify_command}"
-    )
+    service_control_action_signature = hashlib.sha256(
+        (
+            "local_readiness.service_control_preview:"
+            f"{recommended_adapter}:{service_control_command}:{service_control_verify_command}"
+        ).encode("utf-8")
+    ).hexdigest()
     service_control_receipt_base = [
         "agentops", "operator", "record-action-receipt",
         "--action-command", service_control_command,
@@ -23018,10 +23020,12 @@ def local_readiness(
         service_agent_id = service_identity["agent_id"]
         command = f"agentops worker service-control --manager launchd --action restart --adapter {adapter} --agent-id {service_agent_id}"
         verify_command = f"agentops worker service-check --manager launchd --adapter {adapter} --agent-id {service_agent_id}"
-        action_signature = stable_hash(
-            "local_readiness.service_control_preview:"
-            f"{adapter}:{command}:{verify_command}"
-        )
+        action_signature = hashlib.sha256(
+            (
+                "local_readiness.service_control_preview:"
+                f"{adapter}:{command}:{verify_command}"
+            ).encode("utf-8")
+        ).hexdigest()
         action_id = f"local_readiness.service_control_preview.{adapter}" if scoped else "local_readiness.service_control_preview"
         source = action_id
         receipt_base = [
