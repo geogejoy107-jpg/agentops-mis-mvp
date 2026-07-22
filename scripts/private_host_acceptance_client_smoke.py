@@ -552,7 +552,8 @@ def main() -> int:
                 headers={"Origin": origin, "X-AgentOps-CSRF": csrf_token},
             )
             evidence["cross_workspace_submit_denied"] = (
-                cross_submit_status == 403 and cross_submit.get("error") == "forbidden"
+                cross_submit_status == 403
+                and cross_submit.get("error") == "human_workspace_forbidden"
             )
             cross_mark_status, cross_mark = acceptance.http_json(
                 "POST",
