@@ -25,7 +25,10 @@ import {
 import {
   HUMAN_SCRYPT_PARAMS,
 } from "../src/server/controlPlane/humanPasswordPolicy";
-import { ControlPlaneHttpError } from "../src/server/controlPlane/http";
+import {
+  ControlPlaneHttpError,
+  errorPayload,
+} from "../src/server/controlPlane/http";
 import { stableHash } from "../src/server/controlPlane/ledger";
 import { listWorkspaceMemoryCandidates } from "../src/server/controlPlane/memoryCandidates";
 import { reviewWorkspaceMemory } from "../src/server/controlPlane/memoryReviews";
@@ -1309,8 +1312,26 @@ async function main() {
         return candidate.code === "23514"
           && String(candidate.message || "").includes(
             "customer_delivery_evidence_sealed",
-          );
+        );
       },
+    );
+    const sealedHttpFailure = errorPayload({
+      code: "23514",
+      message: "customer_delivery_evidence_sealed",
+    });
+    assert.equal(sealedHttpFailure.status, 409);
+    assert.equal(
+      sealedHttpFailure.body.error,
+      "customer_delivery_evidence_sealed",
+    );
+    const unknownDatabaseFailure = errorPayload({
+      code: "23514",
+      message: "unmapped_database_constraint",
+    });
+    assert.equal(unknownDatabaseFailure.status, 503);
+    assert.equal(
+      unknownDatabaseFailure.body.error,
+      "typescript_control_plane_unavailable",
     );
 
     const humanStorage = await admin.query<{
