@@ -269,3 +269,40 @@ jobs:
           set -euo pipefail
           npm ci
           npm run build
+
+  commercial-next-boundary:
+    name: Commercial Next production boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/next-app/package-lock.json
+
+      - name: Install locked commercial dependencies
+        working-directory: ui/next-app
+        run: npm ci --ignore-scripts
+
+      - name: Verify TypeScript control-plane mode
+        working-directory: ui/next-app
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm run test:control-plane-mode-contract
+
+      - name: Prove production cannot proxy to Python
+        run: timeout 420s python3 scripts/nextjs_production_python_proxy_fail_closed_smoke.py
+
+      - name: Verify tracked source stayed unchanged
+        run: git diff --exit-code
