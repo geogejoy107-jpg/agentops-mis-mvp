@@ -73,8 +73,9 @@ Relay.
   provisioning exists yet.
 - `remote_ready` must remain false until deployed-Relay and physical
   browser-only acceptance are both complete.
-- The current installed preview remains on its earlier source package and is
-  intentionally not upgraded by this acceptance.
+- Preview.42 now packages this Owner-control and managed-restart path. Its real
+  installed Host remains safely unconfigured and disabled, so it is not
+  deployed-Relay or remote-readiness evidence.
 
 ## Next Slice
 

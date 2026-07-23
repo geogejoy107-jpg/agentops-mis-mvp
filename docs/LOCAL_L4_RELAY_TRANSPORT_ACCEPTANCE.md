@@ -230,11 +230,11 @@ or transport exactly-once delivery.
 
 The source Host stack now owns the foreground service when a strict private
 configuration is explicitly enabled; disabled and legacy-unconfigured Hosts do
-not start it. This lifecycle slice has not been installed into the current
-local preview, and Host status/doctor still conservatively refuse to turn a
-service status file into remote readiness. The service owns local Host TLS
-termination, but it does not generate, renew or rotate the supplied certificate
-and key. Its
+not start it. Preview.42 packages this lifecycle slice, while its real installed
+Host remains safely unconfigured and starts no Relay connector. Host
+status/doctor still conservatively refuse to turn a service status file into
+remote readiness. The service owns local Host TLS termination, but it does not
+generate, renew or rotate the supplied certificate and key. Its
 epoch can now be crash-persistent when the protected allocator is supplied,
 while backoff/status state remains process-local. This proves the reconnect and
 epoch identity behavior needed by the Host-owned connector, not the deployed
