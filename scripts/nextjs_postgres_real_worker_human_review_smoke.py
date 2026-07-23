@@ -972,19 +972,29 @@ def human_review(
 
 def prepare_manifest_authority_guard_fixture(
     adapter: NodePgAdapter,
+    base_url: str,
     runtime: str,
+    token: str,
 ) -> dict[str, Any]:
     now = dt.datetime.now(dt.timezone.utc).isoformat()
     agent_id = f"agt_real_{runtime}_review"
     task_id = f"tsk_real_{runtime}_manifest_guard"
     run_id = f"run_real_{runtime}_manifest_guard"
     plan_id = f"plan_real_{runtime}_manifest_guard"
-    expected_steps = ["READ", "VERIFY", "DELIVER"]
+    expected_steps = [
+        "READ",
+        "PLAN",
+        "RETRIEVE",
+        "COMPARE",
+        "EXECUTE",
+        "VERIFY",
+        "RECORD",
+    ]
     adapter.execute(
         """INSERT INTO tasks(
             task_id,workspace_id,title,description,requester_id,owner_agent_id,collaborator_agent_ids,
             status,priority,due_date,acceptance_criteria,risk_level,budget_limit_usd,created_at,updated_at
-        ) VALUES(?,?,?,?,?,?,'[]','completed','medium',NULL,?,'low',0,?,?)""",
+        ) VALUES(?,?,?,?,?,?,'[]','planned','medium',NULL,?,'low',0,?,?)""",
         (
             task_id,
             WORKSPACE_ID,
@@ -997,58 +1007,152 @@ def prepare_manifest_authority_guard_fixture(
             now,
         ),
     )
-    adapter.execute(
-        """INSERT INTO runs(
-            run_id,workspace_id,task_id,agent_id,runtime_type,status,started_at,ended_at,
-            input_summary,output_summary,model_provider,model_name,approval_required,created_at
-        ) VALUES(?,?,?,?,?,'completed',?,?,?,?,?,?,0,?)""",
-        (
-            run_id,
-            WORKSPACE_ID,
-            task_id,
-            agent_id,
-            runtime,
-            now,
-            now,
-            "Isolated manifest authority fixture.",
-            "Fixture run completed before evidence verification.",
-            runtime,
-            runtime,
-            now,
-        ),
-    )
-    adapter.execute(
-        """INSERT INTO agent_plans(
-            plan_id,workspace_id,task_id,run_id,agent_id,task_understanding,
-            referenced_specs_json,referenced_memories_json,referenced_bases_json,
-            proposed_files_to_change_json,risk_level,approval_required,execution_steps_json,
-            verification_plan,rollback_plan,status,created_at,updated_at
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,'low',0,?,?,?,'approved',?,?)""",
-        (
-            plan_id,
-            WORKSPACE_ID,
-            task_id,
-            run_id,
-            agent_id,
-            "Verify that complete run evidence is authoritative.",
-            json.dumps(["docs/POSTGRES_PARITY_CONTRACT.md"]),
-            json.dumps(["plan-evidence-negative-fixtures"]),
-            json.dumps(["agent-gateway-ledger"]),
-            json.dumps([]),
-            json.dumps(expected_steps, indent=2),
-            "Require every tool and evaluation row to pass.",
-            "Discard the isolated fixture schema.",
-            now,
-            now,
-        ),
-    )
     adapter.commit()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-AgentOps-Workspace-Id": WORKSPACE_ID,
+        "X-AgentOps-Agent-Id": agent_id,
+    }
+    claim_status, claim_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/mis/agent-gateway/tasks/"
+        f"{urllib.parse.quote(task_id)}/claim",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "task_id": task_id,
+        },
+        headers=headers,
+    )
+    plan_status, plan_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/mis/agent-gateway/agent-plans",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "plan_id": plan_id,
+            "task_id": task_id,
+            "task_understanding": (
+                "Verify that complete run evidence is authoritative."
+            ),
+            "referenced_specs": [
+                "docs/COMMERCIAL_MIGRATION_CLEAN_ROOM_BREAKDOWN.md",
+            ],
+            "referenced_memories": [
+                "manifest-authority-isolated-fixture",
+            ],
+            "referenced_bases": ["agent-gateway-ledger"],
+            "proposed_files_to_change": [],
+            "risk_level": "low",
+            "approval_required": False,
+            "execution_steps": expected_steps,
+            "verification_plan": (
+                "Require every tool, evaluation, and artifact row."
+            ),
+            "rollback_plan": "Discard the isolated fixture schema.",
+            "status": "submitted",
+        },
+        headers=headers,
+    )
+    verify_status, verify_payload, _ = http_json(
+        "GET",
+        f"{base_url}/api/mis/agent-gateway/agent-plans/"
+        f"{urllib.parse.quote(plan_id)}/verify",
+        headers=headers,
+    )
+    verified_plan = (
+        verify_payload.get("agent_plan")
+        if isinstance(verify_payload, dict)
+        else None
+    )
+    verification = (
+        verify_payload.get("verification")
+        if isinstance(verify_payload, dict)
+        else None
+    )
+    plan_hash = str(
+        (verified_plan or {}).get("plan_hash")
+        if isinstance(verified_plan, dict)
+        else ""
+    )
+    run_status, run_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/mis/agent-gateway/runs/start",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "run_id": run_id,
+            "task_id": task_id,
+            "runtime_type": "codex",
+            "model_provider": "authority-fixture",
+            "model_name": "no-provider-call",
+            "agent_plan_id": plan_id,
+            "plan_hash": plan_hash,
+            "input_summary": "Isolated manifest authority fixture.",
+            "delegation_id": f"manifest_guard_{runtime}",
+        },
+        headers=headers,
+    )
+    heartbeat_status, heartbeat_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/mis/agent-gateway/runs/"
+        f"{urllib.parse.quote(run_id)}/heartbeat",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "task_id": task_id,
+            "status": "completed",
+            "output_summary": (
+                "Fixture run completed before evidence verification."
+            ),
+        },
+        headers=headers,
+    )
+    setup_checks = {
+        "claim": (
+            claim_status == 200
+            and isinstance(claim_payload, dict)
+            and claim_payload.get("outcome") == "claimed"
+        ),
+        "plan": (
+            plan_status == 201
+            and isinstance(plan_payload, dict)
+            and plan_payload.get("outcome") == "created"
+        ),
+        "verification": (
+            verify_status == 200
+            and isinstance(verification, dict)
+            and verification.get("pass") is True
+            and len(plan_hash) == 64
+        ),
+        "run": (
+            run_status == 201
+            and isinstance(run_payload, dict)
+            and run_payload.get("outcome") == "created"
+        ),
+        "heartbeat": (
+            heartbeat_status == 200
+            and isinstance(heartbeat_payload, dict)
+            and heartbeat_payload.get("outcome") == "updated"
+        ),
+    }
+    failed_setup_checks = [
+        name for name, passed in setup_checks.items() if not passed
+    ]
+    if failed_setup_checks:
+        raise RuntimeError(
+            f"{runtime} manifest authority fixture setup failed checks: "
+            f"{','.join(failed_setup_checks)}"
+        )
     return {
         "task_id": task_id,
         "run_id": run_id,
         "plan_id": plan_id,
+        "plan_hash": plan_hash,
         "agent_id": agent_id,
         "expected_steps": expected_steps,
+        "runtime_type": "codex",
+        "provider_call_performed": False,
     }
 
 
@@ -1076,7 +1180,12 @@ def verify_manifest_authority_guards(
     if not approved_expected_steps or not approved_tool_call_ids or not approved_evaluation_ids or not approved_artifact_ids:
         raise RuntimeError(f"{runtime} verified manifest lacks declared evidence needed for authority guard checks")
 
-    guard = prepare_manifest_authority_guard_fixture(adapter, runtime)
+    guard = prepare_manifest_authority_guard_fixture(
+        adapter,
+        base_url,
+        runtime,
+        token,
+    )
     run_id = str(guard["run_id"])
     task_id = str(guard["task_id"])
     expected_steps = list(guard["expected_steps"])
