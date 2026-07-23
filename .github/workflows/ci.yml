@@ -275,6 +275,20 @@ jobs:
     name: Commercial Next production boundary
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agentops_ci
+          POSTGRES_PASSWORD: agentops_ci
+          POSTGRES_DB: agentops_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agentops_ci -d agentops_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -295,12 +309,40 @@ jobs:
         working-directory: ui/next-app
         run: npm ci --ignore-scripts
 
+      - name: Configure disposable Postgres contract DSN
+        env:
+          PGUSER: agentops_ci
+          PGPASSWORD: agentops_ci
+          PGDATABASE: agentops_ci
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+        run: |
+          set -euo pipefail
+          dsn="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}"
+          echo "::add-mask::$dsn"
+          printf 'AGENTOPS_POSTGRES_DSN=%s\n' "$dsn" >> "$GITHUB_ENV"
+
       - name: Verify TypeScript control-plane mode
         working-directory: ui/next-app
         run: |
           set -euo pipefail
           npm run typecheck
           npm run test:control-plane-mode-contract
+          npm run test:postgres-schema-contract
+          npm run build
+
+      - name: Verify production-only install and start readiness
+        working-directory: ui/next-app
+        env:
+          AGENTOPS_DEPLOYMENT_MODE: production
+          AGENTOPS_CONTROL_PLANE_MODE: postgres
+          AGENTOPS_NEXT_HOST: 127.0.0.1
+        run: |
+          set -euo pipefail
+          npm prune --omit=dev --ignore-scripts
+          npm ls --omit=dev tsx
+          npm run check:postgres-schema
+          npm run start:check
 
       - name: Prove production cannot proxy to Python
         run: timeout 420s python3 scripts/nextjs_production_python_proxy_fail_closed_smoke.py
