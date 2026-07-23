@@ -1429,16 +1429,39 @@ def verify_manifest_authority_guards(
         },
         headers=headers,
     )
-    audit_override_count = adapter.fetchone(
-        "SELECT COUNT(*) AS count FROM plan_evidence_manifests WHERE manifest_id=?",
+    audit_override_row = adapter.fetchone(
+        """SELECT status,audit_ids_json FROM plan_evidence_manifests
+        WHERE manifest_id=?""",
         (audit_override_manifest_id,),
     )
+    audit_override_manifest = (
+        audit_override_payload.get("manifest")
+        if isinstance(audit_override_payload, dict)
+        else {}
+    )
+    audit_override_verification = (
+        audit_override_payload.get("verification")
+        if isinstance(audit_override_payload, dict)
+        else {}
+    )
     if not (
-        audit_override_status == 409
-        and audit_override_payload.get("error") == "plan_evidence_audit_ids_server_derived"
-        and int((audit_override_count or {}).get("count") or 0) == 0
+        audit_override_status == 201
+        and isinstance(audit_override_manifest, dict)
+        and audit_override_manifest.get("audit_ids_json") == "[]"
+        and isinstance(audit_override_verification, dict)
+        and audit_override_verification.get("pass") is True
+        and audit_override_row
+        and audit_override_row.get("status") == "verified"
+        and audit_override_row.get("audit_ids_json") == "[]"
+        and "audit_caller_selected" not in json.dumps(
+            audit_override_payload,
+            sort_keys=True,
+        )
     ):
-        raise RuntimeError(f"{runtime} caller-selected audit IDs were not rejected before persistence")
+        raise RuntimeError(
+            f"{runtime} caller-selected audit IDs were not replaced by "
+            "server-derived audit evidence"
+        )
 
     failed_tool_id = f"tc_real_{runtime}_omitted_failed"
     failed_tool_status, failed_tool_payload, _ = http_json(
