@@ -6,7 +6,7 @@ import type {
 } from "./contracts";
 import { redactText, stableHash } from "./redaction";
 
-const PROFILE_VERSION = "commercial_worker_prompt_profiles_v1" as const;
+const PROFILE_VERSION = "worker_prompt_profiles_v1" as const;
 
 const PROFILES = Object.freeze({
   general_customer_delivery_summary: {

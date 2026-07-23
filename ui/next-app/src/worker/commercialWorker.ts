@@ -123,8 +123,8 @@ function unavailableKnowledge(reason: string): KnowledgeEvidence {
 
 function secretBoundary() {
   return {
-    secret_boundary: "trusted_typescript_worker_client_v1",
-    credential_transport: "authorization_header_only",
+    secret_boundary: "trusted_worker_client_v1",
+    credential_transport: "trusted_worker_client_only",
     model_visible_credentials: false,
     secrets_in_prompt: false,
     secrets_in_output: false,
@@ -568,6 +568,9 @@ export class CommercialWorker {
           error_type: result.errorType,
           attempt_count: result.attemptCount,
           max_attempts: result.maxAttempts,
+          prompt_profile_id: prompt.profile.profileId,
+          prompt_profile_version: prompt.profile.version,
+          prompt_profile_hash: prompt.profile.profileHash,
           ...capability,
           event_is_worker_summary_not_raw_trace: true,
           ...secretBoundary(),

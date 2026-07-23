@@ -606,6 +606,18 @@ async function main() {
     const runtimeMetadata = runtimeBody.metadata as Record<string, unknown>;
     assert.equal(runtimeMetadata.provider_call_performed, true);
     assert.equal(runtimeMetadata.dry_run, false);
+    assert.equal(
+      runtimeMetadata.secret_boundary,
+      "trusted_worker_client_v1",
+    );
+    assert.equal(
+      runtimeMetadata.credential_transport,
+      "trusted_worker_client_only",
+    );
+    assert.equal(
+      runtimeMetadata.prompt_profile_version,
+      "worker_prompt_profiles_v1",
+    );
     const toolBody = bodyFor("/api/mis/agent-gateway/tool-calls", happyRequests);
     const toolArgs = toolBody.args as Record<string, unknown>;
     assert.equal(toolArgs.provider_call_performed, true);

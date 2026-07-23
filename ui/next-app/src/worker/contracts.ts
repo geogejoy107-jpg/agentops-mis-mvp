@@ -36,7 +36,7 @@ export type KnowledgeEvidence = {
 
 export type PromptProfile = {
   profileId: string;
-  version: "commercial_worker_prompt_profiles_v1";
+  version: "worker_prompt_profiles_v1";
   profileHash: string;
   objective: string;
   outputContract: string[];
