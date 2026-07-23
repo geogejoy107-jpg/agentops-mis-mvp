@@ -30,6 +30,7 @@ const HUMAN_READ_ROLES = new Set([
   "workspace-admin",
   "owner",
   "operator",
+  "viewer",
 ]);
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
@@ -173,6 +174,27 @@ function boundedLimit(value: unknown) {
   return parsed;
 }
 
+function boundedOffset(value: unknown) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return 0;
+  if (!/^[0-9]{1,4}$/.test(normalized)) {
+    throw new ControlPlaneHttpError(
+      400,
+      "read_offset_invalid",
+      "offset must be an integer between 0 and 5000.",
+    );
+  }
+  const parsed = Number(normalized);
+  if (parsed > 5000) {
+    throw new ControlPlaneHttpError(
+      400,
+      "read_offset_invalid",
+      "offset must be an integer between 0 and 5000.",
+    );
+  }
+  return parsed;
+}
+
 function statusFilter(
   values: readonly unknown[],
   allowed: ReadonlySet<string>,
@@ -194,6 +216,22 @@ function statusFilter(
 
 function ledgerIdentifier(value: unknown, field: "task_id" | "run_id") {
   const normalized = String(value ?? "").trim();
+  if (!/^[A-Za-z0-9._:-]{1,128}$/.test(normalized)) {
+    throw new ControlPlaneHttpError(
+      400,
+      `${field}_invalid`,
+      `${field} must use 1-128 safe identifier characters.`,
+    );
+  }
+  return normalized;
+}
+
+function optionalLedgerIdentifier(
+  value: unknown,
+  field: "task_id" | "agent_id",
+) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return null;
   if (!/^[A-Za-z0-9._:-]{1,128}$/.test(normalized)) {
     throw new ControlPlaneHttpError(
       400,
@@ -404,7 +442,9 @@ async function authenticateWorkspaceReader(
   return identity;
 }
 
-const TASK_COLUMNS = `task.task_id,task.title,task.description,task.requester_id,
+const TASK_COLUMNS = `task.task_id,task.title,task.description,
+  CASE WHEN requester_membership.user_id IS NULL
+    THEN NULL ELSE task.requester_id END AS requester_id,
   task.owner_agent_id,task.collaborator_agent_ids,task.status,task.priority,
   task.due_date,task.acceptance_criteria,task.risk_level,task.budget_limit_usd,
   task.created_at,task.updated_at`;
@@ -437,6 +477,10 @@ export async function listWorkspaceTasks(
     const result = await client.query<TaskRow>(
       `SELECT ${TASK_COLUMNS}
       FROM tasks task
+      LEFT JOIN workspace_memberships requester_membership
+        ON requester_membership.workspace_id=task.workspace_id
+        AND requester_membership.user_id=task.requester_id
+        AND requester_membership.status='active'
       WHERE task.workspace_id=$1
         AND (cardinality($2::text[])=0 OR task.status=ANY($2::text[]))
       ORDER BY task.updated_at DESC,task.task_id
@@ -455,6 +499,9 @@ export async function listWorkspaceRuns(
   workspaceId: unknown,
   rawStatuses: readonly unknown[] = [],
   rawLimit?: unknown,
+  rawTaskId?: unknown,
+  rawAgentId?: unknown,
+  rawOffset?: unknown,
 ) {
   return withPostgresTransaction(async (client) => {
     const identity = await authenticateWorkspaceReader(
@@ -468,6 +515,9 @@ export async function listWorkspaceRuns(
       "run_status_filter_invalid",
     );
     const limit = boundedLimit(rawLimit);
+    const taskId = optionalLedgerIdentifier(rawTaskId, "task_id");
+    const agentId = optionalLedgerIdentifier(rawAgentId, "agent_id");
+    const offset = boundedOffset(rawOffset);
     const result = await client.query<RunRow>(
       `SELECT ${RUN_COLUMNS}
       FROM runs run
@@ -475,10 +525,12 @@ export async function listWorkspaceRuns(
         ON task.task_id=run.task_id
         AND task.workspace_id=$1
         AND run.workspace_id=task.workspace_id
-      WHERE cardinality($2::text[])=0 OR run.status=ANY($2::text[])
+      WHERE (cardinality($2::text[])=0 OR run.status=ANY($2::text[]))
+        AND ($4::text IS NULL OR run.task_id=$4)
+        AND ($5::text IS NULL OR run.agent_id=$5)
       ORDER BY run.created_at DESC,run.run_id
-      LIMIT $3`,
-      [identity.workspaceId, statuses, limit],
+      LIMIT $3 OFFSET $6`,
+      [identity.workspaceId, statuses, limit, taskId, agentId, offset],
     );
     return {
       status: 200,
@@ -495,6 +547,10 @@ async function taskOrNotFound(
   const result = await client.query<TaskRow>(
     `SELECT ${TASK_COLUMNS}
     FROM tasks task
+    LEFT JOIN workspace_memberships requester_membership
+      ON requester_membership.workspace_id=task.workspace_id
+      AND requester_membership.user_id=task.requester_id
+      AND requester_membership.status='active'
     WHERE task.workspace_id=$1 AND task.task_id=$2`,
     [workspaceId, taskId],
   );

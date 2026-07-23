@@ -104,7 +104,7 @@ async function seedHuman(
   client: Client,
   userId: string,
   username: string,
-  role: "owner" | "approver" | "operator",
+  role: "owner" | "approver" | "operator" | "viewer",
   workspaceId = WORKSPACE,
 ) {
   const now = new Date().toISOString();
@@ -428,6 +428,7 @@ async function run() {
     await seedHuman(admin, "usr_read_owner", "read-owner", "owner");
     await seedHuman(admin, "usr_read_reviewer", "read-reviewer", "approver");
     await seedHuman(admin, "usr_read_operator", "read-operator", "operator");
+    await seedHuman(admin, "usr_read_viewer", "read-viewer", "viewer");
     await seedHuman(
       admin,
       "usr_read_foreign",
@@ -440,9 +441,10 @@ async function run() {
     const owner = await login("read-owner");
     const reviewer = await login("read-reviewer");
     const operator = await login("read-operator");
+    const viewer = await login("read-viewer");
     const foreign = await login("read-foreign");
 
-    for (const session of [owner, reviewer, operator]) {
+    for (const session of [owner, reviewer, operator, viewer]) {
       const tasks = await listWorkspaceTasks(
         browserHeaders(session),
         WORKSPACE,
@@ -483,6 +485,30 @@ async function run() {
     );
     assert.equal(limitedRuns.body.length, 1);
     assert.equal(limitedRuns.body[0]?.run_id, "run_read_primary");
+    const filteredRuns = await listWorkspaceRuns(
+      browserHeaders(owner),
+      WORKSPACE,
+      [],
+      "100",
+      "tsk_read_primary",
+      "agt_read_primary",
+      "0",
+    );
+    assert.deepEqual(filteredRuns.body.map((run) => run.run_id), [
+      "run_read_primary",
+    ]);
+    const offsetRuns = await listWorkspaceRuns(
+      browserHeaders(owner),
+      WORKSPACE,
+      [],
+      "1",
+      undefined,
+      undefined,
+      "1",
+    );
+    assert.deepEqual(offsetRuns.body.map((run) => run.run_id), [
+      "run_read_primary",
+    ]);
     const headerBoundTasks = await listWorkspaceTasks(
       browserHeaders(owner),
       undefined,
@@ -621,6 +647,25 @@ async function run() {
         [],
         "201",
       ));
+    await expectCode("read_offset_invalid", () =>
+      listWorkspaceRuns(
+        browserHeaders(owner),
+        WORKSPACE,
+        [],
+        "10",
+        undefined,
+        undefined,
+        "5001",
+      ));
+    await expectCode("agent_id_invalid", () =>
+      listWorkspaceRuns(
+        browserHeaders(owner),
+        WORKSPACE,
+        [],
+        "10",
+        undefined,
+        "invalid agent id",
+      ));
 
     assertSanitized(limitedTasks.body);
     assertSanitized(limitedRuns.body);
@@ -636,7 +681,8 @@ async function run() {
       schema_contract: SCHEMA_CONTRACT,
       migration_count: POSTGRES_MIGRATION_MANIFEST.length,
       workspaces_verified: 2,
-      human_roles_verified: ["owner", "reviewer", "operator"],
+      human_roles_verified: ["owner", "reviewer", "operator", "viewer"],
+      run_task_agent_offset_filters: true,
       routes_verified: [
         "GET /api/mis/tasks",
         "GET /api/mis/tasks/:taskId",
