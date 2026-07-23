@@ -115,6 +115,7 @@ def main() -> int:
     sdist_has_install_acceptance = False
     sdist_has_status_acceptance = False
     sdist_has_activation_plan_acceptance = False
+    sdist_has_config_parser_acceptance = False
     sdist_has_activation_spec = False
     sdist_has_pkg_info = False
     sdist_pkg_info_matches = False
@@ -249,6 +250,10 @@ def main() -> int:
                     )
                     for name in names
                 )
+                sdist_has_config_parser_acceptance = any(
+                    name.endswith("/docs/RELAY_CONFIG_PARSER_ACCEPTANCE.md")
+                    for name in names
+                )
                 sdist_has_activation_spec = any(
                     name.endswith("/docs/RELAY_SERVICE_ACTIVATION_SPEC.md")
                     for name in names
@@ -348,6 +353,11 @@ def main() -> int:
     require(
         sdist_has_activation_plan_acceptance,
         "source distribution omits the activation-plan-core acceptance",
+        failures,
+    )
+    require(
+        sdist_has_config_parser_acceptance,
+        "source distribution omits the config-parser acceptance",
         failures,
     )
     require(
@@ -489,6 +499,9 @@ def main() -> int:
         "sdist_includes_status_acceptance": sdist_has_status_acceptance,
         "sdist_includes_activation_plan_acceptance": (
             sdist_has_activation_plan_acceptance
+        ),
+        "sdist_includes_config_parser_acceptance": (
+            sdist_has_config_parser_acceptance
         ),
         "sdist_includes_activation_spec": sdist_has_activation_spec,
         "credential_or_endpoint_material_present": unit_contains_forbidden_material,

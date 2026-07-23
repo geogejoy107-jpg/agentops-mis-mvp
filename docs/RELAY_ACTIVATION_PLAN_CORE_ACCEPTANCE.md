@@ -44,7 +44,7 @@ The smoke uses synthetic values only. It:
 
 - verifies disabled/inactive, enabled/inactive, disabled/active and
   enabled/active state handling;
-- rejects fifteen malformed systemd cases, nineteen unsafe prerequisite
+- rejects fifteen malformed systemd cases, twenty-one unsafe prerequisite
   snapshots and forged systemd/plan dataclass projections;
 - changes each private bound identity independently and requires a unique plan
   hash;
@@ -63,7 +63,6 @@ This is a pure planning primitive. It does **not** prove that private snapshot
 inputs came from the host or remain current. It does not implement:
 
 - an FD-anchored prerequisite scanner;
-- shared strict parsing of the live Relay daemon configuration;
 - a read-only systemctl adapter;
 - an `activate` or `activation-recover` CLI command;
 - confirmation, lifecycle locking, transaction revisions or receipts;
@@ -71,6 +70,10 @@ inputs came from the host or remain current. It does not implement:
 - Linux account, group, config, certificate or route-key provisioning;
 - a real Linux VM/systemd acceptance;
 - public Relay deployment, firewall, DNS, ACME or browser reachability.
+
+The live daemon now shares the separately accepted strict bytes parser in
+`RELAY_CONFIG_PARSER_ACCEPTANCE.md`. That parser does not inspect host identity
+or bind its result to an activation plan.
 
 The next slice must bind real host observations to this core before exposing a
 confirmable preview. It must not treat a caller-constructed snapshot as

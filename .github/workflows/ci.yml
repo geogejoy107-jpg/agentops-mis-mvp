@@ -41,6 +41,7 @@ jobs:
             server.py \
             agentops_mis_cli/relay_activation.py \
             agentops_mis_cli/relay_admin.py \
+            agentops_mis_cli/relay_daemon.py \
             agentops_mis_cli/host.py \
             agentops_mis_cli/host_log.py \
             agentops_mis_cli/runtime_lock.py \
@@ -48,6 +49,7 @@ jobs:
             agentops_mis_core/worker_fleet.py \
             scripts/run_local_stack.py \
             scripts/relay_activation_plan_smoke.py \
+            scripts/relay_config_parser_smoke.py \
             scripts/relay_offline_status_smoke.py \
             scripts/private_host_runtime_lock_smoke.py \
             scripts/private_host_log_rotation_smoke.py \
@@ -59,6 +61,7 @@ jobs:
           set -euo pipefail
           timeout 120s python3 scripts/private_host_runtime_lock_smoke.py
           timeout 120s python3 scripts/relay_activation_plan_smoke.py
+          timeout 120s python3 scripts/relay_config_parser_smoke.py
           timeout 120s python3 scripts/relay_offline_status_smoke.py
           timeout 120s python3 scripts/private_host_log_rotation_smoke.py
           timeout 120s python3 scripts/worker_service_heartbeat_cadence_smoke.py
@@ -156,6 +159,7 @@ jobs:
           timeout 120s python3 scripts/relay_registration_publication_race_smoke.py
           timeout 120s python3 scripts/relay_sni_router_smoke.py
           timeout 120s python3 scripts/relay_daemon_smoke.py
+          timeout 120s python3 scripts/relay_config_parser_smoke.py
           timeout 120s python3 scripts/relay_deploy_contract_smoke.py
           timeout 120s python3 scripts/relay_release_bundle_smoke.py
           timeout 120s python3 scripts/relay_offline_install_smoke.py

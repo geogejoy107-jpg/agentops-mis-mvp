@@ -46,6 +46,8 @@ from agentops_mis_cli.relay_tunnel import (
 
 MAX_CONFIG_BYTES = 64 * 1024
 MAX_KEY_FILE_BYTES = 512
+MAX_CANONICAL_PATH_CHARS = 4096
+MAX_JSON_INTEGER_DIGITS = 20
 MAX_DAEMON_ROUTES = 256
 MAX_BROWSER_CONNECTIONS = 256
 STATE_SCHEMA_VERSION = 1
@@ -161,16 +163,39 @@ def _require_object(value: object, *, keys: set[str], code: str) -> dict[str, An
     return value
 
 
+def _strict_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise RelayDaemonError("config_duplicate_key")
+        payload[key] = value
+    return payload
+
+
+def _strict_json_integer(value: str) -> int:
+    digits = value[1:] if value.startswith("-") else value
+    if len(digits) > MAX_JSON_INTEGER_DIGITS:
+        raise ValueError("json integer too large")
+    return int(value)
+
+
+def _reject_json_number(_value: str) -> object:
+    raise ValueError("non-integer JSON number rejected")
+
+
 def _parse_listener(value: object, *, code: str) -> tuple[str, int]:
     payload = _require_object(value, keys={"host", "port"}, code=code)
     host = payload.get("host")
     port = payload.get("port")
     if not isinstance(host, str):
         raise RelayDaemonError(code)
+    host_invalid = False
     try:
         ipaddress.ip_address(host)
-    except ValueError as exc:
-        raise RelayDaemonError(code) from exc
+    except ValueError:
+        host_invalid = True
+    if host_invalid:
+        raise RelayDaemonError(code)
     if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
         raise RelayDaemonError(code)
     return host, port
@@ -179,19 +204,47 @@ def _parse_listener(value: object, *, code: str) -> tuple[str, int]:
 def _absolute_path(value: object, *, code: str) -> Path:
     if not isinstance(value, str) or not value:
         raise RelayDaemonError(code)
-    path = Path(value).expanduser()
-    if not path.is_absolute():
+    if (
+        len(value) > MAX_CANONICAL_PATH_CHARS
+        or not value.isascii()
+        or "~" in value
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise RelayDaemonError(code)
+    path = Path(value)
+    if not path.is_absolute() or value.startswith("//"):
+        raise RelayDaemonError(code)
+    if value != path.as_posix():
+        raise RelayDaemonError(code)
+    if value != "/" and any(
+        part in {"", ".", ".."} for part in value.split("/")[1:]
+    ):
         raise RelayDaemonError(code)
     return path
 
 
-def load_config(path: Path) -> RelayDaemonConfig:
+def parse_config_bytes(data: bytes) -> RelayDaemonConfig:
+    if type(data) is not bytes or not data or len(data) > MAX_CONFIG_BYTES:
+        raise RelayDaemonError("config_invalid_json")
+    payload: object = None
+    parse_failed = False
     try:
         payload = json.loads(
-            _read_bounded_file(path, max_bytes=MAX_CONFIG_BYTES, private=False).decode("utf-8")
+            data.decode("utf-8"),
+            object_pairs_hook=_strict_json_object,
+            parse_constant=_reject_json_number,
+            parse_float=_reject_json_number,
+            parse_int=_strict_json_integer,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RelayDaemonError("config_invalid_json") from exc
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValueError,
+        RecursionError,
+    ):
+        parse_failed = True
+    if parse_failed:
+        raise RelayDaemonError("config_invalid_json")
     root = _require_object(
         payload,
         keys={
@@ -205,7 +258,8 @@ def load_config(path: Path) -> RelayDaemonConfig:
         },
         code="config_shape_invalid",
     )
-    if root.get("schema_version") != 1:
+    schema_version = root.get("schema_version")
+    if type(schema_version) is not int or schema_version != 1:
         raise RelayDaemonError("config_schema_unsupported")
     browser_host, browser_port = _parse_listener(
         root.get("browser_listen"),
@@ -246,15 +300,22 @@ def load_config(path: Path) -> RelayDaemonConfig:
             keys={"hostname", "key_file", "route"},
             code="route_shape_invalid",
         )
+        hostname_invalid = False
         try:
             hostname = normalize_dns_hostname(route_payload.get("hostname"))
-        except (TypeError, ValueError) as exc:
-            raise RelayDaemonError("route_hostname_invalid") from exc
+        except (TypeError, ValueError):
+            hostname_invalid = True
+            hostname = ""
+        if hostname_invalid:
+            raise RelayDaemonError("route_hostname_invalid")
         route_ref = route_payload.get("route")
+        route_ref_invalid = False
         try:
             _validate_frame(RelayFrame("register", route_ref, 1, 1))
-        except (TypeError, RelayProtocolError) as exc:
-            raise RelayDaemonError("route_ref_invalid") from exc
+        except (TypeError, RelayProtocolError):
+            route_ref_invalid = True
+        if route_ref_invalid:
+            raise RelayDaemonError("route_ref_invalid")
         if hostname in hostnames or route_ref in route_refs:
             raise RelayDaemonError("route_duplicate")
         hostnames.add(hostname)
@@ -279,6 +340,12 @@ def load_config(path: Path) -> RelayDaemonConfig:
         state_path=state_path,
         status_path=status_path,
         routes=tuple(routes),
+    )
+
+
+def load_config(path: Path) -> RelayDaemonConfig:
+    return parse_config_bytes(
+        _read_bounded_file(path, max_bytes=MAX_CONFIG_BYTES, private=False)
     )
 
 

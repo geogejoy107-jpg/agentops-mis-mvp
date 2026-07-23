@@ -1,8 +1,8 @@
 # Relay Service Activation Specification
 
-Status: pure Activation Plan Core v0 implemented and locally accepted; host
-prerequisite scanner, preview CLI, systemd mutation, transaction, rollback and
-recovery remain planned and unimplemented
+Status: pure Activation Plan Core v0 and strict daemon config parser implemented
+and locally accepted; host prerequisite scanner, preview CLI, systemd mutation,
+transaction, rollback and recovery remain planned and unimplemented
 
 ## Objective
 
@@ -18,7 +18,10 @@ The current `agentops_mis_cli.relay_activation` module implements only strict
 systemd-state parsing, private plan-hash compilation and bounded public
 projection from preconstructed synthetic identities. It does not open host
 files, inspect systemd, expose an `activate` CLI command or perform mutations.
-See `RELAY_ACTIVATION_PLAN_CORE_ACCEPTANCE.md`.
+The live daemon separately shares a bounded strict config parser, but that
+parser does not create authoritative activation identities. See
+`RELAY_ACTIVATION_PLAN_CORE_ACCEPTANCE.md` and
+`RELAY_CONFIG_PARSER_ACCEPTANCE.md`.
 
 ## Command Contract
 

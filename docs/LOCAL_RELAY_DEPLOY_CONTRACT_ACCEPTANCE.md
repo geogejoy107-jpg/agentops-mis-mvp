@@ -114,8 +114,8 @@ The smoke:
   implicitly install the systemd unit;
 - verifies the source distribution carries the systemd template and this
   acceptance document, release/install/status acceptance, the pure activation
-  plan-core acceptance, the remaining activation contract, and the
-  credential-free config example;
+  plan-core acceptance, the strict config-parser acceptance, the remaining
+  activation contract, and the credential-free config example;
 - parses the unit without invoking `systemctl` or `systemd-analyze`;
 - checks the exact foreground arguments, dedicated identity, restart policy,
   private directories, capability bound, address families, and writable paths;
