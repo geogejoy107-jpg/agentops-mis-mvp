@@ -174,10 +174,11 @@ export async function authenticateAgentGateway(
 
 export function enforceWorkspaceBinding(
   identity: AgentGatewayIdentity,
-  input: { header?: string | null; body?: unknown },
+  input: { header?: string | null; query?: string | null; body?: unknown },
 ) {
   for (const requested of [
     input.header,
+    input.query,
     typeof input.body === "string" ? input.body : null,
   ]) {
     if (requested && requested.trim() !== identity.workspaceId) {

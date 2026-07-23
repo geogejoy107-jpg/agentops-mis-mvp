@@ -331,6 +331,8 @@ jobs:
           npm run test:postgres-schema-contract
           npm run migrate:postgres
           npm run test:customer-delivery-approval-request-contract
+          npm run test:agent-gateway-core-postgres-contract
+          npm run test:agent-gateway-core-production-boundary
           npm run build
 
       - name: Verify production-only install and start readiness

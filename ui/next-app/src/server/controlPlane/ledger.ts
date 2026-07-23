@@ -11,6 +11,10 @@ type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
+export function pythonFloat(value: number): PythonFloat {
+  return { __agentops_python_float__: value };
+}
+
 function canonicalValue(value: unknown): JsonValue {
   if (
     value === null
@@ -53,7 +57,7 @@ export function stableHash(value: unknown) {
     .digest("hex");
 }
 
-function newLedgerId(prefix: string) {
+export function newLedgerId(prefix: string) {
   return `${prefix}_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
 }
 
@@ -69,7 +73,7 @@ function nextAuditCreatedAt(previousCreatedAt: string | null) {
 export async function appendAudit(
   client: PoolClient,
   input: {
-    workspaceId: string;
+    workspaceId?: string;
     actorType: "user" | "agent" | "system";
     actorId: string | null;
     action: string;
@@ -80,6 +84,10 @@ export async function appendAudit(
     metadata?: Record<string, unknown>;
   },
 ) {
+  const workspaceId = String(
+    input.workspaceId || input.metadata?.workspace_id || "",
+  ).trim();
+  if (!workspaceId) throw new Error("audit_workspace_required");
   await client.query("SELECT pg_advisory_xact_lock(1095779668)");
   const previousResult = await client.query<{
     tamper_chain_hash: string | null;
@@ -91,7 +99,7 @@ export async function appendAudit(
   const previous = previousResult.rows[0];
   const metadata = {
     ...(input.metadata || {}),
-    workspace_id: input.workspaceId,
+    workspace_id: workspaceId,
   };
   const beforeHash = input.before === undefined ? null : stableHash(input.before);
   const afterHash = input.after === undefined ? null : stableHash(input.after);
@@ -113,7 +121,7 @@ export async function appendAudit(
     ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
     [
       newLedgerId("aud"),
-      input.workspaceId,
+      workspaceId,
       input.actorType,
       input.actorId,
       input.action,
@@ -133,11 +141,13 @@ export async function appendRuntimeEvent(
   input: {
     eventType: string;
     status: string;
-    runId: string;
-    taskId: string;
-    agentId: string;
-    outputSummary: string;
-    rawPayloadHash: string;
+    runId?: string | null;
+    taskId?: string | null;
+    agentId?: string | null;
+    inputSummary?: string | null;
+    outputSummary?: string | null;
+    errorMessage?: string | null;
+    rawPayloadHash?: string | null;
   },
 ) {
   await client.query(
@@ -145,16 +155,18 @@ export async function appendRuntimeEvent(
       runtime_event_id,runtime_connector_id,event_type,status,run_id,task_id,
       agent_id,model_name,latency_ms,prompt_hash,input_summary,output_summary,
       error_message,raw_payload_hash,created_at
-    ) VALUES($1,NULL,$2,$3,$4,$5,$6,NULL,NULL,NULL,NULL,$7,NULL,$8,$9)`,
+    ) VALUES($1,NULL,$2,$3,$4,$5,$6,NULL,NULL,NULL,$7,$8,$9,$10,$11)`,
     [
       newLedgerId("rte"),
       input.eventType,
       input.status,
-      input.runId,
-      input.taskId,
-      input.agentId,
-      input.outputSummary,
-      input.rawPayloadHash,
+      input.runId || null,
+      input.taskId || null,
+      input.agentId || null,
+      input.inputSummary || null,
+      input.outputSummary || null,
+      input.errorMessage || null,
+      input.rawPayloadHash || null,
       new Date().toISOString(),
     ],
   );
