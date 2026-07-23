@@ -212,10 +212,15 @@ Implementation slices:
    A manual foreground Host remains explicit `manual_restart_required`.
    A dependency-free, loopback-tested Relay-side ClientHello SNI selector now
    proves exact two-Host route isolation, bounded parsing/backpressure, opaque
-   application bytes, and fail-closed unknown/malformed input. Binding its
-   opaque route refs to authenticated current Host tunnels, safe managed Host
-   restart, certificate lifecycle, credential provisioning, installation into
-   the current preview, and the deployed Relay remain open.
+   application bytes, and fail-closed unknown/malformed input. A foreground
+   multi-route Relay daemon now binds those opaque route refs to authenticated
+   current Host tunnels, persists accepted epoch tombstones under a
+   cross-process lock before acknowledgement, enforces one daemon per state
+   namespace, forwards the consumed ClientHello exactly once, exposes
+   listener-backed bounded readiness, and stops cleanly on SIGTERM. Public
+   deployment, DNS/ACME and certificate
+   lifecycle, production credential provisioning, installation into the
+   current preview, and physical browser-only evidence remain open.
    `PRIVATE_HOST_MANAGED_RESTART_SPEC.md` freezes the safe restart state machine,
    exact-service authority, response-flush ordering, health gate, rollback, and
    Tailscale/Worker isolation. A deterministic response hook now proves that a
@@ -236,8 +241,12 @@ Implementation slices:
    once into the same Host's MIS audit ledger. Installation and audit proof from
    a versioned candidate, authenticated SNI route binding, certificate
    lifecycle, credential provisioning and the deployed Relay remain open.
-3. `3C Deployed Relay`: L4 endpoint, DNS/ACME provisioning, stable per-Host
-   Console origin, bounded operations metadata, deployment and rollback.
+3. `3C Relay delivery`:
+   - local deployable multi-route daemon, credential-free service contract,
+     bounded status and deterministic loopback acceptance: implemented;
+   - public endpoint, DNS/ACME provisioning, stable per-Host Console origin,
+     production credential lifecycle, retention/monitoring, deployment and
+     rollback receipt: pending external infrastructure acceptance.
 4. `3D Physical acceptance`: fresh browser-only device, real Hermes/OpenClaw
    run, disconnect/reconnect, approval, memory, artifact and logout receipt.
 

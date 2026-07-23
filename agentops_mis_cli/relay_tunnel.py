@@ -19,7 +19,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 
 PROTOCOL_VERSION = 1
@@ -92,12 +92,16 @@ def _is_hex_id(value: str) -> bool:
     return len(value) == HEX_ID_LENGTH and all(char in "0123456789abcdef" for char in value)
 
 
+def _valid_route(value: object) -> bool:
+    return isinstance(value, str) and 1 <= len(value) <= 96 and all(
+        char.isascii() and (char.isalnum() or char in "-_.") for char in value
+    )
+
+
 def _validate_frame(frame: RelayFrame) -> None:
     if not isinstance(frame.kind, str) or frame.kind not in _KINDS:
         raise RelayProtocolError("unknown_kind")
-    if not isinstance(frame.route, str) or not (1 <= len(frame.route) <= 96) or not all(
-        char.isascii() and (char.isalnum() or char in "-_.") for char in frame.route
-    ):
+    if not _valid_route(frame.route):
         raise RelayProtocolError("invalid_route")
     if not isinstance(frame.epoch, int) or isinstance(frame.epoch, bool) or frame.epoch < 1:
         raise RelayProtocolError("invalid_epoch")
@@ -169,15 +173,11 @@ def _read_exact(stream: socket.socket, size: int, deadline: float) -> bytes:
     return b"".join(chunks)
 
 
-def receive_frame(
+def _receive_frame_payload(
     stream: socket.socket,
-    key: bytes,
     *,
     timeout_seconds: float = IO_TIMEOUT_SECONDS,
-) -> RelayFrame:
-    """Read and authenticate one strict bounded frame."""
-    if len(key) < 32:
-        raise RelayProtocolError("weak_tunnel_key")
+) -> dict[str, Any]:
     deadline = time.monotonic() + max(0.1, min(float(timeout_seconds), 30.0))
     size = struct.unpack("!I", _read_exact(stream, 4, deadline))[0]
     if size < 2 or size > MAX_FRAME_BYTES:
@@ -199,6 +199,13 @@ def receive_frame(
     mac = decoded.get("mac")
     if not isinstance(mac, str) or len(mac) != 64:
         raise RelayProtocolError("invalid_mac")
+    return decoded
+
+
+def _authenticate_frame_payload(decoded: dict[str, Any], key: bytes) -> RelayFrame:
+    if len(key) < 32:
+        raise RelayProtocolError("weak_tunnel_key")
+    mac = decoded["mac"]
     unsigned_dict = {name: decoded[name] for name in decoded if name != "mac"}
     unsigned = json.dumps(unsigned_dict, separators=(",", ":"), sort_keys=True).encode("utf-8")
     expected = hmac.new(key, unsigned, hashlib.sha256).hexdigest()
@@ -217,6 +224,38 @@ def receive_frame(
         raise RelayProtocolError("invalid_frame_shape") from exc
     _validate_frame(frame)
     return frame
+
+
+def receive_frame(
+    stream: socket.socket,
+    key: bytes,
+    *,
+    timeout_seconds: float = IO_TIMEOUT_SECONDS,
+) -> RelayFrame:
+    """Read and authenticate one strict bounded frame."""
+    if len(key) < 32:
+        raise RelayProtocolError("weak_tunnel_key")
+    return _authenticate_frame_payload(
+        _receive_frame_payload(stream, timeout_seconds=timeout_seconds),
+        key,
+    )
+
+
+def receive_routed_frame(
+    stream: socket.socket,
+    route_keys: Mapping[str, bytes],
+    *,
+    timeout_seconds: float = IO_TIMEOUT_SECONDS,
+) -> RelayFrame:
+    """Authenticate a first connector frame against its configured opaque route."""
+    decoded = _receive_frame_payload(stream, timeout_seconds=timeout_seconds)
+    route = decoded.get("route")
+    if not _valid_route(route):
+        raise RelayProtocolError("invalid_route")
+    key = route_keys.get(route)
+    if key is None:
+        raise RelayProtocolError("unknown_route")
+    return _authenticate_frame_payload(decoded, key)
 
 
 def send_frame(stream: socket.socket, frame: RelayFrame, key: bytes) -> None:

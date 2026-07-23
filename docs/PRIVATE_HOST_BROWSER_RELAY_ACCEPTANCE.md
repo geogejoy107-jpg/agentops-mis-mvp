@@ -1,9 +1,14 @@
 # Private Host Browser-Only Relay Acceptance
 
-Status: executable target protocol; deployed Relay and physical evidence pending
+Status: local Relay daemon executable; public deployment and physical evidence pending
 
 This is the mandatory ordinary-user second-device protocol. The advanced
 Tailscale protocol cannot satisfy it.
+
+`LOCAL_RELAY_DAEMON_ACCEPTANCE.md` proves the multi-route daemon, authenticated
+Host tunnel binding, persistent epoch and clean service lifecycle on loopback.
+That evidence is necessary but does not satisfy this protocol's public
+certificate, deployed endpoint, retention, or physical stock-browser gates.
 
 ## Preconditions
 

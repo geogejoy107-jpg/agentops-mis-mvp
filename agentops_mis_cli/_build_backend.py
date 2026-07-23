@@ -24,6 +24,11 @@ PACKAGES = [
     ROOT / "agentops_mis_cli",
     ROOT / "agentops_mis_core",
 ]
+RELAY_DEPLOYMENT_FILES = [
+    ROOT / "packaging" / "relay" / "config.example.json",
+    ROOT / "packaging" / "relay" / "systemd" / "agentops-mis-relay.service",
+    ROOT / "docs" / "LOCAL_RELAY_DEPLOY_CONTRACT_ACCEPTANCE.md",
+]
 
 
 def _metadata() -> str:
@@ -52,6 +57,7 @@ def _entry_points() -> str:
     return "\n".join([
         "[console_scripts]",
         "agentops = agentops_mis_cli.cli:main",
+        "agentops-relay = agentops_mis_cli.relay_daemon:main",
         "agentops-worker = agentops_mis_cli.worker:main",
         "",
     ])
@@ -118,6 +124,7 @@ def build_sdist(sdist_directory: str, config_settings=None) -> str:
     include = [
         ROOT / "pyproject.toml",
         *(path for package in PACKAGES for path in sorted(package.glob("*.py"))),
+        *RELAY_DEPLOYMENT_FILES,
         ROOT / "README.md",
     ]
     with tarfile.open(target, "w:gz") as tf:
