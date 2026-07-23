@@ -20,6 +20,8 @@ const TERMINAL_STATUSES = new Set(["completed", "failed", "blocked"]);
 const RISKY_TOOLS = new Set(["shell.exec", "github.push", "email.send", "file.delete", "database.write", "dify.knowledge.upload", "openai.file_search.upload"]);
 const HIGH_RISK_CATEGORIES = new Set(["shell", "email", "database"]);
 const SENSITIVE_KEY = /(authorization|credential|password|secret|token|api[_-]?key|raw[_-]?(prompt|response|transcript|content))/i;
+const SAFE_OMISSION_MARKER =
+  /^(?:raw_(?:prompt|response|transcript|content)|token)_omitted$/i;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 export const EVIDENCE_MAX_BODY_BYTES = 32 * 1024;
 
@@ -189,7 +191,13 @@ function safeJson(value: unknown, depth = 0): unknown {
         .slice(0, 40)
         .map(([rawKey, item]) => {
           const key = text(rawKey, 80);
-          return [key, SENSITIVE_KEY.test(key) ? "[REDACTED]" : safeJson(item, depth + 1)];
+          const safeOmission = item === true && SAFE_OMISSION_MARKER.test(key);
+          return [
+            key,
+            SENSITIVE_KEY.test(key) && !safeOmission
+              ? "[REDACTED]"
+              : safeJson(item, depth + 1),
+          ];
         }),
     );
   }

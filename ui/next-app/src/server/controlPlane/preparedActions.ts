@@ -6,6 +6,14 @@ import {
   enforceWorkspaceBinding,
   type AgentGatewayIdentity,
 } from "./auth";
+import {
+  agentPlanVerificationHash,
+  computeAgentPlanHash,
+  verifyAgentPlanRow,
+} from "./agentPlanContract";
+import {
+  verifyCurrentAgentGatewayPlanEvidenceManifest,
+} from "./agentGatewayPlans";
 import { boundedJsonObject } from "./boundedJson";
 import { withPostgresTransaction } from "./db";
 import { ControlPlaneHttpError } from "./http";
@@ -140,8 +148,11 @@ type ToolCallRow = {
   agent_id: string;
   tool_name: string;
   normalized_args_json: string;
+  target_resource: string | null;
+  risk_level: string;
   status: string;
   side_effect_id: string | null;
+  ended_at: string | null;
 };
 
 type ExecutionLeaseRow = {
@@ -209,25 +220,6 @@ type AgentPlanRow = {
   created_at: string;
 };
 
-type ManifestRow = {
-  manifest_id: string;
-  workspace_id: string;
-  plan_id: string;
-  task_id: string | null;
-  run_id: string;
-  agent_id: string;
-  mismatch_policy: string;
-  expected_steps_json: string;
-  tool_call_ids_json: string;
-  evaluation_ids_json: string;
-  artifact_ids_json: string;
-  audit_ids_json: string;
-  plan_hash: string | null;
-  verification_result_hash: string | null;
-  status: string;
-  verification_json: string;
-};
-
 type EvidenceToolRow = {
   tool_call_id: string;
   run_id: string;
@@ -273,6 +265,7 @@ type BoundAction = {
   run: RunRow;
   task: TaskRow;
   tool: ToolCallRow;
+  plan: AgentPlanRow;
   normalizedArgs: Record<string, unknown>;
   checkpoint: Record<string, unknown>;
   currentActionHash: string;
@@ -294,18 +287,6 @@ type PreparedActionAuthoringToolRow = {
   status: string;
   side_effect_id: string | null;
   ended_at: string | null;
-};
-
-type PreparedActionAuthoringPlanRow = {
-  plan_id: string;
-  workspace_id: string;
-  task_id: string | null;
-  run_id: string | null;
-  agent_id: string;
-  status: string;
-  plan_hash: string | null;
-  verified_at: string | null;
-  verification_result_hash: string | null;
 };
 
 function identifier(value: unknown, field: string) {
@@ -769,16 +750,28 @@ async function loadBoundAction(
   const toolResult = action.tool_call_id
     ? await client.query<ToolCallRow>(
       `SELECT tool_call_id,run_id,agent_id,tool_name,normalized_args_json,
-        status,side_effect_id
+        target_resource,risk_level,status,side_effect_id,ended_at
       FROM tool_calls WHERE tool_call_id=$1 FOR UPDATE`,
       [action.tool_call_id],
     )
     : { rows: [] as ToolCallRow[] };
+  const planResult = runResult.rows[0]?.agent_plan_id
+    ? await client.query<AgentPlanRow>(
+      `SELECT plan_id,workspace_id,task_id,run_id,agent_id,task_understanding,
+        referenced_specs_json,referenced_memories_json,referenced_bases_json,
+        proposed_files_to_change_json,risk_level,approval_required,
+        execution_steps_json,verification_plan,rollback_plan,status,plan_version,
+        plan_hash,verified_at,verification_result_hash,created_at
+      FROM agent_plans WHERE plan_id=$1 FOR UPDATE`,
+      [runResult.rows[0].agent_plan_id],
+    )
+    : { rows: [] as AgentPlanRow[] };
   const approval = approvalResult.rows[0];
   const run = runResult.rows[0];
   const task = taskResult.rows[0];
   const tool = toolResult.rows[0];
-  if (!approval || !run || !task || !tool) {
+  const plan = planResult.rows[0];
+  if (!approval || !run || !task || !tool || !plan) {
     throw new ControlPlaneHttpError(
       409,
       "prepared_action_binding_invalid",
@@ -803,6 +796,13 @@ async function loadBoundAction(
     || tool.run_id !== action.run_id
     || tool.agent_id !== action.requested_by_agent_id
     || tool.tool_name !== ACTION_TYPE
+    || tool.target_resource !== action.target_resource
+    || tool.risk_level !== action.risk_level
+    || plan.plan_id !== run.agent_plan_id
+    || plan.workspace_id !== action.workspace_id
+    || plan.task_id !== action.task_id
+    || (plan.run_id !== null && plan.run_id !== action.run_id)
+    || plan.agent_id !== action.requested_by_agent_id
   ) {
     throw new ControlPlaneHttpError(
       409,
@@ -821,6 +821,10 @@ async function loadBoundAction(
     16 * 1024,
   );
   assertNoRawStoredPayload(normalizedArgs, checkpoint);
+  const toolArgs = parseJsonObject(
+    tool.normalized_args_json,
+    "tool normalized args",
+  );
   const sourceRepoHash = String(normalizedArgs.source_repo_hash || "");
   const baselineHead = String(normalizedArgs.baseline_head || "");
   const allowedPaths = Array.isArray(normalizedArgs.allowed_paths)
@@ -846,6 +850,7 @@ async function loadBoundAction(
     || normalizedArgs.agent_plan_id !== run.agent_plan_id
     || normalizedArgs.agent_plan_hash !== run.plan_hash
     || normalizedArgs.agent_plan_verification_result_hash === undefined
+    || stableHash(toolArgs) !== stableHash(normalizedArgs)
     || normalizedArgs.target_resource !== action.target_resource
     || normalizedArgs.source_repo_clean !== true
     || normalizedArgs.workspace_isolation !== "managed_detached_git_worktree"
@@ -886,6 +891,7 @@ async function loadBoundAction(
     run,
     task,
     tool,
+    plan,
     normalizedArgs,
     checkpoint,
     currentActionHash: preparedActionHash(action),
@@ -905,7 +911,17 @@ function parseExpiry(value: string | null) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function assertReadyForExecution(graph: BoundAction) {
+async function lockPreparedActionMutation(
+  client: PoolClient,
+  workspaceId: string,
+  actionId: string,
+) {
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+    `agentops-prepared-action-decision:${workspaceId}:${actionId}`,
+  ]);
+}
+
+function assertApprovedActionAuthority(graph: BoundAction) {
   if (!SHA256_HEX.test(graph.action.action_hash)) {
     throw new ControlPlaneHttpError(
       409,
@@ -949,14 +965,91 @@ function assertReadyForExecution(graph: BoundAction) {
       "PreparedAction or approval has expired.",
     );
   }
+}
+
+function currentAssignmentAndPlanValid(graph: BoundAction) {
+  const currentPlanHash = computeAgentPlanHash(graph.plan);
+  const planVerification = verifyAgentPlanRow(graph.plan);
+  const verifiedAt = Date.parse(String(graph.plan.verified_at || ""));
+  const createdAt = Date.parse(graph.plan.created_at);
+  return !(
+    graph.task.owner_agent_id !== graph.action.requested_by_agent_id
+    || graph.run.agent_id !== graph.action.requested_by_agent_id
+    || graph.run.agent_plan_id !== graph.plan.plan_id
+    || graph.run.plan_hash !== graph.plan.plan_hash
+    || graph.plan.status !== "approved"
+    || graph.plan.plan_hash !== currentPlanHash
+    || graph.plan.plan_hash !== graph.normalizedArgs.agent_plan_hash
+    || graph.plan.verification_result_hash
+      !== graph.normalizedArgs.agent_plan_verification_result_hash
+    || !planVerification.pass
+    || graph.plan.verification_result_hash
+      !== agentPlanVerificationHash(graph.plan.plan_id, planVerification)
+    || !SHA256_HEX.test(String(graph.plan.plan_hash || ""))
+    || !SHA256_HEX.test(
+      String(graph.plan.verification_result_hash || ""),
+    )
+    || !Number.isFinite(verifiedAt)
+    || !Number.isFinite(createdAt)
+    || verifiedAt < createdAt
+    || verifiedAt > Date.now() + 60_000
+  );
+}
+
+function assertCurrentAssignmentAndPlan(graph: BoundAction) {
+  if (!currentAssignmentAndPlanValid(graph)) {
+    throw new ControlPlaneHttpError(
+      409,
+      "prepared_action_current_assignment_invalid",
+      "PreparedAction no longer binds the current task owner, run Agent, or verified Agent Plan.",
+    );
+  }
+}
+
+function assertExecutionState(
+  graph: BoundAction,
+  phase: "claim" | "executing",
+) {
+  assertApprovedActionAuthority(graph);
+  assertCurrentAssignmentAndPlan(graph);
+  const expectedStatus = phase === "claim" ? "waiting_approval" : "running";
   if (
-    !["waiting_approval", "running"].includes(graph.run.status)
-    || !["waiting_approval", "running"].includes(graph.task.status)
+    graph.run.status !== expectedStatus
+    || graph.run.ended_at !== null
+    || graph.task.status !== expectedStatus
+    || graph.tool.status !== expectedStatus
+    || graph.tool.side_effect_id !== null
+    || graph.tool.ended_at !== null
   ) {
     throw new ControlPlaneHttpError(
       409,
       "prepared_action_parent_state_invalid",
-      "PreparedAction run or task is not waiting for governed execution.",
+      `PreparedAction run, task, and exact tool are not at the ${phase} checkpoint.`,
+    );
+  }
+}
+
+function assertTerminalExecutionState(
+  graph: BoundAction,
+  providerSideEffectId: string,
+) {
+  assertCurrentAssignmentAndPlan(graph);
+  if (
+    graph.action.status !== "consumed"
+    || graph.approval.decision !== "approved"
+    || graph.action.provider_side_effect_id !== providerSideEffectId
+    || graph.action.consumed_at === null
+    || graph.run.status !== "completed"
+    || graph.run.ended_at === null
+    || graph.task.status !== "completed"
+    || graph.tool.status !== "completed"
+    || graph.tool.side_effect_id !== providerSideEffectId
+    || graph.tool.ended_at === null
+  ) {
+    throw new ControlPlaneHttpError(
+      409,
+      "prepared_action_terminal_state_invalid",
+      "PreparedAction terminal state no longer matches its current assignment and side effect.",
     );
   }
 }
@@ -1254,55 +1347,6 @@ async function terminalizeExpiredLease(
   };
 }
 
-function planContract(plan: AgentPlanRow) {
-  return {
-    workspace_id: plan.workspace_id,
-    task_id: plan.task_id,
-    run_id: plan.run_id,
-    agent_id: plan.agent_id,
-    task_understanding: plan.task_understanding || "",
-    referenced_specs: jsonList(plan.referenced_specs_json),
-    referenced_memories: jsonList(plan.referenced_memories_json),
-    referenced_bases: jsonList(plan.referenced_bases_json),
-    proposed_files_to_change: jsonList(plan.proposed_files_to_change_json),
-    risk_level: plan.risk_level,
-    approval_required: Boolean(plan.approval_required),
-    execution_steps: jsonList(plan.execution_steps_json),
-    verification_plan: plan.verification_plan || "",
-    rollback_plan: plan.rollback_plan || "",
-    plan_version: Number(plan.plan_version || 1),
-  };
-}
-
-function planVerificationHash(
-  planId: string,
-  verification: Record<string, unknown>,
-) {
-  const quality = verification.quality
-    && typeof verification.quality === "object"
-    ? verification.quality as Record<string, unknown>
-    : {};
-  const failedChecks = Array.isArray(verification.failed_checks)
-    ? verification.failed_checks
-    : [];
-  return stableHash({
-    plan_id: planId,
-    plan_hash: verification.plan_hash,
-    pass: verification.pass,
-    failed_checks: failedChecks.map((check) =>
-      check && typeof check === "object"
-        ? (check as Record<string, unknown>).id
-        : undefined),
-    summary: verification.summary || {},
-    quality: {
-      version: quality.version,
-      score: quality.score,
-      status: quality.status,
-      failed_rubric_ids: quality.failed_rubric_ids || [],
-    },
-  });
-}
-
 function identifierList(value: string, field: string) {
   const parsed = jsonList(value).map((item) => identifier(item, field));
   if (!parsed.length || new Set(parsed).size !== parsed.length) {
@@ -1321,6 +1365,13 @@ function exactStringList(left: unknown, right: unknown) {
   const normalizedRight = right.map(String);
   return normalizedLeft.length === normalizedRight.length
     && normalizedLeft.every((item, index) => item === normalizedRight[index]);
+}
+
+function exactIdentifierSet(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  const expected = new Set(right);
+  return expected.size === right.length
+    && left.every((item) => expected.has(item));
 }
 
 function safeRelativePath(value: unknown) {
@@ -1345,75 +1396,70 @@ async function verifyWorkspacePlanEvidence(
   manifestId: string,
   providerSideEffectId: string,
 ) {
-  const manifestResult = await client.query<ManifestRow>(
-    `SELECT manifest_id,workspace_id,plan_id,task_id,run_id,agent_id,
-      mismatch_policy,expected_steps_json,tool_call_ids_json,
-      evaluation_ids_json,artifact_ids_json,audit_ids_json,plan_hash,
-      verification_result_hash,status,verification_json
-    FROM plan_evidence_manifests WHERE manifest_id=$1 FOR SHARE`,
-    [manifestId],
+  const current = await verifyCurrentAgentGatewayPlanEvidenceManifest(
+    client,
+    {
+      manifestId,
+      workspaceId: graph.action.workspace_id,
+      taskId: graph.action.task_id,
+      runId: graph.action.run_id,
+      agentId: graph.action.requested_by_agent_id,
+      requireCommercialRuntime: false,
+    },
   );
-  const manifest = manifestResult.rows[0];
-  if (
-    !manifest
-    || manifest.workspace_id !== graph.action.workspace_id
-    || manifest.task_id !== graph.action.task_id
-    || manifest.run_id !== graph.action.run_id
-    || manifest.agent_id !== graph.action.requested_by_agent_id
-    || manifest.plan_id !== graph.normalizedArgs.agent_plan_id
-    || manifest.status !== "verified"
-    || manifest.mismatch_policy !== "block"
-  ) {
+  if (!current) {
     throw new ControlPlaneHttpError(
       428,
       "verified_plan_evidence_manifest_required",
       "A current verified plan evidence manifest with exact bindings is required.",
     );
   }
-  const planResult = await client.query<AgentPlanRow>(
-    `SELECT plan_id,workspace_id,task_id,run_id,agent_id,task_understanding,
-      referenced_specs_json,referenced_memories_json,referenced_bases_json,
-      proposed_files_to_change_json,risk_level,approval_required,
-      execution_steps_json,verification_plan,rollback_plan,status,plan_version,
-      plan_hash,verified_at,verification_result_hash,created_at
-    FROM agent_plans WHERE plan_id=$1 FOR SHARE`,
-    [manifest.plan_id],
-  );
-  const plan = planResult.rows[0];
-  const verification = parseJsonObject(
+  const { manifest, plan, verification } = current;
+  const storedVerification = parseJsonObject(
     manifest.verification_json,
     "manifest.verification_json",
   );
-  const planVerification = verification.plan_verification
-    && typeof verification.plan_verification === "object"
-    && !Array.isArray(verification.plan_verification)
-    ? verification.plan_verification as Record<string, unknown>
+  const storedCheckpoint = storedVerification.execution_checkpoint
+    && typeof storedVerification.execution_checkpoint === "object"
+    && !Array.isArray(storedVerification.execution_checkpoint)
+    ? storedVerification.execution_checkpoint as Record<string, unknown>
     : {};
+  const currentCheckpoint = verification.execution_checkpoint;
+  const currentCheckpointBound = currentCheckpoint.kind === "terminal_run_v1"
+    ? graph.action.status === "consumed" && lease.status === "completed"
+    : currentCheckpoint.kind === "prepared_action_execution_v1"
+      && graph.action.status === "approved"
+      && lease.status === "executing"
+      && currentCheckpoint.prepared_action_id === graph.action.action_id
+      && currentCheckpoint.execution_lease_id === lease.lease_id
+      && currentCheckpoint.active_tool_call_id === graph.tool.tool_call_id
+      && currentCheckpoint.action_hash === graph.action.action_hash;
   if (
-    !plan
-    || plan.workspace_id !== graph.action.workspace_id
-    || plan.task_id !== graph.action.task_id
-    || (plan.run_id !== null && plan.run_id !== graph.action.run_id)
-    || plan.agent_id !== graph.action.requested_by_agent_id
-    || plan.status !== "approved"
-    || plan.plan_id !== graph.run.agent_plan_id
-    || plan.plan_hash !== graph.run.plan_hash
-    || plan.plan_hash !== graph.normalizedArgs.agent_plan_hash
+    manifest.plan_id !== graph.plan.plan_id
+    || manifest.status !== "verified"
+    || manifest.mismatch_policy !== "block"
+    || manifest.plan_hash !== graph.plan.plan_hash
+    || manifest.verification_result_hash
+      !== graph.plan.verification_result_hash
+    || plan.plan_id !== graph.plan.plan_id
+    || plan.plan_hash !== graph.plan.plan_hash
     || plan.verification_result_hash
-      !== graph.normalizedArgs.agent_plan_verification_result_hash
-    || manifest.plan_hash !== plan.plan_hash
-    || manifest.verification_result_hash !== plan.verification_result_hash
-    || !SHA256_HEX.test(String(plan.plan_hash || ""))
-    || !SHA256_HEX.test(String(plan.verification_result_hash || ""))
-    || stableHash(planContract(plan)) !== plan.plan_hash
-    || planVerification.pass !== true
-    || planVerification.plan_hash !== plan.plan_hash
-    || planVerificationHash(plan.plan_id, planVerification)
-      !== plan.verification_result_hash
+      !== graph.plan.verification_result_hash
     || verification.pass !== true
     || verification.status !== "verified"
-    || !Array.isArray(verification.failed_checks)
     || verification.failed_checks.length !== 0
+    || !currentCheckpointBound
+    || storedVerification.pass !== true
+    || storedVerification.status !== "verified"
+    || !Array.isArray(storedVerification.failed_checks)
+    || storedVerification.failed_checks.length !== 0
+    || storedCheckpoint.kind !== "prepared_action_execution_v1"
+    || storedCheckpoint.valid !== true
+    || storedCheckpoint.prepared_action_id !== graph.action.action_id
+    || storedCheckpoint.execution_lease_id !== lease.lease_id
+    || storedCheckpoint.active_tool_call_id !== graph.tool.tool_call_id
+    || storedCheckpoint.action_hash !== graph.action.action_hash
+    || manifest.audit_ids_json !== "[]"
     || !exactStringList(
       jsonList(manifest.expected_steps_json),
       jsonList(plan.execution_steps_json),
@@ -1422,21 +1468,7 @@ async function verifyWorkspacePlanEvidence(
     throw new ControlPlaneHttpError(
       428,
       "verified_plan_evidence_manifest_required",
-      "Plan evidence is stale, incomplete, or no longer verifies.",
-    );
-  }
-  const verifiedAt = Date.parse(String(plan.verified_at || ""));
-  const createdAt = Date.parse(plan.created_at);
-  if (
-    !Number.isFinite(verifiedAt)
-    || !Number.isFinite(createdAt)
-    || verifiedAt < createdAt
-    || verifiedAt > Date.now() + 60_000
-  ) {
-    throw new ControlPlaneHttpError(
-      428,
-      "verified_plan_evidence_manifest_required",
-      "Agent Plan verification time is invalid.",
+      "Plan evidence is stale, selective, or no longer verifies at the current execution checkpoint.",
     );
   }
 
@@ -1446,38 +1478,81 @@ async function verifyWorkspacePlanEvidence(
     "evaluation_id",
   );
   const artifactIds = identifierList(manifest.artifact_ids_json, "artifact_id");
-  const auditIds = identifierList(manifest.audit_ids_json, "audit_id");
   const toolRows = await client.query<EvidenceToolRow>(
     `SELECT tool_call_id,run_id,agent_id,tool_name,normalized_args_json,status
-    FROM tool_calls WHERE tool_call_id=ANY($1::text[]) FOR SHARE`,
-    [toolIds],
+    FROM tool_calls
+    WHERE run_id=$1 AND agent_id=$2
+    ORDER BY created_at,tool_call_id
+    FOR SHARE`,
+    [graph.run.run_id, graph.run.agent_id],
   );
   const evaluationRows = await client.query<EvidenceEvaluationRow>(
     `SELECT evaluation_id,task_id,run_id,agent_id,evaluator_type,pass_fail,
       rubric_json
-    FROM evaluations WHERE evaluation_id=ANY($1::text[]) FOR SHARE`,
-    [evaluationIds],
+    FROM evaluations
+    WHERE run_id=$1 AND agent_id=$2
+    ORDER BY created_at,evaluation_id
+    FOR SHARE`,
+    [graph.run.run_id, graph.run.agent_id],
   );
   const artifactRows = await client.query<EvidenceArtifactRow>(
-    `SELECT artifact_id,task_id,run_id,artifact_type,content_hash
-    FROM artifacts WHERE artifact_id=ANY($1::text[]) FOR SHARE`,
-    [artifactIds],
+    `SELECT artifact.artifact_id,artifact.task_id,artifact.run_id,
+      artifact.artifact_type,artifact.content_hash
+    FROM artifacts artifact
+    LEFT JOIN runs run ON run.run_id=artifact.run_id
+    LEFT JOIN tasks task ON task.task_id=artifact.task_id
+    WHERE (
+        artifact.run_id=$1
+        OR (artifact.run_id IS NULL AND artifact.task_id=$2)
+      )
+      AND (artifact.run_id IS NULL OR run.workspace_id=$3)
+      AND (artifact.task_id IS NULL OR task.workspace_id=$3)
+      AND (run.workspace_id=$3 OR task.workspace_id=$3)
+    ORDER BY artifact.artifact_id
+    FOR SHARE OF artifact`,
+    [
+      graph.run.run_id,
+      graph.task.task_id,
+      graph.action.workspace_id,
+    ],
   );
+  const chainEntityIds = [
+    manifest.manifest_id,
+    plan.plan_id,
+    graph.run.run_id,
+    graph.task.task_id,
+    ...toolRows.rows.map((row) => row.tool_call_id),
+    ...evaluationRows.rows.map((row) => row.evaluation_id),
+    ...artifactRows.rows.map((row) => row.artifact_id),
+  ];
   const auditRows = await client.query<EvidenceAuditRow>(
     `SELECT audit_id,workspace_id,actor_type,actor_id,action,entity_type,
       entity_id,metadata_json,tamper_chain_hash
-    FROM audit_logs WHERE audit_id=ANY($1::text[]) FOR SHARE`,
-    [auditIds],
+    FROM audit_logs
+    WHERE workspace_id=$1
+      AND entity_id=ANY($2::text[])
+      AND metadata_json::jsonb ->> 'workspace_id'=$1
+    ORDER BY created_at,audit_id
+    FOR SHARE`,
+    [graph.action.workspace_id, chainEntityIds],
   );
   if (
-    toolRows.rows.length !== toolIds.length
-    || evaluationRows.rows.length !== evaluationIds.length
-    || artifactRows.rows.length !== artifactIds.length
-    || auditRows.rows.length !== auditIds.length
+    !exactIdentifierSet(
+      toolIds,
+      toolRows.rows.map((row) => row.tool_call_id),
+    )
+    || !exactIdentifierSet(
+      evaluationIds,
+      evaluationRows.rows.map((row) => row.evaluation_id),
+    )
+    || !exactIdentifierSet(
+      artifactIds,
+      artifactRows.rows.map((row) => row.artifact_id),
+    )
+    || auditRows.rows.length === 0
     || toolRows.rows.some((row) =>
       row.run_id !== graph.run.run_id
-      || row.agent_id !== graph.run.agent_id
-      || row.status !== "completed")
+      || row.agent_id !== graph.run.agent_id)
     || evaluationRows.rows.some((row) =>
       row.task_id !== graph.task.task_id
       || row.run_id !== graph.run.run_id
@@ -1490,12 +1565,28 @@ async function verifyWorkspacePlanEvidence(
       || !SHA256_HEX.test(String(row.content_hash || "")))
     || auditRows.rows.some((row) =>
       row.workspace_id !== graph.action.workspace_id
+      || !chainEntityIds.includes(row.entity_id)
       || !SHA256_HEX.test(String(row.tamper_chain_hash || "")))
   ) {
     throw new ControlPlaneHttpError(
       428,
       "verified_plan_evidence_manifest_required",
       "Declared plan evidence is missing or not bound to the run.",
+    );
+  }
+  const manifestOwnerAuditBound = auditRows.rows.some(
+    (row) =>
+      row.actor_type === "agent"
+      && row.actor_id === graph.action.requested_by_agent_id
+      && row.action === "agent_gateway.plan_evidence_manifest_create"
+      && row.entity_type === "plan_evidence_manifests"
+      && row.entity_id === manifest.manifest_id,
+  );
+  if (!manifestOwnerAuditBound) {
+    throw new ControlPlaneHttpError(
+      428,
+      "verified_plan_evidence_manifest_required",
+      "Plan evidence manifest does not have a chained TypeScript/Postgres owner audit.",
     );
   }
 
@@ -1593,8 +1684,14 @@ async function verifyWorkspacePlanEvidence(
     );
   }
 
+  const evidenceSetHash = stableHash({
+    tool_call_ids: [...toolIds].sort(),
+    evaluation_ids: [...evaluationIds].sort(),
+    artifact_ids: [...artifactIds].sort(),
+    audit_ids: auditRows.rows.map((row) => row.audit_id).sort(),
+  });
   const terminalEvidenceHash = stableHash({
-    contract: "prepared_action_workspace_write_terminal_evidence_v1",
+    contract: "prepared_action_workspace_write_terminal_evidence_v2",
     workspace_id: graph.action.workspace_id,
     action_id: graph.action.action_id,
     action_hash: graph.action.action_hash,
@@ -1604,11 +1701,14 @@ async function verifyWorkspacePlanEvidence(
     verification_result_hash: manifest.verification_result_hash,
     provider_side_effect_id: providerSideEffectId,
     diff_evidence_hash: diffEvidenceHash,
+    stored_execution_checkpoint_hash: stableHash(storedCheckpoint),
+    evidence_set_hash: evidenceSetHash,
   });
   return {
     manifest,
     plan,
     diffEvidenceHash,
+    evidenceSetHash,
     terminalEvidenceHash,
   };
 }
@@ -1722,9 +1822,12 @@ export async function preparePreparedAction(
       [toolCallId],
     )).rows[0];
     const plan = run?.agent_plan_id
-      ? (await client.query<PreparedActionAuthoringPlanRow>(
-        `SELECT plan_id,workspace_id,task_id,run_id,agent_id,status,plan_hash,
-          verified_at,verification_result_hash
+      ? (await client.query<AgentPlanRow>(
+        `SELECT plan_id,workspace_id,task_id,run_id,agent_id,task_understanding,
+          referenced_specs_json,referenced_memories_json,referenced_bases_json,
+          proposed_files_to_change_json,risk_level,approval_required,
+          execution_steps_json,verification_plan,rollback_plan,status,
+          plan_version,plan_hash,verified_at,verification_result_hash,created_at
         FROM agent_plans WHERE plan_id=$1 FOR UPDATE`,
         [run.agent_plan_id],
       )).rows[0]
@@ -1737,6 +1840,10 @@ export async function preparePreparedAction(
       );
     }
     const toolArgs = parseJsonObject(tool.normalized_args_json, "tool normalized args");
+    const currentPlanHash = computeAgentPlanHash(plan);
+    const planVerification = verifyAgentPlanRow(plan);
+    const planVerifiedAt = Date.parse(String(plan.verified_at || ""));
+    const planCreatedAt = Date.parse(plan.created_at);
     if (
       task.workspace_id !== identity.workspaceId
       || task.owner_agent_id !== identity.agentId
@@ -1763,8 +1870,16 @@ export async function preparePreparedAction(
       || plan.status !== "approved"
       || !plan.verified_at
       || plan.plan_hash !== run.plan_hash
+      || plan.plan_hash !== currentPlanHash
+      || !planVerification.pass
+      || plan.verification_result_hash
+        !== agentPlanVerificationHash(plan.plan_id, planVerification)
       || !SHA256_HEX.test(String(plan.plan_hash || ""))
       || !SHA256_HEX.test(String(plan.verification_result_hash || ""))
+      || !Number.isFinite(planVerifiedAt)
+      || !Number.isFinite(planCreatedAt)
+      || planVerifiedAt < planCreatedAt
+      || planVerifiedAt > Date.now() + 60_000
       || normalizedArgs.value.task_id !== task.task_id
       || normalizedArgs.value.run_id !== run.run_id
       || normalizedArgs.value.agent_plan_id !== plan.plan_id
@@ -2003,6 +2118,11 @@ export async function getPreparedAction(
   return withPostgresTransaction(async (client) => {
     const identity = await authorize(client, request, "tasks:read");
     await assertPreparedActionSchemaReady(client);
+    await lockPreparedActionMutation(
+      client,
+      identity.workspaceId,
+      actionId,
+    );
     let graph = await loadBoundAction(client, identity, actionId);
     let lease = await loadLease(client, actionId);
     let receipt = await loadReceipt(client, actionId);
@@ -2036,28 +2156,50 @@ export async function getPreparedAction(
       && approvalExpiry !== null
       && actionExpiry > Date.now()
       && approvalExpiry > Date.now()
-      && ["waiting_approval", "running"].includes(graph.run.status)
-      && ["waiting_approval", "running"].includes(graph.task.status);
+      && currentAssignmentAndPlanValid(graph);
     const leaseUnexpired = !lease
       || (
         lease.status === "executing"
         && (parseExpiry(lease.expires_at) ?? 0) > Date.now()
       );
+    const claimReady = authorityReady
+      && !lease
+      && graph.run.status === "waiting_approval"
+      && graph.run.ended_at === null
+      && graph.task.status === "waiting_approval"
+      && graph.tool.status === "waiting_approval"
+      && graph.tool.side_effect_id === null
+      && graph.tool.ended_at === null;
+    const executionReady = authorityReady
+      && lease?.status === "executing"
+      && leaseUnexpired
+      && graph.run.status === "running"
+      && graph.run.ended_at === null
+      && graph.task.status === "running"
+      && graph.tool.status === "running"
+      && graph.tool.side_effect_id === null
+      && graph.tool.ended_at === null;
     let state = "blocked";
     if (
       verification.match
       && graph.action.status === "consumed"
       && lease?.status === "completed"
       && receipt?.outcome === "succeeded"
+      && currentAssignmentAndPlanValid(graph)
+      && graph.run.status === "completed"
+      && graph.run.ended_at !== null
+      && graph.task.status === "completed"
+      && graph.tool.status === "completed"
+      && graph.tool.side_effect_id === graph.action.provider_side_effect_id
+      && graph.tool.ended_at !== null
     ) {
       state = "completed";
     } else if (
       verification.match
-      && authorityReady
       && !receipt
-      && leaseUnexpired
+      && (claimReady || executionReady)
     ) {
-      state = lease?.status === "executing" ? "executing" : "ready";
+      state = executionReady ? "executing" : "ready";
     }
     return {
       status: 200,
@@ -2104,6 +2246,11 @@ export async function claimPreparedActionExecution(
       body,
     );
     await assertPreparedActionSchemaReady(client);
+    await lockPreparedActionMutation(
+      client,
+      identity.workspaceId,
+      actionId,
+    );
     const graph = await loadBoundAction(client, identity, actionId);
     const ttlSeconds = boundedInteger(
       body.lease_ttl_seconds,
@@ -2140,6 +2287,8 @@ export async function claimPreparedActionExecution(
       const existingReceipt = await loadReceipt(client, actionId);
       if (existingReceipt) {
         assertReceiptBinding(graph, existing, existingReceipt);
+      } else if (existing.status === "executing") {
+        assertExecutionState(graph, "executing");
       }
       return {
         status: 409,
@@ -2160,7 +2309,7 @@ export async function claimPreparedActionExecution(
         },
       };
     }
-    assertReadyForExecution(graph);
+    assertExecutionState(graph, "claim");
 
     const startedAt = new Date();
     const actionExpiry = parseExpiry(graph.action.expires_at);
@@ -2217,6 +2366,54 @@ export async function claimPreparedActionExecution(
         "PreparedAction execution lease was not created.",
       );
     }
+    const runUpdate = await client.query(
+      `UPDATE runs SET status='running',approval_required=0
+      WHERE run_id=$1 AND workspace_id=$2 AND task_id=$3 AND agent_id=$4
+        AND status='waiting_approval' AND ended_at IS NULL
+        AND agent_plan_id=$5 AND plan_hash=$6`,
+      [
+        graph.run.run_id,
+        graph.action.workspace_id,
+        graph.task.task_id,
+        graph.action.requested_by_agent_id,
+        graph.plan.plan_id,
+        graph.plan.plan_hash,
+      ],
+    );
+    const taskUpdate = await client.query(
+      `UPDATE tasks SET status='running',updated_at=$1
+      WHERE task_id=$2 AND workspace_id=$3 AND owner_agent_id=$4
+        AND status='waiting_approval'`,
+      [
+        startedAt.toISOString(),
+        graph.task.task_id,
+        graph.action.workspace_id,
+        graph.action.requested_by_agent_id,
+      ],
+    );
+    const toolUpdate = await client.query(
+      `UPDATE tool_calls SET status='running'
+      WHERE tool_call_id=$1 AND run_id=$2 AND agent_id=$3
+        AND tool_name=$4 AND status='waiting_approval'
+        AND side_effect_id IS NULL AND ended_at IS NULL`,
+      [
+        graph.tool.tool_call_id,
+        graph.run.run_id,
+        graph.action.requested_by_agent_id,
+        ACTION_TYPE,
+      ],
+    );
+    if (
+      runUpdate.rowCount !== 1
+      || taskUpdate.rowCount !== 1
+      || toolUpdate.rowCount !== 1
+    ) {
+      throw new ControlPlaneHttpError(
+        409,
+        "prepared_action_execution_checkpoint_conflict",
+        "PreparedAction claim could not establish the exact running checkpoint.",
+      );
+    }
     await appendRuntimeEvent(client, {
       eventType: "prepared_action.execution_claimed",
       status: "running",
@@ -2248,6 +2445,7 @@ export async function claimPreparedActionExecution(
         lease_id: lease.lease_id,
         claim_request_hash: claimRequestHash,
         claim_idempotency_hash: claimIdempotencyHash,
+        execution_checkpoint: "prepared_action_execution_v1",
         execute_once: true,
         raw_provider_output_omitted: true,
         raw_prompt_omitted: true,
@@ -2298,6 +2496,11 @@ export async function failPreparedActionExecution(
       body,
     );
     await assertPreparedActionSchemaReady(client);
+    await lockPreparedActionMutation(
+      client,
+      identity.workspaceId,
+      actionId,
+    );
     const graph = await loadBoundAction(client, identity, actionId);
     const leaseId = identifier(body.lease_id, "lease_id");
     const lease = await loadLease(client, actionId);
@@ -2384,7 +2587,7 @@ export async function failPreparedActionExecution(
     if ((parseExpiry(lease.expires_at) ?? 0) <= Date.now()) {
       return terminalizeExpiredLease(client, graph, lease);
     }
-    assertReadyForExecution(graph);
+    assertExecutionState(graph, "executing");
     const terminalAt = new Date().toISOString();
     const terminalEvidenceHash = stableHash({
       contract: "prepared_action_execution_failure_evidence_v1",
@@ -2412,21 +2615,57 @@ export async function failPreparedActionExecution(
         "PreparedAction failure could not be closed atomically.",
       );
     }
-    await client.query(
+    const runUpdate = await client.query(
       `UPDATE runs SET status='blocked',approval_required=0,
         error_type='CodexWorkspaceWriteFailed',error_message=$1,ended_at=$2
-      WHERE run_id=$3`,
-      [persistedReason, terminalAt, graph.run.run_id],
+      WHERE run_id=$3 AND workspace_id=$4 AND task_id=$5 AND agent_id=$6
+        AND status='running' AND ended_at IS NULL
+        AND agent_plan_id=$7 AND plan_hash=$8`,
+      [
+        persistedReason,
+        terminalAt,
+        graph.run.run_id,
+        graph.action.workspace_id,
+        graph.task.task_id,
+        graph.action.requested_by_agent_id,
+        graph.plan.plan_id,
+        graph.plan.plan_hash,
+      ],
     );
-    await client.query(
-      "UPDATE tasks SET status='blocked',updated_at=$1 WHERE task_id=$2",
-      [terminalAt, graph.task.task_id],
+    const taskUpdate = await client.query(
+      `UPDATE tasks SET status='blocked',updated_at=$1
+      WHERE task_id=$2 AND workspace_id=$3 AND owner_agent_id=$4
+        AND status='running'`,
+      [
+        terminalAt,
+        graph.task.task_id,
+        graph.action.workspace_id,
+        graph.action.requested_by_agent_id,
+      ],
     );
-    await client.query(
+    const toolUpdate = await client.query(
       `UPDATE tool_calls SET status='blocked',result_summary=$1,ended_at=$2
-      WHERE tool_call_id=$3`,
-      [persistedReason, terminalAt, graph.tool.tool_call_id],
+      WHERE tool_call_id=$3 AND run_id=$4 AND agent_id=$5
+        AND status='running' AND side_effect_id IS NULL AND ended_at IS NULL`,
+      [
+        persistedReason,
+        terminalAt,
+        graph.tool.tool_call_id,
+        graph.run.run_id,
+        graph.action.requested_by_agent_id,
+      ],
     );
+    if (
+      runUpdate.rowCount !== 1
+      || taskUpdate.rowCount !== 1
+      || toolUpdate.rowCount !== 1
+    ) {
+      throw new ControlPlaneHttpError(
+        409,
+        "prepared_action_execution_failure_conflict",
+        "PreparedAction failure parent state changed before closure.",
+      );
+    }
     await client.query(
       "UPDATE agents SET status='idle',updated_at=$1 WHERE agent_id=$2",
       [terminalAt, identity.agentId],
@@ -2538,6 +2777,11 @@ export async function resumePreparedActionExecution(
       body,
     );
     await assertPreparedActionSchemaReady(client);
+    await lockPreparedActionMutation(
+      client,
+      identity.workspaceId,
+      actionId,
+    );
     const graph = await loadBoundAction(client, identity, actionId);
     const leaseId = identifier(body.lease_id, "lease_id");
     const manifestId = identifier(
@@ -2567,6 +2811,14 @@ export async function resumePreparedActionExecution(
           "PreparedAction already has a non-success terminal receipt.",
         );
       }
+      assertTerminalExecutionState(graph, providerSideEffectId);
+      const replayEvidence = await verifyWorkspacePlanEvidence(
+        client,
+        graph,
+        lease,
+        manifestId,
+        providerSideEffectId,
+      );
       const auditResult = await client.query<EvidenceAuditRow>(
         `SELECT audit_id,workspace_id,actor_type,actor_id,action,entity_type,
           entity_id,metadata_json,tamper_chain_hash
@@ -2591,9 +2843,7 @@ export async function resumePreparedActionExecution(
         terminalAudit.metadata_json,
         "PreparedAction terminal audit metadata",
       );
-      const terminalEvidenceHash = String(
-        terminalMetadata.terminal_evidence_hash || "",
-      );
+      const terminalEvidenceHash = replayEvidence.terminalEvidenceHash;
       const receiptRequestHash = stableHash({
         contract: "prepared_action_execution_resume_request_v1",
         workspace_id: identity.workspaceId,
@@ -2609,13 +2859,19 @@ export async function resumePreparedActionExecution(
         && terminalAudit.actor_id === identity.agentId
         && SHA256_HEX.test(String(terminalAudit.tamper_chain_hash || ""))
         && terminalMetadata.lease_id === leaseId
+        && terminalMetadata.approval_id === graph.action.approval_id
+        && terminalMetadata.action_hash === graph.action.action_hash
         && terminalMetadata.plan_evidence_manifest_id === manifestId
         && terminalMetadata.provider_side_effect_id === providerSideEffectId
+        && terminalMetadata.evidence_set_hash
+          === replayEvidence.evidenceSetHash
+        && terminalMetadata.terminal_evidence_hash === terminalEvidenceHash
         && terminalEvidenceHash === existingReceipt.terminal_evidence_hash
         && receiptRequestHash === existingReceipt.receipt_request_hash
         && graph.action.status === "consumed"
         && graph.action.provider_side_effect_id === providerSideEffectId
-        && lease.status === "completed";
+        && lease.status === "completed"
+        && lease.completed_at !== null;
       if (!exactReplay) {
         throw new ControlPlaneHttpError(
           409,
@@ -2658,7 +2914,7 @@ export async function resumePreparedActionExecution(
         "PreparedAction execution state is terminal or inconsistent.",
       );
     }
-    if (!existingReceipt) assertReadyForExecution(graph);
+    if (!existingReceipt) assertExecutionState(graph, "executing");
 
     const evidence = await verifyWorkspacePlanEvidence(
       client,
@@ -2708,27 +2964,62 @@ export async function resumePreparedActionExecution(
         "PreparedAction completion could not be committed atomically.",
       );
     }
-    await client.query(
+    const toolUpdate = await client.query(
       `UPDATE tool_calls SET status='completed',side_effect_id=$1,
-        result_summary=$2,ended_at=$3 WHERE tool_call_id=$4`,
-      [providerSideEffectId, resultSummary, terminalAt, graph.tool.tool_call_id],
+        result_summary=$2,ended_at=$3
+      WHERE tool_call_id=$4 AND run_id=$5 AND agent_id=$6
+        AND status='running' AND side_effect_id IS NULL AND ended_at IS NULL`,
+      [
+        providerSideEffectId,
+        resultSummary,
+        terminalAt,
+        graph.tool.tool_call_id,
+        graph.run.run_id,
+        graph.action.requested_by_agent_id,
+      ],
     );
-    await client.query(
+    const runUpdate = await client.query(
       `UPDATE runs SET approval_required=0,status='completed',ended_at=$1,
         duration_ms=$2,output_summary=$3,output_tokens=$4,
-        error_type=NULL,error_message=NULL WHERE run_id=$5`,
+        error_type=NULL,error_message=NULL
+      WHERE run_id=$5 AND workspace_id=$6 AND task_id=$7 AND agent_id=$8
+        AND status='running' AND ended_at IS NULL
+        AND agent_plan_id=$9 AND plan_hash=$10`,
       [
         terminalAt,
         durationMs,
         outputSummary,
         outputTokens,
         graph.run.run_id,
+        graph.action.workspace_id,
+        graph.task.task_id,
+        graph.action.requested_by_agent_id,
+        graph.plan.plan_id,
+        graph.plan.plan_hash,
       ],
     );
-    await client.query(
-      "UPDATE tasks SET status='completed',updated_at=$1 WHERE task_id=$2",
-      [terminalAt, graph.task.task_id],
+    const taskUpdate = await client.query(
+      `UPDATE tasks SET status='completed',updated_at=$1
+      WHERE task_id=$2 AND workspace_id=$3 AND owner_agent_id=$4
+        AND status='running'`,
+      [
+        terminalAt,
+        graph.task.task_id,
+        graph.action.workspace_id,
+        graph.action.requested_by_agent_id,
+      ],
     );
+    if (
+      toolUpdate.rowCount !== 1
+      || runUpdate.rowCount !== 1
+      || taskUpdate.rowCount !== 1
+    ) {
+      throw new ControlPlaneHttpError(
+        409,
+        "prepared_action_execution_resume_conflict",
+        "PreparedAction parent state changed before completion.",
+      );
+    }
     await client.query(
       "UPDATE agents SET status='idle',updated_at=$1 WHERE agent_id=$2",
       [terminalAt, identity.agentId],
@@ -2783,9 +3074,11 @@ export async function resumePreparedActionExecution(
         verification_result_hash:
           evidence.manifest.verification_result_hash,
         diff_evidence_hash: evidence.diffEvidenceHash,
+        evidence_set_hash: evidence.evidenceSetHash,
         terminal_evidence_hash: evidence.terminalEvidenceHash,
         provider_side_effect_id: providerSideEffectId,
         run_completed_in_resume: true,
+        execution_checkpoint: "terminal_run_v1",
         execute_once: true,
         raw_provider_output_omitted: true,
         raw_prompt_omitted: true,

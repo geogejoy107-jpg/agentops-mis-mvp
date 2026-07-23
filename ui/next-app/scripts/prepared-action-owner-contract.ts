@@ -8,16 +8,32 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Client } from "pg";
+import { Client, type PoolClient } from "pg";
 
+import {
+  agentPlanVerificationHash,
+  computeAgentPlanHash,
+  verifyAgentPlanRow,
+} from "../src/server/controlPlane/agentPlanContract";
 import { decideWorkspaceApproval } from "../src/server/controlPlane/approvalDecisions";
 import { closeControlPlanePoolForTests } from "../src/server/controlPlane/db";
+import {
+  recordAgentGatewayArtifact,
+  recordAgentGatewayToolCall,
+  submitAgentGatewayEvaluation,
+} from "../src/server/controlPlane/agentGatewayEvidence";
+import {
+  emitAgentAudit,
+} from "../src/server/controlPlane/agentGatewayEvidenceSupport";
+import {
+  createAgentGatewayPlanEvidenceManifest,
+  verifyCurrentAgentGatewayPlanEvidenceManifest,
+} from "../src/server/controlPlane/agentGatewayPlans";
 import { establishHumanSession } from "../src/server/controlPlane/humanSession";
 import {
   HUMAN_SCRYPT_PARAMS,
 } from "../src/server/controlPlane/humanPasswordPolicy";
 import { ControlPlaneHttpError } from "../src/server/controlPlane/http";
-import { stableHash } from "../src/server/controlPlane/ledger";
 import {
   claimPreparedActionExecution,
   failPreparedActionExecution,
@@ -77,26 +93,6 @@ function require(condition: unknown, message: string): asserts condition {
 
 function sha(value: string) {
   return createHash("sha256").update(value, "utf8").digest("hex");
-}
-
-function planVerificationHash(
-  planId: string,
-  verification: Record<string, unknown>,
-) {
-  const quality = verification.quality as Record<string, unknown>;
-  return stableHash({
-    plan_id: planId,
-    plan_hash: verification.plan_hash,
-    pass: verification.pass,
-    failed_checks: [],
-    summary: verification.summary,
-    quality: {
-      version: quality.version,
-      score: quality.score,
-      status: quality.status,
-      failed_rubric_ids: quality.failed_rubric_ids,
-    },
-  });
 }
 
 function request(
@@ -192,10 +188,31 @@ async function expectCode(
     await work();
   } catch (error) {
     require(error instanceof ControlPlaneHttpError, `${expected}: wrong error type`);
-    require(error.code === expected, `${expected}: received ${error.code}`);
+    require(
+      error.code === expected,
+      `${expected}: received ${error.code}: ${error.message}`,
+    );
     return;
   }
   throw new Error(`${expected}: request unexpectedly passed`);
+}
+
+async function expectDatabaseGuard(
+  expectedMessage: string,
+  work: () => Promise<unknown>,
+) {
+  try {
+    await work();
+  } catch (error) {
+    const databaseError = error as { code?: string; message?: string };
+    require(
+      databaseError.code === "23514"
+        && databaseError.message === expectedMessage,
+      `${expectedMessage}: unexpected database error`,
+    );
+    return;
+  }
+  throw new Error(`${expectedMessage}: database mutation unexpectedly passed`);
 }
 
 function scopedDsn(baseDsn: string, schema: string) {
@@ -364,7 +381,14 @@ async function seedIdentity(
         sha(supplied),
         WORKSPACE_ID,
         agentId,
-        JSON.stringify(["tasks:read", "toolcalls:write"]),
+        JSON.stringify([
+          "tasks:read",
+          "toolcalls:write",
+          "evaluations:submit",
+          "artifacts:write",
+          "audit:write",
+          "plan_evidence:write",
+        ]),
         now.toISOString(),
         expiresAt,
       ],
@@ -403,25 +427,33 @@ async function seedPreparedAction(
     rollback_plan: "Retain the isolated worktree and block automatic retry.",
     plan_version: 1,
   };
-  const planHash = stableHash(planContract);
-  const planVerification = {
-    pass: true,
-    plan_hash: planHash,
-    failed_checks: [],
-    summary: {
-      readable_spec_refs: 1,
-      approved_memory_refs: 1,
-      resolved_base_refs: 1,
-      scoped_file_refs: 1,
-    },
-    quality: {
-      version: "agent_plan_quality_v1",
-      score: 100,
-      status: "ready",
-      failed_rubric_ids: [],
-    },
+  const verifiablePlan = {
+    workspace_id: WORKSPACE_ID,
+    task_id: taskId,
+    run_id: null,
+    agent_id: AGENT_ID,
+    task_understanding: planContract.task_understanding,
+    referenced_specs_json: JSON.stringify(planContract.referenced_specs),
+    referenced_memories_json: JSON.stringify(
+      planContract.referenced_memories,
+    ),
+    referenced_bases_json: JSON.stringify(planContract.referenced_bases),
+    proposed_files_to_change_json: JSON.stringify(
+      planContract.proposed_files_to_change,
+    ),
+    risk_level: planContract.risk_level,
+    approval_required: 1,
+    execution_steps_json: JSON.stringify(STEPS),
+    verification_plan: planContract.verification_plan,
+    rollback_plan: planContract.rollback_plan,
+    plan_version: 1,
   };
-  const verificationResultHash = planVerificationHash(
+  const planHash = computeAgentPlanHash(verifiablePlan);
+  const planVerification = verifyAgentPlanRow({
+    ...verifiablePlan,
+    plan_hash: planHash,
+  });
+  const verificationResultHash = agentPlanVerificationHash(
     planId,
     planVerification,
   );
@@ -618,49 +650,33 @@ async function seedPreparedAction(
 }
 
 async function seedSuccessEvidence(
-  client: Client,
+  token: string,
   fixture: Fixture,
   leaseId: string,
+  options: {
+    manifestId?: string;
+    declaredToolIds?: string[];
+    expectVerified?: boolean;
+  } = {},
 ) {
   const now = new Date().toISOString();
   const verifierToolId = `tc_verify_${fixture.suffix}`;
   const evaluationId = `eval_${fixture.suffix}`;
   const artifactId = `art_${fixture.suffix}`;
-  const auditId = `aud_${fixture.suffix}`;
-  const manifestId = `pem_${fixture.suffix}`;
+  const manifestId = options.manifestId || `pem_${fixture.suffix}`;
   const diffEvidenceHash = sha(`diff:${fixture.suffix}`);
   const providerSideEffectId = `codex-diff-${diffEvidenceHash.slice(0, 24)}`;
-  const planVerification = {
-    pass: true,
-    plan_hash: fixture.planHash,
-    failed_checks: [],
-    summary: {
-      readable_spec_refs: 1,
-      approved_memory_refs: 1,
-      resolved_base_refs: 1,
-      scoped_file_refs: 1,
-    },
-    quality: {
-      version: "agent_plan_quality_v1",
-      score: 100,
-      status: "ready",
-      failed_rubric_ids: [],
-    },
-  };
-  await client.query(
-    `INSERT INTO tool_calls(
-      tool_call_id,run_id,agent_id,tool_name,tool_version,tool_category,
-      normalized_args_json,target_resource,risk_level,status,result_summary,
-      side_effect_id,started_at,ended_at,created_at
-    ) VALUES(
-      $1,$2,$3,'agent_worker.codex.workspace_diff_verify','v1','custom',
-      $4,$5,'medium','completed','Verified bounded diff',NULL,$6,$6,$6
-    )`,
-    [
-      verifierToolId,
-      fixture.runId,
-      AGENT_ID,
-      JSON.stringify({
+  const verifier = await recordAgentGatewayToolCall(
+    request(token, "POST", {
+      workspace_id: WORKSPACE_ID,
+      agent_id: AGENT_ID,
+      task_id: fixture.taskId,
+      run_id: fixture.runId,
+      tool_call_id: verifierToolId,
+      tool_name: "agent_worker.codex.workspace_diff_verify",
+      tool_version: "v1",
+      tool_category: "custom",
+      args: {
         task_id: fixture.taskId,
         agent_plan_id: fixture.planId,
         prepared_action_id: fixture.actionId,
@@ -674,24 +690,32 @@ async function seedSuccessEvidence(
         raw_prompt_omitted: true,
         raw_response_omitted: true,
         token_omitted: true,
-      }),
-      `worktree://${fixture.actionId}/diff-evidence`,
-      now,
-    ],
+      },
+      target_resource: `worktree://${fixture.actionId}/diff-evidence`,
+      risk_level: "medium",
+      status: "completed",
+      result_summary: "Verified bounded diff.",
+      started_at: now,
+      ended_at: now,
+    }),
   );
-  await client.query(
-    `INSERT INTO evaluations(
-      evaluation_id,task_id,run_id,agent_id,evaluator_type,score,pass_fail,
-      rubric_json,notes,created_at
-    ) VALUES(
-      $1,$2,$3,$4,'rule',1,'pass',$5,'Verified governed diff',$6
-    )`,
-    [
-      evaluationId,
-      fixture.taskId,
-      fixture.runId,
-      AGENT_ID,
-      JSON.stringify({
+  require(
+    verifier.status === 201
+      && (verifier.body.tool_call as Record<string, unknown>).status
+        === "completed",
+    "Verifier tool was not recorded through the TypeScript/Postgres owner",
+  );
+  const evaluation = await submitAgentGatewayEvaluation(
+    request(token, "POST", {
+      workspace_id: WORKSPACE_ID,
+      agent_id: AGENT_ID,
+      task_id: fixture.taskId,
+      run_id: fixture.runId,
+      evaluation_id: evaluationId,
+      evaluator_type: "rule",
+      score: 1,
+      pass_fail: "pass",
+      rubric: {
         gate: "codex_governed_workspace_write",
         prepared_action_id: fixture.actionId,
         execution_lease_id: leaseId,
@@ -701,42 +725,45 @@ async function seedSuccessEvidence(
         raw_prompt_omitted: true,
         raw_response_omitted: true,
         token_omitted: true,
-      }),
-      now,
-    ],
+      },
+      notes: "Verified governed diff.",
+    }),
   );
-  await client.query(
-    `INSERT INTO artifacts(
-      artifact_id,task_id,run_id,artifact_type,title,uri,summary,content_hash,
-      created_at
-    ) VALUES(
-      $1,$2,$3,'codex_workspace_diff_evidence','Contract diff',$4,
-      'Hashed bounded diff; raw diff omitted.',$5,$6
-    )`,
-    [
-      artifactId,
-      fixture.taskId,
-      fixture.runId,
-      `worktree://${fixture.actionId}`,
-      diffEvidenceHash,
-      now,
-    ],
+  require(
+    evaluation.status === 201
+      && (evaluation.body.evaluation as Record<string, unknown>).pass_fail
+        === "pass",
+    "Evaluation was not recorded through the TypeScript/Postgres owner",
   );
-  await client.query(
-    `INSERT INTO audit_logs(
-      audit_id,workspace_id,actor_type,actor_id,action,entity_type,entity_id,
-      before_hash,after_hash,metadata_json,tamper_chain_hash,created_at
-    ) VALUES(
-      $1,$2,'agent',$3,'agent_worker.codex_workspace_write_completed',
-      'runs',$4,NULL,NULL,$5,$6,$7
-    )`,
-    [
-      auditId,
-      WORKSPACE_ID,
-      AGENT_ID,
-      fixture.runId,
-      JSON.stringify({
-        workspace_id: WORKSPACE_ID,
+  const artifact = await recordAgentGatewayArtifact(
+    request(token, "POST", {
+      workspace_id: WORKSPACE_ID,
+      agent_id: AGENT_ID,
+      task_id: fixture.taskId,
+      run_id: fixture.runId,
+      artifact_id: artifactId,
+      artifact_type: "codex_workspace_diff_evidence",
+      title: "Contract diff",
+      uri: `worktree://${fixture.actionId}`,
+      summary: "Hashed bounded diff; raw diff omitted.",
+      content_hash: diffEvidenceHash,
+      created_at: now,
+    }),
+  );
+  require(
+    artifact.status === 201,
+    "Artifact was not recorded through the TypeScript/Postgres owner",
+  );
+  const audit = await emitAgentAudit(
+    request(token, "POST", {
+      workspace_id: WORKSPACE_ID,
+      agent_id: AGENT_ID,
+      task_id: fixture.taskId,
+      run_id: fixture.runId,
+      action: "agent_worker.codex_workspace_write_completed",
+      entity_type: "runs",
+      entity_id: fixture.runId,
+      metadata: {
         agent_plan_id: fixture.planId,
         prepared_action_id: fixture.actionId,
         approval_id: fixture.approvalId,
@@ -747,49 +774,50 @@ async function seedSuccessEvidence(
           changed_paths: fixture.allowedPaths,
         },
         raw_diff_omitted: true,
-        raw_prompt_omitted: true,
-        raw_response_omitted: true,
-        token_omitted: true,
-      }),
-      sha(`chain:${auditId}`),
-      now,
-    ],
+      },
+      after: {
+        status: "execution_evidence_recorded",
+        provider_side_effect_id: providerSideEffectId,
+      },
+    }),
   );
-  await client.query(
-    `INSERT INTO plan_evidence_manifests(
-      manifest_id,workspace_id,plan_id,task_id,run_id,agent_id,
-      mismatch_policy,expected_steps_json,tool_call_ids_json,
-      evaluation_ids_json,artifact_ids_json,audit_ids_json,plan_hash,
-      verification_result_hash,status,verification_json,created_at,updated_at
-    ) VALUES(
-      $1,$2,$3,$4,$5,$6,'block',$7,$8,$9,$10,$11,$12,$13,
-      'verified',$14,$15,$15
-    )`,
-    [
-      manifestId,
-      WORKSPACE_ID,
-      fixture.planId,
-      fixture.taskId,
-      fixture.runId,
-      AGENT_ID,
-      JSON.stringify(STEPS),
-      JSON.stringify([verifierToolId]),
-      JSON.stringify([evaluationId]),
-      JSON.stringify([artifactId]),
-      JSON.stringify([auditId]),
-      fixture.planHash,
-      fixture.verificationResultHash,
-      JSON.stringify({
-        pass: true,
-        status: "verified",
-        failed_checks: [],
-        plan_verification: planVerification,
-      }),
-      now,
-    ],
+  require(
+    audit.status === 201 && audit.body.emitted === true,
+    "Worker audit was not emitted through the TypeScript/Postgres owner",
+  );
+  const manifest = await createAgentGatewayPlanEvidenceManifest(
+    request(token, "POST", {
+      workspace_id: WORKSPACE_ID,
+      agent_id: AGENT_ID,
+      manifest_id: manifestId,
+      plan_id: fixture.planId,
+      task_id: fixture.taskId,
+      run_id: fixture.runId,
+      mismatch_policy: "block",
+      expected_steps: STEPS,
+      tool_call_ids: options.declaredToolIds
+        || [fixture.toolCallId, verifierToolId],
+      evaluation_ids: [evaluationId],
+      artifact_ids: [artifactId],
+      audit_ids: [],
+      plan_hash: fixture.planHash,
+      verification_result_hash: fixture.verificationResultHash,
+      verify_now: true,
+    }),
+  );
+  const manifestBody = manifest.body.manifest as Record<string, unknown>;
+  const expectedVerified = options.expectVerified !== false;
+  require(
+    manifest.status === 201
+      && manifestBody.status === (expectedVerified ? "verified" : "blocked"),
+    "Manifest did not pass through the expected owner verification state",
   );
   return {
     manifestId,
+    manifestStatus: String(manifestBody.status),
+    verifierToolId,
+    evaluationId,
+    artifactId,
     diffEvidenceHash,
     providerSideEffectId,
   };
@@ -843,6 +871,67 @@ async function main() {
       token,
       "human_race",
     );
+    const claimOwnerDrift = await seedPreparedAction(
+      scopedAdmin,
+      token,
+      "claim_owner_drift",
+    );
+    const claimRunStateDrift = await seedPreparedAction(
+      scopedAdmin,
+      token,
+      "claim_run_state_drift",
+    );
+    const claimRunAgentDrift = await seedPreparedAction(
+      scopedAdmin,
+      token,
+      "claim_run_agent_drift",
+    );
+    const claimToolStatusDrift = await seedPreparedAction(
+      scopedAdmin,
+      token,
+      "claim_tool_status_drift",
+    );
+    const claimToolEffectDrift = await seedPreparedAction(
+      scopedAdmin,
+      token,
+      "claim_tool_effect_drift",
+    );
+    const claimPlanDrift = await seedPreparedAction(
+      scopedAdmin,
+      token,
+      "claim_plan_drift",
+    );
+    const resumeAssignmentDrift = await seedPreparedAction(
+      scopedAdmin,
+      token,
+      "resume_assignment_drift",
+    );
+    const selectiveEvidence = await seedPreparedAction(
+      scopedAdmin,
+      token,
+      "selective_evidence",
+    );
+    const crossEvidence = await seedPreparedAction(
+      scopedAdmin,
+      token,
+      "cross_evidence",
+    );
+    const allFixtures = [
+      success,
+      failure,
+      expiry,
+      rejectedFixture,
+      raceFixture,
+      claimOwnerDrift,
+      claimRunStateDrift,
+      claimRunAgentDrift,
+      claimToolStatusDrift,
+      claimToolEffectDrift,
+      claimPlanDrift,
+      resumeAssignmentDrift,
+      selectiveEvidence,
+      crossEvidence,
+    ];
 
     const createReplay = await preparePreparedAction(
       request(token, "POST", success.prepareBody),
@@ -969,10 +1058,22 @@ async function main() {
       approvedReplay.body.outcome === "unchanged",
       "Human PreparedAction decision replay was not idempotent",
     );
-    for (const [fixture, session, key] of [
-      [failure, owner, "prepared-owner-approve-failure-0001"],
-      [expiry, approver, "prepared-approver-approve-expiry-0001"],
-    ] as const) {
+    const additionallyApproved = [
+      failure,
+      expiry,
+      claimOwnerDrift,
+      claimRunStateDrift,
+      claimRunAgentDrift,
+      claimToolStatusDrift,
+      claimToolEffectDrift,
+      claimPlanDrift,
+      resumeAssignmentDrift,
+      selectiveEvidence,
+      crossEvidence,
+    ];
+    for (const [index, fixture] of additionallyApproved.entries()) {
+      const session = index % 2 === 0 ? owner : approver;
+      const key = `prepared-approve-${fixture.suffix}-0001`;
       const result = await decideWorkspaceApproval(
         humanDecisionRequest(session, fixture.approvalId, "approve", key),
         { workspace_id: WORKSPACE_ID },
@@ -1072,6 +1173,92 @@ async function main() {
       agent_id: AGENT_ID,
       lease_ttl_seconds: 120,
     };
+    await scopedAdmin.query(
+      "UPDATE tasks SET owner_agent_id=$1 WHERE task_id=$2",
+      [OTHER_AGENT_ID, claimOwnerDrift.taskId],
+    );
+    await expectCode("prepared_action_current_assignment_invalid", () =>
+      claimPreparedActionExecution(
+        request(token, "POST", claimBody),
+        claimOwnerDrift.actionId,
+      ));
+    await scopedAdmin.query(
+      "UPDATE tasks SET owner_agent_id=$1 WHERE task_id=$2",
+      [AGENT_ID, claimOwnerDrift.taskId],
+    );
+
+    await scopedAdmin.query(
+      "UPDATE runs SET status='blocked' WHERE run_id=$1",
+      [claimRunStateDrift.runId],
+    );
+    await expectCode("prepared_action_parent_state_invalid", () =>
+      claimPreparedActionExecution(
+        request(token, "POST", claimBody),
+        claimRunStateDrift.actionId,
+      ));
+    await scopedAdmin.query(
+      "UPDATE runs SET status='waiting_approval' WHERE run_id=$1",
+      [claimRunStateDrift.runId],
+    );
+
+    await expectDatabaseGuard(
+      "approval_parent_binding_immutable",
+      () => scopedAdmin!.query(
+        "UPDATE runs SET agent_id=$1 WHERE run_id=$2",
+        [OTHER_AGENT_ID, claimRunAgentDrift.runId],
+      ),
+    );
+    await expectCode("forbidden", () =>
+      claimPreparedActionExecution(
+        request(otherToken, "POST", {
+          ...claimBody,
+          agent_id: OTHER_AGENT_ID,
+        }, { agentId: OTHER_AGENT_ID }),
+        claimRunAgentDrift.actionId,
+      ));
+
+    await scopedAdmin.query(
+      "UPDATE tool_calls SET status='blocked' WHERE tool_call_id=$1",
+      [claimToolStatusDrift.toolCallId],
+    );
+    await expectCode("prepared_action_parent_state_invalid", () =>
+      claimPreparedActionExecution(
+        request(token, "POST", claimBody),
+        claimToolStatusDrift.actionId,
+      ));
+    await scopedAdmin.query(
+      "UPDATE tool_calls SET status='waiting_approval' WHERE tool_call_id=$1",
+      [claimToolStatusDrift.toolCallId],
+    );
+
+    await scopedAdmin.query(
+      "UPDATE tool_calls SET side_effect_id=$1 WHERE tool_call_id=$2",
+      ["unexpected-effect", claimToolEffectDrift.toolCallId],
+    );
+    await expectCode("prepared_action_parent_state_invalid", () =>
+      claimPreparedActionExecution(
+        request(token, "POST", claimBody),
+        claimToolEffectDrift.actionId,
+      ));
+    await scopedAdmin.query(
+      "UPDATE tool_calls SET side_effect_id=NULL WHERE tool_call_id=$1",
+      [claimToolEffectDrift.toolCallId],
+    );
+
+    await scopedAdmin.query(
+      "UPDATE agent_plans SET verification_result_hash=$1 WHERE plan_id=$2",
+      [sha("stale-plan-verification"), claimPlanDrift.planId],
+    );
+    await expectCode("prepared_action_current_assignment_invalid", () =>
+      claimPreparedActionExecution(
+        request(token, "POST", claimBody),
+        claimPlanDrift.actionId,
+      ));
+    await scopedAdmin.query(
+      "UPDATE agent_plans SET verification_result_hash=$1 WHERE plan_id=$2",
+      [claimPlanDrift.verificationResultHash, claimPlanDrift.planId],
+    );
+
     const claimAttempts = Array.from({ length: 8 }, () =>
       claimPreparedActionExecution(
         request(token, "POST", claimBody),
@@ -1118,9 +1305,32 @@ async function main() {
         success.actionId,
       ));
     const successEvidence = await seedSuccessEvidence(
-      scopedAdmin,
+      token,
       success,
       successLeaseId,
+    );
+    const currentSuccessManifest =
+      await verifyCurrentAgentGatewayPlanEvidenceManifest(
+        scopedAdmin as unknown as PoolClient,
+        {
+          manifestId: successEvidence.manifestId,
+          workspaceId: WORKSPACE_ID,
+          taskId: success.taskId,
+          runId: success.runId,
+          agentId: AGENT_ID,
+          requireCommercialRuntime: false,
+        },
+      );
+    require(
+      currentSuccessManifest?.verification.pass === true,
+      `Current success manifest did not reverify: ${
+        JSON.stringify(
+          currentSuccessManifest?.verification.failed_checks
+            .map((check) => check.id),
+        )
+      } checkpoint=${
+        JSON.stringify(currentSuccessManifest?.verification.execution_checkpoint)
+      }`,
     );
     await expectCode("verified_plan_evidence_manifest_required", () =>
       resumePreparedActionExecution(
@@ -1144,6 +1354,141 @@ async function main() {
         }),
         success.actionId,
       ));
+
+    const assignmentClaim = await claimPreparedActionExecution(
+      request(token, "POST", claimBody),
+      resumeAssignmentDrift.actionId,
+    );
+    const assignmentLeaseId = String(
+      (assignmentClaim.body.execution_lease as Record<string, unknown>).lease_id,
+    );
+    const runningCheckpoint = await scopedAdmin.query<{
+      run_status: string;
+      task_status: string;
+      tool_status: string;
+      tool_side_effect_id: string | null;
+    }>(
+      `SELECT
+        (SELECT status FROM runs WHERE run_id=$1) run_status,
+        (SELECT status FROM tasks WHERE task_id=$2) task_status,
+        (SELECT status FROM tool_calls WHERE tool_call_id=$3) tool_status,
+        (SELECT side_effect_id FROM tool_calls
+          WHERE tool_call_id=$3) tool_side_effect_id`,
+      [
+        resumeAssignmentDrift.runId,
+        resumeAssignmentDrift.taskId,
+        resumeAssignmentDrift.toolCallId,
+      ],
+    );
+    require(
+      runningCheckpoint.rows[0].run_status === "running"
+        && runningCheckpoint.rows[0].task_status === "running"
+        && runningCheckpoint.rows[0].tool_status === "running"
+        && runningCheckpoint.rows[0].tool_side_effect_id === null,
+      "claim did not establish the exact side-effect-free running checkpoint",
+    );
+    await scopedAdmin.query(
+      "UPDATE tasks SET owner_agent_id=$1 WHERE task_id=$2",
+      [OTHER_AGENT_ID, resumeAssignmentDrift.taskId],
+    );
+    await expectCode("prepared_action_current_assignment_invalid", () =>
+      resumePreparedActionExecution(
+        request(token, "POST", {
+          workspace_id: WORKSPACE_ID,
+          agent_id: AGENT_ID,
+          lease_id: assignmentLeaseId,
+          plan_evidence_manifest_id: "pem_assignment_drift",
+          provider_side_effect_id: "codex-diff-assignment-drift",
+        }),
+        resumeAssignmentDrift.actionId,
+      ));
+    await scopedAdmin.query(
+      "UPDATE tasks SET owner_agent_id=$1 WHERE task_id=$2",
+      [AGENT_ID, resumeAssignmentDrift.taskId],
+    );
+    await failPreparedActionExecution(
+      request(token, "POST", {
+        workspace_id: WORKSPACE_ID,
+        agent_id: AGENT_ID,
+        lease_id: assignmentLeaseId,
+        failure_reason: "Assignment drift test closed without external write.",
+        rollback_performed: true,
+      }),
+      resumeAssignmentDrift.actionId,
+    );
+
+    const selectiveClaim = await claimPreparedActionExecution(
+      request(token, "POST", claimBody),
+      selectiveEvidence.actionId,
+    );
+    const selectiveLeaseId = String(
+      (selectiveClaim.body.execution_lease as Record<string, unknown>).lease_id,
+    );
+    const selectiveManifest = await seedSuccessEvidence(
+      token,
+      selectiveEvidence,
+      selectiveLeaseId,
+      {
+        declaredToolIds: [selectiveEvidence.toolCallId],
+        expectVerified: false,
+      },
+    );
+    await expectCode("verified_plan_evidence_manifest_required", () =>
+      resumePreparedActionExecution(
+        request(token, "POST", {
+          workspace_id: WORKSPACE_ID,
+          agent_id: AGENT_ID,
+          lease_id: selectiveLeaseId,
+          plan_evidence_manifest_id: selectiveManifest.manifestId,
+          provider_side_effect_id: selectiveManifest.providerSideEffectId,
+        }),
+        selectiveEvidence.actionId,
+      ));
+    await failPreparedActionExecution(
+      request(token, "POST", {
+        workspace_id: WORKSPACE_ID,
+        agent_id: AGENT_ID,
+        lease_id: selectiveLeaseId,
+        failure_reason: "Selective evidence test failed closed and rolled back.",
+        rollback_performed: true,
+      }),
+      selectiveEvidence.actionId,
+    );
+
+    const crossClaim = await claimPreparedActionExecution(
+      request(token, "POST", claimBody),
+      crossEvidence.actionId,
+    );
+    const crossLeaseId = String(
+      (crossClaim.body.execution_lease as Record<string, unknown>).lease_id,
+    );
+    const crossManifest = await seedSuccessEvidence(
+      token,
+      crossEvidence,
+      crossLeaseId,
+    );
+    await expectCode("verified_plan_evidence_manifest_required", () =>
+      resumePreparedActionExecution(
+        request(token, "POST", {
+          workspace_id: WORKSPACE_ID,
+          agent_id: AGENT_ID,
+          lease_id: successLeaseId,
+          plan_evidence_manifest_id: crossManifest.manifestId,
+          provider_side_effect_id: crossManifest.providerSideEffectId,
+        }),
+        success.actionId,
+      ));
+    await failPreparedActionExecution(
+      request(token, "POST", {
+        workspace_id: WORKSPACE_ID,
+        agent_id: AGENT_ID,
+        lease_id: crossLeaseId,
+        failure_reason: "Cross-action manifest test failed closed and rolled back.",
+        rollback_performed: true,
+      }),
+      crossEvidence.actionId,
+    );
+
     const resumeBody = {
       workspace_id: WORKSPACE_ID,
       agent_id: AGENT_ID,
@@ -1333,10 +1678,10 @@ async function main() {
           WHERE outcome='unknown') unknown`,
     );
     require(
-      Number(terminalCounts.rows[0].leases) === 3
-        && Number(terminalCounts.rows[0].receipts) === 3
+      Number(terminalCounts.rows[0].leases) === 6
+        && Number(terminalCounts.rows[0].receipts) === 6
         && Number(terminalCounts.rows[0].succeeded) === 1
-        && Number(terminalCounts.rows[0].failed) === 1
+        && Number(terminalCounts.rows[0].failed) === 4
         && Number(terminalCounts.rows[0].unknown) === 1,
       "terminal receipt outcomes are incomplete",
     );
@@ -1357,15 +1702,18 @@ async function main() {
           decision_requests`,
     );
     require(
-      Number(ownerEvidence.rows[0].created_audits) === 5
-        && Number(ownerEvidence.rows[0].decision_audits) === 5
-        && Number(ownerEvidence.rows[0].decision_events) === 5
-        && Number(ownerEvidence.rows[0].decision_requests) === 5,
+      Number(ownerEvidence.rows[0].created_audits) === allFixtures.length
+        && Number(ownerEvidence.rows[0].decision_audits)
+          === allFixtures.length
+        && Number(ownerEvidence.rows[0].decision_events)
+          === allFixtures.length
+        && Number(ownerEvidence.rows[0].decision_requests)
+          === allFixtures.length,
       "PreparedAction create or Human decision evidence is incomplete",
     );
 
     console.log(JSON.stringify({
-      contract: "prepared_action_typescript_postgres_owner_v2",
+      contract: "prepared_action_typescript_postgres_owner_v3",
       ok: true,
       control_plane: "typescript_postgres",
       schema_contract: migration.schema_contract,
@@ -1396,10 +1744,24 @@ async function main() {
       concurrent_claim_attempts: claimAttempts.length,
       exclusive_claim_winners: 1,
       exact_claim_replays_blocked: claimAttempts.length - 1,
+      current_state_negative_gates: {
+        task_owner_drift: true,
+        run_status_drift: true,
+        run_agent_drift: true,
+        tool_status_drift: true,
+        tool_side_effect_drift: true,
+        plan_verification_drift: true,
+        resume_assignment_drift: true,
+        cross_action_manifest: true,
+        selective_manifest_evidence: true,
+      },
+      claim_establishes_running_checkpoint: true,
+      manifest_verified_by_real_owner: true,
+      manifest_audit_ids_server_derived: true,
       resume_response_loss_replay: true,
       terminal_receipts: {
         succeeded: 1,
-        failed: 1,
+        failed: 4,
         unknown: 1,
         append_only: true,
       },

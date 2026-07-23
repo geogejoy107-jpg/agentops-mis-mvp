@@ -11,6 +11,7 @@ import { boundedJsonObject } from "./boundedJson";
 import { withPostgresTransaction } from "./db";
 import { ControlPlaneHttpError } from "./http";
 import { appendAudit, appendRuntimeEvent, newLedgerId, stableHash } from "./ledger";
+import { resolvePlanEvidenceExecutionCheckpoint } from "./planEvidenceCheckpoint";
 
 const RISK_LEVELS = new Set(["low", "medium", "high", "critical"]);
 const PLAN_AGENT_STATUSES = new Set(["draft", "submitted"]);
@@ -20,7 +21,7 @@ const SHA256_HEX = /^[a-f0-9]{64}$/;
 const SENSITIVE_KEY = /(authorization|credential|password|secret|token|api[_-]?key|raw[_-]?(prompt|response|transcript|content))/i;
 export const AGENT_PLAN_MAX_BODY_BYTES = 64 * 1024;
 
-type TaskRow = {
+export type TaskRow = {
   task_id: string;
   workspace_id: string;
   owner_agent_id: string | null;
@@ -28,7 +29,7 @@ type TaskRow = {
   status: string;
 };
 
-type RunRow = {
+export type RunRow = {
   run_id: string;
   workspace_id: string;
   task_id: string;
@@ -65,7 +66,7 @@ export type AgentPlanRow = {
   updated_at: string;
 };
 
-type ManifestRow = {
+export type ManifestRow = {
   manifest_id: string;
   workspace_id: string;
   plan_id: string;
@@ -93,6 +94,8 @@ type ToolEvidence = {
   tool_name: string;
   normalized_args_json: string;
   status: string;
+  side_effect_id: string | null;
+  ended_at: string | null;
 };
 type EvaluationEvidence = {
   evaluation_id: string;
@@ -610,6 +613,34 @@ async function verifyManifest(
   };
   const planVerification = verifyAgentPlanRow(plan);
   const currentPlanHash = computeAgentPlanHash(plan);
+  const executionCheckpoint = await resolvePlanEvidenceExecutionCheckpoint(
+    client,
+    {
+      workspaceId: manifest.workspace_id,
+      taskId: String(manifest.task_id || ""),
+      runId: manifest.run_id,
+      agentId: manifest.agent_id,
+      taskOwnerAgentId: task.owner_agent_id,
+      taskStatus: task.status,
+      runStatus: run.status,
+    },
+  );
+  const toolEvidenceAtCheckpoint = toolRows.length > 0
+    && toolRows.every((row) => {
+      if (
+        executionCheckpoint.kind === "prepared_action_execution_v1"
+        && row.tool_call_id === executionCheckpoint.active_tool_call_id
+      ) {
+        return row.run_id === manifest.run_id
+          && row.agent_id === manifest.agent_id
+          && row.status === "running"
+          && row.side_effect_id === null
+          && row.ended_at === null;
+      }
+      return row.run_id === manifest.run_id
+        && row.agent_id === manifest.agent_id
+        && row.status === "completed";
+    });
   const runtimeType = String(run.runtime_type || "").trim().toLowerCase();
   const modelProvider = String(run.model_provider || "").trim().toLowerCase();
   const commercialRuntime = COMMERCIAL_RUNTIME_TYPES.has(runtimeType);
@@ -681,7 +712,8 @@ async function verifyManifest(
     { id: "plan_status", ok: ["submitted", "approved"].includes(plan.status), message: "Referenced agent_plan is submitted or approved." },
     { id: "plan_approval_state", ok: !plan.approval_required || plan.status === "approved", message: "Approval-required plan has human-approved status." },
     { id: "run_exists", ok: Boolean(run), message: "Manifest references an existing run." },
-    { id: "run_completed", ok: run.status === "completed", message: "Manifest verification requires a completed run." },
+    { id: "run_completed", ok: executionCheckpoint.valid, message: "Manifest verification requires a terminal run or one exact server-owned PreparedAction execution checkpoint." },
+    { id: "run_evidence_checkpoint", ok: executionCheckpoint.valid, message: "Run evidence state is derived from current server-owned run, assignment, action, approval and lease rows." },
     { id: "task_exists", ok: Boolean(task), message: "Manifest task exists." },
     { id: "workspace_match", ok: plan.workspace_id === manifest.workspace_id && run.workspace_id === manifest.workspace_id, message: "Plan, manifest and run are in the same workspace." },
     { id: "task_match", ok: (!plan.task_id || plan.task_id === manifest.task_id) && run.task_id === manifest.task_id, message: "Plan, manifest and run bind to the same task." },
@@ -693,7 +725,7 @@ async function verifyManifest(
     { id: "expected_steps", ok: expectedSteps.length >= 3, message: "Manifest carries the approved execution steps." },
     { id: "expected_steps_match_plan", ok: JSON.stringify(expectedSteps) === JSON.stringify(planExpectedSteps), message: "Manifest steps are server-derived from the locked Agent Plan." },
     { id: "tool_evidence_present", ok: toolRows.length >= 1, message: "Run has at least one tool_call evidence row." },
-    { id: "tool_evidence_completed", ok: toolRows.length > 0 && toolRows.every((row) => row.run_id === manifest.run_id && row.agent_id === manifest.agent_id && row.status === "completed"), message: "Tool evidence belongs to the run and is completed." },
+    { id: "tool_evidence_completed", ok: toolEvidenceAtCheckpoint, message: "Tool evidence is completed, except for the exact side-effect-free tool bound to an active PreparedAction execution lease." },
     { id: "tool_ids_found", ok: found(toolRows, suppliedToolIds, "tool_call_id"), message: "All declared tool_call_ids exist." },
     { id: "tool_evidence_complete", ok: complete(toolRows, suppliedToolIds, "tool_call_id"), message: "Declared tool_call_ids are empty for server derivation or cover the complete run evidence set." },
     { id: "evaluation_evidence_present", ok: evaluationRows.length >= 1, message: "Run has at least one evaluation evidence row." },
@@ -739,8 +771,93 @@ async function verifyManifest(
       artifact_ids: suppliedArtifactIds.length,
       audit_ids: suppliedAuditIds.length,
     },
+    execution_checkpoint: executionCheckpoint,
     token_omitted: true,
   };
+}
+
+export async function verifyCurrentAgentGatewayPlanEvidenceManifest(
+  client: PoolClient,
+  input: {
+    manifestId: string;
+    workspaceId: string;
+    taskId: string;
+    runId: string;
+    agentId: string;
+    requireCommercialRuntime?: boolean;
+  },
+) {
+  const manifest = (await client.query<ManifestRow>(
+    `SELECT manifest_id,workspace_id,plan_id,task_id,run_id,agent_id,
+      mismatch_policy,expected_steps_json,tool_call_ids_json,
+      evaluation_ids_json,artifact_ids_json,audit_ids_json,plan_hash,
+      verification_result_hash,status,verification_json,created_at,updated_at
+    FROM plan_evidence_manifests
+    WHERE manifest_id=$1 AND workspace_id=$2 AND task_id=$3 AND run_id=$4
+      AND agent_id=$5
+    FOR SHARE`,
+    [
+      input.manifestId,
+      input.workspaceId,
+      input.taskId,
+      input.runId,
+      input.agentId,
+    ],
+  )).rows[0];
+  if (!manifest) return null;
+
+  const plan = (await client.query<AgentPlanRow>(
+    `SELECT plan_id,workspace_id,task_id,run_id,agent_id,task_understanding,
+      referenced_specs_json,referenced_memories_json,referenced_bases_json,
+      proposed_files_to_change_json,risk_level,approval_required,
+      execution_steps_json,verification_plan,rollback_plan,status,plan_version,
+      plan_hash,verified_at,verification_result_hash,created_at,updated_at
+    FROM agent_plans
+    WHERE plan_id=$1 AND workspace_id=$2
+    FOR SHARE`,
+    [manifest.plan_id, input.workspaceId],
+  )).rows[0];
+  const run = (await client.query<RunRow>(
+    `SELECT run_id,workspace_id,task_id,agent_id,runtime_type,model_provider,
+      status,agent_plan_id,plan_hash
+    FROM runs
+    WHERE run_id=$1 AND workspace_id=$2 AND task_id=$3 AND agent_id=$4
+    FOR SHARE`,
+    [input.runId, input.workspaceId, input.taskId, input.agentId],
+  )).rows[0];
+  const task = (await client.query<TaskRow>(
+    `SELECT task_id,workspace_id,owner_agent_id,collaborator_agent_ids,status
+    FROM tasks
+    WHERE task_id=$1 AND workspace_id=$2
+    FOR SHARE`,
+    [input.taskId, input.workspaceId],
+  )).rows[0];
+  if (
+    !plan
+    || !run
+    || !task
+    || manifest.plan_id !== plan.plan_id
+    || plan.agent_id !== input.agentId
+    || (plan.task_id !== null && plan.task_id !== input.taskId)
+    || (plan.run_id !== null && plan.run_id !== input.runId)
+    || run.agent_plan_id !== plan.plan_id
+    || run.plan_hash !== plan.plan_hash
+  ) {
+    return null;
+  }
+  const requireCommercialRuntime = input.requireCommercialRuntime
+    ?? COMMERCIAL_RUNTIME_TYPES.has(
+      String(run.runtime_type || "").trim().toLowerCase(),
+    );
+  const verification = await verifyManifest(
+    client,
+    manifest,
+    plan,
+    run,
+    task,
+    requireCommercialRuntime,
+  );
+  return { manifest, plan, run, task, verification };
 }
 
 export async function verifyLatestWorkspacePlanEvidence(
