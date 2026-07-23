@@ -74,8 +74,13 @@ const REQUIRED_RELATIONS = Object.freeze([
   "human_login_throttle",
   "human_memory_review_requests",
   "human_approval_decision_requests",
+  "workspace_entitlements",
   "idx_audit_logs_workspace_created",
   "idx_approvals_customer_delivery_run_unique",
+  "idx_workspace_entitlements_updated_by_v9",
+  "idx_gateway_tokens_workspace_usage_v9",
+  "idx_gateway_sessions_workspace_usage_v9",
+  "idx_runs_workspace_monthly_usage_v9",
 ]);
 
 const REQUIRED_LEDGER_COLUMNS = Object.freeze([
@@ -91,6 +96,20 @@ const REQUIRED_COLUMNS = Object.freeze([
   ["memories", "workspace_id"],
   ["memories", "run_id"],
   ["runtime_events", "workspace_id"],
+  ["workspace_entitlements", "workspace_id"],
+  ["workspace_entitlements", "edition"],
+  ["workspace_entitlements", "status"],
+  ["workspace_entitlements", "capabilities_json"],
+  ["workspace_entitlements", "max_agents"],
+  ["workspace_entitlements", "max_active_enrollments"],
+  ["workspace_entitlements", "max_active_sessions_per_agent"],
+  ["workspace_entitlements", "max_monthly_runs"],
+  ["workspace_entitlements", "max_monthly_cost_usd"],
+  ["workspace_entitlements", "effective_at"],
+  ["workspace_entitlements", "expires_at"],
+  ["workspace_entitlements", "created_at"],
+  ["workspace_entitlements", "updated_at"],
+  ["workspace_entitlements", "updated_by_user_id"],
 ] as const);
 
 const MIGRATION_ROOT = fileURLToPath(

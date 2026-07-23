@@ -6,7 +6,7 @@ export type MigrationDefinition = Readonly<{
   checksum: string;
 }>;
 
-export const SCHEMA_CONTRACT = "agentops_commercial_postgres_v8";
+export const SCHEMA_CONTRACT = "agentops_commercial_postgres_v9";
 
 export const POSTGRES_MIGRATION_MANIFEST = Object.freeze([
   {
@@ -71,5 +71,12 @@ export const POSTGRES_MIGRATION_MANIFEST = Object.freeze([
     schemaContract: "worker_evidence_workspace_v8",
     filename: "20260724_worker_evidence_workspace_v8.sql",
     checksum: "ad5c15c636f15395d71a614478acbcdf7361604156362bb8c1f21d4c34b03d11",
+  },
+  {
+    component: "workspace_entitlements",
+    version: "20260724.9",
+    schemaContract: "workspace_entitlements_v9",
+    filename: "20260724_workspace_entitlements_v9.sql",
+    checksum: "a22dc35565b5ae39ff553567154a80c4168957cdfecf5393d82adb3bad032419",
   },
 ] satisfies readonly MigrationDefinition[]);
