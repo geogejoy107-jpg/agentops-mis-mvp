@@ -329,6 +329,7 @@ jobs:
           npm run typecheck
           npm run test:control-plane-mode-contract
           npm run test:postgres-schema-contract
+          npm run migrate:postgres
           npm run test:customer-delivery-approval-request-contract
           npm run build
 

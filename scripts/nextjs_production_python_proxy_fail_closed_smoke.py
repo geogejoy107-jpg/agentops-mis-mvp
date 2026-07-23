@@ -19,6 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NEXT_APP = ROOT / "ui" / "next-app"
+POSTGRES_MIGRATIONS = ROOT / "migrations" / "postgres"
 BUILD_TIMEOUT_SECONDS = 300
 STARTUP_TIMEOUT_SECONDS = 90
 REQUEST_TIMEOUT_SECONDS = 10
@@ -100,6 +101,7 @@ def isolated_environment(upstream_port: int, temp_root: Path) -> dict[str, str]:
         "AGENTOPS_CONTROL_PLANE_MODE": "proxy",
         "AGENTOPS_DEPLOYMENT_MODE": "production",
         "AGENTOPS_NEXT_HOST": "127.0.0.1",
+        "AGENTOPS_POSTGRES_DSN": os.environ["AGENTOPS_POSTGRES_DSN"],
         "NEXT_TELEMETRY_DISABLED": "1",
         "NODE_ENV": "production",
         "TEMP": str(temp_root),
@@ -113,7 +115,13 @@ def copy_app(destination: Path) -> None:
     def ignore(_directory: str, names: list[str]) -> set[str]:
         return {name for name in names if name == ".next" or name.startswith(".env")}
 
+    destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(NEXT_APP, destination, ignore=ignore, copy_function=shutil.copy2)
+    shutil.copytree(
+        POSTGRES_MIGRATIONS,
+        destination.parents[1] / "migrations" / "postgres",
+        copy_function=shutil.copy2,
+    )
 
 
 def tracked_diff_digest() -> str:
@@ -165,7 +173,9 @@ def main() -> int:
     npm = shutil.which("npm")
     require(bool(node), "node is required")
     require(bool(npm), "npm is required")
+    require(bool(os.environ.get("AGENTOPS_POSTGRES_DSN")), "AGENTOPS_POSTGRES_DSN is required")
     require((NEXT_APP / "node_modules").is_dir(), "run npm ci in ui/next-app first")
+    require(POSTGRES_MIGRATIONS.is_dir(), "Postgres migrations are required")
     source_diff_before = tracked_diff_digest()
 
     with PythonObserver.lock:
@@ -177,7 +187,7 @@ def main() -> int:
     try:
         with tempfile.TemporaryDirectory(prefix="agentops-next-production-") as temporary:
             temp_root = Path(temporary)
-            isolated_app = temp_root / "next-app"
+            isolated_app = temp_root / "repo" / "ui" / "next-app"
             copy_app(isolated_app)
             next_cli = isolated_app / "node_modules" / "next" / "dist" / "bin" / "next"
             require(next_cli.is_file(), "isolated Next CLI is missing")
@@ -223,9 +233,9 @@ def main() -> int:
                 f"{base_url}{approval_path}",
                 "POST",
             )
-            require(status == 503, f"POST {approval_path} returned {status}")
+            require(status == 401, f"POST {approval_path} returned {status}")
             require(
-                payload.get("error") == "typescript_control_plane_unavailable",
+                status == 401 and payload.get("error") == "unauthorized",
                 f"{approval_path} did not enter its TypeScript/Postgres owner",
             )
             require(
@@ -293,10 +303,12 @@ def main() -> int:
             source_diff_after = tracked_diff_digest()
             require(source_diff_after == source_diff_before, "isolated build mutated tracked source files")
             print(json.dumps({
-                "contract": "nextjs_production_python_proxy_fail_closed_v4",
+                "contract": "nextjs_production_python_proxy_fail_closed_v5",
                 "ok": True,
                 "production_artifact_built": True,
                 "production_artifact_started_through_npm_start": True,
+                "postgres_migrations_packaged": True,
+                "production_schema_readiness": True,
                 "python_api_started": False,
                 "python_proxy_performed": False,
                 "production_upstream_request_count": production_upstream_hits,
