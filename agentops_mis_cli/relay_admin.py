@@ -1135,6 +1135,318 @@ def _write_new_file(path: Path, data: bytes, mode: int) -> None:
         os.close(descriptor)
 
 
+def _install_lock_fingerprint(
+    metadata: os.stat_result,
+) -> tuple[int, int, int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_nlink,
+        metadata.st_size,
+    )
+
+
+def _install_admin_fingerprint(
+    metadata: os.stat_result,
+) -> tuple[int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_gid,
+    )
+
+
+def _validate_install_admin_metadata(
+    metadata: os.stat_result,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> None:
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != expected_uid
+        or metadata.st_gid != expected_gid
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        raise RelayAdminError("lifecycle_lock_failed")
+
+
+def _open_install_admin_directory(
+    path: Path,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> tuple[int, tuple[int, int, int, int, int]]:
+    descriptor = -1
+    success = False
+    try:
+        before = path.lstat()
+        _validate_install_admin_metadata(
+            before,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        descriptor = os.open(
+            path,
+            (
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            ),
+        )
+        opened = os.fstat(descriptor)
+        after = path.lstat()
+        for metadata in (opened, after):
+            _validate_install_admin_metadata(
+                metadata,
+                expected_uid=expected_uid,
+                expected_gid=expected_gid,
+            )
+        expected = _install_admin_fingerprint(opened)
+        if not (
+            _install_admin_fingerprint(before)
+            == _install_admin_fingerprint(after)
+            == expected
+        ):
+            raise RelayAdminError("lifecycle_lock_failed")
+        success = True
+        return descriptor, expected
+    except RelayAdminError:
+        raise
+    except OSError as exc:
+        raise RelayAdminError("lifecycle_lock_failed") from exc
+    finally:
+        if not success and descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def _validate_install_lock_metadata(
+    metadata: os.stat_result,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> None:
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != expected_uid
+        or metadata.st_gid != expected_gid
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_nlink != 1
+        or metadata.st_size != 0
+    ):
+        raise RelayAdminError("lifecycle_lock_failed")
+
+
+def _validate_install_lock_binding(
+    admin_path: Path,
+    admin_descriptor: int,
+    expected_admin: tuple[int, int, int, int, int],
+    lock_descriptor: int,
+    expected_lock: tuple[int, int, int, int, int, int, int],
+) -> None:
+    try:
+        admin_path_metadata = admin_path.lstat()
+        admin_opened_metadata = os.fstat(admin_descriptor)
+        path_metadata = os.stat(
+            "lifecycle.lock",
+            dir_fd=admin_descriptor,
+            follow_symlinks=False,
+        )
+        opened_metadata = os.fstat(lock_descriptor)
+    except OSError as exc:
+        raise RelayAdminError("recovery_required") from exc
+    try:
+        for metadata in (admin_path_metadata, admin_opened_metadata):
+            _validate_install_admin_metadata(
+                metadata,
+                expected_uid=expected_admin[3],
+                expected_gid=expected_admin[4],
+            )
+        _validate_install_lock_metadata(
+            path_metadata,
+            expected_uid=expected_lock[3],
+            expected_gid=expected_lock[4],
+        )
+        _validate_install_lock_metadata(
+            opened_metadata,
+            expected_uid=expected_lock[3],
+            expected_gid=expected_lock[4],
+        )
+    except RelayAdminError as exc:
+        raise RelayAdminError("recovery_required") from exc
+    if not (
+        _install_admin_fingerprint(admin_path_metadata)
+        == _install_admin_fingerprint(admin_opened_metadata)
+        == expected_admin
+        and _install_lock_fingerprint(path_metadata)
+        == _install_lock_fingerprint(opened_metadata)
+        == expected_lock
+    ):
+        raise RelayAdminError("recovery_required")
+
+
+def _open_install_lifecycle_lock(
+    path: Path,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> tuple[
+    int,
+    tuple[int, int, int, int, int],
+    int,
+    tuple[int, int, int, int, int, int, int],
+]:
+    base_flags = (
+        os.O_RDWR
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    descriptor = -1
+    admin_descriptor = -1
+    created = False
+    expected_admin: tuple[int, int, int, int, int] | None = None
+    expected: tuple[int, int, int, int, int, int, int] | None = None
+    success = False
+    try:
+        admin_descriptor, expected_admin = _open_install_admin_directory(
+            path.parent,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        try:
+            descriptor = os.open(
+                "lifecycle.lock",
+                base_flags | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=admin_descriptor,
+            )
+            created = True
+            os.fchmod(descriptor, 0o600)
+            before = os.fstat(descriptor)
+        except FileExistsError:
+            before = os.stat(
+                "lifecycle.lock",
+                dir_fd=admin_descriptor,
+                follow_symlinks=False,
+            )
+            _validate_install_lock_metadata(
+                before,
+                expected_uid=expected_uid,
+                expected_gid=expected_gid,
+            )
+            descriptor = os.open(
+                "lifecycle.lock",
+                base_flags,
+                dir_fd=admin_descriptor,
+            )
+        opened = os.fstat(descriptor)
+        after = os.stat(
+            "lifecycle.lock",
+            dir_fd=admin_descriptor,
+            follow_symlinks=False,
+        )
+        for metadata in (before, opened, after):
+            _validate_install_lock_metadata(
+                metadata,
+                expected_uid=expected_uid,
+                expected_gid=expected_gid,
+            )
+        if not (
+            _install_lock_fingerprint(before)
+            == _install_lock_fingerprint(opened)
+            == _install_lock_fingerprint(after)
+        ):
+            raise RelayAdminError("lifecycle_lock_failed")
+        try:
+            fcntl.flock(
+                descriptor,
+                fcntl.LOCK_EX | fcntl.LOCK_NB,
+            )
+        except BlockingIOError as exc:
+            raise RelayAdminError("lifecycle_lock_failed") from exc
+        locked = os.fstat(descriptor)
+        locked_path = os.stat(
+            "lifecycle.lock",
+            dir_fd=admin_descriptor,
+            follow_symlinks=False,
+        )
+        locked_admin_path = path.parent.lstat()
+        locked_admin = os.fstat(admin_descriptor)
+        for metadata in (locked_admin_path, locked_admin):
+            _validate_install_admin_metadata(
+                metadata,
+                expected_uid=expected_uid,
+                expected_gid=expected_gid,
+            )
+        for metadata in (locked, locked_path):
+            _validate_install_lock_metadata(
+                metadata,
+                expected_uid=expected_uid,
+                expected_gid=expected_gid,
+            )
+        expected = _install_lock_fingerprint(locked)
+        if (
+            _install_admin_fingerprint(locked_admin_path)
+            != expected_admin
+            or _install_admin_fingerprint(locked_admin)
+            != expected_admin
+            or _install_lock_fingerprint(locked_path) != expected
+            or expected != _install_lock_fingerprint(opened)
+        ):
+            raise RelayAdminError("lifecycle_lock_failed")
+        success = True
+        return admin_descriptor, expected_admin, descriptor, expected
+    except RelayAdminError:
+        raise
+    except OSError as exc:
+        raise RelayAdminError("lifecycle_lock_failed") from exc
+    finally:
+        if not success and descriptor >= 0:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            if created:
+                try:
+                    current = os.stat(
+                        "lifecycle.lock",
+                        dir_fd=admin_descriptor,
+                        follow_symlinks=False,
+                    )
+                    opened = os.fstat(descriptor)
+                    if (
+                        current.st_nlink == 1
+                        and _install_lock_fingerprint(current)
+                        == _install_lock_fingerprint(opened)
+                    ):
+                        os.unlink(
+                            "lifecycle.lock",
+                            dir_fd=admin_descriptor,
+                        )
+                        os.fsync(admin_descriptor)
+                except OSError:
+                    pass
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if not success and admin_descriptor >= 0:
+            try:
+                os.close(admin_descriptor)
+            except OSError:
+                pass
+
+
 def _mkdir_fresh(path: Path, mode: int = 0o755) -> None:
     try:
         os.mkdir(path, mode)
@@ -1225,28 +1537,37 @@ def _publish_install_anchored(
     paths = plan.paths
     if plan.no_op:
         return
-    for directory in (
-        paths.releases,
-        paths.stable_launcher.parent,
-        paths.unit.parent,
-        paths.admin_state,
-    ):
-        _mkdir_chain(paths.root, directory, 0o700 if directory == paths.admin_state else 0o755)
-    lock_flags = (
-        os.O_RDWR
-        | os.O_CREAT
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
+    _mkdir_chain(paths.root, paths.admin_state, 0o700)
     try:
-        lock_descriptor = os.open(paths.lifecycle_lock, lock_flags, 0o600)
-        os.fchmod(lock_descriptor, 0o600)
-        fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+        root_metadata = paths.root.lstat()
     except OSError as exc:
         raise RelayAdminError("lifecycle_lock_failed") from exc
+    (
+        admin_descriptor,
+        admin_fingerprint,
+        lock_descriptor,
+        lock_fingerprint,
+    ) = _open_install_lifecycle_lock(
+        paths.lifecycle_lock,
+        expected_uid=root_metadata.st_uid,
+        expected_gid=root_metadata.st_gid,
+    )
     stage = paths.releases / f".installing-{plan.plan_sha256[:16]}"
     unit_stage = paths.unit.parent / f".{UNIT_NAME}.{plan.plan_sha256[:16]}.tmp"
     try:
+        _validate_install_lock_binding(
+            paths.admin_state,
+            admin_descriptor,
+            admin_fingerprint,
+            lock_descriptor,
+            lock_fingerprint,
+        )
+        for directory in (
+            paths.releases,
+            paths.stable_launcher.parent,
+            paths.unit.parent,
+        ):
+            _mkdir_chain(paths.root, directory)
         refreshed = _plan_for_install(paths.root, plan.bundle)
         if refreshed.plan_sha256 != plan.plan_sha256 or refreshed.no_op:
             raise RelayAdminError("plan_stale")
@@ -1274,6 +1595,13 @@ def _publish_install_anchored(
             _validate_installed_release(paths, plan.bundle)
             if not _root_path_matches(original_root, plan.root_fingerprint):
                 raise RelayAdminError("plan_stale")
+            _validate_install_lock_binding(
+                paths.admin_state,
+                admin_descriptor,
+                admin_fingerprint,
+                lock_descriptor,
+                lock_fingerprint,
+            )
             paths.transaction.unlink()
             _fsync_directory(paths.transaction.parent)
         except (OSError, RelayAdminError) as exc:
@@ -1284,9 +1612,21 @@ def _publish_install_anchored(
             raise RelayAdminError("install_publish_failed") from exc
     finally:
         try:
-            fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+            _validate_install_lock_binding(
+                paths.admin_state,
+                admin_descriptor,
+                admin_fingerprint,
+                lock_descriptor,
+                lock_fingerprint,
+            )
         finally:
-            os.close(lock_descriptor)
+            try:
+                fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+            finally:
+                try:
+                    os.close(lock_descriptor)
+                finally:
+                    os.close(admin_descriptor)
 
 
 def _publish_install(plan: InstallPlan) -> None:

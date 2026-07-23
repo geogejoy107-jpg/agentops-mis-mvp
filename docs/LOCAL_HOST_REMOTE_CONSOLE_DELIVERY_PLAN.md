@@ -251,8 +251,9 @@ Implementation slices:
      manifest, checksums and exact Git provenance: implemented and recorded in
      `RELAY_RELEASE_BUNDLE_ACCEPTANCE.md`;
    - fail-closed offline first-install transaction with exact plan confirmation,
-     immutable releases, stable launch links and protected runtime state:
-     implemented and recorded in `RELAY_OFFLINE_INSTALL_ACCEPTANCE.md`;
+     immutable releases, stable launch links, protected runtime state, and a
+     strict nonblocking lifecycle lock: implemented and recorded in
+     `RELAY_OFFLINE_INSTALL_ACCEPTANCE.md`;
    - anchored read-only installed-tree status with absent, valid, recovery and
      invalid states, exact layout/RECORD checks and zero service-readiness
      claims: implemented and recorded in `RELAY_OFFLINE_STATUS_ACCEPTANCE.md`;

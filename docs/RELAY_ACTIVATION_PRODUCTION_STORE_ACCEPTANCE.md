@@ -96,6 +96,7 @@ This opener has no caller in `main()` and performs no systemd action. A future
 installer or migration transaction must first create the exact namespace while
 holding the same lifecycle lock. The exact-confirmed controller, narrow
 mutation adapter, step evidence compiler, ownership-safe rollback, crash
-recovery, completed-history retention, legacy installer lock hardening, real
-root-owned Linux systemd acceptance, public Relay, and physical
-ordinary-browser acceptance remain open.
+recovery, completed-history retention, real root-owned Linux systemd
+acceptance, public Relay, and physical ordinary-browser acceptance remain
+open. Installer lock hardening is recorded in
+`RELAY_OFFLINE_INSTALL_ACCEPTANCE.md`.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import csv
+import fcntl
 import gzip
 import hashlib
 import importlib.util
@@ -567,6 +568,413 @@ def tree_digest(root: Path) -> str:
     return sha256(b"\n".join(records))
 
 
+def descriptor_count() -> int | None:
+    for directory in ("/proc/self/fd", "/dev/fd"):
+        try:
+            return len(os.listdir(directory))
+        except OSError:
+            continue
+    return None
+
+
+def lifecycle_lock_cases(
+    admin: ModuleType,
+    base: Path,
+    failures: list[str],
+) -> dict[str, object]:
+    base.mkdir(mode=0o700)
+
+    def lock_fixture(name: str) -> tuple[Path, int, int]:
+        parent = base / name
+        parent.mkdir(mode=0o700)
+        metadata = parent.stat()
+        return parent / "lifecycle.lock", metadata.st_uid, metadata.st_gid
+
+    def close_lock(result: tuple[object, ...]) -> None:
+        admin_descriptor = int(result[0])
+        lock_descriptor = int(result[2])
+        try:
+            fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+        finally:
+            try:
+                os.close(lock_descriptor)
+            finally:
+                os.close(admin_descriptor)
+
+    safe_path, safe_uid, safe_gid = lock_fixture("safe")
+    (
+        admin_descriptor,
+        admin_fingerprint,
+        descriptor,
+        fingerprint,
+    ) = admin._open_install_lifecycle_lock(
+        safe_path,
+        expected_uid=safe_uid,
+        expected_gid=safe_gid,
+    )
+    safe_metadata = safe_path.lstat()
+    safe_created = (
+        stat.S_ISREG(safe_metadata.st_mode)
+        and stat.S_IMODE(safe_metadata.st_mode) == 0o600
+        and safe_metadata.st_nlink == 1
+        and safe_metadata.st_size == 0
+        and admin._install_lock_fingerprint(safe_metadata) == fingerprint
+    )
+    try:
+        try:
+            unexpected = admin._open_install_lifecycle_lock(
+                safe_path,
+                expected_uid=safe_uid,
+                expected_gid=safe_gid,
+            )
+            close_lock(unexpected)
+            contention_rejected = False
+        except admin.RelayAdminError as exc:
+            contention_rejected = exc.error_id == "lifecycle_lock_failed"
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+        os.close(admin_descriptor)
+    (
+        reopened_admin,
+        reopened_admin_fingerprint,
+        reopened,
+        reopened_fingerprint,
+    ) = admin._open_install_lifecycle_lock(
+        safe_path,
+        expected_uid=safe_uid,
+        expected_gid=safe_gid,
+    )
+    try:
+        safe_reopened = (
+            reopened_admin_fingerprint == admin_fingerprint
+            and reopened_fingerprint == fingerprint
+        )
+    finally:
+        fcntl.flock(reopened, fcntl.LOCK_UN)
+        os.close(reopened)
+        os.close(reopened_admin)
+
+    admin_acquisition_path, admin_race_uid, admin_race_gid = lock_fixture(
+        "admin-acquisition-race"
+    )
+    admin_acquisition_parent = admin_acquisition_path.parent
+    admin_acquisition_retired = admin_acquisition_parent.with_name(
+        "admin-acquisition-race-retired"
+    )
+    acquisition_before_descriptors = descriptor_count()
+    original_open = admin.os.open
+    acquisition_injected = False
+
+    def replace_admin_before_open(path, *args, **kwargs):
+        nonlocal acquisition_injected
+        if (
+            not acquisition_injected
+            and Path(path) == admin_acquisition_parent
+        ):
+            acquisition_injected = True
+            admin_acquisition_parent.rename(admin_acquisition_retired)
+            admin_acquisition_parent.mkdir(mode=0o700)
+        return original_open(path, *args, **kwargs)
+
+    admin.os.open = replace_admin_before_open
+    try:
+        try:
+            unexpected = admin._open_install_lifecycle_lock(
+                admin_acquisition_path,
+                expected_uid=admin_race_uid,
+                expected_gid=admin_race_gid,
+            )
+            close_lock(unexpected)
+            admin_acquisition_race_rejected = False
+        except admin.RelayAdminError as exc:
+            admin_acquisition_race_rejected = (
+                exc.error_id == "lifecycle_lock_failed"
+            )
+    finally:
+        admin.os.open = original_open
+    acquisition_after_descriptors = descriptor_count()
+    admin_acquisition_race_rejected = (
+        admin_acquisition_race_rejected
+        and acquisition_injected
+        and not admin_acquisition_path.exists()
+        and not (admin_acquisition_retired / "lifecycle.lock").exists()
+        and (
+            acquisition_before_descriptors is None
+            or acquisition_after_descriptors is None
+            or acquisition_before_descriptors
+            == acquisition_after_descriptors
+        )
+    )
+
+    post_open_path, post_open_uid, post_open_gid = lock_fixture(
+        "admin-post-open-race"
+    )
+    post_open_parent = post_open_path.parent
+    post_open_retired = post_open_parent.with_name(
+        "admin-post-open-race-retired"
+    )
+    post_open_before_descriptors = descriptor_count()
+    original_open = admin.os.open
+    post_open_injected = False
+
+    def replace_admin_before_lock(path, *args, **kwargs):
+        nonlocal post_open_injected
+        if not post_open_injected and path == "lifecycle.lock":
+            post_open_injected = True
+            post_open_parent.rename(post_open_retired)
+            post_open_parent.mkdir(mode=0o700)
+        return original_open(path, *args, **kwargs)
+
+    admin.os.open = replace_admin_before_lock
+    try:
+        try:
+            unexpected = admin._open_install_lifecycle_lock(
+                post_open_path,
+                expected_uid=post_open_uid,
+                expected_gid=post_open_gid,
+            )
+            close_lock(unexpected)
+            admin_post_open_race_rejected = False
+        except admin.RelayAdminError as exc:
+            admin_post_open_race_rejected = (
+                exc.error_id == "lifecycle_lock_failed"
+            )
+    finally:
+        admin.os.open = original_open
+    post_open_after_descriptors = descriptor_count()
+    admin_post_open_race_rejected = (
+        admin_post_open_race_rejected
+        and post_open_injected
+        and not post_open_path.exists()
+        and not (post_open_retired / "lifecycle.lock").exists()
+        and (
+            post_open_before_descriptors is None
+            or post_open_after_descriptors is None
+            or post_open_before_descriptors
+            == post_open_after_descriptors
+        )
+    )
+
+    admin_binding_path, binding_uid, binding_gid = lock_fixture(
+        "admin-binding-race"
+    )
+    (
+        binding_admin_descriptor,
+        binding_admin_fingerprint,
+        binding_lock_descriptor,
+        binding_lock_fingerprint,
+    ) = admin._open_install_lifecycle_lock(
+        admin_binding_path,
+        expected_uid=binding_uid,
+        expected_gid=binding_gid,
+    )
+    binding_parent = admin_binding_path.parent
+    binding_retired = binding_parent.with_name("admin-binding-race-retired")
+    binding_parent.rename(binding_retired)
+    binding_parent.mkdir(mode=0o700)
+    replacement_lock = binding_parent / "lifecycle.lock"
+    replacement_lock.write_bytes(b"")
+    replacement_lock.chmod(0o600)
+    try:
+        try:
+            admin._validate_install_lock_binding(
+                binding_parent,
+                binding_admin_descriptor,
+                binding_admin_fingerprint,
+                binding_lock_descriptor,
+                binding_lock_fingerprint,
+            )
+            admin_binding_race_rejected = False
+        except admin.RelayAdminError as exc:
+            admin_binding_race_rejected = (
+                exc.error_id == "recovery_required"
+            )
+    finally:
+        fcntl.flock(binding_lock_descriptor, fcntl.LOCK_UN)
+        os.close(binding_lock_descriptor)
+        os.close(binding_admin_descriptor)
+
+    unsafe_unchanged = True
+    unsafe_cases = (
+        "nonempty",
+        "mode",
+        "hardlink",
+        "symlink",
+        "fifo",
+        "directory",
+    )
+    for case in unsafe_cases:
+        path, expected_uid, expected_gid = lock_fixture(f"unsafe-{case}")
+        if case == "nonempty":
+            path.write_bytes(b"x")
+            path.chmod(0o600)
+        elif case == "mode":
+            path.write_bytes(b"")
+            path.chmod(0o644)
+        elif case == "hardlink":
+            path.write_bytes(b"")
+            path.chmod(0o600)
+            os.link(path, path.with_name("lifecycle.lock.peer"))
+        elif case == "symlink":
+            path.symlink_to("missing")
+        elif case == "fifo":
+            os.mkfifo(path, mode=0o600)
+        else:
+            path.mkdir(mode=0o700)
+        before = tree_digest(path.parent)
+        try:
+            unexpected = admin._open_install_lifecycle_lock(
+                path,
+                expected_uid=expected_uid,
+                expected_gid=expected_gid,
+            )
+            close_lock(unexpected)
+            rejected = False
+        except admin.RelayAdminError as exc:
+            rejected = exc.error_id == "lifecycle_lock_failed"
+        after = tree_digest(path.parent)
+        unsafe_unchanged = unsafe_unchanged and rejected and before == after
+
+    failure_cleanup = True
+    for label in ("fchmod", "flock"):
+        path, expected_uid, expected_gid = lock_fixture(f"failure-{label}")
+        before_descriptors = descriptor_count()
+        if label == "fchmod":
+            original = admin.os.fchmod
+
+            def injected_failure(*_args, **_kwargs):
+                raise OSError("injected fchmod failure")
+
+            admin.os.fchmod = injected_failure
+        else:
+            original = admin.fcntl.flock
+
+            def injected_failure(*_args, **_kwargs):
+                raise OSError("injected flock failure")
+
+            admin.fcntl.flock = injected_failure
+        try:
+            try:
+                unexpected = admin._open_install_lifecycle_lock(
+                    path,
+                    expected_uid=expected_uid,
+                    expected_gid=expected_gid,
+                )
+                close_lock(unexpected)
+                rejected = False
+            except admin.RelayAdminError as exc:
+                rejected = exc.error_id == "lifecycle_lock_failed"
+        finally:
+            if label == "fchmod":
+                admin.os.fchmod = original
+            else:
+                admin.fcntl.flock = original
+        after_descriptors = descriptor_count()
+        stable = (
+            before_descriptors is None
+            or after_descriptors is None
+            or before_descriptors == after_descriptors
+        )
+        failure_cleanup = (
+            failure_cleanup
+            and rejected
+            and stable
+            and not path.exists()
+        )
+
+    race_path, race_uid, race_gid = lock_fixture("post-flock-race")
+    race_path.write_bytes(b"")
+    race_path.chmod(0o600)
+    race_before_descriptors = descriptor_count()
+    original_flock = admin.fcntl.flock
+    injected = False
+
+    def replace_after_flock(descriptor: int, operation: int):
+        nonlocal injected
+        result = original_flock(descriptor, operation)
+        if not injected and operation & fcntl.LOCK_EX:
+            injected = True
+            race_path.rename(race_path.with_name("lifecycle.lock.retired"))
+            race_path.write_bytes(b"")
+            race_path.chmod(0o600)
+        return result
+
+    admin.fcntl.flock = replace_after_flock
+    try:
+        try:
+            unexpected = admin._open_install_lifecycle_lock(
+                race_path,
+                expected_uid=race_uid,
+                expected_gid=race_gid,
+            )
+            close_lock(unexpected)
+            race_rejected = False
+        except admin.RelayAdminError as exc:
+            race_rejected = exc.error_id == "lifecycle_lock_failed"
+    finally:
+        admin.fcntl.flock = original_flock
+    race_after_descriptors = descriptor_count()
+    race_fd_stable = (
+        race_before_descriptors is None
+        or race_after_descriptors is None
+        or race_before_descriptors == race_after_descriptors
+    )
+    race_rejected = race_rejected and injected and race_fd_stable
+
+    require(safe_created, "safe lifecycle lock was not created exactly", failures)
+    require(safe_reopened, "safe existing lifecycle lock changed", failures)
+    require(
+        contention_rejected,
+        "lifecycle lock contention did not fail closed",
+        failures,
+    )
+    require(
+        admin_acquisition_race_rejected,
+        "admin path replacement during lock acquisition was not rejected",
+        failures,
+    )
+    require(
+        admin_post_open_race_rejected,
+        "admin replacement before lock creation was not rejected",
+        failures,
+    )
+    require(
+        admin_binding_race_rejected,
+        "admin path replacement after lock acquisition was not rejected",
+        failures,
+    )
+    require(
+        unsafe_unchanged,
+        "unsafe existing lifecycle lock was accepted or modified",
+        failures,
+    )
+    require(
+        failure_cleanup,
+        "lifecycle lock acquisition failure leaked state or descriptors",
+        failures,
+    )
+    require(
+        race_rejected,
+        "post-flock lifecycle lock replacement was not rejected",
+        failures,
+    )
+    return {
+        "admin_acquisition_race_rejected": (
+            admin_acquisition_race_rejected
+        ),
+        "admin_binding_race_rejected": admin_binding_race_rejected,
+        "admin_post_open_race_rejected": admin_post_open_race_rejected,
+        "contention_rejected": contention_rejected,
+        "failure_cleanup": failure_cleanup,
+        "post_flock_race_rejected": race_rejected,
+        "safe_created": safe_created,
+        "safe_reopened": safe_reopened,
+        "unsafe_cases": len(unsafe_cases),
+        "unsafe_unchanged": unsafe_unchanged,
+    }
+
+
 def main() -> int:
     failures: list[str] = []
     status_before = git_output("status", "--porcelain=v1", "--untracked-files=all")
@@ -610,6 +1018,49 @@ def main() -> int:
             timeout=20,
         )
         require(guard_probe.returncode == 0, "external behavior guard not enforced", failures)
+        admin = load_admin()
+        lock_results = lifecycle_lock_cases(
+            admin,
+            temporary / "lifecycle-lock-cases",
+            failures,
+        )
+        try:
+            inspected_bundle = admin.inspect_bundle(bundle, bundle_sha)
+            publish_preflight_zero_write = True
+            for case in ("admin-mode", "lock-mode"):
+                root = temporary / f"lifecycle-publish-{case}"
+                root.mkdir(mode=0o700)
+                admin_state = root / "var" / "lib" / "agentops-relayctl"
+                admin_state.mkdir(parents=True, mode=0o700)
+                if case == "admin-mode":
+                    admin_state.chmod(0o755)
+                else:
+                    lock = admin_state / "lifecycle.lock"
+                    lock.write_bytes(b"")
+                    lock.chmod(0o644)
+                plan = admin._plan_for_install(root, inspected_bundle)
+                before = tree_digest(root)
+                try:
+                    admin._publish_install(plan)
+                    rejected = False
+                except admin.RelayAdminError as exc:
+                    rejected = exc.error_id == "lifecycle_lock_failed"
+                publish_preflight_zero_write = (
+                    publish_preflight_zero_write
+                    and rejected
+                    and tree_digest(root) == before
+                )
+            require(
+                publish_preflight_zero_write,
+                "unsafe installer lock preflight wrote install state",
+                failures,
+            )
+        except (OSError, ValueError, admin.RelayAdminError):
+            publish_preflight_zero_write = False
+            failures.append("lifecycle lock publish preflight fixture failed")
+        lock_results["publish_preflight_zero_write"] = (
+            publish_preflight_zero_write
+        )
 
         root_target = temporary / "root-target"
         root_target.mkdir(mode=0o700)
@@ -713,7 +1164,6 @@ def main() -> int:
         rollback_canary.write_bytes(CANARY + b"_ROLLBACK")
         rollback_before = snapshot(rollback_canary)
         try:
-            admin = load_admin()
             rollback_bundle = admin.inspect_bundle(bundle, bundle_sha)
             rollback_plan = admin._plan_for_install(rollback_root, rollback_bundle)
             rollback_paths = rollback_plan.paths
@@ -1354,6 +1804,7 @@ def main() -> int:
         "failures": failures,
         "no_external_behavior": guard_probe.returncode == 0,
         "ok": not failures,
+        "lifecycle_lock_cases": lock_results,
         "publish_failure_rolled_back": rollback_clean,
         "root_swap_anchored": root_swap_safe,
         "same_release_no_op": not failures,

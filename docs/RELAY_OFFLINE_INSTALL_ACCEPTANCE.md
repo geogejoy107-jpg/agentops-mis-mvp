@@ -91,6 +91,17 @@ artifacts owned by that plan; an unresolvable interrupted state fails closed as
 `recovery_required`, including a crash that leaves only the pre-publication
 transaction temporary file.
 
+The installer creates the lifecycle lock with `O_EXCL`, or opens an already
+safe lock without changing it. The lock must be an empty, owner/group-matched,
+single-link regular file with exact mode `0600`; symlinks, FIFOs, directories,
+hardlinks, nonempty files, and mode drift fail before other install directories
+are created. The installer holds a no-follow FD for the exact owner-only admin
+directory; lock stat/open/unlink operations are relative to that FD. Both the
+admin path/FD and lock path/FD must keep the same identity before and after
+nonblocking `flock`. Lock contention and acquisition faults fail closed as
+`lifecycle_lock_failed`, and every failure path closes both descriptors. The
+bindings are checked again before publication commits and before unlock.
+
 The same fully verified release is an idempotent no-op. A different installed
 version fails closed as `upgrade_required`; upgrade and rollback are intentionally
 future commands. A different commit under the same version fails closed rather
@@ -160,7 +171,14 @@ The smoke:
    back to the same install plan;
 13. verifies protected config/epoch inode, content, mtime, mode, UID, and GID;
 14. scans output for environment and bundle-body canaries; and
-15. requires repository status to remain unchanged.
+15. rejects six unsafe existing lock forms without repairing or changing them,
+    rejects lock contention and post-`flock` path replacement, and injects
+    `fchmod`/`flock` failures while checking descriptor cleanup;
+16. rejects admin-directory replacement both during lock acquisition and after
+    the lock is held;
+17. proves unsafe admin/lock preflight leaves all other install state
+    untouched; and
+18. requires repository status to remain unchanged.
 
 ## Boundaries
 
@@ -171,6 +189,10 @@ This acceptance is not evidence of:
 - a real Linux VM, firewall, public endpoint, DNS, ACME, or stock browser;
 - route-key/TLS provisioning, rotation, or revocation;
 - upgrade, rollback, uninstall, purge, or crash-recovery automation.
+- complete root-to-admin `openat` parent-chain anchoring against a same-owner
+  hostile filesystem; and
+- transaction creation, commit unlink, and rollback performed entirely through
+  the held admin directory FD.
 
 Those remain separate lifecycle and public-network gates. The v0 installer
 does not invoke or simulate them.
