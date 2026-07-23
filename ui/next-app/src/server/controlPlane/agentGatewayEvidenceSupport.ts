@@ -245,6 +245,10 @@ function assertNoRawEvidence(value: unknown, path = "body", depth = 0): void {
       || (normalized === "model_visible_credentials" && item === false)
       || (normalized === "secrets_in_prompt" && item === false)
       || (normalized === "secrets_in_output" && item === false)
+      || (
+        normalized === "event_is_worker_summary_not_raw_trace"
+        && item === true
+      )
     );
     const sensitive = (
       normalized === "content"

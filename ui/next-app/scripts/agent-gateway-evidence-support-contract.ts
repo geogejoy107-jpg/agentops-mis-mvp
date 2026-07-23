@@ -225,6 +225,7 @@ async function runContract() {
         prompt_hash: "d".repeat(64),
         raw_payload_hash: "e".repeat(64),
         metadata: {
+          event_is_worker_summary_not_raw_trace: true,
           raw_prompt_omitted: true,
           raw_response_omitted: true,
           token_omitted: true,
@@ -257,6 +258,22 @@ async function runContract() {
       ));
       assert.equal(rawRuntimeResponse.status, 400);
       assert.equal((await json(rawRuntimeResponse)).error, "raw_evidence_forbidden");
+
+      const forgedRuntimeClaimResponse = await runtimeEventRoute.POST(postRequest(
+        "/api/mis/agent-gateway/runtime-events",
+        {
+          ...runtimeBody,
+          metadata: {
+            ...runtimeBody.metadata,
+            event_is_worker_summary_not_raw_trace: false,
+          },
+        },
+      ));
+      assert.equal(forgedRuntimeClaimResponse.status, 400);
+      assert.equal(
+        (await json(forgedRuntimeClaimResponse)).error,
+        "raw_evidence_forbidden",
+      );
 
       const memoryBody = {
         workspace_id: "ws_evidence",
