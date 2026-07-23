@@ -90,6 +90,125 @@ async function expectCode(
   ));
 }
 
+type EntitlementDeniedResult = {
+  status: number;
+  body: {
+    ok: boolean;
+    error: string;
+    reason_code: string;
+    raw_config_omitted: boolean;
+    entitlement_decision: {
+      decision: string;
+      reason_code: string;
+      raw_config_omitted: boolean;
+      credentials_omitted: boolean;
+      entitlement: {
+        raw_config_omitted: boolean;
+      };
+    };
+  };
+};
+
+type RunStartAllowedResult = {
+  status: number;
+  body: {
+    ok: true;
+    outcome: "created" | "unchanged";
+    run: {
+      agent_plan_id: string | null;
+      plan_hash: string | null;
+      model_provider: string | null;
+    };
+  };
+};
+
+const RAW_ENTITLEMENT_CONFIG_KEYS = [
+  "capabilities_json",
+  "max_agents",
+  "max_active_enrollments",
+  "max_active_sessions_per_agent",
+  "max_monthly_runs",
+  "max_monthly_cost_usd",
+  "effective_at",
+  "expires_at",
+];
+
+function assertEntitlementDenied(
+  result: Awaited<ReturnType<typeof startAgentGatewayRun>>,
+  expectedReason: string,
+) {
+  const denied = result as EntitlementDeniedResult;
+  assert.equal(denied.status, 403);
+  assert.equal(denied.body.ok, false);
+  assert.equal(denied.body.error, "workspace_entitlement_denied");
+  assert.equal(denied.body.reason_code, expectedReason);
+  assert.equal(denied.body.raw_config_omitted, true);
+  assert.equal(denied.body.entitlement_decision.decision, "deny");
+  assert.equal(denied.body.entitlement_decision.reason_code, expectedReason);
+  assert.equal(denied.body.entitlement_decision.raw_config_omitted, true);
+  assert.equal(denied.body.entitlement_decision.credentials_omitted, true);
+  assert.equal(denied.body.entitlement_decision.entitlement.raw_config_omitted, true);
+  const serialized = JSON.stringify(denied.body);
+  for (const key of RAW_ENTITLEMENT_CONFIG_KEYS) {
+    assert.equal(serialized.includes(key), false, `response leaked raw entitlement key ${key}`);
+  }
+}
+
+function assertRunStartAllowed(
+  result: Awaited<ReturnType<typeof startAgentGatewayRun>>,
+  expectedStatus: number,
+): asserts result is Awaited<ReturnType<typeof startAgentGatewayRun>> & RunStartAllowedResult {
+  const allowed = result as RunStartAllowedResult;
+  assert.equal(allowed.status, expectedStatus);
+  assert.equal(allowed.body.ok, true);
+}
+
+async function setRunEntitlement(
+  client: Client,
+  options: {
+    status?: "active" | "inactive" | "suspended" | "expired";
+    runStart?: boolean;
+    maxMonthlyRuns?: number;
+  } = {},
+) {
+  const now = new Date().toISOString();
+  const effectiveAt = new Date(Date.now() - 60_000).toISOString();
+  await client.query(
+    `INSERT INTO workspace_entitlements(
+      workspace_id,edition,status,capabilities_json,max_agents,
+      max_active_enrollments,max_active_sessions_per_agent,max_monthly_runs,
+      max_monthly_cost_usd,effective_at,expires_at,created_at,updated_at,
+      updated_by_user_id
+    ) VALUES($1,'team_governance',$2,$3,10,10,10,$4,100,$5,NULL,$6,$6,
+      'usr_gateway_core')
+    ON CONFLICT(workspace_id) DO UPDATE SET
+      edition=EXCLUDED.edition,
+      status=EXCLUDED.status,
+      capabilities_json=EXCLUDED.capabilities_json,
+      max_agents=EXCLUDED.max_agents,
+      max_active_enrollments=EXCLUDED.max_active_enrollments,
+      max_active_sessions_per_agent=EXCLUDED.max_active_sessions_per_agent,
+      max_monthly_runs=EXCLUDED.max_monthly_runs,
+      max_monthly_cost_usd=EXCLUDED.max_monthly_cost_usd,
+      effective_at=EXCLUDED.effective_at,
+      expires_at=NULL,
+      updated_at=EXCLUDED.updated_at,
+      updated_by_user_id=EXCLUDED.updated_by_user_id`,
+    [
+      workspaceId,
+      options.status || "active",
+      JSON.stringify({
+        enrollment_issue: true,
+        session_issue: true,
+        run_start: options.runStart ?? true,
+      }),
+      options.maxMonthlyRuns ?? 10,
+      effectiveAt,
+      now,
+    ],
+  );
+}
+
 async function seed(client: Client) {
   const now = new Date().toISOString();
   const future = new Date(Date.now() + 3_600_000).toISOString();
@@ -148,6 +267,7 @@ async function seed(client: Client) {
     )`,
     [sha(session), workspaceId, scopes, now, future],
   );
+  await setRunEntitlement(client);
   for (const [taskId, title] of [
     ["tsk_gateway_race", "Concurrent claim"],
     ["tsk_gateway_core", "Production gateway core"],
@@ -435,9 +555,132 @@ async function runContract() {
         runBody,
       ),
     );
+    assertRunStartAllowed(runStart, 201);
     assert.equal(runStart.body.run.agent_plan_id, "plan_gateway_core");
     assert.equal(runStart.body.run.plan_hash, planHash);
     assert.equal(runStart.body.run.model_provider, "hermes");
+
+    const entitlementClient = new Client({ connectionString: scopedDsn() });
+    await entitlementClient.connect();
+    try {
+      const usageBeforeReplay = await entitlementClient.query<{ run_count: number }>(
+        "SELECT COUNT(*)::int AS run_count FROM runs WHERE workspace_id=$1",
+        [workspaceId],
+      );
+      assert.equal(usageBeforeReplay.rows[0]?.run_count, 1);
+
+      await entitlementClient.query(
+        "DELETE FROM workspace_entitlements WHERE workspace_id=$1",
+        [workspaceId],
+      );
+      const replayWithoutEntitlement = await startAgentGatewayRun(
+        request(
+          "POST",
+          "/api/mis/agent-gateway/runs/start",
+          session,
+          runBody,
+        ),
+      );
+      assertRunStartAllowed(replayWithoutEntitlement, 200);
+      assert.equal(replayWithoutEntitlement.body.outcome, "unchanged");
+      const usageAfterReplay = await entitlementClient.query<{ run_count: number }>(
+        "SELECT COUNT(*)::int AS run_count FROM runs WHERE workspace_id=$1",
+        [workspaceId],
+      );
+      assert.equal(usageAfterReplay.rows[0]?.run_count, 1);
+
+      const deniedRunIds = [
+        "run_gateway_entitlement_missing",
+        "run_gateway_entitlement_capability",
+        "run_gateway_entitlement_suspended",
+        "run_gateway_entitlement_quota",
+      ];
+      const missingDenied = await startAgentGatewayRun(
+        request(
+          "POST",
+          "/api/mis/agent-gateway/runs/start",
+          token,
+          { ...runBody, run_id: deniedRunIds[0] },
+        ),
+      );
+      assertEntitlementDenied(missingDenied, "entitlement_missing");
+
+      await setRunEntitlement(entitlementClient, { runStart: false });
+      const capabilityDenied = await startAgentGatewayRun(
+        request(
+          "POST",
+          "/api/mis/agent-gateway/runs/start",
+          token,
+          { ...runBody, run_id: deniedRunIds[1] },
+        ),
+      );
+      assertEntitlementDenied(capabilityDenied, "capability_disabled");
+
+      await setRunEntitlement(entitlementClient, { status: "suspended" });
+      const suspendedDenied = await startAgentGatewayRun(
+        request(
+          "POST",
+          "/api/mis/agent-gateway/runs/start",
+          token,
+          { ...runBody, run_id: deniedRunIds[2] },
+        ),
+      );
+      assertEntitlementDenied(suspendedDenied, "entitlement_suspended");
+
+      await setRunEntitlement(entitlementClient, { maxMonthlyRuns: 1 });
+      const quotaDenied = await startAgentGatewayRun(
+        request(
+          "POST",
+          "/api/mis/agent-gateway/runs/start",
+          token,
+          { ...runBody, run_id: deniedRunIds[3] },
+        ),
+      );
+      assertEntitlementDenied(quotaDenied, "monthly_run_quota_exceeded");
+
+      const deniedRuns = await entitlementClient.query<{ run_id: string }>(
+        "SELECT run_id FROM runs WHERE run_id=ANY($1::text[])",
+        [deniedRunIds],
+      );
+      assert.equal(deniedRuns.rowCount, 0);
+      const denialAudits = await entitlementClient.query<{
+        actor_type: string;
+        actor_id: string;
+        entity_id: string;
+        metadata_json: string;
+      }>(
+        `SELECT actor_type,actor_id,entity_id,metadata_json
+        FROM audit_logs
+        WHERE workspace_id=$1
+          AND action='agent_gateway.run_start.entitlement_denied'
+          AND entity_id=ANY($2::text[])
+        ORDER BY entity_id`,
+        [workspaceId, deniedRunIds],
+      );
+      assert.equal(denialAudits.rowCount, deniedRunIds.length);
+      const expectedReasons = new Map([
+        [deniedRunIds[0], "entitlement_missing"],
+        [deniedRunIds[1], "capability_disabled"],
+        [deniedRunIds[2], "entitlement_suspended"],
+        [deniedRunIds[3], "monthly_run_quota_exceeded"],
+      ]);
+      for (const audit of denialAudits.rows) {
+        assert.equal(audit.actor_type, "agent");
+        assert.equal(audit.actor_id, "agt_gateway_core");
+        const metadata = typeof audit.metadata_json === "string"
+          ? JSON.parse(audit.metadata_json) as Record<string, unknown>
+          : audit.metadata_json as unknown as Record<string, unknown>;
+        assert.equal(metadata.reason_code, expectedReasons.get(audit.entity_id));
+        assert.equal(metadata.raw_config_omitted, true);
+        assert.equal(metadata.credentials_omitted, true);
+        const serialized = JSON.stringify(metadata);
+        for (const key of RAW_ENTITLEMENT_CONFIG_KEYS) {
+          assert.equal(serialized.includes(key), false, `audit leaked raw entitlement key ${key}`);
+        }
+      }
+    } finally {
+      await entitlementClient.end();
+    }
     await expectCode(
       "forbidden",
       () => heartbeatAgentGatewayRun(
@@ -518,6 +761,7 @@ async function runContract() {
         runBody,
       ),
     );
+    assertRunStartAllowed(runReplay, 200);
     assert.equal(runReplay.body.outcome, "unchanged");
     await expectCode(
       "run_terminal_conflict",
@@ -728,6 +972,9 @@ async function runContract() {
       concurrent_claim_single_winner: true,
       plan_hash_and_verification_bound: true,
       run_plan_binding: true,
+      run_start_entitlement_fail_closed: true,
+      entitlement_denial_audit_persisted: true,
+      run_replay_bypasses_entitlement_usage: true,
       immutable_evidence_replay: true,
       commercial_manifest_provenance_fail_closed: true,
       stale_manifest_hash_denied: true,

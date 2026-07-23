@@ -11,6 +11,10 @@ import { boundedJsonObject } from "./boundedJson";
 import { withPostgresTransaction } from "./db";
 import { ControlPlaneHttpError } from "./http";
 import { appendAudit, appendRuntimeEvent, newLedgerId, pythonFloat, stableHash } from "./ledger";
+import {
+  evaluateWorkspaceEntitlement,
+  type WorkspaceEntitlementDecision,
+} from "./workspaceEntitlements";
 
 const RUNTIME_TYPES = new Set(["mock", "claude_code", "codex", "openhands", "crewai", "langgraph", "openclaw", "hermes"]);
 const RUN_STATUSES = new Set(["running", "completed", "failed", "blocked", "waiting_approval"]);
@@ -178,6 +182,27 @@ function response(run: RunRow, outcome: "created" | "unchanged", agentPlanId?: s
   };
 }
 
+function entitlementDeniedResponse(decision: WorkspaceEntitlementDecision) {
+  return {
+    status: 403,
+    body: {
+      ok: false,
+      provider: "agentops-mis",
+      control_plane: "typescript_postgres",
+      operation: "run_start",
+      error: "workspace_entitlement_denied",
+      message: "Workspace entitlement does not allow a new Agent Gateway run.",
+      reason_code: decision.reason_code,
+      workspace_id: decision.workspace_id,
+      agent_id: decision.agent_id,
+      entitlement_decision: decision,
+      token_omitted: true,
+      credentials_omitted: true,
+      raw_config_omitted: true,
+    },
+  };
+}
+
 function heartbeatResponse(run: RunRow, outcome: "updated" | "unchanged") {
   return {
     status: 200,
@@ -325,6 +350,34 @@ export async function startAgentGatewayRun(request: Request) {
       }
       return response(existing, "unchanged");
     }
+    const costUsd = nonNegativeNumber(body.cost_usd, "cost_usd");
+    const entitlementDecision = await evaluateWorkspaceEntitlement(client, {
+      workspaceId: identity.workspaceId,
+      operation: "run_start",
+      agentId: identity.agentId,
+      estimatedCostUsd: costUsd,
+    });
+    if (!entitlementDecision.allow) {
+      await appendAudit(client, {
+        workspaceId: identity.workspaceId,
+        actorType: "agent",
+        actorId: identity.agentId,
+        action: "agent_gateway.run_start.entitlement_denied",
+        entityType: "runs",
+        entityId: runId,
+        after: entitlementDecision,
+        metadata: {
+          workspace_id: identity.workspaceId,
+          task_id: taskId,
+          operation: "run_start",
+          reason_code: entitlementDecision.reason_code,
+          entitlement_decision: entitlementDecision,
+          credentials_omitted: true,
+          raw_config_omitted: true,
+        },
+      });
+      return entitlementDeniedResponse(entitlementDecision);
+    }
     let agentPlanId: string | null = null;
     let planHash: string | null = null;
     if (runtimeType !== "mock") {
@@ -415,7 +468,7 @@ export async function startAgentGatewayRun(request: Request) {
       input_tokens: nonNegativeInteger(body.input_tokens, "input_tokens"),
       output_tokens: nonNegativeInteger(body.output_tokens, "output_tokens"),
       reasoning_tokens: nonNegativeInteger(body.reasoning_tokens, "reasoning_tokens"),
-      cost_usd: nonNegativeNumber(body.cost_usd, "cost_usd"),
+      cost_usd: costUsd,
       error_type: text(body.error_type, 80) || null,
       error_message: text(body.error_message, 200) || null,
       trace_id: body.trace_id ? identifier(body.trace_id, "trace_id") : newLedgerId("trace"),
