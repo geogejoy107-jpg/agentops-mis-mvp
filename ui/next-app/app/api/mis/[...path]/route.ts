@@ -119,6 +119,18 @@ function isGatewayLifecycleWritePath(path: string[]) {
   return GATEWAY_LIFECYCLE_WRITE_PATHS.has(path.join("/"));
 }
 
+function isFreeLocalMutationProxyAllowed(path: string[]) {
+  return isWorkerDispatchPath(path)
+    || isCustomerWorkerWorkflowPath(path)
+    || isLocalBriefPath(path)
+    || isWorkerReleasePath(path)
+    || isWorkerDaemonPath(path)
+    || isEnrollmentRequestPath(path)
+    || isEnrollmentPolicyPreviewPath(path)
+    || isEnrollmentTokenIssuePath(path)
+    || isGatewayLifecycleWritePath(path);
+}
+
 function parseJsonBody(body: Buffer | undefined) {
   if (!body || body.byteLength === 0) return {};
   return JSON.parse(body.toString("utf-8"));
@@ -438,6 +450,19 @@ async function proxy(request: NextRequest, context: RouteContext) {
       token_omitted: true,
     }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
+  if (
+    !["GET", "HEAD"].includes(request.method)
+    && (request.method !== "POST" || !isFreeLocalMutationProxyAllowed(path))
+  ) {
+    return NextResponse.json({
+      ok: false,
+      error: "free_local_python_proxy_path_not_allowed",
+      blocked_operation: `${request.method} ${path.join("/")}`,
+      python_proxy_performed: false,
+      live_execution_performed: false,
+      token_omitted: true,
+    }, { status: 403, headers: { "Cache-Control": "no-store" } });
+  }
   const body = ["GET", "HEAD"].includes(request.method)
     ? undefined
     : Buffer.from(new Uint8Array(await request.arrayBuffer()));
@@ -552,6 +577,3 @@ async function proxy(request: NextRequest, context: RouteContext) {
 
 export const GET = proxy;
 export const POST = proxy;
-export const PUT = proxy;
-export const PATCH = proxy;
-export const DELETE = proxy;

@@ -3,39 +3,29 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
-    "bootstrap:owner": "tsx scripts/bootstrap-owner.ts",
-    "migrate:postgres": "tsx scripts/migrate-postgres.ts",
-    "schema:readiness": "tsx scripts/migrate-postgres.ts --check",
     "dev": "next dev -p 3001",
     "build": "next build",
-    "start": "next start -p 3001",
+    "start": "node scripts/start.mjs",
+    "start:check": "node scripts/start.mjs --check",
     "typecheck": "tsc --noEmit",
-    "test:control-plane-mode-contract": "tsx scripts/control-plane-mode-contract.ts",
-    "test:human-scrypt-contract": "tsx scripts/human-scrypt-contract.ts",
-    "test:human-schema-contract": "tsx scripts/schema-readiness-contract.ts",
-    "test:human-schema-upgrade-contract": "tsx scripts/schema-migration-upgrade-contract.ts",
-    "test:human-session-timestamp-contract": "tsx scripts/human-session-timestamp-contract.ts",
-    "test:memory-review-idempotency-contract": "tsx scripts/memory-review-idempotency-contract.ts",
-    "test:approval-decision-contract": "tsx scripts/approval-decision-contract.ts",
-    "test:workspace-read-model-contract": "tsx scripts/workspace-read-model-contract.ts",
-    "test:worker-gateway-direct-contract": "tsx scripts/agent-gateway-worker-direct-contract.ts",
-    "test:worker-task-pull-claim-contract": "tsx scripts/worker-task-pull-claim-contract.ts",
-    "test:customer-delivery-approval-request-contract": "tsx scripts/customer-delivery-approval-request-contract.ts"
+    "test:control-plane-mode-contract": "tsx scripts/control-plane-mode-contract.ts"
   },
   "dependencies": {
-    "lucide-react": "0.487.0",
     "next": "16.2.11",
     "pg": "8.22.0",
     "react": "19.2.7",
-    "react-dom": "19.2.7",
-    "tsx": "4.23.1"
+    "react-dom": "19.2.7"
   },
   "devDependencies": {
     "@types/node": "22.10.2",
     "@types/pg": "8.20.0",
     "@types/react": "19.0.2",
     "@types/react-dom": "19.0.2",
+    "tsx": "4.23.1",
     "typescript": "5.7.2"
   },
   "overrides": {

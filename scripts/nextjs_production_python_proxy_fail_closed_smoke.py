@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
 import signal
@@ -98,6 +99,7 @@ def isolated_environment(upstream_port: int, temp_root: Path) -> dict[str, str]:
         "AGENTOPS_API_BASE": f"http://127.0.0.1:{upstream_port}/api",
         "AGENTOPS_CONTROL_PLANE_MODE": "proxy",
         "AGENTOPS_DEPLOYMENT_MODE": "production",
+        "AGENTOPS_NEXT_HOST": "127.0.0.1",
         "NEXT_TELEMETRY_DISABLED": "1",
         "NODE_ENV": "production",
         "TEMP": str(temp_root),
@@ -111,14 +113,38 @@ def copy_app(destination: Path) -> None:
     def ignore(_directory: str, names: list[str]) -> set[str]:
         return {name for name in names if name == ".next" or name.startswith(".env")}
 
-    def hardlink_or_copy(source: str, target: str) -> str:
-        try:
-            os.link(source, target)
-            return target
-        except OSError:
-            return shutil.copy2(source, target)
+    shutil.copytree(NEXT_APP, destination, ignore=ignore, copy_function=shutil.copy2)
 
-    shutil.copytree(NEXT_APP, destination, ignore=ignore, copy_function=hardlink_or_copy)
+
+def tracked_diff_digest() -> str:
+    result = subprocess.run(
+        ["git", "diff", "--binary", "HEAD", "--"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    )
+    return hashlib.sha256(result.stdout).hexdigest()
+
+
+def start_app(
+    npm: str,
+    isolated_app: Path,
+    environment: dict[str, str],
+    port: int,
+    log_path: Path,
+) -> subprocess.Popen[str]:
+    start_environment = dict(environment)
+    start_environment["AGENTOPS_NEXT_PORT"] = str(port)
+    with log_path.open("w", encoding="utf-8") as output:
+        return subprocess.Popen(
+            [npm, "start"],
+            cwd=isolated_app,
+            env=start_environment,
+            text=True,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
 
 
 def wait_until_ready(base_url: str, process: subprocess.Popen[str], log_path: Path) -> None:
@@ -136,8 +162,11 @@ def wait_until_ready(base_url: str, process: subprocess.Popen[str], log_path: Pa
 
 def main() -> int:
     node = shutil.which("node")
+    npm = shutil.which("npm")
     require(bool(node), "node is required")
+    require(bool(npm), "npm is required")
     require((NEXT_APP / "node_modules").is_dir(), "run npm ci in ui/next-app first")
+    source_diff_before = tracked_diff_digest()
 
     with PythonObserver.lock:
         PythonObserver.hits = 0
@@ -172,16 +201,7 @@ def main() -> int:
             port = free_port()
             base_url = f"http://127.0.0.1:{port}"
             start_log = temp_root / "start.log"
-            with start_log.open("w", encoding="utf-8") as output:
-                process = subprocess.Popen(
-                    [str(node), str(next_cli), "start", "-H", "127.0.0.1", "-p", str(port)],
-                    cwd=isolated_app,
-                    env=environment,
-                    text=True,
-                    stdout=output,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                )
+            process = start_app(str(npm), isolated_app, environment, port, start_log)
             wait_until_ready(base_url, process, start_log)
 
             statuses: dict[str, int] = {}
@@ -199,17 +219,77 @@ def main() -> int:
                 statuses[f"{method} {path}"] = status
 
             with PythonObserver.lock:
-                upstream_hits = PythonObserver.hits
-            require(upstream_hits == 0, "production Next reached the Python observer")
+                production_upstream_hits = PythonObserver.hits
+            require(production_upstream_hits == 0, "production Next reached the Python observer")
+
+            stop_process(process)
+            process = None
+            local_environment = dict(environment)
+            local_environment["AGENTOPS_DEPLOYMENT_MODE"] = "free_local"
+            local_environment["AGENTOPS_CONTROL_PLANE_MODE"] = "proxy"
+            local_port = free_port()
+            local_base_url = f"http://127.0.0.1:{local_port}"
+            local_start_log = temp_root / "free-local-start.log"
+            process = start_app(str(npm), isolated_app, local_environment, local_port, local_start_log)
+            wait_until_ready(local_base_url, process, local_start_log)
+
+            with PythonObserver.lock:
+                local_hits_before = PythonObserver.hits
+            blocked_mutations: dict[str, int] = {}
+            for path in (
+                "/api/mis/workflows/hermes-openclaw-loop",
+                "/api/mis/workflows/coding-workspace/cleanup",
+                "/api/mis/workflows/coding-workspace/branch/delete",
+            ):
+                status, payload, cache_control = request_json(f"{local_base_url}{path}", "POST")
+                require(status == 403, f"Free Local dangerous mutation returned {status}: {path}")
+                require(
+                    payload.get("error") == "free_local_python_proxy_path_not_allowed",
+                    f"Free Local dangerous mutation lost deny reason: {path}",
+                )
+                require(payload.get("python_proxy_performed") is False, f"Free Local mutation proxied: {path}")
+                require("no-store" in cache_control.lower(), f"Free Local mutation deny is cacheable: {path}")
+                blocked_mutations[path] = status
+            with PythonObserver.lock:
+                local_hits_after_denies = PythonObserver.hits
+            require(
+                local_hits_after_denies == local_hits_before,
+                "Free Local dangerous mutation reached the upstream observer",
+            )
+
+            status, payload, _cache_control = request_json(
+                f"{local_base_url}/api/mis/workflows/local-brief",
+                "POST",
+            )
+            require(status == 200, f"Free Local allowlisted local brief returned {status}")
+            require(payload.get("unexpected_python_proxy") is True, "Free Local allowlisted path did not proxy")
+            with PythonObserver.lock:
+                local_hits_after_allow = PythonObserver.hits
+            require(
+                local_hits_after_allow == local_hits_after_denies + 1,
+                "Free Local allowlisted mutation did not make exactly one upstream request",
+            )
+
+            source_diff_after = tracked_diff_digest()
+            require(source_diff_after == source_diff_before, "isolated build mutated tracked source files")
             print(json.dumps({
-                "contract": "nextjs_production_python_proxy_fail_closed_v3",
+                "contract": "nextjs_production_python_proxy_fail_closed_v4",
                 "ok": True,
                 "production_artifact_built": True,
-                "production_artifact_started": True,
+                "production_artifact_started_through_npm_start": True,
                 "python_api_started": False,
                 "python_proxy_performed": False,
-                "upstream_request_count": upstream_hits,
+                "production_upstream_request_count": production_upstream_hits,
                 "route_statuses": statuses,
+                "free_local_loopback_start_verified": True,
+                "free_local_blocked_mutations": blocked_mutations,
+                "free_local_dangerous_mutation_upstream_request_count": (
+                    local_hits_after_denies - local_hits_before
+                ),
+                "free_local_allowlisted_mutation_upstream_request_count": (
+                    local_hits_after_allow - local_hits_after_denies
+                ),
+                "tracked_source_unchanged": True,
                 "token_omitted": True,
             }, indent=2, sort_keys=True))
             return 0

@@ -1,6 +1,7 @@
 export type ControlPlaneMode = "proxy" | "postgres";
 
 const FREE_LOCAL_DEPLOYMENT_MODES = new Set(["local", "free_local", "development"]);
+const PRODUCTION_DEPLOYMENT_MODES = new Set(["production", "prod", "shared", "hosted"]);
 
 function normalized(value: string | undefined) {
   return String(value || "").trim().toLowerCase();
@@ -12,23 +13,26 @@ export function controlPlaneMode(): ControlPlaneMode {
   );
   if (configured === "postgres") return "postgres";
   if (configured === "proxy") return isProductionDeployment() ? "postgres" : "proxy";
+  if (configured) {
+    throw new Error("AGENTOPS_CONTROL_PLANE_MODE must be postgres or proxy.");
+  }
   return isProductionDeployment() ? "postgres" : "proxy";
 }
 
 export function isProductionDeployment() {
   const configured = normalized(process.env.AGENTOPS_DEPLOYMENT_MODE);
-  if (configured === "production") return true;
+  if (PRODUCTION_DEPLOYMENT_MODES.has(configured)) return true;
   if (FREE_LOCAL_DEPLOYMENT_MODES.has(configured)) return false;
   if (configured) {
     throw new Error(
-      "AGENTOPS_DEPLOYMENT_MODE must be production, local, free_local, or development.",
+      "AGENTOPS_DEPLOYMENT_MODE must be production, prod, shared, hosted, local, free_local, or development.",
     );
   }
   return normalized(process.env.NODE_ENV) === "production";
 }
 
 export function legacyPythonProxyAllowed() {
-  return !isProductionDeployment();
+  return !isProductionDeployment() && controlPlaneMode() === "proxy";
 }
 
 export function postgresDsn() {

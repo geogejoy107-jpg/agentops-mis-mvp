@@ -40,6 +40,13 @@ try {
   assert.equal(legacyPythonProxyAllowed(), true);
 
   clearContractEnvironment();
+  mutableEnvironment.AGENTOPS_DEPLOYMENT_MODE = "local";
+  mutableEnvironment.AGENTOPS_CONTROL_PLANE_MODE = "postgres";
+  assert.equal(isProductionDeployment(), false);
+  assert.equal(controlPlaneMode(), "postgres");
+  assert.equal(legacyPythonProxyAllowed(), false);
+
+  clearContractEnvironment();
   mutableEnvironment.NODE_ENV = "production";
   assert.equal(isProductionDeployment(), true);
   assert.equal(controlPlaneMode(), "postgres");
@@ -55,12 +62,28 @@ try {
   mutableEnvironment.AGENTOPS_DEPLOYMENT_MODE = "unexpected";
   assert.throws(() => isProductionDeployment(), /AGENTOPS_DEPLOYMENT_MODE must be/);
 
+  for (const alias of ["prod", "shared", "hosted"]) {
+    clearContractEnvironment();
+    mutableEnvironment.AGENTOPS_DEPLOYMENT_MODE = alias;
+    assert.equal(isProductionDeployment(), true);
+    assert.equal(controlPlaneMode(), "postgres");
+    assert.equal(legacyPythonProxyAllowed(), false);
+  }
+
+  clearContractEnvironment();
+  mutableEnvironment.AGENTOPS_DEPLOYMENT_MODE = "local";
+  mutableEnvironment.AGENTOPS_CONTROL_PLANE_MODE = "unexpected";
+  assert.throws(() => controlPlaneMode(), /AGENTOPS_CONTROL_PLANE_MODE must be/);
+
   console.log(JSON.stringify({
-    contract: "nextjs_control_plane_mode_v1",
+    contract: "nextjs_control_plane_mode_v2",
     ok: true,
+    production_aliases_fail_closed: true,
     production_proxy_coerced_to_postgres: true,
     production_python_proxy_allowed: false,
     free_local_python_proxy_allowed: true,
+    local_postgres_python_proxy_allowed: false,
+    unknown_modes_rejected: true,
     postgres_dsn_required: true,
     token_omitted: true,
   }));
