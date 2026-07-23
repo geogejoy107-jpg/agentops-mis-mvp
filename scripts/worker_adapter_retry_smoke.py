@@ -189,6 +189,8 @@ def verify_non_retry_failure(base_url: str, worker_result: dict) -> dict:
     require(args.get("worker_runtime_event_id") == runtime_event_id, f"Hermes tool args missing runtime event id: {args}")
     require(args.get("worker_runtime_event_summary_recorded") is True, f"Hermes runtime summary flag missing: {args}")
     require(args.get("runtime_internal_tools_remain_opaque") is True, f"Hermes opacity proof missing: {args}")
+    require(args.get("provider_call_performed") is False, f"confirmation gate must not claim a provider call: {args}")
+    require(args.get("dry_run") is True, f"confirmation gate must remain a dry-run: {args}")
     history = args.get("retry_history") or []
     require(len(history) == 1 and history[0].get("retryable") is False, f"non-retry history invalid: {history}")
     return {

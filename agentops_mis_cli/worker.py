@@ -350,6 +350,8 @@ class AdapterResult:
     attempt_count: int = 1
     max_attempts: int = 1
     retry_history: list[dict] | None = None
+    provider_call_performed: bool = False
+    dry_run: bool = True
     runtime_observation: dict | None = None
 
 
@@ -548,6 +550,7 @@ def execute_mock(task: dict, attempt: int = 1, fail_before_success: int = 0) -> 
             error_message=f"Simulated transient adapter failure before success, attempt {attempt}.",
             target_resource="local://agentops/mock-worker",
             retryable=True,
+            dry_run=False,
         )
     summary = f"Mock worker completed task '{redact_text(task.get('title'), 80)}' and produced a safe local execution summary."
     return AdapterResult(
@@ -557,6 +560,7 @@ def execute_mock(task: dict, attempt: int = 1, fail_before_success: int = 0) -> 
         **adapter_result_profile_fields(profile),
         raw_payload_hash=stable_hash({"adapter": "mock", "task_id": task.get("task_id"), "summary": summary}),
         target_resource="local://agentops/mock-worker",
+        dry_run=False,
     )
 
 
@@ -603,6 +607,8 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             output_tokens=int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
             target_resource=gateway_url.rstrip("/") + "/v1/chat/completions",
             retryable=not bool(visible),
+            provider_call_performed=True,
+            dry_run=False,
         )
     except HTTPError as exc:
         error_body = exc.read()
@@ -618,6 +624,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             duration_ms=int((time.time() - started) * 1000),
             target_resource=gateway_url.rstrip("/") + "/v1/chat/completions",
             retryable=status in {408, 409, 425, 429} or status >= 500,
+            dry_run=False,
         )
     except Exception as exc:
         return AdapterResult(
@@ -630,6 +637,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             duration_ms=int((time.time() - started) * 1000),
             target_resource=gateway_url.rstrip("/") + "/v1/chat/completions",
             retryable=True,
+            dry_run=False,
         )
 
 
@@ -682,6 +690,8 @@ def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int
             duration_ms=int(meta.get("durationMs") or ((time.time() - started) * 1000)),
             target_resource=f"local://openclaw/{agent_name}",
             retryable=not ok,
+            provider_call_performed=ok,
+            dry_run=False,
         )
     except Exception as exc:
         return AdapterResult(
@@ -694,6 +704,7 @@ def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int
             duration_ms=int((time.time() - started) * 1000),
             target_resource=f"local://openclaw/{agent_name}",
             retryable=True,
+            dry_run=False,
         )
 
 
@@ -728,6 +739,8 @@ def execute_codex(task: dict, binary_path: str, timeout: int, confirm_run: bool)
         output_tokens=runtime_result.output_tokens,
         target_resource=runtime_result.target_resource,
         retryable=runtime_result.retryable,
+        provider_call_performed=runtime_result.ok,
+        dry_run=False,
         runtime_observation=runtime_result.observation,
     )
 
@@ -1709,6 +1722,8 @@ def record_worker_runtime_event(
             "task_id": task_id,
             "adapter": args.adapter,
             "ok": result.ok,
+            "provider_call_performed": result.provider_call_performed,
+            "dry_run": result.dry_run,
             "error_type": result.error_type,
             "attempt_count": result.attempt_count,
             "max_attempts": result.max_attempts,
@@ -2153,6 +2168,8 @@ def resume_codex_workspace_write(client: AgentOpsClient, args) -> dict:
         output_tokens=runtime_result.output_tokens,
         target_resource=runtime_result.target_resource,
         retryable=runtime_result.retryable,
+        provider_call_performed=runtime_result.ok,
+        dry_run=False,
         runtime_observation=runtime_result.observation,
     )
     if not result.ok:
@@ -2249,6 +2266,8 @@ def resume_codex_workspace_write(client: AgentOpsClient, args) -> dict:
             error_message=redact_text(str(exc), 220),
             target_resource=result.target_resource,
             retryable=False,
+            provider_call_performed=result.provider_call_performed,
+            dry_run=result.dry_run,
             runtime_observation={
                 **(result.runtime_observation or {}),
                 "rollback_required": True,
@@ -2573,6 +2592,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "args": {
             "task_id": task_id,
             "adapter": args.adapter,
+            "provider_call_performed": result.provider_call_performed,
+            "dry_run": result.dry_run,
             "prompt_hash": result.prompt_hash,
             "prompt_profile_id": result.prompt_profile_id,
             "prompt_profile_version": result.prompt_profile_version,
@@ -2654,6 +2675,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "rubric": {
             "gate": "worker_adapter_loop",
             "adapter": args.adapter,
+            "provider_call_performed": result.provider_call_performed,
+            "dry_run": result.dry_run,
             "requires_completed_run": True,
             "requires_knowledge_retrieval_evidence": True,
             "prompt_profile_id": result.prompt_profile_id,
@@ -2742,6 +2765,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "metadata": {
             "adapter": args.adapter,
             "ok": result.ok,
+            "provider_call_performed": result.provider_call_performed,
+            "dry_run": result.dry_run,
             "prompt_hash": result.prompt_hash,
             "prompt_profile_id": result.prompt_profile_id,
             "prompt_profile_version": result.prompt_profile_version,
@@ -2836,6 +2861,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         ),
         "adapter": args.adapter,
         "ok": result.ok,
+        "provider_call_performed": result.provider_call_performed,
+        "dry_run": result.dry_run,
         "attempt_count": result.attempt_count,
         "prompt_profile": {
             "profile_id": result.prompt_profile_id,

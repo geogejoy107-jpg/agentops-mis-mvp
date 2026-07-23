@@ -1611,6 +1611,16 @@ def main() -> int:
         prompt_secret,
         *tokens.values(),
     ]
+    # Runtime locations are redacted from diagnostics, while only credentials and
+    # protected task input are forbidden from the bounded persisted evidence.
+    persisted_sensitive = [
+        args.postgres_dsn,
+        runtime_dsn,
+        owner_password,
+        hmac_key,
+        prompt_secret,
+        *tokens.values(),
+    ]
     setup: NodePgAdapter | None = None
     adapter: NodePgAdapter | None = None
     next_proc: subprocess.Popen[str] | None = None
@@ -1693,7 +1703,7 @@ def main() -> int:
                 adapter,
                 runtime,
                 worker_payload,
-                sensitive,
+                persisted_sensitive,
             )
 
         cookie, csrf = login_owner(base_url, owner_password)

@@ -18,6 +18,7 @@ import {
   recordAgentGatewayToolCall,
   submitAgentGatewayEvaluation,
 } from "../src/server/controlPlane/agentGatewayEvidence";
+import { emitAgentAudit } from "../src/server/controlPlane/agentGatewayEvidenceSupport";
 import {
   heartbeatAgentGatewayRun,
   startAgentGatewayRun,
@@ -102,6 +103,7 @@ async function seed(client: Client) {
     "evaluations:submit",
     "artifacts:write",
     "plan_evidence:write",
+    "audit:write",
   ]);
   await client.query(
     `INSERT INTO users(user_id,name,email,role,created_at)
@@ -631,6 +633,49 @@ async function runContract() {
       artifact_ids: ["art_gateway_core"],
       audit_ids: ["aud_caller_supplied"],
     };
+    const missingWorkerAuditManifest = await createAgentGatewayPlanEvidenceManifest(
+      request(
+        "POST",
+        "/api/mis/agent-gateway/plan-evidence-manifests",
+        token,
+        {
+          ...manifestBody,
+          manifest_id: "pem_gateway_core_missing_worker_audit",
+        },
+      ),
+    );
+    const missingWorkerAuditVerification = missingWorkerAuditManifest.body.verification as {
+      pass: boolean;
+      failed_checks: Array<{ id: string }>;
+    };
+    assert.equal(missingWorkerAuditVerification.pass, false);
+    assert.equal(
+      missingWorkerAuditVerification.failed_checks.some(
+        (check) => check.id === "commercial_worker_audit_provenance",
+      ),
+      true,
+    );
+    await emitAgentAudit(
+      request(
+        "POST",
+        "/api/mis/agent-gateway/audit",
+        token,
+        {
+          workspace_id: workspaceId,
+          agent_id: "agt_gateway_core",
+          task_id: "tsk_gateway_core",
+          run_id: "run_gateway_core",
+          action: "agent_worker.task_processed",
+          entity_type: "runs",
+          entity_id: "run_gateway_core",
+          metadata: {
+            adapter: "hermes",
+            provider_call_performed: true,
+            dry_run: false,
+          },
+        },
+      ),
+    );
     const manifest = await createAgentGatewayPlanEvidenceManifest(
       request(
         "POST",
@@ -684,6 +729,7 @@ async function runContract() {
       plan_hash_and_verification_bound: true,
       run_plan_binding: true,
       immutable_evidence_replay: true,
+      commercial_manifest_provenance_fail_closed: true,
       stale_manifest_hash_denied: true,
       raw_prompt_response_token_omitted: true,
       python_observer_requests: pythonObserverRequests,

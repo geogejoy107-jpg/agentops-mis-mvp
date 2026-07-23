@@ -1036,7 +1036,19 @@ export async function createAgentGatewayPlanEvidenceManifest(request: Request) {
       throw new ControlPlaneHttpError(409, "plan_evidence_immutable_conflict", "manifest_id is immutable; create a new manifest for revised evidence bindings.");
     }
     const verifyNow = body.verify_now !== false;
-    const verification = verifyNow ? await verifyManifest(client, candidate, plan, run, task) : null;
+    const requireCommercialRuntime = COMMERCIAL_RUNTIME_TYPES.has(
+      String(run.runtime_type || "").trim().toLowerCase(),
+    );
+    const verification = verifyNow
+      ? await verifyManifest(
+        client,
+        candidate,
+        plan,
+        run,
+        task,
+        requireCommercialRuntime,
+      )
+      : null;
     if (verification) {
       candidate.status = verification.status;
       candidate.verification_json = JSON.stringify(verification);
