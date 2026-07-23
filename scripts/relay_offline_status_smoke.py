@@ -268,11 +268,17 @@ _write_flags = (
     | os.O_TRUNC
     | os.O_APPEND
     | os.O_EXCL
-    | getattr(os, "O_TMPFILE", 0)
 )
+_tmpfile_flag = getattr(os, "O_TMPFILE", 0)
 def _guarded_open(*args, **kwargs):
     _flags = args[1] if len(args) > 1 else kwargs.get("flags", 0)
-    if _flags & _write_flags:
+    if (
+        _flags & _write_flags
+        or (
+            _tmpfile_flag
+            and _flags & _tmpfile_flag == _tmpfile_flag
+        )
+    ):
         raise RuntimeError("relay status attempted write-capable os.open")
     return _real_os_open(*args, **kwargs)
 
