@@ -56,12 +56,14 @@ The private fixture store exercises the intended production algorithm:
 - a newly created plan directory for revision 1; an existing empty directory
   is recovery-required rather than silently reused;
 - `O_EXCL` temporary files, full writes, file fsync, hard-link no-replace
-  publication, parent fsync, temporary unlink, and a second parent fsync;
+  publication, open-FD/path/inode/content revalidation before and after the
+  link, parent fsync, temporary unlink, and a second parent fsync;
 - immutable, contiguous hash chains with no gaps, forks, unknown names,
   ambiguous temporary files, or duplicate revision publication;
 - one-to-one terminal revision and receipt binding;
 - exact receipt replay returning `existing`;
-- bounded plan, revision, receipt, and record counts;
+- descriptor-backed incremental directory enumeration that stops on the first
+  over-limit entry, plus bounded plan, revision, receipt, and record counts;
 - bounded public projections that omit paths, raw observations, credentials,
   and private journal bodies.
 
@@ -92,6 +94,9 @@ The deterministic smoke verifies:
 - rejection of pre-existing empty plan directories, symlink roots, unsafe
   directory modes, path escapes, unknown temporary files, and receipt overflow;
 - failure injection at write, file fsync, no-replace link, and temporary unlink;
+- rejection of a temporary-name replacement injected immediately before link,
+  with the transaction retained as recovery-required;
+- bounded enumeration stopping at the first receipt-count overflow entry;
 - descriptor closure, zero network calls, zero subprocesses, and zero systemd
   calls.
 
@@ -99,10 +104,12 @@ Expected result:
 
 ```json
 {
+  "bounded_enumeration": true,
   "failure_injection_cases": 4,
   "ok": true,
   "operation": "relay_activation_journal_smoke",
   "production_mutation_exposed": false,
+  "publication_race_rejected": true,
   "recovery_cases": 4,
   "schema_id": "agentops.relay.activation-journal.v0",
   "terminal_chains": 2

@@ -1047,6 +1047,30 @@ def _name_exists(parent_fd: int, name: str) -> bool:
         ) from None
 
 
+def _bounded_directory_names(
+    directory_fd: int,
+    maximum_entries: int,
+) -> tuple[str, ...]:
+    if type(maximum_entries) is not int or maximum_entries < 1:
+        raise RelayActivationJournalError("activation_journal_invalid")
+    names: list[str] = []
+    try:
+        with os.scandir(directory_fd) as entries:
+            for entry in entries:
+                if len(names) >= maximum_entries:
+                    raise RelayActivationJournalError(
+                        "activation_journal_recovery_required"
+                    )
+                names.append(entry.name)
+    except RelayActivationJournalError:
+        raise
+    except OSError:
+        raise RelayActivationJournalError(
+            "activation_journal_recovery_required"
+        ) from None
+    return tuple(sorted(names))
+
+
 def _write_all(descriptor: int, raw: bytes) -> None:
     offset = 0
     while offset < len(raw):
@@ -1054,6 +1078,41 @@ def _write_all(descriptor: int, raw: bytes) -> None:
         if written <= 0:
             raise OSError("short write")
         offset += written
+
+
+def _read_descriptor_bytes(descriptor: int, expected_size: int) -> bytes:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    output = bytearray()
+    while len(output) < expected_size:
+        chunk = os.read(
+            descriptor,
+            min(4096, expected_size - len(output)),
+        )
+        if not chunk:
+            break
+        output.extend(chunk)
+    if len(output) != expected_size:
+        raise OSError("published file changed")
+    return bytes(output)
+
+
+def _publication_identity_matches(
+    metadata: os.stat_result,
+    original: os.stat_result,
+    *,
+    expected_nlink: int,
+) -> bool:
+    return (
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_dev == original.st_dev
+        and metadata.st_ino == original.st_ino
+        and stat.S_IFMT(metadata.st_mode) == stat.S_IFMT(original.st_mode)
+        and stat.S_IMODE(metadata.st_mode) == stat.S_IMODE(original.st_mode)
+        and metadata.st_uid == original.st_uid
+        and metadata.st_gid == original.st_gid
+        and metadata.st_size == original.st_size
+        and metadata.st_nlink == expected_nlink
+    )
 
 
 def _publish_bytes_at(
@@ -1083,10 +1142,11 @@ def _publish_bytes_at(
             "activation_journal_recovery_required"
         )
     descriptor = -1
+    publication_started = False
     try:
         descriptor = os.open(
             temporary_name,
-            os.O_WRONLY
+            os.O_RDWR
             | os.O_CREAT
             | os.O_EXCL
             | _file_flags(),
@@ -1106,8 +1166,20 @@ def _publish_bytes_at(
             or metadata.st_size != len(raw)
         ):
             raise OSError("temporary identity mismatch")
-        os.close(descriptor)
-        descriptor = -1
+        path_before_link = os.stat(
+            temporary_name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if not _publication_identity_matches(
+            path_before_link,
+            metadata,
+            expected_nlink=1,
+        ):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+        publication_started = True
         os.link(
             temporary_name,
             final_name,
@@ -1115,9 +1187,60 @@ def _publish_bytes_at(
             dst_dir_fd=parent_fd,
             follow_symlinks=False,
         )
+        linked_identities = (
+            os.fstat(descriptor),
+            os.stat(
+                temporary_name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            ),
+            os.stat(
+                final_name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            ),
+        )
+        if (
+            any(
+                not _publication_identity_matches(
+                    current,
+                    metadata,
+                    expected_nlink=2,
+                )
+                for current in linked_identities
+            )
+            or _read_descriptor_bytes(descriptor, len(raw)) != raw
+        ):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
         os.fsync(parent_fd)
         os.unlink(temporary_name, dir_fd=parent_fd)
+        final_identities = (
+            os.fstat(descriptor),
+            os.stat(
+                final_name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            ),
+        )
+        if (
+            any(
+                not _publication_identity_matches(
+                    current,
+                    metadata,
+                    expected_nlink=1,
+                )
+                for current in final_identities
+            )
+            or _read_descriptor_bytes(descriptor, len(raw)) != raw
+        ):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
         os.fsync(parent_fd)
+        os.close(descriptor)
+        descriptor = -1
         if (
             _read_file_at(
                 parent_fd,
@@ -1129,12 +1252,20 @@ def _publish_bytes_at(
         ):
             raise OSError("published bytes changed")
     except RelayActivationJournalError:
+        if publication_started:
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            ) from None
         raise
     except FileExistsError:
         raise RelayActivationJournalError(
             "activation_journal_recovery_required"
         ) from None
     except OSError:
+        if publication_started:
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            ) from None
         raise RelayActivationJournalError(
             "activation_journal_write_failed"
         ) from None
@@ -1197,12 +1328,10 @@ class _ActivationJournalStore:
         ):
             raise RelayActivationJournalError("activation_journal_invalid")
         if create:
-            try:
-                names = os.listdir(self.transactions_fd)
-            except OSError:
-                raise RelayActivationJournalError(
-                    "activation_journal_recovery_required"
-                ) from None
+            names = _bounded_directory_names(
+                self.transactions_fd,
+                MAX_JOURNAL_PLANS,
+            )
             if (
                 len(names) >= MAX_JOURNAL_PLANS
                 or any(
@@ -1228,7 +1357,10 @@ class _ActivationJournalStore:
         plan_sha256: str,
     ) -> tuple[ActivationJournalRevision, ...]:
         try:
-            names = os.listdir(plan_fd)
+            names = _bounded_directory_names(
+                plan_fd,
+                MAX_JOURNAL_REVISIONS,
+            )
             if not names or len(names) > MAX_JOURNAL_REVISIONS:
                 raise RelayActivationJournalError(
                     "activation_journal_recovery_required"
@@ -1259,7 +1391,13 @@ class _ActivationJournalStore:
                 )
                 for _index, name in indexed
             )
-            if os.listdir(plan_fd) != names:
+            if (
+                _bounded_directory_names(
+                    plan_fd,
+                    MAX_JOURNAL_REVISIONS,
+                )
+                != names
+            ):
                 raise RelayActivationJournalError(
                     "activation_journal_recovery_required"
                 )
@@ -1325,7 +1463,10 @@ class _ActivationJournalStore:
             create=create_plan,
         )
         try:
-            names = os.listdir(plan_fd)
+            names = _bounded_directory_names(
+                plan_fd,
+                MAX_JOURNAL_REVISIONS,
+            )
             if any(
                 _REVISION_NAME_PATTERN.fullmatch(name) is None
                 for name in names
@@ -1370,12 +1511,10 @@ class _ActivationJournalStore:
         revisions = self._load_chain(receipt.identity.plan_sha256)
         last = revisions[-1]
         final_name = f"{receipt.receipt_sha256}.json"
-        try:
-            receipt_names = os.listdir(self.receipts_fd)
-        except OSError:
-            raise RelayActivationJournalError(
-                "activation_journal_recovery_required"
-            ) from None
+        receipt_names = _bounded_directory_names(
+            self.receipts_fd,
+            MAX_JOURNAL_RECEIPTS,
+        )
         if (
             len(receipt_names) > MAX_JOURNAL_RECEIPTS
             or any(
@@ -1470,12 +1609,22 @@ class _ActivationJournalStore:
         if self.closed:
             raise RelayActivationJournalError("activation_journal_invalid")
         try:
-            plan_names = os.listdir(self.transactions_fd)
-            receipt_names = os.listdir(self.receipts_fd)
-        except OSError:
-            raise RelayActivationJournalError(
-                "activation_journal_invalid"
-            ) from None
+            plan_names = _bounded_directory_names(
+                self.transactions_fd,
+                MAX_JOURNAL_PLANS,
+            )
+            receipt_names = _bounded_directory_names(
+                self.receipts_fd,
+                MAX_JOURNAL_RECEIPTS,
+            )
+        except RelayActivationJournalError:
+            return {
+                "ok": False,
+                "operation_id": "activate",
+                "recovery_required": True,
+                "schema_id": ACTIVATION_JOURNAL_SCHEMA,
+                "state": "recovery_required",
+            }
         if (
             len(plan_names) > MAX_JOURNAL_PLANS
             or len(receipt_names) > MAX_JOURNAL_RECEIPTS

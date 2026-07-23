@@ -748,6 +748,104 @@ def failure_injection_cases(failures: list[str]) -> None:
                 )
 
 
+def publication_race_case(failures: list[str]) -> None:
+    prepared = active_prefix(identity())[0]
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        prepare_root(root)
+        with _open_fixture_store(root) as store:
+            original_link = journal.os.link
+
+            def replace_before_link(
+                source: str,
+                destination: str,
+                *,
+                src_dir_fd: int,
+                dst_dir_fd: int,
+                follow_symlinks: bool,
+            ) -> None:
+                os.unlink(source, dir_fd=src_dir_fd)
+                replacement = os.open(
+                    source,
+                    os.O_RDWR | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                    dir_fd=src_dir_fd,
+                )
+                try:
+                    os.write(replacement, b"x" * len(prepared))
+                    os.fsync(replacement)
+                finally:
+                    os.close(replacement)
+                original_link(
+                    source,
+                    destination,
+                    src_dir_fd=src_dir_fd,
+                    dst_dir_fd=dst_dir_fd,
+                    follow_symlinks=follow_symlinks,
+                )
+
+            journal.os.link = replace_before_link
+            try:
+                expect_error(
+                    lambda: store.publish_revision(prepared),
+                    expected="activation_journal_recovery_required",
+                    label="temporary path replacement race",
+                    failures=failures,
+                )
+            finally:
+                journal.os.link = original_link
+            require(
+                store.inspect_store().get("recovery_required") is True,
+                "temporary replacement race did not retain recovery state",
+                failures,
+            )
+
+
+def bounded_enumeration_case(failures: list[str]) -> None:
+    original_scandir = journal.os.scandir
+    yielded = 0
+
+    class FakeEntry:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class FakeScandir:
+        def __enter__(self) -> "FakeScandir":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def __iter__(self) -> "FakeScandir":
+            return self
+
+        def __next__(self) -> FakeEntry:
+            nonlocal yielded
+            yielded += 1
+            if yielded > journal.MAX_JOURNAL_RECEIPTS + 1:
+                raise AssertionError("bounded scanner consumed extra entries")
+            return FakeEntry(f"{yielded:064x}.json")
+
+    journal.os.scandir = lambda _descriptor: FakeScandir()
+    try:
+        expect_error(
+            lambda: journal._bounded_directory_names(
+                707,
+                journal.MAX_JOURNAL_RECEIPTS,
+            ),
+            expected="activation_journal_recovery_required",
+            label="bounded directory enumeration",
+            failures=failures,
+        )
+    finally:
+        journal.os.scandir = original_scandir
+    require(
+        yielded == journal.MAX_JOURNAL_RECEIPTS + 1,
+        "bounded scanner did not stop at the first overflow entry",
+        failures,
+    )
+
+
 def descriptor_cases(failures: list[str]) -> None:
     before = descriptor_count()
     for _index in range(20):
@@ -798,6 +896,8 @@ def main() -> int:
         )
         store_recovery_cases(failures)
         failure_injection_cases(failures)
+        publication_race_case(failures)
+        bounded_enumeration_case(failures)
         descriptor_cases(failures)
     finally:
         socket.socket = original_socket
@@ -823,6 +923,8 @@ def main() -> int:
         json.dumps(
             {
                 "failure_injection_cases": 4,
+                "publication_race_rejected": True,
+                "bounded_enumeration": True,
                 "ok": True,
                 "operation": "relay_activation_journal_smoke",
                 "production_mutation_exposed": False,
