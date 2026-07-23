@@ -15,7 +15,11 @@ import {
   preparedActionHash,
   resumePreparedActionExecution,
 } from "../src/server/controlPlane/preparedActions";
-import { runPostgresSchemaCommand } from "../src/server/controlPlane/schemaReadiness";
+import {
+  POSTGRES_MIGRATION_MANIFEST,
+  runPostgresSchemaCommand,
+  SCHEMA_CONTRACT,
+} from "../src/server/controlPlane/schemaReadiness";
 
 const WORKSPACE_ID = "ws_prepared_action_contract";
 const AGENT_ID = "agt_prepared_action_contract";
@@ -690,9 +694,10 @@ async function main() {
       connectionString: contractDsn,
     });
     require(
-      migration.schema_contract === "agentops_commercial_postgres_v6"
-        && migration.applied_count === migration.manifest_count,
-      "fresh schema did not apply the full v1-v6 manifest",
+      migration.schema_contract === SCHEMA_CONTRACT
+        && migration.applied_count === POSTGRES_MIGRATION_MANIFEST.length
+        && migration.manifest_count === POSTGRES_MIGRATION_MANIFEST.length,
+      "fresh schema did not apply the current complete manifest",
     );
     process.env.AGENTOPS_POSTGRES_DSN = contractDsn;
     process.env.AGENTOPS_POSTGRES_POOL_MAX = "16";
