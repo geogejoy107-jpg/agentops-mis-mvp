@@ -57,7 +57,7 @@ def main() -> int:
         all(label in plan for label in (
             "3A Pairing",
             "3B Transport contract",
-            "3C Deployed Relay",
+            "3C Relay delivery",
             "3D Physical acceptance",
         )),
         "delivery plan is missing a Relay implementation slice",
