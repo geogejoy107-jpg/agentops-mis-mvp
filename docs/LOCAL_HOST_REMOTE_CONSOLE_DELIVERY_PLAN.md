@@ -259,11 +259,13 @@ Implementation slices:
    - credential-free systemd activation state machine and crash/rollback
      boundary: specified in `RELAY_SERVICE_ACTIVATION_SPEC.md`; its pure
      plan core, shared strict daemon config parser and read-only FD-anchored
-     host scanner are implemented and recorded in
+     host scanner plus read-only systemd adapter and activate preview are
+     implemented and recorded in
      `RELAY_ACTIVATION_PLAN_CORE_ACCEPTANCE.md`,
-     `RELAY_CONFIG_PARSER_ACCEPTANCE.md` and
-     `RELAY_ACTIVATION_SCANNER_ACCEPTANCE.md`, while the systemd adapter, CLI,
-     mutation, transaction, rollback and recovery remain unimplemented;
+     `RELAY_CONFIG_PARSER_ACCEPTANCE.md`,
+     `RELAY_ACTIVATION_SCANNER_ACCEPTANCE.md`, and
+     `RELAY_ACTIVATION_PREVIEW_ACCEPTANCE.md`; confirmed mutation, transaction,
+     rollback and recovery remain unimplemented;
    - upgrade, rollback, uninstall, Linux account provisioning, service
      activation and public infrastructure acceptance: pending;
    - public endpoint, DNS/ACME provisioning, stable per-Host Console origin,

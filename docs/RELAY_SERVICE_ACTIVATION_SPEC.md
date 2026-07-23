@@ -1,9 +1,9 @@
 # Relay Service Activation Specification
 
-Status: pure Activation Plan Core v0, strict daemon config parser and read-only
-FD-anchored host prerequisite scanner implemented and locally accepted; systemd
-adapter, preview CLI, mutation, transaction, rollback and recovery remain
-planned and unimplemented
+Status: pure Activation Plan Core v0, strict daemon config parser, read-only
+FD-anchored host prerequisite scanner, production read-only systemd adapter and
+activate preview CLI implemented and locally accepted; confirmed mutation,
+transaction, rollback and recovery remain planned and unimplemented
 
 ## Objective
 
@@ -18,21 +18,37 @@ the daemon is configured, running, healthy, or reachable.
 The current `agentops_mis_cli.relay_activation` module implements strict
 systemd-state parsing, private plan-hash compilation and bounded public
 projection. `agentops_mis_cli.relay_activation_scan` now creates its private
-prerequisite snapshot from one read-only, FD-anchored host observation. Neither
-module inspects live systemd, exposes an `activate` CLI command or performs
-mutations. The live daemon separately shares the bounded strict config parser
-used by the scanner. See
+prerequisite snapshot from one read-only, FD-anchored host observation.
+`agentops_mis_cli.relay_systemd_read` reads exactly one bounded systemd `show`
+snapshot through the scanner-bound opened executable FD, and
+`agentops_mis_cli.relay_activation_preview` requires a second exact
+prerequisite scan before compiling the public projection. None of these
+modules performs mutation. The live daemon separately shares the bounded
+strict config parser used by the scanner. See
 `RELAY_ACTIVATION_PLAN_CORE_ACCEPTANCE.md` and
-`RELAY_CONFIG_PARSER_ACCEPTANCE.md`, plus
-`RELAY_ACTIVATION_SCANNER_ACCEPTANCE.md`.
+`RELAY_CONFIG_PARSER_ACCEPTANCE.md`,
+`RELAY_ACTIVATION_SCANNER_ACCEPTANCE.md`, and
+`RELAY_ACTIVATION_PREVIEW_ACCEPTANCE.md`.
 
 ## Command Contract
 
-The intended operator flow is:
+The currently implemented operator flow is read-only:
 
 ```bash
 agentops-relayctl --root / activate
+```
 
+Only a missing `--root`, one exact `--root /`, or one exact `--root=/` is
+accepted. A normalized spelling such as `/.`, an alternate root, or duplicate
+root options return `host_root_required` before a scan or subprocess. This raw
+activation-only check runs after side-effect-free argument parsing so root
+values that happen to equal `activate` do not change `status`, `inspect`, or
+`install` semantics.
+
+The following confirmed flow is reserved for a later transaction slice and is
+not implemented:
+
+```bash
 agentops-relayctl \
   --root / \
   activate \
@@ -40,10 +56,11 @@ agentops-relayctl \
   --plan-sha256 <64-hex>
 ```
 
-`activate` is read-only by default. A real mutation requires both
-`--confirm-activate` and the exact plan hash returned from a fresh preview.
-Recovery remains a separate command and must bind to the retained transaction
-hash:
+The current CLI parses `--confirm-activate` and `--plan-sha256` only to reject
+either one with `activation_mutation_unavailable` before scanning or starting
+a subprocess. A future real mutation will require both exact values. Recovery
+also remains a future separate command that must bind to a retained
+transaction hash:
 
 ```bash
 agentops-relayctl \
@@ -57,11 +74,9 @@ The normal activation path must run `daemon-reload`, `enable`, and `start` as
 separate, receipted steps. It must not use `enable --now`.
 
 Confirmed activation and recovery require the canonical host root `/`.
-`--root` values other than `/` remain read-only inspection fixtures and must
-return `host_root_required` before any subprocess or write. Tests may inject an
-in-process fake systemctl adapter and a test-only filesystem effects adapter
-into the controller; neither adapter is exposed by the production CLI, and the
-production CLI must not expose a systemctl-path override.
+Tests may inject an in-process fake read-only systemctl runner through private
+helpers; no adapter is exposed by the production CLI, and the production CLI
+has no systemctl-path, root, resolver, scanner, or runner override.
 
 ## Plan Contract
 
@@ -74,7 +89,6 @@ hashes:
   "schema_id": "agentops.relay.activation-plan.v0",
   "ok": true,
   "state": "plan_ready",
-  "installed_state": "installed_valid",
   "plan_sha256": "<64-hex>",
   "release_id": "<version>-<commit12>",
   "version_id": "<version>",
@@ -262,11 +276,17 @@ The implementation must:
 - never invoke `sudo`, `pkexec`, a shell, `journalctl`, package managers, user
   management, network clients, or the Relay daemon directly.
 
-Exact permitted operations:
+The current read-only slice permits exactly one operation:
 
 ```text
 systemctl --system show agentops-mis-relay.service --no-pager \
   --property=LoadState,UnitFileState,ActiveState,SubState,Result,ExecMainStatus,FragmentPath,NeedDaemonReload,InvocationID,MainPID
+```
+
+These mutation operations remain reserved for the unimplemented confirmed
+transaction and rollback slices:
+
+```text
 systemctl --system daemon-reload
 systemctl --system enable agentops-mis-relay.service
 systemctl --system start agentops-mis-relay.service

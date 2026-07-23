@@ -50,6 +50,7 @@ EXPECTED_WHEEL_MODULES = frozenset(
         "agentops_mis_cli/http_transport.py",
         "agentops_mis_cli/redaction.py",
         "agentops_mis_cli/relay_activation.py",
+        "agentops_mis_cli/relay_activation_preview.py",
         "agentops_mis_cli/relay_activation_scan.py",
         "agentops_mis_cli/relay_admin.py",
         "agentops_mis_cli/relay_connector_service.py",
@@ -60,6 +61,7 @@ EXPECTED_WHEEL_MODULES = frozenset(
         "agentops_mis_cli/relay_host_tls_proxy.py",
         "agentops_mis_cli/relay_restart.py",
         "agentops_mis_cli/relay_sni_router.py",
+        "agentops_mis_cli/relay_systemd_read.py",
         "agentops_mis_cli/relay_tunnel.py",
         "agentops_mis_cli/runtime_lock.py",
         "agentops_mis_cli/worker.py",
@@ -2362,6 +2364,9 @@ def _build_parser() -> JsonArgumentParser:
     parser.add_argument("--root", type=Path, default=Path("/"))
     subparsers = parser.add_subparsers(dest="operation", required=True)
     subparsers.add_parser("status")
+    activate = subparsers.add_parser("activate")
+    activate.add_argument("--confirm-activate", action="store_true")
+    activate.add_argument("--plan-sha256")
     for name in ("inspect", "install"):
         command = subparsers.add_parser(name)
         command.add_argument("--bundle", type=Path, required=True)
@@ -2373,10 +2378,50 @@ def _build_parser() -> JsonArgumentParser:
 
 
 def _operation_id(argv: list[str]) -> str:
-    for value in argv:
-        if value in {"inspect", "install", "status"}:
+    index = 0
+    while index < len(argv):
+        value = argv[index]
+        if value == "--root":
+            index += 2
+            continue
+        if value.startswith("--root=") or value.startswith("-"):
+            index += 1
+            continue
+        if value in {"activate", "inspect", "install", "status"}:
             return value
+        return "cli"
     return "cli"
+
+
+def _activation_root_is_canonical(argv: list[str]) -> bool:
+    if (
+        len(argv) > 64
+        or any(
+            not isinstance(value, str)
+            or len(value) > 4096
+            or "\x00" in value
+            or any(
+                ord(character) < 32 or ord(character) == 127
+                for character in value
+            )
+            for value in argv
+        )
+    ):
+        return False
+    roots: list[str] = []
+    index = 0
+    while index < len(argv):
+        value = argv[index]
+        if value == "--root":
+            if index + 1 >= len(argv):
+                return False
+            roots.append(argv[index + 1])
+            index += 2
+            continue
+        if value.startswith("--root="):
+            roots.append(value[len("--root="):])
+        index += 1
+    return len(roots) <= 1 and (not roots or roots[0] == "/")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2385,6 +2430,28 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = _build_parser().parse_args(arguments)
         operation_id = args.operation
+        if args.operation == "activate":
+            if (
+                not _activation_root_is_canonical(arguments)
+                or str(args.root) != "/"
+            ):
+                raise RelayAdminError("host_root_required")
+            if args.confirm_activate or args.plan_sha256 is not None:
+                raise RelayAdminError("activation_mutation_unavailable")
+            from agentops_mis_cli.relay_activation_preview import (
+                RelayActivationPreviewError,
+                preview_activation,
+            )
+
+            try:
+                output = preview_activation()
+            except RelayActivationPreviewError as exc:
+                raise RelayAdminError(exc.error_id) from None
+            print(
+                json.dumps(output, ensure_ascii=True, indent=2, sort_keys=True),
+                file=sys.stdout,
+            )
+            return 0 if output.get("ok") is True else 1
         if args.operation == "status":
             output, status_code = relay_status(args.root)
             print(
