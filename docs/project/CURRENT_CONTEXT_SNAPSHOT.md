@@ -4,7 +4,7 @@
 > Repository: `geogejoy107-jpg/agentops-mis-mvp`
 > Local checkout: `agentops-mis-commercial-handoff-status-mainline`
 > Development line: `codex/local-host-remote-console`
-> Implementation baseline summarized: `706af7d2d2c0256cbc6912013e4b70e16b3ae43e`
+> Implementation baseline summarized: `9cd199b65d27718716680c5332ad842ae8228da5`
 > Snapshot commit: derive from `git rev-parse HEAD`
 > Review surface: Draft PR `#104`
 > Release status: active source development; not a release claim
@@ -54,6 +54,9 @@ The current committed line contains these latest product slices:
 - `136779e`: bounded Worker Sessions release their resources cleanly.
 - `706af7d`: Run Detail exposes a Project Context Receipt so a human can verify
   which governed context was used without exposing its body.
+- `9cd199b`: server-owned SQLite connections close on both success and failure,
+  and API-launched local Worker daemons bind to the trusted request origin
+  through start and restart.
 
 Real, explicitly confirmed local dogfood produced:
 
@@ -69,46 +72,41 @@ output therefore has not silently become canonical project knowledge.
 
 ## Installed Host Versus Source
 
-The installed Private Host is preview.41 at exact commit
-`0adbc9fb9bb569b68f226914705114fc8cbcf0f8`. It does not contain every source
-change at committed HEAD and must not be used as evidence for newer behavior.
+The installed Private Host is preview.42 at exact commit
+`9cd199b65d27718716680c5332ad842ae8228da5`, matching the current committed
+source package. Its verified pre-update backup preserved the preview.41
+authority ledger and Owner state.
 
-Local dogfood found that preview.41 could exhaust its file-descriptor budget
-during sustained API polling because Python's SQLite transaction context did
-not close connections. A controlled Host recovery restored readiness. No
-database, credential, prompt, response, transcript, or Docker data was removed.
+Installed-package load acceptance completed 2,000 concurrent Human-auth status
+requests with 20 clients. Process file descriptors remained `35 -> 35`, idle
+SQLite handles remained `0 -> 0`, and Host health stayed ready.
+
+Persistent installed Workers then completed:
+
+- Hermes task `tsk_preview42_hermes_acceptance_20260723T1553Z`, Run
+  `run_gw_903c688ae46b`;
+- OpenClaw task `tsk_preview42_openclaw_acceptance_20260723T1553Z`, Run
+  `run_gw_f8e666405437`.
+
+Each Run has one Tool Call, one passing Evaluation, one Artifact, one candidate
+Memory, one verified plan-evidence manifest, eight Runtime Events and eight
+Audit rows. Each consumed eight governed context blocks and three approved
+Memory IDs with all raw-input/output omission gates true.
 
 ## Current Uncommitted Work
 
-The worktree intentionally contains an uncommitted reliability slice:
-
-- `db_session()` closes server-managed SQLite connections while preserving
-  commit and rollback semantics;
-- all server-managed `with db()` call sites use the managed lifecycle;
-- a focused lifecycle smoke, CI entry, acceptance note, and merge-readiness
-  gate were added;
-- the Worker daemon resilience smoke now waits for daemon-state convergence
-  after task completion;
-- isolated non-default-port verification found that API-started Workers fell
-  back to port `8787`; the current worktree now binds start/restart to a trusted
-  configured base URL or the canonical request origin.
-
-Focused SQLite lifecycle, pragma, concurrency, compile, secret-scan, and diff
-checks passed during development. After fixing the request-origin defect, the
-Worker daemon smoke passed twice against a non-default isolated port; start and
-restart both retained the correct target. This worktree is still uncommitted,
-has no exact-head CI, is not packaged, and is not attributed to the installed
-Host.
+The implementation worktree is clean before this evidence-only documentation
+update. Candidate archives, extracted staging trees, UI `node_modules` and
+`dist` are temporary local build outputs and are not tracked.
 
 ## CI Truth
 
-- Exact committed-head push run `29949180220` was green.
-- PR run `29949184920` had green Python/UI portions but failed the backend lane
-  in `worker_daemon_resilience_smoke.py`.
-- The current uncommitted work has no exact-head CI evidence.
-
-Historical green CI does not close the current worktree. Re-run focused local
-verification, commit, push, and require exact new push/PR checks before release.
+- Exact `9cd199b` push run `30021569634` passed.
+- Exact `9cd199b` pull-request run `30021573934` passed.
+- The preview.42 candidate was built from that exact clean commit and installed
+  locally.
+- A later documentation-only evidence commit does not change the packaged
+  source identity; it still requires its own lightweight checks and exact CI.
 
 ## Storage And Session Retention
 
@@ -125,20 +123,19 @@ See [`CODEX_SESSION_RETENTION_ACCEPTANCE.md`](./CODEX_SESSION_RETENTION_ACCEPTAN
 
 ## Open Gates
 
-1. Commit and push the SQLite/Worker reliability slice; require exact-head CI.
-2. Package and install a later Host only after the storage preflight has at
-   least 2 GiB available.
-3. Exercise sustained Workspace/API polling and prove bounded SQLite handles on
-   the exact installed package.
-4. Repeat real governed-memory OpenClaw/Hermes dogfood on the exact installed
-   package.
-5. Complete physical remote-browser acceptance from the second Mac when that
-   endpoint is reachable.
+1. Complete physical browser-only preview.42 acceptance from the second Mac.
+2. Confirm the two new Run pages expose the Human Project Context Receipt and
+   Human review links, then sign out and confirm protected reads fail.
+3. Decide whether preview.42 should remain a local candidate or become a
+   published prerelease after physical acceptance.
+4. Keep ordinary no-Tailscale Relay and commercial multi-workspace deployment
+   as separate product tracks.
 
 ## Next Single Action
 
-Commit and push the verified SQLite/Worker reliability slice, then require green
-push and PR CI on that exact commit before packaging it.
+Commit and push the preview.42 evidence-only documentation update, remove
+temporary local build output, then perform physical second-Mac browser
+acceptance without installing AgentOps on the client.
 
 ## Project Delta
 
@@ -150,8 +147,8 @@ priority: P0
 module: Project Governance
 repository: geogejoy107-jpg/agentops-mis-mvp
 branch: codex/local-host-remote-console
-commit: 706af7d2d2c0256cbc6912013e4b70e16b3ae43e
+commit: 9cd199b65d27718716680c5332ad842ae8228da5
 updates: PROJECT_STATE.md and HANDOFF.md operational fields
 evidence: Git history, exact CI run identities, bounded MIS runtime receipts, and local verification
-next_action: commit and push the verified reliability slice, require exact-head CI, then package
+next_action: commit and push preview.42 evidence, then perform physical second-Mac browser acceptance
 ```

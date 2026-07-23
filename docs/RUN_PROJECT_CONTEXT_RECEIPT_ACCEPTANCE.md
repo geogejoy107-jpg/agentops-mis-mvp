@@ -1,7 +1,8 @@
 # Run Project Context Receipt Acceptance
 
-Status: source implementation complete; exact-head CI and packaged Host upgrade
-are separate release gates.
+Status: source implementation, exact-head CI, preview.42 installation and real
+Hermes/OpenClaw ledger acceptance complete; physical second-Mac browser
+acceptance remains open.
 
 ## Product Purpose
 
@@ -48,8 +49,14 @@ The React production build remains an exact-head CI requirement. Local package
 or npm installation should not be attempted on a Host that is below the
 documented storage floor.
 
-## Release Boundary
+## Installed Package Receipt
 
-The installed `v1.6.0-private-host-preview.41` predates this Run-detail panel.
-Do not attribute the visible Project Context Receipt to that package until a
-later exact commit is packaged and installed.
+The installed `v1.6.0-private-host-preview.42` at exact commit
+`9cd199b65d27718716680c5332ad842ae8228da5` contains this Run-detail panel.
+Persistent Hermes Run `run_gw_903c688ae46b` and OpenClaw Run
+`run_gw_f8e666405437` each consumed eight governed context blocks and three
+approved Memory IDs. Their omission gates and context-aware Evaluations passed.
+
+The Human-only aggregate evidence-report endpoint correctly rejects machine
+CLI access. Final physical browser readback from the second Mac is tracked as a
+separate acceptance gate; it must not be replaced by machine authentication.
