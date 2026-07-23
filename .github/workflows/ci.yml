@@ -151,6 +151,7 @@ jobs:
           timeout 120s python3 scripts/relay_sni_router_smoke.py
           timeout 120s python3 scripts/relay_daemon_smoke.py
           timeout 120s python3 scripts/relay_deploy_contract_smoke.py
+          timeout 120s python3 scripts/local_relay_host_e2e_smoke.py
           timeout 120s python3 scripts/relay_host_tls_proxy_smoke.py
           timeout 120s python3 scripts/relay_connector_service_smoke.py
           timeout 120s python3 scripts/private_host_relay_config_smoke.py
