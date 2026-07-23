@@ -218,6 +218,26 @@ def main() -> int:
                 require("no-store" in cache_control.lower(), f"{path} response is cacheable")
                 statuses[f"{method} {path}"] = status
 
+            approval_path = "/api/mis/agent-gateway/approvals/request"
+            status, payload, cache_control = request_json(
+                f"{base_url}{approval_path}",
+                "POST",
+            )
+            require(status == 503, f"POST {approval_path} returned {status}")
+            require(
+                payload.get("error") == "typescript_control_plane_unavailable",
+                f"{approval_path} did not enter its TypeScript/Postgres owner",
+            )
+            require(
+                payload.get("unexpected_python_proxy") is not True,
+                f"{approval_path} returned Python observer",
+            )
+            require(
+                "no-store" in cache_control.lower(),
+                f"{approval_path} response is cacheable",
+            )
+            statuses[f"POST {approval_path}"] = status
+
             with PythonObserver.lock:
                 production_upstream_hits = PythonObserver.hits
             require(production_upstream_hits == 0, "production Next reached the Python observer")
