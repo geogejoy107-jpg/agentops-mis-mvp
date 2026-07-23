@@ -191,6 +191,15 @@ def safe_error(exc: Exception | str) -> dict:
     }
 
 
+def safe_worker_result_error(result: dict) -> dict:
+    error_type = result.get("error_type") or "WorkerResultError"
+    error_message = result.get("error_message") or result.get("reason") or "worker_result_failed"
+    return {
+        "error_type": redact_text(str(error_type), 120),
+        "error_message": redact_text(str(error_message), 260),
+    }
+
+
 class WorkerCredentialError(RuntimeError):
     def __init__(self, code: str):
         super().__init__(code)
@@ -321,16 +330,25 @@ class WorkerState:
         self.write()
 
     def record_result(self, result: dict):
-        if result.get("processed"):
+        failed = worker_result_failed(result)
+        processed = bool(result.get("processed"))
+        if processed:
             self.data["processed"] = int(self.data.get("processed") or 0) + 1
+            self.data["consecutive_idle"] = 0
+        elif failed:
             self.data["consecutive_idle"] = 0
         else:
             self.data["consecutive_idle"] = int(self.data.get("consecutive_idle") or 0) + 1
         self.data["iterations"] = int(self.data.get("iterations") or 0) + 1
-        self.data["consecutive_errors"] = 0
-        self.data["last_error"] = None
+        if failed:
+            self.data["total_errors"] = int(self.data.get("total_errors") or 0) + 1
+            self.data["consecutive_errors"] = int(self.data.get("consecutive_errors") or 0) + 1
+            self.data["last_error"] = safe_worker_result_error(result)
+        else:
+            self.data["consecutive_errors"] = 0
+            self.data["last_error"] = None
         self.update(
-            status="idle" if not result.get("processed") else "completed" if result.get("ok", True) else "failed",
+            status="failed" if failed else "completed" if processed else "idle",
             last_result=result,
             last_task_id=result.get("task_id"),
             last_run_id=result.get("run_id"),
@@ -4186,13 +4204,39 @@ def main(argv: list[str] | None = None) -> int:
             result_failed_seen = result_failed_seen or worker_result_failed(result)
             once_result_failed = once_result_failed or bool(args.once and result.get("ok") is False)
             state.record_result(result)
-            emit_jsonl(args, {"event": "worker.iteration", "ok": True, "result": result, "state": state.data})
+            iteration_failed = worker_result_failed(result)
+            emit_jsonl(args, {"event": "worker.iteration", "ok": not iteration_failed, "result": result, "state": state.data})
             if result.get("processed"):
                 processed += 1
             if args.once:
                 break
             if args.max_tasks and processed >= args.max_tasks:
                 break
+            if iteration_failed:
+                error = state.data.get("last_error") or safe_worker_result_error(result)
+                safe_worker_heartbeat(client, args, "error", error["error_message"], force=True)
+                if not args.continue_on_error:
+                    fatal_failure = True
+                    state.stop("failed")
+                    break
+                if int(state.data.get("consecutive_errors") or 0) >= max(int(args.max_errors or 1), 1):
+                    fatal_failure = True
+                    state.stop("failed_max_errors")
+                    break
+                sleep_sec = backoff_sleep(
+                    args.poll_interval,
+                    args.error_backoff_max,
+                    int(state.data.get("consecutive_errors") or 1),
+                    args.backoff_factor,
+                )
+                state.update(
+                    status="sleeping_after_error",
+                    last_sleep_sec=sleep_sec,
+                    next_sleep_sec=sleep_sec,
+                    last_sleep_reason="error_backoff",
+                )
+                time.sleep(sleep_sec)
+                continue
             if result.get("processed"):
                 sleep_sec = max(args.poll_interval, 0.0)
                 sleep_reason = "post_task"

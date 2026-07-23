@@ -9,6 +9,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -146,6 +147,35 @@ def main() -> int:
         "idle result without explicit failure was treated as Worker failure",
         failures,
     )
+    with tempfile.TemporaryDirectory(prefix="agentops-worker-state-") as temp_dir:
+        state_args = worker.build_parser().parse_args([
+            "--state-path",
+            str(Path(temp_dir) / "worker.state.json"),
+            "--continue-on-error",
+        ])
+        state = worker.WorkerState(state_args)
+        state.record_result({
+            "processed": False,
+            "ok": False,
+            "error_type": "FixtureExplicitFailure",
+            "error_message": "bounded explicit failure",
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        })
+        require(state.data.get("status") == "failed", "explicit failure state was reported as idle", failures)
+        require(state.data.get("total_errors") == 1, "explicit failure did not increment total errors", failures)
+        require(state.data.get("consecutive_errors") == 1, "explicit failure did not increment consecutive errors", failures)
+        require(state.data.get("consecutive_idle") == 0, "explicit failure incremented idle count", failures)
+        require(
+            (state.data.get("last_error") or {}).get("error_type") == "FixtureExplicitFailure",
+            "explicit failure lost bounded error evidence",
+            failures,
+        )
+        state.record_result({"processed": False, "reason": "no_task"})
+        require(state.data.get("status") == "idle", "healthy idle result did not restore idle state", failures)
+        require(state.data.get("consecutive_errors") == 0, "healthy idle result did not clear consecutive errors", failures)
+        require(state.data.get("consecutive_idle") == 1, "healthy idle result did not increment idle count", failures)
+        require(state.data.get("last_error") is None, "healthy idle result retained stale error evidence", failures)
 
     sessions: list[dict] = []
     sessions_omitted = 0
@@ -168,6 +198,9 @@ def main() -> int:
         "daemon_result_history_bounded": len(history) == 20 and omitted == 7,
         "daemon_session_history_bounded": len(sessions) == 20 and sessions_omitted == 7,
         "explicit_failure_semantics": worker.worker_result_failed({"processed": False, "ok": False}),
+        "explicit_failure_state_accounting": state.data.get("status") == "idle"
+        and state.data.get("consecutive_errors") == 0
+        and state.data.get("consecutive_idle") == 1,
         "failures": failures,
         "live_execution_performed": False,
         "token_omitted": True,
