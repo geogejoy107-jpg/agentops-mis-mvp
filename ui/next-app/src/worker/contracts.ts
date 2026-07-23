@@ -114,6 +114,8 @@ export type CommercialWorkerReceipt = {
   plan_evidence_pass?: boolean;
   customer_delivery_approval_requested?: boolean;
   customer_delivery_approval_id?: string;
+  customer_delivery_approval_outcome?: string;
+  customer_delivery_approval_control_plane?: string;
   provider_call_performed: boolean;
   dry_run: boolean;
   ledger_evidence_complete?: boolean;

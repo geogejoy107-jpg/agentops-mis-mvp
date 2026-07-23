@@ -31,7 +31,7 @@ DEFAULT_SOURCE_ROOT = Path(__file__).resolve().parents[1]
 ROOT = DEFAULT_SOURCE_ROOT
 SCRIPTS = ROOT / "scripts"
 NEXT_APP = ROOT / "ui" / "next-app"
-CONTRACT_ID = "nextjs_postgres_real_worker_human_review_v2"
+CONTRACT_ID = "nextjs_postgres_real_worker_human_review_v3"
 WORKSPACE_ID = "ws_real_worker_human_review"
 OTHER_WORKSPACE_ID = "ws_real_worker_human_review_other"
 REQUESTER_ID = "usr_founder"
@@ -269,6 +269,7 @@ def resolve_source_root(value: str) -> Path:
         source_root / "scripts" / "agent_worker.py",
         source_root / "migrations" / "postgres" / "20260724_current_main_commercial_baseline.sql",
         source_root / "ui" / "next-app" / "scripts" / "bootstrap-owner.ts",
+        source_root / "ui" / "next-app" / "scripts" / "commercial-worker.ts",
         source_root / "ui" / "next-app" / "package.json",
     ]
     if not source_root.is_dir() or not all(path.is_file() for path in required):
@@ -519,54 +520,133 @@ def run_worker(
     hermes_url: str,
     openclaw_bin: str,
     sensitive: list[str],
+    worker_implementation: str,
+    node: str,
 ) -> dict[str, Any]:
     agent_id = f"agt_real_{runtime}_review"
-    command = [
-        sys.executable,
-        str(SCRIPTS / "agent_worker.py"),
-        "--base-url",
-        base_url,
-        "--workspace-id",
-        WORKSPACE_ID,
-        "--agent-id",
-        agent_id,
-        "--adapter",
-        runtime,
-        "--once",
-        "--confirm-run",
-        "--request-customer-delivery-approval",
-        "--adapter-max-attempts",
-        "1",
-    ]
-    if runtime == "hermes":
-        command.extend(["--hermes-gateway-url", hermes_url, "--hermes-model", "hermes-agent", "--hermes-timeout", "180"])
+    if worker_implementation == "typescript":
+        command = [
+            node,
+            str(NEXT_APP / "node_modules" / "tsx" / "dist" / "cli.mjs"),
+            str(NEXT_APP / "scripts" / "commercial-worker.ts"),
+            "--base-url",
+            base_url,
+            "--workspace-id",
+            WORKSPACE_ID,
+            "--agent-id",
+            agent_id,
+            "--task-id",
+            f"tsk_real_{runtime}_review",
+            "--adapter",
+            runtime,
+            "--once",
+            "--confirm-run",
+            "--allow-insecure-loopback",
+            "--max-adapter-attempts",
+            "1",
+        ]
+        if runtime == "hermes":
+            command.extend([
+                "--hermes-gateway-url",
+                hermes_url,
+                "--hermes-model",
+                "hermes-agent",
+                "--hermes-timeout-ms",
+                "180000",
+            ])
+        else:
+            command.extend([
+                "--openclaw-bin",
+                openclaw_bin,
+                "--openclaw-agent",
+                "main",
+                "--openclaw-timeout-seconds",
+                "180",
+                "--working-directory",
+                str(ROOT),
+            ])
     else:
-        command.extend(["--openclaw-bin", openclaw_bin, "--openclaw-agent", "main", "--openclaw-timeout", "180"])
+        command = [
+            sys.executable,
+            str(SCRIPTS / "agent_worker.py"),
+            "--base-url",
+            base_url,
+            "--workspace-id",
+            WORKSPACE_ID,
+            "--agent-id",
+            agent_id,
+            "--adapter",
+            runtime,
+            "--once",
+            "--confirm-run",
+            "--request-customer-delivery-approval",
+            "--adapter-max-attempts",
+            "1",
+        ]
+        if runtime == "hermes":
+            command.extend([
+                "--hermes-gateway-url",
+                hermes_url,
+                "--hermes-model",
+                "hermes-agent",
+                "--hermes-timeout",
+                "180",
+            ])
+        else:
+            command.extend([
+                "--openclaw-bin",
+                openclaw_bin,
+                "--openclaw-agent",
+                "main",
+                "--openclaw-timeout",
+                "180",
+            ])
     env = os.environ.copy()
     env["AGENTOPS_API_KEY"] = token
+    env["AGENTOPS_AGENT_TOKEN"] = token
+    env["NODE_ENV"] = "production"
     completed = subprocess.run(
         command,
-        cwd=ROOT,
+        cwd=NEXT_APP if worker_implementation == "typescript" else ROOT,
         env=env,
         text=True,
         capture_output=True,
         timeout=240,
         check=False,
     )
+    if token in completed.stdout or token in completed.stderr:
+        raise RuntimeError(f"{runtime} Worker output exposed its Agent Gateway credential")
     try:
         payload = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(redact(f"{runtime} Worker returned invalid JSON: {completed.stdout[-1600:]}", sensitive)) from exc
+        stdout_bytes = completed.stdout.encode("utf-8", errors="replace")
+        stderr_bytes = completed.stderr.encode("utf-8", errors="replace")
+        failure = {
+            "worker_implementation": worker_implementation,
+            "returncode": completed.returncode,
+            "stdout_sha256": hashlib.sha256(stdout_bytes).hexdigest(),
+            "stdout_size_bytes": len(stdout_bytes),
+            "stderr_sha256": hashlib.sha256(stderr_bytes).hexdigest(),
+            "stderr_size_bytes": len(stderr_bytes),
+            "raw_worker_output_omitted": True,
+        }
+        raise RuntimeError(
+            f"{runtime} Worker returned invalid JSON: "
+            f"{json.dumps(failure, sort_keys=True)}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{runtime} Worker returned a non-object receipt")
     if completed.returncode != 0:
         state = payload.get("state") if isinstance(payload, dict) else None
         last_result = state.get("last_result") if isinstance(state, dict) else None
         last_error = state.get("last_error") if isinstance(state, dict) else None
         results = payload.get("results") if isinstance(payload, dict) else None
         first_result = results[0] if isinstance(results, list) and results else None
+        direct_result = payload if worker_implementation == "typescript" else None
         safe_last_result = {
-            key: last_result.get(key)
+            key: (last_result or direct_result).get(key)
             for key in (
-                "adapter",
+                "runtime",
                 "dry_run",
                 "ok",
                 "processed",
@@ -574,11 +654,15 @@ def run_worker(
                 "reason",
                 "run_id",
                 "task_id",
+                "ledger_evidence_complete",
+                "manual_reconciliation_required",
             )
-            if isinstance(last_result, dict) and key in last_result
+            if isinstance(last_result or direct_result, dict)
+            and key in (last_result or direct_result)
         }
         stderr_bytes = completed.stderr.encode("utf-8", errors="replace")
         failure = {
+            "worker_implementation": worker_implementation,
             "returncode": completed.returncode,
             "status": state.get("status") if isinstance(state, dict) else None,
             "last_result": safe_last_result or None,
@@ -597,8 +681,6 @@ def run_worker(
         raise RuntimeError(redact(f"{runtime} Worker failed: {json.dumps(failure, ensure_ascii=False, sort_keys=True)}", sensitive))
     if not payload.get("ok") or payload.get("processed") != 1:
         raise RuntimeError(redact(f"{runtime} Worker did not complete one task: {payload}", sensitive))
-    if token in completed.stdout or token in completed.stderr:
-        raise RuntimeError(f"{runtime} Worker output exposed its Agent Gateway credential")
     return payload
 
 
@@ -608,7 +690,12 @@ def check_runtime_evidence(
     worker_payload: dict[str, Any],
     sensitive: list[str],
 ) -> dict[str, Any]:
-    iteration = (worker_payload.get("results") or [{}])[0]
+    results = worker_payload.get("results")
+    iteration = (
+        results[0]
+        if isinstance(results, list) and results and isinstance(results[0], dict)
+        else worker_payload
+    )
     run_id = str(iteration.get("run_id") or "")
     if (
         not run_id.startswith("run_gw_")
@@ -1623,6 +1710,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run real Hermes/OpenClaw Worker -> Human Review through Next/Postgres only.")
     parser.add_argument("--postgres-dsn", required=True, help="External Postgres URL; the smoke uses and drops an isolated schema.")
     parser.add_argument("--adapter", action="append", choices=["hermes", "openclaw"], default=[])
+    parser.add_argument(
+        "--worker-implementation",
+        choices=["typescript", "python"],
+        default="typescript",
+        help="Provider-executing Worker implementation; commercial acceptance defaults to TypeScript.",
+    )
     parser.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642"))
     parser.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", shutil.which("openclaw") or "/opt/homebrew/bin/openclaw"))
     parser.add_argument(
@@ -1642,6 +1735,8 @@ def main() -> int:
             "error": str(exc),
             "next_runtime_mode": "production_start",
             "python_api_started": False,
+            "worker_implementation": args.worker_implementation,
+            "python_worker_started": False,
             "credentials_omitted": True,
         }, [])
         return 1
@@ -1657,6 +1752,7 @@ def main() -> int:
             "contract": CONTRACT_ID,
             "error": "next_runtime_unavailable",
             "next_runtime_mode": "production_start",
+            "worker_implementation": args.worker_implementation,
         }, [])
         return 1
     if "openclaw" in adapters and not Path(args.openclaw_bin).exists():
@@ -1665,6 +1761,7 @@ def main() -> int:
             "contract": CONTRACT_ID,
             "error": "openclaw_binary_unavailable",
             "next_runtime_mode": "production_start",
+            "worker_implementation": args.worker_implementation,
         }, [])
         return 1
 
@@ -1721,6 +1818,8 @@ def main() -> int:
             "tracked_worktree_fingerprint_after_acceptance": tracked_after_failure or None,
             "tracked_worktree_unchanged": not mutation_detected,
             "python_api_started": False,
+            "worker_implementation": args.worker_implementation,
+            "python_worker_started": False,
             "real_runtime_execution_performed": False,
             "credentials_omitted": True,
         }, [str(ROOT)])
@@ -1771,6 +1870,7 @@ def main() -> int:
     human_receipts: dict[str, Any] = {}
     manifest_authority_receipts: dict[str, Any] = {}
     tracked_after_acceptance = ""
+    worker_process_started = False
     try:
         setup = NodePgAdapter(args.postgres_dsn, node)
         setup.execute(f'CREATE SCHEMA "{schema}"')
@@ -1835,6 +1935,7 @@ def main() -> int:
         wait_for_next(base_url, next_proc, sensitive)
 
         for runtime in adapters:
+            worker_process_started = True
             worker_payload = run_worker(
                 runtime,
                 base_url,
@@ -1842,6 +1943,8 @@ def main() -> int:
                 args.hermes_gateway_url,
                 args.openclaw_bin,
                 sensitive,
+                args.worker_implementation,
+                node,
             )
             worker_receipts[runtime] = check_runtime_evidence(
                 adapter,
@@ -1895,6 +1998,15 @@ def main() -> int:
             "tracked_worktree_unchanged": True,
             "python_api_started": False,
             "python_or_sqlite_commercial_default": False,
+            "worker_implementation": args.worker_implementation,
+            "typescript_worker_started": (
+                worker_process_started
+                and args.worker_implementation == "typescript"
+            ),
+            "python_worker_started": (
+                worker_process_started
+                and args.worker_implementation == "python"
+            ),
             "real_runtime_execution_performed": all(
                 receipt.get("provider_call_performed") is True and receipt.get("dry_run") is False
                 for receipt in worker_receipts.values()
@@ -1957,6 +2069,15 @@ def main() -> int:
             "tracked_worktree_fingerprint_after_acceptance": tracked_after_acceptance or None,
             "tracked_worktree_unchanged": not mutation_detected,
             "python_api_started": False,
+            "worker_implementation": args.worker_implementation,
+            "typescript_worker_started": (
+                worker_process_started
+                and args.worker_implementation == "typescript"
+            ),
+            "python_worker_started": (
+                worker_process_started
+                and args.worker_implementation == "python"
+            ),
             "real_runtime_execution_performed": bool(worker_receipts) and all(
                 receipt.get("provider_call_performed") is True and receipt.get("dry_run") is False
                 for receipt in worker_receipts.values()

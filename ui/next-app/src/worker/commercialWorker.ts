@@ -766,6 +766,8 @@ export class CommercialWorker {
     let manifestPass = false;
     let approvalRequested = false;
     let approvalId: string | undefined;
+    let approvalOutcome: string | undefined;
+    let approvalControlPlane: string | undefined;
     if (evaluationPass) {
       const manifest = await this.#gateway.post<Record<string, unknown>>(
         `${API}/plan-evidence-manifests`,
@@ -805,6 +807,8 @@ export class CommercialWorker {
         approvalRequested = true;
         approvalId = stringValue(objectValue(approval.approval).approval_id)
           || undefined;
+        approvalOutcome = stringValue(approval.outcome) || undefined;
+        approvalControlPlane = stringValue(approval.control_plane) || undefined;
       }
     }
     await this.#safeHeartbeat(
@@ -827,6 +831,8 @@ export class CommercialWorker {
       plan_evidence_pass: manifestPass,
       customer_delivery_approval_requested: approvalRequested,
       customer_delivery_approval_id: approvalId,
+      customer_delivery_approval_outcome: approvalOutcome,
+      customer_delivery_approval_control_plane: approvalControlPlane,
       provider_call_performed: result.providerCallPerformed,
       dry_run: result.dryRun,
       ledger_evidence_complete: true,

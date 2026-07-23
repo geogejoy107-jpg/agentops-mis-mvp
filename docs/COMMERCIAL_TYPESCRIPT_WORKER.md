@@ -109,3 +109,21 @@ If the provider ran but later evidence persistence fails, the Worker returns:
 That state must be reconciled before any retry. Mock adapters and deterministic
 contracts are CI evidence only; commercial product acceptance requires frozen
 source plus explicitly confirmed real Hermes and OpenClaw runs.
+
+## Real Runtime Acceptance
+
+Run the frozen-source acceptance harness against an isolated PostgreSQL
+database and the production Next.js server:
+
+```bash
+python3 scripts/nextjs_postgres_real_worker_human_review_smoke.py \
+  --postgres-dsn "postgresql://<user>:<password>@127.0.0.1:<port>/<database>" \
+  --worker-implementation typescript \
+  --adapter hermes \
+  --adapter openclaw
+```
+
+The Python process is test orchestration only. A passing commercial receipt
+must report the TypeScript Worker started, the Python Worker and Python API did
+not start, a real provider call ran with `dry_run=false`, and the tracked source
+fingerprint remained unchanged for the full run.

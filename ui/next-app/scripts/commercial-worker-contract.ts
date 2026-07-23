@@ -19,7 +19,7 @@ import {
   stableHash,
 } from "../src/worker/redaction";
 
-const TOKEN = "agtok_contract_only_0123456789abcdef";
+const TOKEN = "contract-bearer-fixture-0123456789abcdef";
 const TASK_CANARY = "credential_canary_abcdefghijklmnop";
 const OUTPUT_CANARY = "token_canary_qrstuvwxyz123456";
 const WORKSPACE_ID = "ws_commercial_ts_contract";
@@ -456,6 +456,19 @@ async function workerSources() {
 async function sourceBoundaryContract() {
   const sources = await workerSources();
   const combined = sources.map((item) => item.source).join("\n");
+  const [cliSource, realAcceptanceSource] = await Promise.all([
+    readFile(
+      new URL("./commercial-worker.ts", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL(
+        "../../../scripts/nextjs_postgres_real_worker_human_review_smoke.py",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ]);
   assert.doesNotMatch(
     combined,
     /\b(?:python3?|sqlite3?|agentops_mis_cli)\b/i,
@@ -468,6 +481,13 @@ async function sourceBoundaryContract() {
   assert.match(orchestrator, /\/api\/mis\/agent-gateway/);
   assert.match(orchestrator, /provider_call_performed/);
   assert.match(orchestrator, /plan-evidence-manifests/);
+  assert.match(cliSource, /gateway_credentials_must_come_from_environment/);
+  assert.match(cliSource, /process\.env\.AGENTOPS_AGENT_TOKEN/);
+  assert.doesNotMatch(cliSource, /values\.get\("--(?:api-key|token)/);
+  assert.match(realAcceptanceSource, /default="typescript"/);
+  assert.match(realAcceptanceSource, /commercial-worker\.ts/);
+  assert.match(realAcceptanceSource, /"python_worker_started"/);
+  assert.match(realAcceptanceSource, /"typescript_worker_started"/);
   return { files: sources.length, python_dependency: false, sqlite_dependency: false };
 }
 
@@ -567,6 +587,11 @@ async function main() {
     assert.equal(happy.manual_reconciliation_required, false);
     assert.equal(happy.plan_evidence_pass, true);
     assert.equal(happy.customer_delivery_approval_requested, true);
+    assert.equal(happy.customer_delivery_approval_outcome, "created");
+    assert.equal(
+      happy.customer_delivery_approval_control_plane,
+      "typescript_postgres",
+    );
     assert.equal(adapter.calls, 1);
     assert.equal(JSON.stringify(happy).includes(TOKEN), false);
     assert.equal(JSON.stringify(happy).includes(TASK_CANARY), false);

@@ -82,7 +82,9 @@ export class HermesAdapter implements RuntimeAdapter {
       `${this.#gatewayUrl.pathname}/v1/chat/completions`,
       this.#gatewayUrl,
     );
-    const targetResource = `hermes://gateway/${sha256(endpoint.origin).slice(0, 20)}`;
+    const targetResource = `hermes://gateway/${
+      sha256(endpoint.origin).slice(0, 20)
+    }/v1/chat/completions`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
     let providerCallPerformed = false;
