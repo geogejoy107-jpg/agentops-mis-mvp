@@ -924,15 +924,16 @@ def main() -> int:
             WHERE component='human_session_memory_review'""",
         )
         adapter.commit()
-        checks["isolated_postgres_schema_v4_ready"] = bool(
+        checks["isolated_postgres_schema_v5_ready"] = bool(
             migrated.get("ready") is True
             and ready.get("ready") is True
             and schema_row
-            and schema_row["version"] == "20260719_approval_kind_bindings_v4"
-            and schema_row["schema_contract"] == "agentops-human-session-approval-kind-bindings-contract-v4"
+            and schema_row["version"] == "20260724_customer_delivery_run_unique_v5"
+            and schema_row["schema_contract"]
+            == "agentops-human-session-customer-delivery-run-unique-contract-v5"
         )
-        if not checks["isolated_postgres_schema_v4_ready"]:
-            raise AssertionError("Isolated Postgres approval schema is not v4-ready")
+        if not checks["isolated_postgres_schema_v5_ready"]:
+            raise AssertionError("Isolated Postgres approval schema is not v5-ready")
 
         seed(adapter, approver_password, viewer_password)
         checks["fixture_contains_approve_reject_and_foreign_workspace"] = True

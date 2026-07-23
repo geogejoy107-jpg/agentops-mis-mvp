@@ -709,6 +709,13 @@ def main() -> int:
         bool(re.search(r'AGENTOPS_POSTGRES_IMAGE:\s+"postgres:16\.14-alpine3\.23@sha256:[0-9a-f]{64}"', text)),
         "Postgres image is not tag-and-digest pinned",
     )
+    recovery_index = text.index("--command-id byoc_acceptance")
+    deployment_runtime_index = text.index("--command-id deployment_postgres_write")
+    next_runtime_index = text.index("--command-id nextjs_postgres_write")
+    require(
+        recovery_index < deployment_runtime_index < next_runtime_index,
+        "BYOC recovery must run before Postgres and Next runtime fixtures",
+    )
     require(
         "runs-on: [self-hosted, agentops-real-runtime]" in real_runtime_text,
         "real Runtime workflow lost its dedicated self-hosted runner label",
@@ -762,6 +769,7 @@ def main() -> int:
         "node": "20.19.4",
         "playwright_cli": "0.1.17",
         "postgres_tag_and_digest_required": True,
+        "byoc_recovery_precedes_runtime_fixtures": True,
         "real_runtime_protected_environment_required": True,
         "real_runtime_checkout_credentials_persisted": False,
         "real_runtime_npm_lifecycle_scripts_enabled": False,

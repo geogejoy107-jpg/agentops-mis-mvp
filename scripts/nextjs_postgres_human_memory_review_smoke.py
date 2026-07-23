@@ -31,6 +31,8 @@ SCRIPTS = ROOT / "scripts"
 NEXT_APP = ROOT / "ui" / "next-app"
 MIGRATION = ROOT / "migrations" / "postgres" / "20260718_human_session_memory_review.sql"
 CONTRACT_ID = "nextjs_postgres_human_memory_review_v1"
+CURRENT_SCHEMA_VERSION = "20260724_customer_delivery_run_unique_v5"
+CURRENT_SCHEMA_CONTRACT = "agentops-human-session-customer-delivery-run-unique-contract-v5"
 
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(SCRIPTS))
@@ -961,8 +963,8 @@ def main() -> int:
                 and schema_contract_payload.get("contract") == "human_memory_schema_readiness_v5"
                 and all((schema_contract_payload.get("checks") or {}).values())
                 and schema_version is not None
-                and schema_version["version"] == "20260719_approval_kind_bindings_v4"
-                and schema_version["schema_contract"] == "agentops-human-session-approval-kind-bindings-contract-v4",
+                and schema_version["version"] == CURRENT_SCHEMA_VERSION
+                and schema_version["schema_contract"] == CURRENT_SCHEMA_CONTRACT,
             )
 
             scrypt_contract = subprocess.run(
@@ -1005,7 +1007,7 @@ def main() -> int:
                 and scrypt_payload.get("scrypt_work_count") == 4
                 and first_bootstrap.returncode == 0
                 and first_bootstrap_payload.get("ok") is True
-                and first_bootstrap_payload.get("schema_version") == "20260719_approval_kind_bindings_v4"
+                and first_bootstrap_payload.get("schema_version") == CURRENT_SCHEMA_VERSION
                 and second_bootstrap.returncode != 0
                 and second_bootstrap_payload.get("error") == "owner_already_initialized"
                 and owner_count == 1

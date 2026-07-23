@@ -28,6 +28,7 @@ import {
   HUMAN_MEMORY_SCHEMA_V1_CHECKSUM,
   HUMAN_MEMORY_SCHEMA_V2_CHECKSUM,
   HUMAN_MEMORY_SCHEMA_V3_CHECKSUM,
+  HUMAN_MEMORY_SCHEMA_V4_CHECKSUM,
 } from "../src/server/controlPlane/schemaReadiness";
 import {
   listWorkspaceApprovals,
@@ -56,6 +57,9 @@ const APPROVAL_MIGRATION_PATH = fileURLToPath(
 );
 const APPROVAL_KIND_MIGRATION_PATH = fileURLToPath(
   new URL("../../../migrations/postgres/20260719_approval_kind_bindings_v4.sql", import.meta.url),
+);
+const CUSTOMER_DELIVERY_UNIQUE_MIGRATION_PATH = fileURLToPath(
+  new URL("../../../migrations/postgres/20260724_customer_delivery_run_unique_v5.sql", import.meta.url),
 );
 const WORKSPACE_A = "ws_read_model_a";
 const WORKSPACE_B = "ws_read_model_b";
@@ -392,11 +396,17 @@ async function applyHumanSessionMigration(client: Client) {
   const onlineIndexMigrationBytes = await readFile(ONLINE_INDEX_MIGRATION_PATH);
   const approvalMigrationBytes = await readFile(APPROVAL_MIGRATION_PATH);
   const approvalKindMigrationBytes = await readFile(APPROVAL_KIND_MIGRATION_PATH);
+  const customerDeliveryUniqueMigrationBytes = await readFile(
+    CUSTOMER_DELIVERY_UNIQUE_MIGRATION_PATH,
+  );
   const baseMigrationChecksum = createHash("sha256").update(baseMigrationBytes).digest("hex");
   const upgradeMigrationChecksum = createHash("sha256").update(upgradeMigrationBytes).digest("hex");
   const onlineIndexMigrationChecksum = createHash("sha256").update(onlineIndexMigrationBytes).digest("hex");
   const approvalMigrationChecksum = createHash("sha256").update(approvalMigrationBytes).digest("hex");
   const approvalKindMigrationChecksum = createHash("sha256").update(approvalKindMigrationBytes).digest("hex");
+  const customerDeliveryUniqueMigrationChecksum = createHash("sha256")
+    .update(customerDeliveryUniqueMigrationBytes)
+    .digest("hex");
   assert.equal(baseMigrationChecksum, HUMAN_MEMORY_SCHEMA_V1_CHECKSUM, "base_migration_checksum_fixture_mismatch");
   assert.equal(upgradeMigrationChecksum, HUMAN_MEMORY_SCHEMA_V2_CHECKSUM, "upgrade_migration_checksum_fixture_mismatch");
   assert.equal(
@@ -407,13 +417,19 @@ async function applyHumanSessionMigration(client: Client) {
   assert.equal(approvalMigrationChecksum, HUMAN_MEMORY_SCHEMA_V3_CHECKSUM, "approval_migration_checksum_fixture_mismatch");
   assert.equal(
     approvalKindMigrationChecksum,
-    HUMAN_MEMORY_SCHEMA_CHECKSUM,
+    HUMAN_MEMORY_SCHEMA_V4_CHECKSUM,
     "approval_kind_migration_checksum_fixture_mismatch",
+  );
+  assert.equal(
+    customerDeliveryUniqueMigrationChecksum,
+    HUMAN_MEMORY_SCHEMA_CHECKSUM,
+    "customer_delivery_unique_migration_checksum_fixture_mismatch",
   );
   await client.query(baseMigrationBytes.toString("utf8"));
   await client.query(upgradeMigrationBytes.toString("utf8"));
   await client.query(approvalMigrationBytes.toString("utf8"));
   await client.query(approvalKindMigrationBytes.toString("utf8"));
+  await client.query(customerDeliveryUniqueMigrationBytes.toString("utf8"));
   await client.query(onlineIndexMigrationBytes.toString("utf8"));
   await client.query(
     `INSERT INTO agentops_schema_migrations(
