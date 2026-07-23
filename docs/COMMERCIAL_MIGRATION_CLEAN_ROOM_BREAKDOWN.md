@@ -164,20 +164,42 @@ Exit gate:
 
 As of 2026-07-24:
 
-- Lane 0 is implemented and locally accepted on the fresh-main integration
-  branch.
-- Lane 1 has an explicit current-main PostgreSQL baseline and v1-v5 bridge
-  accepted against real PostgreSQL 16; the TypeScript runner/readiness owner is
-  still in progress.
-- The Worker has an explicit, default-off customer-delivery review request, but
-  the fresh-main TypeScript/PostgreSQL approval owner is still in progress.
-- Historical real Hermes/OpenClaw evidence is valid for the evidence branch
-  only. Fresh-main real-runtime acceptance has not yet been claimed.
-- Lanes 2 through 7 remain partially open. Release, handoff, and merge authority
-  are false.
+- Lane 0 is implemented. Production and shared Vite builds resolve only to the
+  Next.js `/api/mis` control plane and fail at build time if Python proxy mode,
+  `/mis-api`, credential-bearing URLs, or insecure remote HTTP are selected.
+  Free Local retains the explicit loopback Python compatibility path.
+- Lane 1 has a checksum-pinned nine-migration manifest, schema contract v8,
+  transactional TypeScript runner/readiness ownership, and real PostgreSQL 16
+  bootstrap and contract coverage.
+- Lane 2 has direct TypeScript/PostgreSQL owners for Agent identity, sessions,
+  task claim, Agent Plans, runs, and governed evidence. The commercial
+  TypeScript Worker uses those HTTP owners and has no Python, SQLite, or direct
+  database dependency.
+- Lane 3 owns customer-delivery request creation and Human Session approval
+  decisions, including workspace, CSRF, immutable replay, and sealed evidence
+  checks.
+- Lane 4 owns PreparedAction creation, approval binding, execution leases,
+  terminal receipts, and reconciliation gates.
+- Frozen commit `72a1b9f` passed the complete real Hermes and real OpenClaw
+  Human review flow against the same source fingerprint. Both receipts reported
+  the TypeScript Worker started, no Python Worker or Python API started,
+  `provider_call_performed=true`, and `dry_run=false`.
+- Lane 5 is in progress: the commercial UI transport boundary is owned, while
+  Human and Agent task/run/evidence read models are being completed.
+- Lane 6 remains partial. Agent registration, child sessions, and heartbeat are
+  owned; Human enrollment administration, commercial entitlements, quotas, and
+  policy ownership remain open.
+- Lane 7 remains open for customer packaging, BYOC, upgrade, backup/restore,
+  rollback, supply-chain receipts, and final promotion.
 
-The next slices are to finish Lane 1 startup readiness and Lane 3 customer
-delivery ownership, then advance Lane 4 prepared-action execution authority.
+Commits after `72a1b9f` are not covered by that frozen-source runtime receipt.
+Release, handoff, and merge authority remain false until the remaining read,
+enrollment, entitlement, deployment, and promotion gates pass and the final
+source commit is rerun through both real runtimes.
+
+The next slices are Lane 5 Human and Agent read models, then Lane 6 enrollment
+and entitlement ownership, followed by Lane 7 customer-environment deployment,
+upgrade, rollback, and final dual-runtime promotion.
 
 ## Definition Of Done
 

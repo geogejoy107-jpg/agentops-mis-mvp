@@ -7,6 +7,10 @@ Status date: 2026-07-24
 The following `/api/mis` routes have specific Next.js route files and direct
 TypeScript/PostgreSQL owners:
 
+- `POST /agent-gateway/register`
+- `POST /agent-gateway/session/create`
+- `POST /agent-gateway/heartbeat`
+- `GET /agent-gateway/status`
 - `GET /agent-gateway/tasks/pull`
 - `GET /agent-gateway/tasks/:taskId`
 - `POST /agent-gateway/tasks/:taskId/claim`
@@ -18,6 +22,15 @@ TypeScript/PostgreSQL owners:
 - `POST /agent-gateway/evaluations/submit`
 - `POST /agent-gateway/artifacts`
 - `POST /agent-gateway/plan-evidence-manifests`
+- `POST /agent-gateway/runtime-events`
+- `POST /agent-gateway/audit`
+- `POST /agent-gateway/memories/propose`
+- `POST /agent-gateway/knowledge/index`
+- `GET /agent-gateway/knowledge/evidence-packet`
+- `GET /agent-gateway/knowledge/retrieval-evidence-packet`
+- `POST /agent-gateway/approvals/request`
+- `POST /agent-gateway/prepared-actions`
+- `GET|POST /agent-gateway/prepared-actions/:actionId/*`
 
 Production execution uses the shared Agent Gateway token/session authority,
 PostgreSQL transactions, row and advisory locks, workspace/agent/task/run
@@ -59,20 +72,28 @@ schema, applies the current migration runner, and covers:
 route ownership, bounded bodies, explicit Free Local proxy switch, and absence
 of Python process/proxy calls in production owners.
 
-## Still Not Owned By This Slice
+The complete Human review acceptance also covers the first-party Human Session
+owners for login, logout, current session, approval list/detail/decision,
+candidate Memory review, and operator loop supervision.
 
-This slice does not migrate or claim production ownership for:
+Frozen commit `72a1b9f` passed the full real-runtime acceptance separately with
+Hermes and OpenClaw against the same source fingerprint. Both runs used the
+TypeScript Worker and PostgreSQL 16, performed a real provider call with
+`dry_run=false`, and started neither the Python Worker nor Python API.
 
-- Knowledge routes
-- Agent register or agent heartbeat
-- Gateway audit write
-- Runtime Events write
-- Memory routes
-- Prepared Action routes
-- Human approval decisions
-- read-model and supervision routes outside the task detail above
+## Still Open
 
-Because the current Worker also uses some of those routes, this status is not a
-fresh-main real Hermes/OpenClaw closed-loop or commercial release claim. That
-acceptance must run only after the remaining Worker-required owners are
-integrated on one frozen commit.
+The broader commercial product still needs direct production ownership and
+acceptance for:
+
+- Human Session task, run, graph, tool, evaluation, artifact, audit, and
+  evidence read models
+- Agent-scoped list and detail read models needed by supervision workflows
+- Human enrollment administration, one-time credential issue/revocation,
+  entitlements, quotas, and commercial policy decisions
+- remaining browser dashboard, agent, connector, and deployment workflows
+- BYOC packaging, upgrade, backup/restore, rollback, and promotion receipts
+
+Commits after `72a1b9f` require a new same-SHA Hermes/OpenClaw run before any
+release claim. This status therefore records route ownership and prior frozen
+runtime proof, not current-head commercial release authority.
