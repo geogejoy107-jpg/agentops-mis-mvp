@@ -109,8 +109,11 @@ def main() -> int:
     sdist_has_unit = False
     sdist_has_config_example = False
     sdist_has_acceptance = False
+    sdist_has_pkg_info = False
+    sdist_pkg_info_matches = False
     wheel_reproducible = False
     wheel_metadata_normalized = False
+    prepared_metadata_round_trip = False
     sdist_reproducible = False
     sdist_metadata_normalized = False
     unit_payload = ""
@@ -153,6 +156,32 @@ def main() -> int:
                     wheel_scripts = entry_points(wheel.read(entry_name).decode("utf-8"))
                 wheel_has_unit = any(name.endswith("/agentops-mis-relay.service") for name in names)
 
+            prepared_root = output / "prepared"
+            prepared_wheel_output = output / "prepared-wheel"
+            prepared_wheel_output.mkdir()
+            prepared_name = backend.prepare_metadata_for_build_wheel(str(prepared_root))
+            prepared_dist_info = prepared_root / prepared_name
+            custom_metadata = prepared_dist_info / "licenses" / "agentops-build-contract.json"
+            custom_metadata.parent.mkdir()
+            custom_metadata.write_text('{"schema_version":1}\n', encoding="utf-8")
+            prepared_wheel_name = backend.build_wheel(
+                str(prepared_wheel_output),
+                metadata_directory=str(prepared_root),
+            )
+            with zipfile.ZipFile(prepared_wheel_output / prepared_wheel_name) as wheel:
+                prepared_metadata_round_trip = (
+                    not (prepared_dist_info / "RECORD").exists()
+                    and all(
+                        wheel.read(
+                            f"{backend.DIST_INFO}/"
+                            f"{path.relative_to(prepared_dist_info).as_posix()}"
+                        )
+                        == path.read_bytes()
+                        for path in prepared_dist_info.rglob("*")
+                        if path.is_file()
+                    )
+                )
+
             sdist_name = backend.build_sdist(str(first))
             second_sdist_name = backend.build_sdist(str(second))
             sdist_reproducible = (
@@ -184,6 +213,17 @@ def main() -> int:
                     name.endswith("/docs/LOCAL_RELAY_DEPLOY_CONTRACT_ACCEPTANCE.md")
                     for name in names
                 )
+                pkg_info_name = next(
+                    (name for name in names if name.endswith("/PKG-INFO")),
+                    "",
+                )
+                sdist_has_pkg_info = bool(pkg_info_name)
+                pkg_info = source.extractfile(pkg_info_name) if pkg_info_name else None
+                sdist_pkg_info_matches = bool(
+                    pkg_info
+                    and pkg_info.read()
+                    == backend._metadata().encode("utf-8")
+                )
     except Exception:
         failures.append("offline build artifacts could not be inspected")
 
@@ -210,6 +250,11 @@ def main() -> int:
     )
     require(wheel_reproducible, "wheel bytes are not reproducible", failures)
     require(wheel_metadata_normalized, "wheel metadata is not normalized", failures)
+    require(
+        prepared_metadata_round_trip,
+        "prepared wheel metadata was not preserved exactly",
+        failures,
+    )
     require(sdist_reproducible, "source distribution bytes are not reproducible", failures)
     require(
         sdist_metadata_normalized,
@@ -218,6 +263,12 @@ def main() -> int:
     )
     require(not wheel_has_unit, "wheel must not auto-install a systemd unit", failures)
     require(sdist_has_unit, "source distribution omits the systemd template", failures)
+    require(sdist_has_pkg_info, "source distribution omits PKG-INFO", failures)
+    require(
+        sdist_pkg_info_matches,
+        "source distribution PKG-INFO differs from wheel metadata",
+        failures,
+    )
     require(
         sdist_has_config_example,
         "source distribution omits the credential-free config example",
@@ -340,8 +391,11 @@ def main() -> int:
         "wheel_installs_systemd_unit": wheel_has_unit,
         "wheel_reproducible": wheel_reproducible,
         "wheel_metadata_normalized": wheel_metadata_normalized,
+        "prepared_metadata_round_trip": prepared_metadata_round_trip,
         "sdist_reproducible": sdist_reproducible,
         "sdist_metadata_normalized": sdist_metadata_normalized,
+        "sdist_has_pkg_info": sdist_has_pkg_info,
+        "sdist_pkg_info_matches": sdist_pkg_info_matches,
         "sdist_includes_systemd_unit": sdist_has_unit,
         "sdist_includes_config_example": sdist_has_config_example,
         "sdist_includes_acceptance": sdist_has_acceptance,

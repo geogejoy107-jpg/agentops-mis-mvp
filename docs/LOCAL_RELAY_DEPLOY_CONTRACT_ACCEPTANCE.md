@@ -107,6 +107,9 @@ The smoke:
   entirely inside a temporary directory;
 - builds each artifact twice, requires byte-for-byte identity, and verifies
   normalized archive timestamps, owners, groups, and file modes;
+- requires root-level sdist `PKG-INFO` to match wheel metadata and verifies
+  prepared wheel metadata, including unknown backend metadata, round-trips
+  byte-for-byte without an invalid pre-generated `RECORD`;
 - verifies the wheel entrypoint and verifies that pip installation cannot
   implicitly install the systemd unit;
 - verifies the source distribution carries the systemd template and this

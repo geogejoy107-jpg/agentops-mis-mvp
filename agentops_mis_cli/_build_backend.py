@@ -82,13 +82,48 @@ def _package_files() -> list[tuple[str, bytes]]:
     return files
 
 
-def _wheel_files() -> list[tuple[str, bytes]]:
+def _default_metadata_files() -> list[tuple[str, bytes]]:
     return [
-        *_package_files(),
         (f"{DIST_INFO}/METADATA", _metadata().encode("utf-8")),
         (f"{DIST_INFO}/WHEEL", _wheel().encode("utf-8")),
         (f"{DIST_INFO}/entry_points.txt", _entry_points().encode("utf-8")),
     ]
+
+
+def _prepared_metadata_files(metadata_directory: str) -> list[tuple[str, bytes]]:
+    root = Path(metadata_directory)
+    dist_info = root if root.name == DIST_INFO else root / DIST_INFO
+    if not dist_info.is_dir() or dist_info.is_symlink():
+        raise ValueError("prepared metadata directory is invalid")
+    files: list[tuple[str, bytes]] = []
+    for path in sorted(dist_info.rglob("*")):
+        if path.is_symlink():
+            raise ValueError("prepared metadata entry is invalid")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise ValueError("prepared metadata entry is invalid")
+        relative = path.relative_to(dist_info).as_posix()
+        if relative == "RECORD":
+            raise ValueError("prepared metadata must not contain RECORD")
+        files.append((f"{DIST_INFO}/{relative}", path.read_bytes()))
+    required = {
+        f"{DIST_INFO}/METADATA",
+        f"{DIST_INFO}/WHEEL",
+        f"{DIST_INFO}/entry_points.txt",
+    }
+    if not required.issubset(name for name, _data in files):
+        raise ValueError("prepared metadata is incomplete")
+    return files
+
+
+def _wheel_files(metadata_directory: str | None = None) -> list[tuple[str, bytes]]:
+    metadata = (
+        _prepared_metadata_files(metadata_directory)
+        if metadata_directory is not None
+        else _default_metadata_files()
+    )
+    return [*_package_files(), *metadata]
 
 
 def _record(rows: list[tuple[str, bytes]]) -> bytes:
@@ -109,7 +144,7 @@ def _write_wheel_file(zf: zipfile.ZipFile, name: str, data: bytes) -> None:
 
 
 def build_wheel(wheel_directory: str, config_settings=None, metadata_directory=None) -> str:
-    rows = _wheel_files()
+    rows = _wheel_files(metadata_directory)
     wheel_name = f"{DIST}-{VERSION}-py3-none-any.whl"
     target = Path(wheel_directory) / wheel_name
     with zipfile.ZipFile(target, "w") as zf:
@@ -125,7 +160,6 @@ def prepare_metadata_for_build_wheel(metadata_directory: str, config_settings=No
     (dist_info / "METADATA").write_text(_metadata(), encoding="utf-8")
     (dist_info / "WHEEL").write_text(_wheel(), encoding="utf-8")
     (dist_info / "entry_points.txt").write_text(_entry_points(), encoding="utf-8")
-    (dist_info / "RECORD").write_text("", encoding="utf-8")
     return DIST_INFO
 
 
@@ -139,14 +173,19 @@ def build_sdist(sdist_directory: str, config_settings=None) -> str:
         *RELAY_DEPLOYMENT_FILES,
         ROOT / "README.md",
     ]
+    archive_files = [
+        (
+            f"{prefix}/{path.relative_to(ROOT).as_posix()}",
+            path.read_bytes(),
+        )
+        for path in include
+    ]
+    archive_files.append((f"{prefix}/PKG-INFO", _metadata().encode("utf-8")))
     with target.open("wb") as raw:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode="w") as tf:
-                for path in include:
-                    data = path.read_bytes()
-                    info = tarfile.TarInfo(
-                        f"{prefix}/{path.relative_to(ROOT).as_posix()}"
-                    )
+                for name, data in archive_files:
+                    info = tarfile.TarInfo(name)
                     info.mode = ARCHIVE_MODE
                     info.mtime = 0
                     info.size = len(data)
