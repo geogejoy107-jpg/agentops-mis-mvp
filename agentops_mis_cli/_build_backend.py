@@ -30,6 +30,8 @@ RELAY_DEPLOYMENT_FILES = [
     ROOT / "packaging" / "relay" / "config.example.json",
     ROOT / "packaging" / "relay" / "systemd" / "agentops-mis-relay.service",
     ROOT / "docs" / "LOCAL_RELAY_DEPLOY_CONTRACT_ACCEPTANCE.md",
+    ROOT / "docs" / "RELAY_RELEASE_BUNDLE_ACCEPTANCE.md",
+    ROOT / "docs" / "RELAY_OFFLINE_INSTALL_ACCEPTANCE.md",
 ]
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 ARCHIVE_MODE = 0o644
@@ -62,6 +64,7 @@ def _entry_points() -> str:
         "[console_scripts]",
         "agentops = agentops_mis_cli.cli:main",
         "agentops-relay = agentops_mis_cli.relay_daemon:main",
+        "agentops-relayctl = agentops_mis_cli.relay_admin:main",
         "agentops-worker = agentops_mis_cli.worker:main",
         "",
     ])

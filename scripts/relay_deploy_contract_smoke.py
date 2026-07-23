@@ -23,6 +23,8 @@ CONFIG_EXAMPLE = ROOT / "packaging" / "relay" / "config.example.json"
 ACCEPTANCE = ROOT / "docs" / "LOCAL_RELAY_DEPLOY_CONTRACT_ACCEPTANCE.md"
 ENTRYPOINT_NAME = "agentops-relay"
 ENTRYPOINT_TARGET = "agentops_mis_cli.relay_daemon:main"
+ADMIN_ENTRYPOINT_NAME = "agentops-relayctl"
+ADMIN_ENTRYPOINT_TARGET = "agentops_mis_cli.relay_admin:main"
 EXPECTED_EXEC_START = [
     "/usr/local/bin/agentops-relay",
     "serve",
@@ -109,6 +111,8 @@ def main() -> int:
     sdist_has_unit = False
     sdist_has_config_example = False
     sdist_has_acceptance = False
+    sdist_has_release_acceptance = False
+    sdist_has_install_acceptance = False
     sdist_has_pkg_info = False
     sdist_pkg_info_matches = False
     metadata_version_current = False
@@ -224,6 +228,14 @@ def main() -> int:
                     name.endswith("/docs/LOCAL_RELAY_DEPLOY_CONTRACT_ACCEPTANCE.md")
                     for name in names
                 )
+                sdist_has_release_acceptance = any(
+                    name.endswith("/docs/RELAY_RELEASE_BUNDLE_ACCEPTANCE.md")
+                    for name in names
+                )
+                sdist_has_install_acceptance = any(
+                    name.endswith("/docs/RELAY_OFFLINE_INSTALL_ACCEPTANCE.md")
+                    for name in names
+                )
                 pkg_info_name = next(
                     (name for name in names if name.endswith("/PKG-INFO")),
                     "",
@@ -259,6 +271,16 @@ def main() -> int:
         "wheel entrypoint is missing or incorrect",
         failures,
     )
+    for source, scripts in (
+        ("pyproject", pyproject_scripts),
+        ("custom build backend", backend_scripts),
+        ("wheel", wheel_scripts),
+    ):
+        require(
+            scripts.get(ADMIN_ENTRYPOINT_NAME) == ADMIN_ENTRYPOINT_TARGET,
+            f"{source} Relay admin entrypoint is missing or incorrect",
+            failures,
+        )
     require(wheel_reproducible, "wheel bytes are not reproducible", failures)
     require(wheel_metadata_normalized, "wheel metadata is not normalized", failures)
     require(
@@ -291,6 +313,16 @@ def main() -> int:
         failures,
     )
     require(sdist_has_acceptance, "source distribution omits the deploy acceptance", failures)
+    require(
+        sdist_has_release_acceptance,
+        "source distribution omits the release-bundle acceptance",
+        failures,
+    )
+    require(
+        sdist_has_install_acceptance,
+        "source distribution omits the offline-install acceptance",
+        failures,
+    )
 
     exec_start = one(sections, "Service", "ExecStart")
     try:
@@ -403,6 +435,11 @@ def main() -> int:
         "ok": not failures,
         "entrypoint": ENTRYPOINT_NAME,
         "entrypoint_target": ENTRYPOINT_TARGET,
+        "relay_admin_entrypoint": ADMIN_ENTRYPOINT_NAME,
+        "relay_admin_entrypoint_target": ADMIN_ENTRYPOINT_TARGET,
+        "relay_admin_wheel_entrypoint_present": (
+            wheel_scripts.get(ADMIN_ENTRYPOINT_NAME) == ADMIN_ENTRYPOINT_TARGET
+        ),
         "wheel_entrypoint_present": wheel_scripts.get(ENTRYPOINT_NAME) == ENTRYPOINT_TARGET,
         "wheel_installs_systemd_unit": wheel_has_unit,
         "wheel_reproducible": wheel_reproducible,
@@ -415,6 +452,8 @@ def main() -> int:
         "sdist_includes_systemd_unit": sdist_has_unit,
         "sdist_includes_config_example": sdist_has_config_example,
         "sdist_includes_acceptance": sdist_has_acceptance,
+        "sdist_includes_release_acceptance": sdist_has_release_acceptance,
+        "sdist_includes_install_acceptance": sdist_has_install_acceptance,
         "credential_or_endpoint_material_present": unit_contains_forbidden_material,
         "daemon_imported_or_executed": False,
         "network_used": False,

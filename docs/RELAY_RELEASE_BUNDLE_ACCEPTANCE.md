@@ -94,9 +94,11 @@ The smoke test:
    temporary file remains;
 8. validates normalized tar/gzip metadata, manifest provenance, every declared
    file hash, and `SHA256SUMS`;
-9. scans expanded bundle content for local machine paths and common credential
+9. injects an ignored live-worktree Python canary and proves it cannot enter
+   the exact-commit wheel;
+10. scans expanded bundle content for local machine paths and common credential
    value patterns;
-10. requires repository status to be unchanged.
+11. requires repository status to be unchanged.
 
 ## Acceptance Result
 

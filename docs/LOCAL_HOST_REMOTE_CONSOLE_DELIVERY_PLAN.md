@@ -250,6 +250,11 @@ Implementation slices:
    - deterministic offline release bundle with wheel, systemd/config contracts,
      manifest, checksums and exact Git provenance: implemented and recorded in
      `RELAY_RELEASE_BUNDLE_ACCEPTANCE.md`;
+   - fail-closed offline first-install transaction with exact plan confirmation,
+     immutable releases, stable launch links and protected runtime state:
+     implemented and recorded in `RELAY_OFFLINE_INSTALL_ACCEPTANCE.md`;
+   - upgrade, rollback, uninstall, Linux account provisioning, service
+     activation and public infrastructure acceptance: pending;
    - public endpoint, DNS/ACME provisioning, stable per-Host Console origin,
      production credential lifecycle, retention/monitoring, deployment and
      rollback receipt: pending external infrastructure acceptance.
