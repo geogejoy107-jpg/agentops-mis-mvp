@@ -87,12 +87,13 @@ def direct_backoff_sleep_smoke() -> dict:
 
 
 def server_daemon_smoke(base_url: str, run_stamp: str) -> dict:
-    agent_id = "agt_worker_daemon_mock"
+    agent_id = f"agt_worker_daemon_mock_{run_stamp}"
     task_id = f"tsk_worker_daemon_resilience_{run_stamp}"
     http_json("POST", base_url, "/api/workers/local/stop", {"adapter": "mock"})
 
     status, started = http_json("POST", base_url, "/api/workers/local/start", {
         "adapter": "mock",
+        "agent_id": agent_id,
         "poll_interval": 1,
         "max_tasks": 0,
         "max_errors": 3,
@@ -127,9 +128,21 @@ def server_daemon_smoke(base_url: str, run_stamp: str) -> dict:
     run_id = (runs[0] or {}).get("run_id") if runs else None
     require(bool(run_id), f"completed task has no run evidence: {detail}")
 
-    status, worker_status = http_json("GET", base_url, "/api/workers/status")
-    require(status == 200, f"worker status failed: {status} {worker_status}")
-    daemon = next((item for item in worker_status.get("daemons", []) if item.get("adapter") == "mock"), {})
+    latest_worker_status: dict = {}
+
+    def daemon_processed():
+        status, worker_status = http_json("GET", base_url, "/api/workers/status")
+        latest_worker_status.update({"status": status, "payload": worker_status})
+        if status != 200:
+            return None
+        candidate = next((item for item in worker_status.get("daemons", []) if item.get("adapter") == "mock"), {})
+        if candidate.get("running") is True and int(candidate.get("processed") or 0) >= 1:
+            return candidate
+        return None
+
+    daemon = poll_until(time.time() + 10, 0.25, daemon_processed)
+    require(bool(daemon), f"daemon state did not converge after task completion: {latest_worker_status}")
+    worker_status = latest_worker_status.get("payload") or {}
     require(daemon.get("running") is True, f"mock daemon is not running: {daemon}")
     require(int(daemon.get("processed") or 0) >= 1, f"daemon state did not record processed count: {daemon}")
     require(int(daemon.get("iterations") or 0) >= 1, f"daemon state did not record iterations: {daemon}")

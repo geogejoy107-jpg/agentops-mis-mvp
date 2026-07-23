@@ -97,6 +97,7 @@ jobs:
           set -euo pipefail
           timeout 120s python3 scripts/redaction_policy_smoke.py
           timeout 120s python3 scripts/sqlite_pragmas_smoke.py
+          timeout 120s python3 scripts/sqlite_connection_lifecycle_smoke.py
           timeout 120s python3 scripts/sqlite_reliability_smoke.py
           timeout 120s python3 scripts/sqlite_concurrency_smoke.py
           timeout 120s python3 scripts/audit_chain_concurrency_smoke.py

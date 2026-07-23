@@ -442,6 +442,17 @@ def db(timeout_seconds: float = 30) -> sqlite3.Connection:
     return conn
 
 
+@contextmanager
+def db_session(timeout_seconds: float = 30):
+    """Preserve SQLite transaction semantics and always release the connection."""
+    conn = db(timeout_seconds=timeout_seconds)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
+
 class AtomicApiRollback(Exception):
     def __init__(self, payload: dict, status: int):
         super().__init__(str(payload.get("error") or "atomic_api_rollback"))
@@ -2279,7 +2290,7 @@ def consume_private_host_restart_audit_events(limit: int = 32) -> dict:
             }
         ingested = 0
         try:
-            with db(timeout_seconds=0.05) as conn:
+            with db_session(timeout_seconds=0.05) as conn:
                 for event in ingest_events:
                     action_name = f"host.relay.restart.{event['state']}"
                     event_identity = stable_hash(
@@ -2378,7 +2389,7 @@ def private_host_restart_audit_tick() -> dict:
 
 
 def init_schema():
-    with db() as conn:
+    with db_session() as conn:
         conn.executescript(SCHEMA_SQL)
         human_auth.init_schema(conn)
         ensure_schema_migrations(conn)
@@ -3020,7 +3031,7 @@ def seed(reset=False):
     if reset and DB_PATH.exists():
         DB_PATH.unlink()
     init_schema()
-    with db() as conn:
+    with db_session() as conn:
         count = conn.execute("SELECT COUNT(*) FROM agents").fetchone()[0]
         if count and not reset:
             return
@@ -3193,7 +3204,7 @@ def export_seed_artifacts():
     if os.environ.get("AGENTOPS_SKIP_SEED_EXPORTS") == "1":
         return
     ARTIFACTS_DIR.mkdir(exist_ok=True)
-    with db() as conn:
+    with db_session() as conn:
         runs = rows_to_dicts(conn.execute("SELECT * FROM runs ORDER BY created_at DESC LIMIT 30").fetchall())
         memories = rows_to_dicts(conn.execute("SELECT * FROM memories ORDER BY created_at DESC").fetchall())
     (ARTIFACTS_DIR / "sample_export_runs.json").write_text(json.dumps(runs, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -4250,7 +4261,7 @@ def agent_gateway_is_bound_auth(auth_ctx: dict | None) -> bool:
 
 
 def agent_gateway_auth_error(headers) -> dict | None:
-    with db() as conn:
+    with db_session() as conn:
         _ctx, error = agent_gateway_auth_context(conn, headers)
         return error
 
@@ -14911,7 +14922,7 @@ def workflow_job_recovery_work_order(conn: sqlite3.Connection, workspace_id: str
 def run_workflow_job_background(job_id: str, body: dict) -> None:
     started = now_iso()
     try:
-        with db() as conn:
+        with db_session() as conn:
             before = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
             workflow_type = dict(before).get("workflow_type") if before else "customer_task_template"
             conn.execute(
@@ -14955,7 +14966,7 @@ def run_workflow_job_background(job_id: str, body: dict) -> None:
             conn.commit()
     except Exception as exc:
         error = redact_text(str(exc), 360)
-        with db() as conn:
+        with db_session() as conn:
             before = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
             now = now_iso()
             conn.execute(
@@ -14992,7 +15003,7 @@ def launch_workflow_job_background(job_id: str, body: dict) -> bool:
         claim_time = dt.datetime.now(dt.timezone.utc)
         stale_before = claim_time - dt.timedelta(seconds=WORKFLOW_JOB_LAUNCH_LEASE_SECONDS)
         try:
-            with db() as claim_conn:
+            with db_session() as claim_conn:
                 cursor = claim_conn.execute(
                     """UPDATE workflow_jobs
                     SET started_at=?, updated_at=?
@@ -15016,7 +15027,7 @@ def launch_workflow_job_background(job_id: str, body: dict) -> bool:
             name=f"agentops-workflow-{job_id[-12:]}",
         ).start()
     except Exception:
-        with db() as claim_conn:
+        with db_session() as claim_conn:
             claim_conn.execute(
                 """UPDATE workflow_jobs SET started_at=NULL,updated_at=?
                 WHERE job_id=? AND status='queued' AND started_at=?""",
@@ -17188,6 +17199,12 @@ def body_bool(value, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def local_worker_daemon_base_url(body: dict) -> str:
+    configured = str(os.environ.get("AGENTOPS_BASE_URL") or "").strip()
+    request_origin = str(body.get("_base_url") or "").strip()
+    return (configured or request_origin or "http://127.0.0.1:8787").rstrip("/")
+
+
 def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
     adapter = coerce_choice(body.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
     confirm_run = bool(body.get("confirm_run"))
@@ -17255,7 +17272,7 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
         "--agent-id",
         agent_id,
         "--base-url",
-        os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"),
+        local_worker_daemon_base_url(body),
         "--poll-interval",
         str(poll_interval),
         "--max-tasks",
@@ -17483,6 +17500,7 @@ def restart_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
         "status": status_filters,
         "confirm_run": confirm_run,
         "enforce_intake": enforce_intake,
+        "_base_url": body.get("_base_url"),
     }
     if body.get("openclaw_timeout") is not None:
         restart_body["openclaw_timeout"] = body.get("openclaw_timeout")
@@ -33813,7 +33831,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_bytes(candidate.read_bytes(), content_type=content_type, cache_control=cache_control)
 
     def handle_get_api(self, path, qs):
-        with db() as conn:
+        with db_session() as conn:
             self._request_api_path = path
             self._human_auth_context = None
             if path == "/api/human-auth/status":
@@ -35202,7 +35220,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json({"error": "unknown endpoint"}, 404)
 
     def handle_post_api(self, path, body):
-        with db() as conn:
+        with db_session() as conn:
             if path == "/api/human-auth/bootstrap":
                 origin_error = human_auth.origin_error(self.headers)
                 if origin_error:
@@ -36026,12 +36044,14 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/workers/local/dispatch-once":
                 return self.send_json(dispatch_local_worker_once(conn, body), 201)
             if path == "/api/workers/local/start":
+                body["_base_url"] = request_base_url(self.headers)
                 payload, status = start_local_worker_daemon(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workers/local/stop":
                 payload, status = stop_local_worker_daemon(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workers/local/restart":
+                body["_base_url"] = request_base_url(self.headers)
                 payload, status = restart_local_worker_daemon(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workers/tasks/release":
@@ -36117,7 +36137,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json({"error": "unknown endpoint"}, 404)
 
     def handle_patch_api(self, path, body):
-        with db() as conn:
+        with db_session() as conn:
             human_context = None
             if human_auth.required():
                 human_context, auth_error = human_auth.request_auth(conn, self.headers, path, "PATCH")

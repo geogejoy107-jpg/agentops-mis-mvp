@@ -88,12 +88,17 @@ The worktree intentionally contains an uncommitted reliability slice:
 - a focused lifecycle smoke, CI entry, acceptance note, and merge-readiness
   gate were added;
 - the Worker daemon resilience smoke now waits for daemon-state convergence
-  after task completion.
+  after task completion;
+- isolated non-default-port verification found that API-started Workers fell
+  back to port `8787`; the current worktree now binds start/restart to a trusted
+  configured base URL or the canonical request origin.
 
 Focused SQLite lifecycle, pragma, concurrency, compile, secret-scan, and diff
-checks passed during development. An isolated rerun of the Worker daemon smoke
-later timed out before the task completed, so this worktree is not yet accepted,
-committed, packaged, or attributed to the installed Host.
+checks passed during development. After fixing the request-origin defect, the
+Worker daemon smoke passed twice against a non-default isolated port; start and
+restart both retained the correct target. This worktree is still uncommitted,
+has no exact-head CI, is not packaged, and is not attributed to the installed
+Host.
 
 ## CI Truth
 
@@ -120,22 +125,20 @@ See [`CODEX_SESSION_RETENTION_ACCEPTANCE.md`](./CODEX_SESSION_RETENTION_ACCEPTAN
 
 ## Open Gates
 
-1. Diagnose and stabilize the isolated Worker daemon completion timeout.
-2. Re-run SQLite lifecycle and Worker resilience verification on current source.
-3. Commit and push the reliability slice; require exact-head CI.
-4. Package and install a later Host only after the storage preflight has at
+1. Commit and push the SQLite/Worker reliability slice; require exact-head CI.
+2. Package and install a later Host only after the storage preflight has at
    least 2 GiB available.
-5. Exercise sustained Workspace/API polling and prove bounded SQLite handles.
-6. Repeat real governed-memory OpenClaw/Hermes dogfood on the exact installed
+3. Exercise sustained Workspace/API polling and prove bounded SQLite handles on
+   the exact installed package.
+4. Repeat real governed-memory OpenClaw/Hermes dogfood on the exact installed
    package.
-7. Complete physical remote-browser acceptance from the second Mac when that
+5. Complete physical remote-browser acceptance from the second Mac when that
    endpoint is reachable.
 
 ## Next Single Action
 
-Finish the Worker daemon smoke investigation on an isolated temporary database,
-then run the focused SQLite/Worker verification set before committing the
-current reliability slice.
+Commit and push the verified SQLite/Worker reliability slice, then require green
+push and PR CI on that exact commit before packaging it.
 
 ## Project Delta
 
@@ -150,5 +153,5 @@ branch: codex/local-host-remote-console
 commit: 706af7d2d2c0256cbc6912013e4b70e16b3ae43e
 updates: PROJECT_STATE.md and HANDOFF.md operational fields
 evidence: Git history, exact CI run identities, bounded MIS runtime receipts, and local verification
-next_action: stabilize Worker daemon smoke, verify current source, then commit and push
+next_action: commit and push the verified reliability slice, require exact-head CI, then package
 ```
