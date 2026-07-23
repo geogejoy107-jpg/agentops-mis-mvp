@@ -33,9 +33,20 @@ retrieval, evaluation, CI, security scanning and runtime experiments; it does
 not replace AgentOps MIS authority objects such as tasks, runs, approvals,
 artifacts, evaluations, reviewed memories or audit logs.
 
-## 为什么不是 Next.js 版？
+## 产品轨道与技术栈
 
-用户指定 Next.js + TypeScript + Tailwind 为优先技术栈。本沙盒环境无法稳定安装 npm 依赖，因此这个包提供一个 **零依赖 Python + SQLite + HTML/JS/CSS 的可运行参考实现**，用于验证 MIS 数据模型、流程和页面信息架构。`docs/CODEX_NEXTJS_HANDOFF_PROMPT.md` 是给本地 Codex/Pro 的 Next.js 版本实现提示词。
+仓库现在保留两条边界明确的产品轨道：
+
+- **Free Local**：Python + SQLite 和现有本地 UI，继续承担单机体验、兼容回滚和离线开发。
+- **Commercial / BYOC**：`ui/next-app/` 中的 Next.js 16 + TypeScript + Node.js 20，以及 `migrations/postgres/` 中的 PostgreSQL 16 权威账本。
+
+Commercial 的 production/shared 模式禁止把控制面写请求代理给 Python，也不会把 SQLite 当成商业权威数据源。尚未迁移的生产路由会 fail closed；只有 Free Local 的显式 allowlist 可以使用本地 Python 兼容路径。
+
+商业迁移仍在进行中，当前分支不是发布完成声明。迁移闭环、各 owner 的退出条件、真实 Hermes/OpenClaw 验收和剩余发布门槛见：
+
+- `docs/COMMERCIAL_MIGRATION_CLEAN_ROOM_BREAKDOWN.md`
+- `docs/project/PROJECT_STATE.md`
+- `docs/project/BACKLOG.md`
 
 ## 快速运行
 
