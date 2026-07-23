@@ -339,6 +339,7 @@ jobs:
           npm run test:gateway-lifecycle-contract
           npm run test:agent-gateway-evidence-support-contract
           npm run test:loop-supervision-contract
+          npm run test:human-read-models-contract
           npm run test:prepared-action-owner-contract
           npm run test:owner-bootstrap-contract
           npm run test:human-session-approval-contract
