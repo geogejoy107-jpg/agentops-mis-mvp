@@ -740,23 +740,27 @@ def check_runtime_evidence(
     }
 
 
-def login_owner(base_url: str, password: str) -> tuple[str, str]:
+def login_owner(base_url: str, public_origin: str, password: str) -> tuple[str, str]:
     status, payload, headers = http_json(
         "POST",
         f"{base_url}/api/mis/human-auth/login",
         {"username": OWNER_USERNAME, "password": password},
-        headers={"Origin": base_url},
+        headers={"Origin": public_origin},
     )
     cookie = raw_cookie(headers)
     csrf = str(payload.get("csrf_token") or "") if isinstance(payload, dict) else ""
     if status != 200 or not cookie or not csrf:
-        raise RuntimeError(f"Human Owner login failed closed with status {status}")
+        error_code = str(payload.get("error") or "unknown") if isinstance(payload, dict) else "unknown"
+        raise RuntimeError(
+            f"Human Owner login failed closed with status {status} and error {error_code}"
+        )
     return cookie, csrf
 
 
 def human_review(
     adapter: NodePgAdapter,
     base_url: str,
+    public_origin: str,
     cookie: str,
     csrf: str,
     runtime: str,
@@ -785,7 +789,7 @@ def human_review(
         raise RuntimeError(f"{runtime} delivery approval is absent from the Human workspace queue")
     approval_headers = {
         **list_headers,
-        "Origin": base_url,
+        "Origin": public_origin,
         "X-AgentOps-CSRF": csrf,
         "Idempotency-Key": f"real-worker-{runtime}-delivery-approve-0001",
     }
@@ -808,7 +812,7 @@ def human_review(
     key = f"real-worker-{runtime}-approve-0001"
     write_headers = {
         **list_headers,
-        "Origin": base_url,
+        "Origin": public_origin,
         "X-AgentOps-CSRF": csrf,
         "Idempotency-Key": key,
     }
@@ -1666,6 +1670,7 @@ def main() -> int:
 
         port = free_port()
         base_url = f"http://127.0.0.1:{port}"
+        public_origin = f"https://127.0.0.1:{port}"
         env = os.environ.copy()
         env.update({
             "AGENTOPS_DEPLOYMENT_MODE": "production",
@@ -1674,7 +1679,7 @@ def main() -> int:
             "AGENTOPS_POSTGRES_DSN": runtime_dsn,
             "AGENTOPS_POSTGRES_SSL": "0",
             "AGENTOPS_API_BASE": f"http://127.0.0.1:{free_port()}/api",
-            "AGENTOPS_ALLOWED_ORIGINS": base_url,
+            "AGENTOPS_ALLOWED_ORIGINS": public_origin,
             "AGENTOPS_HUMAN_SESSION_HMAC_KEY": hmac_key,
             "NEXT_TELEMETRY_DISABLED": "1",
             "NODE_ENV": "production",
@@ -1706,12 +1711,13 @@ def main() -> int:
                 persisted_sensitive,
             )
 
-        cookie, csrf = login_owner(base_url, owner_password)
+        cookie, csrf = login_owner(base_url, public_origin, owner_password)
         sensitive.extend([cookie, csrf])
         for runtime in adapters:
             human_receipts[runtime] = human_review(
                 adapter,
                 base_url,
+                public_origin,
                 cookie,
                 csrf,
                 runtime,
@@ -1740,6 +1746,8 @@ def main() -> int:
             "control_plane": "typescript_postgres",
             "deployment_mode": "production",
             "next_runtime_mode": "production_start",
+            "next_internal_transport_scheme": "http_loopback",
+            "human_session_public_origin_scheme": "https",
             "next_artifact_sha256": next_artifact_sha256,
             "next_build_completed": True,
             "tracked_worktree_fingerprint_before": tracked_before,
