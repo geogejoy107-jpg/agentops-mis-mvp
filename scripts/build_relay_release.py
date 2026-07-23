@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -19,17 +20,10 @@ from pathlib import Path, PurePosixPath
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from agentops_mis_cli import _build_backend as build_backend  # noqa: E402
-
-
 SCHEMA = "agentops.relay.release-bundle.v1"
-CONFIG_SOURCE = ROOT / "packaging" / "relay" / "config.example.json"
-SYSTEMD_SOURCE = (
-    ROOT / "packaging" / "relay" / "systemd" / "agentops-mis-relay.service"
-)
+BACKEND_RELATIVE = Path("agentops_mis_cli/_build_backend.py")
+CONFIG_RELATIVE = Path("packaging/relay/config.example.json")
+SYSTEMD_RELATIVE = Path("packaging/relay/systemd/agentops-mis-relay.service")
 RELEASE_INPUTS = (
     "agentops_mis_cli",
     "agentops_mis_core",
@@ -68,15 +62,15 @@ def current_commit() -> str:
     return commit
 
 
-def require_committed_release_inputs() -> None:
-    for diff_args in (("diff", "--quiet", "--"), ("diff", "--cached", "--quiet", "--")):
-        result = run_git(*diff_args, *RELEASE_INPUTS, check=False)
-        if result.returncode not in {0, 1}:
-            raise RuntimeError("unable to verify Relay release input state")
-        if result.returncode == 1:
-            raise RuntimeError(
-                "Relay release inputs differ from HEAD; commit or restore them before building"
-            )
+def require_committed_release_inputs(commit: str) -> None:
+    result = run_git("diff", "--quiet", commit, "--", *RELEASE_INPUTS, check=False)
+    if result.returncode not in {0, 1}:
+        raise RuntimeError("unable to verify Relay release input state")
+    if result.returncode == 1:
+        raise RuntimeError(
+            "Relay release inputs differ from the selected commit; "
+            "commit or restore them before building"
+        )
     untracked = run_git(
         "ls-files",
         "--others",
@@ -90,20 +84,83 @@ def require_committed_release_inputs() -> None:
         )
 
 
-def read_regular_source(path: Path) -> bytes:
+def read_regular_source(path: Path, source_root: Path) -> bytes:
     resolved = path.resolve(strict=True)
-    if path.is_symlink() or ROOT.resolve() not in resolved.parents or not resolved.is_file():
-        raise RuntimeError(f"unsafe Relay release source: {path.relative_to(ROOT)}")
+    if (
+        path.is_symlink()
+        or source_root.resolve() not in resolved.parents
+        or not resolved.is_file()
+    ):
+        raise RuntimeError(
+            f"unsafe Relay release source: {path.relative_to(source_root)}"
+        )
     return resolved.read_bytes()
 
 
-def safe_archive_name(name: str) -> str:
+def safe_archive_name(name: str, *, kind: str) -> str:
     if "\\" in name:
-        raise RuntimeError(f"unsafe wheel member: {name}")
+        raise RuntimeError(f"unsafe {kind} member: {name}")
     path = PurePosixPath(name)
     if path.is_absolute() or not path.parts or ".." in path.parts:
-        raise RuntimeError(f"unsafe wheel member: {name}")
+        raise RuntimeError(f"unsafe {kind} member: {name}")
     return path.as_posix()
+
+
+def materialize_commit_snapshot(commit: str, destination: Path) -> None:
+    result = subprocess.run(
+        [
+            "git",
+            "archive",
+            "--format=tar",
+            commit,
+            "--",
+            *RELEASE_INPUTS,
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        message = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(message or "unable to read Relay release inputs from Git")
+
+    destination.mkdir()
+    seen: set[str] = set()
+    with tarfile.open(fileobj=io.BytesIO(result.stdout), mode="r:") as archive:
+        for member in archive.getmembers():
+            name = safe_archive_name(member.name, kind="Git snapshot")
+            if name in seen:
+                raise RuntimeError(f"Git snapshot contains duplicate member: {name}")
+            seen.add(name)
+            target = destination.joinpath(*PurePosixPath(name).parts)
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            if not member.isfile():
+                raise RuntimeError(f"Git snapshot contains unsupported member: {name}")
+            source = archive.extractfile(member)
+            if source is None:
+                raise RuntimeError(f"Git snapshot member is unreadable: {name}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source.read())
+
+    for relative in (BACKEND_RELATIVE, CONFIG_RELATIVE, SYSTEMD_RELATIVE):
+        path = destination / relative
+        if not path.is_file() or path.is_symlink():
+            raise RuntimeError(f"Git snapshot is missing required source: {relative}")
+
+
+def load_snapshot_backend(snapshot_root: Path):
+    backend_path = snapshot_root / BACKEND_RELATIVE
+    spec = importlib.util.spec_from_file_location(
+        "_agentops_relay_release_build_backend",
+        backend_path,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("unable to load the snapshotted offline build backend")
+    backend = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(backend)
+    return backend
 
 
 def canonicalize_wheel(raw_wheel: bytes) -> bytes:
@@ -111,7 +168,10 @@ def canonicalize_wheel(raw_wheel: bytes) -> bytes:
     target = io.BytesIO()
     with zipfile.ZipFile(source, "r") as incoming:
         infos = incoming.infolist()
-        names = [safe_archive_name(info.filename) for info in infos]
+        names = [
+            safe_archive_name(info.filename, kind="wheel")
+            for info in infos
+        ]
         if len(names) != len(set(names)):
             raise RuntimeError("wheel contains duplicate members")
         members = []
@@ -132,7 +192,10 @@ def canonicalize_wheel(raw_wheel: bytes) -> bytes:
     return target.getvalue()
 
 
-def build_canonical_wheel(temporary_root: Path) -> tuple[str, bytes]:
+def build_canonical_wheel(
+    temporary_root: Path,
+    build_backend,
+) -> tuple[str, bytes]:
     wheel_dir = temporary_root / "wheel-build"
     wheel_dir.mkdir()
     wheel_name = build_backend.build_wheel(str(wheel_dir))
@@ -251,49 +314,62 @@ def require_safe_output(output_dir: Path, bundle_name: str) -> Path:
 
 
 def build_release(output_dir: Path) -> dict[str, object]:
-    version = str(build_backend.VERSION).strip()
-    if not VERSION_PATTERN.fullmatch(version):
-        raise RuntimeError("offline build backend returned an unsafe version")
-    require_committed_release_inputs()
     commit = current_commit()
-    root_name = f"agentops-mis-relay-{version}"
-    archive_name = f"{root_name}-{commit[:12]}.tar.gz"
-    target = require_safe_output(output_dir, archive_name)
+    require_committed_release_inputs(commit)
 
     with tempfile.TemporaryDirectory(prefix="agentops-relay-release-") as temporary:
-        wheel_name, wheel_data = build_canonical_wheel(Path(temporary))
+        temporary_root = Path(temporary)
+        snapshot_root = temporary_root / "snapshot"
+        materialize_commit_snapshot(commit, snapshot_root)
+        build_backend = load_snapshot_backend(snapshot_root)
+        version = str(build_backend.VERSION).strip()
+        if not VERSION_PATTERN.fullmatch(version):
+            raise RuntimeError("offline build backend returned an unsafe version")
+        root_name = f"agentops-mis-relay-{version}"
+        archive_name = f"{root_name}-{commit[:12]}.tar.gz"
+        target = require_safe_output(output_dir, archive_name)
+        wheel_name, wheel_data = build_canonical_wheel(
+            temporary_root,
+            build_backend,
+        )
 
-    payload = {
-        f"wheel/{wheel_name}": wheel_data,
-        "systemd/agentops-mis-relay.service": read_regular_source(SYSTEMD_SOURCE),
-        "config/config.example.json": read_regular_source(CONFIG_SOURCE),
-    }
-    file_records = [
-        {
-            "path": path,
-            "sha256": sha256_bytes(data),
-            "size": len(data),
+        payload = {
+            f"wheel/{wheel_name}": wheel_data,
+            "systemd/agentops-mis-relay.service": read_regular_source(
+                snapshot_root / SYSTEMD_RELATIVE,
+                snapshot_root,
+            ),
+            "config/config.example.json": read_regular_source(
+                snapshot_root / CONFIG_RELATIVE,
+                snapshot_root,
+            ),
         }
-        for path, data in sorted(payload.items())
-    ]
-    manifest = {
-        "files": file_records,
-        "git_commit": commit,
-        "schema": SCHEMA,
-        "version": version,
-    }
-    manifest_data = canonical_json(manifest)
-    checksum_inputs = {**payload, "manifest.json": manifest_data}
-    checksums_data = "".join(
-        f"{sha256_bytes(data)}  {path}\n"
-        for path, data in sorted(checksum_inputs.items())
-    ).encode("ascii")
-    bundle_files = {
-        **payload,
-        "manifest.json": manifest_data,
-        "SHA256SUMS": checksums_data,
-    }
-    archive_data = canonical_tar_gz(root_name, bundle_files)
+        file_records = [
+            {
+                "path": path,
+                "sha256": sha256_bytes(data),
+                "size": len(data),
+            }
+            for path, data in sorted(payload.items())
+        ]
+        manifest = {
+            "files": file_records,
+            "git_commit": commit,
+            "schema": SCHEMA,
+            "version": version,
+        }
+        manifest_data = canonical_json(manifest)
+        checksum_inputs = {**payload, "manifest.json": manifest_data}
+        checksums_data = "".join(
+            f"{sha256_bytes(data)}  {path}\n"
+            for path, data in sorted(checksum_inputs.items())
+        ).encode("ascii")
+        bundle_files = {
+            **payload,
+            "manifest.json": manifest_data,
+            "SHA256SUMS": checksums_data,
+        }
+        archive_data = canonical_tar_gz(root_name, bundle_files)
 
     target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(

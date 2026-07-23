@@ -37,7 +37,7 @@ ARCHIVE_MODE = 0o644
 
 def _metadata() -> str:
     return "\n".join([
-        "Metadata-Version: 2.1",
+        "Metadata-Version: 2.2",
         f"Name: {PROJECT}",
         f"Version: {VERSION}",
         "Summary: Installable AgentOps MIS Agent Gateway CLI wrapper.",

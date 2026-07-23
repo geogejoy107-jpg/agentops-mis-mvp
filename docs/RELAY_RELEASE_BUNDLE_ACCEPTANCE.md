@@ -2,8 +2,9 @@
 
 ## Scope
 
-This slice builds one deterministic, offline Relay release archive from the
-current committed Relay source inputs. It does not install software, modify
+This slice builds one deterministic, offline Relay release archive from an
+immutable `git archive HEAD` snapshot of the committed Relay source inputs.
+It does not install software, modify
 system services, contact a network endpoint, provision credentials, or claim a
 public Relay deployment.
 
@@ -28,6 +29,11 @@ The builder refuses:
 - every output path under the repository's `dist/`;
 - dirty or untracked source inputs that would make `git_commit` provenance
   misleading.
+
+Wheel, systemd, and config bytes are read only from the selected Git commit
+snapshot. Live worktree files and ignored Python files are never build inputs,
+so a concurrent worktree edit cannot change the bytes attributed to the
+manifest's `git_commit`.
 
 It never uses `dist/` as an intermediate directory. Wheel construction happens
 under an operating-system temporary directory. The final archive is fsynced

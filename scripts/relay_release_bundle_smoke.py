@@ -123,6 +123,8 @@ def run_builder(output_dir: Path, env: dict[str, str]) -> tuple[dict, bytes]:
 def archive_files(bundle: bytes) -> tuple[str, dict[str, bytes], list[tarfile.TarInfo]]:
     if len(bundle) < 10 or bundle[4:8] != b"\x00\x00\x00\x00":
         raise RuntimeError("gzip header does not have normalized mtime")
+    if bundle[3] & 0x08:
+        raise RuntimeError("gzip header retained an original filename")
     with gzip.GzipFile(fileobj=io.BytesIO(bundle), mode="rb") as compressed:
         tar_data = compressed.read()
     with tarfile.open(fileobj=io.BytesIO(tar_data), mode="r:") as archive:
@@ -176,6 +178,19 @@ def main() -> int:
         guard = temporary / "guard"
         write_guard(guard)
         env = isolated_env(temporary, guard)
+        excludes = temporary / "git-excludes"
+        ignored_canary = ROOT / "agentops_mis_cli" / "relay_release_ignored_canary.py"
+        excludes.write_text(
+            f"/{ignored_canary.relative_to(ROOT).as_posix()}\n",
+            encoding="utf-8",
+        )
+        env.update(
+            {
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "core.excludesFile",
+                "GIT_CONFIG_VALUE_0": str(excludes),
+            }
+        )
 
         guard_probe = subprocess.run(
             [
@@ -261,13 +276,34 @@ def main() -> int:
         )
         require(dist_rejected.returncode != 0, "repository dist output was accepted", failures)
 
+        ignored_canary_recognized = False
         try:
+            ignored_canary.write_text(
+                'RELAY_RELEASE_LIVE_ONLY_CANARY = "must-not-ship"\n',
+                encoding="utf-8",
+            )
+            ignored_canary_recognized = (
+                subprocess.run(
+                    ["git", "check-ignore", "--quiet", "--", str(ignored_canary)],
+                    cwd=ROOT,
+                    env=env,
+                    check=False,
+                ).returncode
+                == 0
+            )
             result_one, bundle_one = run_builder(temporary / "one", env)
             result_two, bundle_two = run_builder(temporary / "two", env)
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
             failures.append(str(exc))
             result_one = result_two = {}
             bundle_one = bundle_two = b""
+        finally:
+            ignored_canary.unlink(missing_ok=True)
+        require(
+            ignored_canary_recognized,
+            "ignored live-source canary was not covered by the test fixture",
+            failures,
+        )
 
         require(bundle_one == bundle_two and bool(bundle_one), "two builds were not byte-identical", failures)
         require(
@@ -330,6 +366,22 @@ def main() -> int:
             *wheel_paths,
         }
         require(len(wheel_paths) == 1, "bundle must contain exactly one wheel", failures)
+        ignored_canary_absent = False
+        if len(wheel_paths) == 1:
+            try:
+                with zipfile.ZipFile(io.BytesIO(files[wheel_paths[0]]), "r") as wheel:
+                    ignored_canary_absent = not any(
+                        name.endswith("/relay_release_ignored_canary.py")
+                        or name == "agentops_mis_cli/relay_release_ignored_canary.py"
+                        for name in wheel.namelist()
+                    )
+            except zipfile.BadZipFile:
+                pass
+        require(
+            ignored_canary_absent,
+            "ignored live-source Python file entered the committed release wheel",
+            failures,
+        )
         require(set(files) == expected_paths, f"unexpected bundle members: {sorted(files)}", failures)
         require(
             root_name == f"agentops-mis-relay-{result_one.get('version', '')}",
@@ -341,6 +393,12 @@ def main() -> int:
             require(member.uname == "" and member.gname == "", f"named owner retained: {member.name}", failures)
             require(member.mtime == 0, f"non-normalized mtime: {member.name}", failures)
             require(not member.issym() and not member.islnk(), f"link member is not allowed: {member.name}", failures)
+            expected_mode = 0o755 if member.isdir() else 0o644
+            require(
+                stat.S_IMODE(member.mode) == expected_mode,
+                f"non-normalized mode: {member.name}",
+                failures,
+            )
 
         manifest = {}
         if "manifest.json" in files:
@@ -357,12 +415,19 @@ def main() -> int:
         require(manifest.get("git_commit") == commit, "manifest commit mismatch", failures)
         require(manifest.get("version") == result_one.get("version"), "manifest version mismatch", failures)
 
+        manifest_rows = manifest.get("files", [])
         manifest_records = {
             row.get("path"): row
-            for row in manifest.get("files", [])
+            for row in manifest_rows
             if isinstance(row, dict) and isinstance(row.get("path"), str)
         }
         payload_paths = expected_paths - {"SHA256SUMS", "manifest.json"}
+        require(
+            isinstance(manifest_rows, list)
+            and len(manifest_rows) == len(manifest_records),
+            "manifest contains duplicate or malformed file records",
+            failures,
+        )
         require(set(manifest_records) == payload_paths, "manifest payload file set mismatch", failures)
         for path in sorted(payload_paths):
             record = manifest_records.get(path) or {}

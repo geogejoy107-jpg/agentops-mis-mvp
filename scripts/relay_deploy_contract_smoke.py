@@ -111,6 +111,7 @@ def main() -> int:
     sdist_has_acceptance = False
     sdist_has_pkg_info = False
     sdist_pkg_info_matches = False
+    metadata_version_current = False
     wheel_reproducible = False
     wheel_metadata_normalized = False
     prepared_metadata_round_trip = False
@@ -154,6 +155,16 @@ def main() -> int:
                 )
                 if entry_name:
                     wheel_scripts = entry_points(wheel.read(entry_name).decode("utf-8"))
+                metadata_name = next(
+                    (name for name in names if name.endswith(".dist-info/METADATA")),
+                    "",
+                )
+                if metadata_name:
+                    metadata_version_current = (
+                        wheel.read(metadata_name)
+                        .decode("utf-8")
+                        .startswith("Metadata-Version: 2.2\n")
+                    )
                 wheel_has_unit = any(name.endswith("/agentops-mis-relay.service") for name in names)
 
             prepared_root = output / "prepared"
@@ -250,6 +261,11 @@ def main() -> int:
     )
     require(wheel_reproducible, "wheel bytes are not reproducible", failures)
     require(wheel_metadata_normalized, "wheel metadata is not normalized", failures)
+    require(
+        metadata_version_current,
+        "wheel and sdist metadata must use Core Metadata 2.2 or newer",
+        failures,
+    )
     require(
         prepared_metadata_round_trip,
         "prepared wheel metadata was not preserved exactly",
