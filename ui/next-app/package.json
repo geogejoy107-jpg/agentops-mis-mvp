@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
+    "bootstrap:owner": "tsx scripts/bootstrap-owner.ts",
     "start": "node scripts/start.mjs",
     "start:check": "node scripts/start.mjs --check",
     "migrate:postgres": "tsx scripts/migrate-postgres.ts",
@@ -19,6 +20,7 @@
     "test:agent-gateway-core-postgres-contract": "tsx scripts/agent-gateway-core-postgres-contract.ts",
     "test:agent-gateway-core-production-boundary": "tsx scripts/agent-gateway-core-production-boundary.ts",
     "test:agent-gateway-evidence-support-contract": "tsx scripts/agent-gateway-evidence-support-contract.ts",
+    "test:owner-bootstrap-contract": "tsx scripts/bootstrap-owner-contract.ts",
     "test:gateway-lifecycle-contract": "tsx scripts/gateway-lifecycle-contract.ts",
     "test:human-session-approval-contract": "tsx scripts/human-session-approval-contract.ts",
     "test:prepared-action-owner-contract": "tsx scripts/prepared-action-owner-contract.ts",
