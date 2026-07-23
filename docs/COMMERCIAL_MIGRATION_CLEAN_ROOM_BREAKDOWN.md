@@ -18,8 +18,9 @@ mutation to Python or treat SQLite as commercial authority.
 
 ## Source Strategy
 
-The historical commercial migration branch diverged before current `main` and
-is an evidence/reference lane. It must not be merged or rebased wholesale.
+The historical commercial migration branch represented by PR #22 diverged
+before current `main` and is an evidence/reference lane. Do not merge PR #22 directly.
+Do not rebase its full history onto current main.
 
 Every production owner is rebuilt as a small commit from current `origin/main`.
 The integration sequence is:
@@ -38,6 +39,8 @@ authoritative.
 ## Non-Negotiable Rules
 
 - Production writes are Next.js/TypeScript/PostgreSQL only.
+- Do not copy generated docs, DB files, caches, `node_modules`, `dist`, `.env`,
+  local SQLite files, or secret-bearing configuration from the old branch.
 - Unknown production routes return a bounded fail-closed response.
 - Free Local Python proxying uses an explicit allowlist and loopback binding.
 - Production startup requires a valid PostgreSQL DSN and current schema
@@ -172,6 +175,9 @@ As of 2026-07-24:
   only. Fresh-main real-runtime acceptance has not yet been claimed.
 - Lanes 2 through 7 remain partially open. Release, handoff, and merge authority
   are false.
+
+The next slices are to finish Lane 1 startup readiness and Lane 3 customer
+delivery ownership, then advance Lane 4 prepared-action execution authority.
 
 ## Definition Of Done
 
