@@ -59,10 +59,12 @@ smoke also runs in the deterministic backend job.
 
 ## Truth Boundary
 
-This is a pure planning primitive. It does **not** prove that private snapshot
-inputs came from the host or remain current. It does not implement:
+This remains a pure planning primitive. The separately accepted
+`relay_activation_scan` module can now create its private snapshot from one
+read-only host observation, but this core does **not** itself prove that an
+arbitrary caller-provided snapshot came from that scanner or remains current.
+It does not implement:
 
-- an FD-anchored prerequisite scanner;
 - a read-only systemctl adapter;
 - an `activate` or `activation-recover` CLI command;
 - confirmation, lifecycle locking, transaction revisions or receipts;
@@ -75,6 +77,7 @@ The live daemon now shares the separately accepted strict bytes parser in
 `RELAY_CONFIG_PARSER_ACCEPTANCE.md`. That parser does not inspect host identity
 or bind its result to an activation plan.
 
-The next slice must bind real host observations to this core before exposing a
-confirmable preview. It must not treat a caller-constructed snapshot as
-authority.
+See `RELAY_ACTIVATION_SCANNER_ACCEPTANCE.md` for the host-observation boundary.
+The next slice must combine a fresh scanner result with the read-only systemd
+adapter before exposing a confirmable preview. It must not treat a
+caller-constructed snapshot as authority.

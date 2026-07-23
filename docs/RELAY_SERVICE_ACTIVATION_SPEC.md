@@ -1,8 +1,9 @@
 # Relay Service Activation Specification
 
-Status: pure Activation Plan Core v0 and strict daemon config parser implemented
-and locally accepted; host prerequisite scanner, preview CLI, systemd mutation,
-transaction, rollback and recovery remain planned and unimplemented
+Status: pure Activation Plan Core v0, strict daemon config parser and read-only
+FD-anchored host prerequisite scanner implemented and locally accepted; systemd
+adapter, preview CLI, mutation, transaction, rollback and recovery remain
+planned and unimplemented
 
 ## Objective
 
@@ -14,14 +15,16 @@ This slice starts only from an `installed_valid` result produced by
 `agentops-relayctl status`. It must not treat an installed tree as proof that
 the daemon is configured, running, healthy, or reachable.
 
-The current `agentops_mis_cli.relay_activation` module implements only strict
+The current `agentops_mis_cli.relay_activation` module implements strict
 systemd-state parsing, private plan-hash compilation and bounded public
-projection from preconstructed synthetic identities. It does not open host
-files, inspect systemd, expose an `activate` CLI command or perform mutations.
-The live daemon separately shares a bounded strict config parser, but that
-parser does not create authoritative activation identities. See
+projection. `agentops_mis_cli.relay_activation_scan` now creates its private
+prerequisite snapshot from one read-only, FD-anchored host observation. Neither
+module inspects live systemd, exposes an `activate` CLI command or performs
+mutations. The live daemon separately shares the bounded strict config parser
+used by the scanner. See
 `RELAY_ACTIVATION_PLAN_CORE_ACCEPTANCE.md` and
-`RELAY_CONFIG_PARSER_ACCEPTANCE.md`.
+`RELAY_CONFIG_PARSER_ACCEPTANCE.md`, plus
+`RELAY_ACTIVATION_SCANNER_ACCEPTANCE.md`.
 
 ## Command Contract
 

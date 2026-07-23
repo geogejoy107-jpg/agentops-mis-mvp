@@ -65,5 +65,7 @@ does not:
 - provision accounts, files, credentials, TLS, routes, DNS or ACME;
 - prove a deployed Relay or physical browser reachability.
 
-Those host identities remain the responsibility of the pending FD-anchored
-activation prerequisite scanner and confirmable transaction layer.
+The separately accepted FD-anchored scanner in
+`RELAY_ACTIVATION_SCANNER_ACCEPTANCE.md` now creates those host identities for
+one read-only observation. Fresh confirmation, systemd state and the mutation
+transaction remain pending.
