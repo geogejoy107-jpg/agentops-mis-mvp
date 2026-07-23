@@ -82,6 +82,7 @@ export async function appendAudit(
     before?: unknown;
     after?: unknown;
     metadata?: Record<string, unknown>;
+    requestHash?: string;
   },
 ) {
   const workspaceId = String(
@@ -89,6 +90,34 @@ export async function appendAudit(
   ).trim();
   if (!workspaceId) throw new Error("audit_workspace_required");
   await client.query("SELECT pg_advisory_xact_lock(1095779668)");
+  if (input.requestHash) {
+    const existingResult = await client.query<{ audit_id: string }>(
+      `SELECT audit_id
+      FROM audit_logs
+      WHERE workspace_id=$1
+        AND actor_type=$2
+        AND actor_id IS NOT DISTINCT FROM $3
+        AND action=$4
+        AND entity_type=$5
+        AND entity_id=$6
+        AND metadata_json::jsonb ->> 'request_hash'=$7
+      ORDER BY created_at DESC,audit_id DESC
+      LIMIT 1`,
+      [
+        workspaceId,
+        input.actorType,
+        input.actorId,
+        input.action,
+        input.entityType,
+        input.entityId,
+        input.requestHash,
+      ],
+    );
+    const existing = existingResult.rows[0];
+    if (existing) {
+      return { auditId: existing.audit_id, outcome: "unchanged" as const };
+    }
+  }
   const previousResult = await client.query<{
     tamper_chain_hash: string | null;
     created_at: string | null;
@@ -99,6 +128,7 @@ export async function appendAudit(
   const previous = previousResult.rows[0];
   const metadata = {
     ...(input.metadata || {}),
+    ...(input.requestHash ? { request_hash: input.requestHash } : {}),
     workspace_id: workspaceId,
   };
   const beforeHash = input.before === undefined ? null : stableHash(input.before);
@@ -114,13 +144,14 @@ export async function appendAudit(
     metadata_json: metadata,
     previous: previous?.tamper_chain_hash || "genesis",
   });
+  const auditId = newLedgerId("aud");
   await client.query(
     `INSERT INTO audit_logs(
       audit_id,workspace_id,actor_type,actor_id,action,entity_type,entity_id,
       before_hash,after_hash,metadata_json,tamper_chain_hash,created_at
     ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
     [
-      newLedgerId("aud"),
+      auditId,
       workspaceId,
       input.actorType,
       input.actorId,
@@ -134,11 +165,13 @@ export async function appendAudit(
       nextAuditCreatedAt(previous?.created_at || null),
     ],
   );
+  return { auditId, outcome: "created" as const };
 }
 
 export async function appendRuntimeEvent(
   client: PoolClient,
   input: {
+    workspaceId?: string;
     eventType: string;
     status: string;
     runId?: string | null;
@@ -150,14 +183,44 @@ export async function appendRuntimeEvent(
     rawPayloadHash?: string | null;
   },
 ) {
+  let workspaceId = String(input.workspaceId || "").trim();
+  if (!workspaceId && input.runId) {
+    const runResult = await client.query<{
+      workspace_id: string;
+      task_id: string;
+      agent_id: string;
+    }>(
+      `SELECT workspace_id,task_id,agent_id
+      FROM runs WHERE run_id=$1`,
+      [input.runId],
+    );
+    const run = runResult.rows[0];
+    if (
+      !run
+      || (input.taskId && input.taskId !== run.task_id)
+      || (input.agentId && input.agentId !== run.agent_id)
+    ) {
+      throw new Error("runtime_event_run_binding_invalid");
+    }
+    workspaceId = run.workspace_id;
+  }
+  if (!workspaceId && input.taskId) {
+    const taskResult = await client.query<{ workspace_id: string }>(
+      `SELECT workspace_id FROM tasks WHERE task_id=$1`,
+      [input.taskId],
+    );
+    workspaceId = taskResult.rows[0]?.workspace_id || "";
+  }
+  if (!workspaceId) throw new Error("runtime_event_workspace_required");
   await client.query(
     `INSERT INTO runtime_events(
-      runtime_event_id,runtime_connector_id,event_type,status,run_id,task_id,
+      runtime_event_id,workspace_id,runtime_connector_id,event_type,status,run_id,task_id,
       agent_id,model_name,latency_ms,prompt_hash,input_summary,output_summary,
       error_message,raw_payload_hash,created_at
-    ) VALUES($1,NULL,$2,$3,$4,$5,$6,NULL,NULL,NULL,$7,$8,$9,$10,$11)`,
+    ) VALUES($1,$2,NULL,$3,$4,$5,$6,$7,NULL,NULL,NULL,$8,$9,$10,$11,$12)`,
     [
       newLedgerId("rte"),
+      workspaceId,
       input.eventType,
       input.status,
       input.runId || null,

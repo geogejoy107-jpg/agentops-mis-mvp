@@ -43,7 +43,7 @@ export class SchemaReadinessError extends Error {
   }
 }
 
-export const SCHEMA_CONTRACT = "agentops_commercial_postgres_v7";
+export const SCHEMA_CONTRACT = "agentops_commercial_postgres_v8";
 
 export const POSTGRES_MIGRATION_MANIFEST = Object.freeze([
   {
@@ -102,6 +102,13 @@ export const POSTGRES_MIGRATION_MANIFEST = Object.freeze([
     filename: "20260724_governed_knowledge_index_v7.sql",
     checksum: "ea0c543d7a1151d52e8262afc1141fd60f9b7520d5efff5783a82b7335b4bb56",
   },
+  {
+    component: "worker_evidence_workspace",
+    version: "20260724.8",
+    schemaContract: "worker_evidence_workspace_v8",
+    filename: "20260724_worker_evidence_workspace_v8.sql",
+    checksum: "ad5c15c636f15395d71a614478acbcdf7361604156362bb8c1f21d4c34b03d11",
+  },
 ] satisfies readonly MigrationDefinition[]);
 
 const REQUIRED_RELATIONS = Object.freeze([
@@ -144,6 +151,13 @@ const REQUIRED_LEDGER_COLUMNS = Object.freeze([
   "checksum",
   "applied_at",
 ]);
+
+const REQUIRED_COLUMNS = Object.freeze([
+  ["approvals", "approval_kind"],
+  ["memories", "workspace_id"],
+  ["memories", "run_id"],
+  ["runtime_events", "workspace_id"],
+] as const);
 
 const MIGRATION_ROOT = fileURLToPath(
   new URL("../../../../../migrations/postgres/", import.meta.url),
@@ -270,17 +284,20 @@ async function assertSchemaRelations(client: Client) {
     throw new SchemaReadinessError("schema_relation_missing");
   }
 
-  const approvalKind = await client.query<{ present: boolean }>(
-    `SELECT EXISTS(
-       SELECT 1
-         FROM information_schema.columns
-        WHERE table_schema=current_schema()
-          AND table_name='approvals'
-          AND column_name='approval_kind'
-     ) AS present`,
-  );
-  if (!approvalKind.rows[0]?.present) {
-    throw new SchemaReadinessError("schema_column_missing");
+  for (const [tableName, columnName] of REQUIRED_COLUMNS) {
+    const column = await client.query<{ present: boolean }>(
+      `SELECT EXISTS(
+         SELECT 1
+           FROM information_schema.columns
+          WHERE table_schema=current_schema()
+            AND table_name=$1
+            AND column_name=$2
+       ) AS present`,
+      [tableName, columnName],
+    );
+    if (!column.rows[0]?.present) {
+      throw new SchemaReadinessError("schema_column_missing");
+    }
   }
 }
 
