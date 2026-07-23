@@ -109,6 +109,10 @@ def main() -> int:
     sdist_has_unit = False
     sdist_has_config_example = False
     sdist_has_acceptance = False
+    wheel_reproducible = False
+    wheel_metadata_normalized = False
+    sdist_reproducible = False
+    sdist_metadata_normalized = False
     unit_payload = ""
     sections: dict[str, dict[str, list[str]]] = {}
     unit_contains_forbidden_material = False
@@ -123,9 +127,24 @@ def main() -> int:
         backend_scripts = entry_points(backend._entry_points())
         with tempfile.TemporaryDirectory(prefix="agentops-relay-deploy-contract-") as temporary:
             output = Path(temporary)
-            wheel_name = backend.build_wheel(str(output))
-            with zipfile.ZipFile(output / wheel_name) as wheel:
+            first = output / "first"
+            second = output / "second"
+            first.mkdir()
+            second.mkdir()
+            wheel_name = backend.build_wheel(str(first))
+            second_wheel_name = backend.build_wheel(str(second))
+            wheel_reproducible = (
+                wheel_name == second_wheel_name
+                and (first / wheel_name).read_bytes()
+                == (second / second_wheel_name).read_bytes()
+            )
+            with zipfile.ZipFile(first / wheel_name) as wheel:
                 names = wheel.namelist()
+                wheel_metadata_normalized = all(
+                    info.date_time == (1980, 1, 1, 0, 0, 0)
+                    and (info.external_attr >> 16) & 0o777 == 0o644
+                    for info in wheel.infolist()
+                )
                 entry_name = next(
                     (name for name in names if name.endswith(".dist-info/entry_points.txt")),
                     "",
@@ -134,8 +153,24 @@ def main() -> int:
                     wheel_scripts = entry_points(wheel.read(entry_name).decode("utf-8"))
                 wheel_has_unit = any(name.endswith("/agentops-mis-relay.service") for name in names)
 
-            sdist_name = backend.build_sdist(str(output))
-            with tarfile.open(output / sdist_name, "r:gz") as source:
+            sdist_name = backend.build_sdist(str(first))
+            second_sdist_name = backend.build_sdist(str(second))
+            sdist_reproducible = (
+                sdist_name == second_sdist_name
+                and (first / sdist_name).read_bytes()
+                == (second / second_sdist_name).read_bytes()
+            )
+            with tarfile.open(first / sdist_name, "r:gz") as source:
+                members = source.getmembers()
+                sdist_metadata_normalized = all(
+                    member.mtime == 0
+                    and member.uid == 0
+                    and member.gid == 0
+                    and member.uname == ""
+                    and member.gname == ""
+                    and member.mode == 0o644
+                    for member in members
+                )
                 names = source.getnames()
                 sdist_has_unit = any(
                     name.endswith("/packaging/relay/systemd/agentops-mis-relay.service")
@@ -171,6 +206,14 @@ def main() -> int:
     require(
         wheel_scripts.get(ENTRYPOINT_NAME) == ENTRYPOINT_TARGET,
         "wheel entrypoint is missing or incorrect",
+        failures,
+    )
+    require(wheel_reproducible, "wheel bytes are not reproducible", failures)
+    require(wheel_metadata_normalized, "wheel metadata is not normalized", failures)
+    require(sdist_reproducible, "source distribution bytes are not reproducible", failures)
+    require(
+        sdist_metadata_normalized,
+        "source distribution metadata is not normalized",
         failures,
     )
     require(not wheel_has_unit, "wheel must not auto-install a systemd unit", failures)
@@ -295,6 +338,10 @@ def main() -> int:
         "entrypoint_target": ENTRYPOINT_TARGET,
         "wheel_entrypoint_present": wheel_scripts.get(ENTRYPOINT_NAME) == ENTRYPOINT_TARGET,
         "wheel_installs_systemd_unit": wheel_has_unit,
+        "wheel_reproducible": wheel_reproducible,
+        "wheel_metadata_normalized": wheel_metadata_normalized,
+        "sdist_reproducible": sdist_reproducible,
+        "sdist_metadata_normalized": sdist_metadata_normalized,
         "sdist_includes_systemd_unit": sdist_has_unit,
         "sdist_includes_config_example": sdist_has_config_example,
         "sdist_includes_acceptance": sdist_has_acceptance,

@@ -105,6 +105,8 @@ The smoke:
 - parses the `project.scripts` entry without importing the daemon;
 - loads the offline build backend and builds a wheel plus source distribution
   entirely inside a temporary directory;
+- builds each artifact twice, requires byte-for-byte identity, and verifies
+  normalized archive timestamps, owners, groups, and file modes;
 - verifies the wheel entrypoint and verifies that pip installation cannot
   implicitly install the systemd unit;
 - verifies the source distribution carries the systemd template and this

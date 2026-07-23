@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import base64
 import csv
+import gzip
 import hashlib
 import io
+import stat
 import tarfile
 import zipfile
 from pathlib import Path
@@ -29,6 +31,8 @@ RELAY_DEPLOYMENT_FILES = [
     ROOT / "packaging" / "relay" / "systemd" / "agentops-mis-relay.service",
     ROOT / "docs" / "LOCAL_RELAY_DEPLOY_CONTRACT_ACCEPTANCE.md",
 ]
+ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+ARCHIVE_MODE = 0o644
 
 
 def _metadata() -> str:
@@ -96,14 +100,22 @@ def _record(rows: list[tuple[str, bytes]]) -> bytes:
     return out.getvalue().encode("utf-8")
 
 
+def _write_wheel_file(zf: zipfile.ZipFile, name: str, data: bytes) -> None:
+    info = zipfile.ZipInfo(name, ZIP_TIMESTAMP)
+    info.compress_type = zipfile.ZIP_STORED
+    info.create_system = 3
+    info.external_attr = (stat.S_IFREG | ARCHIVE_MODE) << 16
+    zf.writestr(info, data)
+
+
 def build_wheel(wheel_directory: str, config_settings=None, metadata_directory=None) -> str:
     rows = _wheel_files()
     wheel_name = f"{DIST}-{VERSION}-py3-none-any.whl"
     target = Path(wheel_directory) / wheel_name
-    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(target, "w") as zf:
         for name, data in rows:
-            zf.writestr(name, data)
-        zf.writestr(f"{DIST_INFO}/RECORD", _record(rows))
+            _write_wheel_file(zf, name, data)
+        _write_wheel_file(zf, f"{DIST_INFO}/RECORD", _record(rows))
     return wheel_name
 
 
@@ -127,7 +139,20 @@ def build_sdist(sdist_directory: str, config_settings=None) -> str:
         *RELAY_DEPLOYMENT_FILES,
         ROOT / "README.md",
     ]
-    with tarfile.open(target, "w:gz") as tf:
-        for path in include:
-            tf.add(path, arcname=f"{prefix}/{path.relative_to(ROOT).as_posix()}")
+    with target.open("wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
+            with tarfile.open(fileobj=compressed, mode="w") as tf:
+                for path in include:
+                    data = path.read_bytes()
+                    info = tarfile.TarInfo(
+                        f"{prefix}/{path.relative_to(ROOT).as_posix()}"
+                    )
+                    info.mode = ARCHIVE_MODE
+                    info.mtime = 0
+                    info.size = len(data)
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = ""
+                    info.gname = ""
+                    tf.addfile(info, io.BytesIO(data))
     return sdist_name
