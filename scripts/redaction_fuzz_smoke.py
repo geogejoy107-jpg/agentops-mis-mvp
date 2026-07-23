@@ -27,6 +27,7 @@ SECRET_VALUES = [
     "ghp_fuzzGithubSecretToken1234567890",
     "github_pat_fuzzGithubFineGrainedSecretToken1234567890",
     "xoxb-fuzz-slack-secret-1234567890",
+    "credential_canary_fuzzProtectedInput1234567890",
 ]
 
 KEYED_ONLY_SECRET_VALUES = [

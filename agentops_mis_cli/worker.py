@@ -350,6 +350,8 @@ class AdapterResult:
     attempt_count: int = 1
     max_attempts: int = 1
     retry_history: list[dict] | None = None
+    provider_call_performed: bool = False
+    dry_run: bool = True
     runtime_observation: dict | None = None
 
 
@@ -548,6 +550,7 @@ def execute_mock(task: dict, attempt: int = 1, fail_before_success: int = 0) -> 
             error_message=f"Simulated transient adapter failure before success, attempt {attempt}.",
             target_resource="local://agentops/mock-worker",
             retryable=True,
+            dry_run=False,
         )
     summary = f"Mock worker completed task '{redact_text(task.get('title'), 80)}' and produced a safe local execution summary."
     return AdapterResult(
@@ -557,6 +560,7 @@ def execute_mock(task: dict, attempt: int = 1, fail_before_success: int = 0) -> 
         **adapter_result_profile_fields(profile),
         raw_payload_hash=stable_hash({"adapter": "mock", "task_id": task.get("task_id"), "summary": summary}),
         target_resource="local://agentops/mock-worker",
+        dry_run=False,
     )
 
 
@@ -603,6 +607,8 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             output_tokens=int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
             target_resource=gateway_url.rstrip("/") + "/v1/chat/completions",
             retryable=not bool(visible),
+            provider_call_performed=True,
+            dry_run=False,
         )
     except HTTPError as exc:
         error_body = exc.read()
@@ -618,6 +624,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             duration_ms=int((time.time() - started) * 1000),
             target_resource=gateway_url.rstrip("/") + "/v1/chat/completions",
             retryable=status in {408, 409, 425, 429} or status >= 500,
+            dry_run=False,
         )
     except Exception as exc:
         return AdapterResult(
@@ -630,6 +637,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             duration_ms=int((time.time() - started) * 1000),
             target_resource=gateway_url.rstrip("/") + "/v1/chat/completions",
             retryable=True,
+            dry_run=False,
         )
 
 
@@ -682,6 +690,8 @@ def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int
             duration_ms=int(meta.get("durationMs") or ((time.time() - started) * 1000)),
             target_resource=f"local://openclaw/{agent_name}",
             retryable=not ok,
+            provider_call_performed=ok,
+            dry_run=False,
         )
     except Exception as exc:
         return AdapterResult(
@@ -694,6 +704,7 @@ def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int
             duration_ms=int((time.time() - started) * 1000),
             target_resource=f"local://openclaw/{agent_name}",
             retryable=True,
+            dry_run=False,
         )
 
 
@@ -728,6 +739,8 @@ def execute_codex(task: dict, binary_path: str, timeout: int, confirm_run: bool)
         output_tokens=runtime_result.output_tokens,
         target_resource=runtime_result.target_resource,
         retryable=runtime_result.retryable,
+        provider_call_performed=runtime_result.ok,
+        dry_run=False,
         runtime_observation=runtime_result.observation,
     )
 
@@ -1709,6 +1722,8 @@ def record_worker_runtime_event(
             "task_id": task_id,
             "adapter": args.adapter,
             "ok": result.ok,
+            "provider_call_performed": result.provider_call_performed,
+            "dry_run": result.dry_run,
             "error_type": result.error_type,
             "attempt_count": result.attempt_count,
             "max_attempts": result.max_attempts,
@@ -2153,6 +2168,8 @@ def resume_codex_workspace_write(client: AgentOpsClient, args) -> dict:
         output_tokens=runtime_result.output_tokens,
         target_resource=runtime_result.target_resource,
         retryable=runtime_result.retryable,
+        provider_call_performed=runtime_result.ok,
+        dry_run=False,
         runtime_observation=runtime_result.observation,
     )
     if not result.ok:
@@ -2249,6 +2266,8 @@ def resume_codex_workspace_write(client: AgentOpsClient, args) -> dict:
             error_message=redact_text(str(exc), 220),
             target_resource=result.target_resource,
             retryable=False,
+            provider_call_performed=result.provider_call_performed,
+            dry_run=result.dry_run,
             runtime_observation={
                 **(result.runtime_observation or {}),
                 "rollback_required": True,
@@ -2266,6 +2285,60 @@ def resume_codex_workspace_write(client: AgentOpsClient, args) -> dict:
             lease_id=lease_id,
             result=failed_result,
         )
+
+
+def request_customer_delivery_approval(
+    client: AgentOpsClient,
+    args,
+    *,
+    task_id: str,
+    run_id: str,
+    run_succeeded: bool,
+    manifest_verification: dict,
+) -> dict:
+    if not getattr(args, "request_customer_delivery_approval", False):
+        return {}
+    if args.adapter not in {"hermes", "openclaw"}:
+        raise RuntimeError(
+            "customer delivery approval is limited to Hermes or OpenClaw runs"
+        )
+    if not getattr(args, "confirm_run", False):
+        raise RuntimeError(
+            "customer delivery approval requires an explicitly confirmed live run"
+        )
+    if not run_succeeded or manifest_verification.get("pass") is not True:
+        raise RuntimeError(
+            "customer delivery approval requires a successful run and verified plan evidence"
+        )
+
+    receipt = client.post("/api/agent-gateway/approvals/request", {
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "requested_by_agent_id": client.agent_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "approval_kind": "customer_delivery",
+        "decision": "pending",
+        "reason": "Customer delivery requires Human Owner review.",
+    })
+    approval = receipt.get("approval") or {}
+    plan_evidence = receipt.get("plan_evidence") or {}
+    if (
+        receipt.get("operation") != "customer_delivery_approval_request"
+        or receipt.get("control_plane") != "typescript_postgres"
+        or receipt.get("outcome") not in {"created", "unchanged"}
+        or approval.get("approval_kind") != "customer_delivery"
+        or approval.get("task_id") != task_id
+        or approval.get("run_id") != run_id
+        or approval.get("requested_by_agent_id") != client.agent_id
+        or approval.get("decision") != "pending"
+        or approval.get("approver_user_id") is not None
+        or plan_evidence.get("pass") is not True
+    ):
+        raise RuntimeError(
+            "customer delivery approval owner returned an invalid TypeScript/Postgres receipt"
+        )
+    return receipt
 
 
 def process_one_task(client: AgentOpsClient, args) -> dict:
@@ -2519,6 +2592,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "args": {
             "task_id": task_id,
             "adapter": args.adapter,
+            "provider_call_performed": result.provider_call_performed,
+            "dry_run": result.dry_run,
             "prompt_hash": result.prompt_hash,
             "prompt_profile_id": result.prompt_profile_id,
             "prompt_profile_version": result.prompt_profile_version,
@@ -2600,6 +2675,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "rubric": {
             "gate": "worker_adapter_loop",
             "adapter": args.adapter,
+            "provider_call_performed": result.provider_call_performed,
+            "dry_run": result.dry_run,
             "requires_completed_run": True,
             "requires_knowledge_retrieval_evidence": True,
             "prompt_profile_id": result.prompt_profile_id,
@@ -2688,6 +2765,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "metadata": {
             "adapter": args.adapter,
             "ok": result.ok,
+            "provider_call_performed": result.provider_call_performed,
+            "dry_run": result.dry_run,
             "prompt_hash": result.prompt_hash,
             "prompt_profile_id": result.prompt_profile_id,
             "prompt_profile_version": result.prompt_profile_version,
@@ -2740,6 +2819,14 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     )
     manifest = manifest_payload.get("manifest") or {}
     manifest_verification = manifest_payload.get("verification") or {}
+    delivery_approval_payload = request_customer_delivery_approval(
+        client,
+        args,
+        task_id=task_id,
+        run_id=run_id,
+        run_succeeded=result.ok,
+        manifest_verification=manifest_verification,
+    )
     client.post("/api/agent-gateway/heartbeat", {
         "workspace_id": client.workspace_id,
         "agent_id": client.agent_id,
@@ -2756,8 +2843,26 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "plan_evidence_manifest_id": manifest.get("manifest_id"),
         "plan_evidence_status": manifest.get("status"),
         "plan_evidence_pass": manifest_verification.get("pass"),
+        "customer_delivery_approval_requested": bool(delivery_approval_payload),
+        "customer_delivery_approval_id": (
+            (delivery_approval_payload.get("approval") or {}).get("approval_id")
+            if delivery_approval_payload
+            else None
+        ),
+        "customer_delivery_approval_outcome": (
+            delivery_approval_payload.get("outcome")
+            if delivery_approval_payload
+            else None
+        ),
+        "customer_delivery_approval_control_plane": (
+            delivery_approval_payload.get("control_plane")
+            if delivery_approval_payload
+            else None
+        ),
         "adapter": args.adapter,
         "ok": result.ok,
+        "provider_call_performed": result.provider_call_performed,
+        "dry_run": result.dry_run,
         "attempt_count": result.attempt_count,
         "prompt_profile": {
             "profile_id": result.prompt_profile_id,
@@ -2823,6 +2928,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--backoff-factor", type=float, default=2.0, help="Exponential backoff factor for idle/error loops.")
     parser.add_argument("--max-tasks", type=int, default=1, help="Maximum tasks to process before exit. Use 0 for no limit.")
     parser.add_argument("--confirm-run", action="store_true", help="Allow live runtime adapter execution.")
+    parser.add_argument(
+        "--request-customer-delivery-approval",
+        action="store_true",
+        help="After a successful verified Hermes/OpenClaw run, request pending Human review from the TypeScript/Postgres owner.",
+    )
     parser.add_argument("--allow-high-risk", action="store_true", help="Allow high/critical risk tasks.")
     parser.add_argument("--adapter-max-attempts", type=int, default=int(os.environ.get("AGENTOPS_ADAPTER_MAX_ATTEMPTS", "1")), help="Maximum adapter execution attempts for retryable failures.")
     parser.add_argument("--adapter-retry-delay-sec", type=float, default=float(os.environ.get("AGENTOPS_ADAPTER_RETRY_DELAY_SEC", "1")), help="Delay between retryable adapter attempts.")

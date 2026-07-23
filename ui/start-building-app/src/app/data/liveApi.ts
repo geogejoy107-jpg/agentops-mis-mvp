@@ -11,7 +11,8 @@ import type {
   ToolCall,
 } from "./mockData";
 
-const API_BASE = import.meta.env.VITE_AGENTOPS_API_BASE || "/mis-api";
+const API_BASE = __AGENTOPS_API_BASE__;
+const HUMAN_SESSION_REQUIRED = __AGENTOPS_HUMAN_SESSION_REQUIRED__;
 
 export interface DashboardMetrics {
   agents_total: number;
@@ -3836,10 +3837,99 @@ function boolValue(value: unknown): boolean {
   return value === true || value === 1 || value === "1" || value === "true";
 }
 
+type HumanWriteAuthority = {
+  csrf: string;
+  workspaces: string[];
+};
+
+let humanWriteAuthority: Promise<HumanWriteAuthority> | null = null;
+
+function mutationKey(operation: string) {
+  const cryptoApi = globalThis.crypto;
+  if (!cryptoApi?.randomUUID) {
+    throw new Error("secure_idempotency_key_unavailable");
+  }
+  return `mis-ui-${operation}-${cryptoApi.randomUUID()}`;
+}
+
+async function loadHumanWriteAuthority() {
+  if (!humanWriteAuthority) {
+    humanWriteAuthority = (async () => {
+      const response = await fetch(`${API_BASE}/human-auth/session`, {
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        throw new Error(
+          `${response.status} ${response.statusText}: ${await response.text()}`,
+        );
+      }
+      const payload = await response.json() as Record<string, unknown>;
+      const csrf = String(payload.csrf_token || "");
+      const memberships = asArray<Record<string, unknown>>(
+        payload.memberships,
+      );
+      if (!/^[a-f0-9]{64}$/.test(csrf)) {
+        throw new Error("human_session_csrf_unavailable");
+      }
+      return {
+        csrf,
+        workspaces: memberships
+          .map((membership) => String(membership.workspace_id || "").trim())
+          .filter(Boolean),
+      };
+    })().catch((error) => {
+      humanWriteAuthority = null;
+      throw error;
+    });
+  }
+  return humanWriteAuthority;
+}
+
+async function humanMutationJson<T>(
+  path: string,
+  body: Record<string, unknown>,
+  operation: string,
+): Promise<T> {
+  if (!HUMAN_SESSION_REQUIRED) {
+    return apiJson<T>(path, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  const authority = await loadHumanWriteAuthority();
+  const requestedWorkspace = String(body.workspace_id || "").trim();
+  const implicitWorkspace = authority.workspaces.length === 1
+    ? authority.workspaces[0]
+    : "";
+  const workspace = requestedWorkspace || implicitWorkspace;
+  const headers: Record<string, string> = {
+    "X-AgentOps-CSRF": authority.csrf,
+    "Idempotency-Key": mutationKey(operation),
+  };
+  if (workspace) headers["X-AgentOps-Workspace-Id"] = workspace;
+  try {
+    return await apiJson<T>(path, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      credentials: "same-origin",
+    });
+  } catch (error) {
+    humanWriteAuthority = null;
+    throw error;
+  }
+}
+
 export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const { headers: suppliedHeaders, ...options } = init || {};
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-    ...init,
+    credentials: "same-origin",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(suppliedHeaders || {}),
+    },
   });
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
@@ -3865,9 +3955,14 @@ async function optionalApiJson<T>(path: string, fallback: T): Promise<T> {
 }
 
 async function apiJsonWithStatuses<T>(path: string, init: RequestInit | undefined, acceptedStatuses: number[]): Promise<T> {
+  const { headers: suppliedHeaders, ...options } = init || {};
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-    ...init,
+    credentials: "same-origin",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(suppliedHeaders || {}),
+    },
   });
   if (!res.ok && !acceptedStatuses.includes(res.status)) {
     throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
@@ -4518,19 +4613,21 @@ export async function loadAgentPerformance(id: string): Promise<AgentPerformance
 }
 
 export async function decideApproval(id: string, decision: "approve" | "reject"): Promise<Approval> {
-  const raw = await apiJson<Record<string, unknown>>(`/approvals/${encodeURIComponent(id)}/${decision}`, {
-    method: "POST",
-    body: JSON.stringify({}),
-  });
+  const raw = await humanMutationJson<Record<string, unknown>>(
+    `/approvals/${encodeURIComponent(id)}/${decision}`,
+    {},
+    `approval-${decision}`,
+  );
   const approvalRaw = typeof raw.approval === "object" && raw.approval !== null ? raw.approval as Record<string, unknown> : raw;
   return normalizeApproval(approvalRaw);
 }
 
 export async function decideMemory(id: string, decision: "approve" | "reject"): Promise<Memory> {
-  const raw = await apiJson<Record<string, unknown>>(`/memories/${encodeURIComponent(id)}/${decision}`, {
-    method: "POST",
-    body: JSON.stringify({}),
-  });
+  const raw = await humanMutationJson<Record<string, unknown>>(
+    `/memories/${encodeURIComponent(id)}/${decision}`,
+    {},
+    `memory-${decision}`,
+  );
   return normalizeMemory(raw);
 }
 
@@ -9227,17 +9324,19 @@ export async function loadDemoReadiness(): Promise<DemoReadinessPayload> {
 }
 
 export async function createAgentGatewayEnrollment(input: AgentGatewayEnrollmentCreateInput): Promise<AgentGatewayEnrollmentCreateResult> {
-  return apiJson<AgentGatewayEnrollmentCreateResult>("/agent-gateway/enrollment/create", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return humanMutationJson<AgentGatewayEnrollmentCreateResult>(
+    "/agent-gateway/enrollment/create",
+    input,
+    "enrollment-create",
+  );
 }
 
 export async function requestAgentGatewayEnrollment(input: AgentGatewayEnrollmentCreateInput & { reason?: string }): Promise<AgentGatewayEnrollmentRequestResult> {
-  return apiJson<AgentGatewayEnrollmentRequestResult>("/agent-gateway/enrollment/request", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return humanMutationJson<AgentGatewayEnrollmentRequestResult>(
+    "/agent-gateway/enrollment/request",
+    input,
+    "enrollment-request",
+  );
 }
 
 export async function issueApprovedAgentGatewayEnrollment(input: {
@@ -9247,24 +9346,30 @@ export async function issueApprovedAgentGatewayEnrollment(input: {
   heartbeat_timeout_sec?: number;
   label?: string;
 }): Promise<AgentGatewayEnrollmentCreateResult & { issued_from_request_id?: string; approval_id?: string }> {
-  return apiJson<AgentGatewayEnrollmentCreateResult & { issued_from_request_id?: string; approval_id?: string }>("/agent-gateway/enrollment/issue-approved", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return humanMutationJson<AgentGatewayEnrollmentCreateResult & {
+    issued_from_request_id?: string;
+    approval_id?: string;
+  }>(
+    "/agent-gateway/enrollment/issue-approved",
+    input,
+    "enrollment-issue-approved",
+  );
 }
 
 export async function revokeAgentGatewayEnrollment(input: { token_id?: string; agent_id?: string }): Promise<AgentGatewayEnrollmentRevokeResult> {
-  return apiJson<AgentGatewayEnrollmentRevokeResult>("/agent-gateway/enrollment/revoke", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return humanMutationJson<AgentGatewayEnrollmentRevokeResult>(
+    "/agent-gateway/enrollment/revoke",
+    input,
+    "enrollment-revoke",
+  );
 }
 
 export async function revokeAgentGatewaySession(input: { session_id?: string; agent_id?: string }): Promise<AgentGatewaySessionRevokeResult> {
-  return apiJson<AgentGatewaySessionRevokeResult>("/agent-gateway/session/revoke", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return humanMutationJson<AgentGatewaySessionRevokeResult>(
+    "/agent-gateway/session/revoke",
+    input,
+    "session-revoke",
+  );
 }
 
 export async function rotateAgentGatewayEnrollment(input: {
@@ -9275,8 +9380,9 @@ export async function rotateAgentGatewayEnrollment(input: {
   heartbeat_timeout_sec?: number;
   label?: string;
 }): Promise<AgentGatewayEnrollmentRotateResult> {
-  return apiJson<AgentGatewayEnrollmentRotateResult>("/agent-gateway/enrollment/rotate", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return humanMutationJson<AgentGatewayEnrollmentRotateResult>(
+    "/agent-gateway/enrollment/rotate",
+    input,
+    "enrollment-rotate",
+  );
 }

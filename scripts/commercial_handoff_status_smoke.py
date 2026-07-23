@@ -33,12 +33,14 @@ SOURCE_DOCS = [
 COMMAND = "python3 scripts/commercial_handoff_status_smoke.py"
 
 EXPECTED_LANES = [
-    "Commercial Read Models",
-    "Workspace And RBAC Scope",
-    "Storage Boundary",
-    "Commercial Evidence Packets",
-    "UI Route Retirement And Parity",
-    "Deployment And BYOC Readiness",
+    ("Lane 0", "Runtime Boundary"),
+    ("Lane 1", "PostgreSQL Schema And Startup"),
+    ("Lane 2", "Agent Identity And Plans"),
+    ("Lane 3", "Customer Delivery And Human Review"),
+    ("Lane 4", "Prepared Actions"),
+    ("Lane 5", "Read Models And Supervision"),
+    ("Lane 6", "Enrollment And Entitlements"),
+    ("Lane 7", "Deployment And Promotion"),
 ]
 
 PACKET_STATUS = {
@@ -159,10 +161,18 @@ def validate_sources(texts: dict[Path, str], failures: list[str]) -> None:
     require(COMMAND in ci_text, "CI workflow missing handoff command", failures)
     require("read-only handoff packet" in handoff_text, "handoff acceptance missing read-only packet boundary", failures)
 
-    for lane in EXPECTED_LANES:
-        require(f"Lane {EXPECTED_LANES.index(lane) + 1}: {lane}" in breakdown_text, f"missing clean-room lane: {lane}", failures)
+    for lane_id, lane_name in EXPECTED_LANES:
+        require(
+            f"{lane_id}: {lane_name}" in breakdown_text,
+            f"missing clean-room lane: {lane_name}",
+            failures,
+        )
     require("Do not merge PR #22 directly." in breakdown_text, "PR #22 direct-merge block missing", failures)
-    require("Start with Lane 1 or Lane 4." in breakdown_text, "recommended starting lane missing", failures)
+    require(
+        "finish Lane 1 startup readiness and Lane 3 customer" in breakdown_text,
+        "recommended current migration slices missing",
+        failures,
+    )
 
     for packet, status in PACKET_STATUS.items():
         require(packet in index_text, f"missing packet row: {packet}", failures)
@@ -182,40 +192,52 @@ def validate_sources(texts: dict[Path, str], failures: list[str]) -> None:
 def lane_status() -> list[dict[str, str]]:
     return [
         {
-            "lane": "Lane 1",
-            "name": "Commercial Read Models",
-            "status": "partially_started",
-            "evidence": "commercial config status and current-evidence status readbacks exist; no billing or cleanup.",
+            "lane": "Lane 0",
+            "name": "Runtime Boundary",
+            "status": "accepted_locally",
+            "evidence": "production Next build and no-Python fail-closed boundary are smoke guarded.",
         },
         {
-            "lane": "Lane 4",
-            "name": "Commercial Evidence Packets",
-            "status": "active",
-            "evidence": "packet index, current evidence status and handoff status are generator-smoke guarded.",
+            "lane": "Lane 1",
+            "name": "PostgreSQL Schema And Startup",
+            "status": "in_progress",
+            "evidence": "explicit current-main baseline and v1-v5 bridge are present; startup readiness remains open.",
         },
         {
             "lane": "Lane 2",
-            "name": "Workspace And RBAC Scope",
-            "status": "queued",
-            "evidence": "requires separate workspace/RBAC scope slice.",
+            "name": "Agent Identity And Plans",
+            "status": "in_progress",
+            "evidence": "fresh-main TypeScript identity, plan and evidence owners remain incomplete.",
         },
         {
             "lane": "Lane 3",
-            "name": "Storage Boundary",
-            "status": "queued",
-            "evidence": "requires separate storage helper parity slice.",
+            "name": "Customer Delivery And Human Review",
+            "status": "in_progress",
+            "evidence": "Worker opt-in exists; production approval owner and fresh-main Human review remain open.",
+        },
+        {
+            "lane": "Lane 4",
+            "name": "Prepared Actions",
+            "status": "in_progress",
+            "evidence": "current action_id authority exists; commercial Postgres lease and receipt closure remains open.",
         },
         {
             "lane": "Lane 5",
-            "name": "UI Route Retirement And Parity",
+            "name": "Read Models And Supervision",
             "status": "queued",
-            "evidence": "requires separate route inventory and parity slice.",
+            "evidence": "workspace read and Human supervision owners require selective fresh-main replay.",
         },
         {
             "lane": "Lane 6",
-            "name": "Deployment And BYOC Readiness",
+            "name": "Enrollment And Entitlements",
             "status": "queued",
-            "evidence": "requires separate local/customer deployment slice; hosted readiness stays unclaimed.",
+            "evidence": "production enrollment issue and entitlement owners remain open.",
+        },
+        {
+            "lane": "Lane 7",
+            "name": "Deployment And Promotion",
+            "status": "queued",
+            "evidence": "customer install, upgrade, rollback and frozen-source runtime acceptance remain open.",
         },
     ]
 
