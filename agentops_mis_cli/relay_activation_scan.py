@@ -403,7 +403,12 @@ class _AnchoredInventory:
         )
         return opened
 
-    def lstat_optional(self, path: str) -> os.stat_result | None:
+    def lstat_optional(
+        self,
+        path: str,
+        *,
+        record_absence: bool = False,
+    ) -> os.stat_result | None:
         parts = _path_parts(path)
         if not parts:
             return os.fstat(self.root_descriptor)
@@ -411,6 +416,8 @@ class _AnchoredInventory:
         try:
             return os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
         except FileNotFoundError:
+            if record_absence:
+                self._absent.add(parts)
             return None
         except OSError:
             raise _ScanInvalid from None
@@ -684,6 +691,15 @@ def _is_descendant(path: PurePosixPath, parent: PurePosixPath) -> bool:
     return bool(relative.parts)
 
 
+def _trusted_service_parent_group(
+    metadata_gid: int,
+    *,
+    expected_gid: int,
+    service_group_ids: tuple[int, ...],
+) -> bool:
+    return metadata_gid == expected_gid or metadata_gid in service_group_ids
+
+
 def _release_tree_digest(
     inventory: _AnchoredInventory,
     release_id: str,
@@ -806,7 +822,11 @@ def _trusted_parent_hash(
             )
             or (
                 path in service_parents
-                and metadata.st_gid not in {expected_gid, service_gid}
+                and not _trusted_service_parent_group(
+                    metadata.st_gid,
+                    expected_gid=expected_gid,
+                    service_group_ids=service_group_ids,
+                )
             )
         ):
             raise _ScanInvalid
@@ -1083,7 +1103,10 @@ def _scan_anchored(
         )
 
         enablement_links: tuple[LinkIdentity, ...]
-        enablement_metadata = inventory.lstat_optional(ENABLEMENT_LINK_PATH)
+        enablement_metadata = inventory.lstat_optional(
+            ENABLEMENT_LINK_PATH,
+            record_absence=True,
+        )
         if enablement_metadata is None:
             enablement_links = ()
         else:

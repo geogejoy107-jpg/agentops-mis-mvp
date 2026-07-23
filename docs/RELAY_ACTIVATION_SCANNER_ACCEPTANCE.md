@@ -41,7 +41,8 @@ resolver, command path, fixture or mutation override, and this slice adds no
   trusted parent chains;
 - bind both absence and safe existing `0600` state/status leaves into the
   private parent-chain hash;
-- bind the exact optional `multi-user.target.wants` symlink identity and target;
+- bind the exact optional `multi-user.target.wants` symlink identity and target,
+  including an explicitly revalidated absent state;
 - return only an internal private snapshot suitable for
   `compile_activation_plan`.
 
@@ -52,7 +53,7 @@ backend, runs the scanner under write, network, subprocess and unanchored-open
 guards, and verifies that the resulting snapshot compiles into the expected
 activation plan.
 
-It also rejects twenty-three unsafe or raced fixtures, including:
+It also rejects twenty-four unsafe or raced fixtures, including:
 
 - a non-root production call before any host path is opened;
 - symlinked, hard-linked, wrongly-modeled and duplicate sensitive material;
@@ -62,7 +63,8 @@ It also rejects twenty-three unsafe or raced fixtures, including:
   keys;
 - reused or oversized route keys;
 - root replacement, release/unit changes after initial status validation,
-  same-target enablement-link replacement and in-place file mutation.
+  absent-link creation, same-target enablement-link replacement and in-place
+  file mutation.
 
 The smoke checks bounded error output, omitted exception chains, descriptor
 cleanup, an exact wheel-module inventory and the absence of a scanner CLI. It

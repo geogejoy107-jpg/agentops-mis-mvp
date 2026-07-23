@@ -505,6 +505,21 @@ def main() -> int:
         )
         rejected_cases += 1
 
+        require(
+            scanner._trusted_service_parent_group(
+                4242,
+                expected_gid=0,
+                service_group_ids=(3000, 4242),
+            )
+            and not scanner._trusted_service_parent_group(
+                4243,
+                expected_gid=0,
+                service_group_ids=(3000, 4242),
+            ),
+            "supplementary service-group trust drifted",
+            failures,
+        )
+
         plan = compile_activation_plan(
             snapshot,
             parse_systemd_show_bytes(disabled_systemd_bytes()),
@@ -874,6 +889,57 @@ def main() -> int:
         require(
             release_changed and release_status_calls >= 1,
             "release race injection did not run",
+            failures,
+        )
+        rejected_cases += 1
+
+        absent_link_race = clone_root(
+            valid,
+            temporary / "case-absent-link-race",
+        )
+        absent_enablement = (
+            absent_link_race / ENABLEMENT_LINK_PATH.lstrip("/")
+        )
+        original_lstat_optional = scanner._AnchoredInventory.lstat_optional
+        raw_symlink_for_absence = os.symlink
+        absent_link_created = False
+
+        def create_link_after_absence(
+            inventory,
+            path: str,
+            *,
+            record_absence: bool = False,
+        ):
+            nonlocal absent_link_created
+            observed = original_lstat_optional(
+                inventory,
+                path,
+                record_absence=record_absence,
+            )
+            if (
+                path == ENABLEMENT_LINK_PATH
+                and observed is None
+                and not absent_link_created
+            ):
+                raw_symlink_for_absence(
+                    UNIT_PATH,
+                    absent_enablement,
+                )
+                absent_link_created = True
+            return observed
+
+        scanner._AnchoredInventory.lstat_optional = create_link_after_absence
+        try:
+            expect_rejected(
+                absent_link_race,
+                failures,
+                "enablement-link-appeared-after-absence",
+            )
+        finally:
+            scanner._AnchoredInventory.lstat_optional = original_lstat_optional
+        require(
+            absent_link_created,
+            "enablement-link absence race injection did not run",
             failures,
         )
         rejected_cases += 1
