@@ -18,6 +18,7 @@ import {
   containsProtectedMaterial,
   stableHash,
 } from "../src/worker/redaction";
+import { HermesAdapter } from "../src/worker/adapters";
 
 const TOKEN = "contract-bearer-fixture-0123456789abcdef";
 const TASK_CANARY = "credential_canary_abcdefghijklmnop";
@@ -43,10 +44,12 @@ const state: {
   scenario: Scenario;
   requests: RecordedRequest[];
   redirectTargetRequests: number;
+  hermesTargetRequests: number;
 } = {
   scenario: "happy",
   requests: [],
   redirectTargetRequests: 0,
+  hermesTargetRequests: 0,
 };
 
 function send(
@@ -118,6 +121,20 @@ async function handle(
     if (url.pathname === "/api/mis/agent-gateway/redirect-target") {
       state.redirectTargetRequests += 1;
       send(response, 200, { ok: true });
+      return;
+    }
+    if (
+      request.method === "POST"
+      && url.pathname === "/v1/chat/completions"
+    ) {
+      const body = await requestBody(request);
+      assert.equal(body.model, "hermes-agent");
+      assert.ok(Array.isArray(body.messages));
+      state.hermesTargetRequests += 1;
+      send(response, 200, {
+        choices: [{ message: { content: "Bounded contract response." } }],
+        usage: { completion_tokens: 3 },
+      });
       return;
     }
     assert.equal(request.headers.authorization, `Bearer ${TOKEN}`);
@@ -523,6 +540,29 @@ async function main() {
   assert.ok(address && typeof address === "object");
   const baseUrl = `http://127.0.0.1:${address.port}`;
   try {
+    const hermes = new HermesAdapter({
+      gatewayUrl: baseUrl,
+      model: "hermes-agent",
+      timeoutMs: 5_000,
+      maxTokens: 128,
+    });
+    const hermesResult = await hermes.execute({
+      prompt: "Return one bounded contract response.",
+      promptHash: stableHash("Return one bounded contract response."),
+      profile: {
+        profileId: "contract",
+        version: "worker_prompt_profiles_v1",
+        profileHash: stableHash("contract"),
+        objective: "Verify the Hermes endpoint remains on the configured origin.",
+        outputContract: ["bounded_response"],
+      },
+    });
+    assert.equal(hermesResult.ok, true);
+    assert.equal(hermesResult.providerCallPerformed, true);
+    assert.equal(hermesResult.dryRun, false);
+    assert.equal(state.hermesTargetRequests, 1);
+    assert.match(hermesResult.targetResource, /\/v1\/chat\/completions$/);
+
     const gateway = new HttpGatewayClient({
       baseUrl,
       workspaceId: WORKSPACE_ID,

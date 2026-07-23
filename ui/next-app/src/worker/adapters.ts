@@ -78,10 +78,9 @@ export class HermesAdapter implements RuntimeAdapter {
 
   async execute(bundle: PromptBundle): Promise<RuntimeAdapterResult> {
     const started = Date.now();
-    const endpoint = new URL(
-      `${this.#gatewayUrl.pathname}/v1/chat/completions`,
-      this.#gatewayUrl,
-    );
+    const endpoint = new URL(this.#gatewayUrl);
+    const basePath = this.#gatewayUrl.pathname.replace(/\/+$/, "");
+    endpoint.pathname = `${basePath}/v1/chat/completions`;
     const targetResource = `hermes://gateway/${
       sha256(endpoint.origin).slice(0, 20)
     }/v1/chat/completions`;
