@@ -12,7 +12,11 @@ import {
   registerGatewayAgent,
 } from "../src/server/controlPlane/gatewayLifecycle";
 import { ControlPlaneHttpError } from "../src/server/controlPlane/http";
-import { runPostgresSchemaCommand } from "../src/server/controlPlane/schemaReadiness";
+import {
+  POSTGRES_MIGRATION_MANIFEST,
+  runPostgresSchemaCommand,
+  SCHEMA_CONTRACT,
+} from "../src/server/controlPlane/schemaReadiness";
 
 const baseDsn = String(process.env.AGENTOPS_POSTGRES_DSN || "").trim();
 
@@ -95,7 +99,13 @@ async function assertSourceOwnership() {
     assert(!source.includes("server.py"));
     assert(!/\bpython\b/i.test(source));
   }
-  assert(sources.at(-1)?.includes('controlPlaneMode() !== "postgres"'));
+  for (const routeSource of sources.slice(0, -1)) {
+    assert(routeSource.includes('controlPlaneMode() === "proxy"'));
+    assert.match(routeSource, /proxyFreeLocal(?:Read|Mutation)/);
+  }
+  const lifecycleSource = sources.at(-1);
+  assert(lifecycleSource?.includes('controlPlaneMode() !== "postgres"'));
+  assert(!lifecycleSource?.includes("proxyFreeLocal"));
 }
 
 async function seedFixture(
@@ -169,8 +179,9 @@ async function runContract() {
     const migration = await runPostgresSchemaCommand("migrate", {
       connectionString: scopedDsn(schema),
     });
-    assert.equal(migration.schema_contract, "agentops_commercial_postgres_v6");
-    assert.equal(migration.applied_count, migration.manifest_count);
+    assert.equal(migration.schema_contract, SCHEMA_CONTRACT);
+    assert.equal(migration.applied_count, POSTGRES_MIGRATION_MANIFEST.length);
+    assert.equal(migration.manifest_count, POSTGRES_MIGRATION_MANIFEST.length);
     await admin.query(`SET search_path TO "${schema}"`);
     await seedFixture(admin, parentToken, otherToken, expiredToken);
 

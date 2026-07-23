@@ -127,8 +127,9 @@ async function createContractSchema(client: Client) {
       tamper_chain_hash text,created_at text NOT NULL
     );
     CREATE TABLE runtime_events(
-      runtime_event_id text PRIMARY KEY,runtime_connector_id text,event_type text NOT NULL,
-      status text NOT NULL,run_id text,task_id text,agent_id text,model_name text,
+      runtime_event_id text PRIMARY KEY,workspace_id text NOT NULL,
+      runtime_connector_id text,event_type text NOT NULL,status text NOT NULL,
+      run_id text,task_id text,agent_id text,model_name text,
       latency_ms integer,prompt_hash text,input_summary text,output_summary text,
       error_message text,raw_payload_hash text,created_at text NOT NULL
     );

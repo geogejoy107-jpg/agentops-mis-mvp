@@ -245,6 +245,7 @@ export async function pullAgentGatewayTasks(request: Request) {
       [identity.workspaceId, statuses, identity.agentId, limit, filteredTaskId],
     );
     await appendRuntimeEvent(client, {
+      workspaceId: identity.workspaceId,
       eventType: "task.pull",
       status: "completed",
       agentId: identity.agentId,

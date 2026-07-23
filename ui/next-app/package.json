@@ -18,6 +18,8 @@
     "test:customer-delivery-approval-request-contract": "tsx scripts/customer-delivery-approval-request-contract.ts",
     "test:agent-gateway-core-postgres-contract": "tsx scripts/agent-gateway-core-postgres-contract.ts",
     "test:agent-gateway-core-production-boundary": "tsx scripts/agent-gateway-core-production-boundary.ts",
+    "test:agent-gateway-evidence-support-contract": "tsx scripts/agent-gateway-evidence-support-contract.ts",
+    "test:gateway-lifecycle-contract": "tsx scripts/gateway-lifecycle-contract.ts",
     "test:human-session-approval-contract": "tsx scripts/human-session-approval-contract.ts",
     "test:postgres-schema-contract": "tsx scripts/postgres-schema-contract.ts"
   },

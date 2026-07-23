@@ -333,6 +333,8 @@ jobs:
           npm run test:customer-delivery-approval-request-contract
           npm run test:agent-gateway-core-postgres-contract
           npm run test:agent-gateway-core-production-boundary
+          npm run test:gateway-lifecycle-contract
+          npm run test:agent-gateway-evidence-support-contract
           npm run test:human-session-approval-contract
           npm run build
 

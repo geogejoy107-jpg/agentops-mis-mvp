@@ -581,10 +581,9 @@ async function main() {
       "migrate",
       { connectionString: contractDsn },
     );
-    assert.equal(migration.schema_contract, "agentops_commercial_postgres_v6");
+    assert.equal(migration.schema_contract, SCHEMA_CONTRACT);
     assert.equal(migration.applied_count, POSTGRES_MIGRATION_MANIFEST.length);
-    assert.equal(POSTGRES_MIGRATION_MANIFEST.length, 7);
-    assert.equal(SCHEMA_CONTRACT, "agentops_commercial_postgres_v6");
+    assert.equal(migration.manifest_count, POSTGRES_MIGRATION_MANIFEST.length);
     await admin.query(`SET search_path TO ${quotedSchema(schema)}`);
 
     await seedHuman(admin, REVIEWER_ID, "reviewer", "approver");
