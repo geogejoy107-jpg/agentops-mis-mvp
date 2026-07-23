@@ -652,6 +652,8 @@ def run_worker(
                 "processed",
                 "provider_call_performed",
                 "reason",
+                "error_type",
+                "attempt_count",
                 "run_id",
                 "task_id",
                 "ledger_evidence_complete",
