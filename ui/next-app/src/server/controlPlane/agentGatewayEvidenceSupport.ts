@@ -59,6 +59,7 @@ const SAFE_SENSITIVE_EVIDENCE_SUFFIXES = [
 ];
 const TRUSTED_WORKER_SECRET_BOUNDARY = "trusted_worker_client_v1";
 const TRUSTED_WORKER_CREDENTIAL_TRANSPORT = "trusted_worker_client_only";
+const TRUSTED_WORKER_PROMPT_PROFILE_VERSION = /^worker_prompt_profiles_v[1-9][0-9]{0,5}$/;
 
 type RunBinding = {
   run_id: string;
@@ -248,6 +249,11 @@ function assertNoRawEvidence(value: unknown, path = "body", depth = 0): void {
       || (
         normalized === "event_is_worker_summary_not_raw_trace"
         && item === true
+      )
+      || (
+        normalized === "prompt_profile_version"
+        && typeof item === "string"
+        && TRUSTED_WORKER_PROMPT_PROFILE_VERSION.test(item)
       )
     );
     const sensitive = (

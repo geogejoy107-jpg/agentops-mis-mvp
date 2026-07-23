@@ -314,6 +314,7 @@ async function runContract() {
         entity_id: "run_evidence",
         metadata: {
           adapter: "hermes",
+          prompt_profile_version: "worker_prompt_profiles_v1",
           secret_boundary: "trusted_worker_client_v1",
           credential_transport: "trusted_worker_client_only",
           model_visible_credentials: false,
@@ -338,6 +339,22 @@ async function runContract() {
       assert.equal(auditReplayResponse.status, 200);
       assert.equal(auditCreated.audit_id, auditReplay.audit_id);
       assert.equal(auditReplay.outcome, "unchanged");
+
+      const forgedProfileVersionResponse = await auditRoute.POST(postRequest(
+        "/api/mis/agent-gateway/audit",
+        {
+          ...auditBody,
+          metadata: {
+            ...auditBody.metadata,
+            prompt_profile_version: "unexpected-profile-version",
+          },
+        },
+      ));
+      assert.equal(forgedProfileVersionResponse.status, 400);
+      assert.equal(
+        (await json(forgedProfileVersionResponse)).error,
+        "raw_evidence_forbidden",
+      );
 
       const forgedBoundaryResponse = await auditRoute.POST(postRequest(
         "/api/mis/agent-gateway/audit",
