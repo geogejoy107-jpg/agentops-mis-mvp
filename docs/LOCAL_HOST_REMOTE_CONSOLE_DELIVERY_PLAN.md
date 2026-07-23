@@ -257,7 +257,10 @@ Implementation slices:
      invalid states, exact layout/RECORD checks and zero service-readiness
      claims: implemented and recorded in `RELAY_OFFLINE_STATUS_ACCEPTANCE.md`;
    - credential-free systemd activation state machine and crash/rollback
-     boundary: specified in `RELAY_SERVICE_ACTIVATION_SPEC.md`, not implemented;
+     boundary: specified in `RELAY_SERVICE_ACTIVATION_SPEC.md`; its pure
+     plan/parser core is implemented and recorded in
+     `RELAY_ACTIVATION_PLAN_CORE_ACCEPTANCE.md`, while host scanning, CLI,
+     mutation, transaction, rollback and recovery remain unimplemented;
    - upgrade, rollback, uninstall, Linux account provisioning, service
      activation and public infrastructure acceptance: pending;
    - public endpoint, DNS/ACME provisioning, stable per-Host Console origin,

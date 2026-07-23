@@ -114,6 +114,7 @@ def main() -> int:
     sdist_has_release_acceptance = False
     sdist_has_install_acceptance = False
     sdist_has_status_acceptance = False
+    sdist_has_activation_plan_acceptance = False
     sdist_has_activation_spec = False
     sdist_has_pkg_info = False
     sdist_pkg_info_matches = False
@@ -242,6 +243,12 @@ def main() -> int:
                     name.endswith("/docs/RELAY_OFFLINE_STATUS_ACCEPTANCE.md")
                     for name in names
                 )
+                sdist_has_activation_plan_acceptance = any(
+                    name.endswith(
+                        "/docs/RELAY_ACTIVATION_PLAN_CORE_ACCEPTANCE.md"
+                    )
+                    for name in names
+                )
                 sdist_has_activation_spec = any(
                     name.endswith("/docs/RELAY_SERVICE_ACTIVATION_SPEC.md")
                     for name in names
@@ -336,6 +343,11 @@ def main() -> int:
     require(
         sdist_has_status_acceptance,
         "source distribution omits the offline-status acceptance",
+        failures,
+    )
+    require(
+        sdist_has_activation_plan_acceptance,
+        "source distribution omits the activation-plan-core acceptance",
         failures,
     )
     require(
@@ -475,6 +487,9 @@ def main() -> int:
         "sdist_includes_release_acceptance": sdist_has_release_acceptance,
         "sdist_includes_install_acceptance": sdist_has_install_acceptance,
         "sdist_includes_status_acceptance": sdist_has_status_acceptance,
+        "sdist_includes_activation_plan_acceptance": (
+            sdist_has_activation_plan_acceptance
+        ),
         "sdist_includes_activation_spec": sdist_has_activation_spec,
         "credential_or_endpoint_material_present": unit_contains_forbidden_material,
         "daemon_imported_or_executed": False,

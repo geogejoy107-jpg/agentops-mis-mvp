@@ -1,6 +1,8 @@
 # Relay Service Activation Specification
 
-Status: planned; not implemented or accepted
+Status: pure Activation Plan Core v0 implemented and locally accepted; host
+prerequisite scanner, preview CLI, systemd mutation, transaction, rollback and
+recovery remain planned and unimplemented
 
 ## Objective
 
@@ -11,6 +13,12 @@ material, routes, DNS, or public infrastructure.
 This slice starts only from an `installed_valid` result produced by
 `agentops-relayctl status`. It must not treat an installed tree as proof that
 the daemon is configured, running, healthy, or reachable.
+
+The current `agentops_mis_cli.relay_activation` module implements only strict
+systemd-state parsing, private plan-hash compilation and bounded public
+projection from preconstructed synthetic identities. It does not open host
+files, inspect systemd, expose an `activate` CLI command or perform mutations.
+See `RELAY_ACTIVATION_PLAN_CORE_ACCEPTANCE.md`.
 
 ## Command Contract
 
