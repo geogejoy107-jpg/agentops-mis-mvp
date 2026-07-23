@@ -346,6 +346,9 @@ jobs:
           npm run check:postgres-schema
           npm run start:check
 
+      - name: Verify PreparedAction lease and terminal receipts
+        run: timeout 420s python3 scripts/postgres_prepared_action_lease_v6_contract_smoke.py
+
       - name: Prove production cannot proxy to Python
         run: timeout 420s python3 scripts/nextjs_production_python_proxy_fail_closed_smoke.py
 

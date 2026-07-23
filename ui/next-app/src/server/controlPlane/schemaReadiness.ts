@@ -43,7 +43,7 @@ export class SchemaReadinessError extends Error {
   }
 }
 
-export const SCHEMA_CONTRACT = "agentops_commercial_postgres_v5";
+export const SCHEMA_CONTRACT = "agentops_commercial_postgres_v6";
 
 export const POSTGRES_MIGRATION_MANIFEST = Object.freeze([
   {
@@ -88,6 +88,13 @@ export const POSTGRES_MIGRATION_MANIFEST = Object.freeze([
     filename: "20260724_customer_delivery_run_unique_v5.sql",
     checksum: "bd1ab7a550a9ab135c4058113a63dc621f1ae1558fa1060d6a4deed3cfd5a284",
   },
+  {
+    component: "prepared_action_execution_leases",
+    version: "20260724.6",
+    schemaContract: "prepared_action_execution_leases_v6",
+    filename: "20260724_prepared_action_execution_leases_v6.sql",
+    checksum: "4165407bbe609f1c30cf7a420e4efb8cfd5f789059645caa0b6b92ffff8bec1d",
+  },
 ] satisfies readonly MigrationDefinition[]);
 
 const REQUIRED_RELATIONS = Object.freeze([
@@ -100,6 +107,7 @@ const REQUIRED_RELATIONS = Object.freeze([
   "approvals",
   "prepared_actions",
   "prepared_action_execution_leases",
+  "prepared_action_execution_receipts",
   "memories",
   "evaluations",
   "artifacts",
