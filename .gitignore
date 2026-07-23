@@ -21,3 +21,5 @@ ui/**/node_modules/
 ui/**/dist/
 ui/**/output/
 ui/**/.playwright-cli/
+ui/**/.next/
+ui/**/tsconfig.tsbuildinfo
