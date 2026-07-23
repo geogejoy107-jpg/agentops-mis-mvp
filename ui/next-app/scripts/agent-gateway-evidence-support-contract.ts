@@ -297,6 +297,11 @@ async function runContract() {
         entity_id: "run_evidence",
         metadata: {
           adapter: "hermes",
+          secret_boundary: "trusted_worker_client_v1",
+          credential_transport: "trusted_worker_client_only",
+          model_visible_credentials: false,
+          secrets_in_prompt: false,
+          secrets_in_output: false,
           raw_prompt_omitted: true,
           raw_response_omitted: true,
           token_omitted: true,
@@ -316,6 +321,19 @@ async function runContract() {
       assert.equal(auditReplayResponse.status, 200);
       assert.equal(auditCreated.audit_id, auditReplay.audit_id);
       assert.equal(auditReplay.outcome, "unchanged");
+
+      const forgedBoundaryResponse = await auditRoute.POST(postRequest(
+        "/api/mis/agent-gateway/audit",
+        {
+          ...auditBody,
+          metadata: {
+            ...auditBody.metadata,
+            secret_boundary: "untrusted_boundary",
+          },
+        },
+      ));
+      assert.equal(forgedBoundaryResponse.status, 400);
+      assert.equal((await json(forgedBoundaryResponse)).error, "raw_evidence_forbidden");
 
       const crossWorkspaceResponse = await memoryRoute.POST(postRequest(
         "/api/mis/agent-gateway/memories/propose",

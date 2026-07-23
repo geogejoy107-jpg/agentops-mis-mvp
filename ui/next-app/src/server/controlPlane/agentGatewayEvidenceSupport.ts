@@ -57,6 +57,8 @@ const SAFE_SENSITIVE_EVIDENCE_SUFFIXES = [
   "_summary",
   "_tokens",
 ];
+const TRUSTED_WORKER_SECRET_BOUNDARY = "trusted_worker_client_v1";
+const TRUSTED_WORKER_CREDENTIAL_TRANSPORT = "trusted_worker_client_only";
 
 type RunBinding = {
   run_id: string;
@@ -235,6 +237,15 @@ function assertNoRawEvidence(value: unknown, path = "body", depth = 0): void {
   }
   for (const [key, item] of entries) {
     const normalized = key.trim().toLowerCase().replaceAll("-", "_");
+    const trustedWorkerBoundary = (
+      (normalized === "secret_boundary"
+        && item === TRUSTED_WORKER_SECRET_BOUNDARY)
+      || (normalized === "credential_transport"
+        && item === TRUSTED_WORKER_CREDENTIAL_TRANSPORT)
+      || (normalized === "model_visible_credentials" && item === false)
+      || (normalized === "secrets_in_prompt" && item === false)
+      || (normalized === "secrets_in_output" && item === false)
+    );
     const sensitive = (
       normalized === "content"
       || normalized === "payload"
@@ -245,7 +256,7 @@ function assertNoRawEvidence(value: unknown, path = "body", depth = 0): void {
     const safeEvidence = SAFE_SENSITIVE_EVIDENCE_SUFFIXES.some(
       (suffix) => normalized.endsWith(suffix),
     );
-    if (sensitive && !safeEvidence) {
+    if (sensitive && !safeEvidence && !trustedWorkerBoundary) {
       throw new ControlPlaneHttpError(
         400,
         "raw_evidence_forbidden",
