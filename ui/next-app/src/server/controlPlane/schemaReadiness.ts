@@ -43,7 +43,7 @@ export class SchemaReadinessError extends Error {
   }
 }
 
-export const SCHEMA_CONTRACT = "agentops_commercial_postgres_v6";
+export const SCHEMA_CONTRACT = "agentops_commercial_postgres_v7";
 
 export const POSTGRES_MIGRATION_MANIFEST = Object.freeze([
   {
@@ -95,6 +95,13 @@ export const POSTGRES_MIGRATION_MANIFEST = Object.freeze([
     filename: "20260724_prepared_action_execution_leases_v6.sql",
     checksum: "4165407bbe609f1c30cf7a420e4efb8cfd5f789059645caa0b6b92ffff8bec1d",
   },
+  {
+    component: "governed_knowledge_index",
+    version: "20260724.7",
+    schemaContract: "governed_knowledge_index_v7",
+    filename: "20260724_governed_knowledge_index_v7.sql",
+    checksum: "ea0c543d7a1151d52e8262afc1141fd60f9b7520d5efff5783a82b7335b4bb56",
+  },
 ] satisfies readonly MigrationDefinition[]);
 
 const REQUIRED_RELATIONS = Object.freeze([
@@ -108,6 +115,8 @@ const REQUIRED_RELATIONS = Object.freeze([
   "prepared_actions",
   "prepared_action_execution_leases",
   "prepared_action_execution_receipts",
+  "knowledge_documents",
+  "knowledge_chunks",
   "memories",
   "evaluations",
   "artifacts",

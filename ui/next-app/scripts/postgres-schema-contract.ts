@@ -64,6 +64,131 @@ async function ledgerSnapshot(connectionString: string) {
   }
 }
 
+async function verifyGovernedKnowledgeIndex(connectionString: string) {
+  const client = new Client({ connectionString });
+  await client.connect();
+  try {
+    const sourceHash = "a".repeat(64);
+    const now = "2026-07-24T00:00:00.000Z";
+    for (const [docId, workspaceId, accessLevel] of [
+      ["kdoc_global_contract", "global", "internal"],
+      ["kdoc_workspace_a_contract", "ws_contract_a", "private"],
+      ["kdoc_workspace_b_contract", "ws_contract_b", "private"],
+    ]) {
+      await client.query(
+        `INSERT INTO knowledge_documents(
+          doc_id,workspace_id,project_id,access_level,path,title,category,scope,
+          source_hash,content_summary,indexed_at,updated_at
+        ) VALUES($1,$2,'agentops-mis',$3,'docs/worker-contract.md',
+          'Governed worker contract','docs','project',$4,
+          'READ PLAN RETRIEVE COMPARE EXECUTE VERIFY RECORD',$5,$5)`,
+        [docId, workspaceId, accessLevel, sourceHash, now],
+      );
+      await client.query(
+        `INSERT INTO knowledge_chunks(
+          chunk_id,doc_id,workspace_id,project_id,access_level,path,title,
+          heading,heading_path,heading_level,chunk_index,source_hash,
+          content_summary,indexed_at,updated_at
+        ) VALUES($1,$2,$3,'agentops-mis',$4,'docs/worker-contract.md',
+          'Governed worker contract','Execution method','Execution method',1,1,
+          $5,'governed worker execution evidence',$6,$6)`,
+        [
+          `kchunk_${workspaceId}_contract`,
+          docId,
+          workspaceId,
+          accessLevel,
+          sourceHash,
+          now,
+        ],
+      );
+    }
+
+    const visible = await client.query<{ workspace_id: string }>(
+      `SELECT workspace_id
+      FROM knowledge_chunks
+      WHERE workspace_id IN ('global',$1)
+        AND search_document @@ plainto_tsquery('simple'::regconfig,$2)
+      ORDER BY workspace_id`,
+      ["ws_contract_a", "governed worker"],
+    );
+    assert.deepEqual(
+      visible.rows.map((row) => row.workspace_id),
+      ["global", "ws_contract_a"],
+    );
+
+    await assert.rejects(
+      client.query(
+        `INSERT INTO knowledge_documents(
+          doc_id,workspace_id,access_level,path,title,category,scope,source_hash,
+          indexed_at,updated_at
+        ) VALUES(
+          'kdoc_duplicate_contract','ws_contract_a','private',
+          'docs/worker-contract.md','Duplicate','docs','project',$1,$2,$2
+        )`,
+        [sourceHash, now],
+      ),
+      (error: unknown) => (error as { code?: string }).code === "23505",
+    );
+    await assert.rejects(
+      client.query(
+        `INSERT INTO knowledge_documents(
+          doc_id,workspace_id,access_level,path,title,category,scope,source_hash,
+          indexed_at,updated_at
+        ) VALUES(
+          'kdoc_bad_hash_contract','ws_contract_a','private',
+          'docs/bad-hash.md','Bad hash','docs','project','not-a-hash',$1,$1
+        )`,
+        [now],
+      ),
+      (error: unknown) => (error as { code?: string }).code === "23514",
+    );
+    await assert.rejects(
+      client.query(
+        `INSERT INTO knowledge_chunks(
+          chunk_id,doc_id,workspace_id,project_id,access_level,path,title,
+          heading,heading_path,heading_level,chunk_index,source_hash,
+          indexed_at,updated_at
+        ) VALUES(
+          'kchunk_cross_workspace_contract','kdoc_workspace_a_contract',
+          'ws_contract_b','agentops-mis','private','docs/worker-contract.md',
+          'Governed worker contract','Cross workspace','Cross workspace',1,2,
+          $1,$2,$2
+        )`,
+        [sourceHash, now],
+      ),
+      (error: unknown) => (error as { code?: string }).code === "23503",
+    );
+
+    const columns = await client.query<{ table_name: string; column_name: string }>(
+      `SELECT table_name,column_name
+      FROM information_schema.columns
+      WHERE table_schema=current_schema()
+        AND table_name IN ('knowledge_documents','knowledge_chunks')`,
+    );
+    assert.equal(
+      columns.rows.some((row) => (
+        /(^|_)(raw|prompt|response|transcript|credential|token)(_|$)/.test(
+          row.column_name,
+        )
+        || row.column_name === "content"
+      )),
+      false,
+    );
+    const searchIndexes = await client.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+      FROM pg_indexes
+      WHERE schemaname=current_schema()
+        AND indexname IN (
+          'idx_knowledge_documents_search_v7',
+          'idx_knowledge_chunks_search_v7'
+        )`,
+    );
+    assert.equal(searchIndexes.rows[0]?.count, "2");
+  } finally {
+    await client.end();
+  }
+}
+
 function startCheck(connectionString?: string) {
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
@@ -153,6 +278,7 @@ async function runContract() {
     );
     assert.equal(freshReceipt.applied_count, POSTGRES_MIGRATION_MANIFEST.length);
     assert.equal(freshReceipt.current_count, 0);
+    await verifyGovernedKnowledgeIndex(fresh.connectionString);
 
     const readyStart = startCheck(fresh.connectionString);
     assert.equal(readyStart.status, 0);
@@ -277,6 +403,9 @@ async function runContract() {
       missing_migration_fail_closed: true,
       missing_relation_fail_closed: true,
       concurrent_serialization: true,
+      governed_knowledge_workspace_visibility: true,
+      governed_knowledge_full_text_index: true,
+      governed_knowledge_raw_content_columns_absent: true,
       production_dependency_available: true,
       migration_cli_bounded_receipts: true,
       production_start_fail_closed: true,
