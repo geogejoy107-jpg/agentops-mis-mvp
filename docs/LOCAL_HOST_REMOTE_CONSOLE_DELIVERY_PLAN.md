@@ -247,6 +247,9 @@ Implementation slices:
    - complete local daemon-to-connector-to-Host TLS/HTTP topology, including
      exact SNI rejection, payload-free status and no MIS database authority:
      implemented and recorded in `LOCAL_RELAY_HOST_E2E_ACCEPTANCE.md`;
+   - deterministic offline release bundle with wheel, systemd/config contracts,
+     manifest, checksums and exact Git provenance: implemented and recorded in
+     `RELAY_RELEASE_BUNDLE_ACCEPTANCE.md`;
    - public endpoint, DNS/ACME provisioning, stable per-Host Console origin,
      production credential lifecycle, retention/monitoring, deployment and
      rollback receipt: pending external infrastructure acceptance.
