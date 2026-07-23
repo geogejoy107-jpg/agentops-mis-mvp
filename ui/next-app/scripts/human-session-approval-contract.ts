@@ -13,6 +13,7 @@ import {
   decideWorkspaceApproval,
   readWorkspaceApprovalReceipt,
 } from "../src/server/controlPlane/approvalDecisions";
+import { listWorkspaceApprovals } from "../src/server/controlPlane/approvalQueue";
 import { requestCustomerDeliveryApproval } from "../src/server/controlPlane/agentGatewayApprovals";
 import { closeControlPlanePoolForTests } from "../src/server/controlPlane/db";
 import {
@@ -544,13 +545,28 @@ async function requestApproval(fixture: DeliveryFixture) {
 }
 
 async function sourceBoundaryContract() {
-  const [route, memoryListRoute, memoryDecisionRoute, memoryReviewSource] =
+  const [
+    route,
+    approvalListRoute,
+    approvalQueueSource,
+    memoryListRoute,
+    memoryDecisionRoute,
+    memoryReviewSource,
+  ] =
     await Promise.all([
       readFile(
         new URL(
           "../app/api/mis/approvals/[approvalId]/[decision]/route.ts",
           import.meta.url,
         ),
+        "utf8",
+      ),
+      readFile(
+        new URL("../app/api/mis/approvals/route.ts", import.meta.url),
+        "utf8",
+      ),
+      readFile(
+        new URL("../src/server/controlPlane/approvalQueue.ts", import.meta.url),
         "utf8",
       ),
       readFile(
@@ -576,6 +592,17 @@ async function sourceBoundaryContract() {
   assert.match(route, /legacyPythonProxyAllowed/);
   assert.match(route, /proxyControlPlaneRequest/);
   assert.match(route, /human_session_direct_route_required/);
+  assert.match(approvalListRoute, /controlPlaneMode\(\) === "proxy"/);
+  assert.match(approvalListRoute, /proxyControlPlaneRequest/);
+  assert.match(approvalListRoute, /human_session_direct_route_required/);
+  assert.doesNotMatch(approvalQueueSource, /proxyControlPlaneRequest/);
+  assert.doesNotMatch(approvalQueueSource, /\bpython\b/i);
+  assert.match(approvalQueueSource, /authenticateHumanMember/);
+  assert.match(approvalQueueSource, /JOIN tasks task/);
+  assert.match(approvalQueueSource, /JOIN runs run/);
+  assert.match(approvalQueueSource, /LEFT JOIN prepared_actions action/);
+  assert.match(approvalQueueSource, /raw_prompt_omitted: true/);
+  assert.match(approvalQueueSource, /raw_response_omitted: true/);
   for (const memoryRoute of [memoryListRoute, memoryDecisionRoute]) {
     assert.match(memoryRoute, /controlPlaneMode\(\) === "proxy"/);
     assert.match(memoryRoute, /proxyControlPlaneRequest/);
@@ -806,6 +833,75 @@ async function main() {
       })));
     self = await login("self-agent", fixtures[3].agentId);
     const owner = await login("owner", OWNER_ID);
+
+    const approvalQueue = await listWorkspaceApprovals(
+      browserHeaders(reviewer, {
+        workspaceId: WORKSPACE,
+        includeOrigin: false,
+      }),
+      WORKSPACE,
+    );
+    assert.deepEqual(
+      new Set(approvalQueue.body.map((row) => row.approval_id)),
+      new Set(fixtures.map((fixture) => fixture.approvalId)),
+    );
+    for (const row of approvalQueue.body) {
+      assert.equal(row.approval_kind, "customer_delivery");
+      assert.equal(row.decision, "pending");
+      assert.equal(row.prepared_action, null);
+      assert.equal(row.review_supported, true);
+      assert.equal(row.normalized_args_omitted, true);
+      assert.equal(row.checkpoint_omitted, true);
+      assert.equal(row.raw_prompt_omitted, true);
+      assert.equal(row.raw_response_omitted, true);
+      assert.equal(row.token_omitted, true);
+    }
+    const onePendingApproval = await listWorkspaceApprovals(
+      browserHeaders(reviewer, {
+        workspaceId: WORKSPACE,
+        includeOrigin: false,
+      }),
+      WORKSPACE,
+      "pending",
+      "1",
+    );
+    assert.equal(onePendingApproval.body.length, 1);
+    await expectCode("approval_decision_filter_invalid", () =>
+      listWorkspaceApprovals(
+        browserHeaders(reviewer, {
+          workspaceId: WORKSPACE,
+          includeOrigin: false,
+        }),
+        WORKSPACE,
+        "unknown",
+      ));
+    await expectCode("approval_limit_invalid", () =>
+      listWorkspaceApprovals(
+        browserHeaders(reviewer, {
+          workspaceId: WORKSPACE,
+          includeOrigin: false,
+        }),
+        WORKSPACE,
+        "pending",
+        "201",
+      ));
+    await expectCode("human_membership_forbidden", () =>
+      listWorkspaceApprovals(
+        browserHeaders(reviewer, {
+          workspaceId: FOREIGN_WORKSPACE,
+          includeOrigin: false,
+        }),
+        FOREIGN_WORKSPACE,
+      ));
+    await expectCode("machine_credential_not_allowed", () =>
+      listWorkspaceApprovals(
+        browserHeaders(reviewer, {
+          workspaceId: WORKSPACE,
+          machineCredential: true,
+          includeOrigin: false,
+        }),
+        WORKSPACE,
+      ));
 
     const memoryCandidates = await listWorkspaceMemoryCandidates(
       browserHeaders(reviewer, {
@@ -1306,6 +1402,9 @@ async function main() {
       agent_self_approval_rejected: true,
       pending_terminal_single_winner: true,
       exact_replay_unchanged: true,
+      approval_queue_workspace_bound: true,
+      approval_queue_machine_credentials_rejected: true,
+      approval_queue_sensitive_fields_omitted: true,
       memory_candidate_list: true,
       memory_review_idempotent: true,
       memory_review_single_winner: true,

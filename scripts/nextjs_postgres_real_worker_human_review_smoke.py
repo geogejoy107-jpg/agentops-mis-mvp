@@ -786,7 +786,11 @@ def human_review(
     )
     approval_ids = {str(item.get("approval_id")) for item in approvals} if isinstance(approvals, list) else set()
     if approval_status != 200 or receipt["approval_id"] not in approval_ids:
-        raise RuntimeError(f"{runtime} delivery approval is absent from the Human workspace queue")
+        error_code = str(approvals.get("error") or "unknown") if isinstance(approvals, dict) else "unknown"
+        raise RuntimeError(
+            f"{runtime} delivery approval is absent from the Human workspace queue "
+            f"with status {approval_status} and error {error_code}"
+        )
     approval_headers = {
         **list_headers,
         "Origin": public_origin,
