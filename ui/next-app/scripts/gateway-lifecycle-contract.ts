@@ -170,9 +170,9 @@ async function runContract() {
   const schema = `gateway_lifecycle_${randomUUID().replaceAll("-", "")}`;
   const admin = new Client({ connectionString: baseDsn });
   await admin.connect();
-  const parentToken = `agtok_contract_${randomUUID()}`;
-  const otherToken = `agtok_contract_${randomUUID()}`;
-  const expiredToken = `agtok_contract_${randomUUID()}`;
+  const parentToken = `contract_parent_token_${randomUUID()}`;
+  const otherToken = `contract_other_token_${randomUUID()}`;
+  const expiredToken = `contract_expired_token_${randomUUID()}`;
   const rawCanary = `raw_prompt_${randomUUID()}`;
   try {
     await admin.query(`CREATE SCHEMA "${schema}"`);
@@ -393,7 +393,7 @@ async function runContract() {
       workspace_id: "ws_gateway_a",
       agent_id: "agt_gateway_a",
       status: "running",
-      summary: `Bearer agtsess_should_not_persist ${rawCanary}`,
+      summary: `Bearer contract_session_should_not_persist ${rawCanary}`,
       runtime_type: "hermes",
     };
     const heartbeats = await Promise.all(
@@ -437,7 +437,7 @@ async function runContract() {
       "SELECT metadata_json FROM audit_logs",
     );
     assert(!JSON.stringify(allAuditMetadata.rows).includes(rawCanary));
-    assert(!JSON.stringify(allAuditMetadata.rows).includes("agtsess_should_not_persist"));
+    assert(!JSON.stringify(allAuditMetadata.rows).includes("contract_session_should_not_persist"));
     await expectCode("forbidden", () =>
       recordGatewayHeartbeat(
         gatewayRequest(

@@ -12,7 +12,7 @@ import {
 
 const baseDsn = String(process.env.AGENTOPS_POSTGRES_DSN || "").trim();
 const schema = `agentops_evidence_${randomBytes(6).toString("hex")}`;
-const token = `agtok_contract_${randomBytes(24).toString("hex")}`;
+const token = `contract_token_${randomBytes(24).toString("hex")}`;
 const tokenHash = createHash("sha256").update(token, "utf8").digest("hex");
 
 function quotedIdentifier(value: string) {
@@ -127,7 +127,7 @@ async function seedFixture(client: Client) {
       heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,
       last_heartbeat_at
     ) VALUES(
-      'agtok_evidence',$1,'ws_evidence','agt_evidence',$2,'active',
+      'tok_evidence',$1,'ws_evidence','agt_evidence',$2,'active',
       'evidence contract',300,$3,NULL,NULL,NULL,NULL
     )`,
     [

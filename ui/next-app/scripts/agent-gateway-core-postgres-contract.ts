@@ -33,10 +33,10 @@ import { runPostgresSchemaCommand } from "../src/server/controlPlane/schemaReadi
 
 const baseDsn = String(process.env.AGENTOPS_POSTGRES_DSN || "").trim();
 const schema = `agentops_gateway_core_${randomBytes(6).toString("hex")}`;
-const token = `agtok_contract_${randomBytes(18).toString("hex")}`;
-const otherToken = `agtok_other_${randomBytes(18).toString("hex")}`;
-const foreignToken = `agtok_foreign_${randomBytes(18).toString("hex")}`;
-const session = `agtsess_contract_${randomBytes(18).toString("hex")}`;
+const token = `contract_token_${randomBytes(18).toString("hex")}`;
+const otherToken = `contract_other_token_${randomBytes(18).toString("hex")}`;
+const foreignToken = `contract_foreign_token_${randomBytes(18).toString("hex")}`;
+const session = `contract_session_${randomBytes(18).toString("hex")}`;
 const workspaceId = "ws_gateway_core";
 const otherWorkspaceId = "ws_gateway_foreign";
 let pythonObserverRequests = 0;
