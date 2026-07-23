@@ -25,9 +25,12 @@ type ParentTokenRow = {
 
 export type AgentGatewayIdentity = {
   mode: "agent_token" | "agent_session";
+  credentialId: string;
+  parentTokenId: string | null;
   workspaceId: string;
   agentId: string;
   scopes: string[];
+  expiresAt: string | null;
 };
 
 function bearerCredential(headers: Headers) {
@@ -76,7 +79,7 @@ function requireScope(scopes: string[], requiredScope: string) {
 export async function authenticateAgentGateway(
   client: PoolClient,
   headers: Headers,
-  requiredScope: string,
+  requiredScope?: string,
 ): Promise<AgentGatewayIdentity> {
   const supplied = bearerCredential(headers);
   const hash = createHash("sha256").update(supplied, "utf8").digest("hex");
@@ -122,10 +125,21 @@ export async function authenticateAgentGateway(
   }
 
   const granted = parseScopes(credential.scopes_json);
-  requireScope(granted, requiredScope);
+  if (requiredScope) requireScope(granted, requiredScope);
   if (credential.credential_type === "session") {
     if (!credential.parent_token_id) {
-      throw new ControlPlaneHttpError(401, "unauthorized", "Agent session parent is missing.");
+      await client.query(
+        `UPDATE agent_gateway_sessions
+        SET status='revoked',revoked_at=$1
+        WHERE session_id=$2 AND status='active'`,
+        [new Date().toISOString(), credential.credential_id],
+      );
+      throw new ControlPlaneHttpError(
+        401,
+        "unauthorized",
+        "Agent session parent is missing.",
+        true,
+      );
     }
     const parentResult = await client.query<ParentTokenRow>(
       `SELECT token_id,workspace_id,agent_id,scopes_json,status,expires_at
@@ -153,7 +167,22 @@ export async function authenticateAgentGateway(
         true,
       );
     }
-    requireScope(parseScopes(parent.scopes_json), requiredScope);
+    const parentScopes = parseScopes(parent.scopes_json);
+    if (granted.some((scope) => !parentScopes.includes(scope))) {
+      await client.query(
+        `UPDATE agent_gateway_sessions
+        SET status='revoked',revoked_at=$1
+        WHERE session_id=$2 AND status='active'`,
+        [new Date().toISOString(), credential.credential_id],
+      );
+      throw new ControlPlaneHttpError(
+        401,
+        "unauthorized",
+        "Agent session scopes are not bound to its parent token.",
+        true,
+      );
+    }
+    if (requiredScope) requireScope(parentScopes, requiredScope);
   }
 
   const table = credential.credential_type === "token"
@@ -166,9 +195,12 @@ export async function authenticateAgentGateway(
   );
   return {
     mode: credential.credential_type === "token" ? "agent_token" : "agent_session",
+    credentialId: credential.credential_id,
+    parentTokenId: credential.parent_token_id,
     workspaceId: credential.workspace_id,
     agentId: credential.agent_id,
     scopes: granted,
+    expiresAt: credential.expires_at,
   };
 }
 
