@@ -10,6 +10,7 @@
     "dev": "next dev -p 3001",
     "build": "next build",
     "bootstrap:owner": "tsx scripts/bootstrap-owner.ts",
+    "worker:commercial": "tsx scripts/commercial-worker.ts",
     "start": "node scripts/start.mjs",
     "start:check": "node scripts/start.mjs --check",
     "migrate:postgres": "tsx scripts/migrate-postgres.ts",
@@ -25,6 +26,7 @@
     "test:loop-supervision-contract": "tsx scripts/loop-supervision-contract.ts",
     "test:human-session-approval-contract": "tsx scripts/human-session-approval-contract.ts",
     "test:prepared-action-owner-contract": "tsx scripts/prepared-action-owner-contract.ts",
+    "test:commercial-worker-contract": "tsx scripts/commercial-worker-contract.ts",
     "test:postgres-schema-contract": "tsx scripts/postgres-schema-contract.ts"
   },
   "dependencies": {

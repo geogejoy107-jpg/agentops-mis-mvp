@@ -45,8 +45,20 @@ Commercial 的 production/shared 模式禁止把控制面写请求代理给 Pyth
 商业迁移仍在进行中，当前分支不是发布完成声明。迁移闭环、各 owner 的退出条件、真实 Hermes/OpenClaw 验收和剩余发布门槛见：
 
 - `docs/COMMERCIAL_MIGRATION_CLEAN_ROOM_BREAKDOWN.md`
+- `docs/COMMERCIAL_TYPESCRIPT_WORKER.md`
 - `docs/project/PROJECT_STATE.md`
 - `docs/project/BACKLOG.md`
+
+商业 Worker 已有独立的 Node.js/TypeScript 入口：
+
+```bash
+cd ui/next-app
+npm run worker:commercial -- --adapter hermes --confirm-run
+```
+
+它只调用 `/api/mis/agent-gateway/*`，不直接依赖 Python、SQLite 或
+PostgreSQL 驱动。Agent 凭证只能通过环境变量传入；完整运行方式和真实
+Hermes/OpenClaw 证据边界见 `docs/COMMERCIAL_TYPESCRIPT_WORKER.md`。
 
 ## 快速运行
 
