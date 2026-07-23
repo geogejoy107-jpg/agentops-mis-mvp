@@ -20,6 +20,9 @@ import {
   HUMAN_MEMORY_SCHEMA_V3_CHECKSUM,
   HUMAN_MEMORY_SCHEMA_V3_CONTRACT,
   HUMAN_MEMORY_SCHEMA_V3_VERSION,
+  HUMAN_MEMORY_SCHEMA_V4_CHECKSUM,
+  HUMAN_MEMORY_SCHEMA_V4_CONTRACT,
+  HUMAN_MEMORY_SCHEMA_V4_VERSION,
   assertHumanMemorySchemaCoreReady,
   assertHumanMemorySchemaReady,
   SchemaReadinessError,
@@ -39,6 +42,9 @@ const APPROVAL_MIGRATION_PATH = fileURLToPath(
 );
 const APPROVAL_KIND_MIGRATION_PATH = fileURLToPath(
   new URL("../../../migrations/postgres/20260719_approval_kind_bindings_v4.sql", import.meta.url),
+);
+const CUSTOMER_DELIVERY_UNIQUE_MIGRATION_PATH = fileURLToPath(
+  new URL("../../../migrations/postgres/20260724_customer_delivery_run_unique_v5.sql", import.meta.url),
 );
 
 function output(payload: Record<string, unknown>) {
@@ -79,16 +85,21 @@ async function main() {
   const onlineIndexMigrationBytes = await readFile(ONLINE_INDEX_MIGRATION_PATH);
   const approvalMigrationBytes = await readFile(APPROVAL_MIGRATION_PATH);
   const approvalKindMigrationBytes = await readFile(APPROVAL_KIND_MIGRATION_PATH);
+  const customerDeliveryUniqueMigrationBytes = await readFile(CUSTOMER_DELIVERY_UNIQUE_MIGRATION_PATH);
   const baseMigrationChecksum = createHash("sha256").update(baseMigrationBytes).digest("hex");
   const upgradeMigrationChecksum = createHash("sha256").update(upgradeMigrationBytes).digest("hex");
   const onlineIndexMigrationChecksum = createHash("sha256").update(onlineIndexMigrationBytes).digest("hex");
   const approvalMigrationChecksum = createHash("sha256").update(approvalMigrationBytes).digest("hex");
   const approvalKindMigrationChecksum = createHash("sha256").update(approvalKindMigrationBytes).digest("hex");
+  const customerDeliveryUniqueMigrationChecksum = createHash("sha256")
+    .update(customerDeliveryUniqueMigrationBytes)
+    .digest("hex");
   if (baseMigrationChecksum !== HUMAN_MEMORY_SCHEMA_V1_CHECKSUM
     || upgradeMigrationChecksum !== HUMAN_MEMORY_SCHEMA_V2_CHECKSUM
     || onlineIndexMigrationChecksum !== HUMAN_MEMORY_SCHEMA_ONLINE_INDEX_CHECKSUM
     || approvalMigrationChecksum !== HUMAN_MEMORY_SCHEMA_V3_CHECKSUM
-    || approvalKindMigrationChecksum !== HUMAN_MEMORY_SCHEMA_CHECKSUM) {
+    || approvalKindMigrationChecksum !== HUMAN_MEMORY_SCHEMA_V4_CHECKSUM
+    || customerDeliveryUniqueMigrationChecksum !== HUMAN_MEMORY_SCHEMA_CHECKSUM) {
     throw new SchemaReadinessError("human_memory_migration_checksum_mismatch");
   }
   const dsn = String(process.env.AGENTOPS_POSTGRES_DSN || process.env.DATABASE_URL || "").trim();
@@ -149,12 +160,21 @@ async function main() {
             && receipt.version === HUMAN_MEMORY_SCHEMA_V3_VERSION
             && receipt.schema_contract === HUMAN_MEMORY_SCHEMA_V3_CONTRACT
             && receipt.checksum === HUMAN_MEMORY_SCHEMA_V3_CHECKSUM;
+          const exactV4Receipt = receipt
+            && receipt.version === HUMAN_MEMORY_SCHEMA_V4_VERSION
+            && receipt.schema_contract === HUMAN_MEMORY_SCHEMA_V4_CONTRACT
+            && receipt.checksum === HUMAN_MEMORY_SCHEMA_V4_CHECKSUM;
           const exactCurrentReceipt = receipt
             && receipt.version === HUMAN_MEMORY_SCHEMA_VERSION
             && receipt.schema_contract === HUMAN_MEMORY_SCHEMA_CONTRACT
             && receipt.checksum === HUMAN_MEMORY_SCHEMA_CHECKSUM;
           if (receiptRows.length > 1
-            || (receipt && !exactV1Receipt && !exactV2Receipt && !exactV3Receipt && !exactCurrentReceipt)) {
+            || (receipt
+              && !exactV1Receipt
+              && !exactV2Receipt
+              && !exactV3Receipt
+              && !exactV4Receipt
+              && !exactCurrentReceipt)) {
             throw new SchemaReadinessError("human_memory_schema_receipt_drift");
           }
           if (!receipt) {
@@ -169,6 +189,9 @@ async function main() {
           if (!receipt || exactV1Receipt || exactV2Receipt || exactV3Receipt) {
             await client.query(approvalKindMigrationBytes.toString("utf8"));
           }
+          if (!receipt || exactV1Receipt || exactV2Receipt || exactV3Receipt || exactV4Receipt) {
+            await client.query(customerDeliveryUniqueMigrationBytes.toString("utf8"));
+          }
           await assertHumanMemorySchemaCoreReady(poolClient);
           if (!receipt) {
             await client.query(
@@ -182,7 +205,7 @@ async function main() {
                 HUMAN_MEMORY_SCHEMA_CHECKSUM,
               ],
             );
-          } else if (exactV1Receipt || exactV2Receipt || exactV3Receipt) {
+          } else if (exactV1Receipt || exactV2Receipt || exactV3Receipt || exactV4Receipt) {
             await client.query(
               `UPDATE agentops_schema_migrations
               SET version=$1,schema_contract=$2,checksum=$3,applied_at=CURRENT_TIMESTAMP::TEXT

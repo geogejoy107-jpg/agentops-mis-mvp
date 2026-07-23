@@ -1538,6 +1538,15 @@ def main() -> int:
                 "SELECT COUNT(*) AS c FROM runtime_events WHERE event_type=? AND run_id=? AND raw_payload_hash IS NOT NULL",
                 ["tool_call.record", EVIDENCE_RUN_ID],
             )["c"]
+            tool_event_status_counts = {
+                str(row["status"]): int(row["c"])
+                for row in adapter.fetchall(
+                    """SELECT status,COUNT(*) AS c FROM runtime_events
+                    WHERE event_type=? AND run_id=? AND raw_payload_hash IS NOT NULL
+                    GROUP BY status""",
+                    ["tool_call.record", EVIDENCE_RUN_ID],
+                )
+            }
             high_risk_tool_audit_count = adapter.fetchone(
                 "SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?",
                 ["tool_calls", HIGH_RISK_TOOL_CALL_ID],
@@ -1550,6 +1559,14 @@ def main() -> int:
                 "SELECT COUNT(*) AS c FROM runtime_events WHERE event_type=? AND run_id=?",
                 ["evaluation.submit", EVIDENCE_RUN_ID],
             )["c"]
+            evaluation_event_status_counts = {
+                str(row["status"]): int(row["c"])
+                for row in adapter.fetchall(
+                    """SELECT status,COUNT(*) AS c FROM runtime_events
+                    WHERE event_type=? AND run_id=? GROUP BY status""",
+                    ["evaluation.submit", EVIDENCE_RUN_ID],
+                )
+            }
             artifact_audit_count = adapter.fetchone(
                 "SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?",
                 ["artifacts", ARTIFACT_ID],
@@ -1558,6 +1575,14 @@ def main() -> int:
                 "SELECT COUNT(*) AS c FROM runtime_events WHERE event_type=? AND run_id=?",
                 ["artifact.record", EVIDENCE_RUN_ID],
             )["c"]
+            artifact_event_hash_counts = {
+                str(row["raw_payload_hash"]): int(row["c"])
+                for row in adapter.fetchall(
+                    """SELECT raw_payload_hash,COUNT(*) AS c FROM runtime_events
+                    WHERE event_type=? AND run_id=? GROUP BY raw_payload_hash""",
+                    ["artifact.record", EVIDENCE_RUN_ID],
+                )
+            }
             evidence_run_waiting_audit_count = adapter.fetchone(
                 "SELECT COUNT(*) AS c FROM audit_logs WHERE action=? AND entity_id=?",
                 ["agent_gateway.tool_call_run_waiting_approval", EVIDENCE_RUN_ID],
@@ -2129,17 +2154,24 @@ def main() -> int:
             if (
                 int(tool_audit_count or 0) != 1
                 or int(high_risk_tool_audit_count or 0) != 1
-                or int(tool_event_count or 0) != 2
+                or int(tool_event_count or 0) != 3
+                or tool_event_status_counts != {"completed": 1, "failed": 1, "waiting_approval": 1}
                 or int(evaluation_audit_count or 0) != 1
-                or int(evaluation_event_count or 0) != 1
+                or int(evaluation_event_count or 0) != 2
+                or evaluation_event_status_counts != {"fail": 1, "pass": 1}
                 or int(artifact_audit_count or 0) != 1
-                or int(artifact_event_count or 0) != 1
+                or int(artifact_event_count or 0) != 2
+                or artifact_event_hash_counts != {
+                    "typescript_postgres_evidence_hash": 1,
+                    "typescript_postgres_omitted_artifact_hash": 1,
+                }
             ):
                 failures.append(
                     "evidence_audit_runtime_not_single_winner:"
-                    f"tool={tool_audit_count}/{tool_event_count}:high={high_risk_tool_audit_count}:"
-                    f"evaluation={evaluation_audit_count}/{evaluation_event_count}:"
-                    f"artifact={artifact_audit_count}/{artifact_event_count}"
+                    f"tool={tool_audit_count}/{tool_event_count}/{tool_event_status_counts}:"
+                    f"high={high_risk_tool_audit_count}:"
+                    f"evaluation={evaluation_audit_count}/{evaluation_event_count}/{evaluation_event_status_counts}:"
+                    f"artifact={artifact_audit_count}/{artifact_event_count}/{artifact_event_hash_counts}"
                 )
             evidence_run_after_hash_valid = bool(
                 evidence_run_row

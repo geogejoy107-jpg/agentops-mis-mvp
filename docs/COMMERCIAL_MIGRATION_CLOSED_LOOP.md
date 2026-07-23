@@ -50,10 +50,14 @@ not release complete:
 
 - Next.js/TypeScript plus Postgres directly owns Agent Gateway task create/list,
   Agent Plan submit, run start, run heartbeat, execution evidence writeback, and
-  verified plan-evidence manifest creation. These routes authenticate and
-  authorize in the TypeScript process and execute their ledger, runtime-event,
-  and audit transactions in Postgres; they are not successful Python proxy
-  calls. Non-mock run start fails closed without a verified Agent Plan.
+  verified plan-evidence manifest and customer-delivery approval creation.
+  These routes authenticate and authorize in the TypeScript process and execute
+  their ledger, runtime-event, and audit transactions in Postgres; they are not
+  successful Python proxy calls. Non-mock run start fails closed without a
+  verified Agent Plan, and delivery approval creation fails closed unless the
+  actual Hermes/OpenClaw run is completed with current verified evidence.
+  Schema v5 additionally enforces one customer-delivery approval per globally
+  unique run at the database layer.
 - Python/SQLite is a supported Free Local line and an explicit rollback for a
   route that has not yet passed TypeScript/Postgres parity. It is not the
   commercial default and cannot be used as evidence that a commercial route has

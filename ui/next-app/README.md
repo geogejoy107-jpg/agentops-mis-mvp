@@ -150,8 +150,9 @@ memory review actions through the Next.js UI, verifies the state change through
   proxy rollback path. The focused Postgres contracts prove bounded bodies,
   server-derived audit actors, sensitive metadata omission, and single-winner
   claims. `nextjs_postgres_real_worker_human_review_v1` separately proves real
-  Hermes/OpenClaw execution through candidate creation and Human approval
-  without starting the Python API.
+  Hermes/OpenClaw execution through candidate creation, production
+  customer-delivery request creation, and Human approval without starting the
+  Python API.
 - Agent Gateway execution-evidence migration contract: scoped tool-call,
   evaluation-submit, and artifact routes bind evidence to the authenticated
   workspace/run/agent, redact structured and summary data, serialize same-ID
@@ -163,6 +164,16 @@ memory review actions through the Next.js UI, verifies the state change through
   approval status for human control-plane decisions, require a verified plan for
   non-mock run start, and persist verified or blocked manifest outcomes with
   compatible runtime/audit evidence.
+- Agent Gateway customer-delivery review migration contract: scoped
+  `POST /api/mis/agent-gateway/approvals/request` accepts only a completed
+  Hermes/OpenClaw run with current verified plan evidence, keeps approver
+  attribution Human-owned, assigns bounded expiry server-side, and writes one
+  pending approval plus task/runtime/audit transitions under replay and
+  concurrency. Production uses the TypeScript/Postgres owner; only explicit
+  Free Local proxy mode can reach Python. Schema v5 adds a database-level
+  partial unique index so each globally unique run can own at most one
+  `customer_delivery` approval and duplicate legacy rows fail migration without
+  automatic deletion.
 - Agent Gateway CLI worker dogfood contract: a scoped task created through
   Next `/api/mis/agent-gateway/tasks` is claimed and completed by the worker
   CLI entrypoint, then run/tool/evaluation/plan-evidence proof is read back

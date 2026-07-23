@@ -22,6 +22,9 @@ import {
   HUMAN_MEMORY_SCHEMA_V3_CHECKSUM,
   HUMAN_MEMORY_SCHEMA_V3_CONTRACT,
   HUMAN_MEMORY_SCHEMA_V3_VERSION,
+  HUMAN_MEMORY_SCHEMA_V4_CHECKSUM,
+  HUMAN_MEMORY_SCHEMA_V4_CONTRACT,
+  HUMAN_MEMORY_SCHEMA_V4_VERSION,
 } from "../src/server/controlPlane/schemaReadiness";
 
 const NEXT_APP_ROOT = fileURLToPath(new URL("../", import.meta.url));
@@ -41,6 +44,9 @@ const V3_MIGRATION_PATH = fileURLToPath(
 );
 const V4_MIGRATION_PATH = fileURLToPath(
   new URL("../../../migrations/postgres/20260719_approval_kind_bindings_v4.sql", import.meta.url),
+);
+const V5_MIGRATION_PATH = fileURLToPath(
+  new URL("../../../migrations/postgres/20260724_customer_delivery_run_unique_v5.sql", import.meta.url),
 );
 
 type MigrationResult = {
@@ -268,6 +274,28 @@ async function createV3Fixture(client: Client, v1Sql: string, v2Sql: string, v3S
   );
 }
 
+async function createV4Fixture(
+  client: Client,
+  v1Sql: string,
+  v2Sql: string,
+  v3Sql: string,
+  v4Sql: string,
+) {
+  await createV3Fixture(client, v1Sql, v2Sql, v3Sql);
+  await client.query(v4Sql);
+  await client.query(
+    `UPDATE agentops_schema_migrations
+    SET version=$1,schema_contract=$2,checksum=$3,applied_at=CURRENT_TIMESTAMP::TEXT
+    WHERE component=$4`,
+    [
+      HUMAN_MEMORY_SCHEMA_V4_VERSION,
+      HUMAN_MEMORY_SCHEMA_V4_CONTRACT,
+      HUMAN_MEMORY_SCHEMA_V4_CHECKSUM,
+      HUMAN_MEMORY_SCHEMA_COMPONENT,
+    ],
+  );
+}
+
 async function assertApprovalKindUpgrade(client: Client) {
   const column = await client.query<{
     data_type: string;
@@ -285,7 +313,16 @@ async function assertApprovalKindUpgrade(client: Client) {
   }]);
 
   const kinds = await client.query<{ approval_id: string; approval_kind: string }>(
-    `SELECT approval_id,approval_kind FROM approvals ORDER BY approval_id`,
+    `SELECT approval_id,approval_kind FROM approvals
+    WHERE approval_id=ANY($1::text[])
+    ORDER BY approval_id`,
+    [[
+      "approval_delivery_upgrade_contract",
+      "approval_enrollment_upgrade_contract",
+      "approval_prepared_upgrade_contract",
+      "approval_run_upgrade_contract",
+      "approval_tool_upgrade_contract",
+    ]],
   );
   assert.deepEqual(kinds.rows, [
     { approval_id: "approval_delivery_upgrade_contract", approval_kind: "customer_delivery" },
@@ -344,6 +381,26 @@ async function assertApprovalKindUpgrade(client: Client) {
       AND index_relation.relname='idx_agent_gateway_enrollment_approval_unique'`,
   );
   assert.deepEqual(enrollmentIndex.rows, [{ is_unique: true, key_count: 1 }]);
+
+  const customerDeliveryIndex = await client.query<{
+    is_unique: boolean;
+    key_definition: string;
+    predicate: string | null;
+  }>(
+    `SELECT index_record.indisunique AS is_unique,
+      pg_get_indexdef(index_record.indexrelid,1,true) AS key_definition,
+      pg_get_expr(index_record.indpred,index_record.indrelid,true) AS predicate
+    FROM pg_index index_record
+    JOIN pg_class index_relation ON index_relation.oid=index_record.indexrelid
+    JOIN pg_namespace namespace ON namespace.oid=index_relation.relnamespace
+    WHERE namespace.nspname=current_schema()
+      AND index_relation.relname='idx_approvals_customer_delivery_run_unique'`,
+  );
+  assert.deepEqual(customerDeliveryIndex.rows, [{
+    is_unique: true,
+    key_definition: "run_id",
+    predicate: "approval_kind = 'customer_delivery'::text",
+  }]);
 
   await assert.rejects(
     client.query(
@@ -470,6 +527,71 @@ async function assertNoWorkspaceAuditUpgrade(client: Client, tamperedChecksum: s
   assert.deepEqual(receipt.rows, [{ checksum: tamperedChecksum }]);
 }
 
+async function assertConcurrentCustomerDeliveryInsertEnforcement(
+  dsn: string,
+  setupClient: Client,
+) {
+  await setupClient.query(`
+    INSERT INTO tasks(task_id,workspace_id)
+    VALUES('task_customer_delivery_concurrency','workspace_customer_delivery_concurrency');
+    INSERT INTO runs(run_id,task_id,workspace_id,agent_id)
+    VALUES(
+      'run_customer_delivery_concurrency',
+      'task_customer_delivery_concurrency',
+      'workspace_customer_delivery_concurrency',
+      'agent_customer_delivery_concurrency'
+    );
+  `);
+
+  const firstClient = new Client({
+    connectionString: dsn,
+    ssl: sslEnabled() ? { rejectUnauthorized: true } : undefined,
+    application_name: "agentops-mis-schema-upgrade-contract-concurrency-first",
+  });
+  const secondClient = new Client({
+    connectionString: dsn,
+    ssl: sslEnabled() ? { rejectUnauthorized: true } : undefined,
+    application_name: "agentops-mis-schema-upgrade-contract-concurrency-second",
+  });
+  try {
+    await Promise.all([firstClient.connect(), secondClient.connect()]);
+    const insert = (client: Client, approvalId: string) => client.query(
+      `INSERT INTO approvals(
+        approval_id,approval_kind,task_id,run_id,tool_call_id,requested_by_agent_id,reason
+      ) VALUES($1,'customer_delivery',$2,$3,NULL,$4,'concurrent delivery review')`,
+      [
+        approvalId,
+        "task_customer_delivery_concurrency",
+        "run_customer_delivery_concurrency",
+        "agent_customer_delivery_concurrency",
+      ],
+    );
+    const results = await Promise.allSettled([
+      insert(firstClient, "approval_customer_delivery_concurrency_first"),
+      insert(secondClient, "approval_customer_delivery_concurrency_second"),
+    ]);
+    const fulfilled = results.filter((result) => result.status === "fulfilled");
+    const rejected = results.filter((result) => result.status === "rejected");
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    assert.ok(
+      rejected[0]?.status === "rejected" && hasPostgresCode(rejected[0].reason, "23505"),
+      "concurrent_customer_delivery_duplicate_not_rejected_by_database",
+    );
+    const count = await setupClient.query<{ count: string }>(
+      `SELECT COUNT(*)::TEXT AS count FROM approvals
+      WHERE run_id='run_customer_delivery_concurrency'
+        AND approval_kind='customer_delivery'`,
+    );
+    assert.equal(count.rows[0]?.count, "1");
+  } finally {
+    await Promise.all([
+      firstClient.end().catch(() => undefined),
+      secondClient.end().catch(() => undefined),
+    ]);
+  }
+}
+
 async function main() {
   const dsn = String(
     process.env.AGENTOPS_TEST_POSTGRES_DSN || process.env.AGENTOPS_POSTGRES_DSN || "",
@@ -490,7 +612,10 @@ async function main() {
   assert.equal(v3MigrationChecksum, HUMAN_MEMORY_SCHEMA_V3_CHECKSUM);
   const v4MigrationBytes = await readFile(V4_MIGRATION_PATH);
   const v4MigrationChecksum = createHash("sha256").update(v4MigrationBytes).digest("hex");
-  assert.equal(v4MigrationChecksum, HUMAN_MEMORY_SCHEMA_CHECKSUM);
+  assert.equal(v4MigrationChecksum, HUMAN_MEMORY_SCHEMA_V4_CHECKSUM);
+  const v5MigrationBytes = await readFile(V5_MIGRATION_PATH);
+  const v5MigrationChecksum = createHash("sha256").update(v5MigrationBytes).digest("hex");
+  assert.equal(v5MigrationChecksum, HUMAN_MEMORY_SCHEMA_CHECKSUM);
   assert.match(v2MigrationBytes.toString("utf8"), /SET LOCAL lock_timeout = '5s'/);
   assert.doesNotMatch(v2MigrationBytes.toString("utf8"), /CREATE INDEX/);
   assert.match(onlineIndexMigrationBytes.toString("utf8"), /CREATE INDEX CONCURRENTLY/);
@@ -499,10 +624,18 @@ async function main() {
   assert.match(v4MigrationBytes.toString("utf8"), /'customer_delivery'/);
   assert.match(v4MigrationBytes.toString("utf8"), /DEFERRABLE INITIALLY DEFERRED/);
   assert.match(v4MigrationBytes.toString("utf8"), /idx_agent_gateway_enrollment_approval_unique/);
+  assert.match(v5MigrationBytes.toString("utf8"), /customer_delivery_approval_run_duplicate/);
+  assert.match(v5MigrationBytes.toString("utf8"), /SET LOCAL lock_timeout = '5s'/);
+  assert.match(v5MigrationBytes.toString("utf8"), /SET LOCAL statement_timeout = '30s'/);
+  assert.match(v5MigrationBytes.toString("utf8"), /CREATE UNIQUE INDEX IF NOT EXISTS/);
+  assert.match(v5MigrationBytes.toString("utf8"), /WHERE approval_kind='customer_delivery'/);
   const migrationSql = migrationBytes.toString("utf8");
+  const freshSchema = `agentops_schema_fresh_${randomBytes(8).toString("hex")}`;
   const legalSchema = `agentops_schema_upgrade_${randomBytes(8).toString("hex")}`;
   const v2Schema = `agentops_schema_upgrade_v2_${randomBytes(8).toString("hex")}`;
   const v3Schema = `agentops_schema_upgrade_v3_${randomBytes(8).toString("hex")}`;
+  const v4Schema = `agentops_schema_upgrade_v4_${randomBytes(8).toString("hex")}`;
+  const duplicateSchema = `agentops_schema_upgrade_duplicate_${randomBytes(8).toString("hex")}`;
   const unclassifiedSchema = `agentops_schema_upgrade_unclassified_${randomBytes(8).toString("hex")}`;
   const prefilledKindSchema = `agentops_schema_upgrade_prefilled_kind_${randomBytes(8).toString("hex")}`;
   const driftSchema = `agentops_schema_drift_${randomBytes(8).toString("hex")}`;
@@ -520,9 +653,12 @@ async function main() {
   try {
     await admin.connect();
     for (const schema of [
+      freshSchema,
       legalSchema,
       v2Schema,
       v3Schema,
+      v4Schema,
+      duplicateSchema,
       unclassifiedSchema,
       prefilledKindSchema,
       driftSchema,
@@ -530,6 +666,23 @@ async function main() {
       await admin.query(`CREATE SCHEMA ${quotedIdentifier(schema)}`);
       schemasCreated.push(schema);
     }
+
+    const freshDsn = scopedDsn(dsn, freshSchema);
+    const freshClient = new Client({
+      connectionString: freshDsn,
+      ...connectionOptions,
+      application_name: "agentops-mis-schema-upgrade-contract-fresh",
+    });
+    clients.push(freshClient);
+    await freshClient.connect();
+    await createApprovalBindingParentFixture(freshClient);
+    const freshMigration = await runMigrator(freshDsn);
+    assert.equal(
+      freshMigration.exitCode,
+      0,
+      `fresh_install_failed:${freshMigration.stdout.trim()}:${freshMigration.stderr.trim()}`,
+    );
+    await assertWorkspaceAuditUpgrade(freshClient);
 
     const legalDsn = scopedDsn(dsn, legalSchema);
     const legalClient = new Client({
@@ -548,6 +701,14 @@ async function main() {
     );
     assert.match(legalMigration.stdout, /"ready":true/);
     await assertWorkspaceAuditUpgrade(legalClient);
+    const idempotentMigration = await runMigrator(legalDsn);
+    assert.equal(
+      idempotentMigration.exitCode,
+      0,
+      `idempotent_v5_rerun_failed:${idempotentMigration.stdout.trim()}:${idempotentMigration.stderr.trim()}`,
+    );
+    await assertWorkspaceAuditUpgrade(legalClient);
+    await assertConcurrentCustomerDeliveryInsertEnforcement(legalDsn, legalClient);
 
     const v2Dsn = scopedDsn(dsn, v2Schema);
     const v2Client = new Client({
@@ -587,6 +748,82 @@ async function main() {
       `legal_v3_upgrade_failed:${v3Migration.stdout.trim()}:${v3Migration.stderr.trim()}`,
     );
     await assertWorkspaceAuditUpgrade(v3Client);
+
+    const v4Dsn = scopedDsn(dsn, v4Schema);
+    const v4Client = new Client({
+      connectionString: v4Dsn,
+      ...connectionOptions,
+      application_name: "agentops-mis-schema-upgrade-contract-v4",
+    });
+    clients.push(v4Client);
+    await v4Client.connect();
+    await createV4Fixture(
+      v4Client,
+      migrationSql,
+      v2MigrationBytes.toString("utf8"),
+      v3MigrationBytes.toString("utf8"),
+      v4MigrationBytes.toString("utf8"),
+    );
+    const v4Migration = await runMigrator(v4Dsn);
+    assert.equal(
+      v4Migration.exitCode,
+      0,
+      `legal_v4_upgrade_failed:${v4Migration.stdout.trim()}:${v4Migration.stderr.trim()}`,
+    );
+    await assertWorkspaceAuditUpgrade(v4Client);
+
+    const duplicateDsn = scopedDsn(dsn, duplicateSchema);
+    const duplicateClient = new Client({
+      connectionString: duplicateDsn,
+      ...connectionOptions,
+      application_name: "agentops-mis-schema-upgrade-contract-duplicate",
+    });
+    clients.push(duplicateClient);
+    await duplicateClient.connect();
+    await createV4Fixture(
+      duplicateClient,
+      migrationSql,
+      v2MigrationBytes.toString("utf8"),
+      v3MigrationBytes.toString("utf8"),
+      v4MigrationBytes.toString("utf8"),
+    );
+    await duplicateClient.query(
+      `INSERT INTO approvals(
+        approval_id,approval_kind,task_id,run_id,tool_call_id,requested_by_agent_id,reason
+      ) VALUES(
+        'approval_delivery_upgrade_contract_duplicate','customer_delivery',
+        'task_upgrade_contract','run_upgrade_contract',NULL,
+        'agent_upgrade_contract','duplicate delivery review'
+      )`,
+    );
+    const duplicateMigration = await runMigrator(duplicateDsn);
+    assert.notEqual(duplicateMigration.exitCode, 0);
+    assert.match(
+      `${duplicateMigration.stdout}\n${duplicateMigration.stderr}`,
+      /"error":"customer_delivery_approval_run_duplicate"/,
+    );
+    const duplicateReceipt = await duplicateClient.query<{
+      version: string;
+      schema_contract: string;
+      checksum: string;
+    }>(
+      `SELECT version,schema_contract,checksum FROM agentops_schema_migrations
+      WHERE component=$1`,
+      [HUMAN_MEMORY_SCHEMA_COMPONENT],
+    );
+    assert.deepEqual(duplicateReceipt.rows, [{
+      version: HUMAN_MEMORY_SCHEMA_V4_VERSION,
+      schema_contract: HUMAN_MEMORY_SCHEMA_V4_CONTRACT,
+      checksum: HUMAN_MEMORY_SCHEMA_V4_CHECKSUM,
+    }]);
+    const duplicateIndex = await duplicateClient.query<{ count: string }>(
+      `SELECT COUNT(*)::TEXT AS count
+      FROM pg_class index_relation
+      JOIN pg_namespace namespace ON namespace.oid=index_relation.relnamespace
+      WHERE namespace.nspname=current_schema()
+        AND index_relation.relname='idx_approvals_customer_delivery_run_unique'`,
+    );
+    assert.equal(duplicateIndex.rows[0]?.count, "0");
 
     const unclassifiedDsn = scopedDsn(dsn, unclassifiedSchema);
     const unclassifiedClient = new Client({
@@ -666,12 +903,19 @@ async function main() {
 
     output({
       ok: true,
-      contract: "human_memory_schema_v1_v2_v3_to_v4_upgrade_v1",
+      contract: "human_memory_schema_v1_v2_v3_v4_to_v5_upgrade_v1",
       checks: {
+        fresh_install_to_v5_ready: true,
         exact_v1_receipt_upgraded: true,
         exact_v2_receipt_upgraded: true,
         exact_v3_receipt_upgraded: true,
-        latest_v4_receipt_written: true,
+        exact_v4_receipt_upgraded: true,
+        latest_v5_receipt_written: true,
+        v5_migration_rerun_idempotent: true,
+        duplicate_customer_delivery_preflight_failed_closed: true,
+        duplicate_failure_preserved_v4_receipt_and_absent_index: true,
+        concurrent_customer_delivery_insert_database_enforced: true,
+        customer_delivery_run_global_partial_unique_index_ready: true,
         approval_idempotency_table_ready: true,
         approval_kind_is_explicit_without_default: true,
         five_approval_kinds_backfilled: true,
@@ -682,7 +926,8 @@ async function main() {
         mismatched_prefilled_approval_kind_fails_closed: true,
         audit_workspace_column_constraint_and_online_index_ready: true,
         online_index_stage_resumes_after_receipt: true,
-        blocking_index_ddl_absent_from_core_transaction: true,
+        workspace_read_model_online_index_stage_preserved: true,
+        v5_index_build_has_bounded_lock_and_statement_timeouts: true,
         schema_readiness_passed: true,
         tampered_v1_receipt_rejected_without_ddl: true,
       },
@@ -700,9 +945,18 @@ async function main() {
 }
 
 main().catch((error: unknown) => {
+  const stack = error instanceof Error ? String(error.stack || "") : "";
+  const location = stack.match(/schema-migration-upgrade-contract\.ts:\d+:\d+/)?.[0] || null;
+  const databaseCode = (error as { code?: string } | undefined)?.code || null;
   const code = error instanceof Error && /^[a-z0-9_]+$/.test(error.message)
     ? error.message
     : "schema_migration_upgrade_contract_failed";
-  output({ ok: false, error: code, credentials_omitted: true });
+  output({
+    ok: false,
+    error: code,
+    location,
+    database_code: databaseCode,
+    credentials_omitted: true,
+  });
   process.exitCode = 1;
 });

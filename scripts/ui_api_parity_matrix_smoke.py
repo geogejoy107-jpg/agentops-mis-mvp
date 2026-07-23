@@ -264,6 +264,56 @@ def main() -> int:
     assert_entry_routes(entries_by_id.get("run_ledger"), "run_ledger", ["/workspace/runs", "/admin/runs"], ["/workspace/runs"], retirement_allowed=True)
     assert_entry_routes(entries_by_id.get("run_detail"), "run_detail", ["/workspace/runs/:id", "/admin/runs/:id"], ["/workspace/runs/:runId"], retirement_allowed=True)
     assert_entry_routes(entries_by_id.get("agent_detail"), "agent_detail", ["/workspace/agents/:id", "/admin/agents/:id"], ["/workspace/agents/:agentId"], retirement_allowed=True)
+    workspace_control_plane_routes = {
+        "workspace_home": {"/api/mis/dashboard/metrics"},
+        "task_list": {"/api/mis/tasks"},
+        "task_detail": {"/api/mis/tasks/:taskId"},
+        "run_ledger": {"/api/mis/runs"},
+        "run_detail": {"/api/mis/runs/:runId", "/api/mis/runs/:runId/graph"},
+        "approvals": {"/api/mis/approvals", "/api/mis/approvals/:approvalId/:decision"},
+        "audit": {"/api/mis/audit"},
+        "evaluation_room": {"/api/mis/evaluations"},
+        "tool_calls": {"/api/mis/tool-calls"},
+        "next_typescript_postgres_agent_gateway_control_plane": {
+            "/api/mis/agent-gateway/approvals/request",
+        },
+    }
+    workspace_control_plane_owners = {
+        "/api/mis/dashboard/metrics": ("ui/next-app/app/api/mis/dashboard/metrics/route.ts", "workspaceReadModels", "workspaceDashboardMetrics"),
+        "/api/mis/tasks": ("ui/next-app/app/api/mis/tasks/route.ts", "workspaceReadModels", "listWorkspaceTasks"),
+        "/api/mis/tasks/:taskId": ("ui/next-app/app/api/mis/tasks/[taskId]/route.ts", "workspaceReadModels", "getWorkspaceTaskDetail"),
+        "/api/mis/runs": ("ui/next-app/app/api/mis/runs/route.ts", "workspaceReadModels", "listWorkspaceRuns"),
+        "/api/mis/runs/:runId": ("ui/next-app/app/api/mis/runs/[runId]/route.ts", "workspaceReadModels", "getWorkspaceRunDetail"),
+        "/api/mis/runs/:runId/graph": ("ui/next-app/app/api/mis/runs/[runId]/graph/route.ts", "workspaceReadModels", "getWorkspaceRunGraph"),
+        "/api/mis/approvals": ("ui/next-app/app/api/mis/approvals/route.ts", "workspaceReadModels", "listWorkspaceApprovals"),
+        "/api/mis/approvals/:approvalId/:decision": ("ui/next-app/app/api/mis/approvals/[approvalId]/[decision]/route.ts", "approvalDecisions", "decideWorkspaceApproval"),
+        "/api/mis/audit": ("ui/next-app/app/api/mis/audit/route.ts", "workspaceReadModels", "listWorkspaceAudit"),
+        "/api/mis/evaluations": ("ui/next-app/app/api/mis/evaluations/route.ts", "workspaceReadModels", "listWorkspaceEvaluations"),
+        "/api/mis/tool-calls": ("ui/next-app/app/api/mis/tool-calls/route.ts", "workspaceReadModels", "listWorkspaceToolCalls"),
+        "/api/mis/agent-gateway/approvals/request": (
+            "ui/next-app/app/api/mis/agent-gateway/approvals/request/route.ts",
+            "agentGatewayApprovals",
+            "requestCustomerDeliveryApproval",
+        ),
+    }
+    for entry_id, required_routes in workspace_control_plane_routes.items():
+        entry_routes = set(entries_by_id.get(entry_id, {}).get("next_routes") or [])
+        require(
+            required_routes <= entry_routes,
+            f"{entry_id}.next_routes must include direct Next/Postgres routes: {sorted(required_routes)}",
+        )
+    for route, (source_path, owner_module, owner_function) in workspace_control_plane_owners.items():
+        handler_path = ROOT / source_path
+        require(handler_path.exists(), f"direct Next/Postgres route is missing its handler: {route}")
+        handler_text = read_text(handler_path)
+        require(
+            f'@/server/controlPlane/{owner_module}' in handler_text and owner_function in handler_text,
+            f"{route} must call its direct TypeScript owner {owner_module}.{owner_function}",
+        )
+        require(
+            'controlPlaneMode() === "proxy"' in handler_text,
+            f"{route} must retain only an explicit Free Local proxy branch",
+        )
     agent_detail_evidence = entries_by_id.get("agent_detail", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_parity_smoke.py" in agent_detail_evidence, "agent_detail must include Next static parity evidence")
     require("python3 scripts/nextjs_playwright_snapshot_smoke.py" in agent_detail_evidence, "agent_detail must include Next browser evidence")
@@ -382,6 +432,10 @@ def main() -> int:
     next_routes = actual_next_routes()
     require(vite_routes <= matrix_vite_routes, f"matrix misses Vite routes: {sorted(vite_routes - matrix_vite_routes)}")
     require(next_routes <= matrix_next_routes, f"matrix misses Next routes: {sorted(next_routes - matrix_next_routes)}")
+    require(
+        set(workspace_control_plane_owners) <= next_routes,
+        f"direct Next/Postgres handlers are missing: {sorted(set(workspace_control_plane_owners) - next_routes)}",
+    )
 
     doc_text = read_text(ROOT / "docs" / "UI_API_PARITY_MATRIX.md")
     migration_text = read_text(ROOT / "docs" / "COMMERCIAL_MIGRATION_CLOSED_LOOP.md")

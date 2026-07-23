@@ -958,7 +958,7 @@ def main() -> int:
                 and second_migration_payload.get("ready") is True
                 and schema_readiness_payload.get("operation") == "commercial_schema_readiness"
                 and schema_readiness_payload.get("ready") is True
-                and schema_contract_payload.get("contract") == "human_memory_schema_readiness_v4"
+                and schema_contract_payload.get("contract") == "human_memory_schema_readiness_v5"
                 and all((schema_contract_payload.get("checks") or {}).values())
                 and schema_version is not None
                 and schema_version["version"] == "20260719_approval_kind_bindings_v4"

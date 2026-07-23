@@ -50,6 +50,7 @@ def valid_runtime_payload() -> dict:
         "complete_run_artifact_evidence_enforced": True,
         "audit_evidence_server_derived": True,
         "customer_delivery_revalidation_blocked": True,
+        "blocked_customer_delivery_request_persisted": False,
         "approved_customer_delivery_evidence_sealed": True,
     }
     return {
@@ -57,7 +58,14 @@ def valid_runtime_payload() -> dict:
         "control_plane": "typescript_postgres",
         "adapters": ["hermes", "openclaw"],
         "workers": {
-            adapter: {"provider_call_performed": True, "dry_run": False}
+            adapter: {
+                "provider_call_performed": True,
+                "dry_run": False,
+                "delivery_approval_creation_source": "production_next_typescript_postgres_agent_gateway_route",
+                "delivery_approval_request_outcome": "created",
+                "delivery_approval_runtime_event_count": 1,
+                "delivery_approval_audit_count": 1,
+            }
             for adapter in ("hermes", "openclaw")
         },
         "manifest_authority_guards": {
@@ -80,8 +88,8 @@ def valid_runtime_payload() -> dict:
         "real_run_bound_delivery_decisions_completed": True,
         "python_api_started": False,
         "python_or_sqlite_commercial_default": False,
-        "worker_created_delivery_approvals": False,
-        "delivery_approval_creation_source": "acceptance_fixture_bound_to_real_run",
+        "worker_created_delivery_approvals": True,
+        "delivery_approval_creation_source": "production_next_typescript_postgres_agent_gateway_route",
     }
 
 
@@ -138,6 +146,42 @@ def verify_runtime_claim_fail_closed(receipt: ModuleType, readiness: ModuleType)
                 f"invalid {adapter} dry_run was accepted",
             )
             cases += 1
+
+        missing_owner = copy.deepcopy(fixture)
+        missing_owner["workers"][adapter].pop("delivery_approval_request_outcome")
+        missing_owner_claims = receipt.real_runtime_security_claims(missing_owner)
+        require(
+            missing_owner_claims["adapter_claims"][adapter].get(
+                "delivery_approval_created_through_production_owner"
+            ) is None
+            and not receipt.real_runtime_security_claims_complete(missing_owner_claims)
+            and not readiness.runtime_security_claims_valid(
+                missing_owner_claims,
+                required_adapters,
+            ),
+            f"missing {adapter} production approval owner evidence was accepted",
+        )
+        cases += 1
+
+        persisted_blocked_request = copy.deepcopy(fixture)
+        persisted_blocked_request["manifest_authority_guards"][adapter][
+            "blocked_customer_delivery_request_persisted"
+        ] = True
+        persisted_claims = receipt.real_runtime_security_claims(
+            persisted_blocked_request
+        )
+        require(
+            persisted_claims["adapter_claims"][adapter].get(
+                "blocked_customer_delivery_request_persisted"
+            ) is True
+            and not receipt.real_runtime_security_claims_complete(persisted_claims)
+            and not readiness.runtime_security_claims_valid(
+                persisted_claims,
+                required_adapters,
+            ),
+            f"persisted blocked {adapter} delivery request was accepted",
+        )
+        cases += 1
 
     string_true = copy.deepcopy(fixture)
     string_true["real_runtime_execution_performed"] = "true"

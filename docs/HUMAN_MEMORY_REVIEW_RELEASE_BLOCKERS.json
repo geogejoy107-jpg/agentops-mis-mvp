@@ -17,6 +17,7 @@
     "missing_agent_gateway_session_expiry_fails_closed": true,
     "malformed_login_window_fails_closed": true,
     "exact_postgres_schema_version_gate": true,
+    "customer_delivery_run_unique_v5_enforced": true,
     "approval_kind_v4_explicit_without_default": true,
     "approval_kind_v4_immutable_and_edge_bound": true,
     "approval_execution_binding_immutable": true,
@@ -45,14 +46,19 @@
     "production_shared_python_proxy_helper_blocked": true,
     "legacy_review_decisions_fail_closed": true,
     "workspace_detail_read_routes_typescript_postgres_owned": true,
-    "human_approval_decision_route_typescript_postgres_owned": true
+    "human_approval_decision_route_typescript_postgres_owned": true,
+    "customer_delivery_approval_request_typescript_postgres_owned": true,
+    "customer_delivery_approval_request_database_unique": true,
+    "real_worker_delivery_approval_request_observed": true
   },
   "local_precommit_observations": {
     "scope": "non_release_engineering_observation",
     "real_openclaw_worker_human_review_bridge_observed": true,
     "real_hermes_worker_human_review_bridge_observed": true,
     "real_openclaw_run_bound_delivery_decision_observed": true,
-    "real_hermes_run_bound_delivery_decision_observed": true
+    "real_hermes_run_bound_delivery_decision_observed": true,
+    "real_openclaw_production_delivery_request_observed": true,
+    "real_hermes_production_delivery_request_observed": true
   },
   "acceptance_evidence": {
     "evidence_scope": "local_precommit_engineering_only",
@@ -61,8 +67,8 @@
     "receipt_id": null,
     "exact_head": false,
     "release_authority": false,
-    "worker_created_delivery_approvals": false,
-    "delivery_approval_creation_source": "acceptance_fixture_bound_to_real_run"
+    "worker_created_delivery_approvals": true,
+    "delivery_approval_creation_source": "production_next_typescript_postgres_agent_gateway_route"
   },
   "external_runtime_receipt_requirement": {
     "contract_id": "commercial_ci_command_receipt_v1",
@@ -133,13 +139,6 @@
       "status": "open",
       "kind": "lifecycle",
       "detail": "Expired approvals fail closed on authorization, but a bounded reconciler does not yet terminalize the approval and its linked waiting state with audit evidence."
-    },
-    {
-      "id": "production_customer_delivery_approval_creation_owner_missing",
-      "severity": "P1",
-      "status": "open",
-      "kind": "migration",
-      "detail": "Real Hermes and OpenClaw Workers create completed runs, evidence, and verified manifests, but they do not create customer_delivery approvals through a production TypeScript/Postgres owner. Current live acceptance uses an isolated fixture bound to each real run; production approval creation ownership remains required before closed-loop customer-delivery claims."
     },
     {
       "id": "exact_head_real_runtime_receipt_missing",

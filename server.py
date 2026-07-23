@@ -3581,6 +3581,44 @@ def stale_prepared_action_result() -> dict:
     }
 
 
+def repo_fail_unbound_stale_prepared_action(conn, action) -> tuple[sqlite3.Row | None, sqlite3.Row | None, str]:
+    """Terminalize only an already-stale, unbound Postgres execution claim."""
+    if (
+        isinstance(conn, sqlite3.Connection)
+        or not action
+        or action["approval_id"] is not None
+        or action["status"] != "executing"
+        or not prepared_action_execution_stale(action)
+    ):
+        return action, action, "state_conflict"
+    result_json = json.dumps(stale_prepared_action_result(), ensure_ascii=False, sort_keys=True)
+    updated_at = now_iso()
+    cursor = conn.execute(
+        """UPDATE prepared_actions
+        SET status='failed', result_json=?, updated_at=?
+        WHERE prepared_action_id=?
+          AND workspace_id=?
+          AND approval_id IS NULL
+          AND status='executing'
+          AND updated_at=?""",
+        (
+            result_json,
+            updated_at,
+            action["prepared_action_id"],
+            row_workspace(action),
+            action["updated_at"],
+        ),
+    )
+    after = repo_get_workspace_prepared_action(
+        conn,
+        row_workspace(action),
+        action["prepared_action_id"],
+    )
+    if cursor.rowcount == 1:
+        return action, after, "updated"
+    return action, after, "state_conflict"
+
+
 def reconcile_stale_prepared_action(
     conn,
     action,
@@ -3597,12 +3635,15 @@ def reconcile_stale_prepared_action(
         return None, "missing"
     if not prepared_action_execution_stale(fresh):
         return fresh, "unchanged"
-    before, failed, outcome = repo_update_prepared_action_status(
-        conn,
-        prepared_action_id,
-        "failed",
-        result_json=stale_prepared_action_result(),
-    )
+    if not isinstance(conn, sqlite3.Connection) and fresh["approval_id"] is None:
+        before, failed, outcome = repo_fail_unbound_stale_prepared_action(conn, fresh)
+    else:
+        before, failed, outcome = repo_update_prepared_action_status(
+            conn,
+            prepared_action_id,
+            "failed",
+            result_json=stale_prepared_action_result(),
+        )
     if outcome == "updated":
         audit(
             conn,

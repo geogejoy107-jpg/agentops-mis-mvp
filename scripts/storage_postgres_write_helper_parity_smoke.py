@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import multiprocessing as mp
 import os
 import sqlite3
 import sys
@@ -39,6 +40,10 @@ TOOL_CALL_A = "tc_pg_write_a"
 APPROVAL_A = "ap_pg_write_a"
 PREPARED_A = "pact_pg_write_a"
 PREPARED_APPROVAL_CONFLICT = "pact_pg_write_approval_conflict"
+PREPARED_STALE_CONCURRENT = "pact_pg_stale_concurrent"
+PREPARED_STALE_RECENT = "pact_pg_stale_recent"
+PREPARED_STALE_BOUND = "pact_pg_stale_bound"
+APPROVAL_STALE_BOUND = "ap_pg_stale_bound"
 EVAL_A = "eval_pg_write_a"
 ARTIFACT_A = "art_pg_write_a"
 MEMORY_A = "mem_pg_write_a"
@@ -121,6 +126,15 @@ def normalize(value):
 
 def row_dict(row) -> dict:
     return normalize(dict(row))
+
+
+def prepared_action_binding_snapshot(row) -> dict:
+    lifecycle_fields = {"status", "result_json", "updated_at"}
+    return {
+        key: normalize(value)
+        for key, value in dict(row).items()
+        if key not in lifecycle_fields
+    }
 
 
 def seed_reference_rows(conn) -> None:
@@ -639,6 +653,85 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def stale_reconciliation_contender(dsn: str, action_id: str, barrier, result_queue, contender_id: str) -> None:
+    conn = None
+    original_backend = server.STORAGE_BACKEND
+    original_helper = server.repo_fail_unbound_stale_prepared_action
+    cas_outcome = None
+
+    def coordinated_helper(candidate_conn, action):
+        nonlocal cas_outcome
+        barrier.wait(timeout=20)
+        before, after, cas_outcome = original_helper(candidate_conn, action)
+        return before, after, cas_outcome
+
+    try:
+        server.STORAGE_BACKEND = "postgres"
+        server.repo_fail_unbound_stale_prepared_action = coordinated_helper
+        conn = PostgresAdapter.connect(dsn)
+        backend_pid = conn.execute("SELECT pg_backend_pid() AS pid").fetchone()["pid"]
+        action = server.repo_get_workspace_prepared_action(conn, WORKSPACE_A, action_id)
+        row, reconciliation_outcome = server.reconcile_stale_prepared_action(
+            conn,
+            action,
+            actor_id=f"postgres-stale-contender-{contender_id}",
+            audit_action="prepared_action.execution_stale_reconciled",
+        )
+        conn.commit()
+        result_queue.put(
+            {
+                "ok": True,
+                "contender_id": contender_id,
+                "process_id": os.getpid(),
+                "backend_pid": backend_pid,
+                "cas_outcome": cas_outcome,
+                "reconciliation_outcome": reconciliation_outcome,
+                "status": row["status"] if row else None,
+            }
+        )
+    except BaseException as exc:
+        if conn is not None:
+            conn.rollback()
+        result_queue.put(
+            {
+                "ok": False,
+                "contender_id": contender_id,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        )
+    finally:
+        if conn is not None:
+            conn.close()
+        server.repo_fail_unbound_stale_prepared_action = original_helper
+        server.STORAGE_BACKEND = original_backend
+
+
+def reconciliation_unrelated_snapshot(conn, tested_action_ids: list[str]) -> dict:
+    placeholders = ",".join("?" for _ in tested_action_ids)
+    queries = {
+        "tasks": ("SELECT * FROM tasks WHERE task_id=?", [TASK_A]),
+        "runs": ("SELECT * FROM runs WHERE run_id=?", [RUN_A]),
+        "tool_calls": ("SELECT * FROM tool_calls WHERE tool_call_id=?", [TOOL_CALL_A]),
+        "approvals": (
+            "SELECT * FROM approvals WHERE approval_id IN (?,?) ORDER BY approval_id",
+            [APPROVAL_A, APPROVAL_STALE_BOUND],
+        ),
+        "prepared_actions": (
+            f"SELECT * FROM prepared_actions WHERE prepared_action_id NOT IN ({placeholders}) ORDER BY prepared_action_id",
+            tested_action_ids,
+        ),
+        "runtime_events": ("SELECT * FROM runtime_events ORDER BY runtime_event_id", []),
+        "unrelated_audits": (
+            f"SELECT * FROM audit_logs WHERE entity_id NOT IN ({placeholders}) ORDER BY created_at,audit_id",
+            tested_action_ids,
+        ),
+    }
+    return {
+        name: [row_dict(row) for row in conn.execute(sql, params).fetchall()]
+        for name, (sql, params) in queries.items()
+    }
+
+
 def verify_postgres_legacy_prepared_action_migration(conn) -> dict:
     status_constraints = conn.execute(
         """SELECT con.conname, pg_get_constraintdef(con.oid) AS definition
@@ -694,7 +787,7 @@ def verify_postgres_legacy_prepared_action_migration(conn) -> dict:
 def verify_postgres_stale_prepared_action_reconciliation(conn, dsn: str) -> dict:
     old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)).isoformat()
 
-    def insert_stale(action_id: str) -> None:
+    def insert_action(action_id: str, *, updated_at: str, approval_id: str | None = None) -> None:
         conn.execute(
             """INSERT INTO prepared_actions(
             prepared_action_id,workspace_id,task_id,run_id,tool_call_id,approval_id,requested_by_agent_id,
@@ -702,16 +795,16 @@ def verify_postgres_stale_prepared_action_reconciliation(conn, dsn: str) -> dict
             result_json,created_at,updated_at,approved_at,consumed_at
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                action_id, WORKSPACE_A, TASK_A, RUN_A, TOOL_CALL_A, None, AGENT_A,
+                action_id, WORKSPACE_A, TASK_A, RUN_A, TOOL_CALL_A, approval_id, AGENT_A,
                 "postgres.stale_reconciliation", "postgres-smoke", "postgres://stale-reconciliation",
                 "{}", server.prepared_action_args_hash("{}"), None, "stale_snapshot", "executing",
-                "{}", old, old, old, None,
+                "{}", updated_at, updated_at, updated_at, None,
             ),
         )
 
     runtime_events_before = conn.execute("SELECT COUNT(*) AS count FROM runtime_events").fetchone()["count"]
     read_action_id = "pact_pg_stale_read_side"
-    insert_stale(read_action_id)
+    insert_action(read_action_id, updated_at=old)
     conn.commit()
     rows = server.repo_list_workspace_prepared_actions(conn, WORKSPACE_A)
     read_failed = next((row for row in rows if row["prepared_action_id"] == read_action_id), None)
@@ -726,7 +819,7 @@ def verify_postgres_stale_prepared_action_reconciliation(conn, dsn: str) -> dict
     conn.commit()
 
     startup_action_id = "pact_pg_stale_startup"
-    insert_stale(startup_action_id)
+    insert_action(startup_action_id, updated_at=old)
     conn.commit()
     original_backend = server.STORAGE_BACKEND
     startup_env = {
@@ -763,9 +856,224 @@ def verify_postgres_stale_prepared_action_reconciliation(conn, dsn: str) -> dict
         f"Postgres startup stale reconciliation failed: {startup} {startup_result}",
     )
     require(runtime_events_after == runtime_events_before, "Postgres stale reconciliation emitted provider runtime events")
+
+    future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).isoformat()
+    approval_row = {
+        "approval_id": APPROVAL_STALE_BOUND,
+        "approval_kind": "prepared_action",
+        "task_id": TASK_A,
+        "run_id": RUN_A,
+        "tool_call_id": TOOL_CALL_A,
+        "requested_by_agent_id": AGENT_A,
+        "approver_user_id": "usr_founder",
+        "decision": "approved",
+        "reason": "Valid graph fixture for stale bound reconciliation.",
+        "expires_at": future,
+        "created_at": old,
+        "decided_at": old,
+    }
+    before, approval_outcome = server.repo_upsert_approval(conn, approval_row)
+    require(before is None and approval_outcome == "created", "stale bound approval fixture was not created")
+    recent = dt.datetime.now(dt.timezone.utc).isoformat()
+    insert_action(PREPARED_STALE_CONCURRENT, updated_at=old)
+    insert_action(PREPARED_STALE_RECENT, updated_at=recent)
+    insert_action(PREPARED_STALE_BOUND, updated_at=old, approval_id=APPROVAL_STALE_BOUND)
+    conn.commit()
+
+    tested_action_ids = [
+        PREPARED_STALE_CONCURRENT,
+        PREPARED_STALE_RECENT,
+        PREPARED_STALE_BOUND,
+    ]
+    tested_action_bindings_before = {
+        action_id: prepared_action_binding_snapshot(
+            conn.execute(
+                "SELECT * FROM prepared_actions WHERE prepared_action_id=?",
+                (action_id,),
+            ).fetchone()
+        )
+        for action_id in tested_action_ids
+    }
+    unrelated_before = reconciliation_unrelated_snapshot(conn, tested_action_ids)
+
+    context = mp.get_context("spawn")
+    barrier = context.Barrier(2)
+    result_queue = context.Queue()
+    contenders = [
+        context.Process(
+            target=stale_reconciliation_contender,
+            args=(dsn, PREPARED_STALE_CONCURRENT, barrier, result_queue, str(index)),
+        )
+        for index in range(2)
+    ]
+    for contender in contenders:
+        contender.start()
+    for contender in contenders:
+        contender.join(timeout=30)
+    hung = [contender for contender in contenders if contender.is_alive()]
+    for contender in hung:
+        contender.terminate()
+        contender.join(timeout=5)
+    require(not hung, "Postgres stale reconciliation contenders did not exit")
+    contender_results = [result_queue.get(timeout=5) for _ in contenders]
+    result_queue.close()
+    result_queue.join_thread()
+    require(
+        all(result.get("ok") for result in contender_results),
+        f"Postgres stale reconciliation contender failed: {contender_results}",
+    )
+    require(
+        len({result["process_id"] for result in contender_results}) == 2
+        and len({result["backend_pid"] for result in contender_results}) == 2,
+        f"Postgres stale reconciliation contenders did not use independent processes/connections: {contender_results}",
+    )
+    require(
+        sorted(result["cas_outcome"] for result in contender_results) == ["state_conflict", "updated"],
+        f"Postgres stale reconciliation CAS did not produce one winner: {contender_results}",
+    )
+    require(
+        sorted(result["reconciliation_outcome"] for result in contender_results) == ["failed", "reconciled"],
+        f"Postgres stale reconciliation outcomes were not single-winner: {contender_results}",
+    )
+    concurrent_row = conn.execute(
+        "SELECT status,result_json FROM prepared_actions WHERE prepared_action_id=?",
+        (PREPARED_STALE_CONCURRENT,),
+    ).fetchone()
+    concurrent_result = json.loads(concurrent_row["result_json"] or "{}") if concurrent_row else {}
+    concurrent_audits = conn.execute(
+        """SELECT metadata_json FROM audit_logs
+        WHERE action='prepared_action.execution_stale_reconciled'
+          AND entity_type='prepared_actions'
+          AND entity_id=?""",
+        (PREPARED_STALE_CONCURRENT,),
+    ).fetchall()
+    require(
+        concurrent_row
+        and concurrent_row["status"] == "failed"
+        and concurrent_result.get("automatic_retry_performed") is False,
+        f"Postgres concurrent stale action was not terminalized safely: {concurrent_result}",
+    )
+    require(len(concurrent_audits) == 1, f"Postgres concurrent stale action emitted {len(concurrent_audits)} audits")
+    require(
+        json.loads(concurrent_audits[0]["metadata_json"] or "{}").get("automatic_retry_performed") is False,
+        "Postgres concurrent stale action audit did not prohibit provider retry",
+    )
+
+    recent_before = conn.execute(
+        "SELECT * FROM prepared_actions WHERE prepared_action_id=?",
+        (PREPARED_STALE_RECENT,),
+    ).fetchone()
+    recent_row, recent_outcome = server.reconcile_stale_prepared_action(
+        conn,
+        recent_before,
+        actor_id="postgres-stale-recent",
+        audit_action="prepared_action.execution_stale_reconciled",
+    )
+    conn.commit()
+    recent_after = conn.execute(
+        "SELECT * FROM prepared_actions WHERE prepared_action_id=?",
+        (PREPARED_STALE_RECENT,),
+    ).fetchone()
+    recent_audits = conn.execute(
+        "SELECT COUNT(*) AS count FROM audit_logs WHERE entity_type='prepared_actions' AND entity_id=?",
+        (PREPARED_STALE_RECENT,),
+    ).fetchone()["count"]
+    require(
+        recent_outcome == "unchanged"
+        and recent_row
+        and recent_row["status"] == "executing"
+        and row_dict(recent_before) == row_dict(recent_after),
+        f"Recent unbound executing action was mutated: {recent_outcome}",
+    )
+    require(recent_audits == 0, "Recent unbound executing action emitted a reconciliation audit")
+
+    bound_before = conn.execute(
+        "SELECT * FROM prepared_actions WHERE prepared_action_id=?",
+        (PREPARED_STALE_BOUND,),
+    ).fetchone()
+    _before, direct_after, direct_outcome = server.repo_fail_unbound_stale_prepared_action(conn, bound_before)
+    require(
+        direct_outcome == "state_conflict" and row_dict(bound_before) == row_dict(direct_after),
+        "Bound stale action was accepted by the unbound CAS helper",
+    )
+    original_unbound_helper = server.repo_fail_unbound_stale_prepared_action
+    original_status_helper = server.repo_update_prepared_action_status
+    strict_status_calls: list[tuple[str, str]] = []
+
+    def reject_unbound_helper(*_args, **_kwargs):
+        raise AssertionError("bound stale action entered the unbound CAS helper")
+
+    def track_status_helper(candidate_conn, action_id, status, *args, **kwargs):
+        strict_status_calls.append((action_id, status))
+        return original_status_helper(candidate_conn, action_id, status, *args, **kwargs)
+
+    original_backend = server.STORAGE_BACKEND
+    try:
+        server.STORAGE_BACKEND = "postgres"
+        server.repo_fail_unbound_stale_prepared_action = reject_unbound_helper
+        server.repo_update_prepared_action_status = track_status_helper
+        bound_row, bound_outcome = server.reconcile_stale_prepared_action(
+            conn,
+            bound_before,
+            actor_id="postgres-stale-bound",
+            audit_action="prepared_action.execution_stale_reconciled",
+        )
+        conn.commit()
+    finally:
+        server.repo_fail_unbound_stale_prepared_action = original_unbound_helper
+        server.repo_update_prepared_action_status = original_status_helper
+        server.STORAGE_BACKEND = original_backend
+    bound_result = json.loads(bound_row["result_json"] or "{}") if bound_row else {}
+    bound_audits = conn.execute(
+        """SELECT metadata_json FROM audit_logs
+        WHERE action='prepared_action.execution_stale_reconciled'
+          AND entity_type='prepared_actions'
+          AND entity_id=?""",
+        (PREPARED_STALE_BOUND,),
+    ).fetchall()
+    require(
+        bound_outcome == "reconciled"
+        and bound_row
+        and bound_row["status"] == "failed"
+        and strict_status_calls == [(PREPARED_STALE_BOUND, "failed")],
+        f"Bound stale action did not use the strict graph transition: {bound_outcome} {strict_status_calls}",
+    )
+    require(
+        bound_result.get("automatic_retry_performed") is False
+        and len(bound_audits) == 1
+        and json.loads(bound_audits[0]["metadata_json"] or "{}").get("automatic_retry_performed") is False,
+        f"Bound stale action retry/audit result was unsafe: {bound_result} {bound_audits}",
+    )
+
+    unrelated_after = reconciliation_unrelated_snapshot(conn, tested_action_ids)
+    tested_action_bindings_after = {
+        action_id: prepared_action_binding_snapshot(
+            conn.execute(
+                "SELECT * FROM prepared_actions WHERE prepared_action_id=?",
+                (action_id,),
+            ).fetchone()
+        )
+        for action_id in tested_action_ids
+    }
+    runtime_events_final = conn.execute("SELECT COUNT(*) AS count FROM runtime_events").fetchone()["count"]
+    require(unrelated_after == unrelated_before, "Postgres stale reconciliation mutated unrelated state")
+    require(
+        tested_action_bindings_after == tested_action_bindings_before,
+        "Postgres stale reconciliation mutated immutable target bindings",
+    )
+    require(runtime_events_final == runtime_events_before, "Postgres stale reconciliation retried a provider")
     return {
         "read_side_failed_outcome_unknown": True,
         "startup_failed_outcome_unknown": True,
+        "concurrent_cas_outcomes": sorted(result["cas_outcome"] for result in contender_results),
+        "concurrent_reconciliation_outcomes": sorted(
+            result["reconciliation_outcome"] for result in contender_results
+        ),
+        "independent_processes_and_connections": True,
+        "concurrent_single_audit": True,
+        "recent_unbound_unchanged_without_audit": True,
+        "bound_action_strict_graph_path": True,
+        "unrelated_state_unchanged": True,
         "automatic_provider_retry_performed": False,
     }
 

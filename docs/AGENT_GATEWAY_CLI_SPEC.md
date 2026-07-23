@@ -1065,15 +1065,24 @@ path and must omit raw token/session values.
 
 ### `POST /api/agent-gateway/approvals/request`
 
-Creates a human approval request.
+In commercial production, creates only a pending `customer_delivery` Human
+review request through the TypeScript/Postgres owner. The authenticated Agent
+must own the completed Hermes/OpenClaw run, present `approvals:request`, and
+have current verified plan evidence. The server owns expiry and Human approver
+attribution; callers cannot choose either. Replay is immutable and
+database-unique per run. Explicit Free Local proxy mode retains the broader
+Python compatibility implementation.
 
 Writes:
 
 - `approvals`
-- `runs`
 - `tasks`
 - `runtime_events`
 - `audit_logs`
+
+The linked run remains `completed`; only the task moves from `completed` to
+`waiting_approval`. Human approval or rejection remains a separate Human
+Session/RBAC/CSRF/idempotency action.
 
 ### `POST /api/agent-gateway/memories/propose`
 

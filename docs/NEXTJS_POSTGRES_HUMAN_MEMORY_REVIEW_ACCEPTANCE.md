@@ -108,12 +108,15 @@ Once a `customer_delivery` approval is decided, Postgres seals the old and new
 sides of tool-call, evaluation, artifact, Agent Plan, and plan-manifest writes.
 The evidence trigger shares a row lock with the Human decision, so an in-flight
 evidence transaction and the terminal approval serialize. Evidence cannot be
-appended, mutated, deleted, or rebound away from the decided run.
-`human_memory_schema_readiness_v4` validates the exact catalog, and
-`human_memory_schema_v1_v2_v3_to_v4_upgrade_v1` proves exact v1, v2, and v3
-receipts upgrade to v4. The migration runner accepts only a missing receipt, an
-exact v1, v2, or v3 receipt, or the exact current v4 receipt; any other receipt
-fails before newer DDL is executed.
+appended, mutated, deleted, or rebound away from the decided run. The current
+`20260724_customer_delivery_run_unique_v5` migration aborts without deleting or
+merging rows when a run already has duplicate `customer_delivery` approvals,
+then adds a partial unique index over `approvals(run_id)`.
+`human_memory_schema_readiness_v5` validates the exact catalog, and
+`human_memory_schema_v1_v2_v3_v4_to_v5_upgrade_v1` proves exact v1, v2, v3,
+and v4 receipts upgrade to v5, including concurrent database enforcement. The
+migration runner accepts only a missing receipt, an exact v1-v4 receipt, or the
+exact current v5 receipt; any other receipt fails before newer DDL is executed.
 TypeScript audit writers must supply the workspace explicitly; the same value
 is included in hashed metadata, and tenant reads require both copies to match.
 Legacy rows without a trustworthy binding stay unscoped and are excluded from
@@ -254,9 +257,10 @@ python3 -B scripts/nextjs_postgres_real_worker_human_review_smoke.py \
 must report `provider_call_performed: true` and `dry_run: false`, while their
 unconfirmed paths must report the inverse and retain the confirmation gate.
 `nextjs_production_python_proxy_fail_closed_v2` builds an isolated production
-artifact, starts it with `next start`, checks the 12 explicitly expected compiled
-API route keys, and drives 29 explicitly enumerated requests: one catch-all, ten
-direct reads, two approval decisions, and 16 legacy Workspace writes. Those 29
+artifact, starts it with `next start`, checks the 13 explicitly expected compiled
+API route keys, and drives 30 explicitly enumerated requests: one catch-all, ten
+direct reads, two approval decisions, one Agent Gateway customer-delivery
+request, and 16 legacy Workspace writes. Those 30
 requests leave the reachable fake Python upstream counter at zero; this is scoped
 evidence for the named compiled routes and requests, not a claim about every
 production route. The v1 contract ID remains an output compatibility marker.
@@ -269,13 +273,14 @@ OpenClaw adapters, writes run/tool/evaluation/artifact/audit/plan-evidence
 receipts, proposes one `run_log` memory candidate per real run, and then proves
 the candidate is visible and idempotently approved through an Owner Human
 Session. Each real Worker produces a real completed run, its bounded evidence,
-and a verified plan-evidence manifest. An isolated acceptance fixture then
-creates one `customer_delivery` approval bound to that real run; the Human
-Session revalidates the manifest and completed run, decides the approval, and
-replays the same decision without duplicate evidence. The output records
-`worker_created_delivery_approvals: false` and
-`delivery_approval_creation_source: acceptance_fixture_bound_to_real_run`, so
-this acceptance does not verify the missing production approval-creation owner.
+and a verified plan-evidence manifest. With an explicit opt-in flag and
+`approvals:request` scope, each Worker then calls the production Agent Gateway
+route; its TypeScript/Postgres owner revalidates the completed run and manifest
+and creates one pending `customer_delivery` approval. The Human Session decides
+the approval and replays the same decision without duplicate evidence. The
+output records `worker_created_delivery_approvals: true` and
+`delivery_approval_creation_source:
+production_next_typescript_postgres_agent_gateway_route`.
 Customer-delivery approval revalidation reads the actual run and requires a
 matching Hermes/OpenClaw model provider, a completed non-dry-run provider-call
 Worker tool, a matching rule evaluation, no `llm_mock` evaluation, a chained
@@ -288,9 +293,10 @@ raw responses are omitted. A separate ephemeral guard run, which is never used
 for an approved delivery, receives a failed tool, failed evaluation, and
 additional artifact. The acceptance rejects forged `expected_steps` and
 caller-selected audit IDs before persistence, proves a success-only manifest is
-blocked by the authoritative complete-run evidence set, and requires its Human
-customer-delivery attempt to return
-`409 verified_plan_evidence_manifest_required` without advancing linked state.
+blocked by the authoritative complete-run evidence set, and requires the
+production customer-delivery request to return
+`409 verified_plan_evidence_manifest_required` without creating an approval or
+advancing linked state.
 The original real approved delivery remains untouched; append attempts for its
 tool, evaluation, artifact, and manifest evidence all return
 `409 customer_delivery_evidence_sealed` with zero persistence.
@@ -302,12 +308,13 @@ the live cross-contract command remains required release evidence.
 
 A local pre-commit run on this migration worktree observed both real OpenClaw
 and Hermes provider calls with `dry_run=false`, one idempotent Human memory
-decision and one fixture-bound customer-delivery decision per completed run,
-cross-workspace 403 responses, and no Python API process. This is engineering
-observation only: the committed blocker file intentionally carries no subject
-SHA, execution timestamp, or receipt identity. Commercial promotion still
-requires a fresh external exact-HEAD OpenClaw/Hermes command receipt after the
-final commit plus the remaining release gates.
+decision and one production TypeScript/Postgres customer-delivery request plus
+decision per completed run, cross-workspace 403 responses, and no Python API
+process. This is engineering observation only: the committed blocker file
+intentionally carries no subject SHA, execution timestamp, or receipt identity.
+Commercial promotion still requires a fresh external exact-HEAD
+OpenClaw/Hermes command receipt after the final commit plus the remaining
+release gates.
 
 The post-commit evidence path is data-driven and intentionally cannot run with
 candidate-controlled harness code. After this workflow is present on protected

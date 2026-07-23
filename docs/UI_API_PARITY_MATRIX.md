@@ -57,16 +57,26 @@ route retirement:
 
 ## Current Important Gaps
 
-- Eight exact Agent Gateway routes now form a `next_only` TypeScript/Postgres
-  control-plane slice: task list/create, Agent Plan submit, run start/heartbeat,
-  tool-call, evaluation, artifact, and plan-evidence-manifest writes. Production
-  defaults these routes to Postgres and fails closed without a DSN; Python is
-  retained for Free Local and the explicit per-route rollback. The
+- Human Supervision reads now have direct Next/Postgres owners for dashboard
+  metrics, task and run lists/details, run graph, approvals, audit, evaluations,
+  and tool calls. The machine matrix records each `/api/mis/*` handler under its
+  existing Workspace capability. Python remains the Free Local and explicit
+  rollback path; these additions do not independently authorize Vite route
+  retirement.
+- Fifteen exact Agent Gateway routes now form a `next_only` TypeScript/Postgres
+  control-plane slice: Worker registration and heartbeat, task pull/claim/list
+  and create, Agent Plan, run lifecycle, tool/evaluation/artifact/audit,
+  plan-evidence, candidate-memory, and customer-delivery approval writes.
+  Production defaults these routes to Postgres and fails closed without a DSN;
+  Python is retained for Free Local and the explicit per-route rollback. The
   `nextjs_postgres_control_plane_tasks_v1` smoke starts Next.js plus real
   Postgres with no Python API process and verifies authentication, workspace
   isolation, immutable IDs, concurrent single winners, redaction, Plan-gated
   non-mock execution, manifest closure, and the shared audit chain. This does
-  not retire a Vite route or declare the remaining broad proxy migrated.
+  not retire a Vite route or declare the remaining broad proxy migrated. The
+  real Worker acceptance additionally requires Hermes and OpenClaw to request
+  `customer_delivery` review through the production Agent Gateway owner after
+  verified non-dry-run evidence, before Human Session approval.
 - Pixel Office / Dispatch now has explicit visual retirement evidence in
   `pixel_office_dispatch_retirement_evidence_v1`. Next proves a read-only Pixel
   Operating Map, the owner dispatch workflow route bridge, owner task dry-run,

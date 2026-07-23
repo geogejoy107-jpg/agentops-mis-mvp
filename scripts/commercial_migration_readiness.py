@@ -31,6 +31,31 @@ HOME_PATH_RE = re.compile(r"""(?:^|[\s"'=:(])~[\\/][^\s"'`]+""")
 REDACTED_COMMAND_VALUE = "[REDACTED]"
 MAX_EXTERNAL_EVIDENCE_BYTES = 32 * 1024 * 1024
 GITHUB_RUN_TIME_TOLERANCE = dt.timedelta(minutes=5)
+TRUSTED_RUNTIME_WORKFLOW_PATH = ".github/workflows/commercial-real-runtime-acceptance.yml"
+TRUSTED_RUNTIME_JOB_ID = "trusted-real-runtime"
+TRUSTED_RUNTIME_MAIN_GUARD = (
+    "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'"
+)
+TRUSTED_RUNTIME_PERMISSIONS = {
+    "contents": "read",
+    "id-token": "write",
+    "attestations": "write",
+    "artifact-metadata": "write",
+}
+TRUSTED_RUNTIME_CHECKOUT_ACTION = (
+    "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+)
+TRUSTED_RUNTIME_ATTEST_ACTION = (
+    "actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6"
+)
+TRUSTED_RUNTIME_UPLOAD_ACTION = (
+    "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+)
+TRUSTED_RUNTIME_SUPPLY_CHAIN_BLOCKERS = {
+    "trusted_real_runtime_builder_not_established": "supply_chain",
+    "trusted_runtime_identity_attestation_missing": "runtime_identity",
+    "receipt_verifier_binary_trust_missing": "supply_chain",
+}
 
 BLOCKED_PATH_PARTS = (
     "node_modules/",
@@ -105,6 +130,489 @@ def read_json(path: str) -> dict:
         return json.loads(target.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return {}
+
+
+def _yaml_strip_comment(value: str) -> str:
+    quote = ""
+    escaped = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+            continue
+        if quote == '"' and char == "\\":
+            escaped = True
+            continue
+        if char in {"'", '"'}:
+            if not quote:
+                quote = char
+            elif quote == char:
+                quote = ""
+            continue
+        if char == "#" and not quote and (index == 0 or value[index - 1].isspace()):
+            return value[:index].rstrip()
+    return value.rstrip()
+
+
+def _yaml_mapping_entry(value: str) -> tuple[str, str]:
+    match = re.fullmatch(r"([A-Za-z0-9_.-]+):(.*)", value)
+    if not match:
+        raise ValueError("unsupported_yaml_mapping_entry")
+    return match.group(1), match.group(2).strip()
+
+
+def _yaml_inline_values(value: str) -> list[str]:
+    values: list[str] = []
+    start = 0
+    quote = ""
+    escaped = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+            continue
+        if quote == '"' and char == "\\":
+            escaped = True
+            continue
+        if char in {"'", '"'}:
+            if not quote:
+                quote = char
+            elif quote == char:
+                quote = ""
+            continue
+        if char == "," and not quote:
+            values.append(value[start:index].strip())
+            start = index + 1
+    if quote:
+        raise ValueError("unterminated_yaml_quote")
+    values.append(value[start:].strip())
+    return values
+
+
+def _yaml_scalar(value: str) -> object:
+    if value in {"true", "True"}:
+        return True
+    if value in {"false", "False"}:
+        return False
+    if value in {"null", "Null", "NULL", "~"}:
+        return None
+    if re.fullmatch(r"-?[0-9]+", value):
+        return int(value)
+    if value == "[]":
+        return []
+    if value == "{}":
+        return {}
+    if value.startswith("[") and value.endswith("]"):
+        inner = value[1:-1].strip()
+        return [] if not inner else [_yaml_scalar(item) for item in _yaml_inline_values(inner)]
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        return value[1:-1].replace("''", "'")
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("invalid_yaml_double_quoted_scalar") from exc
+        if not isinstance(parsed, str):
+            raise ValueError("invalid_yaml_string_scalar")
+        return parsed
+    if value.startswith(("&", "*", "!")):
+        raise ValueError("yaml_alias_anchor_or_tag_not_supported")
+    return value
+
+
+def parse_restricted_workflow_yaml(text: str) -> dict:
+    """Parse the mapping/list subset used by the trusted acceptance workflow."""
+    tokens: list[tuple[int, int, str, str]] = []
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        if "\t" in raw_line[: len(raw_line) - len(raw_line.lstrip())]:
+            raise ValueError("yaml_tab_indentation_not_supported")
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+        raw_content = raw_line[indent:]
+        content = _yaml_strip_comment(raw_content)
+        if not content or content in {"---", "..."}:
+            continue
+        tokens.append((line_number, indent, content, raw_content))
+    if not tokens:
+        raise ValueError("workflow_yaml_empty")
+
+    def parse_block(index: int, indent: int) -> tuple[object, int]:
+        if index >= len(tokens) or tokens[index][1] != indent:
+            raise ValueError("workflow_yaml_invalid_indentation")
+        if tokens[index][2].startswith("-"):
+            return parse_sequence(index, indent)
+        return parse_mapping(index, indent)
+
+    def parse_mapping(index: int, indent: int) -> tuple[dict, int]:
+        result: dict[str, object] = {}
+        while index < len(tokens):
+            line_number, current_indent, content, _raw_content = tokens[index]
+            if current_indent < indent:
+                break
+            if current_indent != indent or content.startswith("-"):
+                raise ValueError(f"workflow_yaml_invalid_mapping_line_{line_number}")
+            key, raw_value = _yaml_mapping_entry(content)
+            if key in result:
+                raise ValueError(f"workflow_yaml_duplicate_key_{key}")
+            index += 1
+            if raw_value in {"|", "|-", "|+", ">", ">-", ">+"}:
+                block_lines: list[str] = []
+                while index < len(tokens) and tokens[index][1] > indent:
+                    block_lines.append(tokens[index][3].lstrip())
+                    index += 1
+                result[key] = "\n".join(block_lines)
+            elif raw_value:
+                result[key] = _yaml_scalar(raw_value)
+            elif index < len(tokens) and tokens[index][1] > indent:
+                result[key], index = parse_block(index, tokens[index][1])
+            else:
+                result[key] = None
+        return result, index
+
+    def parse_sequence(index: int, indent: int) -> tuple[list, int]:
+        result: list[object] = []
+        while index < len(tokens):
+            line_number, current_indent, content, _raw_content = tokens[index]
+            if current_indent < indent:
+                break
+            if current_indent != indent or not content.startswith("-"):
+                raise ValueError(f"workflow_yaml_invalid_sequence_line_{line_number}")
+            remainder = content[1:].strip()
+            index += 1
+            if not remainder:
+                if index >= len(tokens) or tokens[index][1] <= indent:
+                    raise ValueError(f"workflow_yaml_empty_sequence_item_{line_number}")
+                item, index = parse_block(index, tokens[index][1])
+                result.append(item)
+                continue
+            if re.fullmatch(r"[A-Za-z0-9_.-]+:.*", remainder):
+                key, raw_value = _yaml_mapping_entry(remainder)
+                item: dict[str, object] = {}
+                if raw_value in {"|", "|-", "|+", ">", ">-", ">+"}:
+                    block_lines = []
+                    while index < len(tokens) and tokens[index][1] > indent:
+                        block_lines.append(tokens[index][3].lstrip())
+                        index += 1
+                    item[key] = "\n".join(block_lines)
+                elif raw_value:
+                    item[key] = _yaml_scalar(raw_value)
+                elif index < len(tokens) and tokens[index][1] > indent:
+                    item[key], index = parse_block(index, tokens[index][1])
+                else:
+                    item[key] = None
+                if index < len(tokens) and tokens[index][1] > indent:
+                    continuation, index = parse_block(index, tokens[index][1])
+                    if not isinstance(continuation, dict):
+                        raise ValueError(
+                            f"workflow_yaml_sequence_mapping_expected_{line_number}"
+                        )
+                    overlap = set(item).intersection(continuation)
+                    if overlap:
+                        raise ValueError(
+                            "workflow_yaml_duplicate_sequence_key_" + sorted(overlap)[0]
+                        )
+                    item.update(continuation)
+                result.append(item)
+            else:
+                result.append(_yaml_scalar(remainder))
+                if index < len(tokens) and tokens[index][1] > indent:
+                    raise ValueError(
+                        f"workflow_yaml_scalar_sequence_has_children_{line_number}"
+                    )
+        return result, index
+
+    parsed, final_index = parse_block(0, tokens[0][1])
+    if final_index != len(tokens) or not isinstance(parsed, dict) or tokens[0][1] != 0:
+        raise ValueError("workflow_yaml_root_mapping_required")
+    return parsed
+
+
+def _normalized_workflow_command(value: object) -> str:
+    return " ".join(str(value or "").split())
+
+
+def trusted_real_runtime_workflow_failures(text: str) -> list[str]:
+    failures: list[str] = []
+
+    def require(condition: bool, failure: str) -> None:
+        if not condition:
+            failures.append(failure)
+
+    try:
+        workflow = parse_restricted_workflow_yaml(text)
+    except (TypeError, ValueError):
+        return ["trusted_runtime_workflow_yaml_invalid"]
+
+    events = workflow.get("on")
+    require(
+        isinstance(events, dict) and set(events) == {"workflow_dispatch"},
+        "trusted_runtime_trigger_not_workflow_dispatch_only",
+    )
+    dispatch = events.get("workflow_dispatch") if isinstance(events, dict) else None
+    inputs = dispatch.get("inputs") if isinstance(dispatch, dict) else None
+    expected_sha_input = inputs.get("expected_sha") if isinstance(inputs, dict) else None
+    candidate_ref_input = inputs.get("candidate_ref") if isinstance(inputs, dict) else None
+    require(
+        isinstance(expected_sha_input, dict)
+        and expected_sha_input.get("required") is True
+        and expected_sha_input.get("type") == "string",
+        "trusted_runtime_expected_sha_input_invalid",
+    )
+    require(
+        isinstance(candidate_ref_input, dict)
+        and candidate_ref_input.get("required") is True
+        and candidate_ref_input.get("type") == "string",
+        "trusted_runtime_candidate_ref_input_invalid",
+    )
+    require(
+        workflow.get("name") == "commercial-real-runtime-acceptance",
+        "trusted_runtime_workflow_name_invalid",
+    )
+    require(
+        workflow.get("permissions") == TRUSTED_RUNTIME_PERMISSIONS,
+        "trusted_runtime_permissions_not_least_privilege",
+    )
+    concurrency = workflow.get("concurrency")
+    require(
+        isinstance(concurrency, dict)
+        and concurrency.get("group")
+        == "commercial-real-runtime-${{ inputs.expected_sha }}"
+        and concurrency.get("cancel-in-progress") is False,
+        "trusted_runtime_expected_sha_concurrency_binding_missing",
+    )
+
+    jobs = workflow.get("jobs")
+    require(
+        isinstance(jobs, dict) and set(jobs) == {TRUSTED_RUNTIME_JOB_ID},
+        "trusted_runtime_single_trusted_job_required",
+    )
+    job = jobs.get(TRUSTED_RUNTIME_JOB_ID) if isinstance(jobs, dict) else None
+    if not isinstance(job, dict):
+        return sorted(set(failures + ["trusted_runtime_job_missing"]))
+    require(
+        _normalized_workflow_command(job.get("if")) == TRUSTED_RUNTIME_MAIN_GUARD,
+        "trusted_runtime_exact_main_ref_guard_missing",
+    )
+    require(
+        job.get("environment") == "commercial-real-runtime",
+        "trusted_runtime_protected_environment_missing",
+    )
+    require(
+        job.get("runs-on") == ["self-hosted", "agentops-real-runtime"],
+        "trusted_runtime_dedicated_runner_missing",
+    )
+    require("permissions" not in job, "trusted_runtime_job_permission_override_forbidden")
+    timeout_minutes = job.get("timeout-minutes")
+    require(
+        type(timeout_minutes) is int and 0 < timeout_minutes <= 30,
+        "trusted_runtime_job_timeout_invalid",
+    )
+
+    steps = job.get("steps")
+    if not isinstance(steps, list) or any(not isinstance(step, dict) for step in steps):
+        return sorted(set(failures + ["trusted_runtime_steps_invalid"]))
+    require(len(steps) == 8, "trusted_runtime_unexpected_step_count")
+    require(
+        all(
+            "continue-on-error" not in step and "working-directory" not in step
+            for step in steps
+        ),
+        "trusted_runtime_step_fail_open_or_workdir_override",
+    )
+
+    checkout_steps = [
+        step for step in steps if step.get("uses") == TRUSTED_RUNTIME_CHECKOUT_ACTION
+    ]
+    require(len(checkout_steps) == 2, "trusted_runtime_dual_checkout_missing")
+    checkout_by_path: dict[str, dict] = {}
+    for step in checkout_steps:
+        checkout_with = step.get("with")
+        if not isinstance(checkout_with, dict):
+            continue
+        path = checkout_with.get("path")
+        if isinstance(path, str):
+            checkout_by_path[path] = checkout_with
+        require(
+            checkout_with.get("fetch-depth") == 1
+            and checkout_with.get("persist-credentials") is False,
+            "trusted_runtime_checkout_hardening_missing",
+        )
+    trusted_checkout = checkout_by_path.get("trusted")
+    candidate_checkout = checkout_by_path.get("candidate")
+    require(
+        isinstance(trusted_checkout, dict)
+        and trusted_checkout.get("ref") == "${{ github.sha }}",
+        "trusted_runtime_main_checkout_binding_missing",
+    )
+    require(
+        isinstance(candidate_checkout, dict)
+        and candidate_checkout.get("ref") == "${{ inputs.candidate_ref }}",
+        "trusted_runtime_candidate_checkout_binding_missing",
+    )
+
+    run_steps = [step for step in steps if isinstance(step.get("run"), str)]
+    commands = [_normalized_workflow_command(step.get("run")) for step in run_steps]
+    install_steps = [
+        step
+        for step in run_steps
+        if _normalized_workflow_command(step.get("run"))
+        == "npm --prefix candidate/ui/next-app ci --ignore-scripts"
+    ]
+    require(len(install_steps) == 1, "trusted_runtime_candidate_install_path_invalid")
+
+    verification_markers = (
+        '[[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]',
+        '[[ "$CANDIDATE_REF" =~ ^[A-Za-z0-9._/-]{1,180}$ ]]',
+        'test "$(git -C trusted rev-parse HEAD)" = "$GITHUB_SHA"',
+        'test "$(git -C candidate rev-parse HEAD)" = "$EXPECTED_SHA"',
+        'test -z "$(git -C trusted status --short)"',
+        'test -z "$(git -C candidate status --short)"',
+    )
+    verification_steps = [
+        step
+        for step in run_steps
+        if all(
+            marker in _normalized_workflow_command(step.get("run"))
+            for marker in verification_markers
+        )
+    ]
+    require(len(verification_steps) == 1, "trusted_runtime_exact_sha_verification_missing")
+    if verification_steps:
+        verification_env = verification_steps[0].get("env")
+        require(
+            isinstance(verification_env, dict)
+            and verification_env.get("EXPECTED_SHA") == "${{ inputs.expected_sha }}"
+            and verification_env.get("CANDIDATE_REF") == "${{ inputs.candidate_ref }}",
+            "trusted_runtime_verification_input_binding_missing",
+        )
+
+    runtime_steps = [step for step in run_steps if step.get("id") == "runtime_receipt"]
+    require(len(runtime_steps) == 1, "trusted_runtime_receipt_step_missing")
+    if runtime_steps:
+        runtime_step = runtime_steps[0]
+        runtime_command = _normalized_workflow_command(runtime_step.get("run"))
+        runtime_env = runtime_step.get("env")
+        require(
+            isinstance(runtime_env, dict)
+            and runtime_env.get("EXPECTED_SHA") == "${{ inputs.expected_sha }}",
+            "trusted_runtime_receipt_expected_sha_env_missing",
+        )
+        required_runtime_fragments = (
+            '"$PYTHON_BIN" -B trusted/scripts/commercial_ci_receipt.py command',
+            "--gate-id gate_5_human_memory_real_runtime",
+            "--command-id trusted_main_real_runtime_human_review",
+            "--expected-contract nextjs_postgres_real_worker_human_review_v1",
+            '--subject-sha "$EXPECTED_SHA"',
+            '--builder-sha "$GITHUB_SHA"',
+            '"$PYTHON_BIN" -B "$GITHUB_WORKSPACE/trusted/scripts/nextjs_postgres_real_worker_human_review_smoke.py"',
+            "--adapter hermes",
+            "--adapter openclaw",
+        )
+        require(
+            all(fragment in runtime_command for fragment in required_runtime_fragments),
+            "trusted_runtime_receipt_or_harness_contract_missing",
+        )
+        require(
+            runtime_command.count('--source-root "$GITHUB_WORKSPACE/candidate"') == 2,
+            "trusted_runtime_candidate_build_source_binding_missing",
+        )
+        require(
+            "candidate/scripts/" not in runtime_command
+            and "$GITHUB_WORKSPACE/candidate/scripts/" not in runtime_command,
+            "trusted_runtime_candidate_controlled_harness_forbidden",
+        )
+
+    all_commands = "\n".join(commands)
+    require(
+        all_commands.count("trusted/scripts/commercial_ci_receipt.py") == 1
+        and all_commands.count(
+            "trusted/scripts/nextjs_postgres_real_worker_human_review_smoke.py"
+        )
+        == 1,
+        "trusted_runtime_harness_must_only_execute_from_trusted_checkout",
+    )
+
+    attest_steps = [
+        step for step in steps if step.get("uses") == TRUSTED_RUNTIME_ATTEST_ACTION
+    ]
+    require(
+        len(attest_steps) == 1
+        and attest_steps[0].get("id") == "runtime_attestation"
+        and isinstance(attest_steps[0].get("with"), dict)
+        and attest_steps[0]["with"].get("subject-path")
+        == "receipts/human-memory-real-runtime.json",
+        "trusted_runtime_attestation_step_invalid",
+    )
+    collect_steps = [
+        step
+        for step in run_steps
+        if "steps.runtime_attestation.outputs.bundle-path"
+        in _normalized_workflow_command(step.get("run"))
+        and "receipts/human-memory-real-runtime.attestation.json"
+        in _normalized_workflow_command(step.get("run"))
+    ]
+    require(len(collect_steps) == 1, "trusted_runtime_attestation_bundle_collection_missing")
+    upload_steps = [
+        step for step in steps if step.get("uses") == TRUSTED_RUNTIME_UPLOAD_ACTION
+    ]
+    if len(upload_steps) != 1 or not isinstance(upload_steps[0].get("with"), dict):
+        failures.append("trusted_runtime_receipt_upload_invalid")
+    else:
+        upload_with = upload_steps[0]["with"]
+        upload_path = str(upload_with.get("path") or "")
+        require(
+            upload_with.get("name")
+            == "commercial-real-runtime-receipt-${{ inputs.expected_sha }}"
+            and upload_with.get("if-no-files-found") == "error"
+            and "receipts/human-memory-real-runtime.json" in upload_path
+            and "receipts/human-memory-real-runtime.attestation.json" in upload_path,
+            "trusted_runtime_receipt_upload_invalid",
+        )
+
+    recognized_steps = (
+        len(checkout_steps)
+        + len(install_steps)
+        + len(verification_steps)
+        + len(runtime_steps)
+        + len(attest_steps)
+        + len(collect_steps)
+        + len(upload_steps)
+    )
+    require(
+        recognized_steps == len(steps),
+        "trusted_runtime_unrecognized_step_forbidden",
+    )
+    return sorted(set(failures))
+
+
+def trusted_runtime_blocker_contract_failures(blockers: object) -> list[str]:
+    if not isinstance(blockers, dict):
+        return ["trusted_runtime_blocker_contract_invalid"]
+    failures: list[str] = []
+    requirement = blockers.get("external_runtime_receipt_requirement")
+    if (
+        not isinstance(requirement, dict)
+        or requirement.get("builder_must_differ_from_candidate_authority") is not True
+    ):
+        failures.append("trusted_runtime_independent_builder_requirement_missing")
+    open_blockers = blockers.get("open_blockers")
+    if not isinstance(open_blockers, list):
+        return sorted(set(failures + ["trusted_runtime_open_blockers_invalid"]))
+    rows = [
+        item
+        for item in open_blockers
+        if isinstance(item, dict)
+        and item.get("id") in TRUSTED_RUNTIME_SUPPLY_CHAIN_BLOCKERS
+    ]
+    row_ids = [str(item.get("id")) for item in rows]
+    if len(row_ids) != len(set(row_ids)):
+        failures.append("trusted_runtime_supply_chain_blocker_duplicate")
+    by_id = {str(item.get("id")): item for item in rows}
+    for blocker_id, expected_kind in TRUSTED_RUNTIME_SUPPLY_CHAIN_BLOCKERS.items():
+        item = by_id.get(blocker_id)
+        if not isinstance(item, dict):
+            failures.append(f"trusted_runtime_supply_chain_blocker_missing:{blocker_id}")
+            continue
+        if item.get("status") != "open" or item.get("kind") != expected_kind:
+            failures.append(f"trusted_runtime_supply_chain_blocker_weakened:{blocker_id}")
+    return sorted(set(failures))
 
 
 def valid_utc_timestamp(value: object) -> bool:
@@ -254,8 +762,9 @@ def runtime_security_claims_valid(value: object, required_adapters: set[str]) ->
         and value.get("real_run_bound_delivery_decisions_completed") is True
         and value.get("python_api_started") is False
         and value.get("python_or_sqlite_commercial_default") is False
-        and value.get("worker_created_delivery_approvals") is False
-        and value.get("delivery_approval_creation_source") == "acceptance_fixture_bound_to_real_run"
+        and value.get("worker_created_delivery_approvals") is True
+        and value.get("delivery_approval_creation_source")
+        == "production_next_typescript_postgres_agent_gateway_route"
         and set(adapter_claims) == required_adapters
         and set(runtime_dependency_identity) == {"hermes_endpoint_sha256", "openclaw_binary_sha256"}
         and all(type(item) is str and HASH_RE.fullmatch(item) is not None for item in runtime_dependency_identity.values())
@@ -266,6 +775,8 @@ def runtime_security_claims_valid(value: object, required_adapters: set[str]) ->
             and adapter_claims[adapter].get("manifest_complete_run_evidence_enforced") is True
             and adapter_claims[adapter].get("customer_delivery_revalidation_blocked") is True
             and adapter_claims[adapter].get("approved_customer_delivery_evidence_sealed") is True
+            and adapter_claims[adapter].get("blocked_customer_delivery_request_persisted") is False
+            and adapter_claims[adapter].get("delivery_approval_created_through_production_owner") is True
             and adapter_claims[adapter].get("delivery_approval_updated_once") is True
             for adapter in required_adapters
         )
@@ -686,6 +1197,18 @@ def main() -> int:
         "ui/next-app/package.json",
     ]
     human_memory_blockers = read_json("docs/HUMAN_MEMORY_REVIEW_RELEASE_BLOCKERS.json")
+    trusted_runtime_workflow_path = ROOT / TRUSTED_RUNTIME_WORKFLOW_PATH
+    trusted_runtime_workflow_text = (
+        trusted_runtime_workflow_path.read_text(encoding="utf-8", errors="replace")
+        if trusted_runtime_workflow_path.exists()
+        else ""
+    )
+    trusted_runtime_workflow_contract_failures = (
+        trusted_real_runtime_workflow_failures(trusted_runtime_workflow_text)
+    )
+    trusted_runtime_blocker_failures = trusted_runtime_blocker_contract_failures(
+        human_memory_blockers
+    )
     runtime_receipt = validate_external_runtime_receipt(
         args.human_memory_runtime_receipt,
         args.human_memory_runtime_attestation,
@@ -743,9 +1266,11 @@ def main() -> int:
                 "typescript_approval_policy_entitlement_owner_missing",
                 "production_prepared_action_resume_ownership_missing",
                 "production_enrollment_issue_owner_missing",
-                "production_customer_delivery_approval_creation_owner_missing",
                 "ordinary_high_risk_tool_execution_receipt_missing",
                 "owner_bootstrap_compiled_entry_missing",
+                "trusted_real_runtime_builder_not_established",
+                "trusted_runtime_identity_attestation_missing",
+                "receipt_verifier_binary_trust_missing",
             }.issubset(human_memory_declared_blocker_ids)
             and (
                 "exact_head_real_runtime_receipt_missing" in human_memory_declared_blocker_ids
@@ -794,12 +1319,21 @@ def main() -> int:
             and human_memory_blockers.get("implemented_controls", {}).get(
                 "external_runtime_receipt_security_claims_required"
             ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "customer_delivery_run_unique_v5_enforced"
+            ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "customer_delivery_approval_request_typescript_postgres_owned"
+            ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "customer_delivery_approval_request_database_unique"
+            ) is True
             and human_memory_blockers.get("acceptance_evidence", {}).get(
                 "worker_created_delivery_approvals"
-            ) is False
+            ) is True
             and human_memory_blockers.get("acceptance_evidence", {}).get(
                 "delivery_approval_creation_source"
-            ) == "acceptance_fixture_bound_to_real_run"
+            ) == "production_next_typescript_postgres_agent_gateway_route"
             and human_memory_blockers.get("acceptance_evidence", {}).get(
                 "evidence_scope"
             ) == "local_precommit_engineering_only"
@@ -835,37 +1369,15 @@ def main() -> int:
             ) or []) == {"hermes", "openclaw"}
             and set(human_memory_blockers.get("external_runtime_receipt_requirement", {}).get(
                 "allowed_refs"
-            ) or []) == {
-                "refs/heads/codex/commercial-human-session-memory-review",
-                "refs/heads/main",
-            }
+            ) or []) == {"refs/heads/main"}
             and human_memory_blockers.get("external_runtime_receipt_requirement", {}).get(
                 "max_age_hours"
             ) == 24
-            and file_contains(
-                ".github/workflows/commercial-real-runtime-acceptance.yml",
-                "exact_head_real_runtime_human_review",
-            )
-            and file_contains(
-                ".github/workflows/commercial-real-runtime-acceptance.yml",
-                "commercial_ci_receipt.py command",
-            )
-            and file_contains(
-                ".github/workflows/commercial-real-runtime-acceptance.yml",
-                "npm --prefix ui/next-app ci --ignore-scripts",
-            )
-            and file_contains(
-                ".github/workflows/commercial-real-runtime-acceptance.yml",
-                "actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6",
-            )
-            and file_contains(
-                ".github/workflows/commercial-real-runtime-acceptance.yml",
-                "push:",
-            )
-            and not file_contains(
-                ".github/workflows/commercial-real-runtime-acceptance.yml",
-                "continue-on-error",
-            )
+            and human_memory_blockers.get("external_runtime_receipt_requirement", {}).get(
+                "builder_must_differ_from_candidate_authority"
+            ) is True
+            and not trusted_runtime_workflow_contract_failures
+            and not trusted_runtime_blocker_failures
             and file_contains(
                 "scripts/commercial_ci_receipt.py",
                 "real_runtime_security_claims_incomplete",
@@ -891,7 +1403,17 @@ def main() -> int:
             and human_memory_blockers.get("implemented_controls", {}).get(
                 "human_approval_decision_route_typescript_postgres_owned"
             ) is True,
-            "the v4 approval schema and local pre-commit OpenClaw/Hermes observations are separated from release evidence without attributing approval creation to Workers; an external exact-HEAD runtime receipt can resolve only its evidence blocker while the remaining route, approval-creation, expiry, entitlement, execution, ingress, audit mapping, retention, and packaging gaps stay open",
+            "the v5 approval schema and local pre-commit OpenClaw/Hermes production approval-request observations are separated from release evidence; an external exact-HEAD runtime receipt can resolve only its evidence blocker while the remaining route, expiry, entitlement, execution, ingress, audit mapping, retention, and packaging gaps stay open",
+        ),
+        check(
+            "trusted_main_real_runtime_contract_hardened",
+            not trusted_runtime_workflow_contract_failures
+            and not trusted_runtime_blocker_failures,
+            "workflow_failures="
+            + ",".join(trusted_runtime_workflow_contract_failures)
+            + ";blocker_failures="
+            + ",".join(trusted_runtime_blocker_failures),
+            "python3 scripts/commercial_trusted_main_readiness_smoke.py",
         ),
         check(
             "external_exact_head_real_runtime_receipt_valid_when_provided",
@@ -2260,20 +2782,31 @@ def main() -> int:
             and file_contains("ui/next-app/scripts/approval-decision-contract.ts", "parent_first_lock_order_deadlock_free")
             and file_contains("ui/next-app/scripts/approval-decision-contract.ts", "tool_before_approval")
             and file_contains("ui/next-app/scripts/approval-decision-contract.ts", "production_python_proxy_blocked")
+            and file_contains("ui/next-app/app/api/mis/agent-gateway/approvals/request/route.ts", "requestCustomerDeliveryApproval")
+            and file_contains("ui/next-app/app/api/mis/agent-gateway/approvals/request/route.ts", "explicitFreeLocalProxyMode")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayApprovals.ts", '"approvals:request"')
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayApprovals.ts", "verifyLatestWorkspacePlanEvidence")
+            and file_contains("ui/next-app/scripts/customer-delivery-approval-request-contract.ts", "nextjs_postgres_customer_delivery_approval_request_v1")
+            and file_contains("ui/next-app/scripts/customer-delivery-approval-request-contract.ts", "concurrent_single_winner_no_duplicate_evidence")
             and file_contains("scripts/nextjs_postgres_real_worker_human_review_smoke.py", "real_run_bound_delivery_decisions_completed")
-            and file_contains("scripts/nextjs_postgres_real_worker_human_review_smoke.py", '"worker_created_delivery_approvals": False')
-            and file_contains("scripts/nextjs_postgres_real_worker_human_review_smoke.py", '"delivery_approval_creation_source": "acceptance_fixture_bound_to_real_run"')
+            and file_contains("scripts/nextjs_postgres_real_worker_human_review_smoke.py", '"worker_created_delivery_approvals": all(')
+            and file_contains("scripts/nextjs_postgres_real_worker_human_review_smoke.py", '"delivery_approval_creation_source": "production_next_typescript_postgres_agent_gateway_route"')
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "nextjs_postgres_workspace_read_models_v1")
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "nextjs_postgres_human_approval_decision_v1")
             and file_contains("ui/next-app/package.json", '"test:workspace-read-model-contract"')
             and file_contains("ui/next-app/package.json", '"test:approval-decision-contract"')
+            and file_contains("ui/next-app/package.json", '"test:customer-delivery-approval-request-contract"')
             and file_contains("ui/next-app/package.json", '"test:human-schema-upgrade-contract"')
-            and file_contains("ui/next-app/src/server/controlPlane/schemaReadiness.ts", 'HUMAN_MEMORY_SCHEMA_VERSION = "20260719_approval_kind_bindings_v4"')
-            and file_contains("ui/next-app/src/server/controlPlane/schemaReadiness.ts", 'HUMAN_MEMORY_SCHEMA_CONTRACT = "agentops-human-session-approval-kind-bindings-contract-v4"')
-            and file_contains("ui/next-app/scripts/schema-readiness-contract.ts", "human_memory_schema_readiness_v4")
+            and file_contains("ui/next-app/src/server/controlPlane/schemaReadiness.ts", 'HUMAN_MEMORY_SCHEMA_VERSION = "20260724_customer_delivery_run_unique_v5"')
+            and file_contains("ui/next-app/src/server/controlPlane/schemaReadiness.ts", 'HUMAN_MEMORY_SCHEMA_V4_VERSION = "20260719_approval_kind_bindings_v4"')
+            and file_contains("ui/next-app/src/server/controlPlane/schemaReadiness.ts", "idx_approvals_customer_delivery_run_unique")
+            and file_contains("ui/next-app/scripts/schema-readiness-contract.ts", "human_memory_schema_readiness_v5")
+            and file_contains("ui/next-app/scripts/schema-readiness-contract.ts", "customer_delivery_run_unique_predicate_drift_rejected")
             and file_contains("ui/next-app/scripts/schema-readiness-contract.ts", "non_deferred_binding_trigger_rejected")
-            and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "human_memory_schema_v1_v2_v3_to_v4_upgrade_v1")
-            and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "exact_v3_receipt_upgraded")
+            and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "human_memory_schema_v1_v2_v3_v4_to_v5_upgrade_v1")
+            and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "exact_v4_receipt_upgraded")
+            and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "duplicate_customer_delivery_preflight_failed_closed")
+            and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "concurrent_customer_delivery_insert_database_enforced")
             and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "approval_kind_is_explicit_without_default")
             and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "five_approval_kinds_backfilled")
             and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "deferred_approval_binding_triggers_ready")
@@ -2288,11 +2821,14 @@ def main() -> int:
             and file_contains("migrations/postgres/20260719_approval_kind_bindings_v4.sql", "DEFERRABLE INITIALLY DEFERRED")
             and file_contains("migrations/postgres/20260719_approval_kind_bindings_v4.sql", "AFTER INSERT OR UPDATE OR DELETE")
             and file_contains("migrations/postgres/20260719_approval_kind_bindings_v4.sql", "idx_agent_gateway_enrollment_approval_unique")
+            and file_contains("migrations/postgres/20260724_customer_delivery_run_unique_v5.sql", "customer_delivery_approval_run_duplicate")
+            and file_contains("migrations/postgres/20260724_customer_delivery_run_unique_v5.sql", "idx_approvals_customer_delivery_run_unique")
             and file_contains("migrations/postgres/20260719_human_approval_decisions_v3.sql", "human_approval_decision_requests")
             and file_contains(".github/workflows/commercial-migration-ci.yml", "nextjs_postgres_workspace_read_models")
             and file_contains(".github/workflows/commercial-migration-ci.yml", "nextjs_postgres_human_approval_decision")
-            and file_contains(".github/workflows/commercial-migration-ci.yml", "human_schema_v1_v2_v3_to_v4_upgrade"),
-            "Human Session-protected Workspace reads and approval decisions are direct TypeScript/Postgres owners with exact v4 schema readiness, immutable edge-bound approval kinds, unique enrollment binding, production Python blocking, concurrency evidence, and real Hermes/OpenClaw run-bound delivery decision acceptance; production approval creation, expiry reconciliation, policy, resume, enrollment issue, and execution receipts remain open",
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "nextjs_postgres_customer_delivery_approval_request")
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "human_schema_v1_v2_v3_v4_to_v5_upgrade"),
+            "Human Session Workspace reads/decisions and Agent Gateway customer-delivery request creation are direct TypeScript/Postgres owners with exact v5 schema readiness, immutable edge-bound kinds, database-unique delivery binding, production Python blocking, concurrency evidence, and a real Hermes/OpenClaw Worker-to-Human acceptance; expiry reconciliation, policy, resume, enrollment issue, and release-grade execution receipts remain open",
         ),
         check(
             "postgres_cli_write_parity_surface_exists",

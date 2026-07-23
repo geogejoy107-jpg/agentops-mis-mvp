@@ -153,22 +153,38 @@ def start_process(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> subproce
 
 
 def stop_process(proc: subprocess.Popen[str], *, timeout: int = 5) -> None:
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
+    def signal_group(sig: signal.Signals) -> None:
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            if proc.poll() is None:
+                try:
+                    proc.send_signal(sig)
+                except (PermissionError, ProcessLookupError):
+                    pass
 
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        pass
+    def group_alive() -> bool:
+        try:
+            os.killpg(proc.pid, 0)
+            return True
+        except (PermissionError, ProcessLookupError):
+            return False
 
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    signal_group(signal.SIGTERM)
+    deadline = time.monotonic() + timeout
+    while group_alive() and time.monotonic() < deadline:
+        proc.poll()
+        time.sleep(0.05)
+
+    if group_alive():
+        signal_group(signal.SIGKILL)
     if proc.poll() is None:
-        proc.wait(timeout=timeout)
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def wait_http(url: str, timeout_sec: int = 45) -> None:
@@ -217,6 +233,9 @@ def http_form(url: str, payload: dict[str, str]) -> int:
     data = urllib.parse.urlencode(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data, method="POST")
     request.add_header("Content-Type", "application/x-www-form-urlencoded")
+    parsed_url = urllib.parse.urlsplit(url)
+    request.add_header("Origin", f"{parsed_url.scheme}://{parsed_url.netloc}")
+    request.add_header("Sec-Fetch-Site", "same-origin")
     opener = urllib.request.build_opener(NoRedirect)
     try:
         with opener.open(request, timeout=10) as response:
@@ -1033,11 +1052,17 @@ def verify_dispatch_template_run_success(next_base: str, entitlement_path: Path,
     run_snapshot = wait_for_snapshot_text(
         env,
         f"/workspace/runs/{run_id}",
-        lambda text: "Run Detail" in text and "Tool and evaluation evidence" in text and "Audit and artifact evidence" in text,
+        lambda text: all(
+            marker in text
+            for marker in ("Run Detail", "Tool calls", "Evaluations", "Artifacts", "Audit")
+        ),
         "run detail page to render evidence sections",
         timeout_sec=12,
     )
-    require(run_id in run_snapshot and "Token omitted" in run_snapshot, "Run detail did not show run id and token omission")
+    require(
+        run_id in run_snapshot and "Token omission" in run_snapshot and "verified" in run_snapshot,
+        "Run detail did not show run id and verified token omission",
+    )
     task_goto = playwright(env, "goto", next_base.rstrip("/") + f"/workspace/tasks/{task_id}")
     require(task_goto.returncode == 0, f"Playwright goto failed for task detail: {task_goto.stderr or task_goto.stdout}")
     task_snapshot = wait_for_snapshot_text(
@@ -1047,7 +1072,10 @@ def verify_dispatch_template_run_success(next_base: str, entitlement_path: Path,
         "task detail page to render approvals and artifacts",
         timeout_sec=12,
     )
-    require(task_id in task_snapshot and "Token omitted" in task_snapshot, "Task detail did not show task id and token omission")
+    require(
+        task_id in task_snapshot and "Token omission" in task_snapshot and "verified" in task_snapshot,
+        "Task detail did not show task id and verified token omission",
+    )
     serialized = json.dumps(report, ensure_ascii=False)
     require(not leaked_secret(serialized), "Created project report leaked token-like material")
     return {

@@ -436,10 +436,11 @@ evidence until an external post-commit receipt binds it to the final SHA:
   Negative fixtures use a separate guard run with an omitted failed tool,
   evaluation, and additional artifact, requiring `tool_evidence_complete`,
   `evaluation_evidence_complete`, and `artifact_evidence_complete` to fail
-  closed. Real Hermes/OpenClaw acceptance creates a customer-delivery approval
-  only for that isolated blocked guard and requires the Human decision route to
-  return `409 verified_plan_evidence_manifest_required` without advancing linked
-  state. The already-approved real delivery run remains immutable, and append
+  closed. Real Hermes/OpenClaw acceptance sends that isolated blocked guard to
+  the production approval-request route and requires
+  `409 verified_plan_evidence_manifest_required` before any approval, task
+  transition, runtime event, or audit row is persisted. The already-approved
+  real delivery run remains immutable, and append
   attempts for its tool, evaluation, artifact, and manifest evidence return
   `409 customer_delivery_evidence_sealed`.
   Agent credentials could not set a human approval status; missing or
@@ -456,12 +457,12 @@ evidence until an external post-commit receipt binds it to the final SHA:
   fail-closed reads after constraint loss; omission of raw audit and run text;
   workspace-only aggregates; and inclusion of workspace-bound
   Gateway agents. No Python API process participates in these reads.
-- `human_memory_schema_v1_v2_v3_to_v4_upgrade_v1` proves exact deployed v1, v2,
-  and v3 receipts upgrade through bounded transactional cores to the current
-  append-only v4 receipt. It validates the audit workspace/metadata constraint,
+- `human_memory_schema_v1_v2_v3_v4_to_v5_upgrade_v1` proves exact deployed v1,
+  v2, v3, and v4 receipts upgrade through bounded transactional cores to the
+  current v5 receipt. It validates the audit workspace/metadata constraint,
   creates the audit index concurrently outside the core transaction, creates
   the Human approval idempotency table, resumes the online stage after a partial
-  failure, and passes `human_memory_schema_readiness_v4`. The v4
+  failure, and passes `human_memory_schema_readiness_v5`. The v4
   `approval_kind` column is required and has no database default; its five exact
   values are `run_execution`, `tool_execution`, `prepared_action`,
   `agent_enrollment`, and `customer_delivery`. Kind, approval execution bindings,
@@ -474,7 +475,12 @@ evidence until an external post-commit receipt binds it to the final SHA:
   enrollment request per approval. Evidence-seal triggers inspect both OLD and
   NEW row bindings, include Agent Plans, and share-lock the approval row so an
   evidence transaction serializes with the Human decision. Evidence cannot
-  escape a decided customer delivery by rebinding to another run. A tampered v1 receipt is rejected before
+  escape a decided customer delivery by rebinding to another run. The v5
+  migration fails closed if historical customer-delivery duplicates exist,
+  then installs a partial unique index that permits at most one
+  `customer_delivery` approval per globally unique run. Two independent
+  connections prove the database accepts only one concurrent insert. A
+  tampered v1 receipt is rejected before
   `audit_logs.workspace_id` is added, so schema drift cannot be blessed by
   rerunning the migrator.
 - `nextjs_postgres_human_approval_decision_v1` exercises the production
@@ -490,20 +496,27 @@ evidence until an external post-commit receipt binds it to the final SHA:
   rejection, sibling-run artifact exclusion, serialized decision/evidence
   concurrency, and post-decision customer-delivery evidence sealing,
   Python-writer-compatible lock order, Free Local compatibility, private
-  response projection, and zero production Python proxy calls. The live
+  response projection, and zero production Python proxy calls.
+- `nextjs_postgres_customer_delivery_approval_request_v1` proves the scoped
+  `approvals:request` owner accepts only completed Hermes/OpenClaw runs with
+  current verified evidence, assigns expiry and Human approver attribution
+  server-side, moves only the task to `waiting_approval`, produces one
+  audit/runtime receipt under replay and concurrency, hides cross-workspace
+  IDs, and invokes Python only in explicit Free Local proxy mode. The live
   `nextjs_postgres_real_worker_human_review_v1` acceptance additionally proves
   real Hermes and OpenClaw Workers each produce a real completed run, bounded
   evidence, and a verified manifest through `next build` plus `next start`.
   Customer-delivery approval revalidation reads the actual run and requires a
   matching runtime/provider, non-dry-run provider tool and rule evaluation, no
   mock evaluation, chained artifact SHA-256 audits, and chained
-  plan/tool/evaluation/worker audits. An isolated acceptance fixture creates one
-  `customer_delivery` approval bound to each real run, then a Human Session
+  plan/tool/evaluation/worker audits. Each Worker explicitly requests one
+  `customer_delivery` approval through the production Agent Gateway
+  TypeScript/Postgres owner after its manifest verifies; a Human Session then
   decides and replays it without duplicate evidence while Python remains
-  unstarted. Its receipt records `worker_created_delivery_approvals: false` and
-  `delivery_approval_creation_source: acceptance_fixture_bound_to_real_run`;
-  production customer-delivery approval creation ownership remains an open P1
-  blocker.
+  unstarted as a control-plane server. Its receipt records
+  `worker_created_delivery_approvals: true` and
+  `delivery_approval_creation_source:
+  production_next_typescript_postgres_agent_gateway_route`.
 - `deployment_readiness_postgres_runtime_write_fixture_v1` passed against a
   temporary Postgres-backed MIS API in `experimental_write_http` mode. The
   backend fixture proves `GET /api/deployment/readiness` and

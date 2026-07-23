@@ -250,6 +250,10 @@ def real_runtime_security_claims(payload: dict[str, Any]) -> dict[str, Any]:
         review = reviews.get(adapter) if isinstance(reviews.get(adapter), dict) else {}
         first_outcome = review.get("delivery_approval_first_outcome")
         replay_outcome = review.get("delivery_approval_replay_outcome")
+        delivery_request_outcome = worker.get("delivery_approval_request_outcome")
+        delivery_creation_source = worker.get("delivery_approval_creation_source")
+        delivery_event_count = worker.get("delivery_approval_runtime_event_count")
+        delivery_audit_count = worker.get("delivery_approval_audit_count")
         adapter_claims[adapter] = {
             "provider_call_performed": strict_boolean_claim(worker.get("provider_call_performed")),
             "dry_run": strict_boolean_claim(worker.get("dry_run")),
@@ -266,6 +270,23 @@ def real_runtime_security_claims(payload: dict[str, Any]) -> dict[str, Any]:
             ),
             "approved_customer_delivery_evidence_sealed": strict_boolean_claim(
                 guard.get("approved_customer_delivery_evidence_sealed")
+            ),
+            "blocked_customer_delivery_request_persisted": strict_boolean_claim(
+                guard.get("blocked_customer_delivery_request_persisted")
+            ),
+            "delivery_approval_created_through_production_owner": (
+                delivery_request_outcome == "created"
+                and delivery_creation_source
+                == "production_next_typescript_postgres_agent_gateway_route"
+                and delivery_event_count == 1
+                and delivery_audit_count == 1
+                if (
+                    type(delivery_request_outcome) is str
+                    and type(delivery_creation_source) is str
+                    and type(delivery_event_count) is int
+                    and type(delivery_audit_count) is int
+                )
+                else None
             ),
             "delivery_approval_updated_once": (
                 review.get("delivery_approval_first_outcome") == "updated"
@@ -311,8 +332,9 @@ def real_runtime_security_claims_complete(claims: dict[str, Any]) -> bool:
         and claims.get("real_run_bound_delivery_decisions_completed") is True
         and claims.get("python_api_started") is False
         and claims.get("python_or_sqlite_commercial_default") is False
-        and claims.get("worker_created_delivery_approvals") is False
-        and claims.get("delivery_approval_creation_source") == "acceptance_fixture_bound_to_real_run"
+        and claims.get("worker_created_delivery_approvals") is True
+        and claims.get("delivery_approval_creation_source")
+        == "production_next_typescript_postgres_agent_gateway_route"
         and set(adapter_claims) == set(expected_adapters)
         and set(runtime_dependency_identity) == {"hermes_endpoint_sha256", "openclaw_binary_sha256"}
         and all(
@@ -325,6 +347,8 @@ def real_runtime_security_claims_complete(claims: dict[str, Any]) -> bool:
             and adapter_claims[adapter].get("manifest_complete_run_evidence_enforced") is True
             and adapter_claims[adapter].get("customer_delivery_revalidation_blocked") is True
             and adapter_claims[adapter].get("approved_customer_delivery_evidence_sealed") is True
+            and adapter_claims[adapter].get("blocked_customer_delivery_request_persisted") is False
+            and adapter_claims[adapter].get("delivery_approval_created_through_production_owner") is True
             and adapter_claims[adapter].get("delivery_approval_updated_once") is True
             for adapter in expected_adapters
         )

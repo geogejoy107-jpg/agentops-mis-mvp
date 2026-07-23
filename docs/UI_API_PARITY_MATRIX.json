@@ -72,7 +72,8 @@
         "/workspace"
       ],
       "next_routes": [
-        "/workspace"
+        "/workspace",
+        "/api/mis/dashboard/metrics"
       ],
       "api_contracts": [
         "GET /dashboard/metrics",
@@ -175,7 +176,8 @@
         "/workspace/tasks"
       ],
       "next_routes": [
-        "/workspace/tasks"
+        "/workspace/tasks",
+        "/api/mis/tasks"
       ],
       "api_contracts": [
         "GET /tasks"
@@ -209,7 +211,8 @@
       ],
       "next_routes": [
         "/workspace/tasks/:taskId",
-        "/admin/tasks/:taskId"
+        "/admin/tasks/:taskId",
+        "/api/mis/tasks/:taskId"
       ],
       "api_contracts": [
         "GET /tasks/:id"
@@ -372,7 +375,9 @@
       ],
       "next_routes": [
         "/workspace/approvals",
-        "/workspace/approvals/review"
+        "/workspace/approvals/review",
+        "/api/mis/approvals",
+        "/api/mis/approvals/:approvalId/:decision"
       ],
       "api_contracts": [
         "GET /approvals",
@@ -524,7 +529,8 @@
       ],
       "next_routes": [
         "/workspace/runs",
-        "/admin/runs"
+        "/admin/runs",
+        "/api/mis/runs"
       ],
       "api_contracts": [
         "GET /runs"
@@ -563,7 +569,9 @@
       ],
       "next_routes": [
         "/workspace/runs/:runId",
-        "/admin/runs/:runId"
+        "/admin/runs/:runId",
+        "/api/mis/runs/:runId",
+        "/api/mis/runs/:runId/graph"
       ],
       "api_contracts": [
         "GET /runs/:id",
@@ -602,7 +610,8 @@
         "/admin/toolcalls"
       ],
       "next_routes": [
-        "/workspace/tool-calls"
+        "/workspace/tool-calls",
+        "/api/mis/tool-calls"
       ],
       "api_contracts": [
         "GET /tool-calls"
@@ -640,7 +649,8 @@
         "/admin/evaluations"
       ],
       "next_routes": [
-        "/workspace/evaluations"
+        "/workspace/evaluations",
+        "/api/mis/evaluations"
       ],
       "api_contracts": [
         "GET /evaluations"
@@ -847,7 +857,8 @@
         "/admin/audit"
       ],
       "next_routes": [
-        "/workspace/audit"
+        "/workspace/audit",
+        "/api/mis/audit"
       ],
       "api_contracts": [
         "GET /audit",
@@ -1025,7 +1036,8 @@
         "/api/mis/agent-gateway/evaluations/submit",
         "/api/mis/agent-gateway/artifacts",
         "/api/mis/agent-gateway/plan-evidence-manifests",
-        "/api/mis/agent-gateway/memories/propose"
+        "/api/mis/agent-gateway/memories/propose",
+        "/api/mis/agent-gateway/approvals/request"
       ],
       "api_contracts": [
         "POST /agent-gateway/register",
@@ -1042,7 +1054,8 @@
         "POST /agent-gateway/evaluations/submit",
         "POST /agent-gateway/artifacts",
         "POST /agent-gateway/plan-evidence-manifests",
-        "POST /agent-gateway/memories/propose"
+        "POST /agent-gateway/memories/propose",
+        "POST /agent-gateway/approvals/request"
       ],
       "vite_files": [],
       "next_files": [
@@ -1069,13 +1082,16 @@
         "ui/next-app/src/server/controlPlane/db.ts",
         "ui/next-app/src/server/controlPlane/ledger.ts",
         "ui/next-app/app/api/mis/agent-gateway/memories/propose/route.ts",
-        "ui/next-app/src/server/controlPlane/agentGatewayMemories.ts"
+        "ui/next-app/src/server/controlPlane/agentGatewayMemories.ts",
+        "ui/next-app/app/api/mis/agent-gateway/approvals/request/route.ts",
+        "ui/next-app/src/server/controlPlane/agentGatewayApprovals.ts"
       ],
       "evidence_commands": [
         "python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py",
         "cd ui/next-app && npm run test:worker-task-pull-claim-contract",
         "cd ui/next-app && npm run test:worker-gateway-direct-contract",
         "python3 scripts/nextjs_postgres_real_worker_human_review_smoke.py --postgres-dsn <isolated-postgres-dsn>",
+        "cd ui/next-app && npm run test:customer-delivery-approval-request-contract",
         "cd ui/next-app && npm run build",
         "python3 scripts/nextjs_postgres_memory_propose_smoke.py"
       ],

@@ -44,6 +44,7 @@ SCOPES = [
     "evaluations:submit",
     "artifacts:write",
     "memories:propose",
+    "approvals:request",
     "audit:write",
     "plan_evidence:write",
 ]
@@ -539,6 +540,7 @@ def run_worker(
         runtime,
         "--once",
         "--confirm-run",
+        "--request-customer-delivery-approval",
         "--adapter-max-attempts",
         "1",
     ]
@@ -609,6 +611,27 @@ def check_runtime_evidence(
         "SELECT manifest_id,status,run_id FROM plan_evidence_manifests WHERE run_id=?",
         (run_id,),
     )
+    approval = adapter.fetchone(
+        """SELECT approval_id,approval_kind,task_id,run_id,requested_by_agent_id,
+        approver_user_id,decision,reason,expires_at,created_at,decided_at
+        FROM approvals WHERE run_id=? AND approval_kind='customer_delivery'""",
+        (run_id,),
+    )
+    task = adapter.fetchone(
+        "SELECT status FROM tasks WHERE task_id=? AND workspace_id=?",
+        (f"tsk_real_{runtime}_review", WORKSPACE_ID),
+    )
+    approval_event_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM runtime_events
+        WHERE run_id=? AND event_type='approval.customer_delivery.request'""",
+        (run_id,),
+    ) or {"count": 0})["count"])
+    approval_audit_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM audit_logs
+        WHERE workspace_id=? AND action='agent_gateway.customer_delivery_approval_request'
+          AND entity_type='approvals' AND entity_id=?""",
+        (WORKSPACE_ID, str((approval or {}).get("approval_id") or "")),
+    ) or {"count": 0})["count"])
     worker_audit = adapter.fetchone(
         """SELECT actor_type,actor_id,entity_type,entity_id,metadata_json,tamper_chain_hash
         FROM audit_logs WHERE action='agent_worker.task_processed' AND entity_type='runs' AND entity_id=?""",
@@ -628,6 +651,25 @@ def check_runtime_evidence(
         raise RuntimeError(f"{runtime} tool evidence does not prove a non-dry-run provider call")
     if not manifest or manifest["status"] != "verified":
         raise RuntimeError(f"{runtime} plan-evidence manifest is not verified")
+    if not (
+        iteration.get("customer_delivery_approval_requested") is True
+        and iteration.get("customer_delivery_approval_outcome") == "created"
+        and iteration.get("customer_delivery_approval_control_plane") == "typescript_postgres"
+        and approval
+        and iteration.get("customer_delivery_approval_id") == approval["approval_id"]
+        and approval["approval_kind"] == "customer_delivery"
+        and approval["task_id"] == f"tsk_real_{runtime}_review"
+        and approval["requested_by_agent_id"] == f"agt_real_{runtime}_review"
+        and approval["approver_user_id"] is None
+        and approval["decision"] == "pending"
+        and approval["decided_at"] is None
+        and task
+        and task["status"] == "waiting_approval"
+        and approval_event_count == approval_audit_count == 1
+    ):
+        raise RuntimeError(
+            f"{runtime} Worker did not create one production-owned customer-delivery approval"
+        )
     if not memory or memory["review_status"] != "candidate" or memory["source_ref"] != run_id:
         raise RuntimeError(f"{runtime} real run did not create a bound memory candidate")
     if not worker_audit or not worker_audit["tamper_chain_hash"]:
@@ -649,7 +691,13 @@ def check_runtime_evidence(
         (run_id, f"agt_real_{runtime}_review"),
     )
     evidence_text = json.dumps(
-        {"tool": tool, "memory": memory, "audit": worker_audit, "events": evidence},
+        {
+            "tool": tool,
+            "memory": memory,
+            "approval": approval,
+            "audit": worker_audit,
+            "events": evidence,
+        },
         ensure_ascii=False,
         default=str,
     )
@@ -660,43 +708,14 @@ def check_runtime_evidence(
         "run_id": run_id,
         "memory_id": str(memory["memory_id"]),
         "manifest_id": str(manifest["manifest_id"]),
+        "approval_id": str(approval["approval_id"]),
         "source_type": str(memory["source_type"]),
         "provider_call_performed": True,
         "dry_run": False,
-    }
-
-
-def prepare_run_bound_delivery_approval_fixture(
-    adapter: NodePgAdapter,
-    runtime: str,
-    receipt: dict[str, str],
-) -> dict[str, str]:
-    run_id = receipt["run_id"]
-    task_id = f"tsk_real_{runtime}_review"
-    agent_id = f"agt_real_{runtime}_review"
-    approval_id = f"ap_customer_worker_delivery_{run_id}"
-    now = dt.datetime.now(dt.timezone.utc).isoformat()
-    expires_at = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).isoformat()
-    adapter.execute(
-        """INSERT INTO approvals(
-            approval_id,approval_kind,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,
-            decision,reason,expires_at,created_at,decided_at
-        ) VALUES(?,'customer_delivery',?,?,?,?,NULL,'pending','Customer delivery requires Human Owner review.',?,?,NULL)""",
-        (approval_id, task_id, run_id, None, agent_id, expires_at, now),
-    )
-    adapter.execute(
-        "UPDATE runs SET approval_required=1 WHERE run_id=? AND workspace_id=? AND task_id=? AND agent_id=?",
-        (run_id, WORKSPACE_ID, task_id, agent_id),
-    )
-    adapter.execute(
-        "UPDATE tasks SET status='waiting_approval',updated_at=? WHERE task_id=? AND workspace_id=?",
-        (now, task_id, WORKSPACE_ID),
-    )
-    adapter.commit()
-    return {
-        **receipt,
-        "approval_id": approval_id,
-        "delivery_approval_creation_source": "acceptance_fixture_bound_to_real_run",
+        "delivery_approval_creation_source": "production_next_typescript_postgres_agent_gateway_route",
+        "delivery_approval_request_outcome": "created",
+        "delivery_approval_runtime_event_count": approval_event_count,
+        "delivery_approval_audit_count": approval_audit_count,
     }
 
 
@@ -984,8 +1003,6 @@ def verify_manifest_authority_guards(
     runtime: str,
     token: str,
     receipt: dict[str, str],
-    cookie: str,
-    csrf: str,
 ) -> dict[str, Any]:
     approved_run_id = receipt["run_id"]
     approved_task_id = f"tsk_real_{runtime}_review"
@@ -1276,41 +1293,30 @@ def verify_manifest_authority_guards(
         raise RuntimeError(f"{runtime} selective success-only evidence was not blocked against the complete run ledger")
 
     blocked_approval_id = f"ap_customer_worker_delivery_blocked_{run_id}"
-    now = dt.datetime.now(dt.timezone.utc).isoformat()
-    expires_at = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).isoformat()
-    adapter.execute(
-        """INSERT INTO approvals(
-            approval_id,approval_kind,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,
-            decision,reason,expires_at,created_at,decided_at
-        ) VALUES(?,'customer_delivery',?,?,?,?,NULL,'pending','Customer delivery requires Human Owner review.',?,?,NULL)""",
-        (blocked_approval_id, task_id, run_id, None, agent_id, expires_at, now),
-    )
-    adapter.execute(
-        "UPDATE runs SET approval_required=1 WHERE run_id=? AND workspace_id=? AND task_id=? AND agent_id=?",
-        (run_id, WORKSPACE_ID, task_id, agent_id),
-    )
-    adapter.execute(
-        "UPDATE tasks SET status='waiting_approval',updated_at=? WHERE task_id=? AND workspace_id=?",
-        (now, task_id, WORKSPACE_ID),
-    )
-    adapter.commit()
-
     blocked_status, blocked_payload, _ = http_json(
         "POST",
-        f"{base_url}/api/mis/approvals/{urllib.parse.quote(blocked_approval_id)}/approve",
-        {"workspace_id": WORKSPACE_ID},
+        f"{base_url}/api/agent-gateway/approvals/request",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "requested_by_agent_id": agent_id,
+            "approval_id": blocked_approval_id,
+            "approval_kind": "customer_delivery",
+            "decision": "pending",
+            "task_id": task_id,
+            "run_id": run_id,
+            "reason": "Customer delivery requires Human Owner review.",
+        },
         headers={
-            "Cookie": f"agentops_human_session={cookie}",
+            "Authorization": f"Bearer {token}",
             "X-AgentOps-Workspace-Id": WORKSPACE_ID,
-            "Origin": base_url,
-            "X-AgentOps-CSRF": csrf,
-            "Idempotency-Key": f"real-worker-{runtime}-blocked-delivery-0002",
         },
     )
-    blocked_approval = adapter.fetchone(
-        "SELECT decision,approver_user_id,decided_at FROM approvals WHERE approval_id=? AND run_id=?",
+    blocked_approval_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM approvals
+        WHERE approval_id=? OR (run_id=? AND approval_kind='customer_delivery')""",
         (blocked_approval_id, run_id),
-    )
+    ) or {"count": 0})["count"])
     blocked_run = adapter.fetchone(
         "SELECT status,approval_required FROM runs WHERE run_id=? AND workspace_id=?",
         (run_id, WORKSPACE_ID),
@@ -1319,27 +1325,33 @@ def verify_manifest_authority_guards(
         "SELECT status FROM tasks WHERE task_id=? AND workspace_id=?",
         (task_id, WORKSPACE_ID),
     )
-    blocked_request_count = int((adapter.fetchone(
-        """SELECT COUNT(*) AS count FROM human_approval_decision_requests
-        WHERE workspace_id=? AND approval_id=?""",
+    blocked_runtime_event_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM runtime_events
+        WHERE run_id=? AND event_type='approval.customer_delivery.request'""",
+        (run_id,),
+    ) or {"count": 0})["count"])
+    blocked_audit_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM audit_logs
+        WHERE workspace_id=? AND action='agent_gateway.customer_delivery_approval_request'
+          AND entity_id=?""",
         (WORKSPACE_ID, blocked_approval_id),
     ) or {"count": 0})["count"])
     if not (
         blocked_status == 409
         and isinstance(blocked_payload, dict)
         and blocked_payload.get("error") == "verified_plan_evidence_manifest_required"
-        and blocked_approval
-        and blocked_approval["decision"] == "pending"
-        and blocked_approval["approver_user_id"] is None
-        and blocked_approval["decided_at"] is None
+        and blocked_approval_count == 0
         and blocked_run
         and blocked_run["status"] == "completed"
-        and int(blocked_run["approval_required"] or 0) == 1
+        and int(blocked_run["approval_required"] or 0) == 0
         and blocked_task
-        and blocked_task["status"] == "waiting_approval"
-        and blocked_request_count == 0
+        and blocked_task["status"] == "completed"
+        and blocked_runtime_event_count == 0
+        and blocked_audit_count == 0
     ):
-        raise RuntimeError(f"{runtime} Human customer-delivery decision did not fail closed on the latest blocked manifest")
+        raise RuntimeError(
+            f"{runtime} production customer-delivery request did not fail closed before persistence"
+        )
 
     sealed_ids = {
         "tool": f"tc_real_{runtime}_sealed_append",
@@ -1435,6 +1447,7 @@ def verify_manifest_authority_guards(
         "failed_checks": sorted(required_failures),
         "customer_delivery_revalidation_status": blocked_status,
         "customer_delivery_revalidation_blocked": True,
+        "blocked_customer_delivery_request_persisted": False,
         "approved_customer_delivery_evidence_sealed": True,
         "sealed_evidence_statuses": sealed_statuses,
     }
@@ -1655,10 +1668,11 @@ def main() -> int:
                 args.openclaw_bin,
                 sensitive,
             )
-            worker_receipts[runtime] = prepare_run_bound_delivery_approval_fixture(
+            worker_receipts[runtime] = check_runtime_evidence(
                 adapter,
                 runtime,
-                check_runtime_evidence(adapter, runtime, worker_payload, sensitive),
+                worker_payload,
+                sensitive,
             )
 
         cookie, csrf = login_owner(base_url, owner_password)
@@ -1679,8 +1693,6 @@ def main() -> int:
                 runtime,
                 tokens[runtime],
                 worker_receipts[runtime],
-                cookie,
-                csrf,
             )
 
         stop_process(next_proc)
@@ -1721,8 +1733,11 @@ def main() -> int:
                 and receipt.get("delivery_approval_replay_outcome") == "unchanged"
                 for receipt in human_receipts.values()
             ),
-            "worker_created_delivery_approvals": False,
-            "delivery_approval_creation_source": "acceptance_fixture_bound_to_real_run",
+            "worker_created_delivery_approvals": all(
+                receipt.get("delivery_approval_request_outcome") == "created"
+                for receipt in worker_receipts.values()
+            ),
+            "delivery_approval_creation_source": "production_next_typescript_postgres_agent_gateway_route",
             "agent_gateway_legacy_path_rewrite_verified": True,
             "raw_prompt_response_omitted": True,
             "credentials_omitted": True,

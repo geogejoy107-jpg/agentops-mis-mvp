@@ -10,9 +10,12 @@ export const HUMAN_MEMORY_SCHEMA_V2_CHECKSUM = "d3da5e4b3597c38a0e9261636b363a36
 export const HUMAN_MEMORY_SCHEMA_V3_VERSION = "20260719_human_approval_decisions_v3";
 export const HUMAN_MEMORY_SCHEMA_V3_CONTRACT = "agentops-human-session-approval-decisions-contract-v3";
 export const HUMAN_MEMORY_SCHEMA_V3_CHECKSUM = "fa90bc4d0d42331cdbcfea69b68752c23c2aa03d38c956a1bb4449645716624e";
-export const HUMAN_MEMORY_SCHEMA_VERSION = "20260719_approval_kind_bindings_v4";
-export const HUMAN_MEMORY_SCHEMA_CONTRACT = "agentops-human-session-approval-kind-bindings-contract-v4";
-export const HUMAN_MEMORY_SCHEMA_CHECKSUM = "03efa7fe3f5a9e9746e6cd6f8a40f96904c3bb751a460efc587650c08d46849e";
+export const HUMAN_MEMORY_SCHEMA_V4_VERSION = "20260719_approval_kind_bindings_v4";
+export const HUMAN_MEMORY_SCHEMA_V4_CONTRACT = "agentops-human-session-approval-kind-bindings-contract-v4";
+export const HUMAN_MEMORY_SCHEMA_V4_CHECKSUM = "03efa7fe3f5a9e9746e6cd6f8a40f96904c3bb751a460efc587650c08d46849e";
+export const HUMAN_MEMORY_SCHEMA_VERSION = "20260724_customer_delivery_run_unique_v5";
+export const HUMAN_MEMORY_SCHEMA_CONTRACT = "agentops-human-session-customer-delivery-run-unique-contract-v5";
+export const HUMAN_MEMORY_SCHEMA_CHECKSUM = "1d55b93476e8132a6631b20ed5c10e6896ffa2be83f44d82eb6464f8cf8f38c7";
 export const HUMAN_MEMORY_SCHEMA_ONLINE_INDEX_CHECKSUM = "6f37e786f1394e6e3e229374aca90fe6b7bb7d2b576f7e33cb8e35164c77fc95";
 
 type RequiredColumn = {
@@ -272,6 +275,7 @@ type RequiredIndex = {
   indexName: string;
   unique: boolean;
   keys: string[];
+  predicate?: string;
 };
 
 const REQUIRED_INDEXES: RequiredIndex[] = [
@@ -340,6 +344,13 @@ const REQUIRED_INDEXES: RequiredIndex[] = [
     indexName: "idx_human_approval_decision_idempotency_unique",
     unique: true,
     keys: ["workspace_id", "user_id", "idempotency_key_hash"],
+  },
+  {
+    tableName: "approvals",
+    indexName: "idx_approvals_customer_delivery_run_unique",
+    unique: true,
+    keys: ["run_id"],
+    predicate: "approval_kind = 'customer_delivery'::text",
   },
 ];
 
@@ -937,7 +948,7 @@ async function assertIndexesReady(client: PoolClient) {
       || !row.is_valid
       || !row.is_ready
       || row.included_count !== 0
-      || row.predicate !== null
+      || row.predicate !== (expected.predicate || null)
       || row.key_definitions.length !== expected.keys.length
       || row.key_definitions.some((key, index) => key !== expected.keys[index])) {
       throw new SchemaReadinessError("human_memory_schema_indexes_mismatch");

@@ -16,6 +16,7 @@ import {
   HUMAN_MEMORY_SCHEMA_V1_CHECKSUM,
   HUMAN_MEMORY_SCHEMA_V2_CHECKSUM,
   HUMAN_MEMORY_SCHEMA_V3_CHECKSUM,
+  HUMAN_MEMORY_SCHEMA_V4_CHECKSUM,
   SchemaReadinessError,
 } from "../src/server/controlPlane/schemaReadiness";
 
@@ -33,6 +34,9 @@ const APPROVAL_MIGRATION_PATH = fileURLToPath(
 );
 const APPROVAL_KIND_MIGRATION_PATH = fileURLToPath(
   new URL("../../../migrations/postgres/20260719_approval_kind_bindings_v4.sql", import.meta.url),
+);
+const CUSTOMER_DELIVERY_UNIQUE_MIGRATION_PATH = fileURLToPath(
+  new URL("../../../migrations/postgres/20260724_customer_delivery_run_unique_v5.sql", import.meta.url),
 );
 
 function output(payload: Record<string, unknown>) {
@@ -191,6 +195,9 @@ async function main() {
   const onlineIndexMigrationBytes = await readFile(ONLINE_INDEX_MIGRATION_PATH);
   const approvalMigrationBytes = await readFile(APPROVAL_MIGRATION_PATH);
   const approvalKindMigrationBytes = await readFile(APPROVAL_KIND_MIGRATION_PATH);
+  const customerDeliveryUniqueMigrationBytes = await readFile(
+    CUSTOMER_DELIVERY_UNIQUE_MIGRATION_PATH,
+  );
   const baseMigrationChecksum = createHash("sha256").update(baseMigrationBytes).digest("hex");
   const upgradeMigrationChecksum = createHash("sha256").update(upgradeMigrationBytes).digest("hex");
   const onlineIndexMigrationChecksum = createHash("sha256").update(onlineIndexMigrationBytes).digest("hex");
@@ -198,11 +205,15 @@ async function main() {
   const approvalKindMigrationChecksum = createHash("sha256")
     .update(approvalKindMigrationBytes)
     .digest("hex");
+  const customerDeliveryUniqueMigrationChecksum = createHash("sha256")
+    .update(customerDeliveryUniqueMigrationBytes)
+    .digest("hex");
   if (baseMigrationChecksum !== HUMAN_MEMORY_SCHEMA_V1_CHECKSUM
     || upgradeMigrationChecksum !== HUMAN_MEMORY_SCHEMA_V2_CHECKSUM
     || onlineIndexMigrationChecksum !== HUMAN_MEMORY_SCHEMA_ONLINE_INDEX_CHECKSUM
     || approvalMigrationChecksum !== HUMAN_MEMORY_SCHEMA_V3_CHECKSUM
-    || approvalKindMigrationChecksum !== HUMAN_MEMORY_SCHEMA_CHECKSUM) {
+    || approvalKindMigrationChecksum !== HUMAN_MEMORY_SCHEMA_V4_CHECKSUM
+    || customerDeliveryUniqueMigrationChecksum !== HUMAN_MEMORY_SCHEMA_CHECKSUM) {
     throw new Error("migration_checksum_fixture_mismatch");
   }
 
@@ -225,6 +236,7 @@ async function main() {
     await client.query(onlineIndexMigrationBytes.toString("utf8"));
     await client.query(approvalMigrationBytes.toString("utf8"));
     await client.query(approvalKindMigrationBytes.toString("utf8"));
+    await client.query(customerDeliveryUniqueMigrationBytes.toString("utf8"));
     await client.query(
       `INSERT INTO agentops_schema_migrations(
         component,version,schema_contract,checksum,applied_at
@@ -400,6 +412,21 @@ async function main() {
     );
     await assertHumanMemorySchemaReady(poolClient);
 
+    await client.query(`
+      DROP INDEX idx_approvals_customer_delivery_run_unique;
+      CREATE UNIQUE INDEX idx_approvals_customer_delivery_run_unique
+      ON approvals(run_id)
+      WHERE approval_kind='run_execution';
+    `);
+    await expectReadinessFailure(poolClient, "human_memory_schema_indexes_mismatch");
+    await client.query(`
+      DROP INDEX idx_approvals_customer_delivery_run_unique;
+      CREATE UNIQUE INDEX idx_approvals_customer_delivery_run_unique
+      ON approvals(run_id)
+      WHERE approval_kind='customer_delivery';
+    `);
+    await assertHumanMemorySchemaReady(poolClient);
+
     await client.query(
       "UPDATE agentops_schema_migrations SET checksum=$1 WHERE component=$2",
       ["0".repeat(64), HUMAN_MEMORY_SCHEMA_COMPONENT],
@@ -408,11 +435,13 @@ async function main() {
 
     output({
       ok: true,
-      contract: "human_memory_schema_readiness_v4",
+      contract: "human_memory_schema_readiness_v5",
       checks: {
-        v1_v2_v3_v4_migration_bytes_match_fixed_checksums: true,
+        v1_v2_v3_v4_v5_migration_bytes_match_fixed_checksums: true,
         exact_schema_ready: true,
         five_approval_kinds_backfilled: true,
+        customer_delivery_run_unique_index_ready: true,
+        customer_delivery_run_unique_predicate_drift_rejected: true,
         approval_kind_default_drift_rejected: true,
         weak_approval_kind_binding_constraint_rejected: true,
         non_unique_enrollment_binding_rejected: true,

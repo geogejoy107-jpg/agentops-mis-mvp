@@ -75,6 +75,7 @@ def main() -> int:
         NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "register" / "route.ts",
         NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "heartbeat" / "route.ts",
         NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "audit" / "route.ts",
+        NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "approvals" / "request" / "route.ts",
         NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "tasks" / "pull" / "route.ts",
         NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "tasks" / "[taskId]" / "claim" / "route.ts",
         NEXT_APP / "app" / "api" / "mis" / "tasks" / "route.ts",
@@ -84,6 +85,7 @@ def main() -> int:
         NEXT_APP / "app" / "api" / "mis" / "dashboard" / "metrics" / "route.ts",
         NEXT_APP / "src" / "server" / "controlPlane" / "agentGatewayHeartbeatAudit.ts",
         NEXT_APP / "src" / "server" / "controlPlane" / "agentGatewayTasks.ts",
+        NEXT_APP / "src" / "server" / "controlPlane" / "agentGatewayApprovals.ts",
         NEXT_APP / "src" / "server" / "controlPlane" / "auth.ts",
         NEXT_APP / "src" / "server" / "controlPlane" / "config.ts",
         NEXT_APP / "src" / "server" / "controlPlane" / "humanSession.ts",
@@ -92,6 +94,7 @@ def main() -> int:
         NEXT_APP / "scripts" / "control-plane-mode-contract.ts",
         NEXT_APP / "scripts" / "human-session-timestamp-contract.ts",
         NEXT_APP / "scripts" / "worker-task-pull-claim-contract.ts",
+        NEXT_APP / "scripts" / "customer-delivery-approval-request-contract.ts",
         NEXT_APP / "scripts" / "workspace-read-model-contract.ts",
         NEXT_APP / "scripts" / "schema-migration-upgrade-contract.ts",
         NEXT_APP / "next.config.mjs",
@@ -128,6 +131,7 @@ def main() -> int:
         ROOT / "scripts" / "nextjs_production_python_proxy_fail_closed_smoke.py",
         ROOT / "scripts" / "nextjs_postgres_real_worker_human_review_smoke.py",
         ROOT / "scripts" / "worker_provider_call_evidence_smoke.py",
+        ROOT / "agentops_mis_cli" / "worker.py",
         ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py",
         ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py",
         ROOT / "scripts" / "nextjs_pixel_office_dispatch_smoke.py",
@@ -165,10 +169,12 @@ def main() -> int:
     gateway_register_route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "register" / "route.ts")
     gateway_heartbeat_route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "heartbeat" / "route.ts")
     gateway_audit_route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "audit" / "route.ts")
+    gateway_approval_request_route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "approvals" / "request" / "route.ts")
     gateway_pull_route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "tasks" / "pull" / "route.ts")
     gateway_claim_route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "agent-gateway" / "tasks" / "[taskId]" / "claim" / "route.ts")
     gateway_heartbeat_audit_text = read_text(NEXT_APP / "src" / "server" / "controlPlane" / "agentGatewayHeartbeatAudit.ts")
     gateway_tasks_text = read_text(NEXT_APP / "src" / "server" / "controlPlane" / "agentGatewayTasks.ts")
+    gateway_approvals_text = read_text(NEXT_APP / "src" / "server" / "controlPlane" / "agentGatewayApprovals.ts")
     gateway_plans_text = read_text(NEXT_APP / "src" / "server" / "controlPlane" / "agentGatewayPlans.ts")
     gateway_auth_text = read_text(NEXT_APP / "src" / "server" / "controlPlane" / "auth.ts")
     control_plane_config_text = read_text(NEXT_APP / "src" / "server" / "controlPlane" / "config.ts")
@@ -176,6 +182,7 @@ def main() -> int:
     control_plane_mode_contract_text = read_text(NEXT_APP / "scripts" / "control-plane-mode-contract.ts")
     human_session_timestamp_contract_text = read_text(NEXT_APP / "scripts" / "human-session-timestamp-contract.ts")
     worker_task_contract_text = read_text(NEXT_APP / "scripts" / "worker-task-pull-claim-contract.ts")
+    delivery_approval_request_contract_text = read_text(NEXT_APP / "scripts" / "customer-delivery-approval-request-contract.ts")
     workspace_read_models_text = read_text(NEXT_APP / "src" / "server" / "controlPlane" / "workspaceReadModels.ts")
     workspace_read_contract_text = read_text(NEXT_APP / "scripts" / "workspace-read-model-contract.ts")
     approval_decision_contract_text = read_text(NEXT_APP / "scripts" / "approval-decision-contract.ts")
@@ -205,6 +212,7 @@ def main() -> int:
     approval_kind_schema_migration_text = read_text(ROOT / "migrations" / "postgres" / "20260719_approval_kind_bindings_v4.sql")
     real_worker_human_review_text = read_text(ROOT / "scripts" / "nextjs_postgres_real_worker_human_review_smoke.py")
     worker_provider_evidence_text = read_text(ROOT / "scripts" / "worker_provider_call_evidence_smoke.py")
+    agent_worker_text = read_text(ROOT / "agentops_mis_cli" / "worker.py")
     approvals_review_route_text = read_text(NEXT_APP / "app" / "workspace" / "approvals" / "review" / "route.ts")
     memory_review_route_text = read_text(NEXT_APP / "app" / "workspace" / "memory" / "review" / "route.ts")
     report_archive_route_text = read_text(NEXT_APP / "app" / "workspace" / "customer-projects" / "[projectId]" / "report" / "archive" / "route.ts")
@@ -293,7 +301,7 @@ def main() -> int:
     require(scripts.get("test:memory-review-idempotency-contract") == "tsx scripts/memory-review-idempotency-contract.ts", "Memory Review idempotency contract script is missing")
     require(scripts.get("test:worker-gateway-direct-contract") == "tsx scripts/agent-gateway-worker-direct-contract.ts", "Worker register/heartbeat/audit contract script is missing")
     require(scripts.get("test:workspace-read-model-contract") == "tsx scripts/workspace-read-model-contract.ts", "Workspace Human Session read-model contract script is missing")
-    require(scripts.get("test:human-schema-upgrade-contract") == "tsx scripts/schema-migration-upgrade-contract.ts", "Human schema v1/v2/v3 to v4 upgrade contract script is missing")
+    require(scripts.get("test:human-schema-upgrade-contract") == "tsx scripts/schema-migration-upgrade-contract.ts", "Human schema v1/v2/v3/v4 to v5 upgrade contract script is missing")
     require(scripts.get("test:worker-task-pull-claim-contract") == "tsx scripts/worker-task-pull-claim-contract.ts", "Worker task pull/claim contract script is missing")
     require("AGENTOPS_API_BASE" in route_text, "Free Local API proxy must be configurable with AGENTOPS_API_BASE")
     require("legacyPythonProxyAllowed" in route_text and "typescript_route_owner_required" in route_text and "python_proxy_performed: false" in route_text, "Commercial production catch-all must fail closed instead of forwarding to Python")
@@ -321,9 +329,9 @@ def main() -> int:
     require("JOIN tasks task" in workspace_read_models_text and "JOIN runs run" in workspace_read_models_text and "run.workspace_id=$1" in workspace_read_models_text, "Approval reads must require matching task/run workspace ownership")
     require("audit.metadata_json," not in workspace_read_models_text and "tamper_chain_hash" not in workspace_read_models_text, "Workspace audit read model must omit raw metadata and chain internals")
     require("nextjs_postgres_workspace_read_models_v1" in workspace_read_contract_text and "authenticated_http_routes_return_private_200" in workspace_read_contract_text, "Workspace read-model Postgres isolation and authenticated HTTP contract is incomplete")
-    require("human_memory_schema_readiness_v4" in schema_readiness_contract_text and "v1_v2_v3_v4_migration_bytes_match_fixed_checksums" in schema_readiness_contract_text and "non_deferred_binding_trigger_rejected" in schema_readiness_contract_text and "weak_parent_binding_immutable_trigger_rejected" in schema_readiness_contract_text and "weak_audit_append_only_trigger_rejected" in schema_readiness_contract_text and "update_escape_weak_evidence_seal_function_rejected" in schema_readiness_contract_text, "Human schema v4 exact-readiness contract is incomplete")
-    require("human_memory_schema_v1_v2_v3_to_v4_upgrade_v1" in schema_upgrade_contract_text and "exact_v3_receipt_upgraded" in schema_upgrade_contract_text and "approval_kind_is_explicit_without_default" in schema_upgrade_contract_text and "five_approval_kinds_backfilled" in schema_upgrade_contract_text and "deferred_approval_binding_triggers_ready" in schema_upgrade_contract_text and "enrollment_approval_unique_binding_enforced" in schema_upgrade_contract_text and "unclassified_legacy_approval_fails_closed_without_trusted_audit_evidence" in schema_upgrade_contract_text and "mismatched_prefilled_approval_kind_fails_closed" in schema_upgrade_contract_text and "tampered_v1_receipt_rejected_without_ddl" in schema_upgrade_contract_text, "Human schema v1/v2/v3 to v4 upgrade contract is incomplete")
-    require('HUMAN_MEMORY_SCHEMA_VERSION = "20260719_approval_kind_bindings_v4"' in schema_readiness_text and 'HUMAN_MEMORY_SCHEMA_CONTRACT = "agentops-human-session-approval-kind-bindings-contract-v4"' in schema_readiness_text, "Human schema readiness owner must require the exact current v4 receipt")
+    require("human_memory_schema_readiness_v5" in schema_readiness_contract_text and "v1_v2_v3_v4_v5_migration_bytes_match_fixed_checksums" in schema_readiness_contract_text and "customer_delivery_run_unique_index_ready" in schema_readiness_contract_text and "customer_delivery_run_unique_predicate_drift_rejected" in schema_readiness_contract_text and "non_deferred_binding_trigger_rejected" in schema_readiness_contract_text and "weak_parent_binding_immutable_trigger_rejected" in schema_readiness_contract_text and "weak_audit_append_only_trigger_rejected" in schema_readiness_contract_text and "update_escape_weak_evidence_seal_function_rejected" in schema_readiness_contract_text, "Human schema v5 exact-readiness contract is incomplete")
+    require("human_memory_schema_v1_v2_v3_v4_to_v5_upgrade_v1" in schema_upgrade_contract_text and "exact_v4_receipt_upgraded" in schema_upgrade_contract_text and "duplicate_customer_delivery_preflight_failed_closed" in schema_upgrade_contract_text and "concurrent_customer_delivery_insert_database_enforced" in schema_upgrade_contract_text and "customer_delivery_run_global_partial_unique_index_ready" in schema_upgrade_contract_text and "approval_kind_is_explicit_without_default" in schema_upgrade_contract_text and "five_approval_kinds_backfilled" in schema_upgrade_contract_text and "deferred_approval_binding_triggers_ready" in schema_upgrade_contract_text and "enrollment_approval_unique_binding_enforced" in schema_upgrade_contract_text and "unclassified_legacy_approval_fails_closed_without_trusted_audit_evidence" in schema_upgrade_contract_text and "mismatched_prefilled_approval_kind_fails_closed" in schema_upgrade_contract_text and "tampered_v1_receipt_rejected_without_ddl" in schema_upgrade_contract_text, "Human schema v1/v2/v3/v4 to v5 upgrade contract is incomplete")
+    require('HUMAN_MEMORY_SCHEMA_VERSION = "20260724_customer_delivery_run_unique_v5"' in schema_readiness_text and 'HUMAN_MEMORY_SCHEMA_CONTRACT = "agentops-human-session-customer-delivery-run-unique-contract-v5"' in schema_readiness_text and 'HUMAN_MEMORY_SCHEMA_V4_VERSION = "20260719_approval_kind_bindings_v4"' in schema_readiness_text, "Human schema readiness owner must require the exact current v5 receipt while preserving v4 upgrade identity")
     require("nextjs_postgres_workspace_read_models_v1" in postgres_parity_contract_text, "Workspace read-model Postgres contract is not documented")
     require("ADD COLUMN IF NOT EXISTS workspace_id TEXT" in schema_migration_text and "audit_logs_workspace_metadata_match" in schema_migration_text and "CREATE INDEX" not in schema_migration_text and "CREATE INDEX CONCURRENTLY" in schema_online_index_text, "Postgres audit schema must bind workspace ownership and build its index outside the core transaction")
     require("human_approval_decision_requests" in approval_schema_migration_text and "idempotency_key_hash" in approval_schema_migration_text and "approval_id_fkey" in approval_schema_migration_text, "Postgres Human approval decision idempotency migration is incomplete")
@@ -333,11 +341,51 @@ def main() -> int:
     require(all(marker in gateway_plans_text for marker in ("COMMERCIAL_RUNTIME_TYPES", "commercial_runtime_provider_bound", "commercial_worker_tool_provenance", "commercial_mock_evaluation_absent", "commercial_worker_evaluation_provenance", "commercial_artifact_digest_provenance", "commercial_evidence_audit_coverage", "commercial_worker_audit_provenance")) and "artifact.run_id IS NULL AND artifact.task_id=$2" in gateway_plans_text, "Customer-delivery manifest revalidation must bind real Hermes/OpenClaw provider, non-dry-run tool/evaluation/audit provenance, artifact digests, and current-run artifacts")
     require("nextjs_postgres_human_approval_decision_v1" in approval_decision_contract_text and "concurrent_same_key_16_way_single_winner" in approval_decision_contract_text and "customer_delivery_requires_completed_run" in approval_decision_contract_text and "customer_delivery_mock_evidence_rejected" in approval_decision_contract_text and "sibling_run_artifact_excluded_from_delivery_manifest" in approval_decision_contract_text and "customer_delivery_evidence_matrix_sealed" in approval_decision_contract_text and "customer_delivery_evidence_decision_race_serialized" in approval_decision_contract_text and "approval_kind_explicit_immutable_and_edge_bound" in approval_decision_contract_text and "approval_execution_binding_immutable" in approval_decision_contract_text and "enrollment_approval_unique_binding" in approval_decision_contract_text and "enrollment_approval_delete_must_not_orphan_child" in approval_decision_contract_text and "parent_first_lock_order_deadlock_free" in approval_decision_contract_text and "tool_before_approval" in approval_decision_contract_text and "production_python_proxy_blocked" in approval_decision_contract_text, "Human approval decision Postgres behavior contract is incomplete")
     require("assertCustomerDeliveryEvidenceMutable" in delivery_evidence_seal_text and "customer_delivery_evidence_sealed" in delivery_evidence_seal_text, "TypeScript Agent Gateway evidence writes must enforce the decided customer-delivery seal")
-    require(scripts.get("test:approval-decision-contract") == "tsx scripts/approval-decision-contract.ts" and "nextjs_postgres_human_approval_decision" in commercial_ci_text and "human_schema_v1_v2_v3_to_v4_upgrade" in commercial_ci_text, "Human approval and v4 schema contracts must be runnable locally and required by Gate 5 CI")
+    require(
+        "requestCustomerDeliveryApproval" in gateway_approval_request_route_text
+        and "explicitFreeLocalProxyMode" in gateway_approval_request_route_text
+        and "customer_delivery_approval_proxy_mode_required" in gateway_approval_request_route_text,
+        "Customer-delivery approval requests must have a direct production owner and an explicit Free Local-only Python rollback",
+    )
+    require(
+        all(marker in gateway_approvals_text for marker in (
+            'authenticateAgentGateway(client, request.headers, "approvals:request")',
+            "CUSTOMER_DELIVERY_APPROVAL_MAX_BODY_BYTES",
+            "verifyLatestWorkspacePlanEvidence",
+            "pg_advisory_xact_lock",
+            "appendRuntimeEvent",
+            "appendAudit",
+            "approval_approver_human_owned",
+            "customer_delivery_run_incomplete",
+        )),
+        "Customer-delivery approval owner must authenticate, bind verified evidence, serialize writes, preserve Human attribution, and emit bounded ledger evidence",
+    )
+    require(
+        "nextjs_postgres_customer_delivery_approval_request_v1" in delivery_approval_request_contract_text
+        and "concurrent_single_winner_no_duplicate_evidence" in delivery_approval_request_contract_text
+        and "v5_database_unique_bypass_rejected" in delivery_approval_request_contract_text
+        and "explicit_free_local_proxy_only" in delivery_approval_request_contract_text
+        and "completed_real_runtime_evidence_required" in delivery_approval_request_contract_text,
+        "Customer-delivery approval request Postgres contract is incomplete",
+    )
+    require(
+        scripts.get("test:approval-decision-contract") == "tsx scripts/approval-decision-contract.ts"
+        and scripts.get("test:customer-delivery-approval-request-contract") == "tsx scripts/customer-delivery-approval-request-contract.ts"
+        and "nextjs_postgres_human_approval_decision" in commercial_ci_text
+        and "nextjs_postgres_customer_delivery_approval_request" in commercial_ci_text
+        and "human_schema_v1_v2_v3_v4_to_v5_upgrade" in commercial_ci_text,
+        "Human approval, delivery request, and v5 schema contracts must be runnable locally and required by Gate 5 CI",
+    )
     require("authenticateAgentGateway" in gateway_heartbeat_audit_text and "boundedJsonObject" in gateway_heartbeat_audit_text and "assertExclusiveWorkspaceBinding" in gateway_heartbeat_audit_text, "Worker register/heartbeat/audit ownership must be authenticated, bounded, and workspace-bound")
     require("tasks:read" in gateway_tasks_text and "tasks:claim" in gateway_tasks_text and "pg_advisory_xact_lock" in gateway_tasks_text, "Worker pull/claim ownership must enforce scopes and a single-winner claim lock")
     require("nextjs_postgres_worker_task_pull_claim_v1" in worker_task_contract_text and "planned_to_running_single_winner" in worker_task_contract_text, "Worker pull/claim Postgres contract is incomplete")
-    require("nextjs_postgres_real_worker_human_review_v1" in real_worker_human_review_text and "python_api_started" in real_worker_human_review_text and "real_runtime_execution_performed" in real_worker_human_review_text and "real_run_bound_delivery_decisions_completed" in real_worker_human_review_text and "approved_customer_delivery_evidence_sealed" in real_worker_human_review_text and '"worker_created_delivery_approvals": False' in real_worker_human_review_text and '"delivery_approval_creation_source": "acceptance_fixture_bound_to_real_run"' in real_worker_human_review_text, "Real Worker acceptance must distinguish real Runtime evidence from the fixture-bound delivery decision, prove the approved evidence seal, and not attribute approval creation to the Worker")
+    require(
+        "--request-customer-delivery-approval" in agent_worker_text
+        and "/api/agent-gateway/approvals/request" in agent_worker_text
+        and "customer_delivery_approval_requested" in agent_worker_text,
+        "Worker must support explicit post-manifest customer-delivery review requests through Agent Gateway",
+    )
+    require("nextjs_postgres_real_worker_human_review_v1" in real_worker_human_review_text and "python_api_started" in real_worker_human_review_text and "real_runtime_execution_performed" in real_worker_human_review_text and "real_run_bound_delivery_decisions_completed" in real_worker_human_review_text and "approved_customer_delivery_evidence_sealed" in real_worker_human_review_text and '"worker_created_delivery_approvals": all(' in real_worker_human_review_text and '"delivery_approval_creation_source": "production_next_typescript_postgres_agent_gateway_route"' in real_worker_human_review_text and "blocked_customer_delivery_request_persisted" in real_worker_human_review_text, "Real Worker acceptance must create delivery review through the production TypeScript/Postgres Agent Gateway owner, complete Human decisions, seal approved evidence, and reject blocked manifests before persistence")
     require("provider_call_performed" in real_worker_human_review_text and "dry_run" in real_worker_human_review_text, "Real Worker acceptance must distinguish a provider call from a dry run")
     require("worker_provider_call_evidence_v1" in worker_provider_evidence_text and "provider_call_performed" in worker_provider_evidence_text and "dry_run" in worker_provider_evidence_text, "Worker provider-call evidence contract is incomplete")
     require('normalized(process.env.NODE_ENV) === "production"' in control_plane_config_text, "standard next start must be recognized as a production deployment")
@@ -699,13 +747,15 @@ def main() -> int:
     require('return 0 if command_ok else 1' in commercial_readiness_text, "commercial readiness exit status must validate the truth contract rather than imply release eligibility")
     require("runtime_security_claims" in commercial_readiness_text and "github_run_verified" in commercial_readiness_text and "max_age_hours" in commercial_readiness_text, "commercial readiness must bind fresh runtime security claims to a verified successful GitHub run")
     blocker_ids = {item.get("id") for item in human_memory_release_blockers.get("open_blockers", [])}
-    require({"production_api_route_ownership_incomplete", "trusted_proxy_ip_edge_rate_limit_required", "historical_audit_workspace_backfill_missing", "human_session_retention_job_missing", "human_memory_review_request_retention_policy_missing", "approval_decision_request_retention_policy_missing", "approval_expiry_reconciliation_missing", "typescript_approval_policy_entitlement_owner_missing", "production_prepared_action_resume_ownership_missing", "production_enrollment_issue_owner_missing", "production_customer_delivery_approval_creation_owner_missing", "exact_head_real_runtime_receipt_missing", "trusted_real_runtime_builder_not_established", "trusted_runtime_identity_attestation_missing", "receipt_verifier_binary_trust_missing", "ordinary_high_risk_tool_execution_receipt_missing", "owner_bootstrap_compiled_entry_missing"}.issubset(blocker_ids), "Human Memory Review release blockers are incomplete")
-    require({"approval_kind_binding_missing", "enrollment_approval_unique_binding_missing"}.isdisjoint(blocker_ids), "Closed v4 approval schema blockers must not remain open")
+    require({"production_api_route_ownership_incomplete", "trusted_proxy_ip_edge_rate_limit_required", "historical_audit_workspace_backfill_missing", "human_session_retention_job_missing", "human_memory_review_request_retention_policy_missing", "approval_decision_request_retention_policy_missing", "approval_expiry_reconciliation_missing", "typescript_approval_policy_entitlement_owner_missing", "production_prepared_action_resume_ownership_missing", "production_enrollment_issue_owner_missing", "exact_head_real_runtime_receipt_missing", "trusted_real_runtime_builder_not_established", "trusted_runtime_identity_attestation_missing", "receipt_verifier_binary_trust_missing", "ordinary_high_risk_tool_execution_receipt_missing", "owner_bootstrap_compiled_entry_missing"}.issubset(blocker_ids), "Human Memory Review release blockers are incomplete")
+    require({"approval_kind_binding_missing", "enrollment_approval_unique_binding_missing", "production_customer_delivery_approval_creation_owner_missing"}.isdisjoint(blocker_ids), "Closed approval schema and production delivery-request ownership blockers must not remain open")
     require(human_memory_release_blockers.get("local_precommit_observations", {}).get("scope") == "non_release_engineering_observation", "local real Runtime observations must be explicitly non-release evidence")
     require(human_memory_release_blockers.get("local_precommit_observations", {}).get("real_openclaw_worker_human_review_bridge_observed") is True, "local OpenClaw Worker to Human Review observation is not recorded")
     require(human_memory_release_blockers.get("local_precommit_observations", {}).get("real_hermes_worker_human_review_bridge_observed") is True, "local Hermes Worker to Human Review observation is not recorded")
     require(human_memory_release_blockers.get("local_precommit_observations", {}).get("real_openclaw_run_bound_delivery_decision_observed") is True, "local OpenClaw run-bound delivery decision observation is not recorded")
     require(human_memory_release_blockers.get("local_precommit_observations", {}).get("real_hermes_run_bound_delivery_decision_observed") is True, "local Hermes run-bound delivery decision observation is not recorded")
+    require(human_memory_release_blockers.get("local_precommit_observations", {}).get("real_openclaw_production_delivery_request_observed") is True, "local OpenClaw production delivery-request observation is not recorded")
+    require(human_memory_release_blockers.get("local_precommit_observations", {}).get("real_hermes_production_delivery_request_observed") is True, "local Hermes production delivery-request observation is not recorded")
     runtime_receipt_requirement = human_memory_release_blockers.get("external_runtime_receipt_requirement", {})
     require(runtime_receipt_requirement.get("contract_id") == "commercial_ci_command_receipt_v1" and runtime_receipt_requirement.get("workflow") == "commercial-real-runtime-acceptance", "external exact-head Runtime receipt contract is not recorded")
     require(runtime_receipt_requirement.get("repository") == "geogejoy107-jpg/agentops-mis-mvp" and runtime_receipt_requirement.get("signer_workflow", "").endswith("/.github/workflows/commercial-real-runtime-acceptance.yml"), "external exact-head Runtime signer identity is not pinned")
@@ -714,7 +764,7 @@ def main() -> int:
     require("actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6" in real_runtime_ci_text and "human-memory-real-runtime.attestation.json" in real_runtime_ci_text, "real Runtime workflow must emit a pinned signed offline attestation bundle")
     require("workflow_dispatch:" in real_runtime_ci_text and "github.ref == 'refs/heads/main'" in real_runtime_ci_text and "path: trusted" in real_runtime_ci_text and "path: candidate" in real_runtime_ci_text and "push:" not in real_runtime_ci_text and "continue-on-error" not in real_runtime_ci_text and "environment: commercial-real-runtime" in real_runtime_ci_text, "real Runtime workflow must use only the trusted-main dual-checkout dispatch path and protected environment")
     require("npm --prefix candidate/ui/next-app ci --ignore-scripts" in real_runtime_ci_text and "--subject-sha" in real_runtime_ci_text and "--builder-sha" in real_runtime_ci_text and "--source-root" in real_runtime_ci_text and "trusted/scripts/nextjs_postgres_real_worker_human_review_smoke.py" in real_runtime_ci_text and "AGENTOPS_REAL_RUNTIME_POSTGRES_DSN" in real_runtime_ci_text, "trusted Runtime workflow must test candidate source with a trusted harness, separate subject/builder identity, disabled install scripts, and bounded credentials")
-    require("runtime_security_claims" in commercial_ci_receipt_text and "real_runtime_security_claims_incomplete" in commercial_ci_receipt_text and "approved_customer_delivery_evidence_sealed" in commercial_ci_receipt_text, "external Runtime receipt must retain bounded security claims including the approved-delivery evidence seal")
+    require("runtime_security_claims" in commercial_ci_receipt_text and "real_runtime_security_claims_incomplete" in commercial_ci_receipt_text and "approved_customer_delivery_evidence_sealed" in commercial_ci_receipt_text and "delivery_approval_created_through_production_owner" in commercial_ci_receipt_text and "blocked_customer_delivery_request_persisted" in commercial_ci_receipt_text, "external Runtime receipt must retain bounded security claims for production approval creation, blocked-request non-persistence, and approved-delivery sealing")
     require(
         all(
             marker in commercial_readiness_text
@@ -744,10 +794,13 @@ def main() -> int:
     require(human_memory_release_blockers.get("implemented_controls", {}).get("plan_evidence_complete_tool_evaluation_artifact_set") is True, "complete plan-evidence ledger control is not recorded")
     require(human_memory_release_blockers.get("implemented_controls", {}).get("plan_evidence_audit_ids_server_derived") is True, "server-derived audit evidence control is not recorded")
     require(human_memory_release_blockers.get("implemented_controls", {}).get("external_runtime_receipt_security_claims_required") is True, "external Runtime security-claim receipt control is not recorded")
+    require(human_memory_release_blockers.get("implemented_controls", {}).get("customer_delivery_run_unique_v5_enforced") is True, "customer-delivery run unique v5 control is not recorded")
+    require(human_memory_release_blockers.get("implemented_controls", {}).get("customer_delivery_approval_request_typescript_postgres_owned") is True, "customer-delivery approval request production ownership is not recorded")
+    require(human_memory_release_blockers.get("implemented_controls", {}).get("customer_delivery_approval_request_database_unique") is True, "customer-delivery approval request database uniqueness is not recorded")
     require(human_memory_release_blockers.get("implemented_controls", {}).get("commercial_delivery_real_runtime_provenance_revalidated") is True, "commercial delivery real Runtime provenance control is not recorded")
     require(human_memory_release_blockers.get("implemented_controls", {}).get("trusted_default_branch_candidate_harness_defined") is True, "trusted default-branch candidate harness control is not recorded")
-    require(human_memory_release_blockers.get("acceptance_evidence", {}).get("worker_created_delivery_approvals") is False, "Worker acceptance must not claim production delivery-approval creation")
-    require(human_memory_release_blockers.get("acceptance_evidence", {}).get("delivery_approval_creation_source") == "acceptance_fixture_bound_to_real_run", "run-bound delivery approval fixture source is not recorded")
+    require(human_memory_release_blockers.get("acceptance_evidence", {}).get("worker_created_delivery_approvals") is True, "Worker acceptance must record production delivery-approval creation")
+    require(human_memory_release_blockers.get("acceptance_evidence", {}).get("delivery_approval_creation_source") == "production_next_typescript_postgres_agent_gateway_route", "production delivery approval creation source is not recorded")
     require(human_memory_release_blockers.get("acceptance_evidence", {}).get("evidence_scope") == "local_precommit_engineering_only", "real Runtime evidence scope must remain pre-commit until an external exact-HEAD receipt exists")
     require(human_memory_release_blockers.get("acceptance_evidence", {}).get("subject_sha") is None and human_memory_release_blockers.get("acceptance_evidence", {}).get("exact_head") is False and human_memory_release_blockers.get("acceptance_evidence", {}).get("release_authority") is False, "committed runtime evidence must not self-attest exact-HEAD release authority")
     require(human_memory_release_blockers.get("implemented_controls", {}).get("free_local_legacy_workspace_mutation_same_origin_enforced") is True, "Free Local legacy Workspace writes must stay same-origin")

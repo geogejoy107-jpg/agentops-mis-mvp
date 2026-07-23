@@ -776,6 +776,30 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     manifest_payload = create_worker_plan_manifest(client, plan_id, run_id, tool_call_id, evaluation_id, artifact_id)
     manifest = manifest_payload.get("manifest") or {}
     manifest_verification = manifest_payload.get("verification") or {}
+    delivery_approval_payload: dict = {}
+    if getattr(args, "request_customer_delivery_approval", False):
+        if not result.ok or manifest_verification.get("pass") is not True:
+            raise RuntimeError(
+                "customer delivery approval requires a successful run and verified plan evidence"
+            )
+        delivery_approval_payload = client.post("/api/agent-gateway/approvals/request", {
+            "workspace_id": client.workspace_id,
+            "agent_id": client.agent_id,
+            "requested_by_agent_id": client.agent_id,
+            "task_id": task_id,
+            "run_id": run_id,
+            "approval_kind": "customer_delivery",
+            "decision": "pending",
+            "reason": "Customer delivery requires Human Owner review.",
+        })
+        delivery_approval = delivery_approval_payload.get("approval") or {}
+        if (
+            delivery_approval_payload.get("outcome") not in {"created", "unchanged"}
+            or delivery_approval.get("approval_kind") != "customer_delivery"
+            or delivery_approval.get("decision") != "pending"
+            or delivery_approval.get("approver_user_id") is not None
+        ):
+            raise RuntimeError("customer delivery approval owner returned an invalid receipt")
     client.post("/api/agent-gateway/heartbeat", {
         "workspace_id": client.workspace_id,
         "agent_id": client.agent_id,
@@ -791,6 +815,18 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "plan_evidence_manifest_id": manifest.get("manifest_id"),
         "plan_evidence_status": manifest.get("status"),
         "plan_evidence_pass": manifest_verification.get("pass"),
+        "customer_delivery_approval_requested": bool(delivery_approval_payload),
+        "customer_delivery_approval_id": (
+            (delivery_approval_payload.get("approval") or {}).get("approval_id")
+            if delivery_approval_payload
+            else None
+        ),
+        "customer_delivery_approval_outcome": (
+            delivery_approval_payload.get("outcome") if delivery_approval_payload else None
+        ),
+        "customer_delivery_approval_control_plane": (
+            delivery_approval_payload.get("control_plane") if delivery_approval_payload else None
+        ),
         "adapter": args.adapter,
         "ok": result.ok,
         "provider_call_performed": result.provider_call_performed,
@@ -820,6 +856,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--backoff-factor", type=float, default=2.0, help="Exponential backoff factor for idle/error loops.")
     parser.add_argument("--max-tasks", type=int, default=1, help="Maximum tasks to process before exit. Use 0 for no limit.")
     parser.add_argument("--confirm-run", action="store_true", help="Allow live runtime adapter execution.")
+    parser.add_argument(
+        "--request-customer-delivery-approval",
+        action="store_true",
+        help="After a successful verified run, request pending Human review through Agent Gateway.",
+    )
     parser.add_argument("--allow-high-risk", action="store_true", help="Allow high/critical risk tasks.")
     parser.add_argument("--adapter-max-attempts", type=int, default=int(os.environ.get("AGENTOPS_ADAPTER_MAX_ATTEMPTS", "1")), help="Maximum adapter execution attempts for retryable failures.")
     parser.add_argument("--adapter-retry-delay-sec", type=float, default=float(os.environ.get("AGENTOPS_ADAPTER_RETRY_DELAY_SEC", "1")), help="Delay between retryable adapter attempts.")

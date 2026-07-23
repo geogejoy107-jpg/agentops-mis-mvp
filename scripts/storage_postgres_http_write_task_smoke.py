@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import datetime as dt
 import hashlib
 import json
 import os
@@ -473,7 +474,9 @@ def seed_reference_rows(adapter: PostgresAdapter) -> None:
 
 
 def seed_gateway_token(adapter: PostgresAdapter, *, token_id: str, raw_token: str, agent_id: str, workspace_id: str, scopes: list[str]) -> None:
-    now = "2026-06-22T05:01:00+00:00"
+    now_value = dt.datetime.now(dt.timezone.utc)
+    now = now_value.isoformat()
+    expires_at = (now_value + dt.timedelta(hours=2)).isoformat()
     adapter.execute(
         """INSERT INTO agent_gateway_tokens(token_id,token_hash,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at)
         VALUES(:token_id,:token_hash,:workspace_id,:agent_id,:scopes_json,:status,:label,:heartbeat_timeout_sec,:created_at,:expires_at,:revoked_at,:last_used_at,:last_heartbeat_at)""",
@@ -487,7 +490,7 @@ def seed_gateway_token(adapter: PostgresAdapter, *, token_id: str, raw_token: st
             "label": "Postgres HTTP Gateway write smoke",
             "heartbeat_timeout_sec": 60,
             "created_at": now,
-            "expires_at": "2026-07-23T05:01:00+00:00",
+            "expires_at": expires_at,
             "revoked_at": None,
             "last_used_at": None,
             "last_heartbeat_at": None,

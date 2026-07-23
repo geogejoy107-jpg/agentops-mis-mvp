@@ -25,6 +25,7 @@ COMPATIBILITY_CONTRACT_ID = "nextjs_production_python_proxy_fail_closed_v1"
 EXPECTED_DIRECT_READ_ROUTE_COUNT = 10
 EXPECTED_WORKSPACE_PROXY_ROUTE_COUNT = 16
 EXPECTED_APPROVAL_DECISION_ROUTE_COUNT = 2
+EXPECTED_AGENT_GATEWAY_APPROVAL_REQUEST_ROUTE_COUNT = 1
 BUILD_TIMEOUT_SECONDS = 300
 STARTUP_TIMEOUT_SECONDS = 90
 REQUEST_TIMEOUT_SECONDS = 10
@@ -60,8 +61,18 @@ APPROVAL_DECISION_CASES = tuple(
     for path in APPROVAL_DECISION_PATHS
 )
 
+AGENT_GATEWAY_APPROVAL_REQUEST_CASES = (
+    (
+        "/api/mis/agent-gateway/approvals/request",
+        503,
+        POSTGRES_UNAVAILABLE_ERROR,
+        POSTGRES_UNAVAILABLE_MESSAGE,
+    ),
+)
+
 EXPECTED_COMPILED_API_ROUTE_KEYS = {
     "/api/mis/[...path]/route",
+    "/api/mis/agent-gateway/approvals/request/route",
     "/api/mis/approvals/[approvalId]/[decision]/route",
     "/api/mis/approvals/route",
     "/api/mis/audit/route",
@@ -418,6 +429,11 @@ def main() -> int:
         len(APPROVAL_DECISION_CASES) == EXPECTED_APPROVAL_DECISION_ROUTE_COUNT,
         "approval-decision coverage count drifted",
     )
+    require(
+        len(AGENT_GATEWAY_APPROVAL_REQUEST_CASES)
+        == EXPECTED_AGENT_GATEWAY_APPROVAL_REQUEST_ROUTE_COUNT,
+        "Agent Gateway approval-request coverage count drifted",
+    )
 
     UpstreamHandler.reset()
     upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
@@ -479,6 +495,11 @@ def main() -> int:
                     APPROVAL_DECISION_CASES,
                     method="POST",
                 )
+                approval_request_statuses = exercise_json_cases(
+                    base_url,
+                    AGENT_GATEWAY_APPROVAL_REQUEST_CASES,
+                    method="POST",
+                )
                 workspace_route_statuses: dict[str, int] = {}
                 for path in workspace_python_proxy_route_paths():
                     if path == WORKSPACE_APPROVAL_REVIEW_PATH:
@@ -530,6 +551,9 @@ def main() -> int:
                     "approval_decision_route_count": len(approval_decision_statuses),
                     "approval_decision_route_statuses": approval_decision_statuses,
                     "approval_decision_routes_python_blocked": True,
+                    "agent_gateway_approval_request_route_count": len(approval_request_statuses),
+                    "agent_gateway_approval_request_route_statuses": approval_request_statuses,
+                    "agent_gateway_approval_request_python_blocked": True,
                     "synthetic_human_mutation_headers_used": True,
                     "legacy_workspace_route_count": len(workspace_route_statuses),
                     "legacy_workspace_route_statuses": workspace_route_statuses,
