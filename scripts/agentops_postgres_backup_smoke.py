@@ -81,7 +81,21 @@ def unavailable(message: str, *, skip: bool) -> int:
 def wait_for_postgres(container: str, timeout_sec: int = 45) -> bool:
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
-        ready = run(["docker", "exec", container, "pg_isready", "-U", "agentops", "-d", "agentops_source"], timeout=10)
+        ready = run(
+            [
+                "docker",
+                "exec",
+                container,
+                "pg_isready",
+                "-h",
+                "127.0.0.1",
+                "-U",
+                "agentops",
+                "-d",
+                "agentops_source",
+            ],
+            timeout=10,
+        )
         if ready.returncode == 0:
             return True
         time.sleep(1)
