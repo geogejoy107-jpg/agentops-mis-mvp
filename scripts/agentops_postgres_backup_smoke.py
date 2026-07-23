@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -119,13 +120,44 @@ def psql(
     return run(command, env={"PGPASSWORD": password}, input_text=sql, timeout=timeout)
 
 
-class CountQueryError(RuntimeError):
+class SafeProcessError(RuntimeError):
     def __init__(self, safe_code: str, *, exit_code: int, stdout_hash: str, stderr_hash: str):
         super().__init__(safe_code)
         self.safe_code = safe_code
         self.exit_code = exit_code
         self.stdout_hash = stdout_hash
         self.stderr_hash = stderr_hash
+
+
+class CountQueryError(SafeProcessError):
+    pass
+
+
+def raise_safe_process_error(result: subprocess.CompletedProcess[str], stage: str) -> None:
+    stderr = result.stderr or ""
+    stderr_lower = stderr.lower()
+    missing_relation = re.search(r'relation "([a-z_][a-z0-9_]*)" does not exist', stderr_lower)
+    safe_code = (
+        f"{stage}_relation_{missing_relation.group(1)}_missing"
+        if missing_relation
+        else f"{stage}_foreign_key_violation"
+        if "violates foreign key constraint" in stderr_lower
+        else f"{stage}_check_violation"
+        if "violates check constraint" in stderr_lower
+        else f"{stage}_duplicate_key"
+        if "duplicate key value violates unique constraint" in stderr_lower
+        else f"{stage}_syntax_error"
+        if "syntax error" in stderr_lower
+        else f"{stage}_connection_failed"
+        if "connection to server" in stderr_lower or "server closed the connection" in stderr_lower
+        else f"{stage}_failed_exit_{result.returncode}"
+    )
+    raise SafeProcessError(
+        safe_code,
+        exit_code=result.returncode,
+        stdout_hash=hashlib.sha256((result.stdout or "").encode("utf-8", errors="replace")).hexdigest(),
+        stderr_hash=hashlib.sha256(stderr.encode("utf-8", errors="replace")).hexdigest(),
+    )
 
 
 def table_counts(container: str, password: str, database: str) -> dict[str, int]:
@@ -228,10 +260,12 @@ def main() -> int:
         postgres_sql = ddl_contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL)
         fixture_sql = container_contract.postgres_fixture_sql()
         seeded = psql(container, password, "agentops_source", sql=postgres_sql + "\n" + fixture_sql, timeout=180)
-        require(seeded.returncode == 0, "source_fixture_seed_failed", failures)
+        if seeded.returncode != 0:
+            raise_safe_process_error(seeded, stage)
         stage = "restore_target_create"
         created_target = psql(container, password, "postgres", sql="CREATE DATABASE agentops_restore;\n")
-        require(created_target.returncode == 0, "restore_target_create_failed", failures)
+        if created_target.returncode != 0:
+            raise_safe_process_error(created_target, stage)
 
         source_dsn = f"postgresql://agentops:{password}@127.0.0.1:5432/agentops_source"
         target_dsn = f"postgresql://agentops:{password}@127.0.0.1:5432/agentops_restore"

@@ -566,11 +566,38 @@ def run_worker(
     if completed.returncode != 0:
         state = payload.get("state") if isinstance(payload, dict) else None
         last_result = state.get("last_result") if isinstance(state, dict) else None
+        last_error = state.get("last_error") if isinstance(state, dict) else None
+        results = payload.get("results") if isinstance(payload, dict) else None
+        first_result = results[0] if isinstance(results, list) and results else None
+        safe_last_result = {
+            key: last_result.get(key)
+            for key in (
+                "adapter",
+                "dry_run",
+                "ok",
+                "processed",
+                "provider_call_performed",
+                "reason",
+                "run_id",
+                "task_id",
+            )
+            if isinstance(last_result, dict) and key in last_result
+        }
+        stderr_bytes = completed.stderr.encode("utf-8", errors="replace")
         failure = {
             "returncode": completed.returncode,
             "status": state.get("status") if isinstance(state, dict) else None,
-            "last_result": last_result if isinstance(last_result, dict) else None,
-            "stderr_tail": completed.stderr[-600:],
+            "last_result": safe_last_result or None,
+            "last_error": {
+                "error_type": last_error.get("error_type"),
+                "error_message": last_error.get("error_message"),
+            } if isinstance(last_error, dict) else None,
+            "result_error": {
+                "error_type": first_result.get("error_type"),
+                "error_message": first_result.get("error_message"),
+            } if isinstance(first_result, dict) else None,
+            "stderr_sha256": hashlib.sha256(stderr_bytes).hexdigest(),
+            "stderr_size_bytes": len(stderr_bytes),
             "raw_worker_output_omitted": True,
         }
         raise RuntimeError(redact(f"{runtime} Worker failed: {json.dumps(failure, ensure_ascii=False, sort_keys=True)}", sensitive))
