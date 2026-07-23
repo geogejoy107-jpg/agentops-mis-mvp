@@ -2,8 +2,9 @@
 
 Status: pure Activation Plan Core v0, strict daemon config parser, read-only
 FD-anchored host prerequisite scanner, production read-only systemd adapter and
-activate preview CLI implemented and locally accepted; confirmed mutation,
-transaction, rollback and recovery remain planned and unimplemented
+activate preview CLI, and private immutable activation journal core implemented
+and locally accepted; production journal opening, confirmed mutation,
+controller, rollback and recovery remain planned and unimplemented
 
 ## Objective
 
@@ -23,12 +24,17 @@ prerequisite snapshot from one read-only, FD-anchored host observation.
 snapshot through the scanner-bound opened executable FD, and
 `agentops_mis_cli.relay_activation_preview` requires a second exact
 prerequisite scan before compiling the public projection. None of these
-modules performs mutation. The live daemon separately shares the bounded
-strict config parser used by the scanner. See
+modules performs mutation. `agentops_mis_cli.relay_activation_journal` adds
+strict canonical hash-chained revisions, ownership transitions, observation
+evidence hashes, immutable receipts, no-replace publication, and fail-closed
+recovery projection through a private fixture store only. It does not open the
+production journal root or expose a writer through the CLI. The live daemon
+separately shares the bounded strict config parser used by the scanner. See
 `RELAY_ACTIVATION_PLAN_CORE_ACCEPTANCE.md` and
 `RELAY_CONFIG_PARSER_ACCEPTANCE.md`,
 `RELAY_ACTIVATION_SCANNER_ACCEPTANCE.md`, and
-`RELAY_ACTIVATION_PREVIEW_ACCEPTANCE.md`.
+`RELAY_ACTIVATION_PREVIEW_ACCEPTANCE.md`, and
+`RELAY_ACTIVATION_JOURNAL_ACCEPTANCE.md`.
 
 ## Command Contract
 
@@ -220,6 +226,14 @@ revision, existing final name, or ambiguous temporary file remains
 `recovery_required`. Terminal receipts use the same no-replace publication,
 file fsync, and parent-directory fsync. No transaction or receipt is modified
 in place.
+
+The implemented private journal core additionally binds the initial
+enabled/disabled and active/inactive labels, hashes of the initial enablement
+inventory and installed unit identity, and one step-specific observation hash
+for every observed revision. The future controller must define those
+observation hashes over canonical evidence: enable ownership binds the exact
+post-enable link inventory, while start ownership binds the exact post-start
+InvocationID plus unit identity. Raw systemd output is not journaled.
 
 Confirmed execution order:
 

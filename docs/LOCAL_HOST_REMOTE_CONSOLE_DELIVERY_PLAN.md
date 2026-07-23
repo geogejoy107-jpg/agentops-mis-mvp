@@ -264,8 +264,10 @@ Implementation slices:
      `RELAY_ACTIVATION_PLAN_CORE_ACCEPTANCE.md`,
      `RELAY_CONFIG_PARSER_ACCEPTANCE.md`,
      `RELAY_ACTIVATION_SCANNER_ACCEPTANCE.md`, and
-     `RELAY_ACTIVATION_PREVIEW_ACCEPTANCE.md`; confirmed mutation, transaction,
-     rollback and recovery remain unimplemented;
+     `RELAY_ACTIVATION_PREVIEW_ACCEPTANCE.md`; the private immutable journal
+     core is implemented in `RELAY_ACTIVATION_JOURNAL_ACCEPTANCE.md`, while
+     production journal opening, confirmed mutation, controller, rollback and
+     recovery remain unimplemented;
    - upgrade, rollback, uninstall, Linux account provisioning, service
      activation and public infrastructure acceptance: pending;
    - public endpoint, DNS/ACME provisioning, stable per-Host Console origin,

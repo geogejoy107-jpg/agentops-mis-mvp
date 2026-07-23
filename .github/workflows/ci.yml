@@ -40,6 +40,7 @@ jobs:
           python3 -m py_compile \
             server.py \
             agentops_mis_cli/relay_activation.py \
+            agentops_mis_cli/relay_activation_journal.py \
             agentops_mis_cli/relay_activation_preview.py \
             agentops_mis_cli/relay_activation_scan.py \
             agentops_mis_cli/relay_admin.py \
@@ -51,6 +52,7 @@ jobs:
             agentops_mis_cli/worker.py \
             agentops_mis_core/worker_fleet.py \
             scripts/run_local_stack.py \
+            scripts/relay_activation_journal_smoke.py \
             scripts/relay_activation_plan_smoke.py \
             scripts/relay_activation_preview_smoke.py \
             scripts/relay_activation_scan_smoke.py \
@@ -65,6 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           timeout 120s python3 scripts/private_host_runtime_lock_smoke.py
+          timeout 120s python3 scripts/relay_activation_journal_smoke.py
           timeout 120s python3 scripts/relay_activation_plan_smoke.py
           timeout 120s python3 scripts/relay_activation_preview_smoke.py
           timeout 120s python3 scripts/relay_activation_scan_smoke.py
@@ -172,6 +175,7 @@ jobs:
           timeout 120s python3 scripts/relay_release_bundle_smoke.py
           timeout 120s python3 scripts/relay_offline_install_smoke.py
           timeout 120s python3 scripts/relay_offline_status_smoke.py
+          timeout 120s python3 scripts/relay_activation_journal_smoke.py
           timeout 120s python3 scripts/relay_activation_plan_smoke.py
           timeout 120s python3 scripts/relay_activation_preview_smoke.py
           timeout 120s python3 scripts/relay_activation_scan_smoke.py
