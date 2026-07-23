@@ -862,13 +862,15 @@ def human_review(
     ) or {"count": 0})["count"])
     approval_audit_count = int((adapter.fetchone(
         """SELECT COUNT(*) AS count FROM audit_logs
-        WHERE workspace_id=? AND actor_type='user' AND action='approval.approved'
+        WHERE workspace_id=? AND actor_type='user'
+          AND action='approval.customer_delivery.approved'
           AND entity_type='approvals' AND entity_id=?""",
         (WORKSPACE_ID, receipt["approval_id"]),
     ) or {"count": 0})["count"])
     approval_event_count = int((adapter.fetchone(
         """SELECT COUNT(*) AS count FROM runtime_events
-        WHERE event_type='approval.approved' AND run_id=? AND task_id=? AND agent_id=?""",
+        WHERE event_type='approval.customer_delivery.approved'
+          AND run_id=? AND task_id=? AND agent_id=?""",
         (receipt["run_id"], f"tsk_real_{runtime}_review", f"agt_real_{runtime}_review"),
     ) or {"count": 0})["count"])
     delivery_run = adapter.fetchone(
@@ -891,36 +893,60 @@ def human_review(
         ),
     )
     adapter.commit()
-    if not (
-        approval_first_status == 200
-        and approval_first.get("outcome") == "updated"
-        and approval_first.get("control_plane") == "typescript_postgres"
-        and (approval_first.get("approval") or {}).get("reason") is None
-        and "delivery_approval_gate" not in approval_first
-        and approval_replay_status == 200
-        and approval_replay.get("outcome") == "unchanged"
-        and owner
-        and approval
-        and approval["decision"] == "approved"
-        and approval["approver_user_id"] == owner["user_id"]
-        and approval_request_count == approval_audit_count == approval_event_count == 1
-        and delivery_run
-        and delivery_run["status"] == "completed"
-        and int(delivery_run["approval_required"] or 0) == 0
-        and delivery_task
-        and delivery_task["status"] == "completed"
-        and delivery_manifest
-        and delivery_manifest["status"] == "verified"
-        and first_status == 200
-        and first.get("outcome") == "updated"
-        and replay_status == 200
-        and replay.get("outcome") == "unchanged"
-        and foreign_status == 403
-        and memory
-        and memory["review_status"] == "approved"
-        and request_count == audit_count == event_count == 1
-    ):
-        raise RuntimeError(f"{runtime} Human review evidence or replay/isolation contract failed")
+    review_checks = {
+        "approval_first_status": approval_first_status == 200,
+        "approval_first_outcome": approval_first.get("outcome") == "updated",
+        "approval_typescript_owner": (
+            approval_first.get("control_plane") == "typescript_postgres"
+        ),
+        "approval_reason_omitted": (
+            (approval_first.get("approval") or {}).get("reason") is None
+        ),
+        "legacy_delivery_gate_omitted": "delivery_approval_gate" not in approval_first,
+        "approval_replay_status": approval_replay_status == 200,
+        "approval_replay_outcome": approval_replay.get("outcome") == "unchanged",
+        "owner_present": bool(owner),
+        "approval_present": bool(approval),
+        "approval_decision": bool(approval and approval["decision"] == "approved"),
+        "approval_actor": bool(
+            approval
+            and owner
+            and approval["approver_user_id"] == owner["user_id"]
+        ),
+        "approval_evidence_counts": (
+            approval_request_count
+            == approval_audit_count
+            == approval_event_count
+            == 1
+        ),
+        "delivery_run_completed": bool(
+            delivery_run and delivery_run["status"] == "completed"
+        ),
+        "delivery_run_gate_cleared": bool(
+            delivery_run and int(delivery_run["approval_required"] or 0) == 0
+        ),
+        "delivery_task_completed": bool(
+            delivery_task and delivery_task["status"] == "completed"
+        ),
+        "delivery_manifest_verified": bool(
+            delivery_manifest and delivery_manifest["status"] == "verified"
+        ),
+        "memory_first_status": first_status == 200,
+        "memory_first_outcome": first.get("outcome") == "updated",
+        "memory_replay_status": replay_status == 200,
+        "memory_replay_outcome": replay.get("outcome") == "unchanged",
+        "memory_cross_workspace_denied": foreign_status == 403,
+        "memory_approved": bool(memory and memory["review_status"] == "approved"),
+        "memory_evidence_counts": request_count == audit_count == event_count == 1,
+    }
+    failed_review_checks = [
+        name for name, passed in review_checks.items() if not passed
+    ]
+    if failed_review_checks:
+        raise RuntimeError(
+            f"{runtime} Human review evidence or replay/isolation contract "
+            f"failed checks: {','.join(failed_review_checks)}"
+        )
     return {
         "queue_visible": True,
         "first_outcome": first.get("outcome"),
