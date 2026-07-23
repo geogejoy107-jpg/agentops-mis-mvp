@@ -109,9 +109,9 @@ VALUES
 ('tc_pg_a', 'run_pg_a', 'agt_pg_a', 'postgres_parity_probe', 'v1', 'database', '{{}}', 'postgres://local/container', 'high', 'waiting_approval', 'Prepared action awaits approval.', NULL, '{now}', NULL, '{now}'),
 ('tc_pg_b', 'run_pg_b', 'agt_pg_b', 'postgres_parity_probe', 'v1', 'database', '{{}}', 'postgres://local/container', 'low', 'completed', 'Workspace B completed.', NULL, '{now}', '{now}', '{now}');
 
-INSERT INTO approvals(approval_id, task_id, run_id, tool_call_id, requested_by_agent_id, approver_user_id, decision, reason, expires_at, created_at, decided_at)
+INSERT INTO approvals(approval_id, approval_kind, task_id, run_id, tool_call_id, requested_by_agent_id, approver_user_id, decision, reason, expires_at, created_at, decided_at)
 VALUES
-('ap_pg_a', 'tsk_pg_a', 'run_pg_a', 'tc_pg_a', 'agt_pg_a', NULL, 'pending', 'Container parity prepared action approval.', NULL, '{now}', NULL);
+('ap_pg_a', 'prepared_action', 'tsk_pg_a', 'run_pg_a', 'tc_pg_a', 'agt_pg_a', NULL, 'pending', 'Container parity prepared action approval.', NULL, '{now}', NULL);
 
 INSERT INTO prepared_actions(prepared_action_id, workspace_id, task_id, run_id, tool_call_id, approval_id, requested_by_agent_id, action_type, provider, target_resource, normalized_args_json, args_hash, snapshot_ref, snapshot_hash, status, result_json, created_at, updated_at, approved_at, consumed_at)
 VALUES

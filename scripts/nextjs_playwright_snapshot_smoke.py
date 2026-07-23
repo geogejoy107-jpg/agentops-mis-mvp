@@ -419,13 +419,14 @@ def seed_customer_project_fixture(db_path: str) -> str:
             ),
         )
         conn.execute(
-            """INSERT INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO approvals(approval_id,approval_kind,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 f"ap_kb_bot_{project_id}_delivery",
+                "customer_delivery",
                 final_task_id,
                 final_run_id,
-                f"tc_kb_bot_{project_id}_delivery",
+                None,
                 "agt_cos",
                 "usr_founder",
                 "approved",

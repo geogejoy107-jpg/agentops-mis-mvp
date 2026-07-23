@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Filter, RefreshCw, Wrench } from "lucide-react";
 import { AppFrame } from "./AppFrame";
-import { loadToolCalls, type ToolCallSummary } from "@/lib/mis";
+import { isHumanSessionUnauthorized, loadToolCalls, setActiveWorkspaceId, type ToolCallSummary } from "@/lib/mis";
 
 type LoadState<T> = {
   data: T;
@@ -44,13 +44,21 @@ function durationSeconds(toolCall: ToolCallSummary) {
 
 export function ToolCallsParityPage() {
   const [riskFilter, setRiskFilter] = useState("all");
+  const [sessionRequired, setSessionRequired] = useState(false);
   const [state, setState] = useState<LoadState<ToolCallSummary[]>>({ data: [], error: null, loading: true });
 
   const refresh = async () => {
     setState((current) => ({ ...current, error: null, loading: true }));
+    setSessionRequired(false);
     try {
       setState({ data: await loadToolCalls(), error: null, loading: false });
     } catch (err) {
+      if (isHumanSessionUnauthorized(err)) {
+        setActiveWorkspaceId("");
+        setSessionRequired(true);
+        setState({ data: [], error: null, loading: false });
+        return;
+      }
       setState({ data: [], error: err instanceof Error ? err.message : String(err), loading: false });
     }
   };
@@ -90,6 +98,9 @@ export function ToolCallsParityPage() {
         </button>
       </header>
 
+      {sessionRequired ? (
+        <div className="banner error">Human Session required. <Link className="backLink" href="/workspace">Sign in</Link></div>
+      ) : null}
       {state.error ? <div className="banner error">MIS API unavailable through /api/mis/tool-calls: {state.error}</div> : null}
 
       <div className="filterBar">
@@ -132,7 +143,7 @@ export function ToolCallsParityPage() {
                   ) : "-"}
                 </td>
                 <td className="mono">{toolCall.agent_id || "-"}</td>
-                <td>{toolCall.target_resource || toolCall.result_summary || "-"}</td>
+                <td>{toolCall.target_resource || "-"}</td>
                 <td>{durationSeconds(toolCall)}</td>
                 <td>{formatDate(toolCall.started_at || toolCall.created_at)}</td>
               </tr>

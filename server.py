@@ -1247,6 +1247,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 
 CREATE TABLE IF NOT EXISTS approvals (
     approval_id TEXT PRIMARY KEY,
+    approval_kind TEXT NOT NULL DEFAULT 'tool_execution',
     task_id TEXT NOT NULL,
     run_id TEXT NOT NULL,
     tool_call_id TEXT,
@@ -1257,6 +1258,10 @@ CREATE TABLE IF NOT EXISTS approvals (
     expires_at TEXT,
     created_at TEXT NOT NULL,
     decided_at TEXT,
+    CONSTRAINT approvals_kind_binding_check CHECK(
+        (approval_kind IN ('tool_execution','prepared_action') AND tool_call_id IS NOT NULL)
+        OR (approval_kind IN ('run_execution','agent_enrollment','customer_delivery') AND tool_call_id IS NULL)
+    ),
     FOREIGN KEY(task_id) REFERENCES tasks(task_id),
     FOREIGN KEY(run_id) REFERENCES runs(run_id),
     FOREIGN KEY(tool_call_id) REFERENCES tool_calls(tool_call_id),
@@ -1702,6 +1707,7 @@ CREATE INDEX IF NOT EXISTS idx_prepared_actions_workspace ON prepared_actions(wo
 CREATE INDEX IF NOT EXISTS idx_prepared_actions_status ON prepared_actions(status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_prepared_actions_tool ON prepared_actions(tool_call_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_prepared_actions_approval_unique ON prepared_actions(approval_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_gateway_enrollment_approval_unique ON agent_gateway_enrollment_requests(approval_id);
 CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(review_status);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
 CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id, updated_at);
@@ -1778,6 +1784,10 @@ def init_schema():
         if isinstance(conn, sqlite3.Connection):
             schema_sql = schema_sql.replace(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_prepared_actions_approval_unique ON prepared_actions(approval_id);\n",
+                "",
+            )
+            schema_sql = schema_sql.replace(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_gateway_enrollment_approval_unique ON agent_gateway_enrollment_requests(approval_id);\n",
                 "",
             )
         conn.executescript(schema_sql)
@@ -1879,6 +1889,34 @@ def ensure_prepared_action_approval_unique_index(conn) -> bool:
     return True
 
 
+def enrollment_duplicate_approval_bindings(conn, limit: int = 20) -> list[dict]:
+    rows = conn.execute(
+        """SELECT approval_id, COUNT(*) AS binding_count
+        FROM agent_gateway_enrollment_requests
+        GROUP BY approval_id
+        HAVING COUNT(*) > 1
+        ORDER BY approval_id
+        LIMIT ?""",
+        (max(1, min(int(limit or 20), 100)),),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def ensure_enrollment_approval_unique_index(conn) -> bool:
+    duplicates = enrollment_duplicate_approval_bindings(conn)
+    if duplicates:
+        duplicate_fingerprint = stable_hash(duplicates)[:16]
+        raise RuntimeError(
+            "enrollment_approval_binding_duplicates_detected:"
+            f"groups={len(duplicates)}:fingerprint={duplicate_fingerprint}"
+        )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_gateway_enrollment_approval_unique "
+        "ON agent_gateway_enrollment_requests(approval_id)"
+    )
+    return True
+
+
 def ensure_postgres_prepared_action_lifecycle_schema(conn) -> dict:
     if isinstance(conn, sqlite3.Connection):
         return {"table_present": False, "check_migrated": False, "approval_index_ensured": False}
@@ -1925,6 +1963,34 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "runtime_connectors", "trust_status", "trust_status TEXT NOT NULL DEFAULT 'trusted'")
     ensure_column(conn, "runtime_connectors", "trust_note", "trust_note TEXT")
     ensure_column(conn, "runtime_connectors", "trust_updated_at", "trust_updated_at TEXT")
+    ensure_column(conn, "approvals", "approval_kind", "approval_kind TEXT NOT NULL DEFAULT 'tool_execution'")
+    conn.execute(
+        """UPDATE approvals SET approval_kind='prepared_action'
+        WHERE EXISTS(
+            SELECT 1 FROM prepared_actions action
+            WHERE action.approval_id=approvals.approval_id
+        )"""
+    )
+    conn.execute(
+        """UPDATE approvals SET approval_kind='agent_enrollment'
+        WHERE EXISTS(
+            SELECT 1 FROM agent_gateway_enrollment_requests request
+            WHERE request.approval_id=approvals.approval_id
+        )"""
+    )
+    conn.execute(
+        """UPDATE approvals SET approval_kind='customer_delivery'
+        WHERE EXISTS(
+            SELECT 1 FROM audit_logs audit
+            WHERE audit.entity_type='approvals'
+              AND audit.entity_id=approvals.approval_id
+              AND audit.action='workflow.customer_worker_task.delivery_approval'
+        )"""
+    )
+    conn.execute(
+        """UPDATE approvals SET approval_kind='run_execution'
+        WHERE approval_kind='tool_execution' AND tool_call_id IS NULL"""
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id, updated_at)")
@@ -1934,6 +2000,7 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_actions_status ON prepared_actions(status, updated_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_actions_tool ON prepared_actions(tool_call_id)")
     ensure_prepared_action_approval_unique_index(conn)
+    ensure_enrollment_approval_unique_index(conn)
     conn.execute(
         """UPDATE memories
         SET workspace_id=(
@@ -2436,8 +2503,8 @@ def seed(reset=False):
             run = conn.execute("SELECT task_id FROM runs WHERE run_id=?", (tc["run_id"],)).fetchone()
             decision = ["pending", "approved", "rejected", "pending"][i % 4]
             conn.execute(
-                """INSERT INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                """INSERT INTO approvals(approval_id,approval_kind,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
+                VALUES(?,'tool_execution',?,?,?,?,?,?,?,?,?,?)""",
                 (
                     f"ap_seed_{i+1:02d}", run["task_id"], tc["run_id"], tc["tool_call_id"], tc["agent_id"], "usr_founder", decision,
                     "Seed approval for high-risk tool call", (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)).isoformat(),
@@ -2638,7 +2705,17 @@ def upsert_agent(conn, row: dict, actor_id="adapter-import") -> str:
 def repo_upsert_task(conn: sqlite3.Connection, row: dict) -> tuple[sqlite3.Row | None, str]:
     ensure_default_user(conn, row.get("requester_id"))
     row.setdefault("workspace_id", "local-demo")
-    before = conn.execute("SELECT * FROM tasks WHERE task_id=?", (row["task_id"],)).fetchone()
+    if not isinstance(conn, sqlite3.Connection):
+        conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(?))",
+            (f"agentops-task:{row['task_id']}",),
+        )
+        before = conn.execute(
+            "SELECT * FROM tasks WHERE task_id=? FOR UPDATE",
+            (row["task_id"],),
+        ).fetchone()
+    else:
+        before = conn.execute("SELECT * FROM tasks WHERE task_id=?", (row["task_id"],)).fetchone()
     if before:
         if row_unchanged(before, row, {"created_at", "updated_at"}):
             return before, "unchanged"
@@ -2668,11 +2745,114 @@ def upsert_task(conn, row: dict, actor_id="adapter-import") -> str:
     return outcome
 
 
+def postgres_lock_execution_graph(
+    conn,
+    *,
+    task_id: str | None = None,
+    run_id: str | None = None,
+    tool_call_id: str | None = None,
+    approval_id: str | None = None,
+    prepared_action_id: str | None = None,
+    enrollment_request_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict:
+    """Lock one execution graph in the shared Postgres writer order."""
+    graph = {
+        "task": None,
+        "run": None,
+        "tool_call": None,
+        "approval": None,
+        "prepared_action": None,
+        "enrollment_request": None,
+    }
+    if isinstance(conn, sqlite3.Connection):
+        return graph
+    if run_id and not task_id:
+        raise ValueError("postgres_graph_task_id_required")
+    if tool_call_id and not run_id:
+        raise ValueError("postgres_graph_run_id_required")
+    if approval_id and not run_id:
+        raise ValueError("postgres_graph_approval_parent_required")
+
+    if task_id:
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (f"agentops-task:{task_id}",))
+        graph["task"] = conn.execute(
+            "SELECT * FROM tasks WHERE task_id=? FOR UPDATE",
+            (task_id,),
+        ).fetchone()
+    if run_id:
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (f"agentops-run:{run_id}",))
+        graph["run"] = conn.execute(
+            "SELECT * FROM runs WHERE run_id=? FOR UPDATE",
+            (run_id,),
+        ).fetchone()
+    if tool_call_id:
+        conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(?))",
+            (f"agentops-tool-call:{tool_call_id}",),
+        )
+        graph["tool_call"] = conn.execute(
+            "SELECT * FROM tool_calls WHERE tool_call_id=? FOR UPDATE",
+            (tool_call_id,),
+        ).fetchone()
+    if approval_id:
+        approval_workspace = normalize_workspace_id(
+            workspace_id or (row_workspace(graph["task"]) if graph["task"] else "local-demo")
+        )
+        conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(?))",
+            (f"agentops-approval:{approval_workspace}:{approval_id}",),
+        )
+        graph["approval"] = conn.execute(
+            "SELECT * FROM approvals WHERE approval_id=? FOR UPDATE",
+            (approval_id,),
+        ).fetchone()
+    if prepared_action_id:
+        conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(?))",
+            (f"agentops-prepared-action:{prepared_action_id}",),
+        )
+        graph["prepared_action"] = conn.execute(
+            "SELECT * FROM prepared_actions WHERE prepared_action_id=? FOR UPDATE",
+            (prepared_action_id,),
+        ).fetchone()
+    if enrollment_request_id:
+        conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(?))",
+            (f"agentops-enrollment-request:{enrollment_request_id}",),
+        )
+        graph["enrollment_request"] = conn.execute(
+            "SELECT * FROM agent_gateway_enrollment_requests WHERE request_id=? FOR UPDATE",
+            (enrollment_request_id,),
+        ).fetchone()
+    return graph
+
+
 def repo_upsert_run(conn: sqlite3.Connection, row: dict, allow_update: bool = True) -> tuple[sqlite3.Row | None, str]:
     if not row.get("workspace_id"):
         task = conn.execute("SELECT workspace_id FROM tasks WHERE task_id=?", (row.get("task_id"),)).fetchone()
         row["workspace_id"] = (task["workspace_id"] if task else None) or "local-demo"
-    before = conn.execute("SELECT * FROM runs WHERE run_id=?", (row["run_id"],)).fetchone()
+    if not isinstance(conn, sqlite3.Connection):
+        graph = postgres_lock_execution_graph(
+            conn,
+            task_id=row.get("task_id"),
+            run_id=row.get("run_id"),
+            workspace_id=row.get("workspace_id"),
+        )
+        task_parent = graph["task"]
+        if not task_parent:
+            raise ValueError("run_parent_task_missing")
+        if row_workspace(task_parent) != normalize_workspace_id(row.get("workspace_id")):
+            raise ValueError("run_parent_task_binding_invalid")
+        before = graph["run"]
+        if before and (
+            before["task_id"] != row.get("task_id")
+            or row_workspace(before) != normalize_workspace_id(row.get("workspace_id"))
+            or before["agent_id"] != row.get("agent_id")
+        ):
+            raise ValueError("run_immutable_binding_conflict")
+    else:
+        before = conn.execute("SELECT * FROM runs WHERE run_id=?", (row["run_id"],)).fetchone()
     if before:
         if not allow_update:
             return before, "unchanged"
@@ -2700,7 +2880,38 @@ def repo_upsert_run(conn: sqlite3.Connection, row: dict, allow_update: bool = Tr
 
 
 def repo_upsert_tool_call(conn: sqlite3.Connection, row: dict, allow_update: bool = True) -> tuple[sqlite3.Row | None, str]:
-    before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (row["tool_call_id"],)).fetchone()
+    if not isinstance(conn, sqlite3.Connection):
+        run_hint = conn.execute(
+            "SELECT task_id,workspace_id,agent_id FROM runs WHERE run_id=?",
+            (row.get("run_id"),),
+        ).fetchone()
+        if not run_hint:
+            raise ValueError("tool_call_parent_run_missing")
+        graph = postgres_lock_execution_graph(
+            conn,
+            task_id=run_hint["task_id"],
+            run_id=row.get("run_id"),
+            tool_call_id=row.get("tool_call_id"),
+            workspace_id=row_workspace(run_hint),
+        )
+        task_parent = graph["task"]
+        run_parent = graph["run"]
+        if not task_parent or not run_parent:
+            raise ValueError("tool_call_parent_run_missing")
+        if (
+            run_parent["task_id"] != task_parent["task_id"]
+            or row_workspace(run_parent) != row_workspace(task_parent)
+            or run_parent["agent_id"] != row.get("agent_id")
+        ):
+            raise ValueError("tool_call_parent_binding_invalid")
+        before = graph["tool_call"]
+        if before and (
+            before["run_id"] != row.get("run_id")
+            or before["agent_id"] != row.get("agent_id")
+        ):
+            raise ValueError("tool_call_immutable_binding_conflict")
+    else:
+        before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (row["tool_call_id"],)).fetchone()
     if before:
         if not allow_update or row_unchanged(before, row, {"created_at"}):
             return before, "unchanged"
@@ -2739,11 +2950,217 @@ class PreparedActionImmutableConflict(ValueError):
     pass
 
 
+VALID_APPROVAL_KINDS = {
+    "run_execution",
+    "tool_execution",
+    "prepared_action",
+    "agent_enrollment",
+    "customer_delivery",
+}
+
+
+def postgres_approval_link_hints(conn, approval_id: str) -> dict:
+    if isinstance(conn, sqlite3.Connection):
+        return {"prepared_action_ids": [], "enrollment_request_ids": []}
+    prepared_action_ids = [
+        row["prepared_action_id"]
+        for row in conn.execute(
+            """SELECT prepared_action_id FROM prepared_actions
+            WHERE approval_id=? ORDER BY prepared_action_id LIMIT 2""",
+            (approval_id,),
+        ).fetchall()
+    ]
+    enrollment_request_ids = [
+        row["request_id"]
+        for row in conn.execute(
+            """SELECT request_id FROM agent_gateway_enrollment_requests
+            WHERE approval_id=? ORDER BY request_id LIMIT 2""",
+            (approval_id,),
+        ).fetchall()
+    ]
+    return {
+        "prepared_action_ids": prepared_action_ids,
+        "enrollment_request_ids": enrollment_request_ids,
+    }
+
+
+def postgres_approval_graph_binding_error(graph: dict, approval, *, require_linked_kind: bool) -> str | None:
+    task = graph["task"]
+    run = graph["run"]
+    tool_call = graph["tool_call"]
+    prepared_action = graph["prepared_action"]
+    enrollment_request = graph["enrollment_request"]
+    if not task:
+        return "approval_parent_task_missing"
+    if not run or run["task_id"] != task["task_id"] or row_workspace(run) != row_workspace(task):
+        return "approval_parent_run_binding_invalid"
+    if approval["task_id"] != task["task_id"] or approval["run_id"] != run["run_id"]:
+        return "approval_parent_binding_invalid"
+    requested_by_agent_id = approval["requested_by_agent_id"]
+    if requested_by_agent_id and requested_by_agent_id != run["agent_id"]:
+        return "approval_parent_agent_binding_invalid"
+    expected_tool_call_id = approval["tool_call_id"] or None
+    if expected_tool_call_id:
+        if not tool_call:
+            return "approval_parent_tool_binding_invalid"
+        if tool_call["tool_call_id"] != expected_tool_call_id \
+                or tool_call["run_id"] != run["run_id"] \
+                or tool_call["agent_id"] != run["agent_id"]:
+            return "approval_parent_tool_binding_invalid"
+    elif tool_call:
+        return "approval_parent_tool_binding_invalid"
+    if prepared_action and (
+        prepared_action["approval_id"] != approval["approval_id"]
+        or prepared_action["task_id"] != task["task_id"]
+        or prepared_action["run_id"] != run["run_id"]
+        or prepared_action["tool_call_id"] != expected_tool_call_id
+        or row_workspace(prepared_action) != row_workspace(task)
+        or (
+            prepared_action["requested_by_agent_id"]
+            and prepared_action["requested_by_agent_id"] != run["agent_id"]
+        )
+    ):
+        return "approval_prepared_action_binding_invalid"
+    if enrollment_request and (
+        enrollment_request["approval_id"] != approval["approval_id"]
+        or enrollment_request["task_id"] != task["task_id"]
+        or enrollment_request["run_id"] != run["run_id"]
+        or enrollment_request["agent_id"] != run["agent_id"]
+        or row_workspace(enrollment_request) != row_workspace(task)
+    ):
+        return "approval_enrollment_binding_invalid"
+    if prepared_action and enrollment_request:
+        return "approval_linked_workflow_conflict"
+
+    approval_kind = str(approval["approval_kind"] or "")
+    if approval_kind not in VALID_APPROVAL_KINDS:
+        return "approval_kind_invalid"
+    if approval_kind in {"tool_execution", "prepared_action"} and not expected_tool_call_id:
+        return "approval_kind_tool_binding_required"
+    if approval_kind in {"run_execution", "agent_enrollment", "customer_delivery"} and expected_tool_call_id:
+        return "approval_kind_tool_binding_forbidden"
+    if prepared_action and approval_kind != "prepared_action":
+        return "approval_kind_prepared_action_binding_invalid"
+    if enrollment_request and approval_kind != "agent_enrollment":
+        return "approval_kind_enrollment_binding_invalid"
+    if require_linked_kind:
+        if approval_kind == "prepared_action" and (not prepared_action or enrollment_request):
+            return "approval_kind_prepared_action_binding_invalid"
+        if approval_kind == "agent_enrollment" and (prepared_action or not enrollment_request):
+            return "approval_kind_enrollment_binding_invalid"
+        if approval_kind in {"tool_execution", "run_execution", "customer_delivery"} \
+                and (prepared_action or enrollment_request):
+            return "approval_kind_linked_workflow_forbidden"
+    return None
+
+
+def postgres_prepared_action_graph_binding_error(graph: dict, action, *, require_existing: bool) -> str | None:
+    approval = graph["approval"]
+    if not approval:
+        return "prepared_action_approval_missing"
+    approval_error = postgres_approval_graph_binding_error(
+        graph,
+        approval,
+        require_linked_kind=require_existing,
+    )
+    if approval_error:
+        return approval_error
+    task = graph["task"]
+    run = graph["run"]
+    tool_call = graph["tool_call"]
+    if not task or not run or not tool_call:
+        return "prepared_action_parent_binding_invalid"
+    if (
+        action["workspace_id"] != row_workspace(task)
+        or action["task_id"] != task["task_id"]
+        or action["run_id"] != run["run_id"]
+        or action["tool_call_id"] != tool_call["tool_call_id"]
+        or action["approval_id"] != approval["approval_id"]
+        or (
+            action["requested_by_agent_id"]
+            and action["requested_by_agent_id"] != run["agent_id"]
+        )
+    ):
+        return "prepared_action_parent_binding_invalid"
+    if str(approval["approval_kind"] or "") != "prepared_action":
+        return "prepared_action_approval_kind_invalid"
+    if require_existing:
+        existing = graph["prepared_action"]
+        if not existing or existing["prepared_action_id"] != action["prepared_action_id"]:
+            return "prepared_action_binding_missing"
+    return None
+
+
+def postgres_enrollment_request_graph_binding_error(graph: dict, request, *, require_existing: bool) -> str | None:
+    approval = graph["approval"]
+    if not approval:
+        return "gateway_enrollment_approval_missing"
+    approval_error = postgres_approval_graph_binding_error(
+        graph,
+        approval,
+        require_linked_kind=require_existing,
+    )
+    if approval_error:
+        return approval_error
+    task = graph["task"]
+    run = graph["run"]
+    if not task or not run:
+        return "gateway_enrollment_parent_binding_invalid"
+    if (
+        request["workspace_id"] != row_workspace(task)
+        or request["task_id"] != task["task_id"]
+        or request["run_id"] != run["run_id"]
+        or request["approval_id"] != approval["approval_id"]
+        or request["agent_id"] != run["agent_id"]
+    ):
+        return "gateway_enrollment_parent_binding_invalid"
+    if str(approval["approval_kind"] or "") != "agent_enrollment":
+        return "gateway_enrollment_approval_kind_invalid"
+    if require_existing:
+        existing = graph["enrollment_request"]
+        if not existing or existing["request_id"] != request["request_id"]:
+            return "gateway_enrollment_request_binding_missing"
+    return None
+
+
 def repo_upsert_approval(conn: sqlite3.Connection, row: dict, allow_update: bool = True) -> tuple[sqlite3.Row | None, str]:
+    row = dict(row)
+    raw_approval_kind = row.get("approval_kind")
+    if raw_approval_kind is None:
+        if not isinstance(conn, sqlite3.Connection):
+            raise ApprovalImmutableConflict("approval_kind_required")
+        raw_approval_kind = "tool_execution" if row.get("tool_call_id") else "run_execution"
+    approval_kind = str(raw_approval_kind)
+    if approval_kind not in VALID_APPROVAL_KINDS:
+        raise ApprovalImmutableConflict("approval_kind_invalid")
+    if approval_kind in {"tool_execution", "prepared_action"} and not row.get("tool_call_id"):
+        raise ApprovalImmutableConflict("approval_kind_tool_binding_required")
+    if approval_kind in {"run_execution", "agent_enrollment", "customer_delivery"} and row.get("tool_call_id"):
+        raise ApprovalImmutableConflict("approval_kind_tool_binding_forbidden")
+    row["approval_kind"] = approval_kind
+    if not isinstance(conn, sqlite3.Connection):
+        links = postgres_approval_link_hints(conn, row["approval_id"])
+        if len(links["prepared_action_ids"]) > 1 or len(links["enrollment_request_ids"]) > 1:
+            raise ApprovalImmutableConflict("approval_linked_workflow_conflict")
+        graph = postgres_lock_execution_graph(
+            conn,
+            task_id=row["task_id"],
+            run_id=row["run_id"],
+            tool_call_id=row.get("tool_call_id"),
+            approval_id=row["approval_id"],
+            prepared_action_id=(links["prepared_action_ids"] or [None])[0],
+            enrollment_request_id=(links["enrollment_request_ids"] or [None])[0],
+        )
+        binding_error = postgres_approval_graph_binding_error(graph, row, require_linked_kind=False)
+        if binding_error:
+            raise ApprovalImmutableConflict(binding_error)
+        before = graph["approval"]
+    else:
+        before = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
     ensure_default_user(conn, row.get("approver_user_id"))
-    before = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
     if before:
         immutable_fields = (
+            "approval_kind",
             "task_id",
             "run_id",
             "tool_call_id",
@@ -2767,8 +3184,8 @@ def repo_upsert_approval(conn: sqlite3.Connection, row: dict, allow_update: bool
         )
         return before, "updated"
     conn.execute(
-        """INSERT INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
-        VALUES(:approval_id,:task_id,:run_id,:tool_call_id,:requested_by_agent_id,:approver_user_id,:decision,:reason,:expires_at,:created_at,:decided_at)""",
+        """INSERT INTO approvals(approval_id,approval_kind,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
+        VALUES(:approval_id,:approval_kind,:task_id,:run_id,:tool_call_id,:requested_by_agent_id,:approver_user_id,:decision,:reason,:expires_at,:created_at,:decided_at)""",
         row,
     )
     return before, "created"
@@ -2781,11 +3198,42 @@ def repo_update_approval_decision(
     reason: str | None = None,
     decided_at: str | None = None,
 ) -> tuple[sqlite3.Row | None, sqlite3.Row | None, str]:
-    before = postgres_locking_select(
-        conn,
-        "SELECT * FROM approvals WHERE approval_id=?",
-        (approval_id,),
-    )
+    if not isinstance(conn, sqlite3.Connection):
+        hint = conn.execute(
+            """SELECT task_id,run_id,tool_call_id FROM approvals
+            WHERE approval_id=?""",
+            (approval_id,),
+        ).fetchone()
+        if not hint:
+            return None, None, "missing"
+        links = postgres_approval_link_hints(conn, approval_id)
+        if len(links["prepared_action_ids"]) > 1 or len(links["enrollment_request_ids"]) > 1:
+            raise ApprovalImmutableConflict("approval_linked_workflow_conflict")
+        graph = postgres_lock_execution_graph(
+            conn,
+            task_id=hint["task_id"],
+            run_id=hint["run_id"],
+            tool_call_id=hint["tool_call_id"],
+            approval_id=approval_id,
+            prepared_action_id=(links["prepared_action_ids"] or [None])[0],
+            enrollment_request_id=(links["enrollment_request_ids"] or [None])[0],
+        )
+        before = graph["approval"]
+        if not before:
+            return None, None, "missing"
+        if before["task_id"] != hint["task_id"] \
+                or before["run_id"] != hint["run_id"] \
+                or (before["tool_call_id"] or None) != (hint["tool_call_id"] or None):
+            raise ApprovalImmutableConflict("approval_immutable_binding_conflict")
+        binding_error = postgres_approval_graph_binding_error(graph, before, require_linked_kind=True)
+        if binding_error:
+            raise ApprovalImmutableConflict(binding_error)
+    else:
+        before = postgres_locking_select(
+            conn,
+            "SELECT * FROM approvals WHERE approval_id=?",
+            (approval_id,),
+        )
     if not before:
         return None, None, "missing"
     current_decision = str(before["decision"] or "pending")
@@ -2890,13 +3338,26 @@ def repo_upsert_prepared_action(conn: sqlite3.Connection, row: dict, allow_updat
     row.setdefault("snapshot_hash", None)
     row.setdefault("approved_at", None)
     row.setdefault("consumed_at", None)
-    if row.get("approval_id"):
-        postgres_locking_select(
+    if not isinstance(conn, sqlite3.Connection):
+        graph = postgres_lock_execution_graph(
             conn,
-            "SELECT approval_id FROM approvals WHERE approval_id=?",
-            (row["approval_id"],),
+            task_id=row.get("task_id"),
+            run_id=row.get("run_id"),
+            tool_call_id=row.get("tool_call_id"),
+            approval_id=row.get("approval_id"),
+            prepared_action_id=row.get("prepared_action_id"),
+            workspace_id=row.get("workspace_id"),
         )
-    before = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (row["prepared_action_id"],)).fetchone()
+        binding_error = postgres_prepared_action_graph_binding_error(
+            graph,
+            row,
+            require_existing=bool(graph["prepared_action"]),
+        )
+        if binding_error:
+            raise PreparedActionImmutableConflict(binding_error)
+        before = graph["prepared_action"]
+    else:
+        before = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (row["prepared_action_id"],)).fetchone()
     approval_binding = conn.execute(
         "SELECT prepared_action_id FROM prepared_actions WHERE approval_id=? AND prepared_action_id<>?",
         (row.get("approval_id"), row["prepared_action_id"]),
@@ -2956,11 +3417,38 @@ def repo_update_prepared_action_status(
     approval_id: str | None = None,
     result_json=None,
 ) -> tuple[sqlite3.Row | None, sqlite3.Row | None, str]:
-    before = postgres_locking_select(
-        conn,
-        "SELECT * FROM prepared_actions WHERE prepared_action_id=?",
-        (prepared_action_id,),
-    )
+    if not isinstance(conn, sqlite3.Connection):
+        hint = conn.execute(
+            "SELECT * FROM prepared_actions WHERE prepared_action_id=?",
+            (prepared_action_id,),
+        ).fetchone()
+        if not hint:
+            return None, None, "missing"
+        graph = postgres_lock_execution_graph(
+            conn,
+            task_id=hint["task_id"],
+            run_id=hint["run_id"],
+            tool_call_id=hint["tool_call_id"],
+            approval_id=hint["approval_id"],
+            prepared_action_id=prepared_action_id,
+            workspace_id=row_workspace(hint),
+        )
+        before = graph["prepared_action"]
+        if not before:
+            return None, None, "missing"
+        binding_error = postgres_prepared_action_graph_binding_error(
+            graph,
+            before,
+            require_existing=True,
+        )
+        if binding_error:
+            raise PreparedActionImmutableConflict(binding_error)
+    else:
+        before = postgres_locking_select(
+            conn,
+            "SELECT * FROM prepared_actions WHERE prepared_action_id=?",
+            (prepared_action_id,),
+        )
     if not before:
         return None, None, "missing"
     if approval_id is not None and approval_id != before["approval_id"]:
@@ -3008,12 +3496,44 @@ def repo_claim_workspace_prepared_action(
     action_type: str,
 ) -> tuple[sqlite3.Row | None, str]:
     workspace_id = normalize_workspace_id(workspace_id)
-    before = postgres_locking_select(
-        conn,
-        """SELECT * FROM prepared_actions
-        WHERE workspace_id=? AND prepared_action_id=? AND provider=? AND action_type=?""",
-        (workspace_id, prepared_action_id, provider, action_type),
-    )
+    if not isinstance(conn, sqlite3.Connection):
+        hint = conn.execute(
+            """SELECT * FROM prepared_actions
+            WHERE workspace_id=? AND prepared_action_id=? AND provider=? AND action_type=?""",
+            (workspace_id, prepared_action_id, provider, action_type),
+        ).fetchone()
+        if not hint:
+            return None, "missing"
+        graph = postgres_lock_execution_graph(
+            conn,
+            task_id=hint["task_id"],
+            run_id=hint["run_id"],
+            tool_call_id=hint["tool_call_id"],
+            approval_id=hint["approval_id"],
+            prepared_action_id=prepared_action_id,
+            workspace_id=workspace_id,
+        )
+        before = graph["prepared_action"]
+        if not before:
+            return None, "missing"
+        binding_error = postgres_prepared_action_graph_binding_error(
+            graph,
+            before,
+            require_existing=True,
+        )
+        if binding_error:
+            raise PreparedActionImmutableConflict(binding_error)
+        if row_workspace(before) != workspace_id \
+                or before["provider"] != provider \
+                or before["action_type"] != action_type:
+            return None, "missing"
+    else:
+        before = postgres_locking_select(
+            conn,
+            """SELECT * FROM prepared_actions
+            WHERE workspace_id=? AND prepared_action_id=? AND provider=? AND action_type=?""",
+            (workspace_id, prepared_action_id, provider, action_type),
+        )
     if not before:
         return None, "missing"
     current_status = str(before["status"] or "waiting_approval")
@@ -3137,6 +3657,42 @@ def reconcile_stale_prepared_actions(
     return reconciled
 
 
+def prepared_action_parent_execution_state(conn, action) -> str:
+    workspace_id = row_workspace(action)
+    if not isinstance(conn, sqlite3.Connection):
+        graph = postgres_lock_execution_graph(
+            conn,
+            task_id=action["task_id"],
+            run_id=action["run_id"],
+            workspace_id=workspace_id,
+        )
+        task = graph["task"]
+        run = graph["run"]
+    else:
+        task = postgres_locking_select(
+            conn,
+            "SELECT task_id,workspace_id,status FROM tasks WHERE task_id=? AND workspace_id=?",
+            (action["task_id"], workspace_id),
+        )
+        run = postgres_locking_select(
+            conn,
+            """SELECT run_id,workspace_id,task_id,status FROM runs
+            WHERE run_id=? AND task_id=? AND workspace_id=?""",
+            (action["run_id"], action["task_id"], workspace_id),
+        )
+    if not task:
+        return "parent_missing"
+    if not run or run["task_id"] != task["task_id"] \
+            or row_workspace(run) != row_workspace(task) \
+            or row_workspace(task) != workspace_id:
+        return "parent_missing"
+    if str(task["status"] or "") in {"blocked", "failed", "canceled", "completed"}:
+        return "parent_blocked"
+    if str(run["status"] or "") in {"blocked", "failed", "canceled", "completed"}:
+        return "parent_blocked"
+    return "ready"
+
+
 def claim_prepared_action_execution(
     conn,
     action,
@@ -3153,6 +3709,9 @@ def claim_prepared_action_execution(
         fresh = repo_get_workspace_prepared_action(conn, workspace_id, prepared_action_id)
         if not fresh or fresh["provider"] != provider or fresh["action_type"] != action_type:
             return None, "missing"
+        parent_state = prepared_action_parent_execution_state(conn, fresh)
+        if parent_state != "ready":
+            return fresh, parent_state
         if prepared_action_execution_stale(fresh):
             failed, outcome = reconcile_stale_prepared_action(
                 conn,
@@ -3236,6 +3795,8 @@ def prepared_action_claim_error(provider: str, prepared_action_id: str, outcome:
         "expired": "prepared_action_expired",
         "canceled": "prepared_action_canceled",
         "failed": "prepared_action_failed",
+        "parent_missing": "prepared_action_parent_missing",
+        "parent_blocked": "prepared_action_parent_blocked",
         "missing": "prepared_action_not_found",
     }.get(outcome, "prepared_action_state_conflict")
     return {
@@ -4735,10 +5296,28 @@ def repo_list_gateway_sessions(conn: sqlite3.Connection, workspace_id: str | Non
 
 
 def repo_upsert_gateway_enrollment_request(conn: sqlite3.Connection, row: dict) -> tuple[sqlite3.Row | None, str]:
-    before = conn.execute(
-        "SELECT * FROM agent_gateway_enrollment_requests WHERE request_id=?",
-        (row["request_id"],),
-    ).fetchone()
+    if not isinstance(conn, sqlite3.Connection):
+        graph = postgres_lock_execution_graph(
+            conn,
+            task_id=row.get("task_id"),
+            run_id=row.get("run_id"),
+            approval_id=row.get("approval_id"),
+            enrollment_request_id=row.get("request_id"),
+            workspace_id=row.get("workspace_id"),
+        )
+        binding_error = postgres_enrollment_request_graph_binding_error(
+            graph,
+            row,
+            require_existing=bool(graph["enrollment_request"]),
+        )
+        if binding_error:
+            raise ValueError(binding_error)
+        before = graph["enrollment_request"]
+    else:
+        before = conn.execute(
+            "SELECT * FROM agent_gateway_enrollment_requests WHERE request_id=?",
+            (row["request_id"],),
+        ).fetchone()
     if before:
         immutable_fields = ("approval_id", "task_id", "run_id", "workspace_id", "agent_id", "created_at")
         if any(str(before[field]) != str(row[field]) for field in immutable_fields):
@@ -5131,6 +5710,7 @@ def agent_gateway_request_enrollment(conn, body) -> tuple[dict, int]:
     }, "agent-gateway-enrollment", {"scopes": scopes, "token_omitted": True})
     approval = {
         "approval_id": approval_id,
+        "approval_kind": "agent_enrollment",
         "task_id": task_id,
         "run_id": run_id,
         "tool_call_id": None,
@@ -5173,11 +5753,37 @@ def agent_gateway_request_enrollment(conn, body) -> tuple[dict, int]:
 
 
 def sync_enrollment_request_decision(conn, approval_id: str, decision: str):
-    row = postgres_locking_select(
-        conn,
-        "SELECT * FROM agent_gateway_enrollment_requests WHERE approval_id=?",
-        (approval_id,),
-    )
+    if not isinstance(conn, sqlite3.Connection):
+        hint = conn.execute(
+            "SELECT * FROM agent_gateway_enrollment_requests WHERE approval_id=?",
+            (approval_id,),
+        ).fetchone()
+        if not hint:
+            return "missing"
+        graph = postgres_lock_execution_graph(
+            conn,
+            task_id=hint["task_id"],
+            run_id=hint["run_id"],
+            approval_id=approval_id,
+            enrollment_request_id=hint["request_id"],
+            workspace_id=row_workspace(hint),
+        )
+        row = graph["enrollment_request"]
+        if not row:
+            return "missing"
+        binding_error = postgres_enrollment_request_graph_binding_error(
+            graph,
+            row,
+            require_existing=True,
+        )
+        if binding_error:
+            raise ValueError(binding_error)
+    else:
+        row = postgres_locking_select(
+            conn,
+            "SELECT * FROM agent_gateway_enrollment_requests WHERE approval_id=?",
+            (approval_id,),
+        )
     if not row:
         return "missing"
     status = "approved" if decision == "approved" else "rejected" if decision == "rejected" else str(row["status"])
@@ -5220,14 +5826,62 @@ def agent_gateway_issue_approved_enrollment(conn, body) -> tuple[dict, int]:
         return {"error": "not found", "message": "Enrollment request not found."}, 404
     if not commercial_capability_enabled("approval_policies"):
         return commercial_entitlement_block(conn, "approval_policies", "agent_gateway.enrollment.issue_approved", "agent-gateway-enrollment"), 403
-    approval = postgres_locking_select(
-        conn,
-        "SELECT * FROM approvals WHERE approval_id=?",
-        (request_hint["approval_id"],),
-    )
-    request = postgres_locking_select(conn, request_sql, request_params)
+    if not isinstance(conn, sqlite3.Connection):
+        graph = postgres_lock_execution_graph(
+            conn,
+            task_id=request_hint["task_id"],
+            run_id=request_hint["run_id"],
+            approval_id=request_hint["approval_id"],
+            enrollment_request_id=request_hint["request_id"],
+            workspace_id=admin_workspace_id,
+        )
+        task = graph["task"]
+        run = graph["run"]
+        approval = graph["approval"]
+        request = graph["enrollment_request"]
+    else:
+        task = postgres_locking_select(
+            conn,
+            "SELECT task_id,workspace_id,status FROM tasks WHERE task_id=? AND workspace_id=?",
+            (request_hint["task_id"], admin_workspace_id),
+        )
+        run = postgres_locking_select(
+            conn,
+            """SELECT run_id,workspace_id,task_id,status FROM runs
+            WHERE run_id=? AND task_id=? AND workspace_id=?""",
+            (request_hint["run_id"], request_hint["task_id"], admin_workspace_id),
+        )
+        approval = postgres_locking_select(
+            conn,
+            "SELECT * FROM approvals WHERE approval_id=?",
+            (request_hint["approval_id"],),
+        )
+        request = postgres_locking_select(conn, request_sql, request_params)
+    if not task or not run:
+        return {"error": "not found", "message": "Enrollment request parent state was not found."}, 404
+    if row_workspace(task) != admin_workspace_id \
+            or row_workspace(run) != admin_workspace_id \
+            or run["task_id"] != task["task_id"]:
+        return {"error": "not found", "message": "Enrollment request parent state was not found."}, 404
+    if str(task["status"] or "") in {"blocked", "failed", "canceled"} \
+            or str(run["status"] or "") in {"blocked", "failed", "canceled"}:
+        return {
+            "error": "enrollment_parent_blocked",
+            "message": "Enrollment cannot issue after its parent task or run is blocked.",
+            "approval_id": request_hint["approval_id"],
+        }, 409
     if not request or not approval or request["approval_id"] != approval["approval_id"]:
         return {"error": "not found", "message": "Enrollment request not found."}, 404
+    if not isinstance(conn, sqlite3.Connection):
+        binding_error = postgres_enrollment_request_graph_binding_error(
+            graph,
+            request,
+            require_existing=True,
+        )
+        if binding_error:
+            return {"error": "approval_binding_invalid", "message": "Enrollment approval binding is invalid."}, 409
+    if str(approval["approval_kind"] or "") != "agent_enrollment":
+        return {"error": "approval_binding_invalid", "message": "Enrollment approval kind is invalid."}, 409
     if not approval or approval["decision"] != "approved":
         return {"error": "approval_required", "message": "Enrollment request must be approved before issuing a token.", "approval_id": request["approval_id"]}, 409
     if request["status"] == "issued":
@@ -6644,9 +7298,7 @@ def latest_plan_evidence_manifest_for_run(conn: sqlite3.Connection, run_id: str 
 
 
 def customer_delivery_approval_requires_manifest(approval: sqlite3.Row | dict) -> bool:
-    approval_id = str(approval["approval_id"] or "")
-    reason = str(approval["reason"] or "").lower()
-    return approval_id.startswith("ap_customer_worker_delivery") or "customer delivery" in reason
+    return str(approval["approval_kind"] or "") == "customer_delivery"
 
 
 def delivery_manifest_gate(conn: sqlite3.Connection, run_id: str | None) -> dict:
@@ -6927,6 +7579,32 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
     agent = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
     started = now_iso()
     run_id = body.get("run_id") or new_id("run_gw")
+    if not isinstance(conn, sqlite3.Connection):
+        graph = postgres_lock_execution_graph(
+            conn,
+            task_id=task_id,
+            run_id=run_id,
+            workspace_id=ident["workspace_id"],
+        )
+        task = graph["task"]
+        if not task:
+            return {"error": "task not found"}, 404
+        actual_workspace = row_workspace(task)
+        if actual_workspace != ident["workspace_id"]:
+            return workspace_forbidden("task", task_id, ident["workspace_id"], actual_workspace)
+        if not agent_can_access_task(task, agent_id):
+            return {"error": "forbidden", "message": f"Task {task_id} is assigned to another agent.", "owner_agent_id": task["owner_agent_id"]}, 403
+        if task["status"] == "running" and task["owner_agent_id"] != agent_id:
+            return {"error": "conflict", "message": f"Task {task_id} is already running.", "status": task["status"], "owner_agent_id": task["owner_agent_id"]}, 409
+        if task["status"] not in {"planned", "backlog", "running"}:
+            return {"error": "conflict", "message": f"Task {task_id} cannot start a run from status {task['status']}.", "status": task["status"], "owner_agent_id": task["owner_agent_id"]}, 409
+        existing_run = graph["run"]
+        if existing_run and (
+            existing_run["task_id"] != task_id
+            or row_workspace(existing_run) != ident["workspace_id"]
+            or existing_run["agent_id"] != agent_id
+        ):
+            return {"error": "conflict", "message": f"Run {run_id} is already bound to another task, workspace, or agent."}, 409
     row = {
         "run_id": run_id,
         "workspace_id": ident["workspace_id"],
@@ -6977,6 +7655,31 @@ def agent_gateway_run_heartbeat(conn, run_id: str, body) -> tuple[dict, int]:
         }, 403
     if body.get("task_id") and body.get("task_id") != before["task_id"]:
         return {"error": "forbidden", "message": "Run heartbeat task_id must match the target run."}, 403
+    if not isinstance(conn, sqlite3.Connection):
+        graph = postgres_lock_execution_graph(
+            conn,
+            task_id=before["task_id"],
+            run_id=run_id,
+            workspace_id=ident["workspace_id"],
+        )
+        task = graph["task"]
+        before = graph["run"]
+        if not before:
+            return {"error": "run not found"}, 404
+        if not task:
+            return {"error": "task not found"}, 404
+        actual_workspace = row_workspace(before)
+        if actual_workspace != ident["workspace_id"]:
+            return workspace_forbidden("run", run_id, ident["workspace_id"], actual_workspace)
+        if before["agent_id"] != ident["agent_id"]:
+            return {"error": "forbidden", "message": "Agent token cannot write another agent's run."}, 403
+        if before["task_id"] != task["task_id"] or row_workspace(task) != actual_workspace:
+            return {
+                "error": "forbidden",
+                "message": "Run heartbeat task workspace must match the target run workspace.",
+            }, 403
+        if body.get("task_id") and body.get("task_id") != before["task_id"]:
+            return {"error": "forbidden", "message": "Run heartbeat task_id must match the target run."}, 403
     status = coerce_choice(body.get("status"), {"running", "completed", "failed", "blocked", "waiting_approval"}, before["status"])
     if before["status"] in {"completed", "failed", "blocked"} and status != before["status"]:
         return {
@@ -7025,6 +7728,32 @@ def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
     agent_id = body.get("agent_id")
     if not agent_id:
         agent_id = run["agent_id"]
+    tool_call_id = body.get("tool_call_id") or new_id("tc_gw")
+    if not isinstance(conn, sqlite3.Connection):
+        graph = postgres_lock_execution_graph(
+            conn,
+            task_id=run["task_id"],
+            run_id=run_id,
+            tool_call_id=tool_call_id,
+            workspace_id=ident["workspace_id"],
+        )
+        task = graph["task"]
+        run = graph["run"]
+        if not task or not run:
+            return {"error": "run not found"}, 404
+        actual_workspace = row_workspace(run)
+        if actual_workspace != ident["workspace_id"]:
+            return workspace_forbidden("run", run_id, ident["workspace_id"], actual_workspace)
+        if run["task_id"] != task["task_id"] or row_workspace(task) != actual_workspace:
+            return {"error": "forbidden", "message": "Tool call task binding must match the target run."}, 403
+        if run["agent_id"] != agent_id:
+            return {"error": "forbidden", "message": "Agent token cannot write another agent's tool call."}, 403
+        existing_tool_call = graph["tool_call"]
+        if existing_tool_call and (
+            existing_tool_call["run_id"] != run_id
+            or existing_tool_call["agent_id"] != agent_id
+        ):
+            return {"error": "conflict", "message": "Tool call id is already bound to another run or agent."}, 409
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
     tool_name = redact_text(body.get("tool_name") or "agent_gateway.note", 120)
     risk = coerce_choice(body.get("risk_level") or ("high" if tool_name in RISKY_TOOLS else "low"), VALID_RISK_LEVELS, "low")
@@ -7032,7 +7761,7 @@ def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
     status = coerce_choice(body.get("status"), {"planned", "running", "completed", "failed", "blocked", "waiting_approval"}, "completed" if risk in {"low", "medium"} else "waiting_approval")
     args = safe_json_metadata(body.get("normalized_args_json") or body.get("args") or {"summary": body.get("args_summary") or "redacted"})
     row = {
-        "tool_call_id": body.get("tool_call_id") or new_id("tc_gw"),
+        "tool_call_id": tool_call_id,
         "run_id": run_id,
         "agent_id": agent_id,
         "tool_name": tool_name,
@@ -7097,6 +7826,7 @@ def agent_gateway_request_approval(conn, body) -> tuple[dict, int]:
     reason = redact_text(body.get("reason") or "Agent requested approval for an external or high-risk action.", 260)
     row = {
         "approval_id": approval_id,
+        "approval_kind": "tool_execution" if tool_call_id else "run_execution",
         "task_id": run["task_id"],
         "run_id": run_id,
         "tool_call_id": tool_call_id,
@@ -7525,6 +8255,7 @@ def openclaw_prepare_probe(conn, body: dict, prompt_hash: str) -> tuple[dict, in
     })
     repo_upsert_approval(conn, {
         "approval_id": approval_id,
+        "approval_kind": "prepared_action",
         "task_id": task_id,
         "run_id": run_id,
         "tool_call_id": tool_call_id,
@@ -8134,6 +8865,7 @@ def dify_prepare_upload_text(conn, body: dict, cfg: dict, dataset_id: str, docum
     })
     repo_upsert_approval(conn, {
         "approval_id": approval_id,
+        "approval_kind": "prepared_action",
         "task_id": task_id,
         "run_id": run_id,
         "tool_call_id": tool_call_id,
@@ -8539,6 +9271,7 @@ def agnesfallback_prepare_probe(conn, body: dict, mode: str, agnes: dict, prompt
     })
     repo_upsert_approval(conn, {
         "approval_id": approval_id,
+        "approval_kind": "prepared_action",
         "task_id": task_id,
         "run_id": run_id,
         "tool_call_id": tool_call_id,
@@ -9008,6 +9741,7 @@ def prepare_local_ai_brief(conn, body: dict, agnes: dict, state: dict, prompt_ha
     })
     repo_upsert_approval(conn, {
         "approval_id": approval_id,
+        "approval_kind": "prepared_action",
         "task_id": task_id,
         "run_id": run_id,
         "tool_call_id": tool_call_id,
@@ -10231,6 +10965,7 @@ def prepare_customer_worker_external_write(
     })
     repo_upsert_approval(conn, {
         "approval_id": approval_id,
+        "approval_kind": "prepared_action",
         "task_id": task_id,
         "run_id": run_id,
         "tool_call_id": tool_call_id,
@@ -11142,12 +11877,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
     items: list[dict] = []
     for row in approvals:
         approval_id = row.get("approval_id")
-        if (approval_id or "").startswith("ap_gw_enroll_") or "enrollment" in (row.get("reason") or "").lower():
-            approval_kind = "agent_enrollment"
-        elif row.get("tool_call_id"):
-            approval_kind = "tool_call"
-        else:
-            approval_kind = "delivery_or_run"
+        approval_kind = row.get("approval_kind") or "unknown"
         items.append({
             "item_type": "approval",
             "item_id": approval_id,
@@ -11520,6 +12250,7 @@ def hermes_prepare_run_task(conn, body: dict, cfg: dict, status: dict, prompt_ha
     })
     repo_upsert_approval(conn, {
         "approval_id": approval_id,
+        "approval_kind": "prepared_action",
         "task_id": task_id,
         "run_id": run_id,
         "tool_call_id": tool_call_id,
@@ -15496,6 +16227,7 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
         delivery_approval_id = stable_id("ap_customer_worker_delivery", run_id)
         delivery_approval = {
             "approval_id": delivery_approval_id,
+            "approval_kind": "customer_delivery",
             "task_id": task_id,
             "run_id": run_id,
             "tool_call_id": None,
@@ -15822,6 +16554,7 @@ def notion_prepare_confirmed_export(conn, body: dict, markdown: str, cfg: dict) 
     })
     repo_upsert_approval(conn, {
         "approval_id": approval_id,
+        "approval_kind": "prepared_action",
         "task_id": task_id,
         "run_id": run_id,
         "tool_call_id": tool_call_id,
@@ -16861,7 +17594,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json({"error": "not found"}, 404)
                 run = conn.execute("SELECT * FROM runs WHERE run_id=?", (tc["run_id"],)).fetchone()
                 approval_id = new_id("ap")
-                conn.execute("INSERT INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                conn.execute("INSERT INTO approvals(approval_id,approval_kind,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at) VALUES(?,'tool_execution',?,?,?,?,?,?,?,?,?,?)",
                              (approval_id, run["task_id"], tc["run_id"], tc_id, tc["agent_id"], "usr_founder", "pending", "Manual approval requested", (dt.datetime.now(dt.timezone.utc)+dt.timedelta(days=2)).isoformat(), now_iso(), None))
                 audit(conn, "user", "usr_founder", "approval.request", "approvals", approval_id, None, {"tool_call_id": tc_id}, {})
                 conn.commit()
@@ -17287,7 +18020,7 @@ def start_mock_run(conn, body):
         conn.execute("UPDATE tasks SET status='waiting_approval', updated_at=? WHERE task_id=?", (now_iso(), task_id))
         for tc_id in high_risk:
             approval_id = new_id("ap")
-            conn.execute("INSERT INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            conn.execute("INSERT INTO approvals(approval_id,approval_kind,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at) VALUES(?,'tool_execution',?,?,?,?,?,?,?,?,?,?)",
                          (approval_id, task_id, run_id, tc_id, agent_id, "usr_founder", "pending", "High-risk tool call requires approval", (dt.datetime.now(dt.timezone.utc)+dt.timedelta(days=2)).isoformat(), now_iso(), None))
             audit(conn, "agent", agent_id, "approval.request", "approvals", approval_id, None, {"tool_call_id": tc_id}, {"run_id": run_id})
     else:

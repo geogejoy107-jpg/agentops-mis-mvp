@@ -232,8 +232,8 @@ def fixture_operations() -> list[StorageOperation]:
             ),
             StorageOperation(
                 "insert_approval",
-                """INSERT INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
-                VALUES(:approval_id,:task_id,:run_id,:tool_call_id,:requested_by_agent_id,:approver_user_id,:decision,:reason,:expires_at,:created_at,:decided_at)""",
+                """INSERT INTO approvals(approval_id,approval_kind,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
+                VALUES(:approval_id,'tool_execution',:task_id,:run_id,:tool_call_id,:requested_by_agent_id,:approver_user_id,:decision,:reason,:expires_at,:created_at,:decided_at)""",
                 {
                     "approval_id": "ap_parity_a",
                     "task_id": "tsk_parity_a",

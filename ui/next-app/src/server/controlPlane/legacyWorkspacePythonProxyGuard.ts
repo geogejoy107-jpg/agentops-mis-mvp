@@ -2,19 +2,66 @@ import { NextResponse } from "next/server";
 
 import { legacyPythonProxyAllowed } from "./config";
 
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+type ExactOrigin = {
+  host: string;
+  isHttpLoopback: boolean;
+  origin: string;
+};
+
+function parseExactOrigin(value: string): ExactOrigin | null {
+  const supplied = String(value || "").trim();
+  if (!supplied) return null;
+  try {
+    const parsed = new URL(supplied);
+    const isLoopback = LOOPBACK_HOSTNAMES.has(parsed.hostname.toLowerCase());
+    if (
+      parsed.origin !== supplied
+      || parsed.username
+      || parsed.password
+      || parsed.pathname !== "/"
+      || parsed.search
+      || parsed.hash
+      || (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLoopback))
+    ) {
+      return null;
+    }
+    return {
+      host: parsed.host.toLowerCase(),
+      isHttpLoopback: parsed.protocol === "http:" && isLoopback,
+      origin: parsed.origin,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function configuredAllowedOrigins() {
+  const configured = String(process.env.AGENTOPS_ALLOWED_ORIGINS || "");
+  const entries = configured.split(",").map((item) => item.trim()).filter(Boolean);
+  if (!entries.length) return null;
+
+  const allowed = new Map<string, string>();
+  for (const entry of entries) {
+    const parsed = parseExactOrigin(entry);
+    if (!parsed) return null;
+    allowed.set(parsed.origin, parsed.host);
+  }
+  return allowed;
+}
+
 function sameOriginBrowserMutation(request: Request) {
-  const origin = String(request.headers.get("origin") || "").trim();
   const fetchSite = String(request.headers.get("sec-fetch-site") || "").trim().toLowerCase();
   if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") return false;
-  if (!origin) return false;
-  try {
-    const requestUrl = new URL(request.url);
-    const requestHost = String(request.headers.get("host") || requestUrl.host).trim();
-    const requestOrigin = new URL(`${requestUrl.protocol}//${requestHost}`).origin;
-    return new URL(origin).origin === requestOrigin;
-  } catch {
-    return false;
-  }
+
+  const origin = parseExactOrigin(String(request.headers.get("origin") || ""));
+  const directHost = String(request.headers.get("host") || "").trim().toLowerCase();
+  if (!origin || !directHost || origin.host !== directHost) return false;
+  if (origin.isHttpLoopback) return true;
+
+  const allowed = configuredAllowedOrigins();
+  return allowed?.get(origin.origin) === directHost;
 }
 
 export function legacyWorkspacePythonProxyGuard(request: Request) {

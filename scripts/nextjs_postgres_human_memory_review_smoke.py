@@ -958,11 +958,11 @@ def main() -> int:
                 and second_migration_payload.get("ready") is True
                 and schema_readiness_payload.get("operation") == "commercial_schema_readiness"
                 and schema_readiness_payload.get("ready") is True
-                and schema_contract_payload.get("contract") == "human_memory_schema_readiness_v2"
+                and schema_contract_payload.get("contract") == "human_memory_schema_readiness_v4"
                 and all((schema_contract_payload.get("checks") or {}).values())
                 and schema_version is not None
-                and schema_version["version"] == "20260719_workspace_read_models_v2"
-                and schema_version["schema_contract"] == "agentops-human-session-workspace-read-models-contract-v2",
+                and schema_version["version"] == "20260719_approval_kind_bindings_v4"
+                and schema_version["schema_contract"] == "agentops-human-session-approval-kind-bindings-contract-v4",
             )
 
             scrypt_contract = subprocess.run(
@@ -1005,7 +1005,7 @@ def main() -> int:
                 and scrypt_payload.get("scrypt_work_count") == 4
                 and first_bootstrap.returncode == 0
                 and first_bootstrap_payload.get("ok") is True
-                and first_bootstrap_payload.get("schema_version") == "20260719_workspace_read_models_v2"
+                and first_bootstrap_payload.get("schema_version") == "20260719_approval_kind_bindings_v4"
                 and second_bootstrap.returncode != 0
                 and second_bootstrap_payload.get("error") == "owner_already_initialized"
                 and owner_count == 1

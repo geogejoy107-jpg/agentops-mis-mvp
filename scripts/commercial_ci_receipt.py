@@ -16,8 +16,13 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-SENSITIVE_ASSIGNMENT_RE = re.compile(r"(?i)^([^=]*(?:token|secret|password|key|dsn)[^=]*)=(.*)$")
+SENSITIVE_COMMAND_NAME_RE = re.compile(r"(?i)(token|key|secret|password|dsn|url|path|bin)")
+URL_VALUE_RE = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://")
+POSIX_ABSOLUTE_PATH_RE = re.compile(r"""(?:^|[\s"'=:(])/(?!/)[^\s"'`]+""")
+WINDOWS_ABSOLUTE_PATH_RE = re.compile(r"""(?:^|[\s"'=:(])(?:[A-Za-z]:[\\/]|\\\\)[^\s"'`]+""")
+HOME_PATH_RE = re.compile(r"""(?:^|[\s"'=:(])~[\\/][^\s"'`]+""")
 SAFE_CODE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,119}$")
+REDACTED_COMMAND_VALUE = "[REDACTED]"
 
 
 def utc_now() -> str:
@@ -32,20 +37,47 @@ def canonical_sha256(payload: Any) -> str:
     return sha256_bytes(json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8"))
 
 
+def git_head(root: Path = ROOT) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    candidate = proc.stdout.strip().lower()
+    return candidate if SHA_RE.fullmatch(candidate) else ""
+
+
 def current_sha() -> str:
     candidate = str(os.environ.get("GITHUB_SHA") or "").strip().lower()
     if SHA_RE.fullmatch(candidate):
         return candidate
-    proc = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    candidate = proc.stdout.strip().lower()
+    return git_head(ROOT)
+
+
+def exact_sha(value: object) -> str:
+    if type(value) is not str:
+        return ""
+    candidate = value.lower()
     return candidate if SHA_RE.fullmatch(candidate) else ""
+
+
+def resolve_source_root(value: object) -> Path | None:
+    if value is None or value == "":
+        return ROOT.resolve()
+    if type(value) is not str:
+        return None
+    try:
+        candidate = Path(value)
+        resolved = candidate.resolve() if candidate.is_absolute() else (ROOT / candidate).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return resolved if resolved.is_dir() else None
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -112,22 +144,191 @@ def payload_diagnostics(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def safe_command(command: list[str]) -> list[str]:
-    safe: list[str] = []
-    redact_next = False
-    for arg in command:
-        if redact_next:
-            safe.append("[REDACTED]")
-            redact_next = False
+def strict_boolean_claim(value: Any) -> bool | None:
+    return value if type(value) is bool else None
+
+
+def strict_all_true_claim(values: list[Any]) -> bool | None:
+    claims = [strict_boolean_claim(value) for value in values]
+    return None if any(value is None for value in claims) else all(claims)
+
+
+def sensitive_command_name(value: str) -> bool:
+    return SENSITIVE_COMMAND_NAME_RE.search(value) is not None
+
+
+def known_repo_script(value: str, source_root: Path | None = ROOT) -> str | None:
+    roots = [root.resolve() for root in (source_root, ROOT) if root is not None]
+    for root in dict.fromkeys(roots):
+        try:
+            candidate = Path(value)
+            resolved = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+            relative = resolved.relative_to(root)
+        except (OSError, RuntimeError, ValueError):
             continue
-        lower = arg.lower()
-        if lower in {"--password", "--token", "--secret", "--key", "--dsn"} or lower.endswith("-dsn"):
+        if relative.parts[:1] == ("scripts",) and relative.suffix == ".py" and resolved.is_file():
+            return relative.as_posix()
+    return None
+
+
+def unsafe_command_value(value: str) -> bool:
+    return (
+        URL_VALUE_RE.search(value) is not None
+        or POSIX_ABSOLUTE_PATH_RE.search(value) is not None
+        or WINDOWS_ABSOLUTE_PATH_RE.search(value) is not None
+        or HOME_PATH_RE.search(value) is not None
+    )
+
+
+def safe_command_value(value: str, source_root: Path | None = ROOT) -> str:
+    script = known_repo_script(value, source_root)
+    if script is not None:
+        return script
+    roots = [root.resolve() for root in (source_root, ROOT) if root is not None]
+    if any(str(root) in value for root in roots):
+        return REDACTED_COMMAND_VALUE
+    return REDACTED_COMMAND_VALUE if unsafe_command_value(value) else value
+
+
+def executable_basename(value: str) -> str:
+    basename = value.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    return basename or REDACTED_COMMAND_VALUE
+
+
+def safe_command(command: list[str], source_root: Path | None = ROOT) -> list[str]:
+    if not command:
+        return []
+    safe = [executable_basename(str(command[0]))]
+    index = 1
+    while index < len(command):
+        arg = str(command[index])
+        if "=" in arg:
+            name, raw_value = arg.split("=", 1)
+            value = (
+                REDACTED_COMMAND_VALUE
+                if sensitive_command_name(name)
+                else safe_command_value(raw_value, source_root)
+            )
+            safe.append(f"{name}={value}")
+            index += 1
+            continue
+        if arg.startswith("--") and sensitive_command_name(arg):
             safe.append(arg)
-            redact_next = True
+            if index + 1 < len(command):
+                safe.append(REDACTED_COMMAND_VALUE)
+                index += 2
+            else:
+                index += 1
             continue
-        assignment = SENSITIVE_ASSIGNMENT_RE.match(arg)
-        safe.append(f"{assignment.group(1)}=[REDACTED]" if assignment else arg)
+        safe.append(safe_command_value(arg, source_root))
+        index += 1
     return safe
+
+
+def real_runtime_security_claims(payload: dict[str, Any]) -> dict[str, Any]:
+    raw_adapters = payload.get("adapters")
+    adapters = (
+        sorted(raw_adapters)
+        if isinstance(raw_adapters, list) and all(type(item) is str for item in raw_adapters)
+        else None
+    )
+    workers = payload.get("workers") if isinstance(payload.get("workers"), dict) else {}
+    guards = payload.get("manifest_authority_guards") if isinstance(payload.get("manifest_authority_guards"), dict) else {}
+    reviews = payload.get("human_reviews") if isinstance(payload.get("human_reviews"), dict) else {}
+    raw_identity = payload.get("runtime_dependency_identity") if isinstance(payload.get("runtime_dependency_identity"), dict) else {}
+    runtime_dependency_identity = {
+        key: raw_identity[key]
+        for key in ("hermes_endpoint_sha256", "openclaw_binary_sha256")
+        if type(raw_identity.get(key)) is str and re.fullmatch(r"[0-9a-f]{64}", raw_identity[key])
+    }
+    adapter_claims: dict[str, dict[str, Any]] = {}
+    for adapter in adapters or []:
+        if adapter not in {"hermes", "openclaw"}:
+            continue
+        worker = workers.get(adapter) if isinstance(workers.get(adapter), dict) else {}
+        guard = guards.get(adapter) if isinstance(guards.get(adapter), dict) else {}
+        review = reviews.get(adapter) if isinstance(reviews.get(adapter), dict) else {}
+        first_outcome = review.get("delivery_approval_first_outcome")
+        replay_outcome = review.get("delivery_approval_replay_outcome")
+        adapter_claims[adapter] = {
+            "provider_call_performed": strict_boolean_claim(worker.get("provider_call_performed")),
+            "dry_run": strict_boolean_claim(worker.get("dry_run")),
+            "manifest_complete_run_evidence_enforced": strict_all_true_claim(
+                [
+                    guard.get("complete_run_tool_evidence_enforced"),
+                    guard.get("complete_run_evaluation_evidence_enforced"),
+                    guard.get("complete_run_artifact_evidence_enforced"),
+                    guard.get("audit_evidence_server_derived"),
+                ]
+            ),
+            "customer_delivery_revalidation_blocked": strict_boolean_claim(
+                guard.get("customer_delivery_revalidation_blocked")
+            ),
+            "approved_customer_delivery_evidence_sealed": strict_boolean_claim(
+                guard.get("approved_customer_delivery_evidence_sealed")
+            ),
+            "delivery_approval_updated_once": (
+                review.get("delivery_approval_first_outcome") == "updated"
+                and review.get("delivery_approval_replay_outcome") == "unchanged"
+                if type(first_outcome) is str and type(replay_outcome) is str
+                else None
+            )
+        }
+    return {
+        "contract": payload.get("contract") if type(payload.get("contract")) is str else "",
+        "control_plane": payload.get("control_plane") if type(payload.get("control_plane")) is str else "",
+        "adapters": adapters,
+        "adapter_claims": adapter_claims,
+        "runtime_dependency_identity": runtime_dependency_identity,
+        "real_runtime_execution_performed": strict_boolean_claim(payload.get("real_runtime_execution_performed")),
+        "manifest_authority_guards_passed": strict_boolean_claim(payload.get("manifest_authority_guards_passed")),
+        "real_run_bound_delivery_decisions_completed": strict_boolean_claim(
+            payload.get("real_run_bound_delivery_decisions_completed")
+        ),
+        "python_api_started": strict_boolean_claim(payload.get("python_api_started")),
+        "python_or_sqlite_commercial_default": strict_boolean_claim(
+            payload.get("python_or_sqlite_commercial_default")
+        ),
+        "worker_created_delivery_approvals": strict_boolean_claim(payload.get("worker_created_delivery_approvals")),
+        "delivery_approval_creation_source": (
+            payload.get("delivery_approval_creation_source")
+            if type(payload.get("delivery_approval_creation_source")) is str
+            else ""
+        ),
+    }
+
+
+def real_runtime_security_claims_complete(claims: dict[str, Any]) -> bool:
+    expected_adapters = ["hermes", "openclaw"]
+    adapter_claims = claims.get("adapter_claims") if isinstance(claims.get("adapter_claims"), dict) else {}
+    runtime_dependency_identity = claims.get("runtime_dependency_identity") if isinstance(claims.get("runtime_dependency_identity"), dict) else {}
+    return (
+        claims.get("contract") == "nextjs_postgres_real_worker_human_review_v1"
+        and claims.get("control_plane") == "typescript_postgres"
+        and claims.get("adapters") == expected_adapters
+        and claims.get("real_runtime_execution_performed") is True
+        and claims.get("manifest_authority_guards_passed") is True
+        and claims.get("real_run_bound_delivery_decisions_completed") is True
+        and claims.get("python_api_started") is False
+        and claims.get("python_or_sqlite_commercial_default") is False
+        and claims.get("worker_created_delivery_approvals") is False
+        and claims.get("delivery_approval_creation_source") == "acceptance_fixture_bound_to_real_run"
+        and set(adapter_claims) == set(expected_adapters)
+        and set(runtime_dependency_identity) == {"hermes_endpoint_sha256", "openclaw_binary_sha256"}
+        and all(
+            type(value) is str and re.fullmatch(r"[0-9a-f]{64}", value)
+            for value in runtime_dependency_identity.values()
+        )
+        and all(
+            adapter_claims[adapter].get("provider_call_performed") is True
+            and adapter_claims[adapter].get("dry_run") is False
+            and adapter_claims[adapter].get("manifest_complete_run_evidence_enforced") is True
+            and adapter_claims[adapter].get("customer_delivery_revalidation_blocked") is True
+            and adapter_claims[adapter].get("approved_customer_delivery_evidence_sealed") is True
+            and adapter_claims[adapter].get("delivery_approval_updated_once") is True
+            for adapter in expected_adapters
+        )
+    )
 
 
 def docker_image_identity(image: str) -> dict[str, Any]:
@@ -157,21 +358,35 @@ def docker_image_identity(image: str) -> dict[str, Any]:
     }
 
 
-def dependency_inputs() -> dict[str, Any]:
+def dependency_inputs(source_root: Path | None = ROOT) -> dict[str, Any]:
+    if source_root is None:
+        files: dict[str, str] = {}
+        return {
+            "python": sys.version.split()[0],
+            "lockfile_sha256": files,
+            "psycopg_install_spec": "",
+            "inputs_sha256": canonical_sha256(files),
+        }
+    source_root = source_root.resolve()
     candidates = [
-        ROOT / "pyproject.toml",
-        ROOT / "requirements.txt",
-        ROOT / "ui" / "next-app" / "package-lock.json",
-        ROOT / "ui" / "start-building-app" / "package-lock.json",
+        source_root / "pyproject.toml",
+        source_root / "requirements.txt",
+        source_root / "ui" / "next-app" / "package-lock.json",
+        source_root / "ui" / "start-building-app" / "package-lock.json",
     ]
-    files = {
-        str(path.relative_to(ROOT)): sha256_bytes(path.read_bytes())
-        for path in candidates
-        if path.exists()
-    }
+    files: dict[str, str] = {}
+    for path in candidates:
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(source_root)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if path.is_symlink() or not resolved.is_file():
+            continue
+        files[resolved.relative_to(source_root).as_posix()] = sha256_bytes(resolved.read_bytes())
     psycopg_spec = ""
-    optional_adapter = ROOT / "scripts" / "storage_postgres_optional_adapter_smoke.py"
-    if optional_adapter.exists():
+    optional_adapter = source_root / "scripts" / "storage_postgres_optional_adapter_smoke.py"
+    if optional_adapter.is_file() and not optional_adapter.is_symlink():
         match = re.search(
             r'PSYCOPG_INSTALL_SPEC\s*=\s*[^\n]*?["\'](psycopg\[binary\][^"\']+)["\']',
             optional_adapter.read_text(encoding="utf-8"),
@@ -189,16 +404,45 @@ def command_receipt(args: argparse.Namespace) -> int:
     command = list(args.command)
     if command and command[0] == "--":
         command = command[1:]
-    subject_sha = current_sha()
     failures: list[str] = []
+    requested_subject_sha = getattr(args, "subject_sha", "")
+    if requested_subject_sha:
+        subject_sha = exact_sha(requested_subject_sha)
+        if not subject_sha:
+            failures.append("subject_sha_invalid")
+    else:
+        subject_sha = current_sha()
+        if not subject_sha:
+            failures.append("subject_sha_unavailable")
+    trusted_builder_sha = git_head(ROOT)
+    requested_builder_sha = getattr(args, "builder_sha", "")
+    if requested_builder_sha:
+        builder_sha = exact_sha(requested_builder_sha)
+        if not builder_sha:
+            failures.append("builder_sha_invalid")
+        elif not trusted_builder_sha:
+            failures.append("builder_sha_unavailable")
+        elif builder_sha != trusted_builder_sha:
+            failures.append("builder_sha_mismatch")
+    else:
+        builder_sha = trusted_builder_sha
+        if not builder_sha:
+            failures.append("builder_sha_unavailable")
+    source_root = resolve_source_root(getattr(args, "source_root", ""))
+    if source_root is None:
+        failures.append("source_root_invalid")
+
     if not command:
         failures.append("command_missing")
+        proc = subprocess.CompletedProcess(command, 2, b"", b"")
+    elif failures:
+        failures.append("command_not_executed_invalid_context")
         proc = subprocess.CompletedProcess(command, 2, b"", b"")
     else:
         try:
             proc = subprocess.run(
                 command,
-                cwd=ROOT,
+                cwd=source_root,
                 capture_output=True,
                 timeout=args.timeout,
                 check=False,
@@ -206,6 +450,9 @@ def command_receipt(args: argparse.Namespace) -> int:
         except subprocess.TimeoutExpired as exc:
             proc = subprocess.CompletedProcess(command, 124, exc.stdout or b"", exc.stderr or b"")
             failures.append("command_timeout")
+        except OSError:
+            proc = subprocess.CompletedProcess(command, 126, b"", b"")
+            failures.append("command_start_failed")
     stdout = proc.stdout if isinstance(proc.stdout, bytes) else str(proc.stdout or "").encode("utf-8", errors="replace")
     stderr = proc.stderr if isinstance(proc.stderr, bytes) else str(proc.stderr or "").encode("utf-8", errors="replace")
     stdout_text = stdout.decode("utf-8", errors="replace")
@@ -228,10 +475,9 @@ def command_receipt(args: argparse.Namespace) -> int:
         payload = {}
         failures.append("stdout_json_invalid")
     payload = payload if isinstance(payload, dict) else {}
+    runtime_security_claims = real_runtime_security_claims(payload)
     observed_values = all_scalar_values(payload)
     missing_contracts = sorted(set(args.expected_contract) - observed_values)
-    if not subject_sha:
-        failures.append("subject_sha_unavailable")
     if proc.returncode != 0:
         failures.append("command_exit_nonzero")
     if payload.get("ok") is not True:
@@ -240,32 +486,40 @@ def command_receipt(args: argparse.Namespace) -> int:
         failures.append("payload_contains_skipped_evidence")
     if missing_contracts:
         failures.append("expected_contract_missing")
+    if (
+        "nextjs_postgres_real_worker_human_review_v1" in args.expected_contract
+        and not real_runtime_security_claims_complete(runtime_security_claims)
+    ):
+        failures.append("real_runtime_security_claims_incomplete")
     failures = sorted(set(failures))
     receipt = {
         "contract_id": "commercial_ci_command_receipt_v1",
         "generated_at": utc_now(),
         "subject_sha": subject_sha,
-        "builder_sha": subject_sha,
+        "builder_sha": builder_sha,
         "github_run": {
             "run_id": str(os.environ.get("GITHUB_RUN_ID") or "local"),
             "run_attempt": str(os.environ.get("GITHUB_RUN_ATTEMPT") or "local"),
             "workflow": str(os.environ.get("GITHUB_WORKFLOW") or "local"),
+            "repository": str(os.environ.get("GITHUB_REPOSITORY") or "local"),
+            "ref": str(os.environ.get("GITHUB_REF") or "local"),
         },
         "gate_id": args.gate_id,
         "command_id": args.command_id,
-        "command": safe_command(command),
+        "command": safe_command(command, source_root),
         "exit_code": int(proc.returncode),
         "payload_ok": payload.get("ok") is True,
         "skipped_evidence": any_skipped(payload),
         "expected_contracts": sorted(set(args.expected_contract)),
         "missing_contracts": missing_contracts,
         "payload_diagnostics": payload_diagnostics(payload),
+        "runtime_security_claims": runtime_security_claims,
         "stdout_sha256": sha256_bytes(stdout),
         "stdout_size_bytes": len(stdout),
         "stderr_sha256": sha256_bytes(stderr),
         "stderr_size_bytes": len(stderr),
         "container_image": docker_image_identity(args.container_image),
-        "dependency_inputs": dependency_inputs(),
+        "dependency_inputs": dependency_inputs(source_root),
         "evidence_complete": not failures,
         "failures": failures,
         "raw_output_stored": False,
@@ -333,6 +587,8 @@ def scope_receipt(args: argparse.Namespace) -> int:
         "github_run": {
             "run_id": str(os.environ.get("GITHUB_RUN_ID") or "local"),
             "run_attempt": str(os.environ.get("GITHUB_RUN_ATTEMPT") or "local"),
+            "repository": str(os.environ.get("GITHUB_REPOSITORY") or "local"),
+            "ref": str(os.environ.get("GITHUB_REF") or "local"),
         },
         "gate_id": args.gate_id,
         "required_command_ids": required,
@@ -395,6 +651,8 @@ def aggregate_receipt(args: argparse.Namespace) -> int:
             "run_id": str(os.environ.get("GITHUB_RUN_ID") or "local"),
             "run_attempt": str(os.environ.get("GITHUB_RUN_ATTEMPT") or "local"),
             "workflow": str(os.environ.get("GITHUB_WORKFLOW") or "local"),
+            "repository": str(os.environ.get("GITHUB_REPOSITORY") or "local"),
+            "ref": str(os.environ.get("GITHUB_REF") or "local"),
         },
         "required_scopes": args.required_scope,
         "scope_receipts": [
@@ -433,6 +691,9 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--command-id", required=True)
     command.add_argument("--expected-contract", action="append", default=[])
     command.add_argument("--container-image", default="")
+    command.add_argument("--subject-sha", default="")
+    command.add_argument("--builder-sha", default="")
+    command.add_argument("--source-root", default="")
     command.add_argument("--output", required=True)
     command.add_argument("--timeout", type=int, default=900)
     command.add_argument("command", nargs=argparse.REMAINDER)

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ClipboardCheck, Filter, Gauge, RefreshCw } from "lucide-react";
 import { AppFrame } from "./AppFrame";
-import { loadEvaluations, type EvaluationSummary } from "@/lib/mis";
+import { isHumanSessionUnauthorized, loadEvaluations, setActiveWorkspaceId, type EvaluationSummary } from "@/lib/mis";
 
 type LoadState<T> = {
   data: T;
@@ -33,13 +33,21 @@ function scoreValue(evaluation: EvaluationSummary) {
 export function EvaluationsParityPage() {
   const [resultFilter, setResultFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [sessionRequired, setSessionRequired] = useState(false);
   const [state, setState] = useState<LoadState<EvaluationSummary[]>>({ data: [], error: null, loading: true });
 
   const refresh = async () => {
     setState((current) => ({ ...current, error: null, loading: true }));
+    setSessionRequired(false);
     try {
       setState({ data: await loadEvaluations(), error: null, loading: false });
     } catch (err) {
+      if (isHumanSessionUnauthorized(err)) {
+        setActiveWorkspaceId("");
+        setSessionRequired(true);
+        setState({ data: [], error: null, loading: false });
+        return;
+      }
       setState({ data: [], error: err instanceof Error ? err.message : String(err), loading: false });
     }
   };
@@ -86,6 +94,9 @@ export function EvaluationsParityPage() {
         </button>
       </header>
 
+      {sessionRequired ? (
+        <div className="banner error">Human Session required. <Link className="backLink" href="/workspace">Sign in</Link></div>
+      ) : null}
       {state.error ? <div className="banner error">MIS API unavailable through /api/mis/evaluations: {state.error}</div> : null}
 
       <section className="metricGrid">

@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 
 import { authenticateAgentGateway, enforceWorkspaceBinding } from "./auth";
 import { withPostgresTransaction } from "./db";
+import { assertCustomerDeliveryEvidenceMutable } from "./deliveryEvidenceSeal";
 import { ControlPlaneHttpError } from "./http";
 import { appendAudit, appendRuntimeEvent, newLedgerId, pythonFloat, stableHash } from "./ledger";
 
@@ -9,7 +10,7 @@ const TOOL_CATEGORIES = new Set(["browser", "github", "file", "shell", "email", 
 const RISK_LEVELS = new Set(["low", "medium", "high", "critical"]);
 const TOOL_STATUSES = new Set(["planned", "running", "completed", "failed", "blocked", "waiting_approval"]);
 const EVALUATOR_TYPES = new Set(["human", "rule", "llm_mock"]);
-const TERMINAL_STATUSES = new Set(["completed", "failed", "blocked"]);
+const TERMINAL_STATUSES = new Set(["completed", "failed", "blocked", "canceled"]);
 const RISKY_TOOLS = new Set(["shell.exec", "github.push", "email.send", "file.delete", "database.write", "dify.knowledge.upload", "openai.file_search.upload"]);
 const HIGH_RISK_CATEGORIES = new Set(["shell", "email", "database"]);
 const SENSITIVE_KEY = /(authorization|credential|password|secret|token|api[_-]?key|raw[_-]?(prompt|response|transcript|content))/i;
@@ -260,6 +261,12 @@ async function lockEvidenceRun(
     throw new ControlPlaneHttpError(409, "run_immutable_binding_conflict", "Run task binding changed while evidence write was waiting.");
   }
   if (run.agent_id !== identity.agentId) throw new ControlPlaneHttpError(403, "forbidden", "Run belongs to another agent.");
+  await assertCustomerDeliveryEvidenceMutable(
+    client,
+    identity.workspaceId,
+    run.task_id,
+    run.run_id,
+  );
   return { identity, run, task };
 }
 

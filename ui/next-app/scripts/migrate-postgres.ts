@@ -14,6 +14,12 @@ import {
   HUMAN_MEMORY_SCHEMA_V1_CHECKSUM,
   HUMAN_MEMORY_SCHEMA_V1_CONTRACT,
   HUMAN_MEMORY_SCHEMA_V1_VERSION,
+  HUMAN_MEMORY_SCHEMA_V2_CHECKSUM,
+  HUMAN_MEMORY_SCHEMA_V2_CONTRACT,
+  HUMAN_MEMORY_SCHEMA_V2_VERSION,
+  HUMAN_MEMORY_SCHEMA_V3_CHECKSUM,
+  HUMAN_MEMORY_SCHEMA_V3_CONTRACT,
+  HUMAN_MEMORY_SCHEMA_V3_VERSION,
   assertHumanMemorySchemaCoreReady,
   assertHumanMemorySchemaReady,
   SchemaReadinessError,
@@ -27,6 +33,12 @@ const UPGRADE_MIGRATION_PATH = fileURLToPath(
 );
 const ONLINE_INDEX_MIGRATION_PATH = fileURLToPath(
   new URL("../../../migrations/postgres/20260719_workspace_read_models_v2_online_indexes.sql", import.meta.url),
+);
+const APPROVAL_MIGRATION_PATH = fileURLToPath(
+  new URL("../../../migrations/postgres/20260719_human_approval_decisions_v3.sql", import.meta.url),
+);
+const APPROVAL_KIND_MIGRATION_PATH = fileURLToPath(
+  new URL("../../../migrations/postgres/20260719_approval_kind_bindings_v4.sql", import.meta.url),
 );
 
 function output(payload: Record<string, unknown>) {
@@ -65,12 +77,18 @@ async function main() {
   const baseMigrationBytes = await readFile(BASE_MIGRATION_PATH);
   const upgradeMigrationBytes = await readFile(UPGRADE_MIGRATION_PATH);
   const onlineIndexMigrationBytes = await readFile(ONLINE_INDEX_MIGRATION_PATH);
+  const approvalMigrationBytes = await readFile(APPROVAL_MIGRATION_PATH);
+  const approvalKindMigrationBytes = await readFile(APPROVAL_KIND_MIGRATION_PATH);
   const baseMigrationChecksum = createHash("sha256").update(baseMigrationBytes).digest("hex");
   const upgradeMigrationChecksum = createHash("sha256").update(upgradeMigrationBytes).digest("hex");
   const onlineIndexMigrationChecksum = createHash("sha256").update(onlineIndexMigrationBytes).digest("hex");
+  const approvalMigrationChecksum = createHash("sha256").update(approvalMigrationBytes).digest("hex");
+  const approvalKindMigrationChecksum = createHash("sha256").update(approvalKindMigrationBytes).digest("hex");
   if (baseMigrationChecksum !== HUMAN_MEMORY_SCHEMA_V1_CHECKSUM
-    || upgradeMigrationChecksum !== HUMAN_MEMORY_SCHEMA_CHECKSUM
-    || onlineIndexMigrationChecksum !== HUMAN_MEMORY_SCHEMA_ONLINE_INDEX_CHECKSUM) {
+    || upgradeMigrationChecksum !== HUMAN_MEMORY_SCHEMA_V2_CHECKSUM
+    || onlineIndexMigrationChecksum !== HUMAN_MEMORY_SCHEMA_ONLINE_INDEX_CHECKSUM
+    || approvalMigrationChecksum !== HUMAN_MEMORY_SCHEMA_V3_CHECKSUM
+    || approvalKindMigrationChecksum !== HUMAN_MEMORY_SCHEMA_CHECKSUM) {
     throw new SchemaReadinessError("human_memory_migration_checksum_mismatch");
   }
   const dsn = String(process.env.AGENTOPS_POSTGRES_DSN || process.env.DATABASE_URL || "").trim();
@@ -123,11 +141,20 @@ async function main() {
             && receipt.version === HUMAN_MEMORY_SCHEMA_V1_VERSION
             && receipt.schema_contract === HUMAN_MEMORY_SCHEMA_V1_CONTRACT
             && receipt.checksum === HUMAN_MEMORY_SCHEMA_V1_CHECKSUM;
+          const exactV2Receipt = receipt
+            && receipt.version === HUMAN_MEMORY_SCHEMA_V2_VERSION
+            && receipt.schema_contract === HUMAN_MEMORY_SCHEMA_V2_CONTRACT
+            && receipt.checksum === HUMAN_MEMORY_SCHEMA_V2_CHECKSUM;
+          const exactV3Receipt = receipt
+            && receipt.version === HUMAN_MEMORY_SCHEMA_V3_VERSION
+            && receipt.schema_contract === HUMAN_MEMORY_SCHEMA_V3_CONTRACT
+            && receipt.checksum === HUMAN_MEMORY_SCHEMA_V3_CHECKSUM;
           const exactCurrentReceipt = receipt
             && receipt.version === HUMAN_MEMORY_SCHEMA_VERSION
             && receipt.schema_contract === HUMAN_MEMORY_SCHEMA_CONTRACT
             && receipt.checksum === HUMAN_MEMORY_SCHEMA_CHECKSUM;
-          if (receiptRows.length > 1 || (receipt && !exactV1Receipt && !exactCurrentReceipt)) {
+          if (receiptRows.length > 1
+            || (receipt && !exactV1Receipt && !exactV2Receipt && !exactV3Receipt && !exactCurrentReceipt)) {
             throw new SchemaReadinessError("human_memory_schema_receipt_drift");
           }
           if (!receipt) {
@@ -135,6 +162,12 @@ async function main() {
           }
           if (!receipt || exactV1Receipt) {
             await client.query(upgradeMigrationBytes.toString("utf8"));
+          }
+          if (!receipt || exactV1Receipt || exactV2Receipt) {
+            await client.query(approvalMigrationBytes.toString("utf8"));
+          }
+          if (!receipt || exactV1Receipt || exactV2Receipt || exactV3Receipt) {
+            await client.query(approvalKindMigrationBytes.toString("utf8"));
           }
           await assertHumanMemorySchemaCoreReady(poolClient);
           if (!receipt) {
@@ -149,7 +182,7 @@ async function main() {
                 HUMAN_MEMORY_SCHEMA_CHECKSUM,
               ],
             );
-          } else if (exactV1Receipt) {
+          } else if (exactV1Receipt || exactV2Receipt || exactV3Receipt) {
             await client.query(
               `UPDATE agentops_schema_migrations
               SET version=$1,schema_contract=$2,checksum=$3,applied_at=CURRENT_TIMESTAMP::TEXT

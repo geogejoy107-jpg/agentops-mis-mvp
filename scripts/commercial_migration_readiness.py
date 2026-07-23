@@ -1,19 +1,36 @@
 #!/usr/bin/env python3
 """Read-only commercial migration readiness checker.
 
-The checker intentionally avoids contacting external services. It verifies that
-the commercial migration lane has the core docs, current product stack, branch
-isolation, and no obvious generated/runtime artifacts in the pending change set.
+Local engineering checks avoid external services. When an external Runtime
+receipt is supplied, the checker also verifies its GitHub attestation and source
+workflow run before granting that receipt release authority.
 """
 from __future__ import annotations
 
+import argparse
 import ast
+import datetime as dt
+import hashlib
 import json
+import os
+import re
+import stat
 import subprocess
+import tempfile
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+SENSITIVE_COMMAND_NAME_RE = re.compile(r"(?i)(token|key|secret|password|dsn|url|path|bin)")
+URL_VALUE_RE = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://")
+POSIX_ABSOLUTE_PATH_RE = re.compile(r"""(?:^|[\s"'=:(])/(?!/)[^\s"'`]+""")
+WINDOWS_ABSOLUTE_PATH_RE = re.compile(r"""(?:^|[\s"'=:(])(?:[A-Za-z]:[\\/]|\\\\)[^\s"'`]+""")
+HOME_PATH_RE = re.compile(r"""(?:^|[\s"'=:(])~[\\/][^\s"'`]+""")
+REDACTED_COMMAND_VALUE = "[REDACTED]"
+MAX_EXTERNAL_EVIDENCE_BYTES = 32 * 1024 * 1024
+GITHUB_RUN_TIME_TOLERANCE = dt.timedelta(minutes=5)
 
 BLOCKED_PATH_PARTS = (
     "node_modules/",
@@ -88,6 +105,422 @@ def read_json(path: str) -> dict:
         return json.loads(target.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return {}
+
+
+def valid_utc_timestamp(value: object) -> bool:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        return False
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() == dt.timedelta(0)
+
+
+def parse_utc_timestamp(value: object) -> dt.datetime | None:
+    if not valid_utc_timestamp(value):
+        return None
+    return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+def read_regular_file_once(path: Path, label: str) -> tuple[bytes, str | None]:
+    try:
+        path_stat = os.lstat(path)
+    except OSError:
+        return b"", f"{label}_unreadable"
+    if not stat.S_ISREG(path_stat.st_mode):
+        return b"", f"{label}_not_regular"
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return b"", f"{label}_unreadable"
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or (before.st_dev, before.st_ino) != (path_stat.st_dev, path_stat.st_ino)
+            or before.st_size < 0
+            or before.st_size > MAX_EXTERNAL_EVIDENCE_BYTES
+        ):
+            return b"", (
+                f"{label}_too_large"
+                if before.st_size > MAX_EXTERNAL_EVIDENCE_BYTES
+                else f"{label}_changed_before_read"
+            )
+        chunks: list[bytes] = []
+        size = 0
+        while True:
+            chunk = os.read(descriptor, min(1024 * 1024, MAX_EXTERNAL_EVIDENCE_BYTES + 1 - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > MAX_EXTERNAL_EVIDENCE_BYTES:
+                return b"", f"{label}_too_large"
+        after = os.fstat(descriptor)
+        if (
+            (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            != (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+            or size != before.st_size
+        ):
+            return b"", f"{label}_changed_during_read"
+        return b"".join(chunks), None
+    except OSError:
+        return b"", f"{label}_unreadable"
+    finally:
+        os.close(descriptor)
+
+
+def write_owner_only_snapshot(path: Path, value: bytes) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb", closefd=False) as handle:
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        os.close(descriptor)
+    os.chmod(path, 0o600)
+
+
+def statement_binds_receipt_sha256(statement: object, receipt_sha256: str) -> bool:
+    if not isinstance(statement, dict):
+        return False
+    subjects = statement.get("subject")
+    if not isinstance(subjects, list) or len(subjects) != 1 or not isinstance(subjects[0], dict):
+        return False
+    digest = subjects[0].get("digest")
+    return (
+        isinstance(digest, dict)
+        and set(digest) == {"sha256"}
+        and digest.get("sha256") == receipt_sha256
+    )
+
+
+def command_value_is_safe(value: str) -> bool:
+    return not (
+        URL_VALUE_RE.search(value)
+        or POSIX_ABSOLUTE_PATH_RE.search(value)
+        or WINDOWS_ABSOLUTE_PATH_RE.search(value)
+        or HOME_PATH_RE.search(value)
+    )
+
+
+def external_runtime_command_valid(value: object) -> bool:
+    if not isinstance(value, list) or not value or any(type(item) is not str for item in value):
+        return False
+    executable = value[0]
+    if executable != executable.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]:
+        return False
+    if "scripts/nextjs_postgres_real_worker_human_review_smoke.py" not in value:
+        return False
+    index = 1
+    while index < len(value):
+        arg = value[index]
+        if not command_value_is_safe(arg):
+            return False
+        if "=" in arg:
+            name, persisted_value = arg.split("=", 1)
+            if SENSITIVE_COMMAND_NAME_RE.search(name) and persisted_value != REDACTED_COMMAND_VALUE:
+                return False
+        elif arg.startswith("--") and SENSITIVE_COMMAND_NAME_RE.search(arg):
+            if index + 1 >= len(value) or value[index + 1] != REDACTED_COMMAND_VALUE:
+                return False
+            index += 1
+        index += 1
+    return True
+
+
+def runtime_security_claims_valid(value: object, required_adapters: set[str]) -> bool:
+    if not isinstance(value, dict):
+        return False
+    adapters = value.get("adapters")
+    if (
+        not required_adapters
+        or not isinstance(adapters, list)
+        or any(type(item) is not str for item in adapters)
+        or len(adapters) != len(set(adapters))
+        or set(adapters) != required_adapters
+    ):
+        return False
+    adapter_claims = value.get("adapter_claims") if isinstance(value.get("adapter_claims"), dict) else {}
+    runtime_dependency_identity = value.get("runtime_dependency_identity") if isinstance(value.get("runtime_dependency_identity"), dict) else {}
+    return (
+        value.get("contract") == "nextjs_postgres_real_worker_human_review_v1"
+        and value.get("control_plane") == "typescript_postgres"
+        and value.get("real_runtime_execution_performed") is True
+        and value.get("manifest_authority_guards_passed") is True
+        and value.get("real_run_bound_delivery_decisions_completed") is True
+        and value.get("python_api_started") is False
+        and value.get("python_or_sqlite_commercial_default") is False
+        and value.get("worker_created_delivery_approvals") is False
+        and value.get("delivery_approval_creation_source") == "acceptance_fixture_bound_to_real_run"
+        and set(adapter_claims) == required_adapters
+        and set(runtime_dependency_identity) == {"hermes_endpoint_sha256", "openclaw_binary_sha256"}
+        and all(type(item) is str and HASH_RE.fullmatch(item) is not None for item in runtime_dependency_identity.values())
+        and all(
+            isinstance(adapter_claims.get(adapter), dict)
+            and adapter_claims[adapter].get("provider_call_performed") is True
+            and adapter_claims[adapter].get("dry_run") is False
+            and adapter_claims[adapter].get("manifest_complete_run_evidence_enforced") is True
+            and adapter_claims[adapter].get("customer_delivery_revalidation_blocked") is True
+            and adapter_claims[adapter].get("approved_customer_delivery_evidence_sealed") is True
+            and adapter_claims[adapter].get("delivery_approval_updated_once") is True
+            for adapter in required_adapters
+        )
+    )
+
+
+def validate_external_runtime_receipt(
+    path_value: str | None,
+    attestation_value: str | None,
+    subject_sha: str,
+    worktree_clean: bool,
+    requirement: dict,
+) -> dict:
+    if not path_value:
+        return {
+            "provided": False,
+            "valid": False,
+            "failures": ["receipt_not_provided"],
+            "subject_sha": None,
+            "receipt_sha256": None,
+            "attestation_verified": False,
+            "github_run_verified": False,
+            "release_authority": False,
+        }
+    path = Path(path_value).expanduser()
+    if not path.is_absolute():
+        path = ROOT / path
+    attestation_path = Path(attestation_value).expanduser() if attestation_value else None
+    if attestation_path is not None and not attestation_path.is_absolute():
+        attestation_path = ROOT / attestation_path
+    failures: list[str] = []
+    raw, receipt_file_failure = read_regular_file_once(path, "receipt")
+    if receipt_file_failure:
+        failures.append(receipt_file_failure)
+    try:
+        receipt = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        receipt = {}
+        failures.append("receipt_json_invalid")
+    if not isinstance(receipt, dict):
+        receipt = {}
+        failures.append("receipt_not_object")
+
+    attestation_raw = b""
+    attestation_file_failure = "attestation_bundle_missing"
+    if attestation_path is not None:
+        attestation_raw, attestation_file_failure = read_regular_file_once(
+            attestation_path,
+            "attestation_bundle",
+        )
+    if attestation_file_failure:
+        failures.append(attestation_file_failure)
+
+    raw_command = receipt.get("command")
+    command = raw_command if isinstance(raw_command, list) else []
+    adapters = {
+        command[index + 1]
+        for index, item in enumerate(command[:-1])
+        if item == "--adapter" and type(command[index + 1]) is str
+    }
+    github_run = receipt.get("github_run") if isinstance(receipt.get("github_run"), dict) else {}
+    diagnostics = receipt.get("payload_diagnostics") if isinstance(receipt.get("payload_diagnostics"), dict) else {}
+    dependency_inputs = receipt.get("dependency_inputs") if isinstance(receipt.get("dependency_inputs"), dict) else {}
+    runtime_security_claims = receipt.get("runtime_security_claims")
+    builder_sha = receipt.get("builder_sha") if type(receipt.get("builder_sha")) is str else ""
+    expected_contracts = {str(item) for item in receipt.get("expected_contracts") or []}
+    repository = str(requirement.get("repository") or "")
+    workflow = str(requirement.get("workflow") or "")
+    signer_workflow = str(requirement.get("signer_workflow") or "")
+    required_adapters = {str(item) for item in requirement.get("required_adapters") or []}
+    allowed_refs = {str(item) for item in requirement.get("allowed_refs") or []}
+    generated_at = None
+    generated_at = parse_utc_timestamp(receipt.get("generated_at"))
+    try:
+        max_age = dt.timedelta(hours=float(requirement.get("max_age_hours") or 24))
+    except (TypeError, ValueError):
+        max_age = dt.timedelta(0)
+    now = dt.datetime.now(dt.timezone.utc)
+    checks = {
+        "contract": receipt.get("contract_id") == "commercial_ci_command_receipt_v1",
+        "gate": receipt.get("gate_id") == requirement.get("gate_id"),
+        "command_id": receipt.get("command_id") == requirement.get("command_id"),
+        "subject_sha": bool(subject_sha) and receipt.get("subject_sha") == subject_sha,
+        "builder_sha": SHA_RE.fullmatch(builder_sha) is not None,
+        "workflow": bool(workflow) and github_run.get("workflow") == workflow,
+        "repository": bool(repository) and github_run.get("repository") == repository,
+        "ref": github_run.get("ref") == "refs/heads/main"
+        and (not allowed_refs or "refs/heads/main" in allowed_refs),
+        "nonlocal_run": str(github_run.get("run_id") or "").isdigit(),
+        "run_attempt": str(github_run.get("run_attempt") or "").isdigit(),
+        "generated_at": generated_at is not None,
+        "fresh": generated_at is not None
+        and max_age > dt.timedelta(0)
+        and now - max_age <= generated_at <= now + dt.timedelta(minutes=5),
+        "exact_worktree": worktree_clean,
+        "command": external_runtime_command_valid(raw_command),
+        "adapters": bool(required_adapters) and adapters == required_adapters,
+        "expected_contract": requirement.get("expected_contract") in expected_contracts,
+        "evidence_complete": receipt.get("evidence_complete") is True,
+        "payload_ok": receipt.get("payload_ok") is True,
+        "not_skipped": receipt.get("skipped_evidence") is False,
+        "exit_zero": receipt.get("exit_code") == 0,
+        "no_failures": receipt.get("failures") == [],
+        "no_missing_contracts": receipt.get("missing_contracts") == [],
+        "payload_failure_free": diagnostics.get("failure_count") == 0
+        and diagnostics.get("failure_hashes") == []
+        and diagnostics.get("error_codes") == [],
+        "hash_only": receipt.get("raw_output_stored") is False
+        and HASH_RE.fullmatch(str(receipt.get("stdout_sha256") or "")) is not None
+        and HASH_RE.fullmatch(str(receipt.get("stderr_sha256") or "")) is not None,
+        "credentials_omitted": receipt.get("credentials_stored") is False,
+        "dependency_identity": HASH_RE.fullmatch(str(dependency_inputs.get("inputs_sha256") or "")) is not None,
+        "runtime_security_claims": runtime_security_claims_valid(runtime_security_claims, required_adapters),
+    }
+    failures.extend(name for name, ok in checks.items() if not ok)
+    attestation_verified = False
+    receipt_sha256 = hashlib.sha256(raw).hexdigest() if raw else ""
+    if attestation_file_failure or receipt_file_failure:
+        pass
+    elif not repository or not signer_workflow or not subject_sha or not builder_sha or not raw or not attestation_raw:
+        failures.append("attestation_policy_incomplete")
+    else:
+        try:
+            predicate_type = str(requirement.get("predicate_type") or "")
+            source_ref = "refs/heads/main"
+            with tempfile.TemporaryDirectory(prefix="agentops-attestation-snapshot-") as snapshot_value:
+                snapshot_dir = Path(snapshot_value)
+                os.chmod(snapshot_dir, 0o700)
+                receipt_snapshot = snapshot_dir / "receipt.json"
+                attestation_snapshot = snapshot_dir / "attestation.json"
+                write_owner_only_snapshot(receipt_snapshot, raw)
+                write_owner_only_snapshot(attestation_snapshot, attestation_raw)
+                verify_command = [
+                    "gh",
+                    "attestation",
+                    "verify",
+                    str(receipt_snapshot),
+                    "--repo",
+                    repository,
+                    "--bundle",
+                    str(attestation_snapshot),
+                    "--signer-workflow",
+                    signer_workflow,
+                    "--signer-digest",
+                    builder_sha,
+                    "--source-digest",
+                    builder_sha,
+                    "--source-ref",
+                    source_ref,
+                    "--format",
+                    "json",
+                ]
+                if predicate_type:
+                    verify_command.extend(["--predicate-type", predicate_type])
+                verified = subprocess.run(
+                    verify_command,
+                    cwd=ROOT,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=30,
+                    check=False,
+                )
+            verified_payload = json.loads(verified.stdout) if verified.returncode == 0 else []
+            attestation_verified = (
+                isinstance(verified_payload, list)
+                and len(verified_payload) > 0
+                and all(
+                    isinstance(item, dict)
+                    and isinstance(item.get("verificationResult"), dict)
+                    and isinstance(item["verificationResult"].get("statement"), dict)
+                    and statement_binds_receipt_sha256(
+                        item["verificationResult"]["statement"],
+                        receipt_sha256,
+                    )
+                    and (
+                        not predicate_type
+                        or item["verificationResult"]["statement"].get("predicateType") == predicate_type
+                    )
+                    for item in verified_payload
+                )
+            )
+        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+            attestation_verified = False
+        if not attestation_verified:
+            failures.append("attestation_verification_failed")
+    github_run_verified = False
+    github_run_time_bound = False
+    if (
+        not receipt_file_failure
+        and not attestation_file_failure
+        and repository
+        and builder_sha
+        and str(github_run.get("run_id") or "").isdigit()
+    ):
+        try:
+            run_lookup = subprocess.run(
+                [
+                    "gh",
+                    "api",
+                    f"repos/{repository}/actions/runs/{github_run['run_id']}",
+                ],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=30,
+                check=False,
+            )
+            run_payload = json.loads(run_lookup.stdout) if run_lookup.returncode == 0 else {}
+            run_started_at = parse_utc_timestamp(run_payload.get("run_started_at"))
+            run_updated_at = parse_utc_timestamp(run_payload.get("updated_at"))
+            github_run_time_bound = (
+                generated_at is not None
+                and run_started_at is not None
+                and run_updated_at is not None
+                and run_started_at <= run_updated_at
+                and run_started_at - GITHUB_RUN_TIME_TOLERANCE
+                <= generated_at
+                <= run_updated_at + GITHUB_RUN_TIME_TOLERANCE
+            )
+            github_run_verified = (
+                isinstance(run_payload, dict)
+                and run_payload.get("status") == "completed"
+                and run_payload.get("conclusion") == "success"
+                and run_payload.get("head_sha") == builder_sha
+                and run_payload.get("run_attempt") == int(str(github_run.get("run_attempt") or "0"))
+                and run_payload.get("event") == "workflow_dispatch"
+                and run_payload.get("head_branch") == "main"
+                and run_payload.get("name") == workflow
+                and str(run_payload.get("path") or "").startswith(
+                    ".github/workflows/commercial-real-runtime-acceptance.yml@"
+                )
+                and isinstance(run_payload.get("head_repository"), dict)
+                and run_payload["head_repository"].get("full_name") == repository
+                and github_run_time_bound
+            )
+        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, ValueError):
+            github_run_verified = False
+    if not github_run_verified:
+        failures.append("github_run_verification_failed")
+    if not github_run_time_bound:
+        failures.append("github_run_time_binding_failed")
+    return {
+        "provided": True,
+        "valid": not failures,
+        "failures": sorted(set(failures)),
+        "subject_sha": receipt.get("subject_sha"),
+        "builder_sha": builder_sha or None,
+        "receipt_sha256": receipt_sha256 or None,
+        "attestation_verified": attestation_verified,
+        "github_run_verified": github_run_verified,
+        "release_authority": not failures,
+        "source": "external_uncommitted_github_actions_attested_artifact",
+    }
 
 
 def route_naming_decision_semantics_ok() -> bool:
@@ -198,7 +631,21 @@ def check(name: str, ok: bool, detail: str, command: str | None = None) -> dict:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Check commercial migration engineering and release readiness.")
+    parser.add_argument(
+        "--human-memory-runtime-receipt",
+        default=os.environ.get("AGENTOPS_HUMAN_MEMORY_RUNTIME_RECEIPT"),
+        help="External hash-only exact-head receipt from commercial-real-runtime-acceptance.",
+    )
+    parser.add_argument(
+        "--human-memory-runtime-attestation",
+        default=os.environ.get("AGENTOPS_HUMAN_MEMORY_RUNTIME_ATTESTATION"),
+        help="Offline GitHub/Sigstore attestation bundle for the exact-head Runtime receipt.",
+    )
+    args = parser.parse_args()
     branch_ok, branch = run_git(["branch", "--show-current"])
+    sha_ok, subject_sha = run_git(["rev-parse", "HEAD"])
+    subject_sha = subject_sha.lower() if sha_ok and SHA_RE.fullmatch(subject_sha.lower()) else ""
     paths = status_paths()
     blocked_paths = blocked_status_paths(paths)
 
@@ -239,20 +686,39 @@ def main() -> int:
         "ui/next-app/package.json",
     ]
     human_memory_blockers = read_json("docs/HUMAN_MEMORY_REVIEW_RELEASE_BLOCKERS.json")
+    runtime_receipt = validate_external_runtime_receipt(
+        args.human_memory_runtime_receipt,
+        args.human_memory_runtime_attestation,
+        subject_sha,
+        not paths,
+        human_memory_blockers.get("external_runtime_receipt_requirement") or {},
+    )
     human_memory_open_blockers = [
         item
         for item in human_memory_blockers.get("open_blockers") or []
         if isinstance(item, dict) and item.get("status") == "open"
     ]
-    human_memory_blocker_ids = {
+    human_memory_declared_blocker_ids = {
         str(item.get("id"))
         for item in human_memory_open_blockers
+    }
+    human_memory_effective_open_blockers = [
+        item
+        for item in human_memory_open_blockers
+        if item.get("id") != "exact_head_real_runtime_receipt_missing" or not runtime_receipt["valid"]
+    ]
+    human_memory_blocker_ids = {
+        str(item.get("id"))
+        for item in human_memory_effective_open_blockers
     }
 
     checks = [
         check(
             "isolated_commercial_branch",
-            branch_ok and branch.startswith("codex/") and branch not in {"main", "codex/agent-gateway-kb-demo"},
+            branch_ok and (
+                (branch.startswith("codex/") and branch != "codex/agent-gateway-kb-demo")
+                or (branch == "main" and runtime_receipt["valid"])
+            ),
             f"current_branch={branch or 'unknown'}",
             "git branch --show-current",
         ),
@@ -264,28 +730,176 @@ def main() -> int:
         check(
             "human_memory_review_release_blockers_recorded",
             human_memory_blockers.get("contract_id") == "human_memory_review_release_blockers_v1"
-            and human_memory_blockers.get("release_claim_allowed") is False
-            and human_memory_blockers.get("closed_loop_claim_allowed") is False
+            and human_memory_blockers.get("release_claim_allowed") == (not bool(human_memory_open_blockers))
+            and human_memory_blockers.get("closed_loop_claim_allowed") == (not bool(human_memory_open_blockers))
             and {
+                "production_api_route_ownership_incomplete",
                 "trusted_proxy_ip_edge_rate_limit_required",
                 "historical_audit_workspace_backfill_missing",
                 "human_session_retention_job_missing",
                 "human_memory_review_request_retention_policy_missing",
+                "approval_decision_request_retention_policy_missing",
+                "approval_expiry_reconciliation_missing",
+                "typescript_approval_policy_entitlement_owner_missing",
+                "production_prepared_action_resume_ownership_missing",
+                "production_enrollment_issue_owner_missing",
+                "production_customer_delivery_approval_creation_owner_missing",
+                "ordinary_high_risk_tool_execution_receipt_missing",
                 "owner_bootstrap_compiled_entry_missing",
-            }.issubset(human_memory_blocker_ids)
-            and human_memory_blockers.get("implemented_controls", {}).get(
-                "real_openclaw_worker_human_review_bridge_verified"
+            }.issubset(human_memory_declared_blocker_ids)
+            and (
+                "exact_head_real_runtime_receipt_missing" in human_memory_declared_blocker_ids
+                or runtime_receipt["valid"]
+            )
+            and {
+                "approval_kind_binding_missing",
+                "enrollment_approval_unique_binding_missing",
+            }.isdisjoint(human_memory_declared_blocker_ids)
+            and human_memory_blockers.get("local_precommit_observations", {}).get(
+                "real_openclaw_worker_human_review_bridge_observed"
+            ) is True
+            and human_memory_blockers.get("local_precommit_observations", {}).get(
+                "real_hermes_worker_human_review_bridge_observed"
+            ) is True
+            and human_memory_blockers.get("local_precommit_observations", {}).get(
+                "real_openclaw_run_bound_delivery_decision_observed"
+            ) is True
+            and human_memory_blockers.get("local_precommit_observations", {}).get(
+                "real_hermes_run_bound_delivery_decision_observed"
             ) is True
             and human_memory_blockers.get("implemented_controls", {}).get(
-                "real_hermes_worker_human_review_bridge_verified"
+                "approval_kind_v4_explicit_without_default"
             ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "approval_kind_v4_immutable_and_edge_bound"
+            ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "approval_execution_binding_immutable"
+            ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "legacy_approval_kind_backfill_unclassified_fails_closed"
+            ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "enrollment_approval_unique_binding_enforced"
+            ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "customer_delivery_evidence_sealed_after_decision"
+            ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "plan_evidence_complete_tool_evaluation_artifact_set"
+            ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "plan_evidence_audit_ids_server_derived"
+            ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "external_runtime_receipt_security_claims_required"
+            ) is True
+            and human_memory_blockers.get("acceptance_evidence", {}).get(
+                "worker_created_delivery_approvals"
+            ) is False
+            and human_memory_blockers.get("acceptance_evidence", {}).get(
+                "delivery_approval_creation_source"
+            ) == "acceptance_fixture_bound_to_real_run"
+            and human_memory_blockers.get("acceptance_evidence", {}).get(
+                "evidence_scope"
+            ) == "local_precommit_engineering_only"
+            and human_memory_blockers.get("acceptance_evidence", {}).get(
+                "subject_sha"
+            ) is None
+            and human_memory_blockers.get("acceptance_evidence", {}).get(
+                "executed_at"
+            ) is None
+            and human_memory_blockers.get("acceptance_evidence", {}).get(
+                "receipt_id"
+            ) is None
+            and human_memory_blockers.get("acceptance_evidence", {}).get(
+                "exact_head"
+            ) is False
+            and human_memory_blockers.get("acceptance_evidence", {}).get(
+                "release_authority"
+            ) is False
+            and human_memory_blockers.get("external_runtime_receipt_requirement", {}).get(
+                "contract_id"
+            ) == "commercial_ci_command_receipt_v1"
+            and human_memory_blockers.get("external_runtime_receipt_requirement", {}).get(
+                "workflow"
+            ) == "commercial-real-runtime-acceptance"
+            and human_memory_blockers.get("external_runtime_receipt_requirement", {}).get(
+                "repository"
+            ) == "geogejoy107-jpg/agentops-mis-mvp"
+            and human_memory_blockers.get("external_runtime_receipt_requirement", {}).get(
+                "signer_workflow"
+            ) == "geogejoy107-jpg/agentops-mis-mvp/.github/workflows/commercial-real-runtime-acceptance.yml"
+            and set(human_memory_blockers.get("external_runtime_receipt_requirement", {}).get(
+                "required_adapters"
+            ) or []) == {"hermes", "openclaw"}
+            and set(human_memory_blockers.get("external_runtime_receipt_requirement", {}).get(
+                "allowed_refs"
+            ) or []) == {
+                "refs/heads/codex/commercial-human-session-memory-review",
+                "refs/heads/main",
+            }
+            and human_memory_blockers.get("external_runtime_receipt_requirement", {}).get(
+                "max_age_hours"
+            ) == 24
+            and file_contains(
+                ".github/workflows/commercial-real-runtime-acceptance.yml",
+                "exact_head_real_runtime_human_review",
+            )
+            and file_contains(
+                ".github/workflows/commercial-real-runtime-acceptance.yml",
+                "commercial_ci_receipt.py command",
+            )
+            and file_contains(
+                ".github/workflows/commercial-real-runtime-acceptance.yml",
+                "npm --prefix ui/next-app ci --ignore-scripts",
+            )
+            and file_contains(
+                ".github/workflows/commercial-real-runtime-acceptance.yml",
+                "actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6",
+            )
+            and file_contains(
+                ".github/workflows/commercial-real-runtime-acceptance.yml",
+                "push:",
+            )
+            and not file_contains(
+                ".github/workflows/commercial-real-runtime-acceptance.yml",
+                "continue-on-error",
+            )
+            and file_contains(
+                "scripts/commercial_ci_receipt.py",
+                "real_runtime_security_claims_incomplete",
+            )
+            and file_contains(
+                "scripts/commercial_ci_receipt.py",
+                "approved_customer_delivery_evidence_sealed",
+            )
+            and file_contains("scripts/commercial_migration_readiness.py", "gh")
+            and file_contains("scripts/commercial_migration_readiness.py", "attestation")
             and human_memory_blockers.get("implemented_controls", {}).get(
                 "free_local_legacy_workspace_mutation_same_origin_enforced"
             ) is True
             and human_memory_blockers.get("implemented_controls", {}).get(
                 "legacy_review_decisions_fail_closed"
+            ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "production_shared_python_proxy_helper_blocked"
+            ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "workspace_detail_read_routes_typescript_postgres_owned"
+            ) is True
+            and human_memory_blockers.get("implemented_controls", {}).get(
+                "human_approval_decision_route_typescript_postgres_owned"
             ) is True,
-            "the live OpenClaw and Hermes bridges are recorded while remaining ingress, historical audit mapping, retention, and bootstrap packaging gaps block release claims",
+            "the v4 approval schema and local pre-commit OpenClaw/Hermes observations are separated from release evidence without attributing approval creation to Workers; an external exact-HEAD runtime receipt can resolve only its evidence blocker while the remaining route, approval-creation, expiry, entitlement, execution, ingress, audit mapping, retention, and packaging gaps stay open",
+        ),
+        check(
+            "external_exact_head_real_runtime_receipt_valid_when_provided",
+            not runtime_receipt["provided"] or runtime_receipt["valid"],
+            "provided=" + str(runtime_receipt["provided"]).lower()
+            + ",valid=" + str(runtime_receipt["valid"]).lower()
+            + ",failures=" + ",".join(runtime_receipt["failures"]),
+            "python3 scripts/commercial_migration_readiness.py --human-memory-runtime-receipt <receipt.json> --human-memory-runtime-attestation <attestation.json>",
         ),
         check(
             "current_product_stack_present",
@@ -380,7 +994,7 @@ def main() -> int:
         ),
         check(
             "nextjs_parity_surface_exists",
-            file_contains("ui/next-app/package.json", '"next": "16.2.9"')
+            file_contains("ui/next-app/package.json", '"next": "16.2.11"')
             and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "AGENTOPS_API_BASE")
             and file_contains("ui/next-app/src/lib/mis.ts", "/dashboard/metrics")
             and file_contains("ui/next-app/src/lib/mis.ts", "/storage/backend-status")
@@ -1503,12 +2117,18 @@ def main() -> int:
             and file_contains("ui/next-app/src/server/controlPlane/config.ts", "AGENTOPS_DEPLOYMENT_MODE must be production")
             and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "typescript_route_owner_required")
             and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "python_proxy_performed: false")
-            and file_contains("scripts/nextjs_production_python_proxy_fail_closed_smoke.py", "nextjs_production_python_proxy_fail_closed_v1")
+            and file_contains("scripts/nextjs_production_python_proxy_fail_closed_smoke.py", "nextjs_production_python_proxy_fail_closed_v2")
+            and file_contains("scripts/nextjs_production_python_proxy_fail_closed_smoke.py", "EXPECTED_COMPILED_API_ROUTE_KEYS")
+            and file_contains("scripts/nextjs_production_python_proxy_fail_closed_smoke.py", "EXPECTED_DIRECT_READ_ROUTE_COUNT = 10")
+            and file_contains("scripts/nextjs_production_python_proxy_fail_closed_smoke.py", "EXPECTED_APPROVAL_DECISION_ROUTE_COUNT = 2")
+            and file_contains("scripts/nextjs_production_python_proxy_fail_closed_smoke.py", "EXPECTED_WORKSPACE_PROXY_ROUTE_COUNT = 16")
+            and file_contains("scripts/nextjs_production_python_proxy_fail_closed_smoke.py", '"compiled_api_route_count": len(compiled_api_routes)')
             and file_contains("scripts/nextjs_production_python_proxy_fail_closed_smoke.py", "upstream_request_count")
-            and file_contains("scripts/nextjs_production_python_proxy_fail_closed_smoke.py", "typescript_owned_workspace_routes_python_blocked")
             and file_contains("ui/next-app/package.json", '"test:control-plane-mode-contract"')
             and file_contains("ui/next-app/scripts/control-plane-mode-contract.ts", "control_plane_production_fail_closed_v1")
             and file_contains("ui/next-app/scripts/control-plane-mode-contract.ts", "production_python_catch_all_blocked")
+            and file_contains("ui/next-app/scripts/control-plane-mode-contract.ts", "production_proxy_helper_blocked")
+            and file_contains("ui/next-app/scripts/control-plane-mode-contract.ts", "explicit_local_dns_rebinding_blocked")
             and file_contains("ui/next-app/scripts/control-plane-mode-contract.ts", "unknown_deployment_mode_rejected")
             and file_contains("ui/next-app/src/server/controlPlane/auth.ts", "authenticateAgentGateway")
             and file_contains("ui/next-app/src/server/controlPlane/auth.ts", "allowMissing")
@@ -1580,6 +2200,13 @@ def main() -> int:
             and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"concurrent_manifest_single_winner"')
             and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"manifest_verification_passed"')
             and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"manifest_immutable"')
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayPlans.ts", "plan_evidence_expected_steps_conflict")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayPlans.ts", "expected_steps_match_plan")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayPlans.ts", "tool_evidence_complete")
+            and file_contains("ui/next-app/src/server/controlPlane/agentGatewayPlans.ts", "evaluation_evidence_complete")
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"manifest_expected_steps_server_derived"')
+            and file_contains("scripts/nextjs_postgres_control_plane_tasks_smoke.py", '"manifest_complete_run_evidence_enforced"')
+            and file_contains("scripts/nextjs_postgres_real_worker_human_review_smoke.py", '"manifest_authority_guards_passed"')
             and file_contains(
                 "scripts/nextjs_postgres_control_plane_tasks_smoke.py",
                 '"manifest_cross_workspace_evidence_blocked"',
@@ -1588,7 +2215,7 @@ def main() -> int:
             and file_contains(".github/workflows/commercial-migration-ci.yml", "nextjs_postgres_control_plane_tasks")
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "nextjs_postgres_control_plane_tasks_v1")
             and (ROOT / "scripts" / "nextjs_postgres_control_plane_tasks_smoke.py").exists(),
-            "The TypeScript-owned Agent Gateway task/run lifecycle, Agent Plan, verified plan-evidence manifest, and immutable execution-evidence routes default to Postgres in production, retain local proxy rollback, use workspace-scoped evidence queries plus consistent task/run, evidence-ID, and parent-token/session locking, force risky tools to approval, require verified plans for non-mock run start, and have a no-Python dynamic CI receipt",
+            "The TypeScript-owned Agent Gateway task/run lifecycle, Agent Plan, verified plan-evidence manifest, and immutable execution-evidence routes default to Postgres in production, retain local proxy rollback, use workspace-scoped complete-run evidence queries plus server-derived locked plan steps and consistent task/run, evidence-ID, and parent-token/session locking, force risky tools to approval, require verified plans for non-mock run start, and have no-Python dynamic and real-Runtime negative receipts",
         ),
         check(
             "nextjs_postgres_workspace_read_models_surface_exists",
@@ -1608,19 +2235,64 @@ def main() -> int:
             and file_contains("ui/next-app/app/api/mis/approvals/route.ts", "listWorkspaceApprovals")
             and file_contains("ui/next-app/app/api/mis/audit/route.ts", "listWorkspaceAudit")
             and file_contains("ui/next-app/app/api/mis/dashboard/metrics/route.ts", "workspaceDashboardMetrics")
+            and file_contains("ui/next-app/app/api/mis/tasks/[taskId]/route.ts", "getWorkspaceTaskDetail")
+            and file_contains("ui/next-app/app/api/mis/runs/[runId]/route.ts", "getWorkspaceRunDetail")
+            and file_contains("ui/next-app/app/api/mis/runs/[runId]/graph/route.ts", "getWorkspaceRunGraph")
+            and file_contains("ui/next-app/app/api/mis/tool-calls/route.ts", "listWorkspaceToolCalls")
+            and file_contains("ui/next-app/app/api/mis/evaluations/route.ts", "listWorkspaceEvaluations")
+            and file_contains("ui/next-app/app/api/mis/approvals/[approvalId]/[decision]/route.ts", "decideWorkspaceApproval")
+            and file_contains("ui/next-app/src/server/controlPlane/approvalDecisions.ts", "prepared_action_required")
+            and file_contains("ui/next-app/src/server/controlPlane/approvalDecisions.ts", "verifyLatestWorkspacePlanEvidence")
+            and file_contains("ui/next-app/src/server/controlPlane/approvalDecisions.ts", "customer_delivery_run_incomplete")
+            and file_contains("ui/next-app/src/server/controlPlane/approvalDecisions.ts", "approver_user_id=$2")
             and file_contains("migrations/postgres/20260719_workspace_read_models_v2.sql", "audit_logs_workspace_metadata_match")
             and file_contains("migrations/postgres/20260719_workspace_read_models_v2.sql", "SET LOCAL lock_timeout")
             and file_contains("migrations/postgres/20260719_workspace_read_models_v2_online_indexes.sql", "CREATE INDEX CONCURRENTLY")
             and file_contains("ui/next-app/src/server/controlPlane/ledger.ts", "workspaceId: string | null")
             and file_contains("ui/next-app/scripts/workspace-read-model-contract.ts", "nextjs_postgres_workspace_read_models_v1")
             and file_contains("ui/next-app/scripts/workspace-read-model-contract.ts", "authenticated_http_routes_return_private_200")
+            and file_contains("ui/next-app/scripts/approval-decision-contract.ts", "nextjs_postgres_human_approval_decision_v1")
+            and file_contains("ui/next-app/scripts/approval-decision-contract.ts", "concurrent_same_key_16_way_single_winner")
+            and file_contains("ui/next-app/scripts/approval-decision-contract.ts", "customer_delivery_requires_completed_run")
+            and file_contains("ui/next-app/scripts/approval-decision-contract.ts", "approval_kind_explicit_immutable_and_edge_bound")
+            and file_contains("ui/next-app/scripts/approval-decision-contract.ts", "enrollment_approval_unique_binding")
+            and file_contains("ui/next-app/scripts/approval-decision-contract.ts", "enrollment_approval_delete_must_not_orphan_child")
+            and file_contains("ui/next-app/scripts/approval-decision-contract.ts", "parent_first_lock_order_deadlock_free")
+            and file_contains("ui/next-app/scripts/approval-decision-contract.ts", "tool_before_approval")
+            and file_contains("ui/next-app/scripts/approval-decision-contract.ts", "production_python_proxy_blocked")
+            and file_contains("scripts/nextjs_postgres_real_worker_human_review_smoke.py", "real_run_bound_delivery_decisions_completed")
+            and file_contains("scripts/nextjs_postgres_real_worker_human_review_smoke.py", '"worker_created_delivery_approvals": False')
+            and file_contains("scripts/nextjs_postgres_real_worker_human_review_smoke.py", '"delivery_approval_creation_source": "acceptance_fixture_bound_to_real_run"')
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "nextjs_postgres_workspace_read_models_v1")
+            and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "nextjs_postgres_human_approval_decision_v1")
             and file_contains("ui/next-app/package.json", '"test:workspace-read-model-contract"')
+            and file_contains("ui/next-app/package.json", '"test:approval-decision-contract"')
             and file_contains("ui/next-app/package.json", '"test:human-schema-upgrade-contract"')
-            and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "human_memory_schema_v1_to_v2_upgrade_v1")
+            and file_contains("ui/next-app/src/server/controlPlane/schemaReadiness.ts", 'HUMAN_MEMORY_SCHEMA_VERSION = "20260719_approval_kind_bindings_v4"')
+            and file_contains("ui/next-app/src/server/controlPlane/schemaReadiness.ts", 'HUMAN_MEMORY_SCHEMA_CONTRACT = "agentops-human-session-approval-kind-bindings-contract-v4"')
+            and file_contains("ui/next-app/scripts/schema-readiness-contract.ts", "human_memory_schema_readiness_v4")
+            and file_contains("ui/next-app/scripts/schema-readiness-contract.ts", "non_deferred_binding_trigger_rejected")
+            and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "human_memory_schema_v1_v2_v3_to_v4_upgrade_v1")
+            and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "exact_v3_receipt_upgraded")
+            and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "approval_kind_is_explicit_without_default")
+            and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "five_approval_kinds_backfilled")
+            and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "deferred_approval_binding_triggers_ready")
+            and file_contains("ui/next-app/scripts/schema-migration-upgrade-contract.ts", "enrollment_approval_unique_binding_enforced")
+            and file_contains("migrations/postgres/20260719_approval_kind_bindings_v4.sql", "ALTER COLUMN approval_kind DROP DEFAULT")
+            and file_contains("migrations/postgres/20260719_approval_kind_bindings_v4.sql", "run_execution")
+            and file_contains("migrations/postgres/20260719_approval_kind_bindings_v4.sql", "tool_execution")
+            and file_contains("migrations/postgres/20260719_approval_kind_bindings_v4.sql", "prepared_action")
+            and file_contains("migrations/postgres/20260719_approval_kind_bindings_v4.sql", "agent_enrollment")
+            and file_contains("migrations/postgres/20260719_approval_kind_bindings_v4.sql", "customer_delivery")
+            and file_contains("migrations/postgres/20260719_approval_kind_bindings_v4.sql", "agentops_enforce_approval_kind_immutable")
+            and file_contains("migrations/postgres/20260719_approval_kind_bindings_v4.sql", "DEFERRABLE INITIALLY DEFERRED")
+            and file_contains("migrations/postgres/20260719_approval_kind_bindings_v4.sql", "AFTER INSERT OR UPDATE OR DELETE")
+            and file_contains("migrations/postgres/20260719_approval_kind_bindings_v4.sql", "idx_agent_gateway_enrollment_approval_unique")
+            and file_contains("migrations/postgres/20260719_human_approval_decisions_v3.sql", "human_approval_decision_requests")
             and file_contains(".github/workflows/commercial-migration-ci.yml", "nextjs_postgres_workspace_read_models")
-            and file_contains(".github/workflows/commercial-migration-ci.yml", "human_schema_v1_to_v2_upgrade"),
-            "Human Session-protected Workspace task/run/approval/audit/dashboard reads are direct TypeScript/Postgres owners with structured audit tenancy, single-membership inference, production Python blocking, and dynamic Postgres isolation evidence",
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "nextjs_postgres_human_approval_decision")
+            and file_contains(".github/workflows/commercial-migration-ci.yml", "human_schema_v1_v2_v3_to_v4_upgrade"),
+            "Human Session-protected Workspace reads and approval decisions are direct TypeScript/Postgres owners with exact v4 schema readiness, immutable edge-bound approval kinds, unique enrollment binding, production Python blocking, concurrency evidence, and real Hermes/OpenClaw run-bound delivery decision acceptance; production approval creation, expiry reconciliation, policy, resume, enrollment issue, and execution receipts remain open",
         ),
         check(
             "postgres_cli_write_parity_surface_exists",
@@ -1944,6 +2616,7 @@ def main() -> int:
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
                 "python3 scripts/nextjs_postgres_control_plane_tasks_smoke.py",
                 "npm --prefix ui/next-app run test:workspace-read-model-contract",
+                "npm --prefix ui/next-app run test:approval-decision-contract",
                 "npm --prefix ui/next-app run test:human-schema-upgrade-contract",
                 "python3 scripts/nextjs_postgres_human_memory_review_smoke.py --postgres-dsn postgresql://...",
                 "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
@@ -1953,15 +2626,14 @@ def main() -> int:
     ]
 
     engineering_surface_ready = all(item["ok"] for item in checks)
-    declared_slice_release_allowed = human_memory_blockers.get("release_claim_allowed") is True
-    declared_slice_closed_loop_allowed = human_memory_blockers.get("closed_loop_claim_allowed") is True
-    release_blocked_by_contract = (
-        bool(human_memory_open_blockers)
-        or not declared_slice_release_allowed
-        or not declared_slice_closed_loop_allowed
+    declared_release_blocked = bool(human_memory_open_blockers)
+    release_blocked_by_contract = bool(human_memory_effective_open_blockers)
+    expected_blocker_status = "blocked" if declared_release_blocked else "ready"
+    blocker_contract_truthful = (
+        human_memory_blockers.get("status") == expected_blocker_status
+        and human_memory_blockers.get("release_claim_allowed") == (not declared_release_blocked)
+        and human_memory_blockers.get("closed_loop_claim_allowed") == (not declared_release_blocked)
     )
-    expected_blocker_status = "blocked" if release_blocked_by_contract else "ready"
-    blocker_contract_truthful = human_memory_blockers.get("status") == expected_blocker_status
     command_ok = engineering_surface_ready and blocker_contract_truthful
     release_ready = command_ok and not release_blocked_by_contract
     payload = {
@@ -1972,6 +2644,8 @@ def main() -> int:
         "closed_loop_claim_allowed": release_ready,
         "readiness_contract_valid": command_ok,
         "open_release_blocker_ids": sorted(human_memory_blocker_ids),
+        "declared_open_release_blocker_ids": sorted(human_memory_declared_blocker_ids),
+        "external_real_runtime_receipt": runtime_receipt,
         "branch": branch,
         "worktree": str(ROOT),
         "strategy": {

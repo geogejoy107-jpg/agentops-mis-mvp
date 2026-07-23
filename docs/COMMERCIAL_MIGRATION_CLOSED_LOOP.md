@@ -886,11 +886,14 @@ Must be true:
   `python3 -I -B -S scripts/commercial_release_grade_promotion_smoke.py`. The migration
   readiness script inventories only this static source/docs/CI wiring; the
   workflow's execution of the promotion smoke is the dynamic gate.
-- `commercial_ci_supply_chain_pins_v1` fixes the commercial workflow to
-  `ubuntu-24.04`, commit-pinned first-party actions, Python `3.11.9`, Node
-  `20.19.4`, Playwright CLI `0.1.17`, and a Postgres 16.14 Alpine tag plus image
-  index digest. `python3 scripts/commercial_ci_supply_chain_smoke.py` fails if
-  any of those execution inputs becomes movable again.
+- `commercial_ci_supply_chain_pins_v1` fixes the main commercial workflow to
+  `ubuntu-24.04`, Python `3.11.9`, Node `20.19.4`, Playwright CLI `0.1.17`, and
+  a Postgres 16.14 Alpine tag plus image index digest. It also requires the live
+  Runtime workflow's dedicated self-hosted label, protected environment,
+  non-persistent checkout credentials, disabled npm lifecycle scripts, and
+  allowlisted refs. First-party actions in both workflows are commit-pinned.
+  `python3 scripts/commercial_ci_supply_chain_smoke.py` fails if any of those
+  execution inputs or trust boundaries drifts.
 - `release_freeze_protocol_v1` keeps commercial handoff in
   `freeze_active_not_release_complete`, and `merge_readiness_status_v1` keeps
   merge status at `blocked_release_evidence_required` until release evidence,

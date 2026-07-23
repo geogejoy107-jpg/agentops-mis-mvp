@@ -17,6 +17,23 @@
     "missing_agent_gateway_session_expiry_fails_closed": true,
     "malformed_login_window_fails_closed": true,
     "exact_postgres_schema_version_gate": true,
+    "approval_kind_v4_explicit_without_default": true,
+    "approval_kind_v4_immutable_and_edge_bound": true,
+    "approval_execution_binding_immutable": true,
+    "approval_parent_binding_immutable": true,
+    "approval_terminal_state_immutable": true,
+    "legacy_approval_kind_backfill_unclassified_fails_closed": true,
+    "enrollment_approval_unique_binding_enforced": true,
+    "audit_log_append_only": true,
+    "customer_delivery_evidence_sealed_after_decision": true,
+    "customer_delivery_agent_plan_sealed_after_decision": true,
+    "customer_delivery_evidence_decision_race_serialized": true,
+    "plan_evidence_expected_steps_server_derived": true,
+    "plan_evidence_complete_tool_evaluation_artifact_set": true,
+    "plan_evidence_audit_ids_server_derived": true,
+    "commercial_delivery_real_runtime_provenance_revalidated": true,
+    "external_runtime_receipt_security_claims_required": true,
+    "trusted_default_branch_candidate_harness_defined": true,
     "workspace_core_read_routes_typescript_postgres_owned": true,
     "structured_audit_workspace_binding": true,
     "audit_workspace_binding_chain_constrained": true,
@@ -24,9 +41,48 @@
     "production_server_loader_python_blocked": true,
     "legacy_workspace_python_mutation_routes_blocked": true,
     "free_local_legacy_workspace_mutation_same_origin_enforced": true,
+    "free_local_dns_rebinding_blocked": true,
+    "production_shared_python_proxy_helper_blocked": true,
     "legacy_review_decisions_fail_closed": true,
-    "real_openclaw_worker_human_review_bridge_verified": true,
-    "real_hermes_worker_human_review_bridge_verified": true
+    "workspace_detail_read_routes_typescript_postgres_owned": true,
+    "human_approval_decision_route_typescript_postgres_owned": true
+  },
+  "local_precommit_observations": {
+    "scope": "non_release_engineering_observation",
+    "real_openclaw_worker_human_review_bridge_observed": true,
+    "real_hermes_worker_human_review_bridge_observed": true,
+    "real_openclaw_run_bound_delivery_decision_observed": true,
+    "real_hermes_run_bound_delivery_decision_observed": true
+  },
+  "acceptance_evidence": {
+    "evidence_scope": "local_precommit_engineering_only",
+    "subject_sha": null,
+    "executed_at": null,
+    "receipt_id": null,
+    "exact_head": false,
+    "release_authority": false,
+    "worker_created_delivery_approvals": false,
+    "delivery_approval_creation_source": "acceptance_fixture_bound_to_real_run"
+  },
+  "external_runtime_receipt_requirement": {
+    "contract_id": "commercial_ci_command_receipt_v1",
+    "gate_id": "gate_5_human_memory_real_runtime",
+    "command_id": "trusted_main_real_runtime_human_review",
+    "expected_contract": "nextjs_postgres_real_worker_human_review_v1",
+    "workflow": "commercial-real-runtime-acceptance",
+    "repository": "geogejoy107-jpg/agentops-mis-mvp",
+    "signer_workflow": "geogejoy107-jpg/agentops-mis-mvp/.github/workflows/commercial-real-runtime-acceptance.yml",
+    "predicate_type": "https://slsa.dev/provenance/v1",
+    "max_age_hours": 24,
+    "allowed_refs": [
+      "refs/heads/main"
+    ],
+    "builder_must_differ_from_candidate_authority": true,
+    "required_adapters": [
+      "hermes",
+      "openclaw"
+    ],
+    "source": "external_uncommitted_github_actions_attested_artifact"
   },
   "open_blockers": [
     {
@@ -34,7 +90,7 @@
       "severity": "P1",
       "status": "open",
       "kind": "migration",
-      "detail": "Commercial production rejects the generic Python catch-all and all 16 legacy Workspace mutation proxies; the first Workspace task/run/approval/audit/dashboard read set now has direct TypeScript/Postgres owners. The blocked UI, detail, administration, entitlement, deployment, and integration APIs still need direct TypeScript/Postgres owners before the production Next application is feature-complete."
+      "detail": "Commercial production rejects the generic and shared Python proxy paths plus all 16 legacy Workspace mutation proxies. Workspace task/run/approval/audit/dashboard lists, task/run details, run graph, tool/evaluation reads, and Human approval decisions now have direct TypeScript/Postgres owners. Remaining administration, entitlement, deployment, integration, prepared-action resume, and enrollment-issue APIs still need direct owners before the production Next application is feature-complete."
     },
     {
       "id": "trusted_proxy_ip_edge_rate_limit_required",
@@ -63,6 +119,83 @@
       "status": "open",
       "kind": "retention",
       "detail": "Completed Human Memory Review idempotency rows do not yet have an approved retention policy and bounded cleanup job."
+    },
+    {
+      "id": "approval_decision_request_retention_policy_missing",
+      "severity": "P2",
+      "status": "open",
+      "kind": "retention",
+      "detail": "Completed Human approval decision idempotency rows do not yet have an approved retention policy and bounded cleanup job."
+    },
+    {
+      "id": "approval_expiry_reconciliation_missing",
+      "severity": "P1",
+      "status": "open",
+      "kind": "lifecycle",
+      "detail": "Expired approvals fail closed on authorization, but a bounded reconciler does not yet terminalize the approval and its linked waiting state with audit evidence."
+    },
+    {
+      "id": "production_customer_delivery_approval_creation_owner_missing",
+      "severity": "P1",
+      "status": "open",
+      "kind": "migration",
+      "detail": "Real Hermes and OpenClaw Workers create completed runs, evidence, and verified manifests, but they do not create customer_delivery approvals through a production TypeScript/Postgres owner. Current live acceptance uses an isolated fixture bound to each real run; production approval creation ownership remains required before closed-loop customer-delivery claims."
+    },
+    {
+      "id": "exact_head_real_runtime_receipt_missing",
+      "severity": "P1",
+      "status": "open",
+      "kind": "evidence",
+      "detail": "The local Hermes/OpenClaw acceptance is pre-commit engineering evidence only. A post-commit external receipt must bind both non-dry-run adapters, the final Git SHA, execution time, and receipt identity before release or handoff can treat the runtime evidence as current."
+    },
+    {
+      "id": "trusted_real_runtime_builder_not_established",
+      "severity": "P1",
+      "status": "open",
+      "kind": "supply_chain",
+      "detail": "The trusted-main dual-checkout harness is defined in this candidate branch, but it has no release authority until that harness exists on the protected default branch and the commercial-real-runtime environment enforces independent reviewer and branch policy. Candidate-controlled workflow code cannot sign its own release evidence."
+    },
+    {
+      "id": "trusted_runtime_identity_attestation_missing",
+      "severity": "P1",
+      "status": "open",
+      "kind": "runtime_identity",
+      "detail": "Customer-delivery revalidation binds Hermes/OpenClaw run, provider-call, non-dry-run, evaluation, artifact-digest, and chained audit evidence, but the external Runtime processes do not yet answer a signed challenge or provide a platform-verifiable code identity. Hashing an endpoint string or executable is evidence identity, not proof of process identity."
+    },
+    {
+      "id": "receipt_verifier_binary_trust_missing",
+      "severity": "P1",
+      "status": "open",
+      "kind": "supply_chain",
+      "detail": "External receipt verification still depends on the operator host's gh and git executables. Release promotion requires a pinned verifier image or independently attested verifier binary before those local tools can confer release authority."
+    },
+    {
+      "id": "typescript_approval_policy_entitlement_owner_missing",
+      "severity": "P1",
+      "status": "open",
+      "kind": "entitlement",
+      "detail": "The TypeScript approval decision owner enforces Human Session, RBAC, CSRF, tenant binding and risk safety, but commercial policy and entitlement evaluation has not yet moved into the same production transaction boundary."
+    },
+    {
+      "id": "production_prepared_action_resume_ownership_missing",
+      "severity": "P1",
+      "status": "open",
+      "kind": "migration",
+      "detail": "Approval can unlock an exact Prepared Action without invoking a provider, but the commercial TypeScript control plane does not yet own the subsequent claim-before-provider resume and terminal receipt path."
+    },
+    {
+      "id": "production_enrollment_issue_owner_missing",
+      "severity": "P1",
+      "status": "open",
+      "kind": "migration",
+      "detail": "Enrollment approval updates the request and synthetic task/run only; commercial TypeScript ownership for one-time credential issue, delivery, and receipt remains open."
+    },
+    {
+      "id": "ordinary_high_risk_tool_execution_receipt_missing",
+      "severity": "P1",
+      "status": "open",
+      "kind": "execution",
+      "detail": "High and critical ordinary tool approvals fail closed unless an exact Prepared Action exists, but lower-risk resumed execution still needs a production TypeScript claim and terminal execution-receipt owner."
     },
     {
       "id": "owner_bootstrap_compiled_entry_missing",

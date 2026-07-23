@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import http from "node:http";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { Client, type Pool, type PoolClient } from "pg";
@@ -10,7 +11,12 @@ import { GET as getApprovalsRoute } from "../app/api/mis/approvals/route";
 import { GET as getAuditRoute } from "../app/api/mis/audit/route";
 import { GET as getDashboardMetricsRoute } from "../app/api/mis/dashboard/metrics/route";
 import { GET as getRunsRoute } from "../app/api/mis/runs/route";
+import { GET as getRunDetailRoute } from "../app/api/mis/runs/[runId]/route";
+import { GET as getRunGraphRoute } from "../app/api/mis/runs/[runId]/graph/route";
 import { GET as getTasksRoute } from "../app/api/mis/tasks/route";
+import { GET as getTaskDetailRoute } from "../app/api/mis/tasks/[taskId]/route";
+import { GET as getToolCallsRoute } from "../app/api/mis/tool-calls/route";
+import { GET as getEvaluationsRoute } from "../app/api/mis/evaluations/route";
 
 import { authenticateHumanMember } from "../src/server/controlPlane/humanSession";
 import {
@@ -20,12 +26,19 @@ import {
   HUMAN_MEMORY_SCHEMA_ONLINE_INDEX_CHECKSUM,
   HUMAN_MEMORY_SCHEMA_VERSION,
   HUMAN_MEMORY_SCHEMA_V1_CHECKSUM,
+  HUMAN_MEMORY_SCHEMA_V2_CHECKSUM,
+  HUMAN_MEMORY_SCHEMA_V3_CHECKSUM,
 } from "../src/server/controlPlane/schemaReadiness";
 import {
   listWorkspaceApprovals,
   listWorkspaceAudit,
+  listWorkspaceEvaluations,
   listWorkspaceRuns,
   listWorkspaceTasks,
+  listWorkspaceToolCalls,
+  getWorkspaceRunDetail,
+  getWorkspaceRunGraph,
+  getWorkspaceTaskDetail,
   workspaceDashboardMetrics,
 } from "../src/server/controlPlane/workspaceReadModels";
 
@@ -37,6 +50,12 @@ const UPGRADE_MIGRATION_PATH = fileURLToPath(
 );
 const ONLINE_INDEX_MIGRATION_PATH = fileURLToPath(
   new URL("../../../migrations/postgres/20260719_workspace_read_models_v2_online_indexes.sql", import.meta.url),
+);
+const APPROVAL_MIGRATION_PATH = fileURLToPath(
+  new URL("../../../migrations/postgres/20260719_human_approval_decisions_v3.sql", import.meta.url),
+);
+const APPROVAL_KIND_MIGRATION_PATH = fileURLToPath(
+  new URL("../../../migrations/postgres/20260719_approval_kind_bindings_v4.sql", import.meta.url),
 );
 const WORKSPACE_A = "ws_read_model_a";
 const WORKSPACE_B = "ws_read_model_b";
@@ -59,6 +78,40 @@ type RunList = (
   suppliedLimit: unknown,
   filters?: { taskId?: string | null; agentId?: string | null },
 ) => Promise<HttpResult<Row[]>>;
+
+const TASK_DETAIL_FIELDS = [
+  "budget_limit_usd", "created_at", "owner_agent_id", "priority", "risk_level",
+  "status", "task_id", "title", "updated_at",
+];
+const RUN_FIELDS = [
+  "agent_id", "cost_usd", "created_at", "duration_ms", "run_id", "runtime_type",
+  "started_at", "status", "task_id",
+];
+const APPROVAL_EVIDENCE_FIELDS = [
+  "approval_id", "approval_kind", "decided_at", "decision", "expires_at", "requested_by_agent_id",
+  "run_id", "task_id", "tool_call_id",
+];
+const TOOL_CALL_FIELDS = [
+  "agent_id", "created_at", "ended_at", "risk_level", "run_id", "started_at",
+  "status", "tool_call_id", "tool_category", "tool_name", "tool_version",
+];
+const EVALUATION_FIELDS = [
+  "agent_id", "created_at", "evaluation_id", "evaluator_type", "pass_fail", "run_id",
+  "score", "task_id",
+];
+const MEMORY_EVIDENCE_FIELDS = [
+  "agent_id", "confidence", "created_at", "memory_id", "memory_type", "review_status",
+  "scope", "source_type", "task_id", "ttl_review_due_at", "updated_at",
+];
+const ARTIFACT_EVIDENCE_FIELDS = [
+  "artifact_id", "artifact_type", "created_at", "run_id", "task_id", "title",
+];
+const RUNTIME_EVENT_FIELDS = [
+  "created_at", "event_type", "run_id", "runtime_event_id", "status", "task_id",
+];
+const AUDIT_FIELDS = [
+  "action", "actor_id", "actor_type", "audit_id", "created_at", "entity_id", "entity_type",
+];
 
 function output(payload: Record<string, unknown>) {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -110,6 +163,18 @@ function assertOnlyIds(rows: Row[], key: string, expectedIds: string[]) {
   );
 }
 
+function assertExactFields(value: unknown, expected: string[], label: string) {
+  assert.ok(value && typeof value === "object" && !Array.isArray(value), `${label}_must_be_object`);
+  assert.deepEqual(Object.keys(value as Row).sort(), [...expected].sort(), `${label}_field_mismatch`);
+}
+
+function assertRowsHaveExactFields(rows: unknown, expected: string[], label: string) {
+  assert.ok(Array.isArray(rows), `${label}_must_be_array`);
+  for (const [index, row] of rows.entries()) {
+    assertExactFields(row, expected, `${label}_${index}`);
+  }
+}
+
 function assertRunProjection(rows: Row[]) {
   for (const row of rows) {
     assert.equal("input_summary" in row, false);
@@ -156,11 +221,26 @@ async function createBaseSchema(client: Client) {
       error_message TEXT,
       cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
       started_at TEXT NOT NULL,
+      parent_run_id TEXT,
+      delegation_id TEXT,
       created_at TEXT NOT NULL
     );
     CREATE TABLE tool_calls(
       tool_call_id TEXT PRIMARY KEY,
-      run_id TEXT NOT NULL
+      run_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      tool_version TEXT NOT NULL,
+      tool_category TEXT NOT NULL,
+      normalized_args_json TEXT NOT NULL,
+      target_resource TEXT,
+      risk_level TEXT NOT NULL,
+      status TEXT NOT NULL,
+      result_summary TEXT,
+      side_effect_id TEXT,
+      started_at TEXT NOT NULL,
+      ended_at TEXT,
+      created_at TEXT NOT NULL
     );
     CREATE TABLE approvals(
       approval_id TEXT PRIMARY KEY,
@@ -177,17 +257,41 @@ async function createBaseSchema(client: Client) {
     CREATE TABLE memories(
       memory_id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      memory_type TEXT NOT NULL,
+      canonical_text TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      source_ref TEXT,
+      confidence DOUBLE PRECISION NOT NULL,
       review_status TEXT NOT NULL,
-      ttl_review_due_at TEXT
+      task_id TEXT,
+      agent_id TEXT,
+      ttl_review_due_at TEXT,
+      access_tags TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
     CREATE TABLE evaluations(
       evaluation_id TEXT PRIMARY KEY,
-      run_id TEXT NOT NULL
+      task_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      evaluator_type TEXT NOT NULL,
+      score DOUBLE PRECISION NOT NULL,
+      pass_fail TEXT NOT NULL,
+      rubric_json TEXT NOT NULL,
+      notes TEXT,
+      created_at TEXT NOT NULL
     );
     CREATE TABLE artifacts(
       artifact_id TEXT PRIMARY KEY,
       task_id TEXT,
-      run_id TEXT
+      run_id TEXT,
+      artifact_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      uri TEXT,
+      summary TEXT,
+      created_at TEXT NOT NULL
     );
     CREATE TABLE audit_logs(
       audit_id TEXT PRIMARY KEY,
@@ -200,6 +304,23 @@ async function createBaseSchema(client: Client) {
       after_hash TEXT,
       metadata_json TEXT NOT NULL DEFAULT '{}',
       tamper_chain_hash TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE runtime_events(
+      runtime_event_id TEXT PRIMARY KEY,
+      runtime_connector_id TEXT,
+      event_type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      run_id TEXT,
+      task_id TEXT,
+      agent_id TEXT,
+      model_name TEXT,
+      latency_ms INTEGER,
+      prompt_hash TEXT,
+      input_summary TEXT,
+      output_summary TEXT,
+      error_message TEXT,
+      raw_payload_hash TEXT,
       created_at TEXT NOT NULL
     );
     CREATE TABLE agent_gateway_tokens(
@@ -230,6 +351,38 @@ async function createBaseSchema(client: Client) {
       revoked_at TEXT,
       last_used_at TEXT
     );
+    CREATE TABLE prepared_actions(
+      prepared_action_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      tool_call_id TEXT NOT NULL,
+      approval_id TEXT,
+      requested_by_agent_id TEXT
+    );
+    CREATE TABLE agent_gateway_enrollment_requests(
+      request_id TEXT PRIMARY KEY,
+      approval_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL
+    );
+    CREATE TABLE agent_plans(
+      plan_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      task_id TEXT,
+      run_id TEXT,
+      agent_id TEXT NOT NULL
+    );
+    CREATE TABLE plan_evidence_manifests(
+      manifest_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      plan_id TEXT NOT NULL,
+      task_id TEXT,
+      run_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL
+    );
   `);
 }
 
@@ -237,18 +390,30 @@ async function applyHumanSessionMigration(client: Client) {
   const baseMigrationBytes = await readFile(BASE_MIGRATION_PATH);
   const upgradeMigrationBytes = await readFile(UPGRADE_MIGRATION_PATH);
   const onlineIndexMigrationBytes = await readFile(ONLINE_INDEX_MIGRATION_PATH);
+  const approvalMigrationBytes = await readFile(APPROVAL_MIGRATION_PATH);
+  const approvalKindMigrationBytes = await readFile(APPROVAL_KIND_MIGRATION_PATH);
   const baseMigrationChecksum = createHash("sha256").update(baseMigrationBytes).digest("hex");
   const upgradeMigrationChecksum = createHash("sha256").update(upgradeMigrationBytes).digest("hex");
   const onlineIndexMigrationChecksum = createHash("sha256").update(onlineIndexMigrationBytes).digest("hex");
+  const approvalMigrationChecksum = createHash("sha256").update(approvalMigrationBytes).digest("hex");
+  const approvalKindMigrationChecksum = createHash("sha256").update(approvalKindMigrationBytes).digest("hex");
   assert.equal(baseMigrationChecksum, HUMAN_MEMORY_SCHEMA_V1_CHECKSUM, "base_migration_checksum_fixture_mismatch");
-  assert.equal(upgradeMigrationChecksum, HUMAN_MEMORY_SCHEMA_CHECKSUM, "upgrade_migration_checksum_fixture_mismatch");
+  assert.equal(upgradeMigrationChecksum, HUMAN_MEMORY_SCHEMA_V2_CHECKSUM, "upgrade_migration_checksum_fixture_mismatch");
   assert.equal(
     onlineIndexMigrationChecksum,
     HUMAN_MEMORY_SCHEMA_ONLINE_INDEX_CHECKSUM,
     "online_index_migration_checksum_fixture_mismatch",
   );
+  assert.equal(approvalMigrationChecksum, HUMAN_MEMORY_SCHEMA_V3_CHECKSUM, "approval_migration_checksum_fixture_mismatch");
+  assert.equal(
+    approvalKindMigrationChecksum,
+    HUMAN_MEMORY_SCHEMA_CHECKSUM,
+    "approval_kind_migration_checksum_fixture_mismatch",
+  );
   await client.query(baseMigrationBytes.toString("utf8"));
   await client.query(upgradeMigrationBytes.toString("utf8"));
+  await client.query(approvalMigrationBytes.toString("utf8"));
+  await client.query(approvalKindMigrationBytes.toString("utf8"));
   await client.query(onlineIndexMigrationBytes.toString("utf8"));
   await client.query(
     `INSERT INTO agentops_schema_migrations(
@@ -347,6 +512,11 @@ async function seed(client: Client) {
     FROM generate_series(1,3) AS value`,
     [WORKSPACE_B, agentsB[0]],
   );
+  await client.query(
+    `UPDATE tasks SET title=repeat('T',400),description=repeat('D',700),
+      acceptance_criteria=repeat('A',700)
+    WHERE task_id IN ('tsk_a_001','tsk_a_205')`,
+  );
 
   for (let value = 1; value <= 23; value += 1) {
     const runAgent = RUN_AGENTS_A[(value - 1) % RUN_AGENTS_A.length];
@@ -396,35 +566,126 @@ async function seed(client: Client) {
   );
 
   await client.query(
-    `INSERT INTO tool_calls(tool_call_id,run_id) VALUES
-      ('tool_a_01','run_a_01'),('tool_b_01','run_b_01')`,
+    `UPDATE runs SET parent_run_id='run_a_02',delegation_id='delegation_shared'
+      WHERE run_id='run_a_01';
+    UPDATE runs SET parent_run_id='run_a_01' WHERE run_id='run_a_03';
+    UPDATE runs SET delegation_id='delegation_shared' WHERE run_id='run_a_04';
+    UPDATE runs SET parent_run_id='run_b_01' WHERE run_id='run_a_05';
+    UPDATE runs SET parent_run_id='run_a_01' WHERE run_id='run_b_01';
+    UPDATE runs SET delegation_id='delegation_shared' WHERE run_id='run_b_shared_running';`,
+  );
+
+  await client.query(
+    `INSERT INTO tool_calls(
+      tool_call_id,run_id,agent_id,tool_name,tool_version,tool_category,
+      normalized_args_json,target_resource,risk_level,status,result_summary,
+      side_effect_id,started_at,ended_at,created_at
+    ) VALUES
+      ('tool_a_01','run_a_01',$1,'contract.read','v1','custom',
+        '{"secret":"tenant-a-args"}','secret://tenant-a-target','high','completed',
+        'tenant A raw tool result','side-effect-a',$3,$3,$3),
+      ('tool_a_cross_agent','run_a_01',$2,'contract.invalid-agent','v1','custom',
+        '{"secret":"cross-agent-args"}','secret://cross-agent-target','high','completed',
+        'cross-agent raw tool result','side-effect-cross-agent',$3,$3,$3),
+      ('tool_b_01','run_b_01',$2,'contract.other','v9','shell',
+        '{"secret":"tenant-b-args"}','secret://tenant-b-target','critical','failed',
+        'tenant B raw tool result','side-effect-b',$3,$3,$3)`,
+    [RUN_AGENTS_A[0], agentsB[3], nowText],
   );
   await client.query(
     `INSERT INTO approvals(
-      approval_id,decision,task_id,run_id,tool_call_id,requested_by_agent_id,
+      approval_id,approval_kind,decision,task_id,run_id,tool_call_id,requested_by_agent_id,
       reason,expires_at,decided_at,created_at
     ) VALUES
-      ('ap_a_01','pending','tsk_a_001','run_a_01','tool_a_01',$1,'A approval',$3,NULL,$2),
-      ('ap_b_01','pending','tsk_b_001','run_b_01','tool_b_01',$4,'B approval',$3,NULL,$2),
-      ('ap_a_cross_tool','pending','tsk_a_001','run_a_01','tool_b_01',$1,'Invalid cross-run tool',$3,NULL,$2)`,
-    [AGENT_OWNER_A, nowText, futureText, agentsB[0]],
+      ('ap_a_01','tool_execution','pending','tsk_a_001','run_a_01','tool_a_01',$1,'A approval',$3,NULL,$2),
+      ('ap_b_01','tool_execution','pending','tsk_b_001','run_b_01','tool_b_01',$4,'B approval',$3,NULL,$2)`,
+    [RUN_AGENTS_A[0], nowText, futureText, agentsB[3]],
+  );
+  await client.query("ALTER TABLE approvals DISABLE TRIGGER approvals_kind_binding_enforced");
+  try {
+    await client.query(
+      `INSERT INTO approvals(
+        approval_id,approval_kind,decision,task_id,run_id,tool_call_id,requested_by_agent_id,
+        reason,expires_at,decided_at,created_at
+      ) VALUES(
+        'ap_a_cross_tool','tool_execution','pending','tsk_a_001','run_a_01','tool_b_01',$1,
+        'Invalid cross-run tool',$3,NULL,$2
+      ),(
+        'ap_a_cross_requester','run_execution','pending','tsk_a_001','run_a_01',NULL,$4,
+        'Invalid cross-workspace requester',$3,NULL,$2
+      )`,
+      [RUN_AGENTS_A[0], nowText, futureText, agentsB[3]],
+    );
+  } finally {
+    await client.query("ALTER TABLE approvals ENABLE TRIGGER approvals_kind_binding_enforced");
+  }
+  await client.query(
+    `INSERT INTO memories(
+      memory_id,workspace_id,scope,memory_type,canonical_text,source_type,source_ref,
+      confidence,review_status,task_id,agent_id,ttl_review_due_at,access_tags,created_at,updated_at
+    ) VALUES
+      ('mem_a_stale',$1,'task','risk','tenant A private memory','run_log','raw://memory-a',
+        0.9,'stale','tsk_a_001',$5,NULL,'["private"]',$4,$4),
+      ('mem_a_due',$1,'task','decision','tenant A due memory','manual','raw://memory-a-due',
+        0.8,'approved','tsk_a_001',$5,$2,'["private"]',$4,$4),
+      ('mem_a_fresh',$1,'task','policy','tenant A fresh memory','manual','raw://memory-a-fresh',
+        0.7,'approved','tsk_a_002',$5,$3,'[]',$4,$4),
+      ('mem_b_stale',$6,'task','risk','tenant B private memory','run_log','raw://memory-b',
+        0.6,'stale','tsk_b_001',$7,$2,'["private"]',$4,$4),
+      ('mem_a_cross_task',$1,'task','risk','malformed cross workspace task','manual','raw://cross-a',
+        0.5,'approved','tsk_b_001',$5,$3,'[]',$4,$4),
+      ('mem_b_cross_task',$6,'task','risk','malformed cross workspace task','manual','raw://cross-b',
+        0.5,'approved','tsk_a_001',$7,$3,'[]',$4,$4)`,
+    [WORKSPACE_A, pastText, futureText, nowText, AGENT_OWNER_A, WORKSPACE_B, agentsB[0]],
   );
   await client.query(
-    `INSERT INTO memories(memory_id,workspace_id,review_status,ttl_review_due_at) VALUES
-      ('mem_a_stale',$1,'stale',NULL),
-      ('mem_a_due',$1,'approved',$2),
-      ('mem_a_fresh',$1,'approved',$3),
-      ('mem_b_stale',$4,'stale',$2)`,
-    [WORKSPACE_A, pastText, futureText, WORKSPACE_B],
+    `INSERT INTO evaluations(
+      evaluation_id,task_id,run_id,agent_id,evaluator_type,score,pass_fail,
+      rubric_json,notes,created_at
+    ) VALUES
+      ('eval_a_01','tsk_a_001','run_a_01',$1,'rule',97,'pass',
+        '{"secret":"tenant-a-rubric"}','tenant A private notes',$3),
+      ('eval_a_cross_agent','tsk_a_001','run_a_01',$2,'rule',1,'fail',
+        '{"secret":"cross-agent"}','must be excluded',$3),
+      ('eval_b_01','tsk_b_001','run_b_01',$2,'human',3,'fail',
+        '{"secret":"tenant-b-rubric"}','tenant B private notes',$3),
+      ('eval_cross_a_task_b_run','tsk_a_001','run_b_01',$1,'rule',1,'fail',
+        '{"secret":"cross"}','must be excluded',$3),
+      ('eval_cross_b_task_a_run','tsk_b_001','run_a_01',$2,'rule',1,'fail',
+        '{"secret":"cross"}','must be excluded',$3)`,
+    [RUN_AGENTS_A[0], agentsB[3], nowText],
   );
   await client.query(
-    `INSERT INTO evaluations(evaluation_id,run_id) VALUES
-      ('eval_a_01','run_a_01'),('eval_b_01','run_b_01')`,
+    `INSERT INTO artifacts(
+      artifact_id,task_id,run_id,artifact_type,title,uri,summary,created_at
+    ) VALUES
+      ('artifact_a_01','tsk_a_001','run_a_01','report',repeat('A',400),
+        'secret://artifact-a','tenant A raw artifact summary',$1),
+      ('artifact_a_run_only',NULL,'run_a_01','receipt','Tenant A run receipt',
+        'secret://artifact-a-run','tenant A raw run artifact summary',$1),
+      ('artifact_b_01','tsk_b_001','run_b_01','report','Tenant B evidence',
+        'secret://artifact-b','tenant B raw artifact summary',$1),
+      ('artifact_cross_a_task_b_run','tsk_a_001','run_b_01','report','Malformed artifact',
+        'secret://artifact-cross-a','must be excluded',$1),
+      ('artifact_cross_b_task_a_run','tsk_b_001','run_a_01','report','Malformed artifact',
+        'secret://artifact-cross-b','must be excluded',$1)`,
+    [nowText],
   );
   await client.query(
-    `INSERT INTO artifacts(artifact_id,task_id,run_id) VALUES
-      ('artifact_a_01','tsk_a_001','run_a_01'),
-      ('artifact_b_01','tsk_b_001','run_b_01')`,
+    `INSERT INTO runtime_events(
+      runtime_event_id,runtime_connector_id,event_type,status,run_id,task_id,agent_id,
+      model_name,latency_ms,prompt_hash,input_summary,output_summary,error_message,
+      raw_payload_hash,created_at
+    ) VALUES
+      ('rte_a_01','rtc_a','run.completed','completed','run_a_01','tsk_a_001',$1,
+        'private-model-a',12,'prompt-secret-a','raw input a','raw output a',NULL,'raw-hash-a',$3),
+      ('rte_a_cross_agent','rtc_a','run.invalid','failed','run_a_01','tsk_a_001',$2,
+        'private-model-a',14,'prompt-cross-agent','raw input cross','raw output cross','raw error cross','raw-hash-cross-agent',$3),
+      ('rte_b_01','rtc_b','run.failed','failed','run_b_01','tsk_b_001',$2,
+        'private-model-b',13,'prompt-secret-b','raw input b','raw output b','raw error b','raw-hash-b',$3),
+      ('rte_cross_task','rtc_a','run.invalid','failed','run_a_01','tsk_b_001',$1,
+        'private-model-a',14,'prompt-cross','raw input cross','raw output cross','raw error cross','raw-hash-cross',$3)`,
+    [RUN_AGENTS_A[0], agentsB[3], nowText],
   );
 
   await client.query(
@@ -474,6 +735,7 @@ async function seed(client: Client) {
     ["aud_a_tool", WORKSPACE_A, "tool_calls", "tool_a_01"],
     ["aud_a_evaluation", WORKSPACE_A, "evaluations", "eval_a_01"],
     ["aud_a_artifact", WORKSPACE_A, "artifacts", "artifact_a_01"],
+    ["aud_a_unknown", WORKSPACE_A, "unknown_entities", "opaque_a"],
     ["aud_b_task", WORKSPACE_B, "tasks", "tsk_b_001"],
     ["aud_b_structured_points_a", WORKSPACE_B, "tasks", "tsk_a_001"],
   ];
@@ -585,6 +847,9 @@ async function verifyReadModels() {
   assert.equal(cappedTasks.status, 200);
   assert.equal(cappedTasks.body.length, 200);
   assert.ok(cappedTasks.body.every((row) => row.task_id.startsWith("tsk_a_")));
+  assert.equal(cappedTasks.body[0]?.title.length, 240);
+  assert.equal(cappedTasks.body[0]?.description?.length, 512);
+  assert.equal(cappedTasks.body[0]?.acceptance_criteria?.length, 512);
   await expectHttpError(() => listWorkspaceTasks(headersA, undefined, "201"), 400, "limit_invalid");
   await expectHttpError(() => listWorkspaceTasks(headersA, undefined, "0"), 400, "limit_invalid");
   await expectHttpError(() => runList(headersA, undefined, "invalid"), 400, "limit_invalid");
@@ -617,11 +882,154 @@ async function verifyReadModels() {
   assertOnlyIds(runsB.body, "run_id", ["run_b_01", "run_b_shared_running"]);
   assertRunProjection(runsB.body);
 
+  const taskDetail = await getWorkspaceTaskDetail(headersA, undefined, "tsk_a_001", undefined);
+  assertExactFields(
+    taskDetail.body,
+    ["approvals", "artifacts", "evaluations", "memories", "runs", "task", "token_omitted"],
+    "task_detail",
+  );
+  assert.equal(taskDetail.body.token_omitted, true);
+  assertExactFields(taskDetail.body.task, TASK_DETAIL_FIELDS, "task_detail_task");
+  assert.equal(taskDetail.body.task.title.length, 240);
+  assertOnlyIds(taskDetail.body.runs as Row[], "run_id", ["run_a_01", "run_a_02", "run_a_03"]);
+  assertRowsHaveExactFields(taskDetail.body.runs, RUN_FIELDS, "task_detail_runs");
+  assertOnlyIds(taskDetail.body.approvals as Row[], "approval_id", ["ap_a_01"]);
+  assertRowsHaveExactFields(taskDetail.body.approvals, APPROVAL_EVIDENCE_FIELDS, "task_detail_approvals");
+  assertOnlyIds(taskDetail.body.evaluations as Row[], "evaluation_id", ["eval_a_01"]);
+  assertRowsHaveExactFields(taskDetail.body.evaluations, EVALUATION_FIELDS, "task_detail_evaluations");
+  assertOnlyIds(taskDetail.body.memories as Row[], "memory_id", ["mem_a_due", "mem_a_stale"]);
+  assertRowsHaveExactFields(taskDetail.body.memories, MEMORY_EVIDENCE_FIELDS, "task_detail_memories");
+  assertOnlyIds(taskDetail.body.artifacts as Row[], "artifact_id", ["artifact_a_01"]);
+  assertRowsHaveExactFields(taskDetail.body.artifacts, ARTIFACT_EVIDENCE_FIELDS, "task_detail_artifacts");
+  assert.equal(taskDetail.body.artifacts[0]?.title.length, 240);
+
+  const runDetail = await getWorkspaceRunDetail(headersA, undefined, "run_a_01", undefined);
+  assertExactFields(
+    runDetail.body,
+    ["approvals", "artifacts", "audit_logs", "evaluations", "run", "runtime_events", "task", "token_omitted", "tool_calls"],
+    "run_detail",
+  );
+  assert.equal(runDetail.body.token_omitted, true);
+  assertExactFields(runDetail.body.run, RUN_FIELDS, "run_detail_run");
+  assertExactFields(runDetail.body.task, TASK_DETAIL_FIELDS, "run_detail_task");
+  assertOnlyIds(runDetail.body.tool_calls as Row[], "tool_call_id", ["tool_a_01"]);
+  assertRowsHaveExactFields(runDetail.body.tool_calls, TOOL_CALL_FIELDS, "run_detail_tool_calls");
+  assertOnlyIds(runDetail.body.approvals as Row[], "approval_id", ["ap_a_01"]);
+  assertRowsHaveExactFields(runDetail.body.approvals, APPROVAL_EVIDENCE_FIELDS, "run_detail_approvals");
+  assertOnlyIds(runDetail.body.evaluations as Row[], "evaluation_id", ["eval_a_01"]);
+  assertRowsHaveExactFields(runDetail.body.evaluations, EVALUATION_FIELDS, "run_detail_evaluations");
+  assertOnlyIds(runDetail.body.artifacts as Row[], "artifact_id", ["artifact_a_01", "artifact_a_run_only"]);
+  assertRowsHaveExactFields(runDetail.body.artifacts, ARTIFACT_EVIDENCE_FIELDS, "run_detail_artifacts");
+  assertOnlyIds(runDetail.body.runtime_events as Row[], "runtime_event_id", ["rte_a_01"]);
+  assertRowsHaveExactFields(runDetail.body.runtime_events, RUNTIME_EVENT_FIELDS, "run_detail_runtime_events");
+  assertOnlyIds(runDetail.body.audit_logs as Row[], "audit_id", [
+    "aud_a_task",
+    "aud_a_run",
+    "aud_a_approval",
+    "aud_a_tool",
+    "aud_a_evaluation",
+    "aud_a_artifact",
+  ]);
+  assertRowsHaveExactFields(runDetail.body.audit_logs, AUDIT_FIELDS, "run_detail_audit_logs");
+
+  const graph = await getWorkspaceRunGraph(headersA, undefined, "run_a_01", undefined);
+  assertExactFields(graph.body, ["children", "parent", "run", "siblings_by_delegation", "token_omitted"], "run_graph");
+  assert.equal(graph.body.token_omitted, true);
+  assertExactFields(graph.body.run, RUN_FIELDS, "run_graph_run");
+  assertExactFields(graph.body.parent, RUN_FIELDS, "run_graph_parent");
+  assert.equal(graph.body.parent?.run_id, "run_a_02");
+  assertOnlyIds(graph.body.children as Row[], "run_id", ["run_a_03"]);
+  assertRowsHaveExactFields(graph.body.children, RUN_FIELDS, "run_graph_children");
+  assertOnlyIds(graph.body.siblings_by_delegation as Row[], "run_id", ["run_a_04"]);
+  assertRowsHaveExactFields(graph.body.siblings_by_delegation, RUN_FIELDS, "run_graph_siblings");
+
+  const crossWorkspaceParent = await getWorkspaceRunGraph(headersA, undefined, "run_a_05", undefined);
+  assert.equal(crossWorkspaceParent.body.parent, null);
+
+  const toolCallsA = await listWorkspaceToolCalls(headersA, undefined, "200");
+  assertOnlyIds(toolCallsA.body, "tool_call_id", ["tool_a_01"]);
+  assertRowsHaveExactFields(toolCallsA.body, TOOL_CALL_FIELDS, "tool_call_list_a");
+  const toolCallsB = await listWorkspaceToolCalls(headersMulti, WORKSPACE_B, "200");
+  assertOnlyIds(toolCallsB.body, "tool_call_id", ["tool_b_01"]);
+  const filteredTools = await listWorkspaceToolCalls(headersA, undefined, "10", { runId: "run_b_01" });
+  assert.deepEqual(filteredTools.body, []);
+  await expectHttpError(
+    () => listWorkspaceToolCalls(headersA, undefined, "10", { runId: "invalid run" }),
+    400,
+    "run_id_invalid",
+  );
+
+  const evaluationsA = await listWorkspaceEvaluations(headersA, undefined, "200");
+  assertOnlyIds(evaluationsA.body, "evaluation_id", ["eval_a_01"]);
+  assertRowsHaveExactFields(evaluationsA.body, EVALUATION_FIELDS, "evaluation_list_a");
+  const evaluationsB = await listWorkspaceEvaluations(headersMulti, WORKSPACE_B, "200");
+  assertOnlyIds(evaluationsB.body, "evaluation_id", ["eval_b_01"]);
+  const filteredEvaluations = await listWorkspaceEvaluations(headersA, undefined, "10", { taskId: "tsk_b_001" });
+  assert.deepEqual(filteredEvaluations.body, []);
+  await expectHttpError(
+    () => listWorkspaceEvaluations(headersA, undefined, "201"),
+    400,
+    "limit_invalid",
+  );
+
+  await expectHttpError(() => getWorkspaceTaskDetail(headersA, undefined, "invalid task", undefined), 400, "task_id_invalid");
+  await expectHttpError(() => getWorkspaceRunDetail(headersA, undefined, "invalid run", undefined), 400, "run_id_invalid");
+  await expectHttpError(() => getWorkspaceTaskDetail(headersA, undefined, "tsk_b_001", undefined), 404, "not_found");
+  await expectHttpError(() => getWorkspaceTaskDetail(headersA, undefined, "tsk_missing", undefined), 404, "not_found");
+  await expectHttpError(() => getWorkspaceRunDetail(headersA, undefined, "run_b_01", undefined), 404, "not_found");
+  await expectHttpError(() => getWorkspaceRunDetail(headersA, undefined, "run_missing", undefined), 404, "not_found");
+
   const approvalsA = await listWorkspaceApprovals(headersA, undefined, "20");
   assertOnlyIds(approvalsA.body, "approval_id", ["ap_a_01"]);
   const approvalsB = await listWorkspaceApprovals(headersMulti, WORKSPACE_B, "20");
   assertOnlyIds(approvalsB.body, "approval_id", ["ap_b_01"]);
 
+  const filteredToolCallsA = await listWorkspaceToolCalls(headersA, undefined, "20", {
+    runId: "run_a_01",
+    riskLevel: "high",
+    status: "completed",
+  });
+  assertOnlyIds(filteredToolCallsA.body, "tool_call_id", ["tool_a_01"]);
+  assertRowsHaveExactFields(filteredToolCallsA.body, TOOL_CALL_FIELDS, "tool_call_list_a");
+  const boundedToolCallsB = await listWorkspaceToolCalls(headersMulti, WORKSPACE_B, "20");
+  assertOnlyIds(boundedToolCallsB.body, "tool_call_id", ["tool_b_01"]);
+  await expectHttpError(
+    () => listWorkspaceToolCalls(headersA, undefined, "20", { runId: "invalid run id" }),
+    400,
+    "run_id_invalid",
+  );
+  await expectHttpError(
+    () => listWorkspaceToolCalls(headersA, undefined, "20", { riskLevel: "urgent" }),
+    400,
+    "risk_level_invalid",
+  );
+
+  const filteredEvaluationsA = await listWorkspaceEvaluations(headersA, undefined, "20", {
+    taskId: "tsk_a_001",
+    runId: "run_a_01",
+    evaluatorType: "rule",
+    passFail: "pass",
+  });
+  assertOnlyIds(filteredEvaluationsA.body, "evaluation_id", ["eval_a_01"]);
+  assertRowsHaveExactFields(filteredEvaluationsA.body, EVALUATION_FIELDS, "evaluation_list_a");
+  const boundedEvaluationsB = await listWorkspaceEvaluations(headersMulti, WORKSPACE_B, "20");
+  assertOnlyIds(boundedEvaluationsB.body, "evaluation_id", ["eval_b_01"]);
+  await expectHttpError(
+    () => listWorkspaceEvaluations(headersA, undefined, "20", { evaluatorType: "private" }),
+    400,
+    "evaluator_type_invalid",
+  );
+  await expectHttpError(
+    () => getWorkspaceRunGraph(headersA, undefined, "run_a_01", "201"),
+    400,
+    "limit_invalid",
+  );
+
+  await expectHttpError(
+    () => getWorkspaceRunDetail(headersMulti, undefined, "run_a_01", "20"),
+    403,
+    "workspace_id_required",
+  );
   const auditA = await listWorkspaceAudit(headersA, undefined, "120");
   assertOnlyIds(auditA.body, "audit_id", [
     "aud_a_task",
@@ -644,7 +1052,7 @@ async function verifyReadModels() {
     }
   }
   const auditB = await listWorkspaceAudit(headersMulti, WORKSPACE_B, "120");
-  assertOnlyIds(auditB.body, "audit_id", ["aud_b_task", "aud_b_structured_points_a"]);
+  assertOnlyIds(auditB.body, "audit_id", ["aud_b_task"]);
 
   const metrics = await workspaceDashboardMetrics(headersA, undefined);
   assert.equal(metrics.status, 200);
@@ -680,18 +1088,33 @@ async function verifyReadModels() {
   ]);
 }
 
-function routeRequest(path: string, token: string, workspaceHeader?: string) {
-  const headers = humanHeaders(token, workspaceHeader);
+function routeRequest(path: string, token?: string, workspaceHeader?: string) {
+  const headers = token ? humanHeaders(token, workspaceHeader) : new Headers();
   return new NextRequest(`http://127.0.0.1${path}`, { method: "GET", headers });
 }
 
-async function assertPrivateRouteResponse(response: Response) {
-  assert.equal(response.status, 200);
+function assertPrivateHeaders(response: Response) {
   assert.match(String(response.headers.get("cache-control") || ""), /no-store/i);
   const vary = String(response.headers.get("vary") || "").toLowerCase();
   assert.ok(vary.includes("cookie"));
   assert.ok(vary.includes("x-agentops-workspace-id"));
+}
+
+async function assertPrivateRouteResponse(response: Response) {
+  assert.equal(response.status, 200);
+  assertPrivateHeaders(response);
   return response.json() as Promise<unknown>;
+}
+
+async function assertPrivateRouteError(response: Response, status: number, error: string) {
+  assert.equal(response.status, status);
+  assertPrivateHeaders(response);
+  const body = await response.json() as Row;
+  assertExactFields(body, ["error", "message", "ok", "token_omitted"], "private_route_error");
+  assert.equal(body.ok, false);
+  assert.equal(body.error, error);
+  assert.equal(body.token_omitted, true);
+  return body;
 }
 
 async function verifyHttpRoutes() {
@@ -746,6 +1169,304 @@ async function verifyHttpRoutes() {
   ));
   assert.equal(mismatch.status, 403);
   assert.equal((await mismatch.json() as Row).error, "forbidden");
+
+  const taskDetail = await assertPrivateRouteResponse(await getTaskDetailRoute(
+    routeRequest("/api/mis/tasks/tsk_a_001", SESSION_TOKEN_SINGLE),
+    { params: Promise.resolve({ taskId: "tsk_a_001" }) },
+  )) as Row;
+  assertExactFields(taskDetail, ["approvals", "artifacts", "evaluations", "memories", "runs", "task", "token_omitted"], "task_detail_route");
+  assertExactFields(taskDetail.task, TASK_DETAIL_FIELDS, "task_detail_route_task");
+  assertRowsHaveExactFields(taskDetail.runs, RUN_FIELDS, "task_detail_route_runs");
+  assertRowsHaveExactFields(taskDetail.approvals, APPROVAL_EVIDENCE_FIELDS, "task_detail_route_approvals");
+  assertRowsHaveExactFields(taskDetail.evaluations, EVALUATION_FIELDS, "task_detail_route_evaluations");
+  assertRowsHaveExactFields(taskDetail.memories, MEMORY_EVIDENCE_FIELDS, "task_detail_route_memories");
+  assertRowsHaveExactFields(taskDetail.artifacts, ARTIFACT_EVIDENCE_FIELDS, "task_detail_route_artifacts");
+
+  const runDetail = await assertPrivateRouteResponse(await getRunDetailRoute(
+    routeRequest("/api/mis/runs/run_a_01", SESSION_TOKEN_SINGLE),
+    { params: Promise.resolve({ runId: "run_a_01" }) },
+  )) as Row;
+  assertExactFields(runDetail, ["approvals", "artifacts", "audit_logs", "evaluations", "run", "runtime_events", "task", "token_omitted", "tool_calls"], "run_detail_route");
+  assertExactFields(runDetail.run, RUN_FIELDS, "run_detail_route_run");
+  assertExactFields(runDetail.task, TASK_DETAIL_FIELDS, "run_detail_route_task");
+  assertRowsHaveExactFields(runDetail.tool_calls, TOOL_CALL_FIELDS, "run_detail_route_tool_calls");
+  assertRowsHaveExactFields(runDetail.approvals, APPROVAL_EVIDENCE_FIELDS, "run_detail_route_approvals");
+  assertRowsHaveExactFields(runDetail.evaluations, EVALUATION_FIELDS, "run_detail_route_evaluations");
+  assertRowsHaveExactFields(runDetail.artifacts, ARTIFACT_EVIDENCE_FIELDS, "run_detail_route_artifacts");
+  assertRowsHaveExactFields(runDetail.runtime_events, RUNTIME_EVENT_FIELDS, "run_detail_route_runtime_events");
+  assertRowsHaveExactFields(runDetail.audit_logs, AUDIT_FIELDS, "run_detail_route_audit_logs");
+
+  const runGraph = await assertPrivateRouteResponse(await getRunGraphRoute(
+    routeRequest("/api/mis/runs/run_a_01/graph", SESSION_TOKEN_SINGLE),
+    { params: Promise.resolve({ runId: "run_a_01" }) },
+  )) as Row;
+  assertExactFields(runGraph, ["children", "parent", "run", "siblings_by_delegation", "token_omitted"], "run_graph_route");
+  assertExactFields(runGraph.run, RUN_FIELDS, "run_graph_route_run");
+  assertExactFields(runGraph.parent, RUN_FIELDS, "run_graph_route_parent");
+  assertRowsHaveExactFields(runGraph.children, RUN_FIELDS, "run_graph_route_children");
+  assertRowsHaveExactFields(runGraph.siblings_by_delegation, RUN_FIELDS, "run_graph_route_siblings");
+
+  const toolCalls = await assertPrivateRouteResponse(await getToolCallsRoute(routeRequest(
+    "/api/mis/tool-calls?run_id=run_a_01&limit=10",
+    SESSION_TOKEN_SINGLE,
+  )));
+  assertRowsHaveExactFields(toolCalls, TOOL_CALL_FIELDS, "tool_call_route");
+
+  const evaluations = await assertPrivateRouteResponse(await getEvaluationsRoute(routeRequest(
+    "/api/mis/evaluations?task_id=tsk_a_001&limit=10",
+    SESSION_TOKEN_SINGLE,
+  )));
+  assertRowsHaveExactFields(evaluations, EVALUATION_FIELDS, "evaluation_route");
+
+  await assertPrivateRouteError(
+    await getToolCallsRoute(routeRequest("/api/mis/tool-calls")),
+    401,
+    "human_auth_required",
+  );
+  await assertPrivateRouteError(
+    await getEvaluationsRoute(routeRequest("/api/mis/evaluations")),
+    401,
+    "human_auth_required",
+  );
+  await assertPrivateRouteError(
+    await getTaskDetailRoute(
+      routeRequest("/api/mis/tasks/tsk_a_001"),
+      { params: Promise.resolve({ taskId: "tsk_a_001" }) },
+    ),
+    401,
+    "human_auth_required",
+  );
+  await assertPrivateRouteError(
+    await getRunDetailRoute(
+      routeRequest("/api/mis/runs/run_a_01"),
+      { params: Promise.resolve({ runId: "run_a_01" }) },
+    ),
+    401,
+    "human_auth_required",
+  );
+  await assertPrivateRouteError(
+    await getRunGraphRoute(
+      routeRequest("/api/mis/runs/run_a_01/graph"),
+      { params: Promise.resolve({ runId: "run_a_01" }) },
+    ),
+    401,
+    "human_auth_required",
+  );
+  await assertPrivateRouteError(
+    await getTaskDetailRoute(
+      routeRequest(`/api/mis/tasks/tsk_b_001?workspace_id=${WORKSPACE_B}`, SESSION_TOKEN_SINGLE),
+      { params: Promise.resolve({ taskId: "tsk_b_001" }) },
+    ),
+    403,
+    "human_membership_forbidden",
+  );
+  await assertPrivateRouteError(
+    await getRunDetailRoute(
+      routeRequest(`/api/mis/runs/run_b_01?workspace_id=${WORKSPACE_B}`, SESSION_TOKEN_SINGLE),
+      { params: Promise.resolve({ runId: "run_b_01" }) },
+    ),
+    403,
+    "human_membership_forbidden",
+  );
+  await assertPrivateRouteError(
+    await getRunGraphRoute(
+      routeRequest(`/api/mis/runs/run_b_01/graph?workspace_id=${WORKSPACE_B}`, SESSION_TOKEN_SINGLE),
+      { params: Promise.resolve({ runId: "run_b_01" }) },
+    ),
+    403,
+    "human_membership_forbidden",
+  );
+  await assertPrivateRouteError(
+    await getToolCallsRoute(routeRequest(
+      `/api/mis/tool-calls?workspace_id=${WORKSPACE_B}`,
+      SESSION_TOKEN_SINGLE,
+    )),
+    403,
+    "human_membership_forbidden",
+  );
+  await assertPrivateRouteError(
+    await getEvaluationsRoute(routeRequest(
+      `/api/mis/evaluations?workspace_id=${WORKSPACE_B}`,
+      SESSION_TOKEN_SINGLE,
+    )),
+    403,
+    "human_membership_forbidden",
+  );
+
+  const foreignTask = await getTaskDetailRoute(
+    routeRequest("/api/mis/tasks/tsk_b_001", SESSION_TOKEN_SINGLE),
+    { params: Promise.resolve({ taskId: "tsk_b_001" }) },
+  );
+  const missingTask = await getTaskDetailRoute(
+    routeRequest("/api/mis/tasks/tsk_missing", SESSION_TOKEN_SINGLE),
+    { params: Promise.resolve({ taskId: "tsk_missing" }) },
+  );
+  const foreignTaskBody = await assertPrivateRouteError(foreignTask, 404, "not_found");
+  const missingTaskBody = await assertPrivateRouteError(missingTask, 404, "not_found");
+  assert.deepEqual(foreignTaskBody, missingTaskBody);
+
+  const foreignRun = await getRunDetailRoute(
+    routeRequest("/api/mis/runs/run_b_01", SESSION_TOKEN_SINGLE),
+    { params: Promise.resolve({ runId: "run_b_01" }) },
+  );
+  const missingRun = await getRunDetailRoute(
+    routeRequest("/api/mis/runs/run_missing", SESSION_TOKEN_SINGLE),
+    { params: Promise.resolve({ runId: "run_missing" }) },
+  );
+  const foreignRunBody = await assertPrivateRouteError(foreignRun, 404, "not_found");
+  const missingRunBody = await assertPrivateRouteError(missingRun, 404, "not_found");
+  assert.deepEqual(foreignRunBody, missingRunBody);
+
+  const foreignGraph = await getRunGraphRoute(
+    routeRequest("/api/mis/runs/run_b_01/graph", SESSION_TOKEN_SINGLE),
+    { params: Promise.resolve({ runId: "run_b_01" }) },
+  );
+  const missingGraph = await getRunGraphRoute(
+    routeRequest("/api/mis/runs/run_missing/graph", SESSION_TOKEN_SINGLE),
+    { params: Promise.resolve({ runId: "run_missing" }) },
+  );
+  const foreignGraphBody = await assertPrivateRouteError(foreignGraph, 404, "not_found");
+  const missingGraphBody = await assertPrivateRouteError(missingGraph, 404, "not_found");
+  assert.deepEqual(foreignGraphBody, missingGraphBody);
+
+  await assertPrivateRouteError(
+    await getRunGraphRoute(
+      routeRequest("/api/mis/runs/invalid/graph", SESSION_TOKEN_SINGLE),
+      { params: Promise.resolve({ runId: "invalid run" }) },
+    ),
+    400,
+    "run_id_invalid",
+  );
+  await assertPrivateRouteError(
+    await getTaskDetailRoute(
+      routeRequest("/api/mis/tasks/tsk_a_001?unknown=1", SESSION_TOKEN_SINGLE),
+      { params: Promise.resolve({ taskId: "tsk_a_001" }) },
+    ),
+    400,
+    "filter_invalid",
+  );
+  await assertPrivateRouteError(
+    await getRunDetailRoute(
+      routeRequest("/api/mis/runs/run_a_01?limit=1&limit=2", SESSION_TOKEN_SINGLE),
+      { params: Promise.resolve({ runId: "run_a_01" }) },
+    ),
+    400,
+    "filter_invalid",
+  );
+  await assertPrivateRouteError(
+    await getRunGraphRoute(
+      routeRequest(
+        `/api/mis/runs/run_a_01/graph?workspace_id=${WORKSPACE_A}&workspace_id=${WORKSPACE_A}`,
+        SESSION_TOKEN_SINGLE,
+      ),
+      { params: Promise.resolve({ runId: "run_a_01" }) },
+    ),
+    400,
+    "filter_invalid",
+  );
+  await assertPrivateRouteError(
+    await getEvaluationsRoute(routeRequest("/api/mis/evaluations?limit=201", SESSION_TOKEN_SINGLE)),
+    400,
+    "limit_invalid",
+  );
+  await assertPrivateRouteError(
+    await getToolCallsRoute(routeRequest(
+      "/api/mis/tool-calls?unknown_filter=1",
+      SESSION_TOKEN_SINGLE,
+    )),
+    400,
+    "filter_invalid",
+  );
+  await assertPrivateRouteError(
+    await getEvaluationsRoute(routeRequest(
+      "/api/mis/evaluations?limit=1&limit=2",
+      SESSION_TOKEN_SINGLE,
+    )),
+    400,
+    "filter_invalid",
+  );
+}
+
+async function verifyProxyModeBoundaries() {
+  const requests: string[] = [];
+  const server = http.createServer((request, response) => {
+    requests.push(String(request.url || ""));
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ proxied: true }));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const previousMode = process.env.AGENTOPS_CONTROL_PLANE_MODE;
+  const previousDeployment = process.env.AGENTOPS_DEPLOYMENT_MODE;
+  const previousApiBase = process.env.AGENTOPS_API_BASE;
+  process.env.AGENTOPS_API_BASE = `http://127.0.0.1:${address.port}/api`;
+  try {
+    process.env.AGENTOPS_CONTROL_PLANE_MODE = "proxy";
+    process.env.AGENTOPS_DEPLOYMENT_MODE = "free_local";
+    await assertPrivateRouteResponse(await getTaskDetailRoute(
+      routeRequest(`/api/mis/tasks/tsk_a_001?workspace_id=${WORKSPACE_A}`, SESSION_TOKEN_SINGLE),
+      { params: Promise.resolve({ taskId: "tsk_a_001" }) },
+    ));
+    await assertPrivateRouteResponse(await getRunDetailRoute(
+      routeRequest(`/api/mis/runs/run_a_01?workspace_id=${WORKSPACE_A}`, SESSION_TOKEN_SINGLE),
+      { params: Promise.resolve({ runId: "run_a_01" }) },
+    ));
+    await assertPrivateRouteResponse(await getRunGraphRoute(
+      routeRequest(`/api/mis/runs/run_a_01/graph?workspace_id=${WORKSPACE_A}`, SESSION_TOKEN_SINGLE),
+      { params: Promise.resolve({ runId: "run_a_01" }) },
+    ));
+    await assertPrivateRouteResponse(await getToolCallsRoute(routeRequest(
+      `/api/mis/tool-calls?workspace_id=${WORKSPACE_A}&limit=7&legacy_filter=kept`,
+      SESSION_TOKEN_SINGLE,
+    )));
+    await assertPrivateRouteResponse(await getEvaluationsRoute(routeRequest(
+      `/api/mis/evaluations?workspace_id=${WORKSPACE_A}&limit=9`,
+      SESSION_TOKEN_SINGLE,
+    )));
+    assert.deepEqual(requests, [
+      `/api/tasks/tsk_a_001?workspace_id=${WORKSPACE_A}`,
+      `/api/runs/run_a_01?workspace_id=${WORKSPACE_A}`,
+      `/api/runs/run_a_01/graph?workspace_id=${WORKSPACE_A}`,
+      `/api/tool-calls?workspace_id=${WORKSPACE_A}&limit=7&legacy_filter=kept`,
+      `/api/evaluations?workspace_id=${WORKSPACE_A}&limit=9`,
+    ]);
+
+    requests.length = 0;
+    process.env.AGENTOPS_DEPLOYMENT_MODE = "production";
+    await assertPrivateRouteResponse(await getTaskDetailRoute(
+      routeRequest("/api/mis/tasks/tsk_a_001", SESSION_TOKEN_SINGLE),
+      { params: Promise.resolve({ taskId: "tsk_a_001" }) },
+    ));
+    await assertPrivateRouteResponse(await getRunDetailRoute(
+      routeRequest("/api/mis/runs/run_a_01", SESSION_TOKEN_SINGLE),
+      { params: Promise.resolve({ runId: "run_a_01" }) },
+    ));
+    await assertPrivateRouteResponse(await getRunGraphRoute(
+      routeRequest("/api/mis/runs/run_a_01/graph", SESSION_TOKEN_SINGLE),
+      { params: Promise.resolve({ runId: "run_a_01" }) },
+    ));
+    await assertPrivateRouteResponse(await getToolCallsRoute(routeRequest(
+      "/api/mis/tool-calls?limit=7",
+      SESSION_TOKEN_SINGLE,
+    )));
+    await assertPrivateRouteResponse(await getEvaluationsRoute(routeRequest(
+      "/api/mis/evaluations?limit=9",
+      SESSION_TOKEN_SINGLE,
+    )));
+    assert.deepEqual(requests, []);
+  } finally {
+    if (previousMode === undefined) delete process.env.AGENTOPS_CONTROL_PLANE_MODE;
+    else process.env.AGENTOPS_CONTROL_PLANE_MODE = previousMode;
+    if (previousDeployment === undefined) delete process.env.AGENTOPS_DEPLOYMENT_MODE;
+    else process.env.AGENTOPS_DEPLOYMENT_MODE = previousDeployment;
+    if (previousApiBase === undefined) delete process.env.AGENTOPS_API_BASE;
+    else process.env.AGENTOPS_API_BASE = previousApiBase;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 }
 
 async function closeControlPlanePool() {
@@ -788,6 +1509,7 @@ async function main() {
     await verifyAuthentication(admin as unknown as PoolClient);
     await verifyReadModels();
     await verifyHttpRoutes();
+    await verifyProxyModeBoundaries();
     await verifyAuditWorkspaceBinding(admin);
 
     output({
@@ -801,13 +1523,31 @@ async function main() {
         audit_uses_chain_bound_workspace_and_omits_sensitive_fields: true,
         audit_workspace_constraint_rejects_retag: true,
         audit_workspace_reads_fail_closed_after_constraint_loss: true,
+        audit_entity_edges_workspace_bound: true,
+        unknown_audit_entity_types_fail_closed: true,
         strict_limit_and_run_filters: true,
+        strict_detail_ids_and_evidence_filters: true,
+        unknown_and_repeated_production_filters_rejected: true,
         dashboard_metrics_workspace_scoped: true,
         workspace_running_agents_scoped_to_runs: true,
+        task_and_run_details_workspace_scoped: true,
+        run_graph_edges_workspace_scoped: true,
+        cross_workspace_graph_references_excluded: true,
+        child_agent_edges_workspace_bound: true,
+        sensitive_detail_and_evidence_fields_omitted: true,
+        ui_required_text_projections_bounded: true,
+        foreign_and_missing_details_share_404_contract: true,
+        free_local_python_paths_preserved: true,
+        production_proxy_configuration_stays_on_postgres: true,
         gateway_bound_agents_counted: true,
         revoked_gateway_bindings_excluded: true,
         untrusted_runtime_health_omitted: true,
         authenticated_http_routes_return_private_200: true,
+        all_new_routes_require_human_session: true,
+        private_route_error_fields_exact: true,
+        private_route_errors_return_no_store_and_vary: true,
+        all_new_routes_reject_foreign_membership: true,
+        detail_and_graph_routes_reject_unknown_or_repeated_filters: true,
       },
       credentials_omitted: true,
     });

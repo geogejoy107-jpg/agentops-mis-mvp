@@ -3,12 +3,15 @@ import type { PoolClient } from "pg";
 import { jsonList, verifyAgentPlanRow } from "./agentPlanContract";
 import { authenticateAgentGateway, enforceWorkspaceBinding } from "./auth";
 import { withPostgresTransaction } from "./db";
+import { assertCustomerDeliveryEvidenceMutable } from "./deliveryEvidenceSeal";
 import { ControlPlaneHttpError } from "./http";
 import { appendAudit, appendRuntimeEvent, newLedgerId, stableHash } from "./ledger";
 
 const RISK_LEVELS = new Set(["low", "medium", "high", "critical"]);
 const PLAN_AGENT_STATUSES = new Set(["draft", "submitted"]);
 const MANIFEST_POLICIES = new Set(["block", "warn"]);
+const COMMERCIAL_RUNTIME_TYPES = new Set(["hermes", "openclaw"]);
+const SHA256_HEX = /^[a-f0-9]{64}$/;
 const SENSITIVE_KEY = /(authorization|credential|password|secret|token|api[_-]?key|raw[_-]?(prompt|response|transcript|content))/i;
 
 type TaskRow = {
@@ -24,6 +27,8 @@ type RunRow = {
   workspace_id: string;
   task_id: string;
   agent_id: string;
+  runtime_type: string;
+  model_provider: string | null;
   status: string;
 };
 
@@ -67,10 +72,33 @@ type ManifestRow = {
   updated_at: string;
 };
 
-type ToolEvidence = { tool_call_id: string; run_id: string; agent_id: string; status: string };
-type EvaluationEvidence = { evaluation_id: string; run_id: string; agent_id: string; pass_fail: string };
+type ToolEvidence = {
+  tool_call_id: string;
+  run_id: string;
+  agent_id: string;
+  tool_name: string;
+  normalized_args_json: string;
+  status: string;
+};
+type EvaluationEvidence = {
+  evaluation_id: string;
+  run_id: string;
+  agent_id: string;
+  evaluator_type: string;
+  rubric_json: string;
+  pass_fail: string;
+};
 type ArtifactEvidence = { artifact_id: string; run_id: string | null; task_id: string | null };
-type AuditEvidence = { audit_id: string; entity_id: string };
+type AuditEvidence = {
+  audit_id: string;
+  actor_type: string;
+  actor_id: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  metadata_json: string;
+  tamper_chain_hash: string | null;
+};
 
 function text(value: unknown, limit: number) {
   return String(value ?? "")
@@ -143,6 +171,17 @@ function identifierList(value: unknown, field: string) {
 
 function listJson(value: unknown, field: string) {
   return JSON.stringify(listInput(value, field));
+}
+
+function jsonObject(value: string) {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function collaborators(task: TaskRow) {
@@ -348,56 +387,38 @@ async function verifyManifest(
   plan: AgentPlanRow,
   run: RunRow,
   task: TaskRow,
+  requireCommercialRuntime = false,
 ) {
   const expectedSteps = jsonList(manifest.expected_steps_json);
+  const planExpectedSteps = jsonList(plan.execution_steps_json);
   const suppliedToolIds = jsonList(manifest.tool_call_ids_json).map(String);
   const suppliedEvaluationIds = jsonList(manifest.evaluation_ids_json).map(String);
   const suppliedArtifactIds = jsonList(manifest.artifact_ids_json).map(String);
   const suppliedAuditIds = jsonList(manifest.audit_ids_json).map(String);
-  const toolRows = suppliedToolIds.length
-    ? (await client.query<ToolEvidence>(
-        `SELECT tool.* FROM tool_calls tool JOIN runs run ON run.run_id=tool.run_id
-        WHERE tool.tool_call_id=ANY($1::text[]) AND run.workspace_id=$2`,
-        [suppliedToolIds, manifest.workspace_id],
-      )).rows
-    : (await client.query<ToolEvidence>(
-        `SELECT tool.* FROM tool_calls tool JOIN runs run ON run.run_id=tool.run_id
-        WHERE tool.run_id=$1 AND run.workspace_id=$2 ORDER BY tool.created_at`,
-        [manifest.run_id, manifest.workspace_id],
-      )).rows;
-  const evaluationRows = suppliedEvaluationIds.length
-    ? (await client.query<EvaluationEvidence>(
-        `SELECT evaluation.* FROM evaluations evaluation JOIN runs run ON run.run_id=evaluation.run_id
-        WHERE evaluation.evaluation_id=ANY($1::text[]) AND run.workspace_id=$2`,
-        [suppliedEvaluationIds, manifest.workspace_id],
-      )).rows
-    : (await client.query<EvaluationEvidence>(
-        `SELECT evaluation.* FROM evaluations evaluation JOIN runs run ON run.run_id=evaluation.run_id
-        WHERE evaluation.run_id=$1 AND run.workspace_id=$2 ORDER BY evaluation.created_at`,
-        [manifest.run_id, manifest.workspace_id],
-      )).rows;
-  const artifactRows = suppliedArtifactIds.length
-    ? (await client.query<ArtifactEvidence>(
-        `SELECT DISTINCT artifact.* FROM artifacts artifact
-        LEFT JOIN runs run ON run.run_id=artifact.run_id
-        LEFT JOIN tasks task ON task.task_id=artifact.task_id
-        WHERE artifact.artifact_id=ANY($1::text[])
-          AND (artifact.run_id IS NULL OR run.workspace_id=$2)
-          AND (artifact.task_id IS NULL OR task.workspace_id=$2)
-          AND (run.workspace_id=$2 OR task.workspace_id=$2)`,
-        [suppliedArtifactIds, manifest.workspace_id],
-      )).rows
-    : (await client.query<ArtifactEvidence>(
-        `SELECT DISTINCT artifact.* FROM artifacts artifact
-        LEFT JOIN runs run ON run.run_id=artifact.run_id
-        LEFT JOIN tasks task ON task.task_id=artifact.task_id
-        WHERE (artifact.run_id=$1 OR artifact.task_id=$2)
-          AND (artifact.run_id IS NULL OR run.workspace_id=$3)
-          AND (artifact.task_id IS NULL OR task.workspace_id=$3)
-          AND (run.workspace_id=$3 OR task.workspace_id=$3)
-        ORDER BY artifact.created_at`,
-        [manifest.run_id, manifest.task_id, manifest.workspace_id],
-      )).rows;
+  const toolRows = (await client.query<ToolEvidence>(
+    `SELECT tool.* FROM tool_calls tool JOIN runs run ON run.run_id=tool.run_id
+    WHERE tool.run_id=$1 AND run.workspace_id=$2 ORDER BY tool.created_at`,
+    [manifest.run_id, manifest.workspace_id],
+  )).rows;
+  const evaluationRows = (await client.query<EvaluationEvidence>(
+    `SELECT evaluation.* FROM evaluations evaluation JOIN runs run ON run.run_id=evaluation.run_id
+    WHERE evaluation.run_id=$1 AND run.workspace_id=$2 ORDER BY evaluation.created_at`,
+    [manifest.run_id, manifest.workspace_id],
+  )).rows;
+  const artifactRows = (await client.query<ArtifactEvidence>(
+    `SELECT DISTINCT artifact.* FROM artifacts artifact
+    LEFT JOIN runs run ON run.run_id=artifact.run_id
+    LEFT JOIN tasks task ON task.task_id=artifact.task_id
+    WHERE (
+        artifact.run_id=$1
+        OR (artifact.run_id IS NULL AND artifact.task_id=$2)
+      )
+      AND (artifact.run_id IS NULL OR run.workspace_id=$3)
+      AND (artifact.task_id IS NULL OR task.workspace_id=$3)
+      AND (run.workspace_id=$3 OR task.workspace_id=$3)
+    ORDER BY artifact.created_at`,
+    [manifest.run_id, manifest.task_id, manifest.workspace_id],
+  )).rows;
   const chainEntityIds = [
     manifest.plan_id,
     manifest.run_id,
@@ -406,18 +427,87 @@ async function verifyManifest(
     ...evaluationRows.map((row) => row.evaluation_id),
     ...artifactRows.map((row) => row.artifact_id),
   ].filter((item): item is string => Boolean(item));
-  const auditRows = suppliedAuditIds.length
-    ? (await client.query<AuditEvidence>(
-        "SELECT audit_id,entity_id FROM audit_logs WHERE audit_id=ANY($1::text[]) AND entity_id=ANY($2::text[])",
-        [suppliedAuditIds, chainEntityIds],
-      )).rows
-    : (await client.query<AuditEvidence>("SELECT audit_id,entity_id FROM audit_logs WHERE entity_id=ANY($1::text[]) ORDER BY created_at", [chainEntityIds])).rows;
+  const auditRows = (await client.query<AuditEvidence>(
+    `SELECT audit_id,actor_type,actor_id,action,entity_type,entity_id,metadata_json,tamper_chain_hash
+    FROM audit_logs
+    WHERE entity_id=ANY($1::text[])
+      AND workspace_id=$2 AND metadata_json::jsonb ->> 'workspace_id'=$2
+    ORDER BY created_at,audit_id`,
+    [chainEntityIds, manifest.workspace_id],
+  )).rows;
   const found = <T>(rows: T[], ids: string[], field: keyof T) => {
     if (!ids.length) return true;
     const values = new Set(rows.map((row) => String(row[field])));
     return ids.every((id) => values.has(id));
   };
+  const complete = <T>(rows: T[], ids: string[], field: keyof T) => {
+    if (!ids.length) return true;
+    const declared = new Set(ids);
+    const authoritative = new Set(rows.map((row) => String(row[field])));
+    return declared.size === authoritative.size && [...declared].every((id) => authoritative.has(id));
+  };
   const planVerification = verifyAgentPlanRow(plan);
+  const runtimeType = String(run.runtime_type || "").trim().toLowerCase();
+  const modelProvider = String(run.model_provider || "").trim().toLowerCase();
+  const commercialRuntime = COMMERCIAL_RUNTIME_TYPES.has(runtimeType);
+  const commercialToolRows = toolRows.filter((row) => {
+    const args = jsonObject(row.normalized_args_json);
+    return row.tool_name === `agent_worker.${runtimeType}`
+      && args.adapter === runtimeType
+      && args.provider_call_performed === true
+      && args.dry_run === false;
+  });
+  const commercialEvaluationRows = evaluationRows.filter((row) => {
+    const rubric = jsonObject(row.rubric_json);
+    return row.evaluator_type === "rule"
+      && rubric.adapter === runtimeType
+      && rubric.provider_call_performed === true
+      && rubric.dry_run === false;
+  });
+  const chainedAudit = (row: AuditEvidence) => SHA256_HEX.test(String(row.tamper_chain_hash || ""));
+  const matchingAudit = (
+    entityType: string,
+    entityId: string,
+    actions: Set<string>,
+  ) => auditRows.some((row) => row.entity_type === entityType
+    && row.entity_id === entityId
+    && actions.has(row.action)
+    && chainedAudit(row));
+  const evidenceAuditCoverage = matchingAudit(
+    "agent_plans",
+    manifest.plan_id,
+    new Set(["agent_gateway.agent_plan_create", "agent_gateway.agent_plan_update"]),
+  )
+    && toolRows.every((row) => matchingAudit(
+      "tool_calls",
+      row.tool_call_id,
+      new Set(["tool_call.create", "tool_call.update"]),
+    ))
+    && evaluationRows.every((row) => matchingAudit(
+      "evaluations",
+      row.evaluation_id,
+      new Set(["evaluation.create"]),
+    ));
+  const artifactDigestCoverage = artifactRows.every((artifact) => auditRows.some((audit) => {
+    if (audit.entity_type !== "artifacts"
+      || audit.entity_id !== artifact.artifact_id
+      || audit.action !== "agent_gateway.artifact_record"
+      || !chainedAudit(audit)) return false;
+    const metadata = jsonObject(audit.metadata_json);
+    return typeof metadata.content_hash === "string" && SHA256_HEX.test(metadata.content_hash);
+  }));
+  const workerAuditProvenance = auditRows.some((audit) => {
+    if (audit.actor_type !== "agent"
+      || audit.actor_id !== manifest.agent_id
+      || audit.action !== "agent_worker.task_processed"
+      || audit.entity_type !== "runs"
+      || audit.entity_id !== manifest.run_id
+      || !chainedAudit(audit)) return false;
+    const metadata = jsonObject(audit.metadata_json);
+    return metadata.adapter === runtimeType
+      && metadata.provider_call_performed === true
+      && metadata.dry_run === false;
+  });
   const checks = [
     { id: "plan_exists", ok: Boolean(plan), message: "Manifest references an existing agent_plan." },
     { id: "plan_verifies", ok: planVerification.pass, message: "Referenced agent_plan passes method-block verification." },
@@ -430,18 +520,32 @@ async function verifyManifest(
     { id: "run_match", ok: !plan.run_id || plan.run_id === manifest.run_id, message: "Manifest run matches any run pinned by the plan." },
     { id: "agent_match", ok: plan.agent_id === manifest.agent_id && run.agent_id === manifest.agent_id, message: "Plan, manifest and run bind to the same agent." },
     { id: "expected_steps", ok: expectedSteps.length >= 3, message: "Manifest carries the approved execution steps." },
+    { id: "expected_steps_match_plan", ok: JSON.stringify(expectedSteps) === JSON.stringify(planExpectedSteps), message: "Manifest steps are server-derived from the locked Agent Plan." },
     { id: "tool_evidence_present", ok: toolRows.length >= 1, message: "Run has at least one tool_call evidence row." },
     { id: "tool_evidence_completed", ok: toolRows.length > 0 && toolRows.every((row) => row.run_id === manifest.run_id && row.agent_id === manifest.agent_id && row.status === "completed"), message: "Tool evidence belongs to the run and is completed." },
     { id: "tool_ids_found", ok: found(toolRows, suppliedToolIds, "tool_call_id"), message: "All declared tool_call_ids exist." },
+    { id: "tool_evidence_complete", ok: complete(toolRows, suppliedToolIds, "tool_call_id"), message: "Declared tool_call_ids are empty for server derivation or cover the complete run evidence set." },
     { id: "evaluation_evidence_present", ok: evaluationRows.length >= 1, message: "Run has at least one evaluation evidence row." },
     { id: "evaluation_evidence_passed", ok: evaluationRows.length > 0 && evaluationRows.every((row) => row.run_id === manifest.run_id && row.agent_id === manifest.agent_id && row.pass_fail === "pass"), message: "Evaluation evidence belongs to the run and passes." },
     { id: "evaluation_ids_found", ok: found(evaluationRows, suppliedEvaluationIds, "evaluation_id"), message: "All declared evaluation_ids exist." },
+    { id: "evaluation_evidence_complete", ok: complete(evaluationRows, suppliedEvaluationIds, "evaluation_id"), message: "Declared evaluation_ids are empty for server derivation or cover the complete run evidence set." },
     { id: "artifact_evidence_present", ok: artifactRows.length >= 1, message: "Run or task has at least one artifact evidence row." },
-    { id: "artifact_evidence_bound", ok: artifactRows.length > 0 && artifactRows.every((row) => row.run_id === manifest.run_id || row.task_id === manifest.task_id), message: "Artifact evidence is bound to the run or task." },
+    { id: "artifact_evidence_bound", ok: artifactRows.length > 0 && artifactRows.every((row) => row.run_id === manifest.run_id || (row.run_id === null && row.task_id === manifest.task_id)), message: "Artifact evidence is bound directly to the run or is an unbound task-level artifact." },
     { id: "artifact_ids_found", ok: found(artifactRows, suppliedArtifactIds, "artifact_id"), message: "All declared artifact_ids exist." },
+    { id: "artifact_evidence_complete", ok: complete(artifactRows, suppliedArtifactIds, "artifact_id"), message: "Declared artifact_ids are empty for server derivation or cover the complete run/task artifact set." },
     { id: "audit_evidence_present", ok: auditRows.length >= 1, message: "Ledger has audit evidence for the plan/run/tool/eval/artifact chain." },
     { id: "audit_ids_found", ok: found(auditRows, suppliedAuditIds, "audit_id"), message: "All declared audit_ids exist." },
+    { id: "audit_ids_server_derived", ok: suppliedAuditIds.length === 0, message: "Audit evidence is server-derived and cannot be caller-selected." },
     { id: "audit_evidence_bound", ok: auditRows.every((row) => chainEntityIds.includes(row.entity_id)), message: "Declared audit evidence belongs to the manifest chain." },
+    { id: "commercial_runtime_required", ok: !requireCommercialRuntime || commercialRuntime, message: "Customer delivery requires a Hermes or OpenClaw run." },
+    { id: "commercial_run_completed", ok: !requireCommercialRuntime || run.status === "completed", message: "Customer delivery requires the actual run to be completed." },
+    { id: "commercial_runtime_provider_bound", ok: !requireCommercialRuntime || modelProvider === runtimeType, message: "The run provider is bound to its commercial runtime type." },
+    { id: "commercial_worker_tool_provenance", ok: !requireCommercialRuntime || commercialToolRows.length >= 1, message: "The run contains completed non-dry-run provider-call worker evidence." },
+    { id: "commercial_mock_evaluation_absent", ok: !requireCommercialRuntime || evaluationRows.every((row) => row.evaluator_type !== "llm_mock"), message: "Mock evaluator evidence cannot authorize customer delivery." },
+    { id: "commercial_worker_evaluation_provenance", ok: !requireCommercialRuntime || commercialEvaluationRows.length >= 1, message: "A passing rule evaluation binds the real adapter and provider call." },
+    { id: "commercial_artifact_digest_provenance", ok: !requireCommercialRuntime || artifactDigestCoverage, message: "Every delivery artifact has a chained SHA-256 evidence audit." },
+    { id: "commercial_evidence_audit_coverage", ok: !requireCommercialRuntime || evidenceAuditCoverage, message: "Plan, tool and evaluation evidence have chained server audits." },
+    { id: "commercial_worker_audit_provenance", ok: !requireCommercialRuntime || workerAuditProvenance, message: "The run has chained non-dry-run worker completion provenance." },
   ];
   const failed = checks.filter((check) => !check.ok);
   const status = failed.length === 0 ? "verified" : manifest.mismatch_policy === "block" ? "blocked" : "warning";
@@ -464,6 +568,93 @@ async function verifyManifest(
       artifact_ids: suppliedArtifactIds.length,
       audit_ids: suppliedAuditIds.length,
     },
+    token_omitted: true,
+  };
+}
+
+export async function verifyLatestWorkspacePlanEvidence(
+  client: PoolClient,
+  workspaceId: string,
+  taskId: string,
+  runId: string,
+  agentId: string,
+) {
+  const manifestHintResult = await client.query<Pick<ManifestRow, "manifest_id" | "plan_id">>(
+    `SELECT manifest_id,plan_id
+    FROM plan_evidence_manifests
+    WHERE workspace_id=$1 AND task_id=$2 AND run_id=$3
+    ORDER BY updated_at DESC,created_at DESC,manifest_id DESC
+    LIMIT 1`,
+    [workspaceId, taskId, runId],
+  );
+  const manifestHint = manifestHintResult.rows[0];
+  if (!manifestHint) {
+    return {
+      required: true,
+      pass: false,
+      status: "blocked_missing_verified_manifest",
+      manifest_id: null,
+      failed_checks: ["manifest_exists"],
+      evidence_counts: {},
+      token_omitted: true,
+    };
+  }
+  const planResult = await client.query<AgentPlanRow>(
+    `SELECT plan_id,workspace_id,task_id,run_id,agent_id,task_understanding,
+    referenced_specs_json,referenced_memories_json,referenced_bases_json,
+    proposed_files_to_change_json,risk_level,approval_required,execution_steps_json,
+    verification_plan,rollback_plan,status,created_at,updated_at
+    FROM agent_plans WHERE plan_id=$1 AND workspace_id=$2 FOR SHARE`,
+    [manifestHint.plan_id, workspaceId],
+  );
+  const plan = planResult.rows[0];
+  const manifestResult = await client.query<ManifestRow>(
+    `SELECT manifest_id,workspace_id,plan_id,task_id,run_id,agent_id,mismatch_policy,
+    expected_steps_json,tool_call_ids_json,evaluation_ids_json,artifact_ids_json,audit_ids_json,
+    status,verification_json,created_at,updated_at
+    FROM plan_evidence_manifests
+    WHERE manifest_id=$1 AND workspace_id=$2 AND task_id=$3 AND run_id=$4 FOR SHARE`,
+    [manifestHint.manifest_id, workspaceId, taskId, runId],
+  );
+  const manifest = manifestResult.rows[0];
+  const runResult = await client.query<RunRow>(
+    `SELECT run_id,workspace_id,task_id,agent_id,runtime_type,model_provider,status
+    FROM runs WHERE run_id=$1 AND workspace_id=$2 AND task_id=$3 FOR SHARE`,
+    [runId, workspaceId, taskId],
+  );
+  const taskResult = await client.query<TaskRow>(
+    `SELECT task_id,workspace_id,owner_agent_id,collaborator_agent_ids,status
+    FROM tasks WHERE task_id=$1 AND workspace_id=$2 FOR SHARE`,
+    [taskId, workspaceId],
+  );
+  const run = runResult.rows[0];
+  const task = taskResult.rows[0];
+  if (!plan || !manifest || !run || !task
+    || manifest.plan_id !== plan.plan_id
+    || manifest.agent_id !== agentId
+    || plan.agent_id !== agentId
+    || run.agent_id !== agentId
+    || run.task_id !== task.task_id
+    || (plan.task_id && plan.task_id !== taskId)
+    || (plan.run_id && plan.run_id !== runId)) {
+    return {
+      required: true,
+      pass: false,
+      status: "blocked_manifest_binding_invalid",
+      manifest_id: manifestHint.manifest_id,
+      failed_checks: ["manifest_binding"],
+      evidence_counts: {},
+      token_omitted: true,
+    };
+  }
+  const verification = await verifyManifest(client, manifest, plan, run, task, true);
+  return {
+    required: true,
+    pass: verification.pass,
+    status: verification.status,
+    manifest_id: manifest.manifest_id,
+    failed_checks: verification.failed_checks.map((check) => check.id),
+    evidence_counts: verification.evidence_counts,
     token_omitted: true,
   };
 }
@@ -535,13 +726,20 @@ export async function createAgentGatewayPlanEvidenceManifest(request: Request) {
     if (!task) throw new ControlPlaneHttpError(404, "task_not_found", "Manifest task was not found in the credential workspace.");
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`agentops-run:${runId}`]);
     const runResult = await client.query<RunRow>(
-      "SELECT run_id,workspace_id,task_id,agent_id,status FROM runs WHERE run_id=$1 AND workspace_id=$2 FOR UPDATE",
+      `SELECT run_id,workspace_id,task_id,agent_id,runtime_type,model_provider,status
+      FROM runs WHERE run_id=$1 AND workspace_id=$2 FOR UPDATE`,
       [runId, identity.workspaceId],
     );
     const run = runResult.rows[0];
     if (!run || run.task_id !== taskId || run.agent_id !== identity.agentId) {
       throw new ControlPlaneHttpError(409, "run_immutable_binding_conflict", "Run binding changed while manifest was waiting.");
     }
+    await assertCustomerDeliveryEvidenceMutable(
+      client,
+      identity.workspaceId,
+      taskId,
+      runId,
+    );
     const planResult = await client.query<AgentPlanRow>(
       "SELECT * FROM agent_plans WHERE plan_id=$1 AND workspace_id=$2 FOR UPDATE",
       [planId, identity.workspaceId],
@@ -555,9 +753,29 @@ export async function createAgentGatewayPlanEvidenceManifest(request: Request) {
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`agentops-plan-evidence:${manifestId}`]);
     const existingResult = await client.query<ManifestRow>("SELECT * FROM plan_evidence_manifests WHERE manifest_id=$1 FOR UPDATE", [manifestId]);
     const existing = existingResult.rows[0];
-    const expectedSteps = body.expected_steps === undefined
-      ? plan.execution_steps_json
-      : JSON.stringify(listInput(body.expected_steps, "expected_steps"));
+    const planExpectedSteps = jsonList(plan.execution_steps_json);
+    const expectedSteps = existing?.expected_steps_json || JSON.stringify(planExpectedSteps);
+    const requestedExpectedSteps = body.expected_steps === undefined
+      ? []
+      : listInput(body.expected_steps, "expected_steps");
+    if (
+      requestedExpectedSteps.length > 0
+      && JSON.stringify(requestedExpectedSteps) !== JSON.stringify(planExpectedSteps)
+    ) {
+      throw new ControlPlaneHttpError(
+        409,
+        "plan_evidence_expected_steps_conflict",
+        "expected_steps are server-derived from the locked Agent Plan and cannot be overridden.",
+      );
+    }
+    const requestedAuditIds = identifierList(body.audit_ids, "audit_ids");
+    if (requestedAuditIds.length > 0) {
+      throw new ControlPlaneHttpError(
+        409,
+        "plan_evidence_audit_ids_server_derived",
+        "audit_ids are server-derived from the locked evidence chain and cannot be selected by the caller.",
+      );
+    }
     const now = new Date().toISOString();
     const candidate: ManifestRow = {
       manifest_id: manifestId,
@@ -571,7 +789,7 @@ export async function createAgentGatewayPlanEvidenceManifest(request: Request) {
       tool_call_ids_json: JSON.stringify(identifierList(body.tool_call_ids, "tool_call_ids")),
       evaluation_ids_json: JSON.stringify(identifierList(body.evaluation_ids, "evaluation_ids")),
       artifact_ids_json: JSON.stringify(identifierList(body.artifact_ids, "artifact_ids")),
-      audit_ids_json: JSON.stringify(identifierList(body.audit_ids, "audit_ids")),
+      audit_ids_json: "[]",
       status: existing?.status || "submitted",
       verification_json: existing?.verification_json || "{}",
       created_at: existing?.created_at || now,

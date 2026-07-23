@@ -75,18 +75,45 @@ closed if any Owner membership already exists, and atomically creates the user,
 active Owner membership, fixed-parameter scrypt credential, and a truthful
 `actor_type=system` bootstrap audit. No session is created and no password,
 salt, hash, DSN, or setup code is returned. Bootstrap validates the exact
-`20260719_workspace_read_models_v2` schema and catalog before it reads or
+`20260719_approval_kind_bindings_v4` schema and catalog before it reads or
 derives the Owner password.
 
-The original `20260718_human_session_memory_review_v1` migration remains
-immutable. The append-only `20260719_workspace_read_models_v2` migration adds
-the nullable `audit_logs.workspace_id` binding plus a validated constraint that
-requires every scoped row to match the workspace copied into hashed metadata.
-The core DDL has bounded lock and statement timeouts. Its supporting index is
-created after the receipt transaction with `CREATE INDEX CONCURRENTLY`; a
-failed online stage can be retried from the exact current receipt. The migration
-runner accepts only a missing receipt, the exact v1 receipt, or the exact
-current receipt; any other receipt fails before v2 DDL is executed.
+The append-only `20260718_human_session_memory_review_v1`,
+`20260719_workspace_read_models_v2`, and
+`20260719_human_approval_decisions_v3` migrations remain immutable. The v2
+migration adds the nullable `audit_logs.workspace_id` binding plus a validated
+constraint that requires every scoped row to match the workspace copied into
+hashed metadata. The core DDL has bounded lock and statement timeouts. Its
+supporting index is created after the receipt transaction with `CREATE INDEX
+CONCURRENTLY`; a failed online stage can be retried from the exact current
+receipt. The v3 migration adds durable workspace/user idempotency receipts for
+Human approval decisions.
+
+The current append-only `20260719_approval_kind_bindings_v4` migration makes
+`approval_kind` explicit, required, and free of a database default. Its five
+allowed values are `run_execution`, `tool_execution`, `prepared_action`,
+`agent_enrollment`, and `customer_delivery`. Kind is immutable after insertion;
+the approval ID and its task, run, tool, and requesting-agent execution bindings
+are immutable as well. Approval rows are append-only, terminal decisions cannot
+return to pending, and task/run/tool identity parents cannot be rebound behind an
+approval. Audit rows are database append-only. Legacy approvals, including rows
+with a prefilled kind, are classified only from deterministic child rows or
+trusted audit actions; an unclassified, mismatched-prefill, or
+customer-delivery-shaped row without trusted evidence aborts the migration
+instead of being guessed. Deferred, initially-deferred relationship triggers on approvals, Prepared
+Actions, and enrollment requests validate INSERT, UPDATE, and DELETE edges
+across task, run, workspace, agent, tool call, and kind-specific child rows. A
+unique enrollment-request index enforces one enrollment binding per approval.
+Once a `customer_delivery` approval is decided, Postgres seals the old and new
+sides of tool-call, evaluation, artifact, Agent Plan, and plan-manifest writes.
+The evidence trigger shares a row lock with the Human decision, so an in-flight
+evidence transaction and the terminal approval serialize. Evidence cannot be
+appended, mutated, deleted, or rebound away from the decided run.
+`human_memory_schema_readiness_v4` validates the exact catalog, and
+`human_memory_schema_v1_v2_v3_to_v4_upgrade_v1` proves exact v1, v2, and v3
+receipts upgrade to v4. The migration runner accepts only a missing receipt, an
+exact v1, v2, or v3 receipt, or the exact current v4 receipt; any other receipt
+fails before newer DDL is executed.
 TypeScript audit writers must supply the workspace explicitly; the same value
 is included in hashed metadata, and tenant reads require both copies to match.
 Legacy rows without a trustworthy binding stay unscoped and are excluded from
@@ -122,6 +149,37 @@ Agent Gateway Sessions require a non-null valid expiry. Corrupted timestamp
 state therefore cannot fail open; long-lived parent tokens may still explicitly
 use a null expiry.
 
+### Approval Decision Transaction
+
+Commercial approval decisions use the same Human Session authority through
+`POST /api/mis/approvals/:approval_id/approve|reject` and the HTML fallback at
+`POST /workspace/approvals/review`. Both paths require the selected workspace,
+exact Origin, CSRF token, and a durable `Idempotency-Key`; only `approver` and
+`owner` memberships may decide. Free Local retains the guarded Python
+compatibility path, while production always calls the TypeScript/Postgres owner.
+
+The transaction locks the Human Session and membership, request idempotency,
+approval, task, run, linked tool call, Prepared Action or enrollment request,
+and any customer-delivery plan evidence in one stable order. It records the
+actual Human `user_id`, updates linked state, and appends workspace-bound audit
+and runtime evidence atomically. Same-key replay is unchanged and emits no
+duplicate evidence; different decisions, key rebinding, cross-workspace IDs,
+machine credentials, stale linked state, and concurrent losing requests fail
+closed.
+
+Approving a Prepared Action only unlocks its exact resume state and never calls
+the provider. High or critical ordinary tool approvals without a bound Prepared
+Action return `prepared_action_required`. Enrollment approval changes only the
+request and synthetic task/run; it never issues or exposes a token. Customer
+delivery approval revalidates the current workspace-bound plan-evidence manifest
+and requires the locked run to be completed inside the decision transaction.
+Manifest steps are always derived from the locked Agent Plan. Verification reads
+the complete workspace-bound tool, evaluation, and run/task artifact ledger.
+Audit IDs are server-derived and cannot be caller-selected. A caller cannot hide
+failed, waiting, or additional evidence by declaring only successful evidence
+IDs.
+Expired approvals cannot authorize an action.
+
 ## Release Gates
 
 Production ingress must apply a trusted-proxy-aware source-IP rate limit to
@@ -133,6 +191,11 @@ slice. `docs/HUMAN_MEMORY_REVIEW_RELEASE_BLOCKERS.json` keeps those gaps
 machine-readable and forbids release or closed-loop claims while they remain
 open. It also records that all remaining UI/read-model APIs need explicit
 TypeScript/Postgres owners now that the production Python catch-all is blocked.
+Approval-request retention, expiry reconciliation, TypeScript entitlement
+ownership, Prepared Action resume, enrollment credential issue, production
+customer-delivery approval creation, and lower-risk execution receipts remain
+explicit blockers; successful schema and decision contracts do not close those
+execution and lifecycle gates.
 This smoke also uses synthetic `source_type=manual` candidates. Separate
 exact-head Hermes/OpenClaw and Agent Gateway evidence does not close the Human
 Review bridge until a real Worker `source_type=run_log`, `source_ref=run_gw_*`
@@ -142,11 +205,16 @@ and exactly one runtime event.
 ## Verification
 
 ```bash
-python3 -B scripts/nextjs_postgres_human_memory_review_smoke.py
+export AGENTOPS_POSTGRES_DSN=postgresql://...
+export AGENTOPS_TEST_POSTGRES_DSN="$AGENTOPS_POSTGRES_DSN"
+python3 -B scripts/nextjs_postgres_human_memory_review_smoke.py \
+  --postgres-dsn "$AGENTOPS_POSTGRES_DSN"
 cd ui/next-app
 npm run test:human-scrypt-contract
 npm run test:human-schema-contract
+npm run test:human-schema-upgrade-contract
 npm run test:memory-review-idempotency-contract
+npm run test:approval-decision-contract
 npm run typecheck
 npm run build
 ```
@@ -185,28 +253,97 @@ python3 -B scripts/nextjs_postgres_real_worker_human_review_smoke.py \
 `worker_provider_call_evidence_v1` is a no-API unit contract: both live adapters
 must report `provider_call_performed: true` and `dry_run: false`, while their
 unconfirmed paths must report the inverse and retain the confirmation gate.
-`nextjs_production_python_proxy_fail_closed_v1` starts a real Next process with
-a reachable fake Python upstream and proves an unowned production route returns
-503 without sending any upstream request.
-`nextjs_postgres_real_worker_human_review_v1` starts Next in production
-Postgres mode but never starts `server.py`. The existing Worker CLI uses a
+`nextjs_production_python_proxy_fail_closed_v2` builds an isolated production
+artifact, starts it with `next start`, checks the 12 explicitly expected compiled
+API route keys, and drives 29 explicitly enumerated requests: one catch-all, ten
+direct reads, two approval decisions, and 16 legacy Workspace writes. Those 29
+requests leave the reachable fake Python upstream counter at zero; this is scoped
+evidence for the named compiled routes and requests, not a claim about every
+production route. The v1 contract ID remains an output compatibility marker.
+`nextjs_postgres_real_worker_human_review_v1` builds Next before any database or
+runtime secret is introduced, hashes the `.next` artifact, starts it with
+`next start`, and proves the tracked source fingerprint is unchanged. It runs in
+production Postgres mode but never starts `server.py`. The existing Worker CLI uses a
 hash-stored parent token from its environment, executes real Hermes and
 OpenClaw adapters, writes run/tool/evaluation/artifact/audit/plan-evidence
 receipts, proposes one `run_log` memory candidate per real run, and then proves
 the candidate is visible and idempotently approved through an Owner Human
-Session. The output distinguishes `python_api_started: false` from Python test
-orchestration and reports `real_runtime_execution_performed: true`; credentials,
-raw prompts, and raw responses are omitted.
+Session. Each real Worker produces a real completed run, its bounded evidence,
+and a verified plan-evidence manifest. An isolated acceptance fixture then
+creates one `customer_delivery` approval bound to that real run; the Human
+Session revalidates the manifest and completed run, decides the approval, and
+replays the same decision without duplicate evidence. The output records
+`worker_created_delivery_approvals: false` and
+`delivery_approval_creation_source: acceptance_fixture_bound_to_real_run`, so
+this acceptance does not verify the missing production approval-creation owner.
+Customer-delivery approval revalidation reads the actual run and requires a
+matching Hermes/OpenClaw model provider, a completed non-dry-run provider-call
+Worker tool, a matching rule evaluation, no `llm_mock` evaluation, a chained
+SHA-256 audit for every artifact, chained plan/tool/evaluation audits, and the
+bound `agent_worker.task_processed` audit. This raises the evidence floor but is
+not a signed process-identity attestation.
+It distinguishes `python_api_started: false` from Python test orchestration and
+reports `real_runtime_execution_performed: true`; credentials, raw prompts, and
+raw responses are omitted. A separate ephemeral guard run, which is never used
+for an approved delivery, receives a failed tool, failed evaluation, and
+additional artifact. The acceptance rejects forged `expected_steps` and
+caller-selected audit IDs before persistence, proves a success-only manifest is
+blocked by the authoritative complete-run evidence set, and requires its Human
+customer-delivery attempt to return
+`409 verified_plan_evidence_manifest_required` without advancing linked state.
+The original real approved delivery remains untouched; append attempts for its
+tool, evaluation, artifact, and manifest evidence all return
+`409 customer_delivery_evidence_sealed` with zero persistence.
 
 CI runs `nextjs_postgres_worker_task_pull_claim_v1` against Postgres to guard
 scope binding, tenant isolation, bounded claim bodies, same-agent replay, and
 single-winner claim concurrency. CI does not claim real Runtime execution;
 the live cross-contract command remains required release evidence.
 
-The migration branch has also passed this cross-contract independently with
-the real OpenClaw and Hermes adapters: both provider calls were non-dry-run,
-each resulting `run_log` candidate was approved exactly once through Human
-Session, cross-workspace access returned 403, and the Python API was never
-started. This closes the bridge-implementation blocker; commercial promotion
-still requires fresh exact-HEAD OpenClaw and Hermes receipts after the final
-commit plus the remaining release gates.
+A local pre-commit run on this migration worktree observed both real OpenClaw
+and Hermes provider calls with `dry_run=false`, one idempotent Human memory
+decision and one fixture-bound customer-delivery decision per completed run,
+cross-workspace 403 responses, and no Python API process. This is engineering
+observation only: the committed blocker file intentionally carries no subject
+SHA, execution timestamp, or receipt identity. Commercial promotion still
+requires a fresh external exact-HEAD OpenClaw/Hermes command receipt after the
+final commit plus the remaining release gates.
+
+The post-commit evidence path is data-driven and intentionally cannot run with
+candidate-controlled harness code. After this workflow is present on protected
+`main`, an operator manually dispatches
+`.github/workflows/commercial-real-runtime-acceptance.yml` with an exact
+candidate SHA and branch. One checkout pins the trusted `main` harness and a
+second checkout pins the candidate. The trusted smoke and receipt generator test
+the candidate source, recording distinct builder and subject SHAs. The private
+runner labelled `agentops-real-runtime` must expose real Hermes/OpenClaw, an
+isolated Postgres DSN, and Python through the protected
+`commercial-real-runtime` environment. The workflow signs the hash-only receipt
+with GitHub OIDC/Sigstore provenance, uploads only hashes, the offline
+attestation bundle, and bounded diagnostics, and never uploads raw provider
+output or credentials.
+Download both files outside the repository and validate them with:
+
+```bash
+python3 scripts/commercial_migration_readiness.py \
+  --human-memory-runtime-receipt /path/outside/repo/human-memory-real-runtime.json \
+  --human-memory-runtime-attestation /path/outside/repo/human-memory-real-runtime.attestation.json
+```
+
+The checker resolves only `exact_head_real_runtime_receipt_missing`, and only
+when `gh attestation verify` binds the receipt digest and SLSA predicate to the
+pinned repository and trusted-main signer workflow/digest; the signed receipt
+binds the candidate subject SHA separately. GitHub must report the referenced
+run as a successful completed `workflow_dispatch` at the same builder SHA,
+attempt, workflow path, repository, and allowlisted `main` ref;
+the receipt is no older than 24 hours; the local worktree is clean at the same
+HEAD; both adapters were explicit; the expected contract passed without a skip;
+and hash-only runtime security claims prove non-dry-run provider calls, complete
+tool/evaluation/artifact evidence, server-derived audit evidence, transactional
+delivery revalidation, and post-decision evidence sealing. Runtime credentials are
+not job-wide and dependency lifecycle scripts are disabled before the bounded
+live step. The trusted builder has no release authority until the workflow is on
+protected `main`, the environment enforces independent review, and the verifier
+binary trust and signed Runtime identity blockers are closed. All unrelated blockers remain open. A missing receipt leaves the
+checker usable for local engineering; an explicitly supplied invalid or
+unattested receipt fails the readiness contract.

@@ -384,6 +384,7 @@ def execute_mock(task: dict, attempt: int = 1, fail_before_success: int = 0) -> 
 
 def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confirm_run: bool) -> AdapterResult:
     prompt = build_task_prompt(task)
+    evidence_target = "hermes://gateway/v1/chat/completions"
     if not confirm_run:
         return AdapterResult(
             ok=False,
@@ -391,7 +392,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             prompt_hash=stable_hash(prompt),
             error_type="ConfirmRunRequired",
             error_message="Hermes live execution requires --confirm-run.",
-            target_resource=gateway_url.rstrip() + "/v1/chat/completions",
+            target_resource=evidence_target,
             retryable=False,
             dry_run=True,
         )
@@ -421,7 +422,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             error_message=None if visible else "Hermes returned no visible content.",
             duration_ms=int((time.time() - started) * 1000),
             output_tokens=int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
-            target_resource=gateway_url.rstrip("/") + "/v1/chat/completions",
+            target_resource=evidence_target,
             retryable=not bool(visible),
             provider_call_performed=bool(visible),
         )
@@ -431,9 +432,12 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             output_summary="Hermes adapter execution failed.",
             prompt_hash=stable_hash(prompt),
             error_type="HermesExecutionFailed",
-            error_message=redact_text(str(exc), 200),
+            error_message=redact_text(
+                str(exc).replace(gateway_url.rstrip("/"), "hermes://gateway"),
+                200,
+            ),
             duration_ms=int((time.time() - started) * 1000),
-            target_resource=gateway_url.rstrip("/") + "/v1/chat/completions",
+            target_resource=evidence_target,
             retryable=True,
         )
 

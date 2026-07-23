@@ -5,10 +5,14 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import importlib
 import json
 import os
 import secrets
+import signal
 import shutil
+import socket
+import stat
 import subprocess
 import sys
 import time
@@ -20,7 +24,8 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_SOURCE_ROOT = Path(__file__).resolve().parents[1]
+ROOT = DEFAULT_SOURCE_ROOT
 SCRIPTS = ROOT / "scripts"
 NEXT_APP = ROOT / "ui" / "next-app"
 CONTRACT_ID = "nextjs_postgres_real_worker_human_review_v1"
@@ -42,14 +47,6 @@ SCOPES = [
     "audit:write",
     "plan_evidence:write",
 ]
-
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(SCRIPTS))
-
-import server  # noqa: E402
-import storage_postgres_contract_smoke as contract  # noqa: E402
-from nextjs_playwright_snapshot_smoke import free_port, start_process, stop_process  # noqa: E402
-
 
 NODE_PG_HELPER = r"""
 const fs = require('node:fs');
@@ -173,6 +170,152 @@ def dsn_with_search_path(dsn: str, schema: str) -> str:
     ))
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _hash_field(digest: Any, value: bytes) -> None:
+    digest.update(len(value).to_bytes(8, "big"))
+    digest.update(value)
+
+
+def stable_tree_sha256(root: Path) -> str:
+    """Hash tree paths, entry types, and contents without filesystem metadata."""
+    if root.is_symlink() or not root.is_dir():
+        raise RuntimeError("next_build_artifact_missing_or_unsafe")
+    entries = sorted(root.rglob("*"), key=lambda item: os.fsencode(item.relative_to(root).as_posix()))
+    if not entries:
+        raise RuntimeError("next_build_artifact_empty")
+    digest = hashlib.sha256()
+    _hash_field(digest, b"agentops-stable-tree-sha256-v1")
+    for path in entries:
+        relative = os.fsencode(path.relative_to(root).as_posix())
+        metadata = path.lstat()
+        _hash_field(digest, relative)
+        if stat.S_ISDIR(metadata.st_mode):
+            _hash_field(digest, b"directory")
+        elif stat.S_ISLNK(metadata.st_mode):
+            _hash_field(digest, b"symlink")
+            _hash_field(digest, os.fsencode(os.readlink(path)))
+        elif stat.S_ISREG(metadata.st_mode):
+            _hash_field(digest, b"file")
+            _hash_field(digest, bytes.fromhex(file_sha256(path)))
+        else:
+            raise RuntimeError("next_build_artifact_contains_special_file")
+    return digest.hexdigest()
+
+
+def tracked_worktree_fingerprint(source_root: Path) -> str:
+    """Hash the live contents of every Git-indexed path in a dirty-safe way."""
+    git = shutil.which("git")
+    if not git:
+        raise RuntimeError("git_binary_unavailable")
+    listed = subprocess.run(
+        [git, "-C", str(source_root), "ls-files", "--stage", "-z"],
+        text=False,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    if listed.returncode != 0:
+        raise RuntimeError("tracked_worktree_inventory_failed")
+    records = sorted(record for record in listed.stdout.split(b"\0") if record)
+    digest = hashlib.sha256()
+    _hash_field(digest, b"agentops-tracked-worktree-sha256-v1")
+    for record in records:
+        index_entry, separator, relative = record.partition(b"\t")
+        if not separator or not relative:
+            raise RuntimeError("tracked_worktree_inventory_invalid")
+        path = source_root / os.fsdecode(relative)
+        _hash_field(digest, index_entry)
+        _hash_field(digest, relative)
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            _hash_field(digest, b"missing")
+            continue
+        if stat.S_ISLNK(metadata.st_mode):
+            _hash_field(digest, b"symlink")
+            _hash_field(digest, os.fsencode(os.readlink(path)))
+        elif stat.S_ISREG(metadata.st_mode):
+            _hash_field(digest, b"file")
+            _hash_field(digest, str(stat.S_IMODE(metadata.st_mode) & 0o111).encode("ascii"))
+            _hash_field(digest, bytes.fromhex(file_sha256(path)))
+        elif stat.S_ISDIR(metadata.st_mode):
+            _hash_field(digest, b"directory")
+        else:
+            _hash_field(digest, b"special")
+    return digest.hexdigest()
+
+
+def resolve_source_root(value: str) -> Path:
+    try:
+        source_root = Path(value).expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError("source_root_unavailable") from exc
+    required = [
+        source_root / "server.py",
+        source_root / "scripts" / "agent_worker.py",
+        source_root / "scripts" / "storage_postgres_contract_smoke.py",
+        source_root / "ui" / "next-app" / "package.json",
+    ]
+    if not source_root.is_dir() or not all(path.is_file() for path in required):
+        raise RuntimeError("source_root_contract_files_missing")
+    git = shutil.which("git")
+    if not git:
+        raise RuntimeError("git_binary_unavailable")
+    top_level = subprocess.run(
+        [git, "-C", str(source_root), "rev-parse", "--show-toplevel"],
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    if top_level.returncode != 0 or Path(top_level.stdout.strip()).resolve() != source_root:
+        raise RuntimeError("source_root_must_be_git_worktree_root")
+    return source_root
+
+
+def load_candidate_modules(source_root: Path) -> tuple[Any, Any]:
+    for path in (source_root / "scripts", source_root):
+        sys.path.insert(0, str(path))
+    importlib.invalidate_caches()
+    server_module = importlib.import_module("server")
+    contract_module = importlib.import_module("storage_postgres_contract_smoke")
+    for module in (server_module, contract_module):
+        module_file = Path(str(getattr(module, "__file__", ""))).resolve()
+        if source_root not in module_file.parents:
+            raise RuntimeError("candidate_module_loaded_outside_source_root")
+    return server_module, contract_module
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def stop_process(proc: subprocess.Popen[str], *, timeout: int = 5) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if proc.poll() is None:
+        proc.wait(timeout=timeout)
+
+
 def http_json(
     method: str,
     url: str,
@@ -235,6 +378,24 @@ def wait_for_next(base_url: str, proc: subprocess.Popen[str], sensitive: list[st
             last = str(exc)
         time.sleep(0.25)
     raise RuntimeError(redact(f"Next Agent Gateway alias did not become ready: {last}", sensitive))
+
+
+def run_next_build(npm: str) -> subprocess.CompletedProcess[str]:
+    safe_keys = ("HOME", "LANG", "LC_ALL", "PATH", "SHELL", "TMPDIR", "TMP", "TEMP")
+    env = {key: os.environ[key] for key in safe_keys if os.environ.get(key)}
+    env.update({
+        "CI": "1",
+        "NEXT_TELEMETRY_DISABLED": "1",
+    })
+    return subprocess.run(
+        [npm, "run", "--silent", "build"],
+        cwd=NEXT_APP,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=600,
+        check=False,
+    )
 
 
 def run_npm(npm: str, runtime_dsn: str, args: list[str], *, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -505,6 +666,40 @@ def check_runtime_evidence(
     }
 
 
+def prepare_run_bound_delivery_approval_fixture(
+    adapter: NodePgAdapter,
+    runtime: str,
+    receipt: dict[str, str],
+) -> dict[str, str]:
+    run_id = receipt["run_id"]
+    task_id = f"tsk_real_{runtime}_review"
+    agent_id = f"agt_real_{runtime}_review"
+    approval_id = f"ap_customer_worker_delivery_{run_id}"
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    expires_at = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).isoformat()
+    adapter.execute(
+        """INSERT INTO approvals(
+            approval_id,approval_kind,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,
+            decision,reason,expires_at,created_at,decided_at
+        ) VALUES(?,'customer_delivery',?,?,?,?,NULL,'pending','Customer delivery requires Human Owner review.',?,?,NULL)""",
+        (approval_id, task_id, run_id, None, agent_id, expires_at, now),
+    )
+    adapter.execute(
+        "UPDATE runs SET approval_required=1 WHERE run_id=? AND workspace_id=? AND task_id=? AND agent_id=?",
+        (run_id, WORKSPACE_ID, task_id, agent_id),
+    )
+    adapter.execute(
+        "UPDATE tasks SET status='waiting_approval',updated_at=? WHERE task_id=? AND workspace_id=?",
+        (now, task_id, WORKSPACE_ID),
+    )
+    adapter.commit()
+    return {
+        **receipt,
+        "approval_id": approval_id,
+        "delivery_approval_creation_source": "acceptance_fixture_bound_to_real_run",
+    }
+
+
 def login_owner(base_url: str, password: str) -> tuple[str, str]:
     status, payload, headers = http_json(
         "POST",
@@ -539,6 +734,37 @@ def human_review(
     candidate_ids = {str(item.get("memory_id")) for item in candidates} if isinstance(candidates, list) else set()
     if status != 200 or receipt["memory_id"] not in candidate_ids:
         raise RuntimeError(f"{runtime} candidate is absent from the Human workspace queue")
+
+    approval_status, approvals, _ = http_json(
+        "GET",
+        f"{base_url}/api/mis/approvals?workspace_id={WORKSPACE_ID}",
+        headers=list_headers,
+    )
+    approval_ids = {str(item.get("approval_id")) for item in approvals} if isinstance(approvals, list) else set()
+    if approval_status != 200 or receipt["approval_id"] not in approval_ids:
+        raise RuntimeError(f"{runtime} delivery approval is absent from the Human workspace queue")
+    approval_headers = {
+        **list_headers,
+        "Origin": base_url,
+        "X-AgentOps-CSRF": csrf,
+        "Idempotency-Key": f"real-worker-{runtime}-delivery-approve-0001",
+    }
+    approval_route = (
+        f"{base_url}/api/mis/approvals/"
+        f"{urllib.parse.quote(receipt['approval_id'])}/approve"
+    )
+    approval_first_status, approval_first, _ = http_json(
+        "POST",
+        approval_route,
+        {"workspace_id": WORKSPACE_ID},
+        headers=approval_headers,
+    )
+    approval_replay_status, approval_replay, _ = http_json(
+        "POST",
+        approval_route,
+        {"workspace_id": WORKSPACE_ID},
+        headers=approval_headers,
+    )
     key = f"real-worker-{runtime}-approve-0001"
     write_headers = {
         **list_headers,
@@ -572,9 +798,72 @@ def human_review(
         "SELECT COUNT(*) AS count FROM runtime_events WHERE event_type='memory.approved' AND task_id=? AND agent_id=?",
         (f"tsk_real_{runtime}_review", f"agt_real_{runtime}_review"),
     ) or {"count": 0})["count"])
+    owner = adapter.fetchone(
+        "SELECT user_id FROM human_login_credentials WHERE username=?",
+        (OWNER_USERNAME,),
+    )
+    approval = adapter.fetchone(
+        """SELECT decision,approver_user_id FROM approvals
+        WHERE approval_id=? AND task_id=? AND run_id=?""",
+        (receipt["approval_id"], f"tsk_real_{runtime}_review", receipt["run_id"]),
+    )
+    approval_request_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM human_approval_decision_requests
+        WHERE workspace_id=? AND approval_id=?""",
+        (WORKSPACE_ID, receipt["approval_id"]),
+    ) or {"count": 0})["count"])
+    approval_audit_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM audit_logs
+        WHERE workspace_id=? AND actor_type='user' AND action='approval.approved'
+          AND entity_type='approvals' AND entity_id=?""",
+        (WORKSPACE_ID, receipt["approval_id"]),
+    ) or {"count": 0})["count"])
+    approval_event_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM runtime_events
+        WHERE event_type='approval.approved' AND run_id=? AND task_id=? AND agent_id=?""",
+        (receipt["run_id"], f"tsk_real_{runtime}_review", f"agt_real_{runtime}_review"),
+    ) or {"count": 0})["count"])
+    delivery_run = adapter.fetchone(
+        "SELECT status,approval_required FROM runs WHERE run_id=? AND workspace_id=?",
+        (receipt["run_id"], WORKSPACE_ID),
+    )
+    delivery_task = adapter.fetchone(
+        "SELECT status FROM tasks WHERE task_id=? AND workspace_id=?",
+        (f"tsk_real_{runtime}_review", WORKSPACE_ID),
+    )
+    delivery_manifest = adapter.fetchone(
+        """SELECT status FROM plan_evidence_manifests
+        WHERE manifest_id=? AND workspace_id=? AND task_id=? AND run_id=? AND agent_id=?""",
+        (
+            receipt["manifest_id"],
+            WORKSPACE_ID,
+            f"tsk_real_{runtime}_review",
+            receipt["run_id"],
+            f"agt_real_{runtime}_review",
+        ),
+    )
     adapter.commit()
     if not (
-        first_status == 200
+        approval_first_status == 200
+        and approval_first.get("outcome") == "updated"
+        and approval_first.get("control_plane") == "typescript_postgres"
+        and (approval_first.get("approval") or {}).get("reason") is None
+        and "delivery_approval_gate" not in approval_first
+        and approval_replay_status == 200
+        and approval_replay.get("outcome") == "unchanged"
+        and owner
+        and approval
+        and approval["decision"] == "approved"
+        and approval["approver_user_id"] == owner["user_id"]
+        and approval_request_count == approval_audit_count == approval_event_count == 1
+        and delivery_run
+        and delivery_run["status"] == "completed"
+        and int(delivery_run["approval_required"] or 0) == 0
+        and delivery_task
+        and delivery_task["status"] == "completed"
+        and delivery_manifest
+        and delivery_manifest["status"] == "verified"
+        and first_status == 200
         and first.get("outcome") == "updated"
         and replay_status == 200
         and replay.get("outcome") == "unchanged"
@@ -592,26 +881,682 @@ def human_review(
         "request_count": request_count,
         "human_audit_count": audit_count,
         "human_runtime_event_count": event_count,
+        "delivery_approval_queue_visible": True,
+        "delivery_approval_first_outcome": approval_first.get("outcome"),
+        "delivery_approval_replay_outcome": approval_replay.get("outcome"),
+        "delivery_approval_request_count": approval_request_count,
+        "delivery_approval_audit_count": approval_audit_count,
+        "delivery_approval_runtime_event_count": approval_event_count,
+        "delivery_manifest_gate_passed": bool(
+            approval_first_status == 200
+            and delivery_manifest
+            and delivery_manifest["status"] == "verified"
+        ),
+        "delivery_manifest_gate_status": delivery_manifest["status"] if delivery_manifest else None,
+    }
+
+
+def prepare_manifest_authority_guard_fixture(
+    adapter: NodePgAdapter,
+    runtime: str,
+) -> dict[str, Any]:
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    agent_id = f"agt_real_{runtime}_review"
+    task_id = f"tsk_real_{runtime}_manifest_guard"
+    run_id = f"run_real_{runtime}_manifest_guard"
+    plan_id = f"plan_real_{runtime}_manifest_guard"
+    expected_steps = ["READ", "VERIFY", "DELIVER"]
+    adapter.execute(
+        """INSERT INTO tasks(
+            task_id,workspace_id,title,description,requester_id,owner_agent_id,collaborator_agent_ids,
+            status,priority,due_date,acceptance_criteria,risk_level,budget_limit_usd,created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,'[]','completed','medium',NULL,?,'low',0,?,?)""",
+        (
+            task_id,
+            WORKSPACE_ID,
+            f"{runtime} plan-evidence authority guard",
+            "Isolated negative fixture; no provider call or customer output.",
+            REQUESTER_ID,
+            agent_id,
+            "Selective evidence must fail closed.",
+            now,
+            now,
+        ),
+    )
+    adapter.execute(
+        """INSERT INTO runs(
+            run_id,workspace_id,task_id,agent_id,runtime_type,status,started_at,ended_at,
+            input_summary,output_summary,model_provider,model_name,approval_required,created_at
+        ) VALUES(?,?,?,?,?,'completed',?,?,?,?,?,?,0,?)""",
+        (
+            run_id,
+            WORKSPACE_ID,
+            task_id,
+            agent_id,
+            runtime,
+            now,
+            now,
+            "Isolated manifest authority fixture.",
+            "Fixture run completed before evidence verification.",
+            runtime,
+            runtime,
+            now,
+        ),
+    )
+    adapter.execute(
+        """INSERT INTO agent_plans(
+            plan_id,workspace_id,task_id,run_id,agent_id,task_understanding,
+            referenced_specs_json,referenced_memories_json,referenced_bases_json,
+            proposed_files_to_change_json,risk_level,approval_required,execution_steps_json,
+            verification_plan,rollback_plan,status,created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,'low',0,?,?,?,'approved',?,?)""",
+        (
+            plan_id,
+            WORKSPACE_ID,
+            task_id,
+            run_id,
+            agent_id,
+            "Verify that complete run evidence is authoritative.",
+            json.dumps(["docs/POSTGRES_PARITY_CONTRACT.md"]),
+            json.dumps(["plan-evidence-negative-fixtures"]),
+            json.dumps(["agent-gateway-ledger"]),
+            json.dumps([]),
+            json.dumps(expected_steps, indent=2),
+            "Require every tool and evaluation row to pass.",
+            "Discard the isolated fixture schema.",
+            now,
+            now,
+        ),
+    )
+    adapter.commit()
+    return {
+        "task_id": task_id,
+        "run_id": run_id,
+        "plan_id": plan_id,
+        "agent_id": agent_id,
+        "expected_steps": expected_steps,
+    }
+
+
+def verify_manifest_authority_guards(
+    adapter: NodePgAdapter,
+    base_url: str,
+    runtime: str,
+    token: str,
+    receipt: dict[str, str],
+    cookie: str,
+    csrf: str,
+) -> dict[str, Any]:
+    approved_run_id = receipt["run_id"]
+    approved_task_id = f"tsk_real_{runtime}_review"
+    agent_id = f"agt_real_{runtime}_review"
+    approved_manifest = adapter.fetchone(
+        """SELECT plan_id,expected_steps_json,tool_call_ids_json,evaluation_ids_json,artifact_ids_json
+        FROM plan_evidence_manifests WHERE manifest_id=? AND run_id=?""",
+        (receipt["manifest_id"], approved_run_id),
+    )
+    if not approved_manifest:
+        raise RuntimeError(f"{runtime} verified manifest disappeared before authority guard checks")
+    approved_expected_steps = json.loads(str(approved_manifest["expected_steps_json"] or "[]"))
+    approved_tool_call_ids = json.loads(str(approved_manifest["tool_call_ids_json"] or "[]"))
+    approved_evaluation_ids = json.loads(str(approved_manifest["evaluation_ids_json"] or "[]"))
+    approved_artifact_ids = json.loads(str(approved_manifest["artifact_ids_json"] or "[]"))
+    if not approved_expected_steps or not approved_tool_call_ids or not approved_evaluation_ids or not approved_artifact_ids:
+        raise RuntimeError(f"{runtime} verified manifest lacks declared evidence needed for authority guard checks")
+
+    guard = prepare_manifest_authority_guard_fixture(adapter, runtime)
+    run_id = str(guard["run_id"])
+    task_id = str(guard["task_id"])
+    expected_steps = list(guard["expected_steps"])
+    plan_id = str(guard["plan_id"])
+    tool_call_ids = [f"tc_real_{runtime}_guard_completed"]
+    evaluation_ids = [f"eval_real_{runtime}_guard_passed"]
+    artifact_ids = [f"art_real_{runtime}_guard_report"]
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-AgentOps-Workspace-Id": WORKSPACE_ID,
+    }
+    success_tool_status, success_tool_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/tool-calls",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "tool_call_id": tool_call_ids[0],
+            "run_id": run_id,
+            "task_id": task_id,
+            "tool_name": "agent_gateway.authority_guard",
+            "tool_category": "custom",
+            "risk_level": "low",
+            "status": "completed",
+            "args": {"contract": "plan_evidence_authority_negative_fixture_v1"},
+            "result_summary": "Completed evidence retained for selective-manifest testing.",
+        },
+        headers=headers,
+    )
+    success_evaluation_status, success_evaluation_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/evaluations/submit",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "evaluation_id": evaluation_ids[0],
+            "run_id": run_id,
+            "task_id": task_id,
+            "evaluator_type": "rule",
+            "score": 1,
+            "pass_fail": "pass",
+            "rubric": {"contract": "plan_evidence_authority_negative_fixture_v1"},
+            "notes": "Passing evidence retained for selective-manifest testing.",
+        },
+        headers=headers,
+    )
+    success_artifact_status, success_artifact_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/artifacts",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "artifact_id": artifact_ids[0],
+            "run_id": run_id,
+            "task_id": task_id,
+            "artifact_type": "report",
+            "title": "Manifest authority guard report",
+            "summary": "Bounded isolated fixture artifact.",
+        },
+        headers=headers,
+    )
+    baseline_manifest_id = f"pem_real_{runtime}_guard_verified"
+    baseline_status, baseline_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/plan-evidence-manifests",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "manifest_id": baseline_manifest_id,
+            "plan_id": plan_id,
+            "task_id": task_id,
+            "run_id": run_id,
+            "mismatch_policy": "block",
+            "expected_steps": expected_steps,
+            "tool_call_ids": tool_call_ids,
+            "evaluation_ids": evaluation_ids,
+            "artifact_ids": artifact_ids,
+            "verify_now": True,
+        },
+        headers=headers,
+    )
+    baseline_verification = baseline_payload.get("verification") if isinstance(baseline_payload, dict) else {}
+    if not (
+        success_tool_status == 201
+        and success_evaluation_status == 201
+        and success_artifact_status == 201
+        and baseline_status == 201
+        and isinstance(baseline_verification, dict)
+        and baseline_verification.get("pass") is True
+    ):
+        raise RuntimeError(
+            f"{runtime} isolated manifest authority baseline failed: "
+            f"tool={success_tool_status}:{success_tool_payload} "
+            f"evaluation={success_evaluation_status}:{success_evaluation_payload} "
+            f"artifact={success_artifact_status}:{success_artifact_payload} "
+            f"manifest={baseline_status}:{baseline_payload}"
+        )
+    manifest = {"plan_id": plan_id}
+    conflict_manifest_id = f"pem_real_{runtime}_expected_steps_conflict"
+    conflict_status, conflict_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/plan-evidence-manifests",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "manifest_id": conflict_manifest_id,
+            "plan_id": manifest["plan_id"],
+            "task_id": task_id,
+            "run_id": run_id,
+            "mismatch_policy": "block",
+            "expected_steps": ["READ", "OMIT_FAILED_EVIDENCE", "DELIVER"],
+            "tool_call_ids": tool_call_ids,
+            "evaluation_ids": evaluation_ids,
+            "artifact_ids": artifact_ids,
+            "verify_now": True,
+        },
+        headers=headers,
+    )
+    conflict_count = adapter.fetchone(
+        "SELECT COUNT(*) AS count FROM plan_evidence_manifests WHERE manifest_id=?",
+        (conflict_manifest_id,),
+    )
+    if (
+        conflict_status != 409
+        or not isinstance(conflict_payload, dict)
+        or conflict_payload.get("error") != "plan_evidence_expected_steps_conflict"
+        or int((conflict_count or {}).get("count") or 0) != 0
+    ):
+        raise RuntimeError(f"{runtime} manifest expected_steps override was not rejected before persistence")
+
+    audit_override_manifest_id = f"pem_real_{runtime}_audit_ids_override"
+    audit_override_status, audit_override_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/plan-evidence-manifests",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "manifest_id": audit_override_manifest_id,
+            "plan_id": manifest["plan_id"],
+            "task_id": task_id,
+            "run_id": run_id,
+            "mismatch_policy": "block",
+            "expected_steps": expected_steps,
+            "tool_call_ids": tool_call_ids,
+            "evaluation_ids": evaluation_ids,
+            "artifact_ids": artifact_ids,
+            "audit_ids": ["audit_caller_selected"],
+            "verify_now": True,
+        },
+        headers=headers,
+    )
+    audit_override_count = adapter.fetchone(
+        "SELECT COUNT(*) AS count FROM plan_evidence_manifests WHERE manifest_id=?",
+        (audit_override_manifest_id,),
+    )
+    if not (
+        audit_override_status == 409
+        and audit_override_payload.get("error") == "plan_evidence_audit_ids_server_derived"
+        and int((audit_override_count or {}).get("count") or 0) == 0
+    ):
+        raise RuntimeError(f"{runtime} caller-selected audit IDs were not rejected before persistence")
+
+    failed_tool_id = f"tc_real_{runtime}_omitted_failed"
+    failed_tool_status, failed_tool_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/tool-calls",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "tool_call_id": failed_tool_id,
+            "run_id": run_id,
+            "task_id": task_id,
+            "tool_name": "agent_gateway.negative_fixture",
+            "tool_category": "custom",
+            "risk_level": "low",
+            "status": "failed",
+            "args": {"contract": "plan_evidence_authority_negative_fixture_v1"},
+            "result_summary": "Intentional failed evidence retained for completeness verification.",
+        },
+        headers=headers,
+    )
+    failed_evaluation_id = f"eval_real_{runtime}_omitted_failed"
+    failed_evaluation_status, failed_evaluation_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/evaluations/submit",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "evaluation_id": failed_evaluation_id,
+            "run_id": run_id,
+            "task_id": task_id,
+            "evaluator_type": "rule",
+            "score": 0.1,
+            "pass_fail": "fail",
+            "rubric": {"contract": "plan_evidence_authority_negative_fixture_v1"},
+            "notes": "Intentional failed evaluation retained for completeness verification.",
+        },
+        headers=headers,
+    )
+    omitted_artifact_id = f"art_real_{runtime}_omitted_additional"
+    omitted_artifact_status, omitted_artifact_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/artifacts",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "artifact_id": omitted_artifact_id,
+            "run_id": run_id,
+            "task_id": task_id,
+            "artifact_type": "report",
+            "title": "Omitted additional guard artifact",
+            "summary": "Intentional additional artifact retained for completeness verification.",
+        },
+        headers=headers,
+    )
+    if failed_tool_status != 201 or failed_evaluation_status != 201 or omitted_artifact_status != 201:
+        raise RuntimeError(
+            f"{runtime} could not persist negative completeness fixtures: "
+            f"tool={failed_tool_status}:{failed_tool_payload} "
+            f"evaluation={failed_evaluation_status}:{failed_evaluation_payload} "
+            f"artifact={omitted_artifact_status}:{omitted_artifact_payload}"
+        )
+
+    selective_manifest_id = f"pem_real_{runtime}_selective_success_only"
+    selective_status, selective_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/plan-evidence-manifests",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "manifest_id": selective_manifest_id,
+            "plan_id": manifest["plan_id"],
+            "task_id": task_id,
+            "run_id": run_id,
+            "mismatch_policy": "block",
+            "expected_steps": expected_steps,
+            "tool_call_ids": tool_call_ids,
+            "evaluation_ids": evaluation_ids,
+            "artifact_ids": artifact_ids,
+            "verify_now": True,
+        },
+        headers=headers,
+    )
+    verification = selective_payload.get("verification") if isinstance(selective_payload, dict) else {}
+    verification = verification if isinstance(verification, dict) else {}
+    failed_checks = {
+        str(item.get("id"))
+        for item in verification.get("failed_checks") or []
+        if isinstance(item, dict)
+    }
+    required_failures = {
+        "tool_evidence_completed",
+        "tool_evidence_complete",
+        "evaluation_evidence_passed",
+        "evaluation_evidence_complete",
+        "artifact_evidence_complete",
+    }
+    persisted = adapter.fetchone(
+        "SELECT status FROM plan_evidence_manifests WHERE manifest_id=? AND run_id=?",
+        (selective_manifest_id, run_id),
+    )
+    if (
+        selective_status != 201
+        or verification.get("pass") is not False
+        or not required_failures.issubset(failed_checks)
+        or not persisted
+        or persisted.get("status") != "blocked"
+    ):
+        raise RuntimeError(f"{runtime} selective success-only evidence was not blocked against the complete run ledger")
+
+    blocked_approval_id = f"ap_customer_worker_delivery_blocked_{run_id}"
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    expires_at = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).isoformat()
+    adapter.execute(
+        """INSERT INTO approvals(
+            approval_id,approval_kind,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,
+            decision,reason,expires_at,created_at,decided_at
+        ) VALUES(?,'customer_delivery',?,?,?,?,NULL,'pending','Customer delivery requires Human Owner review.',?,?,NULL)""",
+        (blocked_approval_id, task_id, run_id, None, agent_id, expires_at, now),
+    )
+    adapter.execute(
+        "UPDATE runs SET approval_required=1 WHERE run_id=? AND workspace_id=? AND task_id=? AND agent_id=?",
+        (run_id, WORKSPACE_ID, task_id, agent_id),
+    )
+    adapter.execute(
+        "UPDATE tasks SET status='waiting_approval',updated_at=? WHERE task_id=? AND workspace_id=?",
+        (now, task_id, WORKSPACE_ID),
+    )
+    adapter.commit()
+
+    blocked_status, blocked_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/mis/approvals/{urllib.parse.quote(blocked_approval_id)}/approve",
+        {"workspace_id": WORKSPACE_ID},
+        headers={
+            "Cookie": f"agentops_human_session={cookie}",
+            "X-AgentOps-Workspace-Id": WORKSPACE_ID,
+            "Origin": base_url,
+            "X-AgentOps-CSRF": csrf,
+            "Idempotency-Key": f"real-worker-{runtime}-blocked-delivery-0002",
+        },
+    )
+    blocked_approval = adapter.fetchone(
+        "SELECT decision,approver_user_id,decided_at FROM approvals WHERE approval_id=? AND run_id=?",
+        (blocked_approval_id, run_id),
+    )
+    blocked_run = adapter.fetchone(
+        "SELECT status,approval_required FROM runs WHERE run_id=? AND workspace_id=?",
+        (run_id, WORKSPACE_ID),
+    )
+    blocked_task = adapter.fetchone(
+        "SELECT status FROM tasks WHERE task_id=? AND workspace_id=?",
+        (task_id, WORKSPACE_ID),
+    )
+    blocked_request_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM human_approval_decision_requests
+        WHERE workspace_id=? AND approval_id=?""",
+        (WORKSPACE_ID, blocked_approval_id),
+    ) or {"count": 0})["count"])
+    if not (
+        blocked_status == 409
+        and isinstance(blocked_payload, dict)
+        and blocked_payload.get("error") == "verified_plan_evidence_manifest_required"
+        and blocked_approval
+        and blocked_approval["decision"] == "pending"
+        and blocked_approval["approver_user_id"] is None
+        and blocked_approval["decided_at"] is None
+        and blocked_run
+        and blocked_run["status"] == "completed"
+        and int(blocked_run["approval_required"] or 0) == 1
+        and blocked_task
+        and blocked_task["status"] == "waiting_approval"
+        and blocked_request_count == 0
+    ):
+        raise RuntimeError(f"{runtime} Human customer-delivery decision did not fail closed on the latest blocked manifest")
+
+    sealed_ids = {
+        "tool": f"tc_real_{runtime}_sealed_append",
+        "evaluation": f"eval_real_{runtime}_sealed_append",
+        "artifact": f"art_real_{runtime}_sealed_append",
+        "manifest": f"pem_real_{runtime}_sealed_append",
+    }
+    sealed_requests = [
+        (
+            "tool",
+            f"{base_url}/api/agent-gateway/tool-calls",
+            {
+                "workspace_id": WORKSPACE_ID,
+                "agent_id": agent_id,
+                "tool_call_id": sealed_ids["tool"],
+                "run_id": approved_run_id,
+                "task_id": approved_task_id,
+                "tool_name": "agent_gateway.sealed_append",
+                "tool_category": "custom",
+                "risk_level": "low",
+                "status": "failed",
+                "args": {"contract": "customer_delivery_evidence_seal_v1"},
+            },
+        ),
+        (
+            "evaluation",
+            f"{base_url}/api/agent-gateway/evaluations/submit",
+            {
+                "workspace_id": WORKSPACE_ID,
+                "agent_id": agent_id,
+                "evaluation_id": sealed_ids["evaluation"],
+                "run_id": approved_run_id,
+                "task_id": approved_task_id,
+                "evaluator_type": "rule",
+                "score": 0,
+                "pass_fail": "fail",
+                "rubric": {"contract": "customer_delivery_evidence_seal_v1"},
+            },
+        ),
+        (
+            "artifact",
+            f"{base_url}/api/agent-gateway/artifacts",
+            {
+                "workspace_id": WORKSPACE_ID,
+                "agent_id": agent_id,
+                "artifact_id": sealed_ids["artifact"],
+                "run_id": approved_run_id,
+                "task_id": approved_task_id,
+                "artifact_type": "report",
+                "title": "Forbidden post-delivery artifact",
+            },
+        ),
+        (
+            "manifest",
+            f"{base_url}/api/agent-gateway/plan-evidence-manifests",
+            {
+                "workspace_id": WORKSPACE_ID,
+                "agent_id": agent_id,
+                "manifest_id": sealed_ids["manifest"],
+                "plan_id": approved_manifest["plan_id"],
+                "task_id": approved_task_id,
+                "run_id": approved_run_id,
+                "mismatch_policy": "block",
+                "expected_steps": approved_expected_steps,
+                "tool_call_ids": approved_tool_call_ids,
+                "evaluation_ids": approved_evaluation_ids,
+                "artifact_ids": approved_artifact_ids,
+                "verify_now": True,
+            },
+        ),
+    ]
+    sealed_statuses: dict[str, int] = {}
+    for kind, route, payload in sealed_requests:
+        status, response_payload, _ = http_json("POST", route, payload, headers=headers)
+        sealed_statuses[kind] = status
+        if status != 409 or response_payload.get("error") != "customer_delivery_evidence_sealed":
+            raise RuntimeError(f"{runtime} approved customer-delivery {kind} evidence was not sealed")
+    sealed_row_counts = {
+        "tool": int((adapter.fetchone("SELECT COUNT(*) AS count FROM tool_calls WHERE tool_call_id=?", (sealed_ids["tool"],)) or {"count": 0})["count"]),
+        "evaluation": int((adapter.fetchone("SELECT COUNT(*) AS count FROM evaluations WHERE evaluation_id=?", (sealed_ids["evaluation"],)) or {"count": 0})["count"]),
+        "artifact": int((adapter.fetchone("SELECT COUNT(*) AS count FROM artifacts WHERE artifact_id=?", (sealed_ids["artifact"],)) or {"count": 0})["count"]),
+        "manifest": int((adapter.fetchone("SELECT COUNT(*) AS count FROM plan_evidence_manifests WHERE manifest_id=?", (sealed_ids["manifest"],)) or {"count": 0})["count"]),
+    }
+    if any(sealed_row_counts.values()):
+        raise RuntimeError(f"{runtime} post-delivery evidence seal persisted rejected rows")
+    return {
+        "expected_steps_server_derived": True,
+        "complete_run_tool_evidence_enforced": True,
+        "complete_run_evaluation_evidence_enforced": True,
+        "complete_run_artifact_evidence_enforced": True,
+        "audit_evidence_server_derived": True,
+        "selective_manifest_status": "blocked",
+        "failed_checks": sorted(required_failures),
+        "customer_delivery_revalidation_status": blocked_status,
+        "customer_delivery_revalidation_blocked": True,
+        "approved_customer_delivery_evidence_sealed": True,
+        "sealed_evidence_statuses": sealed_statuses,
     }
 
 
 def main() -> int:
+    global ROOT, SCRIPTS, NEXT_APP
+
     parser = argparse.ArgumentParser(description="Run real Hermes/OpenClaw Worker -> Human Review through Next/Postgres only.")
     parser.add_argument("--postgres-dsn", required=True, help="External Postgres URL; the smoke uses and drops an isolated schema.")
     parser.add_argument("--adapter", action="append", choices=["hermes", "openclaw"], default=[])
     parser.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642"))
     parser.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", shutil.which("openclaw") or "/opt/homebrew/bin/openclaw"))
+    parser.add_argument(
+        "--source-root",
+        default=str(DEFAULT_SOURCE_ROOT),
+        help="Candidate Git worktree root; defaults to the checkout containing this trusted harness.",
+    )
     args = parser.parse_args()
+
+    try:
+        ROOT = resolve_source_root(args.source_root)
+    except Exception as exc:
+        result({
+            "ok": False,
+            "contract": CONTRACT_ID,
+            "error_type": exc.__class__.__name__,
+            "error": str(exc),
+            "next_runtime_mode": "production_start",
+            "python_api_started": False,
+            "credentials_omitted": True,
+        }, [])
+        return 1
+    SCRIPTS = ROOT / "scripts"
+    NEXT_APP = ROOT / "ui" / "next-app"
 
     adapters = list(dict.fromkeys(args.adapter or ["hermes", "openclaw"]))
     node = shutil.which("node")
     npm = shutil.which("npm")
     if not node or not npm or not (NEXT_APP / "node_modules" / "next").exists():
-        result({"ok": False, "contract": CONTRACT_ID, "error": "next_runtime_unavailable"}, [])
+        result({
+            "ok": False,
+            "contract": CONTRACT_ID,
+            "error": "next_runtime_unavailable",
+            "next_runtime_mode": "production_start",
+        }, [])
         return 1
     if "openclaw" in adapters and not Path(args.openclaw_bin).exists():
-        result({"ok": False, "contract": CONTRACT_ID, "error": "openclaw_binary_unavailable"}, [])
+        result({
+            "ok": False,
+            "contract": CONTRACT_ID,
+            "error": "openclaw_binary_unavailable",
+            "next_runtime_mode": "production_start",
+        }, [])
         return 1
+
+    tracked_before = ""
+    tracked_after_build = ""
+    next_artifact_sha256 = ""
+    try:
+        tracked_before = tracked_worktree_fingerprint(ROOT)
+        built = run_next_build(npm)
+        tracked_after_build = tracked_worktree_fingerprint(ROOT)
+        if tracked_after_build != tracked_before:
+            raise RuntimeError(
+                "next_build_modified_tracked_source:"
+                f"before={tracked_before}:after={tracked_after_build}"
+            )
+        if built.returncode != 0:
+            raise RuntimeError(
+                "Next production build failed "
+                f"(code={built.returncode}): {(built.stdout or '')[-1200:]} {(built.stderr or '')[-1200:]}"
+            )
+        next_artifact_sha256 = stable_tree_sha256(NEXT_APP / ".next")
+        server_module, contract_module = load_candidate_modules(ROOT)
+        tracked_after_prepare = tracked_worktree_fingerprint(ROOT)
+        if tracked_after_prepare != tracked_before:
+            raise RuntimeError(
+                "acceptance_preparation_modified_tracked_source:"
+                f"before={tracked_before}:after={tracked_after_prepare}"
+            )
+    except Exception as exc:
+        original_traceback = traceback.format_exc()
+        try:
+            tracked_after_failure = tracked_worktree_fingerprint(ROOT) if tracked_before else ""
+        except Exception:
+            tracked_after_failure = ""
+        mutation_detected = (
+            not tracked_before
+            or not tracked_after_failure
+            or tracked_after_failure != tracked_before
+        )
+        result({
+            "ok": False,
+            "contract": CONTRACT_ID,
+            "error_type": "RuntimeError" if mutation_detected else exc.__class__.__name__,
+            "error": (
+                "tracked_worktree_modified_or_unverifiable_during_next_build_or_preparation"
+                if mutation_detected
+                else str(exc)
+            ),
+            "traceback": original_traceback[-4000:],
+            "next_runtime_mode": "production_start",
+            "next_artifact_sha256": next_artifact_sha256 or None,
+            "next_build_completed": bool(next_artifact_sha256),
+            "tracked_worktree_fingerprint_before": tracked_before or None,
+            "tracked_worktree_fingerprint_after_build": tracked_after_build or None,
+            "tracked_worktree_fingerprint_after_acceptance": tracked_after_failure or None,
+            "tracked_worktree_unchanged": not mutation_detected,
+            "python_api_started": False,
+            "real_runtime_execution_performed": False,
+            "credentials_omitted": True,
+        }, [str(ROOT)])
+        return 1
+
+    runtime_dependency_identity: dict[str, str] = {}
+    if "hermes" in adapters:
+        runtime_dependency_identity["hermes_endpoint_sha256"] = hashlib.sha256(
+            args.hermes_gateway_url.encode("utf-8")
+        ).hexdigest()
+    if "openclaw" in adapters:
+        runtime_dependency_identity["openclaw_binary_sha256"] = file_sha256(Path(args.openclaw_bin))
 
     schema = f"agentops_real_worker_review_{secrets.token_hex(8)}"
     runtime_dsn = dsn_with_search_path(args.postgres_dsn, schema)
@@ -619,12 +1564,24 @@ def main() -> int:
     hmac_key = secrets.token_urlsafe(48)
     prompt_secret = "sk-" + secrets.token_urlsafe(24)
     tokens = {runtime: f"agtok_real_{runtime}_{secrets.token_urlsafe(24)}" for runtime in adapters}
-    sensitive = [args.postgres_dsn, runtime_dsn, owner_password, hmac_key, prompt_secret, *tokens.values()]
+    sensitive = [
+        args.postgres_dsn,
+        runtime_dsn,
+        args.hermes_gateway_url,
+        args.openclaw_bin,
+        str(ROOT),
+        owner_password,
+        hmac_key,
+        prompt_secret,
+        *tokens.values(),
+    ]
     setup: NodePgAdapter | None = None
     adapter: NodePgAdapter | None = None
     next_proc: subprocess.Popen[str] | None = None
     worker_receipts: dict[str, Any] = {}
     human_receipts: dict[str, Any] = {}
+    manifest_authority_receipts: dict[str, Any] = {}
+    tracked_after_acceptance = ""
     try:
         setup = NodePgAdapter(args.postgres_dsn, node)
         setup.execute(f'CREATE SCHEMA "{schema}"')
@@ -633,7 +1590,7 @@ def main() -> int:
         setup = None
 
         adapter = NodePgAdapter(runtime_dsn, node)
-        adapter.executescript(contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
+        adapter.executescript(contract_module.postgres_ddl_from_sqlite(server_module.SCHEMA_SQL))
         seed_foundation(adapter)
         adapter.close()
         adapter = None
@@ -676,9 +1633,10 @@ def main() -> int:
             "AGENTOPS_ALLOWED_ORIGINS": base_url,
             "AGENTOPS_HUMAN_SESSION_HMAC_KEY": hmac_key,
             "NEXT_TELEMETRY_DISABLED": "1",
+            "NODE_ENV": "production",
         })
         next_proc = subprocess.Popen(
-            [node, str(NEXT_APP / "node_modules" / "next" / "dist" / "bin" / "next"), "dev", "-p", str(port)],
+            [node, str(NEXT_APP / "node_modules" / "next" / "dist" / "bin" / "next"), "start", "-p", str(port)],
             cwd=NEXT_APP,
             env=env,
             text=True,
@@ -697,7 +1655,11 @@ def main() -> int:
                 args.openclaw_bin,
                 sensitive,
             )
-            worker_receipts[runtime] = check_runtime_evidence(adapter, runtime, worker_payload, sensitive)
+            worker_receipts[runtime] = prepare_run_bound_delivery_approval_fixture(
+                adapter,
+                runtime,
+                check_runtime_evidence(adapter, runtime, worker_payload, sensitive),
+            )
 
         cookie, csrf = login_owner(base_url, owner_password)
         sensitive.extend([cookie, csrf])
@@ -710,12 +1672,37 @@ def main() -> int:
                 runtime,
                 worker_receipts[runtime],
             )
+        for runtime in adapters:
+            manifest_authority_receipts[runtime] = verify_manifest_authority_guards(
+                adapter,
+                base_url,
+                runtime,
+                tokens[runtime],
+                worker_receipts[runtime],
+                cookie,
+                csrf,
+            )
 
+        stop_process(next_proc)
+        next_proc = None
+        tracked_after_acceptance = tracked_worktree_fingerprint(ROOT)
+        if tracked_after_acceptance != tracked_before:
+            raise RuntimeError(
+                "acceptance_modified_tracked_source:"
+                f"before={tracked_before}:after={tracked_after_acceptance}"
+            )
         result({
             "ok": True,
             "contract": CONTRACT_ID,
             "control_plane": "typescript_postgres",
             "deployment_mode": "production",
+            "next_runtime_mode": "production_start",
+            "next_artifact_sha256": next_artifact_sha256,
+            "next_build_completed": True,
+            "tracked_worktree_fingerprint_before": tracked_before,
+            "tracked_worktree_fingerprint_after_build": tracked_after_build,
+            "tracked_worktree_fingerprint_after_acceptance": tracked_after_acceptance,
+            "tracked_worktree_unchanged": True,
             "python_api_started": False,
             "python_or_sqlite_commercial_default": False,
             "real_runtime_execution_performed": all(
@@ -725,6 +1712,17 @@ def main() -> int:
             "adapters": adapters,
             "workers": worker_receipts,
             "human_reviews": human_receipts,
+            "manifest_authority_guards": manifest_authority_receipts,
+            "manifest_authority_guards_passed": len(manifest_authority_receipts) == len(adapters),
+            "runtime_dependency_identity": runtime_dependency_identity,
+            "real_run_bound_delivery_decisions_completed": all(
+                receipt.get("delivery_manifest_gate_passed") is True
+                and receipt.get("delivery_approval_first_outcome") == "updated"
+                and receipt.get("delivery_approval_replay_outcome") == "unchanged"
+                for receipt in human_receipts.values()
+            ),
+            "worker_created_delivery_approvals": False,
+            "delivery_approval_creation_source": "acceptance_fixture_bound_to_real_run",
             "agent_gateway_legacy_path_rewrite_verified": True,
             "raw_prompt_response_omitted": True,
             "credentials_omitted": True,
@@ -732,12 +1730,39 @@ def main() -> int:
         }, sensitive)
         return 0
     except Exception as exc:
+        original_traceback = traceback.format_exc()
+        if next_proc is not None:
+            stop_process(next_proc)
+            next_proc = None
+        fingerprint_error = ""
+        try:
+            tracked_after_acceptance = tracked_worktree_fingerprint(ROOT)
+        except Exception as fingerprint_exc:
+            tracked_after_acceptance = ""
+            fingerprint_error = str(fingerprint_exc)
+        mutation_detected = (
+            not tracked_after_acceptance
+            or tracked_after_acceptance != tracked_before
+        )
         result({
             "ok": False,
             "contract": CONTRACT_ID,
-            "error_type": exc.__class__.__name__,
-            "error": redact(str(exc), sensitive),
-            "traceback": redact(traceback.format_exc(), sensitive)[-4000:],
+            "error_type": "RuntimeError" if mutation_detected else exc.__class__.__name__,
+            "error": (
+                "tracked_worktree_modified_or_unverifiable_during_acceptance"
+                if mutation_detected
+                else redact(str(exc), sensitive)
+            ),
+            "underlying_error_type": exc.__class__.__name__ if mutation_detected else None,
+            "fingerprint_error": redact(fingerprint_error, sensitive) if fingerprint_error else None,
+            "traceback": redact(original_traceback, sensitive)[-4000:],
+            "next_runtime_mode": "production_start",
+            "next_artifact_sha256": next_artifact_sha256,
+            "next_build_completed": True,
+            "tracked_worktree_fingerprint_before": tracked_before,
+            "tracked_worktree_fingerprint_after_build": tracked_after_build,
+            "tracked_worktree_fingerprint_after_acceptance": tracked_after_acceptance or None,
+            "tracked_worktree_unchanged": not mutation_detected,
             "python_api_started": False,
             "real_runtime_execution_performed": bool(worker_receipts) and all(
                 receipt.get("provider_call_performed") is True and receipt.get("dry_run") is False

@@ -23,7 +23,7 @@ from agentops_mis_storage.postgres import PostgresAdapter, PostgresAdapterUnavai
 
 
 BUNDLED_PYTHON = Path("/Users/wuji/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3")
-PSYCOPG_INSTALL_SPEC = os.environ.get("AGENTOPS_PSYCOPG_INSTALL_SPEC", "psycopg[binary]==3.3.4")
+PSYCOPG_INSTALL_SPEC = os.environ.get("AGENTOPS_PSYCOPG_INSTALL_SPEC", "psycopg[binary]==3.2.13")
 
 
 def run(args: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess[str]:

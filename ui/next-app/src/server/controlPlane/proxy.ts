@@ -3,7 +3,7 @@ import https from "node:https";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-import { proxyBaseUrl } from "./config";
+import { isProductionDeployment, proxyBaseUrl } from "./config";
 import { removeHumanSessionCookie, removeHumanSessionSetCookie } from "./proxyHeaders";
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -22,6 +22,18 @@ export async function proxyControlPlaneRequest(
   upstreamPath: string,
   boundedBody?: Buffer,
 ) {
+  if (isProductionDeployment()) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "typescript_route_owner_required",
+        message: "Production control-plane routes cannot proxy to the Python API.",
+        python_proxy_performed: false,
+        token_omitted: true,
+      },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  }
   const body = ["GET", "HEAD"].includes(request.method)
     ? undefined
     : boundedBody ?? Buffer.from(await request.arrayBuffer());

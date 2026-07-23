@@ -49,13 +49,19 @@ EVIDENCE_RUN_ID = "run_ts_control_plane_evidence"
 EVIDENCE_PLAN_ID = "plan_ts_control_plane_evidence"
 MANIFEST_ID = "pem_ts_control_plane_evidence"
 BLOCKED_MANIFEST_ID = "pem_ts_control_plane_blocked"
+SELECTIVE_MANIFEST_ID = "pem_ts_control_plane_selective_evidence"
+EXPECTED_STEPS_CONFLICT_MANIFEST_ID = "pem_ts_control_plane_expected_steps_conflict"
+AUDIT_OVERRIDE_MANIFEST_ID = "pem_ts_control_plane_audit_override"
 UNPLANNED_TASK_ID = "tsk_ts_control_plane_unplanned"
 HIGH_RISK_TASK_ID = "tsk_ts_control_plane_high_risk_plan"
 HIGH_RISK_PLAN_ID = "plan_ts_control_plane_high_risk"
 TOOL_CALL_ID = "tc_ts_control_plane_evidence"
+OMITTED_FAILED_TOOL_CALL_ID = "tc_ts_control_plane_omitted_failed"
 HIGH_RISK_TOOL_CALL_ID = "tc_ts_control_plane_high_risk"
 EVALUATION_ID = "eval_ts_control_plane_evidence"
+OMITTED_FAILED_EVALUATION_ID = "eval_ts_control_plane_omitted_failed"
 ARTIFACT_ID = "art_ts_control_plane_evidence"
+OMITTED_ADDITIONAL_ARTIFACT_ID = "art_ts_control_plane_omitted_additional"
 OTHER_EVIDENCE_RUN_ID = "run_ts_control_plane_other_evidence"
 OTHER_TOOL_CALL_ID = "tc_ts_control_plane_other_evidence"
 OTHER_EVALUATION_ID = "eval_ts_control_plane_other_evidence"
@@ -1066,6 +1072,67 @@ def main() -> int:
             manifest_mutation_status, manifest_mutation_payload = http_json(
                 "POST", manifest_route, {**manifest_body, "artifact_ids": []}, token=raw_session
             )
+            expected_steps_conflict_status, expected_steps_conflict_payload = http_json(
+                "POST",
+                manifest_route,
+                {
+                    **manifest_body,
+                    "manifest_id": EXPECTED_STEPS_CONFLICT_MANIFEST_ID,
+                    "expected_steps": ["READ", "OMIT_FAILED_EVIDENCE", "DELIVER"],
+                },
+                token=raw_session,
+            )
+            audit_override_status, audit_override_payload = http_json(
+                "POST",
+                manifest_route,
+                {
+                    **manifest_body,
+                    "manifest_id": AUDIT_OVERRIDE_MANIFEST_ID,
+                    "audit_ids": ["audit_caller_selected"],
+                },
+                token=raw_session,
+            )
+            omitted_failed_tool_status, omitted_failed_tool_payload = http_json(
+                "POST",
+                tool_route,
+                {
+                    **tool_body,
+                    "tool_call_id": OMITTED_FAILED_TOOL_CALL_ID,
+                    "status": "failed",
+                    "result_summary": "Intentional failed evidence for completeness verification.",
+                },
+                token=raw_session,
+            )
+            omitted_failed_evaluation_status, omitted_failed_evaluation_payload = http_json(
+                "POST",
+                evaluation_route,
+                {
+                    **evaluation_body,
+                    "evaluation_id": OMITTED_FAILED_EVALUATION_ID,
+                    "score": 0.1,
+                    "pass_fail": "fail",
+                    "notes": "Intentional failed evaluation for completeness verification.",
+                },
+                token=raw_session,
+            )
+            omitted_additional_artifact_status, omitted_additional_artifact_payload = http_json(
+                "POST",
+                artifact_route,
+                {
+                    **artifact_body,
+                    "artifact_id": OMITTED_ADDITIONAL_ARTIFACT_ID,
+                    "title": "Omitted additional artifact",
+                    "summary": "Intentional additional artifact for completeness verification.",
+                    "content_hash": "typescript_postgres_omitted_artifact_hash",
+                },
+                token=raw_session,
+            )
+            selective_manifest_status, selective_manifest_payload = http_json(
+                "POST",
+                manifest_route,
+                {**manifest_body, "manifest_id": SELECTIVE_MANIFEST_ID},
+                token=raw_session,
+            )
             blocked_manifest_status, blocked_manifest_payload = http_json(
                 "POST",
                 manifest_route,
@@ -1427,6 +1494,18 @@ def main() -> int:
                 "SELECT * FROM plan_evidence_manifests WHERE manifest_id=?",
                 [BLOCKED_MANIFEST_ID],
             )
+            selective_manifest_row = adapter.fetchone(
+                "SELECT * FROM plan_evidence_manifests WHERE manifest_id=?",
+                [SELECTIVE_MANIFEST_ID],
+            )
+            expected_steps_conflict_manifest_count = adapter.fetchone(
+                "SELECT COUNT(*) AS c FROM plan_evidence_manifests WHERE manifest_id=?",
+                [EXPECTED_STEPS_CONFLICT_MANIFEST_ID],
+            )["c"]
+            audit_override_manifest_count = adapter.fetchone(
+                "SELECT COUNT(*) AS c FROM plan_evidence_manifests WHERE manifest_id=?",
+                [AUDIT_OVERRIDE_MANIFEST_ID],
+            )["c"]
             manifest_audit_count = adapter.fetchone(
                 "SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?",
                 ["plan_evidence_manifests", MANIFEST_ID],
@@ -1929,6 +2008,26 @@ def main() -> int:
             ):
                 failures.append(f"manifest_rewrite_not_rejected:{manifest_mutation_status}:{manifest_mutation_payload}")
             if (
+                expected_steps_conflict_status != 409
+                or expected_steps_conflict_payload.get("error") != "plan_evidence_expected_steps_conflict"
+                or int(expected_steps_conflict_manifest_count or 0) != 0
+            ):
+                failures.append(
+                    "manifest_expected_steps_override_not_rejected:"
+                    f"{expected_steps_conflict_status}:{expected_steps_conflict_payload}:"
+                    f"persisted={expected_steps_conflict_manifest_count}"
+                )
+            if (
+                audit_override_status != 409
+                or audit_override_payload.get("error") != "plan_evidence_audit_ids_server_derived"
+                or int(audit_override_manifest_count or 0) != 0
+            ):
+                failures.append(
+                    "manifest_audit_ids_override_not_rejected:"
+                    f"{audit_override_status}:{audit_override_payload}:"
+                    f"persisted={audit_override_manifest_count}"
+                )
+            if (
                 not manifest_row
                 or manifest_row.get("status") != "verified"
                 or not manifest_verification.get("pass")
@@ -1940,6 +2039,38 @@ def main() -> int:
                     f"manifest_verification_or_single_write_mismatch:row={manifest_row}:"
                     f"verification={manifest_verification}:audit={manifest_audit_count}:"
                     f"event={manifest_event_count}:hash={manifest_after_hash_valid}"
+                )
+            selective_manifest_verification = selective_manifest_payload.get("verification") or {}
+            selective_manifest_failed_ids = {
+                str(check.get("id")) for check in selective_manifest_verification.get("failed_checks") or []
+            }
+            omitted_failure_checks = {
+                "tool_evidence_completed",
+                "tool_evidence_complete",
+                "evaluation_evidence_passed",
+                "evaluation_evidence_complete",
+                "artifact_evidence_complete",
+            }
+            if (
+                omitted_failed_tool_status != 201
+                or omitted_failed_evaluation_status != 201
+                or omitted_additional_artifact_status != 201
+                or selective_manifest_status != 201
+                or not selective_manifest_row
+                or selective_manifest_row.get("status") != "blocked"
+                or selective_manifest_verification.get("pass") is not False
+                or not omitted_failure_checks.issubset(selective_manifest_failed_ids)
+                or (selective_manifest_verification.get("evidence_counts") or {}).get("tool_calls") != 2
+                or (selective_manifest_verification.get("evidence_counts") or {}).get("evaluations") != 2
+                or (selective_manifest_verification.get("evidence_counts") or {}).get("artifacts") != 2
+            ):
+                failures.append(
+                    "manifest_selective_success_evidence_not_blocked:"
+                    f"tool={omitted_failed_tool_status}:{omitted_failed_tool_payload}:"
+                    f"evaluation={omitted_failed_evaluation_status}:{omitted_failed_evaluation_payload}:"
+                    f"artifact={omitted_additional_artifact_status}:{omitted_additional_artifact_payload}:"
+                    f"manifest={selective_manifest_status}:{selective_manifest_payload}:"
+                    f"row={selective_manifest_row}"
                 )
             blocked_manifest_failed_ids = {
                 str(check.get("id")) for check in blocked_manifest_verification.get("failed_checks") or []
@@ -2182,6 +2313,16 @@ def main() -> int:
                 "concurrent_manifest_single_winner": manifest_outcomes == ["created", "unchanged"],
                 "manifest_verification_passed": bool(manifest_verification.get("pass")),
                 "manifest_immutable": manifest_mutation_status == 409,
+                "manifest_expected_steps_server_derived": (
+                    expected_steps_conflict_status == 409
+                    and expected_steps_conflict_payload.get("error") == "plan_evidence_expected_steps_conflict"
+                    and int(expected_steps_conflict_manifest_count or 0) == 0
+                ),
+                "manifest_complete_run_evidence_enforced": (
+                    selective_manifest_status == 201
+                    and selective_manifest_verification.get("pass") is False
+                    and omitted_failure_checks.issubset(selective_manifest_failed_ids)
+                ),
                 "manifest_cross_workspace_evidence_blocked": cross_workspace_evidence_rejected,
                 "manifest_after_hash_valid": manifest_after_hash_valid,
                 "high_risk_tool_forced_waiting_approval": bool(

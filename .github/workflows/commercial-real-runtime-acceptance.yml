@@ -1,0 +1,129 @@
+name: commercial-real-runtime-acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact 40-character candidate commit SHA to verify
+        required: true
+        type: string
+      candidate_ref:
+        description: Branch whose current head must equal expected_sha
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+concurrency:
+  group: commercial-real-runtime-${{ inputs.expected_sha }}
+  cancel-in-progress: false
+
+jobs:
+  trusted-real-runtime:
+    name: Trusted-main Hermes and OpenClaw candidate acceptance
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, agentops-real-runtime]
+    timeout-minutes: 30
+    environment: commercial-real-runtime
+    env:
+      PYTHON_BIN: ${{ vars.AGENTOPS_PYTHON_BIN }}
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Checkout trusted default-branch harness
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout candidate source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.candidate_ref }}
+          path: candidate
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify trusted builder, exact candidate, and private runtime configuration
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          CANDIDATE_REF: ${{ inputs.candidate_ref }}
+          AGENTOPS_POSTGRES_DSN: ${{ secrets.AGENTOPS_REAL_RUNTIME_POSTGRES_DSN }}
+          HERMES_GATEWAY_URL: ${{ vars.AGENTOPS_HERMES_GATEWAY_URL }}
+          OPENCLAW_BIN: ${{ vars.AGENTOPS_OPENCLAW_BIN }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CANDIDATE_REF" =~ ^[A-Za-z0-9._/-]{1,180}$ ]]
+          test "$(git -C trusted rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C candidate rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git -C trusted status --short)"
+          test -z "$(git -C candidate status --short)"
+          test -n "$AGENTOPS_POSTGRES_DSN"
+          test -n "$HERMES_GATEWAY_URL"
+          test -n "$OPENCLAW_BIN"
+          test -x "$OPENCLAW_BIN"
+          if [[ -z "$PYTHON_BIN" ]]; then
+            echo "AGENTOPS_PYTHON_BIN repository variable is required" >&2
+            exit 1
+          fi
+          "$PYTHON_BIN" --version
+          node --version
+          npm --version
+
+      - name: Install pinned candidate Next.js dependencies
+        run: npm --prefix candidate/ui/next-app ci --ignore-scripts
+
+      - name: Run trusted real adapters against candidate source
+        id: runtime_receipt
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          AGENTOPS_POSTGRES_DSN: ${{ secrets.AGENTOPS_REAL_RUNTIME_POSTGRES_DSN }}
+          HERMES_GATEWAY_URL: ${{ vars.AGENTOPS_HERMES_GATEWAY_URL }}
+          OPENCLAW_BIN: ${{ vars.AGENTOPS_OPENCLAW_BIN }}
+        run: |
+          set -euo pipefail
+          mkdir -p receipts
+          "$PYTHON_BIN" -B trusted/scripts/commercial_ci_receipt.py command \
+            --gate-id gate_5_human_memory_real_runtime \
+            --command-id trusted_main_real_runtime_human_review \
+            --expected-contract nextjs_postgres_real_worker_human_review_v1 \
+            --subject-sha "$EXPECTED_SHA" \
+            --builder-sha "$GITHUB_SHA" \
+            --source-root "$GITHUB_WORKSPACE/candidate" \
+            --timeout 1200 \
+            --output receipts/human-memory-real-runtime.json \
+            -- \
+            "$PYTHON_BIN" -B "$GITHUB_WORKSPACE/trusted/scripts/nextjs_postgres_real_worker_human_review_smoke.py" \
+              --source-root "$GITHUB_WORKSPACE/candidate" \
+              --postgres-dsn "$AGENTOPS_POSTGRES_DSN" \
+              --adapter hermes \
+              --adapter openclaw \
+              --hermes-gateway-url "$HERMES_GATEWAY_URL" \
+              --openclaw-bin "$OPENCLAW_BIN"
+
+      - name: Attest candidate real Runtime receipt from trusted builder
+        id: runtime_attestation
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: receipts/human-memory-real-runtime.json
+
+      - name: Collect offline attestation bundle
+        shell: bash
+        run: cp '${{ steps.runtime_attestation.outputs.bundle-path }}' receipts/human-memory-real-runtime.attestation.json
+
+      - name: Upload trusted real Runtime receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: commercial-real-runtime-receipt-${{ inputs.expected_sha }}
+          path: |
+            receipts/human-memory-real-runtime.json
+            receipts/human-memory-real-runtime.attestation.json
+          if-no-files-found: error

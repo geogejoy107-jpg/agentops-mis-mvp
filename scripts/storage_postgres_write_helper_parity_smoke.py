@@ -326,6 +326,7 @@ def run_write_helpers(conn) -> dict[str, str]:
 
         approval_a = {
             "approval_id": APPROVAL_A,
+            "approval_kind": "prepared_action",
             "task_id": TASK_A,
             "run_id": RUN_A,
             "tool_call_id": TOOL_CALL_A,
@@ -339,14 +340,6 @@ def run_write_helpers(conn) -> dict[str, str]:
         }
         before, outcomes["repo_upsert_approval_create"] = server.repo_upsert_approval(conn, dict(approval_a))
         require(before is None and outcomes["repo_upsert_approval_create"] == "created", "approval create outcome mismatch")
-        _before, after, outcomes["repo_update_approval_decision"] = server.repo_update_approval_decision(
-            conn,
-            APPROVAL_A,
-            "approved",
-            "Write-helper approval decided.",
-            decided_at=server.now_iso(),
-        )
-        require(after and after["decision"] == "approved", "approval decision update mismatch")
 
         prepared_a = {
             "prepared_action_id": PREPARED_A,
@@ -372,6 +365,14 @@ def run_write_helpers(conn) -> dict[str, str]:
         }
         before, outcomes["repo_upsert_prepared_action_create"] = server.repo_upsert_prepared_action(conn, dict(prepared_a))
         require(before is None and outcomes["repo_upsert_prepared_action_create"] == "created", "prepared create outcome mismatch")
+        _before, after, outcomes["repo_update_approval_decision"] = server.repo_update_approval_decision(
+            conn,
+            APPROVAL_A,
+            "approved",
+            "Write-helper approval decided.",
+            decided_at=server.now_iso(),
+        )
+        require(after and after["decision"] == "approved", "approval decision update mismatch")
         approval_conflict = dict(prepared_a)
         approval_conflict["prepared_action_id"] = PREPARED_APPROVAL_CONFLICT
         try:
@@ -554,6 +555,28 @@ def run_write_helpers(conn) -> dict[str, str]:
         )
         require(after and after["status"] == "verified", "manifest update mismatch")
     return outcomes
+
+
+def verify_postgres_approval_kind_required(conn) -> bool:
+    row = {
+        "approval_id": "ap_pg_write_missing_kind",
+        "task_id": TASK_A,
+        "run_id": RUN_A,
+        "tool_call_id": None,
+        "requested_by_agent_id": AGENT_A,
+        "approver_user_id": "usr_founder",
+        "decision": "pending",
+        "reason": "Missing approval kind must fail before Postgres SQL.",
+        "expires_at": None,
+        "created_at": "2026-06-22T04:00:00+00:00",
+        "decided_at": None,
+    }
+    try:
+        server.repo_upsert_approval(conn, row)
+    except server.ApprovalImmutableConflict as exc:
+        require(str(exc) == "approval_kind_required", f"unexpected approval kind error: {exc}")
+        return True
+    raise AssertionError("Postgres approval helper inferred a missing approval_kind")
 
 
 SNAPSHOT_QUERIES = {
@@ -817,6 +840,7 @@ def run_postgres(*, image: str, skip: bool, install_driver: bool) -> tuple[int |
             adapter.executescript(contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
             lifecycle_migration = verify_postgres_legacy_prepared_action_migration(adapter)
             seed_reference_rows(adapter)
+            approval_kind_required = verify_postgres_approval_kind_required(adapter)
             outcomes = run_write_helpers(adapter)
             adapter.commit()
             rollback_sentinel = run_rollback_sentinel(adapter)
@@ -829,6 +853,7 @@ def run_postgres(*, image: str, skip: bool, install_driver: bool) -> tuple[int |
                 "rollback_sentinel": rollback_sentinel,
                 "lifecycle_migration": lifecycle_migration,
                 "stale_reconciliation": stale_reconciliation,
+                "approval_kind_required": approval_kind_required,
             }
         except (AssertionError, PostgresAdapterUnavailable, RuntimeError, ValueError, KeyError) as exc:
             if adapter is not None:
@@ -878,6 +903,7 @@ def main() -> int:
         "rollback_sentinel": rollback_sentinel,
         "postgres_legacy_lifecycle_migration": postgres_result["lifecycle_migration"],
         "postgres_stale_reconciliation": postgres_result["stale_reconciliation"],
+        "postgres_approval_kind_required": postgres_result["approval_kind_required"],
         "sqlite_write_helper_hash": sqlite_digest,
         "postgres_write_helper_hash": postgres_digest,
         "free_local_dependencies": [],

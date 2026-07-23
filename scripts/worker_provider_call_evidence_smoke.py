@@ -54,11 +54,18 @@ def evidence(result: worker.AdapterResult) -> dict[str, object]:
 
 
 def main() -> int:
-    hermes_dry = worker.execute_hermes(TASK, "http://127.0.0.1:8642", "hermes-agent", 5, False)
+    hermes_url = "http://127.0.0.1:8642"
+    hermes_dry = worker.execute_hermes(TASK, hermes_url, "hermes-agent", 5, False)
     openclaw_dry = worker.execute_openclaw(TASK, "/missing/openclaw", "main", 5, False)
 
     with patch.object(worker, "urlopen", return_value=FakeHermesResponse()) as hermes_call:
-        hermes_live = worker.execute_hermes(TASK, "http://127.0.0.1:8642", "hermes-agent", 5, True)
+        hermes_live = worker.execute_hermes(TASK, hermes_url, "hermes-agent", 5, True)
+    with patch.object(
+        worker,
+        "urlopen",
+        side_effect=RuntimeError(f"upstream unavailable at {hermes_url}/private"),
+    ):
+        hermes_failed = worker.execute_hermes(TASK, hermes_url, "hermes-agent", 5, True)
     openclaw_payload = {
         "result": {
             "meta": {"durationMs": 7, "finalAssistantVisibleText": "OpenClaw visible result"},
@@ -84,6 +91,17 @@ def main() -> int:
         require(bool(result.target_resource), f"{label} omitted its target")
     require(hermes_call.call_count == 1, "Hermes provider call count was not exactly one")
     require(openclaw_call.call_count == 1, "OpenClaw provider call count was not exactly one")
+    require(
+        hermes_dry.target_resource == "hermes://gateway/v1/chat/completions"
+        and hermes_live.target_resource == "hermes://gateway/v1/chat/completions"
+        and hermes_failed.target_resource == "hermes://gateway/v1/chat/completions",
+        "Hermes evidence persisted a physical gateway address",
+    )
+    require(
+        hermes_failed.error_type == "HermesExecutionFailed"
+        and hermes_url not in str(hermes_failed.error_message),
+        "Hermes failure evidence exposed its physical gateway address",
+    )
 
     print(json.dumps({
         "ok": True,
@@ -93,6 +111,7 @@ def main() -> int:
             "hermes_dry": evidence(hermes_dry),
             "openclaw_dry": evidence(openclaw_dry),
             "hermes_live": evidence(hermes_live),
+            "hermes_failed": evidence(hermes_failed),
             "openclaw_live": evidence(openclaw_live),
         },
     }, ensure_ascii=False, indent=2, sort_keys=True))

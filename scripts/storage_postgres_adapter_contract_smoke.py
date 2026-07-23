@@ -282,8 +282,8 @@ def adapter_fixture_sql() -> str:
         VALUES('tc_adapter_a','run_adapter_a','agt_adapter_a','adapter_contract','v1','database','{}','postgres://adapter','high','waiting_approval','Adapter prepared action pending.',NULL,'2026-06-22T01:00:00+00:00',NULL,'2026-06-22T01:00:00+00:00');
     """
     approval_sql = """
-        INSERT INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
-        VALUES('ap_adapter_a','tsk_adapter_a','run_adapter_a','tc_adapter_a','agt_adapter_a',NULL,'pending','Adapter contract approval.',NULL,'2026-06-22T01:00:00+00:00',NULL);
+        INSERT INTO approvals(approval_id,approval_kind,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
+        VALUES('ap_adapter_a','prepared_action','tsk_adapter_a','run_adapter_a','tc_adapter_a','agt_adapter_a',NULL,'pending','Adapter contract approval.',NULL,'2026-06-22T01:00:00+00:00',NULL);
     """
     prepared = {
         "prepared_action_id": "pact_adapter_a",

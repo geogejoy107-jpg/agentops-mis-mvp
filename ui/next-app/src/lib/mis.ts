@@ -175,14 +175,60 @@ export type NotionExportResult = {
 
 export type ApprovalSummary = {
   approval_id: string;
+  approval_kind?: "run_execution" | "tool_execution" | "prepared_action" | "agent_enrollment" | "customer_delivery";
   decision: string;
   task_id?: string;
   run_id?: string;
-  tool_call_id?: string;
-  requested_by_agent_id?: string;
+  tool_call_id?: string | null;
+  requested_by_agent_id?: string | null;
   reason?: string;
   expires_at?: string;
+  created_at?: string;
   decided_at?: string | null;
+};
+
+export type ApprovalDecisionPayload = {
+  ok: boolean;
+  provider: "agentops-human-approval-decision";
+  control_plane: "typescript_postgres";
+  operation: "approval_decision";
+  outcome: "updated" | "unchanged";
+  decision: "approved" | "rejected";
+  approval: ApprovalSummary & { approver_user_id?: string | null };
+  linked_state: {
+    task_status: string;
+    run_status: string;
+    tool_call_status: string | null;
+    prepared_action_status: string | null;
+    enrollment_status: string | null;
+  };
+  credentials_omitted: true;
+  raw_body_omitted: true;
+  token_omitted: true;
+};
+
+export type ApprovalDecisionResult = ApprovalDecisionPayload | ApprovalSummary;
+
+export type ArtifactSummary = {
+  artifact_id: string;
+  task_id?: string | null;
+  run_id?: string | null;
+  artifact_type?: string;
+  title?: string;
+  created_at?: string;
+};
+
+export type RuntimeEventSummary = {
+  runtime_event_id: string;
+  runtime_connector_id?: string | null;
+  event_type?: string;
+  status?: string;
+  run_id?: string | null;
+  task_id?: string | null;
+  agent_id?: string | null;
+  model_name?: string | null;
+  latency_ms?: number | null;
+  created_at?: string;
 };
 
 export type MemorySummary = {
@@ -1629,12 +1675,12 @@ export type RunGraphPayload = {
   parent?: RunSummary | null;
   children?: RunSummary[];
   siblings_by_delegation?: RunSummary[];
-  tool_calls?: unknown[];
-  evaluations?: unknown[];
-  artifacts?: unknown[];
-  approvals?: unknown[];
-  audit_logs?: unknown[];
-  runtime_events?: unknown[];
+  tool_calls?: ToolCallSummary[];
+  evaluations?: EvaluationSummary[];
+  artifacts?: ArtifactSummary[];
+  approvals?: ApprovalSummary[];
+  audit_logs?: AuditSummary[];
+  runtime_events?: RuntimeEventSummary[];
   token_omitted?: boolean;
   error?: string;
 };
@@ -1645,9 +1691,9 @@ export type TaskDetailPayload = {
   task?: TaskSummary;
   runs?: RunSummary[];
   approvals?: ApprovalSummary[];
-  evaluations?: unknown[];
+  evaluations?: EvaluationSummary[];
   memories?: MemorySummary[];
-  artifacts?: unknown[];
+  artifacts?: ArtifactSummary[];
   token_omitted?: boolean;
   error?: string;
 };
@@ -1657,13 +1703,13 @@ export type RunDetailPayload = {
   operation?: string;
   run?: RunSummary;
   task?: TaskSummary;
-  tool_calls?: unknown[];
+  tool_calls?: ToolCallSummary[];
   approvals?: ApprovalSummary[];
-  evaluations?: unknown[];
+  evaluations?: EvaluationSummary[];
   memories?: MemorySummary[];
-  artifacts?: unknown[];
-  runtime_events?: unknown[];
-  audit_logs?: unknown[];
+  artifacts?: ArtifactSummary[];
+  runtime_events?: RuntimeEventSummary[];
+  audit_logs?: AuditSummary[];
   token_omitted?: boolean;
   error?: string;
 };
@@ -1849,12 +1895,24 @@ export async function loadRuns(workspaceId?: string): Promise<RunSummary[]> {
   return misJson<RunSummary[]>(workspaceReadPath("/runs", workspaceId));
 }
 
-export async function loadToolCalls(): Promise<ToolCallSummary[]> {
-  return misJson<ToolCallSummary[]>("/tool-calls");
+export async function loadTaskDetail(taskId: string, workspaceId?: string): Promise<TaskDetailPayload> {
+  return misJson<TaskDetailPayload>(workspaceReadPath(`/tasks/${encodeURIComponent(taskId)}`, workspaceId));
 }
 
-export async function loadEvaluations(): Promise<EvaluationSummary[]> {
-  return misJson<EvaluationSummary[]>("/evaluations");
+export async function loadRunDetail(runId: string, workspaceId?: string): Promise<RunDetailPayload> {
+  return misJson<RunDetailPayload>(workspaceReadPath(`/runs/${encodeURIComponent(runId)}`, workspaceId));
+}
+
+export async function loadRunGraph(runId: string, workspaceId?: string): Promise<RunGraphPayload> {
+  return misJson<RunGraphPayload>(workspaceReadPath(`/runs/${encodeURIComponent(runId)}/graph`, workspaceId));
+}
+
+export async function loadToolCalls(workspaceId?: string): Promise<ToolCallSummary[]> {
+  return misJson<ToolCallSummary[]>(workspaceReadPath("/tool-calls", workspaceId));
+}
+
+export async function loadEvaluations(workspaceId?: string): Promise<EvaluationSummary[]> {
+  return misJson<EvaluationSummary[]>(workspaceReadPath("/evaluations", workspaceId));
 }
 
 export async function loadRuntimeConnectors(): Promise<RuntimeConnectorSummary[]> {
@@ -1904,10 +1962,19 @@ export async function loadApprovals(workspaceId?: string): Promise<ApprovalSumma
   return misJson<ApprovalSummary[]>(workspaceReadPath("/approvals", workspaceId));
 }
 
-export async function decideApproval(id: string, decision: "approve" | "reject"): Promise<ApprovalSummary> {
-  return misJson<ApprovalSummary>(`/approvals/${encodeURIComponent(id)}/${decision}`, {
+export async function decideApproval(
+  id: string,
+  decision: "approve" | "reject",
+  human?: { workspaceId: string; csrfToken: string; idempotencyKey: string },
+): Promise<ApprovalDecisionResult> {
+  return misJson<ApprovalDecisionResult>(`/approvals/${encodeURIComponent(id)}/${decision}`, {
     method: "POST",
-    body: JSON.stringify({}),
+    headers: human ? {
+      "Idempotency-Key": human.idempotencyKey,
+      "X-AgentOps-CSRF": human.csrfToken,
+      "X-AgentOps-Workspace-Id": human.workspaceId,
+    } : undefined,
+    body: JSON.stringify(human ? { workspace_id: human.workspaceId } : {}),
   });
 }
 

@@ -85,9 +85,13 @@ restore and target-state confirmation, restores into a fresh database, compares
 source/restored fixture counts, creates a pre-restore archive before overwrite,
 and rejects tampered archives without printing credentials or raw rows.
 
-All layers are intentionally derived from `server.SCHEMA_SQL`, because
-`server.py` is still the executable schema authority for the dependency-free
-local product line.
+The Free Local and Python compatibility layers are intentionally derived from
+`server.SCHEMA_SQL`; `server.py` remains the executable schema authority for
+the dependency-free local product line. Commercial Human Session, membership,
+review, and approval-decision schema is owned separately by the append-only
+Postgres migrations under `migrations/postgres/` and the Next/TypeScript schema
+readiness contracts. Passing Python storage parity does not certify those
+commercial tables or transfer their ownership back to Python.
 
 ## Contract v1
 
@@ -132,13 +136,11 @@ The first Postgres adapter must preserve these invariants:
 
 ## Locked Tables
 
-`python3 scripts/storage_postgres_contract_smoke.py` requires the executable
-schema to include:
+`python3 scripts/storage_postgres_contract_smoke.py` requires the Free Local
+compatibility schema to include:
 
 - core ledger: `users`, `agents`, `tasks`, `runs`, `tool_calls`, `approvals`,
   `evaluations`, `artifacts`, `audit_logs`, `memories`;
-- Human governance: `workspace_memberships`, `human_login_credentials`,
-  `human_sessions`, `human_login_throttle`, `human_memory_review_requests`;
 - prepared actions: `prepared_actions`;
 - runtime and workflow state: `runtime_connectors`, `runtime_events`,
   `workflow_jobs`;
@@ -146,6 +148,13 @@ schema to include:
   `agent_gateway_sessions`, `agent_gateway_enrollment_requests`;
 - planning evidence: `agent_plans`, `plan_evidence_manifests`;
 - knowledge metadata: `knowledge_documents`.
+
+The commercial Next/TypeScript migration contracts separately require and
+validate `workspace_memberships`, `human_login_credentials`, `human_sessions`,
+`human_login_throttle`, `human_memory_review_requests`, and
+`human_approval_decision_requests`, together with the v2-v4 audit and approval
+constraints. Those tables are guarded by `test:human-schema-contract` and
+`test:human-schema-upgrade-contract`, not by the Python parity table list.
 
 ## Verification
 
@@ -251,7 +260,11 @@ The Postgres recovery utility and its two contracts are implemented, but a
 current non-skipped smoke receipt is still required before deployment readiness
 or commercial handoff may call recovery accepted.
 
-Current local evidence on `codex/commercial-migration-closed-loop`:
+Historical base storage evidence began on
+`codex/commercial-migration-closed-loop`. The Human v4 and direct
+Next/TypeScript contracts later in this list belong to
+`codex/commercial-human-session-memory-review`; none is exact-HEAD release
+evidence until an external post-commit receipt binds it to the final SHA:
 
 - `postgres_container_parity_v1` passed against `postgres:16-alpine` with
   `postgres_ddl_hash=315c235397dcd9efd1730751e82e8f0110b3ea3a0cf8fa95a2d3c12c045da1eb`.
@@ -416,7 +429,21 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   process. Concurrent same-ID plan and manifest requests produced one create
   plus one unchanged response and one audit/runtime write. Submitted plans and
   manifest evidence bindings were immutable; Agent credentials could not set a
-  human approval status; missing or approval-pending plans blocked non-mock run
+  manifest step list that differs from the locked Agent Plan, and verification
+  queried every workspace-bound tool/evaluation row plus every run/task artifact
+  even when the caller declared a success-only subset. Audit evidence is
+  server-derived; caller-selected audit IDs are rejected before persistence.
+  Negative fixtures use a separate guard run with an omitted failed tool,
+  evaluation, and additional artifact, requiring `tool_evidence_complete`,
+  `evaluation_evidence_complete`, and `artifact_evidence_complete` to fail
+  closed. Real Hermes/OpenClaw acceptance creates a customer-delivery approval
+  only for that isolated blocked guard and requires the Human decision route to
+  return `409 verified_plan_evidence_manifest_required` without advancing linked
+  state. The already-approved real delivery run remains immutable, and append
+  attempts for its tool, evaluation, artifact, and manifest evidence return
+  `409 customer_delivery_evidence_sealed`.
+  Agent credentials could not set a human approval status; missing or
+  approval-pending plans blocked non-mock run
   start; a complete bound manifest verified while a manifest declaring missing
   evidence was persisted as blocked. Plan and manifest after-hashes and the full
   cross-language audit chain were recomputed from Postgres rows.
@@ -429,13 +456,54 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   fail-closed reads after constraint loss; omission of raw audit and run text;
   workspace-only aggregates; and inclusion of workspace-bound
   Gateway agents. No Python API process participates in these reads.
-- `human_memory_schema_v1_to_v2_upgrade_v1` proves an exact deployed v1
-  receipt upgrades through a bounded transactional core, validates the audit
-  workspace/metadata constraint, creates the audit index concurrently outside
-  that transaction, resumes the online stage after a partial failure, and
-  passes exact readiness. A tampered
-  v1 receipt is rejected before `audit_logs.workspace_id` is added, so schema
-  drift cannot be blessed by rerunning the migrator.
+- `human_memory_schema_v1_v2_v3_to_v4_upgrade_v1` proves exact deployed v1, v2,
+  and v3 receipts upgrade through bounded transactional cores to the current
+  append-only v4 receipt. It validates the audit workspace/metadata constraint,
+  creates the audit index concurrently outside the core transaction, creates
+  the Human approval idempotency table, resumes the online stage after a partial
+  failure, and passes `human_memory_schema_readiness_v4`. The v4
+  `approval_kind` column is required and has no database default; its five exact
+  values are `run_execution`, `tool_execution`, `prepared_action`,
+  `agent_enrollment`, and `customer_delivery`. Kind, approval execution bindings,
+  and task/run/tool identity parents are immutable; approval rows are append-only
+  and terminal decisions cannot return to pending. Audit rows are append-only.
+  Every legacy row, including one with a prefilled kind, must match deterministic
+  child or trusted audit evidence or the migration aborts. Deferred
+  relationship triggers validate INSERT, UPDATE, and DELETE edges for approvals,
+  Prepared Actions, and enrollment requests, and a unique index enforces one
+  enrollment request per approval. Evidence-seal triggers inspect both OLD and
+  NEW row bindings, include Agent Plans, and share-lock the approval row so an
+  evidence transaction serializes with the Human decision. Evidence cannot
+  escape a decided customer delivery by rebinding to another run. A tampered v1 receipt is rejected before
+  `audit_logs.workspace_id` is added, so schema drift cannot be blessed by
+  rerunning the migrator.
+- `nextjs_postgres_human_approval_decision_v1` exercises the production
+  TypeScript/Postgres approval route and HTML fallback against a random isolated
+  schema. It proves Human Session approver RBAC, Origin/CSRF, durable idempotency,
+  exact replay without duplicate evidence, concurrent single-winner behavior,
+  hidden cross-workspace IDs, real approver attribution, Prepared Action and
+  enrollment transitions without provider or token issue, high-risk and expiry
+  fail-closed behavior, current customer-delivery manifest verification plus a
+  locked completed-run requirement, explicit immutable kind and relationship
+  binding, immutable execution/parent binding, terminal approval immutability,
+  unique enrollment binding, deferred DELETE-edge enforcement, mock-evidence
+  rejection, sibling-run artifact exclusion, serialized decision/evidence
+  concurrency, and post-decision customer-delivery evidence sealing,
+  Python-writer-compatible lock order, Free Local compatibility, private
+  response projection, and zero production Python proxy calls. The live
+  `nextjs_postgres_real_worker_human_review_v1` acceptance additionally proves
+  real Hermes and OpenClaw Workers each produce a real completed run, bounded
+  evidence, and a verified manifest through `next build` plus `next start`.
+  Customer-delivery approval revalidation reads the actual run and requires a
+  matching runtime/provider, non-dry-run provider tool and rule evaluation, no
+  mock evaluation, chained artifact SHA-256 audits, and chained
+  plan/tool/evaluation/worker audits. An isolated acceptance fixture creates one
+  `customer_delivery` approval bound to each real run, then a Human Session
+  decides and replays it without duplicate evidence while Python remains
+  unstarted. Its receipt records `worker_created_delivery_approvals: false` and
+  `delivery_approval_creation_source: acceptance_fixture_bound_to_real_run`;
+  production customer-delivery approval creation ownership remains an open P1
+  blocker.
 - `deployment_readiness_postgres_runtime_write_fixture_v1` passed against a
   temporary Postgres-backed MIS API in `experimental_write_http` mode. The
   backend fixture proves `GET /api/deployment/readiness` and

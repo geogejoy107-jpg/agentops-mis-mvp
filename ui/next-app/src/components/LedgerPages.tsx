@@ -1,14 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Clock, Filter, RefreshCw, ShieldAlert, XCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { CheckCircle2, Clock, Filter, LogIn, LogOut, RefreshCw, ShieldAlert, User, XCircle } from "lucide-react";
 import {
   decideApproval,
+  getActiveWorkspaceId,
+  isHumanSessionUnauthorized,
   loadApprovals,
+  loadHumanSession,
   loadRuns,
   loadTasks,
+  loginHumanSession,
+  logoutHumanSession,
+  MisApiError,
+  setActiveWorkspaceId,
   type ApprovalSummary,
+  type HumanSessionPayload,
   type RunSummary,
   type TaskSummary,
 } from "@/lib/mis";
@@ -19,6 +27,37 @@ type LoadState<T> = {
   error: string | null;
   loading: boolean;
 };
+
+type AuthMode = "loading" | "required" | "authenticated" | "proxy";
+
+const APPROVAL_DECISION_KEY_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
+
+function selectedWorkspaceForSession(session: HumanSessionPayload) {
+  const memberships = session.memberships || [];
+  const persistedWorkspace = getActiveWorkspaceId();
+  if (memberships.some((membership) => membership.workspace_id === persistedWorkspace)) {
+    return persistedWorkspace;
+  }
+  return memberships.length === 1 ? memberships[0].workspace_id : "";
+}
+
+function approvalDecisionStorageKey(
+  userId: string,
+  workspaceId: string,
+  approvalId: string,
+  decision: "approve" | "reject",
+) {
+  return ["agentops_approval_decision", userId, workspaceId, approvalId, decision]
+    .map((part) => encodeURIComponent(part))
+    .join(":");
+}
+
+function newApprovalDecisionKey() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return `approval-decision-${globalThis.crypto.randomUUID()}`;
+  }
+  return `approval-decision-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+}
 
 function statusClass(status: string) {
   if (["completed", "approved"].includes(status)) return "status statusGood";
@@ -191,33 +230,176 @@ export function ApprovalsParityPage({
   initialLoaded = false,
 }: Readonly<{ initialApprovals?: ApprovalSummary[]; initialError?: string | null; initialLoaded?: boolean }> = {}) {
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<AuthMode>("loading");
+  const [humanSession, setHumanSession] = useState<HumanSessionPayload | null>(null);
+  const [workspaceId, setWorkspaceId] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const fallbackDecisionIdempotencyKeys = useRef(new Map<string, string>());
   const [state, setState] = useState<LoadState<ApprovalSummary[]>>({
     data: initialApprovals,
     error: initialError,
     loading: !initialLoaded,
   });
 
-  const refresh = async () => {
+  const requireLogin = () => {
+    setHumanSession(null);
+    setWorkspaceId("");
+    setActiveWorkspaceId("");
+    setAuthMode("required");
+    setState({ data: [], error: null, loading: false });
+  };
+
+  const refresh = async (
+    selectedWorkspace = workspaceId,
+    mode = authMode,
+  ): Promise<ApprovalSummary[] | null> => {
+    if (mode === "loading" || mode === "required" || (mode === "authenticated" && !selectedWorkspace)) {
+      setState({ data: [], error: null, loading: false });
+      return null;
+    }
     setState((current) => ({ ...current, error: null, loading: true }));
     try {
-      setState({ data: await loadApprovals(), error: null, loading: false });
+      const directWorkspace = mode === "authenticated" ? selectedWorkspace : undefined;
+      const approvals = await loadApprovals(directWorkspace);
+      setState({ data: approvals, error: null, loading: false });
+      return approvals;
     } catch (err) {
+      if (isHumanSessionUnauthorized(err)) {
+        requireLogin();
+        return null;
+      }
       setState({ data: [], error: err instanceof Error ? err.message : String(err), loading: false });
+      return null;
     }
   };
 
   useEffect(() => {
-    if (!initialLoaded) void refresh();
+    let active = true;
+    const initialize = async () => {
+      try {
+        const session = await loadHumanSession();
+        if (!active) return;
+        const selectedWorkspace = selectedWorkspaceForSession(session);
+        setHumanSession(session);
+        setWorkspaceId(selectedWorkspace);
+        setActiveWorkspaceId(selectedWorkspace);
+        setAuthMode("authenticated");
+        if (selectedWorkspace) {
+          await refresh(selectedWorkspace, "authenticated");
+        } else {
+          setState({ data: [], error: null, loading: false });
+        }
+      } catch (err) {
+        if (!active) return;
+        if (isHumanSessionUnauthorized(err)) {
+          requireLogin();
+          return;
+        }
+        if (err instanceof MisApiError && err.code === "human_session_postgres_required") {
+          setAuthMode("proxy");
+          if (!initialLoaded) {
+            await refresh("", "proxy");
+          } else {
+            setState((current) => ({ ...current, loading: false }));
+          }
+          return;
+        }
+        setState({ data: [], error: err instanceof Error ? err.message : String(err), loading: false });
+      }
+    };
+    void initialize();
+    return () => {
+      active = false;
+    };
   }, [initialLoaded]);
+
+  const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setState((current) => ({ ...current, error: null, loading: true }));
+    try {
+      const session = await loginHumanSession(username, password);
+      const selectedWorkspace = selectedWorkspaceForSession(session);
+      setPassword("");
+      setHumanSession(session);
+      setWorkspaceId(selectedWorkspace);
+      setActiveWorkspaceId(selectedWorkspace);
+      setAuthMode("authenticated");
+      if (selectedWorkspace) {
+        await refresh(selectedWorkspace, "authenticated");
+      } else {
+        setState({ data: [], error: null, loading: false });
+      }
+    } catch (err) {
+      setPassword("");
+      setState({ data: [], error: err instanceof Error ? err.message : String(err), loading: false });
+    }
+  };
+
+  const submitLogout = async () => {
+    try {
+      await logoutHumanSession(humanSession?.csrf_token || "", workspaceId);
+      requireLogin();
+    } catch (err) {
+      if (isHumanSessionUnauthorized(err)) {
+        requireLogin();
+        return;
+      }
+      setState((current) => ({ ...current, error: err instanceof Error ? err.message : String(err) }));
+    }
+  };
+
+  const decisionIdempotencyKey = (approvalId: string, decision: "approve" | "reject") => {
+    const userId = humanSession?.user?.user_id || "free-local";
+    const selectedWorkspace = workspaceId || "free-local";
+    const storageKey = approvalDecisionStorageKey(userId, selectedWorkspace, approvalId, decision);
+    const fallbackKey = fallbackDecisionIdempotencyKeys.current.get(storageKey);
+    try {
+      const storedKey = window.sessionStorage.getItem(storageKey);
+      if (storedKey && APPROVAL_DECISION_KEY_PATTERN.test(storedKey)) {
+        fallbackDecisionIdempotencyKeys.current.set(storageKey, storedKey);
+        return storedKey;
+      }
+      const nextKey = fallbackKey || newApprovalDecisionKey();
+      window.sessionStorage.setItem(storageKey, nextKey);
+      fallbackDecisionIdempotencyKeys.current.set(storageKey, nextKey);
+      return nextKey;
+    } catch {
+      const nextKey = fallbackKey || newApprovalDecisionKey();
+      fallbackDecisionIdempotencyKeys.current.set(storageKey, nextKey);
+      return nextKey;
+    }
+  };
 
   const pending = state.data.filter((approval) => approval.decision === "pending");
   const decided = state.data.filter((approval) => approval.decision !== "pending");
+  const selectedMembership = humanSession?.memberships?.find((membership) => membership.workspace_id === workspaceId);
+  const canReview = authMode === "proxy" || ["approver", "owner"].includes(selectedMembership?.role || "");
 
   const submitDecision = async (approvalId: string, decision: "approve" | "reject") => {
     setBusyId(approvalId);
     try {
-      await decideApproval(approvalId, decision);
-      await refresh();
+      let human: { workspaceId: string; csrfToken: string; idempotencyKey: string } | undefined;
+      if (authMode === "authenticated") {
+        const userId = humanSession?.user?.user_id || "";
+        const csrfToken = humanSession?.csrf_token || "";
+        if (!userId || !workspaceId || !csrfToken || !canReview) {
+          throw new Error("Human Session approval context is unavailable");
+        }
+        human = {
+          workspaceId,
+          csrfToken,
+          idempotencyKey: decisionIdempotencyKey(approvalId, decision),
+        };
+      }
+      await decideApproval(approvalId, decision, human);
+      await refresh(workspaceId, authMode);
+    } catch (err) {
+      if (isHumanSessionUnauthorized(err)) {
+        requireLogin();
+        return;
+      }
+      setState((current) => ({ ...current, error: err instanceof Error ? err.message : String(err) }));
     } finally {
       setBusyId(null);
     }
@@ -225,20 +407,29 @@ export function ApprovalsParityPage({
 
   const renderApproval = (approval: ApprovalSummary) => {
     const isPending = approval.decision === "pending";
+    const approveIdempotencyKey = isPending && canReview
+      ? decisionIdempotencyKey(approval.approval_id, "approve")
+      : "";
+    const rejectIdempotencyKey = isPending && canReview
+      ? decisionIdempotencyKey(approval.approval_id, "reject")
+      : "";
     return (
       <article className={`approval ${isPending ? "pending" : ""}`} key={approval.approval_id}>
         <div>
           <strong>{approval.approval_id}</strong>
-          <span>{approval.reason || approval.task_id || approval.run_id || "approval required"}</span>
+          <span>{approval.approval_kind || approval.reason || approval.task_id || approval.run_id || "approval required"}</span>
           <p>{approval.requested_by_agent_id || "agent"} · task {approval.task_id || "-"} · run {approval.run_id || "-"}</p>
         </div>
         <div className="approvalActions">
           <span className={statusClass(approval.decision)}>{approval.decision}</span>
-          {isPending ? (
+          {isPending && canReview ? (
             <>
               <form className="inlineForm" method="post" action="/workspace/approvals/review">
                 <input type="hidden" name="approval_id" value={approval.approval_id} />
                 <input type="hidden" name="decision" value="approve" />
+                <input type="hidden" name="workspace_id" value={workspaceId} />
+                <input type="hidden" name="csrf_token" value={humanSession?.csrf_token || ""} />
+                <input type="hidden" name="idempotency_key" value={approveIdempotencyKey} />
                 <button
                   className="miniButton good"
                   disabled={busyId === approval.approval_id}
@@ -254,6 +445,9 @@ export function ApprovalsParityPage({
               <form className="inlineForm" method="post" action="/workspace/approvals/review">
                 <input type="hidden" name="approval_id" value={approval.approval_id} />
                 <input type="hidden" name="decision" value="reject" />
+                <input type="hidden" name="workspace_id" value={workspaceId} />
+                <input type="hidden" name="csrf_token" value={humanSession?.csrf_token || ""} />
+                <input type="hidden" name="idempotency_key" value={rejectIdempotencyKey} />
                 <button
                   className="miniButton bad"
                   disabled={busyId === approval.approval_id}
@@ -278,9 +472,57 @@ export function ApprovalsParityPage({
       <PageHeader
         title="Approvals"
         summary={`${pending.length} pending · ${decided.length} decided`}
-        loading={state.loading || Boolean(busyId)}
-        onRefresh={refresh}
+        loading={state.loading
+          || Boolean(busyId)
+          || authMode === "loading"
+          || authMode === "required"
+          || (authMode === "authenticated" && !workspaceId)}
+        onRefresh={() => void refresh()}
       />
+      {authMode === "required" ? (
+        <form className="humanSessionBar" onSubmit={submitLogin}>
+          <label className="field">
+            <span>Username</span>
+            <input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required />
+          </label>
+          <label className="field">
+            <span>Password</span>
+            <input autoComplete="current-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+          </label>
+          <button className="miniButton good" disabled={state.loading} type="submit"><LogIn size={13} />Sign in</button>
+        </form>
+      ) : null}
+      {authMode === "authenticated" && humanSession ? (
+        <div className="humanSessionBar">
+          <div className="sessionIdentity">
+            <User size={15} />
+            <span>{humanSession.user?.name || humanSession.user?.user_id}</span>
+          </div>
+          <label className="field workspaceSelect">
+            <span>Workspace</span>
+            <select
+              value={workspaceId}
+              required
+              onChange={(event) => {
+                const selected = event.target.value;
+                setWorkspaceId(selected);
+                setActiveWorkspaceId(selected);
+                void refresh(selected, "authenticated");
+              }}
+            >
+              {(humanSession.memberships || []).length !== 1 ? <option value="">Select workspace</option> : null}
+              {(humanSession.memberships || []).map((membership) => (
+                <option key={membership.workspace_id} value={membership.workspace_id}>
+                  {membership.workspace_id} ({membership.role})
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="iconButton" onClick={() => void submitLogout()} type="button" aria-label="Sign out" title="Sign out">
+            <LogOut size={16} />
+          </button>
+        </div>
+      ) : null}
       {state.error ? <div className="banner error">MIS API unavailable through /api/mis/approvals: {state.error}</div> : null}
 
       <section className="panel wide">

@@ -1,5 +1,4 @@
-import { RunDetailPage } from "@/components/LedgerDetailPages";
-import { loadServerRunDetail } from "@/lib/misServer";
+import { RunDetailClientPage } from "@/components/LedgerDetailPages";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +8,5 @@ type PageProps = {
 
 export default async function RunPage({ params }: PageProps) {
   const { runId } = await params;
-  const snapshot = await loadServerRunDetail(runId);
-  return <RunDetailPage runId={runId} snapshot={snapshot.data} error={snapshot.error} />;
+  return <RunDetailClientPage runId={runId} />;
 }
