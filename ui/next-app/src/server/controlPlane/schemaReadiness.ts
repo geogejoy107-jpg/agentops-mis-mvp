@@ -5,16 +5,18 @@ import { fileURLToPath } from "node:url";
 import { Client, type ClientConfig } from "pg";
 
 import { postgresDsn, postgresSslEnabled } from "./config";
+import {
+  POSTGRES_MIGRATION_MANIFEST,
+  SCHEMA_CONTRACT,
+  type MigrationDefinition,
+} from "./schemaManifest";
+
+export {
+  POSTGRES_MIGRATION_MANIFEST,
+  SCHEMA_CONTRACT,
+} from "./schemaManifest";
 
 export type SchemaCommand = "migrate" | "check";
-
-type MigrationDefinition = Readonly<{
-  component: string;
-  version: string;
-  schemaContract: string;
-  filename: string;
-  checksum: string;
-}>;
 
 type LoadedMigration = MigrationDefinition & Readonly<{ sql: string }>;
 
@@ -42,74 +44,6 @@ export class SchemaReadinessError extends Error {
     this.code = code;
   }
 }
-
-export const SCHEMA_CONTRACT = "agentops_commercial_postgres_v8";
-
-export const POSTGRES_MIGRATION_MANIFEST = Object.freeze([
-  {
-    component: "commercial_control_plane_baseline",
-    version: "20260724.1",
-    schemaContract: "current_main_commercial_baseline_v1",
-    filename: "20260724_current_main_commercial_baseline.sql",
-    checksum: "da149c133e6d731c446650fa1dc50973e54e5a9b786369b0db5af4d7951ae068",
-  },
-  {
-    component: "human_session_memory_review",
-    version: "20260718.1",
-    schemaContract: "human_session_memory_review_v1",
-    filename: "20260718_human_session_memory_review.sql",
-    checksum: "8b9e121ce6615fb9475b494b534cad6e1fca84bb9c01b70fe896bc87debe196f",
-  },
-  {
-    component: "workspace_read_models",
-    version: "20260719.2",
-    schemaContract: "workspace_read_models_v2",
-    filename: "20260719_workspace_read_models_v2.sql",
-    checksum: "cd2115869682fe44d37b00344023446d001a4cf8df034f5ae0a1044584659e0a",
-  },
-  {
-    component: "human_approval_decisions",
-    version: "20260719.3",
-    schemaContract: "human_approval_decisions_v3",
-    filename: "20260719_human_approval_decisions_v3.sql",
-    checksum: "bb88014418b69754908dcaeccdca88e37b0819f938053f11ddf9a7e9cba32124",
-  },
-  {
-    component: "approval_kind_bindings",
-    version: "20260719.4",
-    schemaContract: "approval_kind_bindings_v4",
-    filename: "20260719_approval_kind_bindings_v4.sql",
-    checksum: "c68d80f35a1b58943d3dc489b5fa5135a9b9f5042723a5146facabc8ccafffaf",
-  },
-  {
-    component: "customer_delivery_run_unique",
-    version: "20260724.5",
-    schemaContract: "customer_delivery_run_unique_v5",
-    filename: "20260724_customer_delivery_run_unique_v5.sql",
-    checksum: "bd1ab7a550a9ab135c4058113a63dc621f1ae1558fa1060d6a4deed3cfd5a284",
-  },
-  {
-    component: "prepared_action_execution_leases",
-    version: "20260724.6",
-    schemaContract: "prepared_action_execution_leases_v6",
-    filename: "20260724_prepared_action_execution_leases_v6.sql",
-    checksum: "4165407bbe609f1c30cf7a420e4efb8cfd5f789059645caa0b6b92ffff8bec1d",
-  },
-  {
-    component: "governed_knowledge_index",
-    version: "20260724.7",
-    schemaContract: "governed_knowledge_index_v7",
-    filename: "20260724_governed_knowledge_index_v7.sql",
-    checksum: "ea0c543d7a1151d52e8262afc1141fd60f9b7520d5efff5783a82b7335b4bb56",
-  },
-  {
-    component: "worker_evidence_workspace",
-    version: "20260724.8",
-    schemaContract: "worker_evidence_workspace_v8",
-    filename: "20260724_worker_evidence_workspace_v8.sql",
-    checksum: "ad5c15c636f15395d71a614478acbcdf7361604156362bb8c1f21d4c34b03d11",
-  },
-] satisfies readonly MigrationDefinition[]);
 
 const REQUIRED_RELATIONS = Object.freeze([
   "users",

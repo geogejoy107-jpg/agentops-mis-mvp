@@ -9,6 +9,10 @@ const nextConfig = {
         source: "/api/agent-gateway/:path*",
         destination: "/api/mis/agent-gateway/:path*",
       },
+      {
+        source: "/api/operator/loop-supervision",
+        destination: "/api/mis/operator/loop-supervision",
+      },
     ];
   },
 };
