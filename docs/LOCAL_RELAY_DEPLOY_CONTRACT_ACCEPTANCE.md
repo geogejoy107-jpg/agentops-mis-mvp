@@ -113,7 +113,8 @@ The smoke:
 - verifies the wheel entrypoint and verifies that pip installation cannot
   implicitly install the systemd unit;
 - verifies the source distribution carries the systemd template and this
-  acceptance document plus the credential-free config example;
+  acceptance document, release/install/status acceptance, the planned
+  activation contract, and the credential-free config example;
 - parses the unit without invoking `systemctl` or `systemd-analyze`;
 - checks the exact foreground arguments, dedicated identity, restart policy,
   private directories, capability bound, address families, and writable paths;

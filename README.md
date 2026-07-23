@@ -132,11 +132,16 @@ Tailscale 或临时公网隧道描述成默认零安装方案。
 
 Linux Relay 已有确定性离线发布包与 preview-first 首次安装事务。运维入口为
 `agentops-relayctl`，真实写入必须同时提供 `--confirm-install` 和 dry-run 返回的
-精确 `--plan-sha256`；详见
+精确 `--plan-sha256`。安装后可用只读命令
+`agentops-relayctl --root / status` 区分未安装、安装树有效、需要恢复和无效
+状态；它不读取运行配置正文，也不把安装有效冒充为服务在线。详见
 [`docs/RELAY_RELEASE_BUNDLE_ACCEPTANCE.md`](docs/RELAY_RELEASE_BUNDLE_ACCEPTANCE.md)
 与
-[`docs/RELAY_OFFLINE_INSTALL_ACCEPTANCE.md`](docs/RELAY_OFFLINE_INSTALL_ACCEPTANCE.md)。
-这仍不代表公共 Relay、DNS/ACME、服务启动或升级/回滚已经完成。
+[`docs/RELAY_OFFLINE_INSTALL_ACCEPTANCE.md`](docs/RELAY_OFFLINE_INSTALL_ACCEPTANCE.md)、
+[`docs/RELAY_OFFLINE_STATUS_ACCEPTANCE.md`](docs/RELAY_OFFLINE_STATUS_ACCEPTANCE.md)。
+服务激活的后续安全边界已冻结在
+[`docs/RELAY_SERVICE_ACTIVATION_SPEC.md`](docs/RELAY_SERVICE_ACTIVATION_SPEC.md)，
+但尚未实现。这仍不代表公共 Relay、DNS/ACME、服务启动或升级/回滚已经完成。
 
 `host init` 仍生成一次性 Owner 设置码，并把它、机器 API key 与 Admin key
 存到仓库外的 `~/.agentops/host/`，文件权限为 `0600`。`host start` 默认后台

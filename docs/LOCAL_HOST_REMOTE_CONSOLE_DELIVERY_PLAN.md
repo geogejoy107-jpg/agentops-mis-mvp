@@ -253,6 +253,11 @@ Implementation slices:
    - fail-closed offline first-install transaction with exact plan confirmation,
      immutable releases, stable launch links and protected runtime state:
      implemented and recorded in `RELAY_OFFLINE_INSTALL_ACCEPTANCE.md`;
+   - anchored read-only installed-tree status with absent, valid, recovery and
+     invalid states, exact layout/RECORD checks and zero service-readiness
+     claims: implemented and recorded in `RELAY_OFFLINE_STATUS_ACCEPTANCE.md`;
+   - credential-free systemd activation state machine and crash/rollback
+     boundary: specified in `RELAY_SERVICE_ACTIVATION_SPEC.md`, not implemented;
    - upgrade, rollback, uninstall, Linux account provisioning, service
      activation and public infrastructure acceptance: pending;
    - public endpoint, DNS/ACME provisioning, stable per-Host Console origin,

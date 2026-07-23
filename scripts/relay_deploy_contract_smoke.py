@@ -113,6 +113,8 @@ def main() -> int:
     sdist_has_acceptance = False
     sdist_has_release_acceptance = False
     sdist_has_install_acceptance = False
+    sdist_has_status_acceptance = False
+    sdist_has_activation_spec = False
     sdist_has_pkg_info = False
     sdist_pkg_info_matches = False
     metadata_version_current = False
@@ -236,6 +238,14 @@ def main() -> int:
                     name.endswith("/docs/RELAY_OFFLINE_INSTALL_ACCEPTANCE.md")
                     for name in names
                 )
+                sdist_has_status_acceptance = any(
+                    name.endswith("/docs/RELAY_OFFLINE_STATUS_ACCEPTANCE.md")
+                    for name in names
+                )
+                sdist_has_activation_spec = any(
+                    name.endswith("/docs/RELAY_SERVICE_ACTIVATION_SPEC.md")
+                    for name in names
+                )
                 pkg_info_name = next(
                     (name for name in names if name.endswith("/PKG-INFO")),
                     "",
@@ -321,6 +331,16 @@ def main() -> int:
     require(
         sdist_has_install_acceptance,
         "source distribution omits the offline-install acceptance",
+        failures,
+    )
+    require(
+        sdist_has_status_acceptance,
+        "source distribution omits the offline-status acceptance",
+        failures,
+    )
+    require(
+        sdist_has_activation_spec,
+        "source distribution omits the service-activation specification",
         failures,
     )
 
@@ -454,6 +474,8 @@ def main() -> int:
         "sdist_includes_acceptance": sdist_has_acceptance,
         "sdist_includes_release_acceptance": sdist_has_release_acceptance,
         "sdist_includes_install_acceptance": sdist_has_install_acceptance,
+        "sdist_includes_status_acceptance": sdist_has_status_acceptance,
+        "sdist_includes_activation_spec": sdist_has_activation_spec,
         "credential_or_endpoint_material_present": unit_contains_forbidden_material,
         "daemon_imported_or_executed": False,
         "network_used": False,

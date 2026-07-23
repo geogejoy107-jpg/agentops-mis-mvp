@@ -27,6 +27,7 @@ BUNDLE_SCHEMA = "agentops.relay.release-bundle.v1"
 PLAN_SCHEMA = "agentops.relay.offline-install-plan.v0"
 INSTALLED_SCHEMA = "agentops.relay.installed-release.v0"
 TRANSACTION_SCHEMA = "agentops.relay.install-transaction.v0"
+STATUS_SCHEMA = "agentops.relay.offline-status.v0"
 VERSION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
@@ -88,6 +89,10 @@ MAX_WHEEL_MEMBERS = 4096
 MAX_WHEEL_MEMBER_SIZE = 32 * 1024 * 1024
 MAX_WHEEL_EXPANDED_SIZE = 256 * 1024 * 1024
 MAX_METADATA_SIZE = 1024 * 1024
+MAX_STATUS_DIRECTORY_ENTRIES = 4096
+MAX_STATUS_RELEASE_FILES = 4096
+MAX_STATUS_RELEASE_DIRECTORIES = 512
+MAX_STATUS_RELEASE_BYTES = 256 * 1024 * 1024
 
 CONFIG_PATH = "config/config.example.json"
 UNIT_PATH = "systemd/agentops-mis-relay.service"
@@ -104,6 +109,10 @@ class RelayAdminError(Exception):
         super().__init__(error_id)
         self.error_id = error_id
         self.future_operation_id = future_operation_id
+
+
+class RelayStatusInvalid(Exception):
+    """Internal sentinel for a bounded, redacted invalid status."""
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -176,6 +185,29 @@ class InstallPlan:
     plan_sha256: str
     root_fingerprint: str
     no_op: bool
+
+
+@dataclass(frozen=True)
+class StatusFile:
+    data: bytes
+    gid: int
+    mode: int
+    nlink: int
+    uid: int
+
+
+def _status_file_fingerprint(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        stat.S_IMODE(metadata.st_mode),
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_nlink,
+    )
 
 
 def _sha256(data: bytes) -> str:
@@ -1278,6 +1310,1009 @@ def _publish_install(plan: InstallPlan) -> None:
         os.close(root_descriptor)
 
 
+def _status_directory_flags() -> int:
+    return (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+
+
+def _status_file_flags() -> int:
+    return (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+
+
+def _status_safe_native_name(name: str) -> None:
+    if (
+        not name
+        or name in {".", ".."}
+        or "/" in name
+        or "\x00" in name
+        or len(name) > 240
+    ):
+        raise RelayStatusInvalid
+    try:
+        name.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise RelayStatusInvalid from exc
+
+
+def _status_open_directory_at(
+    root_descriptor: int,
+    parts: tuple[str, ...],
+    *,
+    missing_ok: bool,
+) -> int | None:
+    descriptor = os.dup(root_descriptor)
+    try:
+        for part in parts:
+            _status_safe_native_name(part)
+            try:
+                child = os.open(
+                    part,
+                    _status_directory_flags(),
+                    dir_fd=descriptor,
+                )
+            except FileNotFoundError:
+                if missing_ok:
+                    os.close(descriptor)
+                    return None
+                raise RelayStatusInvalid
+            except OSError as exc:
+                raise RelayStatusInvalid from exc
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except Exception:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        raise
+
+
+def _status_list_directory(descriptor: int) -> tuple[str, ...]:
+    try:
+        names = os.listdir(descriptor)
+    except OSError as exc:
+        raise RelayStatusInvalid from exc
+    if len(names) > MAX_STATUS_DIRECTORY_ENTRIES:
+        raise RelayStatusInvalid
+    for name in names:
+        _status_safe_native_name(name)
+    return tuple(sorted(names))
+
+
+def _status_lstat_at(
+    root_descriptor: int,
+    parts: tuple[str, ...],
+) -> os.stat_result | None:
+    if not parts:
+        try:
+            return os.fstat(root_descriptor)
+        except OSError as exc:
+            raise RelayStatusInvalid from exc
+    parent = _status_open_directory_at(
+        root_descriptor,
+        parts[:-1],
+        missing_ok=True,
+    )
+    if parent is None:
+        return None
+    try:
+        _status_safe_native_name(parts[-1])
+        try:
+            return os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise RelayStatusInvalid from exc
+    finally:
+        os.close(parent)
+
+
+def _status_read_file_at(
+    root_descriptor: int,
+    parts: tuple[str, ...],
+    *,
+    maximum: int,
+) -> StatusFile:
+    parent = _status_open_directory_at(
+        root_descriptor,
+        parts[:-1],
+        missing_ok=False,
+    )
+    if parent is None:
+        raise RelayStatusInvalid
+    descriptor = -1
+    try:
+        _status_safe_native_name(parts[-1])
+        before = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
+        if not stat.S_ISREG(before.st_mode):
+            raise RelayStatusInvalid
+        descriptor = os.open(parts[-1], _status_file_flags(), dir_fd=parent)
+        opened = os.fstat(descriptor)
+        if _status_file_fingerprint(before) != _status_file_fingerprint(opened):
+            raise RelayStatusInvalid
+        if opened.st_size < 0 or opened.st_size > maximum:
+            raise RelayStatusInvalid
+        chunks: list[bytes] = []
+        remaining = opened.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                raise RelayStatusInvalid
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            raise RelayStatusInvalid
+        after = os.fstat(descriptor)
+        if _status_file_fingerprint(opened) != _status_file_fingerprint(after):
+            raise RelayStatusInvalid
+        return StatusFile(
+            data=b"".join(chunks),
+            gid=opened.st_gid,
+            mode=stat.S_IMODE(opened.st_mode),
+            nlink=opened.st_nlink,
+            uid=opened.st_uid,
+        )
+    except RelayStatusInvalid:
+        raise
+    except OSError as exc:
+        raise RelayStatusInvalid from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        os.close(parent)
+
+
+def _status_read_symlink_at(
+    root_descriptor: int,
+    parts: tuple[str, ...],
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> str:
+    parent = _status_open_directory_at(
+        root_descriptor,
+        parts[:-1],
+        missing_ok=False,
+    )
+    if parent is None:
+        raise RelayStatusInvalid
+    try:
+        _status_safe_native_name(parts[-1])
+        metadata = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
+        if (
+            not stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != expected_uid
+            or metadata.st_gid != expected_gid
+        ):
+            raise RelayStatusInvalid
+        target = os.readlink(parts[-1], dir_fd=parent)
+        if len(target) > 240 or "\x00" in target:
+            raise RelayStatusInvalid
+        after = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
+        if _status_file_fingerprint(metadata) != _status_file_fingerprint(after):
+            raise RelayStatusInvalid
+        return target
+    except RelayStatusInvalid:
+        raise
+    except OSError as exc:
+        raise RelayStatusInvalid from exc
+    finally:
+        os.close(parent)
+
+
+def _status_validate_directory_at(
+    root_descriptor: int,
+    parts: tuple[str, ...],
+    *,
+    expected_uid: int,
+    expected_gid: int,
+    expected_mode: int,
+    expected_names: set[str] | None = None,
+) -> tuple[str, ...]:
+    descriptor = _status_open_directory_at(
+        root_descriptor,
+        parts,
+        missing_ok=False,
+    )
+    if descriptor is None:
+        raise RelayStatusInvalid
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != expected_uid
+            or metadata.st_gid != expected_gid
+            or stat.S_IMODE(metadata.st_mode) != expected_mode
+        ):
+            raise RelayStatusInvalid
+        names = _status_list_directory(descriptor)
+        if expected_names is not None and set(names) != expected_names:
+            raise RelayStatusInvalid
+        return names
+    finally:
+        os.close(descriptor)
+
+
+def _status_validate_safe_parent_chain(
+    root_descriptor: int,
+    parts: tuple[str, ...],
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> None:
+    descriptor = os.dup(root_descriptor)
+    try:
+        for part in parts:
+            _status_safe_native_name(part)
+            try:
+                child = os.open(
+                    part,
+                    _status_directory_flags(),
+                    dir_fd=descriptor,
+                )
+            except OSError as exc:
+                raise RelayStatusInvalid from exc
+            try:
+                metadata = os.fstat(child)
+                if (
+                    not stat.S_ISDIR(metadata.st_mode)
+                    or metadata.st_uid != expected_uid
+                    or metadata.st_gid != expected_gid
+                    or stat.S_IMODE(metadata.st_mode) & 0o022
+                ):
+                    raise RelayStatusInvalid
+            except Exception:
+                os.close(child)
+                raise
+            os.close(descriptor)
+            descriptor = child
+    finally:
+        os.close(descriptor)
+
+
+def _status_recovery_marker_count(root_descriptor: int) -> int:
+    scans = (
+        (
+            ("var", "lib", "agentops-relayctl"),
+            lambda name: name == "transaction.json"
+            or (name.startswith(".transaction-") and name.endswith(".tmp")),
+        ),
+        (
+            ("opt", "agentops-mis-relay", "releases"),
+            lambda name: name.startswith(".installing-"),
+        ),
+        (
+            ("etc", "systemd", "system"),
+            lambda name: name.startswith(f".{UNIT_NAME}.")
+            and name.endswith(".tmp"),
+        ),
+    )
+    count = 0
+    invalid_parent = False
+    for parts, predicate in scans:
+        try:
+            descriptor = _status_open_directory_at(
+                root_descriptor,
+                parts,
+                missing_ok=True,
+            )
+            if descriptor is None:
+                continue
+            try:
+                names = _status_list_directory(descriptor)
+            finally:
+                os.close(descriptor)
+            count += sum(1 for name in names if predicate(name))
+        except RelayStatusInvalid:
+            invalid_parent = True
+    if count:
+        return count
+    if invalid_parent:
+        raise RelayStatusInvalid
+    return 0
+
+
+def _status_scan_release_tree(
+    root_descriptor: int,
+    release_parts: tuple[str, ...],
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> tuple[dict[str, StatusFile], set[str]]:
+    root = _status_open_directory_at(
+        root_descriptor,
+        release_parts,
+        missing_ok=False,
+    )
+    if root is None:
+        raise RelayStatusInvalid
+    files: dict[str, StatusFile] = {}
+    directories: set[str] = set()
+    total_bytes = 0
+
+    def scan(descriptor: int, relative: tuple[str, ...]) -> None:
+        nonlocal total_bytes
+        metadata = os.fstat(descriptor)
+        if (
+            metadata.st_uid != expected_uid
+            or metadata.st_gid != expected_gid
+            or stat.S_IMODE(metadata.st_mode) != 0o755
+        ):
+            raise RelayStatusInvalid
+        relative_name = PurePosixPath(*relative).as_posix() if relative else ""
+        directories.add(relative_name)
+        if len(directories) > MAX_STATUS_RELEASE_DIRECTORIES:
+            raise RelayStatusInvalid
+        names = _status_list_directory(descriptor)
+        for name in names:
+            observed = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            child_relative = (*relative, name)
+            child_name = PurePosixPath(*child_relative).as_posix()
+            if stat.S_ISDIR(observed.st_mode):
+                try:
+                    child = os.open(
+                        name,
+                        _status_directory_flags(),
+                        dir_fd=descriptor,
+                    )
+                except OSError as exc:
+                    raise RelayStatusInvalid from exc
+                try:
+                    opened = os.fstat(child)
+                    if (observed.st_dev, observed.st_ino) != (
+                        opened.st_dev,
+                        opened.st_ino,
+                    ):
+                        raise RelayStatusInvalid
+                    scan(child, child_relative)
+                finally:
+                    os.close(child)
+                continue
+            if not stat.S_ISREG(observed.st_mode):
+                raise RelayStatusInvalid
+            expected_mode = 0o755 if child_name == "bin/agentops-relay" else 0o644
+            if (
+                observed.st_uid != expected_uid
+                or observed.st_gid != expected_gid
+                or stat.S_IMODE(observed.st_mode) != expected_mode
+                or observed.st_nlink != 1
+            ):
+                raise RelayStatusInvalid
+            if len(files) >= MAX_STATUS_RELEASE_FILES:
+                raise RelayStatusInvalid
+            try:
+                child = os.open(
+                    name,
+                    _status_file_flags(),
+                    dir_fd=descriptor,
+                )
+            except OSError as exc:
+                raise RelayStatusInvalid from exc
+            try:
+                opened = os.fstat(child)
+                if _status_file_fingerprint(observed) != _status_file_fingerprint(
+                    opened
+                ):
+                    raise RelayStatusInvalid
+                if (
+                    opened.st_size < 0
+                    or opened.st_size > MAX_WHEEL_MEMBER_SIZE
+                    or total_bytes + opened.st_size > MAX_STATUS_RELEASE_BYTES
+                ):
+                    raise RelayStatusInvalid
+                chunks: list[bytes] = []
+                remaining = opened.st_size
+                while remaining:
+                    chunk = os.read(child, min(1024 * 1024, remaining))
+                    if not chunk:
+                        raise RelayStatusInvalid
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                if os.read(child, 1):
+                    raise RelayStatusInvalid
+                after = os.fstat(child)
+                if _status_file_fingerprint(opened) != _status_file_fingerprint(
+                    after
+                ):
+                    raise RelayStatusInvalid
+                data = b"".join(chunks)
+            finally:
+                os.close(child)
+            total_bytes += len(data)
+            files[child_name] = StatusFile(
+                data=data,
+                gid=opened.st_gid,
+                mode=stat.S_IMODE(opened.st_mode),
+                nlink=opened.st_nlink,
+                uid=opened.st_uid,
+            )
+
+    try:
+        scan(root, ())
+    finally:
+        os.close(root)
+    return files, directories
+
+
+def _status_release_metadata(data: bytes) -> dict[str, Any]:
+    try:
+        metadata = _parse_json(data)
+    except RelayAdminError as exc:
+        raise RelayStatusInvalid from exc
+    required = {
+        "archive_sha256",
+        "bundle_schema",
+        "git_commit",
+        "installed_file_count",
+        "launcher_sha256",
+        "manifest_sha256",
+        "release_id",
+        "schema",
+        "unit_sha256",
+        "version",
+        "wheel_member_count",
+        "wheel_sha256",
+    }
+    if (
+        not isinstance(metadata, dict)
+        or set(metadata) != required
+        or data != _canonical_json(metadata)
+        or metadata.get("schema") != INSTALLED_SCHEMA
+        or metadata.get("bundle_schema") != BUNDLE_SCHEMA
+    ):
+        raise RelayStatusInvalid
+    version = metadata.get("version")
+    commit = metadata.get("git_commit")
+    release_id = metadata.get("release_id")
+    if (
+        not isinstance(version, str)
+        or not VERSION_PATTERN.fullmatch(version)
+        or not isinstance(commit, str)
+        or not COMMIT_PATTERN.fullmatch(commit)
+        or not isinstance(release_id, str)
+        or release_id != f"{version}-{commit[:12]}"
+        or not RELEASE_ID_PATTERN.fullmatch(release_id)
+    ):
+        raise RelayStatusInvalid
+    for name in (
+        "archive_sha256",
+        "launcher_sha256",
+        "manifest_sha256",
+        "unit_sha256",
+        "wheel_sha256",
+    ):
+        value = metadata.get(name)
+        if not isinstance(value, str) or not SHA256_PATTERN.fullmatch(value):
+            raise RelayStatusInvalid
+    for name in ("installed_file_count", "wheel_member_count"):
+        value = metadata.get(name)
+        if type(value) is not int or value <= 0 or value > MAX_STATUS_RELEASE_FILES:
+            raise RelayStatusInvalid
+    if metadata["launcher_sha256"] != _sha256(_launcher_data()):
+        raise RelayStatusInvalid
+    return metadata
+
+
+def _status_validate_site_packages(
+    site_files: dict[str, bytes],
+    *,
+    version: str,
+    wheel_member_count: int,
+) -> None:
+    dist_info = f"agentops_mis_cli-{version}.dist-info"
+    expected_dist_info = {
+        f"{dist_info}/METADATA",
+        f"{dist_info}/RECORD",
+        f"{dist_info}/WHEEL",
+        f"{dist_info}/entry_points.txt",
+    }
+    package_members = {
+        name for name in site_files if PACKAGE_MEMBER_PATTERN.fullmatch(name)
+    }
+    dist_info_members = {
+        name
+        for name in site_files
+        if PurePosixPath(name).parts[0] == dist_info
+    }
+    if (
+        package_members != EXPECTED_WHEEL_MODULES
+        or dist_info_members != expected_dist_info
+        or set(site_files) != EXPECTED_WHEEL_MODULES | expected_dist_info
+        or wheel_member_count != len(site_files)
+        or any(
+            len(site_files[name]) > MAX_METADATA_SIZE
+            for name in expected_dist_info
+        )
+    ):
+        raise RelayStatusInvalid
+    entries = tuple(
+        WheelEntry(name=name, data=data)
+        for name, data in sorted(site_files.items())
+    )
+    expected_metadata = "\n".join(
+        [
+            "Metadata-Version: 2.2",
+            "Name: agentops-mis-cli",
+            f"Version: {version}",
+            "Summary: Installable AgentOps MIS Agent Gateway CLI wrapper.",
+            "Requires-Python: >=3.10",
+            "License: Proprietary local MVP",
+            "",
+        ]
+    ).encode("utf-8")
+    expected_wheel_metadata = "\n".join(
+        [
+            "Wheel-Version: 1.0",
+            "Generator: agentops-mis-cli offline backend",
+            "Root-Is-Purelib: true",
+            "Tag: py3-none-any",
+            "",
+        ]
+    ).encode("utf-8")
+    expected_entry_points = "\n".join(
+        [
+            "[console_scripts]",
+            "agentops = agentops_mis_cli.cli:main",
+            "agentops-relay = agentops_mis_cli.relay_daemon:main",
+            "agentops-relayctl = agentops_mis_cli.relay_admin:main",
+            "agentops-worker = agentops_mis_cli.worker:main",
+            "",
+        ]
+    ).encode("utf-8")
+    try:
+        metadata = _metadata_fields(
+            site_files[f"{dist_info}/METADATA"],
+            "installed_state_invalid",
+        )
+        wheel_metadata = _metadata_fields(
+            site_files[f"{dist_info}/WHEEL"],
+            "installed_state_invalid",
+        )
+        parser = configparser.ConfigParser(interpolation=None, strict=True)
+        parser.optionxform = str
+        parser.read_string(
+            site_files[f"{dist_info}/entry_points.txt"].decode("utf-8")
+        )
+        scripts = dict(parser.items("console_scripts"))
+        _validate_wheel_record(entries, f"{dist_info}/RECORD")
+    except (
+        KeyError,
+        UnicodeDecodeError,
+        configparser.Error,
+        configparser.NoSectionError,
+        RelayAdminError,
+    ) as exc:
+        raise RelayStatusInvalid from exc
+    if (
+        metadata.get("Metadata-Version") != "2.2"
+        or metadata.get("Name") != "agentops-mis-cli"
+        or metadata.get("Version") != version
+        or site_files[f"{dist_info}/METADATA"] != expected_metadata
+        or wheel_metadata.get("Wheel-Version") != "1.0"
+        or wheel_metadata.get("Root-Is-Purelib") != "true"
+        or wheel_metadata.get("Tag") != "py3-none-any"
+        or site_files[f"{dist_info}/WHEEL"] != expected_wheel_metadata
+        or site_files[f"{dist_info}/entry_points.txt"] != expected_entry_points
+        or parser.sections() != ["console_scripts"]
+        or scripts
+        != {
+            "agentops": "agentops_mis_cli.cli:main",
+            "agentops-relay": "agentops_mis_cli.relay_daemon:main",
+            "agentops-relayctl": "agentops_mis_cli.relay_admin:main",
+            "agentops-worker": "agentops_mis_cli.worker:main",
+        }
+    ):
+        raise RelayStatusInvalid
+
+
+def _status_expected_directories(file_names: set[str]) -> set[str]:
+    directories = {""}
+    for name in file_names:
+        path = PurePosixPath(name)
+        for parent in path.parents:
+            if parent != PurePosixPath("."):
+                directories.add(parent.as_posix())
+    return directories
+
+
+def _status_installed_valid(
+    root_descriptor: int,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> dict[str, object]:
+    opt_parts = ("opt", "agentops-mis-relay")
+    releases_parts = (*opt_parts, "releases")
+    for chain in (
+        releases_parts,
+        ("usr", "local", "bin"),
+        ("etc", "systemd", "system"),
+        ("var", "lib", "agentops-relayctl"),
+    ):
+        _status_validate_safe_parent_chain(
+            root_descriptor,
+            chain,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+    opt_names = _status_validate_directory_at(
+        root_descriptor,
+        opt_parts,
+        expected_uid=expected_uid,
+        expected_gid=expected_gid,
+        expected_mode=0o755,
+        expected_names={"controller", "current", "releases"},
+    )
+    del opt_names
+    releases_descriptor = _status_open_directory_at(
+        root_descriptor,
+        releases_parts,
+        missing_ok=False,
+    )
+    if releases_descriptor is None:
+        raise RelayStatusInvalid
+    try:
+        releases_metadata = os.fstat(releases_descriptor)
+        release_names = _status_list_directory(releases_descriptor)
+    finally:
+        os.close(releases_descriptor)
+    if (
+        releases_metadata.st_uid != expected_uid
+        or releases_metadata.st_gid != expected_gid
+        or stat.S_IMODE(releases_metadata.st_mode) != 0o755
+        or len(release_names) != 1
+        or not RELEASE_ID_PATTERN.fullmatch(release_names[0])
+    ):
+        raise RelayStatusInvalid
+    release_id = release_names[0]
+    expected_release_target = f"releases/{release_id}"
+    if (
+        _status_read_symlink_at(
+            root_descriptor,
+            (*opt_parts, "current"),
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        != expected_release_target
+        or _status_read_symlink_at(
+            root_descriptor,
+            (*opt_parts, "controller"),
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        != expected_release_target
+    ):
+        raise RelayStatusInvalid
+    stable_parts = ("usr", "local", "bin", LAUNCHER_NAME)
+    stable_target = "../../../opt/agentops-mis-relay/current/bin/agentops-relay"
+    if (
+        _status_read_symlink_at(
+            root_descriptor,
+            stable_parts,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        != stable_target
+    ):
+        raise RelayStatusInvalid
+    admin_parts = ("var", "lib", "agentops-relayctl")
+    _status_validate_directory_at(
+        root_descriptor,
+        admin_parts,
+        expected_uid=expected_uid,
+        expected_gid=expected_gid,
+        expected_mode=0o700,
+        expected_names={"lifecycle.lock"},
+    )
+    lifecycle = _status_read_file_at(
+        root_descriptor,
+        (*admin_parts, "lifecycle.lock"),
+        maximum=0,
+    )
+    if (
+        lifecycle.data
+        or lifecycle.mode != 0o600
+        or lifecycle.uid != expected_uid
+        or lifecycle.gid != expected_gid
+        or lifecycle.nlink != 1
+    ):
+        raise RelayStatusInvalid
+    release_parts = (*releases_parts, release_id)
+    release_files, release_directories = _status_scan_release_tree(
+        root_descriptor,
+        release_parts,
+        expected_uid=expected_uid,
+        expected_gid=expected_gid,
+    )
+    try:
+        release_json = release_files["release.json"].data
+        launcher = release_files["bin/agentops-relay"].data
+        release_unit = release_files[f"systemd/{UNIT_NAME}"].data
+    except KeyError as exc:
+        raise RelayStatusInvalid from exc
+    metadata = _status_release_metadata(release_json)
+    if metadata["release_id"] != release_id:
+        raise RelayStatusInvalid
+    site_prefix = "private/site-packages/"
+    site_files = {
+        name[len(site_prefix) :]: observed.data
+        for name, observed in release_files.items()
+        if name.startswith(site_prefix)
+    }
+    _status_validate_site_packages(
+        site_files,
+        version=metadata["version"],
+        wheel_member_count=metadata["wheel_member_count"],
+    )
+    expected_release_files = {
+        "bin/agentops-relay",
+        "release.json",
+        f"systemd/{UNIT_NAME}",
+        *(f"{site_prefix}{name}" for name in site_files),
+    }
+    if (
+        set(release_files) != expected_release_files
+        or release_directories
+        != _status_expected_directories(expected_release_files)
+        or metadata["installed_file_count"] != len(release_files)
+        or metadata["installed_file_count"] != len(site_files) + 3
+        or launcher != _launcher_data()
+        or _sha256(launcher) != metadata["launcher_sha256"]
+        or _sha256(release_unit) != metadata["unit_sha256"]
+    ):
+        raise RelayStatusInvalid
+    installed_unit = _status_read_file_at(
+        root_descriptor,
+        ("etc", "systemd", "system", UNIT_NAME),
+        maximum=MAX_METADATA_SIZE,
+    )
+    if (
+        installed_unit.data != release_unit
+        or _sha256(installed_unit.data) != metadata["unit_sha256"]
+        or installed_unit.mode != 0o644
+        or installed_unit.uid != expected_uid
+        or installed_unit.gid != expected_gid
+        or installed_unit.nlink != 1
+    ):
+        raise RelayStatusInvalid
+    return {
+        "installed": True,
+        "ok": True,
+        "operation_id": "status",
+        "provenance_archive_sha256": metadata["archive_sha256"],
+        "provenance_git_commit": metadata["git_commit"],
+        "provenance_manifest_sha256": metadata["manifest_sha256"],
+        "provenance_only": True,
+        "provenance_wheel_sha256": metadata["wheel_sha256"],
+        "record_integrity_valid": True,
+        "relationships_valid": True,
+        "release_directory_count": len(release_directories),
+        "release_file_count": len(release_files),
+        "release_id": release_id,
+        "schema_id": STATUS_SCHEMA,
+        "site_package_file_count": len(site_files),
+        "state_id": "installed_valid",
+        "version_id": metadata["version"],
+    }
+
+
+def _status_absent_or_scaffolding(
+    root_descriptor: int,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> bool:
+    stable = _status_lstat_at(
+        root_descriptor,
+        ("usr", "local", "bin", LAUNCHER_NAME),
+    )
+    unit = _status_lstat_at(
+        root_descriptor,
+        ("etc", "systemd", "system", UNIT_NAME),
+    )
+    if stable is not None or unit is not None:
+        return False
+    opt_parts = ("opt", "agentops-mis-relay")
+    opt = _status_lstat_at(root_descriptor, opt_parts)
+    if opt is not None:
+        if not stat.S_ISDIR(opt.st_mode):
+            return False
+        _status_validate_safe_parent_chain(
+            root_descriptor,
+            opt_parts,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        opt_names = _status_validate_directory_at(
+            root_descriptor,
+            opt_parts,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+            expected_mode=0o755,
+        )
+        if set(opt_names) not in (set(), {"releases"}):
+            return False
+        if "releases" in opt_names:
+            _status_validate_safe_parent_chain(
+                root_descriptor,
+                (*opt_parts, "releases"),
+                expected_uid=expected_uid,
+                expected_gid=expected_gid,
+            )
+            _status_validate_directory_at(
+                root_descriptor,
+                (*opt_parts, "releases"),
+                expected_uid=expected_uid,
+                expected_gid=expected_gid,
+                expected_mode=0o755,
+                expected_names=set(),
+            )
+    admin_parts = ("var", "lib", "agentops-relayctl")
+    admin = _status_lstat_at(root_descriptor, admin_parts)
+    if admin is not None:
+        if not stat.S_ISDIR(admin.st_mode):
+            return False
+        _status_validate_safe_parent_chain(
+            root_descriptor,
+            admin_parts,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        admin_names = _status_validate_directory_at(
+            root_descriptor,
+            admin_parts,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+            expected_mode=0o700,
+        )
+        if set(admin_names) not in (set(), {"lifecycle.lock"}):
+            return False
+        if "lifecycle.lock" in admin_names:
+            lifecycle = _status_read_file_at(
+                root_descriptor,
+                (*admin_parts, "lifecycle.lock"),
+                maximum=0,
+            )
+            if (
+                lifecycle.data
+                or lifecycle.mode != 0o600
+                or lifecycle.uid != expected_uid
+                or lifecycle.gid != expected_gid
+                or lifecycle.nlink != 1
+            ):
+                raise RelayStatusInvalid
+    return True
+
+
+def _status_scan_anchored(root_descriptor: int) -> tuple[dict[str, object], int]:
+    root_metadata = os.fstat(root_descriptor)
+    if (
+        not stat.S_ISDIR(root_metadata.st_mode)
+        or root_metadata.st_uid not in {0, os.geteuid()}
+        or stat.S_IMODE(root_metadata.st_mode) & 0o022
+    ):
+        raise RelayStatusInvalid
+    marker_count = _status_recovery_marker_count(root_descriptor)
+    if marker_count:
+        return (
+            {
+                "installed": False,
+                "ok": False,
+                "operation_id": "status",
+                "recovery_marker_count": marker_count,
+                "recovery_required": True,
+                "schema_id": STATUS_SCHEMA,
+                "state_id": "recovery_required",
+            },
+            1,
+        )
+    if _status_absent_or_scaffolding(
+        root_descriptor,
+        expected_uid=root_metadata.st_uid,
+        expected_gid=root_metadata.st_gid,
+    ):
+        return (
+            {
+                "installed": False,
+                "ok": True,
+                "operation_id": "status",
+                "recovery_required": False,
+                "schema_id": STATUS_SCHEMA,
+                "state_id": "absent",
+            },
+            0,
+        )
+    return (
+        _status_installed_valid(
+            root_descriptor,
+            expected_uid=root_metadata.st_uid,
+            expected_gid=root_metadata.st_gid,
+        ),
+        0,
+    )
+
+
+def relay_status(root: Path) -> tuple[dict[str, object], int]:
+    if not root.is_absolute():
+        return (
+            {
+                "installed": False,
+                "ok": False,
+                "operation_id": "status",
+                "schema_id": STATUS_SCHEMA,
+                "state_id": "invalid",
+            },
+            1,
+        )
+    cwd_descriptor = -1
+    root_descriptor = -1
+    result: tuple[dict[str, object], int] | None = None
+    restore_failed = False
+    try:
+        cwd_descriptor = os.open(".", _status_directory_flags())
+        root_descriptor = os.open(root, _status_directory_flags())
+        root_fingerprint = _metadata_fingerprint(os.fstat(root_descriptor))
+        os.fchdir(root_descriptor)
+        result = _status_scan_anchored(root_descriptor)
+        held_root = os.fstat(root_descriptor)
+        current_root = os.stat(root, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(current_root.st_mode)
+            or _metadata_fingerprint(held_root) != root_fingerprint
+            or _metadata_fingerprint(current_root) != root_fingerprint
+        ):
+            raise RelayStatusInvalid
+    except Exception:
+        result = (
+            {
+                "installed": False,
+                "ok": False,
+                "operation_id": "status",
+                "schema_id": STATUS_SCHEMA,
+                "state_id": "invalid",
+            },
+            1,
+        )
+    finally:
+        if cwd_descriptor >= 0:
+            try:
+                os.fchdir(cwd_descriptor)
+            except OSError:
+                restore_failed = True
+            finally:
+                try:
+                    os.close(cwd_descriptor)
+                except OSError:
+                    restore_failed = True
+        if root_descriptor >= 0:
+            try:
+                os.close(root_descriptor)
+            except OSError:
+                restore_failed = True
+    if restore_failed or result is None:
+        return (
+            {
+                "installed": False,
+                "ok": False,
+                "operation_id": "status",
+                "schema_id": STATUS_SCHEMA,
+                "state_id": "invalid",
+            },
+            1,
+        )
+    return result
+
+
 def _inspect_output(bundle: RelayBundle) -> dict[str, object]:
     return {
         "archive_member_count": bundle.archive_member_count,
@@ -1321,9 +2356,10 @@ def _install_output(
 
 
 def _build_parser() -> JsonArgumentParser:
-    parser = JsonArgumentParser(description=__doc__)
+    parser = JsonArgumentParser(prog="agentops-relayctl", description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("/"))
     subparsers = parser.add_subparsers(dest="operation", required=True)
+    subparsers.add_parser("status")
     for name in ("inspect", "install"):
         command = subparsers.add_parser(name)
         command.add_argument("--bundle", type=Path, required=True)
@@ -1336,7 +2372,7 @@ def _build_parser() -> JsonArgumentParser:
 
 def _operation_id(argv: list[str]) -> str:
     for value in argv:
-        if value in {"inspect", "install"}:
+        if value in {"inspect", "install", "status"}:
             return value
     return "cli"
 
@@ -1347,6 +2383,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = _build_parser().parse_args(arguments)
         operation_id = args.operation
+        if args.operation == "status":
+            output, status_code = relay_status(args.root)
+            print(
+                json.dumps(output, ensure_ascii=True, indent=2, sort_keys=True),
+                file=sys.stdout,
+            )
+            return status_code
         bundle = inspect_bundle(args.bundle, args.expect_sha256)
         if args.operation == "inspect":
             _resolve_root(args.root)
