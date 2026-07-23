@@ -1099,16 +1099,18 @@ def operator_local_loop_admission_packet(
         or f"agentops worker service-control --manager launchd --action restart --adapter {adapter} --agent-id {service_agent_id} --confirm-control"
     )
     evidence_report_command = "agentops operator evidence-report --run-id <run_id> --limit 1"
-    service_control_action_signature = hashlib.sha256(
-        f"operator_start_check.service_control_preview:{adapter}:{service_command}:{service_verify}".encode("utf-8")
+    service_control_action_id = f"local_readiness.service_control_preview.{adapter}"
+    service_control_source = str(service_step.get("source") or service_control_action_id)
+    service_control_action_signature = str(service_step.get("action_signature") or "").strip() or hashlib.sha256(
+        f"local_readiness.service_control_preview:{adapter}:{service_command}:{service_verify}".encode("utf-8")
     ).hexdigest()
     service_control_receipt_command = " ".join(shlex.quote(str(part)) for part in [
         "agentops", "operator", "record-action-receipt",
         "--action-command", service_command,
         "--verify-command", service_verify,
-        "--action-id", f"operator_start_check.service_control_preview.{adapter}",
+        "--action-id", service_control_action_id,
         "--action-signature", service_control_action_signature,
-        "--source", f"operator_start_check.service_control_preview.{adapter}",
+        "--source", service_control_source,
         "--status", "verified",
         "--result-summary", f"{adapter} worker service-control preview inspected and service-check reviewed.",
         "--confirm-record",
@@ -1116,7 +1118,7 @@ def operator_local_loop_admission_packet(
     service_control_readback_command = " ".join(shlex.quote(str(part)) for part in [
         "agentops", "operator", "record-control-readback",
         "--receipt-id", str(service_managed_loop.get("receipt_id") or "<receipt_id>"),
-        "--source", f"operator_start_check.service_control_preview.{adapter}.control_readback",
+        "--source", f"{service_control_source}.control_readback",
         "--control-readback-json", json.dumps({
             "before": {
                 "step_id": "preview_worker_service_control",
