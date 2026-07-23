@@ -202,6 +202,7 @@ async function reviewCandidate(
     },
   });
   await appendRuntimeEvent(client, {
+    workspaceId: identity.workspaceId,
     eventType: `memory.${requestedDecision}`,
     status: "completed",
     taskId: before.task_id,

@@ -26,6 +26,8 @@ import {
 } from "../src/server/controlPlane/humanPasswordPolicy";
 import { ControlPlaneHttpError } from "../src/server/controlPlane/http";
 import { stableHash } from "../src/server/controlPlane/ledger";
+import { listWorkspaceMemoryCandidates } from "../src/server/controlPlane/memoryCandidates";
+import { reviewWorkspaceMemory } from "../src/server/controlPlane/memoryReviews";
 import {
   POSTGRES_MIGRATION_MANIFEST,
   runPostgresSchemaCommand,
@@ -173,6 +175,27 @@ function decisionRequest(
     }),
     body: JSON.stringify(body),
   });
+}
+
+function memoryDecisionRequest(
+  session: HumanBrowserSession,
+  memoryId: string,
+  decision: "approve" | "reject",
+  key: string,
+  workspaceId = WORKSPACE,
+) {
+  return new Request(
+    `${ORIGIN}/api/mis/memories/${memoryId}/${decision}`,
+    {
+      method: "POST",
+      headers: browserHeaders(session, {
+        csrf: session.csrf,
+        idempotencyKey: key,
+        workspaceId,
+      }),
+      body: JSON.stringify({ workspace_id: workspaceId }),
+    },
+  );
 }
 
 async function seedHuman(
@@ -521,13 +544,31 @@ async function requestApproval(fixture: DeliveryFixture) {
 }
 
 async function sourceBoundaryContract() {
-  const route = await readFile(
-    new URL(
-      "../app/api/mis/approvals/[approvalId]/[decision]/route.ts",
-      import.meta.url,
-    ),
-    "utf8",
-  );
+  const [route, memoryListRoute, memoryDecisionRoute, memoryReviewSource] =
+    await Promise.all([
+      readFile(
+        new URL(
+          "../app/api/mis/approvals/[approvalId]/[decision]/route.ts",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(
+        new URL("../app/api/mis/memories/route.ts", import.meta.url),
+        "utf8",
+      ),
+      readFile(
+        new URL(
+          "../app/api/mis/memories/[memoryId]/[decision]/route.ts",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(
+        new URL("../src/server/controlPlane/memoryReviews.ts", import.meta.url),
+        "utf8",
+      ),
+    ]);
   const humanSource = await readFile(
     new URL("../src/server/controlPlane/humanSession.ts", import.meta.url),
     "utf8",
@@ -535,6 +576,13 @@ async function sourceBoundaryContract() {
   assert.match(route, /legacyPythonProxyAllowed/);
   assert.match(route, /proxyControlPlaneRequest/);
   assert.match(route, /human_session_direct_route_required/);
+  for (const memoryRoute of [memoryListRoute, memoryDecisionRoute]) {
+    assert.match(memoryRoute, /controlPlaneMode\(\) === "proxy"/);
+    assert.match(memoryRoute, /proxyControlPlaneRequest/);
+    assert.match(memoryRoute, /human_session_direct_route_required/);
+  }
+  assert.doesNotMatch(memoryReviewSource, /proxyControlPlaneRequest/);
+  assert.doesNotMatch(memoryReviewSource, /\bpython\b/i);
   assert.match(humanSource, /SameSite=Strict/);
   assert.match(humanSource, /HttpOnly/);
   assert.match(humanSource, /isProductionDeployment\(\).*Secure/s);
@@ -601,6 +649,38 @@ async function main() {
     fixtures.push(await seedDeliveryEvidence(admin, "owner", "openclaw"));
     fixtures.push(await seedDeliveryEvidence(admin, "race", "hermes"));
     fixtures.push(await seedDeliveryEvidence(admin, "self", "openclaw"));
+    const memoryIds = [
+      "mem_human_approve",
+      "mem_human_reject",
+      "mem_human_race",
+    ];
+    const memoryCreatedAt = new Date().toISOString();
+    for (const [index, memoryId] of memoryIds.entries()) {
+      const fixture = fixtures[index];
+      await admin.query(
+        `INSERT INTO memories(
+          memory_id,workspace_id,scope,memory_type,canonical_text,source_type,
+          source_ref,project_id,task_id,run_id,agent_id,confidence,
+          review_status,owner_user_id,ttl_review_due_at,supersedes_memory_id,
+          access_tags,created_at,updated_at
+        ) VALUES(
+          $1,$2,'project','artifact_summary',$3,'run_log',$4,'agentops-mis',
+          $5,$6,$7,0.9,'candidate',NULL,$8,NULL,$9,$10,$10
+        )`,
+        [
+          memoryId,
+          WORKSPACE,
+          `Bounded review candidate ${index + 1}.`,
+          fixture.runId,
+          fixture.taskId,
+          fixture.runId,
+          fixture.agentId,
+          new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          JSON.stringify(["human-review-contract"]),
+          memoryCreatedAt,
+        ],
+      );
+    }
     for (const fixture of fixtures) {
       await admin.query(
         `INSERT INTO agent_gateway_tokens(
@@ -726,6 +806,161 @@ async function main() {
       })));
     self = await login("self-agent", fixtures[3].agentId);
     const owner = await login("owner", OWNER_ID);
+
+    const memoryCandidates = await listWorkspaceMemoryCandidates(
+      browserHeaders(reviewer, {
+        workspaceId: WORKSPACE,
+        includeOrigin: false,
+      }),
+      WORKSPACE,
+    );
+    assert.deepEqual(
+      new Set(memoryCandidates.body.map((row) => row.memory_id)),
+      new Set(memoryIds),
+    );
+    await expectCode("human_membership_forbidden", () =>
+      listWorkspaceMemoryCandidates(
+        browserHeaders(reviewer, {
+          workspaceId: FOREIGN_WORKSPACE,
+          includeOrigin: false,
+        }),
+        FOREIGN_WORKSPACE,
+      ));
+    await expectCode("machine_credential_not_allowed", () =>
+      reviewWorkspaceMemory(
+        new Request(
+          `${ORIGIN}/api/mis/memories/${memoryIds[0]}/approve`,
+          {
+            method: "POST",
+            headers: browserHeaders(reviewer, {
+              csrf: reviewer.csrf,
+              idempotencyKey: "memory-machine-boundary-0001",
+              workspaceId: WORKSPACE,
+              machineCredential: true,
+            }),
+          },
+        ),
+        { workspace_id: WORKSPACE },
+        memoryIds[0],
+        "approve",
+      ));
+    await expectCode("csrf_validation_failed", () =>
+      reviewWorkspaceMemory(
+        new Request(
+          `${ORIGIN}/api/mis/memories/${memoryIds[0]}/approve`,
+          {
+            method: "POST",
+            headers: browserHeaders(reviewer, {
+              csrf: "0".repeat(64),
+              idempotencyKey: "memory-csrf-boundary-0001",
+              workspaceId: WORKSPACE,
+            }),
+          },
+        ),
+        { workspace_id: WORKSPACE },
+        memoryIds[0],
+        "approve",
+      ));
+    const memoryApproveKey = "memory-human-approve-0001";
+    const memoryApproved = await reviewWorkspaceMemory(
+      memoryDecisionRequest(
+        reviewer,
+        memoryIds[0],
+        "approve",
+        memoryApproveKey,
+      ),
+      { workspace_id: WORKSPACE },
+      memoryIds[0],
+      "approve",
+    );
+    assert.equal(memoryApproved.body.outcome, "updated");
+    assert.equal(memoryApproved.body.review_status, "approved");
+    const memoryReplay = await reviewWorkspaceMemory(
+      memoryDecisionRequest(
+        reviewer,
+        memoryIds[0],
+        "approve",
+        memoryApproveKey,
+      ),
+      { workspace_id: WORKSPACE },
+      memoryIds[0],
+      "approve",
+    );
+    assert.equal(memoryReplay.body.outcome, "unchanged");
+    await expectCode("memory_review_conflict", () =>
+      reviewWorkspaceMemory(
+        memoryDecisionRequest(
+          reviewer,
+          memoryIds[0],
+          "approve",
+          "memory-human-approve-new-key",
+        ),
+        { workspace_id: WORKSPACE },
+        memoryIds[0],
+        "approve",
+      ));
+    const memoryRejected = await reviewWorkspaceMemory(
+      memoryDecisionRequest(
+        owner,
+        memoryIds[1],
+        "reject",
+        "memory-human-reject-0001",
+      ),
+      { workspace_id: WORKSPACE },
+      memoryIds[1],
+      "reject",
+    );
+    assert.equal(memoryRejected.body.review_status, "rejected");
+    const memoryRace = await Promise.allSettled([
+      reviewWorkspaceMemory(
+        memoryDecisionRequest(
+          reviewer,
+          memoryIds[2],
+          "approve",
+          "memory-human-race-approve",
+        ),
+        { workspace_id: WORKSPACE },
+        memoryIds[2],
+        "approve",
+      ),
+      reviewWorkspaceMemory(
+        memoryDecisionRequest(
+          owner,
+          memoryIds[2],
+          "reject",
+          "memory-human-race-reject",
+        ),
+        { workspace_id: WORKSPACE },
+        memoryIds[2],
+        "reject",
+      ),
+    ]);
+    assert.equal(
+      memoryRace.filter((result) => result.status === "fulfilled").length,
+      1,
+    );
+    assert.equal(
+      memoryRace.filter((result) => result.status === "rejected").length,
+      1,
+    );
+    const memoryRaceRow = await admin.query<{
+      review_status: string;
+      owner_user_id: string;
+      decisions: string;
+    }>(
+      `SELECT memory.review_status,memory.owner_user_id,
+        (SELECT COUNT(*)::text FROM human_memory_review_requests request
+          WHERE request.memory_id=memory.memory_id) AS decisions
+      FROM memories memory WHERE memory.memory_id=$1`,
+      [memoryIds[2]],
+    );
+    assert.ok(
+      ["approved", "rejected"].includes(memoryRaceRow.rows[0].review_status),
+    );
+    assert.ok(
+      [REVIEWER_ID, OWNER_ID].includes(memoryRaceRow.rows[0].owner_user_id),
+    );
+    assert.equal(Number(memoryRaceRow.rows[0].decisions), 1);
 
     await expectCode("machine_credential_not_allowed", () =>
       decideWorkspaceApproval(
@@ -1026,21 +1261,34 @@ async function main() {
       decisions: string;
       approval_audits: string;
       runtime_events: string;
+      memory_decisions: string;
+      memory_audits: string;
+      memory_runtime_events: string;
     }>(
       `SELECT
         (SELECT COUNT(*)::text FROM human_approval_decision_requests) AS decisions,
         (SELECT COUNT(*)::text FROM audit_logs
           WHERE action LIKE 'approval.customer_delivery.%') AS approval_audits,
         (SELECT COUNT(*)::text FROM runtime_events
-          WHERE event_type LIKE 'approval.customer_delivery.%') AS runtime_events`,
+          WHERE event_type LIKE 'approval.customer_delivery.%') AS runtime_events,
+        (SELECT COUNT(*)::text FROM human_memory_review_requests) AS memory_decisions,
+        (SELECT COUNT(*)::text FROM audit_logs
+          WHERE action IN ('memory.approved','memory.rejected')) AS memory_audits,
+        (SELECT COUNT(*)::text FROM runtime_events
+          WHERE workspace_id=$1
+            AND event_type IN ('memory.approved','memory.rejected')) AS memory_runtime_events`,
+      [WORKSPACE],
     );
     assert.equal(Number(counts.rows[0].decisions), 4);
     assert.equal(Number(counts.rows[0].approval_audits), 4);
     assert.ok(Number(counts.rows[0].runtime_events) >= 8);
+    assert.equal(Number(counts.rows[0].memory_decisions), 3);
+    assert.equal(Number(counts.rows[0].memory_audits), 3);
+    assert.equal(Number(counts.rows[0].memory_runtime_events), 3);
 
     const receipt = {
       ok: true,
-      contract: "nextjs_postgres_human_session_customer_delivery_v1",
+      contract: "nextjs_postgres_human_session_review_v2",
       postgres_major: 16,
       schema_contract: SCHEMA_CONTRACT,
       migrations_applied: POSTGRES_MIGRATION_MANIFEST.length,
@@ -1058,6 +1306,10 @@ async function main() {
       agent_self_approval_rejected: true,
       pending_terminal_single_winner: true,
       exact_replay_unchanged: true,
+      memory_candidate_list: true,
+      memory_review_idempotent: true,
+      memory_review_single_winner: true,
+      memory_review_workspace_bound: true,
       terminal_overwrite_rejected: true,
       plan_manifest_evidence_hash_bound: true,
       evidence_seal_v4_compatible: true,
