@@ -1,18 +1,28 @@
-import { createHash, randomUUID } from "node:crypto";
+import {
+  createHash,
+  randomBytes,
+  randomUUID,
+  scryptSync,
+} from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Client } from "pg";
 
+import { decideWorkspaceApproval } from "../src/server/controlPlane/approvalDecisions";
 import { closeControlPlanePoolForTests } from "../src/server/controlPlane/db";
+import { establishHumanSession } from "../src/server/controlPlane/humanSession";
+import {
+  HUMAN_SCRYPT_PARAMS,
+} from "../src/server/controlPlane/humanPasswordPolicy";
 import { ControlPlaneHttpError } from "../src/server/controlPlane/http";
 import { stableHash } from "../src/server/controlPlane/ledger";
 import {
   claimPreparedActionExecution,
   failPreparedActionExecution,
   getPreparedAction,
-  preparedActionHash,
+  preparePreparedAction,
   resumePreparedActionExecution,
 } from "../src/server/controlPlane/preparedActions";
 import {
@@ -25,6 +35,11 @@ const WORKSPACE_ID = "ws_prepared_action_contract";
 const AGENT_ID = "agt_prepared_action_contract";
 const OTHER_AGENT_ID = "agt_prepared_action_other";
 const USER_ID = "usr_prepared_action_contract";
+const APPROVER_ID = "usr_prepared_action_approver";
+const OPERATOR_ID = "usr_prepared_action_operator";
+const ORIGIN = "https://mis.example.test";
+const HOST = "mis.example.test";
+const PASSWORD = `${randomBytes(24).toString("base64url")}Aa1!`;
 const STEPS = [
   "READ",
   "PLAN",
@@ -47,6 +62,13 @@ type Fixture = {
   verificationResultHash: string;
   actionHash: string;
   allowedPaths: string[];
+  prepareBody: Record<string, unknown>;
+};
+
+type HumanBrowserSession = {
+  cookie: string;
+  csrf: string;
+  userId: string;
 };
 
 function require(condition: unknown, message: string): asserts condition {
@@ -96,6 +118,72 @@ function request(
   });
 }
 
+function browserHeaders(
+  session: HumanBrowserSession,
+  input: {
+    csrf?: string;
+    idempotencyKey?: string;
+    includeOrigin?: boolean;
+    machineCredential?: boolean;
+  } = {},
+) {
+  const headers = new Headers({
+    cookie: session.cookie,
+    host: HOST,
+    "x-agentops-workspace-id": WORKSPACE_ID,
+  });
+  if (input.includeOrigin !== false) headers.set("origin", ORIGIN);
+  if (input.csrf !== undefined) headers.set("x-agentops-csrf", input.csrf);
+  if (input.idempotencyKey) {
+    headers.set("idempotency-key", input.idempotencyKey);
+  }
+  if (input.machineCredential) {
+    headers.set("authorization", "Bearer machine-not-human");
+  }
+  return headers;
+}
+
+function humanDecisionRequest(
+  session: HumanBrowserSession,
+  approvalId: string,
+  decision: "approve" | "reject",
+  idempotencyKey: string,
+  options: {
+    csrf?: string;
+    includeOrigin?: boolean;
+    machineCredential?: boolean;
+  } = {},
+) {
+  return new Request(
+    `${ORIGIN}/api/mis/approvals/${approvalId}/${decision}`,
+    {
+      method: "POST",
+      headers: browserHeaders(session, {
+        csrf: options.csrf ?? session.csrf,
+        idempotencyKey,
+        includeOrigin: options.includeOrigin,
+        machineCredential: options.machineCredential,
+      }),
+      body: JSON.stringify({ workspace_id: WORKSPACE_ID }),
+    },
+  );
+}
+
+async function login(username: string, userId: string) {
+  const result = await establishHumanSession(
+    new Headers({ origin: ORIGIN, host: HOST }),
+    { username, password: PASSWORD },
+  );
+  require(result.status === 200, "Human login failed");
+  const csrf = String(result.body.csrf_token || "");
+  require(/^[a-f0-9]{64}$/.test(csrf), "Human CSRF token missing");
+  return {
+    cookie: result.setCookie.split(";", 1)[0],
+    csrf,
+    userId,
+  };
+}
+
 async function expectCode(
   expected: string,
   work: () => Promise<unknown>,
@@ -126,6 +214,20 @@ async function sourceContract() {
     ),
     "utf8",
   );
+  const collectionRoute = await readFile(
+    path.join(
+      appRoot,
+      "app/api/mis/agent-gateway/prepared-actions/route.ts",
+    ),
+    "utf8",
+  );
+  const humanRoute = await readFile(
+    path.join(
+      appRoot,
+      "app/api/mis/approvals/[approvalId]/[decision]/route.ts",
+    ),
+    "utf8",
+  );
   const service = await readFile(
     path.join(appRoot, "src/server/controlPlane/preparedActions.ts"),
     "utf8",
@@ -140,6 +242,17 @@ async function sourceContract() {
       && route.includes("failPreparedActionExecution")
       && route.includes("resumePreparedActionExecution"),
     "PreparedAction route is not wired to all Worker operations",
+  );
+  require(
+    collectionRoute.includes("preparePreparedAction")
+      && collectionRoute.includes("legacyPythonProxyAllowed")
+      && collectionRoute.includes("prepared_action_postgres_owner_required"),
+    "PreparedAction collection route does not preserve production ownership and Free Local rollback",
+  );
+  require(
+    humanRoute.includes("decideWorkspaceApproval")
+      && humanRoute.includes("human_session_direct_route_required"),
+    "PreparedAction Human decision must use the existing Human Session route",
   );
   require(
     route.includes("prepared_action_postgres_owner_required")
@@ -167,11 +280,56 @@ async function seedIdentity(
 ) {
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 3_600_000).toISOString();
-  await client.query(
-    `INSERT INTO users(user_id,name,email,role,created_at)
-    VALUES($1,'Contract Reviewer','reviewer@example.invalid','admin',$2)`,
-    [USER_ID, now.toISOString()],
-  );
+  for (const [userId, username, membershipRole] of [
+    [USER_ID, "prepared-owner", "owner"],
+    [APPROVER_ID, "prepared-approver", "approver"],
+    [OPERATOR_ID, "prepared-operator", "operator"],
+  ]) {
+    const salt = randomBytes(16);
+    const passwordHash = scryptSync(
+      PASSWORD,
+      salt,
+      HUMAN_SCRYPT_PARAMS.keylen,
+      {
+        N: HUMAN_SCRYPT_PARAMS.n,
+        r: HUMAN_SCRYPT_PARAMS.r,
+        p: HUMAN_SCRYPT_PARAMS.p,
+        maxmem: 128 * 1024 * 1024,
+      },
+    ).toString("hex");
+    await client.query(
+      `INSERT INTO users(user_id,name,email,role,created_at)
+      VALUES($1,$2,$3,$4,$5)`,
+      [
+        userId,
+        username,
+        `${username}@example.invalid`,
+        membershipRole,
+        now.toISOString(),
+      ],
+    );
+    await client.query(
+      `INSERT INTO workspace_memberships(
+        workspace_id,user_id,role,status,created_at,updated_at
+      ) VALUES($1,$2,$3,'active',$4,$4)`,
+      [WORKSPACE_ID, userId, membershipRole, now.toISOString()],
+    );
+    await client.query(
+      `INSERT INTO human_login_credentials(
+        credential_id,user_id,username,password_hash,password_salt,
+        password_params_json,status,created_at,updated_at,last_login_at
+      ) VALUES($1,$2,$3,$4,$5,$6,'active',$7,$7,NULL)`,
+      [
+        `cred_${username}`,
+        userId,
+        username,
+        passwordHash,
+        salt.toString("hex"),
+        JSON.stringify(HUMAN_SCRYPT_PARAMS),
+        now.toISOString(),
+      ],
+    );
+  }
   for (const [agentId, name] of [
     [AGENT_ID, "PreparedAction Contract Agent"],
     [OTHER_AGENT_ID, "Other Contract Agent"],
@@ -216,20 +374,17 @@ async function seedIdentity(
 
 async function seedPreparedAction(
   client: Client,
+  token: string,
   suffix: string,
-  options: { tamperedHash?: boolean } = {},
 ): Promise<Fixture> {
   const now = new Date();
   const createdAt = new Date(now.getTime() - 20_000).toISOString();
   const verifiedAt = new Date(now.getTime() - 15_000).toISOString();
   const decidedAt = new Date(now.getTime() - 10_000).toISOString();
-  const expiresAt = new Date(now.getTime() + 3_600_000).toISOString();
   const taskId = `tsk_pa_${suffix}`;
   const runId = `run_pa_${suffix}`;
   const planId = `plan_pa_${suffix}`;
   const toolCallId = `tc_pa_${suffix}`;
-  const approvalId = `ap_pa_${suffix}`;
-  const actionId = `pa_${suffix}`;
   const allowedPaths = [`src/${suffix}.ts`];
   const planContract = {
     workspace_id: WORKSPACE_ID,
@@ -302,7 +457,7 @@ async function seedPreparedAction(
     token_omitted: true,
   };
   const normalizedArgsJson = JSON.stringify(normalizedArgs);
-  const checkpointJson = JSON.stringify({
+  const checkpoint = {
     checkpoint: "before_codex_workspace_write_execution",
     task_id: taskId,
     run_id: runId,
@@ -311,27 +466,7 @@ async function seedPreparedAction(
     baseline_head: baselineHead,
     allowed_paths: allowedPaths,
     runtime_attestation: runtimeAttestation,
-  });
-  const actionBase = {
-    action_id: actionId,
-    workspace_id: WORKSPACE_ID,
-    task_id: taskId,
-    run_id: runId,
-    tool_call_id: toolCallId,
-    approval_id: approvalId,
-    requested_by_agent_id: AGENT_ID,
-    action_type: "agent_worker.codex.workspace_write",
-    normalized_args_json: normalizedArgsJson,
-    target_resource: targetResource,
-    risk_level: "high",
-    policy_version: "approval-wall-codex-workspace-write-v2",
-    checkpoint_json: checkpointJson,
-    idempotency_key: `idem_${suffix}`,
-    expires_at: expiresAt,
   };
-  const actionHash = options.tamperedHash
-    ? sha(`tampered:${suffix}`)
-    : preparedActionHash(actionBase);
 
   await client.query("BEGIN");
   try {
@@ -427,63 +562,45 @@ async function seedPreparedAction(
         createdAt,
       ],
     );
-    await client.query(
-      `INSERT INTO approvals(
-        approval_id,approval_kind,task_id,run_id,tool_call_id,
-        requested_by_agent_id,approver_user_id,decision,reason,expires_at,
-        created_at,decided_at
-      ) VALUES(
-        $1,'prepared_action',$2,$3,$4,$5,$6,'approved',
-        'Approved exact bounded workspace write',$7,$8,$9
-      )`,
-      [
-        approvalId,
-        taskId,
-        runId,
-        toolCallId,
-        AGENT_ID,
-        USER_ID,
-        expiresAt,
-        createdAt,
-        decidedAt,
-      ],
-    );
-    await client.query(
-      `INSERT INTO prepared_actions(
-        action_id,workspace_id,task_id,run_id,tool_call_id,approval_id,
-        requested_by_agent_id,action_type,normalized_args_json,target_resource,
-        risk_level,policy_version,checkpoint_json,action_hash,idempotency_key,
-        status,provider_side_effect_id,result_summary,created_at,approved_at,
-        consumed_at,expires_at
-      ) VALUES(
-        $1,$2,$3,$4,$5,$6,$7,'agent_worker.codex.workspace_write',$8,$9,
-        'high','approval-wall-codex-workspace-write-v2',$10,$11,$12,
-        'approved',NULL,NULL,$13,$14,
-        NULL,$15
-      )`,
-      [
-        actionId,
-        WORKSPACE_ID,
-        taskId,
-        runId,
-        toolCallId,
-        approvalId,
-        AGENT_ID,
-        normalizedArgsJson,
-        targetResource,
-        checkpointJson,
-        actionHash,
-        `idem_${suffix}`,
-        createdAt,
-        decidedAt,
-        expiresAt,
-      ],
-    );
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
   }
+  const prepareBody = {
+    workspace_id: WORKSPACE_ID,
+    agent_id: AGENT_ID,
+    task_id: taskId,
+    run_id: runId,
+    tool_call_id: toolCallId,
+    action_type: "agent_worker.codex.workspace_write",
+    normalized_args: normalizedArgs,
+    target_resource: targetResource,
+    risk_level: "high",
+    policy_version: "approval-wall-codex-workspace-write-v2",
+    checkpoint,
+    idempotency_key: `prepared-action-${suffix}-0001`,
+    expires_in_seconds: 3_600,
+    reason: "Contract PreparedAction requires Human approval.",
+  };
+  const prepared = await preparePreparedAction(
+    request(token, "POST", prepareBody),
+    prepareBody,
+  );
+  require(
+    prepared.status === 201 && prepared.body.outcome === "created",
+    `PreparedAction ${suffix} was not created through the owner`,
+  );
+  const action = prepared.body.prepared_action as Record<string, unknown>;
+  const approval = prepared.body.approval as Record<string, unknown>;
+  const actionId = String(action.action_id || "");
+  const approvalId = String(approval.approval_id || "");
+  const actionHash = String(action.action_hash || "");
+  require(actionId && approvalId, "PreparedAction owner omitted authority ids");
+  require(
+    action.status === "prepared" && approval.decision === "pending",
+    "PreparedAction owner did not create pending Human authority",
+  );
   return {
     suffix,
     actionId,
@@ -496,6 +613,7 @@ async function seedPreparedAction(
     verificationResultHash,
     actionHash,
     allowedPaths,
+    prepareBody,
   };
 }
 
@@ -678,6 +796,11 @@ async function seedSuccessEvidence(
 }
 
 async function main() {
+  process.env.AGENTOPS_DEPLOYMENT_MODE = "production";
+  process.env.AGENTOPS_CONTROL_PLANE_MODE = "postgres";
+  process.env.AGENTOPS_ALLOWED_ORIGINS = ORIGIN;
+  process.env.AGENTOPS_HUMAN_SESSION_HMAC_KEY =
+    randomBytes(48).toString("base64url");
   await sourceContract();
   const baseDsn = String(process.env.AGENTOPS_POSTGRES_DSN || "").trim();
   require(baseDsn, "AGENTOPS_POSTGRES_DSN is required");
@@ -704,12 +827,219 @@ async function main() {
     scopedAdmin = new Client({ connectionString: contractDsn });
     await scopedAdmin.connect();
     await seedIdentity(scopedAdmin, token, otherToken);
-    const success = await seedPreparedAction(scopedAdmin, "success");
-    const failure = await seedPreparedAction(scopedAdmin, "failure");
-    const expiry = await seedPreparedAction(scopedAdmin, "expiry");
-    const tampered = await seedPreparedAction(scopedAdmin, "tampered", {
-      tamperedHash: true,
-    });
+    const owner = await login("prepared-owner", USER_ID);
+    const approver = await login("prepared-approver", APPROVER_ID);
+    const operator = await login("prepared-operator", OPERATOR_ID);
+    const success = await seedPreparedAction(scopedAdmin, token, "success");
+    const failure = await seedPreparedAction(scopedAdmin, token, "failure");
+    const expiry = await seedPreparedAction(scopedAdmin, token, "expiry");
+    const rejectedFixture = await seedPreparedAction(
+      scopedAdmin,
+      token,
+      "human_reject",
+    );
+    const raceFixture = await seedPreparedAction(
+      scopedAdmin,
+      token,
+      "human_race",
+    );
+
+    const createReplay = await preparePreparedAction(
+      request(token, "POST", success.prepareBody),
+      success.prepareBody,
+    );
+    require(
+      createReplay.status === 200
+        && createReplay.body.outcome === "unchanged"
+        && String(
+          (createReplay.body.prepared_action as Record<string, unknown>).action_id,
+        ) === success.actionId,
+      "PreparedAction create replay was not idempotent",
+    );
+    await expectCode("prepared_action_idempotency_conflict", () =>
+      preparePreparedAction(
+        request(token, "POST", {
+          ...success.prepareBody,
+          expires_in_seconds: 3_601,
+        }),
+        {
+          ...success.prepareBody,
+          expires_in_seconds: 3_601,
+        },
+      ));
+    await expectCode("prepared_action_current_assignment_invalid", () =>
+      preparePreparedAction(
+        request(otherToken, "POST", {
+          ...success.prepareBody,
+          agent_id: OTHER_AGENT_ID,
+          idempotency_key: "prepared-other-assignment-0001",
+        }, { agentId: OTHER_AGENT_ID }),
+        {
+          ...success.prepareBody,
+          agent_id: OTHER_AGENT_ID,
+          idempotency_key: "prepared-other-assignment-0001",
+        },
+      ));
+
+    await expectCode("machine_credential_not_allowed", () =>
+      decideWorkspaceApproval(
+        humanDecisionRequest(
+          owner,
+          success.approvalId,
+          "approve",
+          "prepared-machine-boundary-0001",
+          { machineCredential: true },
+        ),
+        { workspace_id: WORKSPACE_ID },
+        success.approvalId,
+        "approve",
+      ));
+    await expectCode("origin_validation_failed", () =>
+      decideWorkspaceApproval(
+        humanDecisionRequest(
+          owner,
+          success.approvalId,
+          "approve",
+          "prepared-origin-boundary-0001",
+          { includeOrigin: false },
+        ),
+        { workspace_id: WORKSPACE_ID },
+        success.approvalId,
+        "approve",
+      ));
+    await expectCode("csrf_validation_failed", () =>
+      decideWorkspaceApproval(
+        humanDecisionRequest(
+          owner,
+          success.approvalId,
+          "approve",
+          "prepared-csrf-boundary-0001",
+          { csrf: "0".repeat(64) },
+        ),
+        { workspace_id: WORKSPACE_ID },
+        success.approvalId,
+        "approve",
+      ));
+    await expectCode("human_role_forbidden", () =>
+      decideWorkspaceApproval(
+        humanDecisionRequest(
+          operator,
+          success.approvalId,
+          "approve",
+          "prepared-operator-boundary-0001",
+        ),
+        { workspace_id: WORKSPACE_ID },
+        success.approvalId,
+        "approve",
+      ));
+
+    const successDecisionKey = "prepared-owner-approve-success-0001";
+    const approved = await decideWorkspaceApproval(
+      humanDecisionRequest(
+        owner,
+        success.approvalId,
+        "approve",
+        successDecisionKey,
+      ),
+      { workspace_id: WORKSPACE_ID },
+      success.approvalId,
+      "approve",
+    );
+    const approvedBody = approved.body as Record<string, unknown>;
+    require(
+      approvedBody.operation === "prepared_action_approval_decision"
+        && approvedBody.outcome === "updated"
+        && approvedBody.side_effect_performed === false
+        && (approvedBody.prepared_action as Record<string, unknown>).status
+          === "approved",
+      "Human owner approval did not authorize PreparedAction",
+    );
+    const approvedReplay = await decideWorkspaceApproval(
+      humanDecisionRequest(
+        owner,
+        success.approvalId,
+        "approve",
+        successDecisionKey,
+      ),
+      { workspace_id: WORKSPACE_ID },
+      success.approvalId,
+      "approve",
+    );
+    require(
+      approvedReplay.body.outcome === "unchanged",
+      "Human PreparedAction decision replay was not idempotent",
+    );
+    for (const [fixture, session, key] of [
+      [failure, owner, "prepared-owner-approve-failure-0001"],
+      [expiry, approver, "prepared-approver-approve-expiry-0001"],
+    ] as const) {
+      const result = await decideWorkspaceApproval(
+        humanDecisionRequest(session, fixture.approvalId, "approve", key),
+        { workspace_id: WORKSPACE_ID },
+        fixture.approvalId,
+        "approve",
+      );
+      const resultBody = result.body as Record<string, unknown>;
+      require(
+        (resultBody.prepared_action as Record<string, unknown>).status
+          === "approved",
+        "Human reviewer did not approve PreparedAction fixture",
+      );
+    }
+    const rejected = await decideWorkspaceApproval(
+      humanDecisionRequest(
+        owner,
+        rejectedFixture.approvalId,
+        "reject",
+        "prepared-owner-reject-0001",
+      ),
+      { workspace_id: WORKSPACE_ID },
+      rejectedFixture.approvalId,
+      "reject",
+    );
+    const rejectedBody = rejected.body as Record<string, unknown>;
+    require(
+      (rejectedBody.prepared_action as Record<string, unknown>).status
+          === "rejected"
+        && rejectedBody.side_effect_performed === false,
+      "Human PreparedAction rejection did not fail closed",
+    );
+    const race = await Promise.allSettled([
+      decideWorkspaceApproval(
+        humanDecisionRequest(
+          owner,
+          raceFixture.approvalId,
+          "approve",
+          "prepared-race-owner-approve-0001",
+        ),
+        { workspace_id: WORKSPACE_ID },
+        raceFixture.approvalId,
+        "approve",
+      ),
+      decideWorkspaceApproval(
+        humanDecisionRequest(
+          approver,
+          raceFixture.approvalId,
+          "reject",
+          "prepared-race-approver-reject-0001",
+        ),
+        { workspace_id: WORKSPACE_ID },
+        raceFixture.approvalId,
+        "reject",
+      ),
+    ]);
+    require(
+      race.filter((result) => result.status === "fulfilled").length === 1
+        && race.filter((result) => result.status === "rejected").length === 1,
+      "PreparedAction Human decision race did not have one winner",
+    );
+    const raceLoser = race.find((result) => result.status === "rejected");
+    require(
+      raceLoser?.status === "rejected"
+        && raceLoser.reason instanceof ControlPlaneHttpError
+        && raceLoser.reason.code === "approval_decision_conflict",
+      "PreparedAction Human decision race did not fail closed",
+    );
 
     await expectCode("unauthorized", () =>
       getPreparedAction(request(null, "GET"), success.actionId));
@@ -972,21 +1302,6 @@ async function main() {
       "GET did not reconcile an expired lease to an unknown terminal receipt",
     );
 
-    await expectCode("action_hash_mismatch", () =>
-      claimPreparedActionExecution(
-        request(token, "POST", claimBody),
-        tampered.actionId,
-      ));
-    const tamperedCount = await scopedAdmin.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count
-      FROM prepared_action_execution_leases WHERE action_id=$1`,
-      [tampered.actionId],
-    );
-    require(
-      Number(tamperedCount.rows[0].count) === 0,
-      "tampered action hash acquired a lease",
-    );
-
     const rawColumns = await scopedAdmin.query<{ column_name: string }>(
       `SELECT column_name FROM information_schema.columns
       WHERE table_schema=current_schema()
@@ -1025,14 +1340,38 @@ async function main() {
         && Number(terminalCounts.rows[0].unknown) === 1,
       "terminal receipt outcomes are incomplete",
     );
+    const ownerEvidence = await scopedAdmin.query<{
+      created_audits: string;
+      decision_audits: string;
+      decision_events: string;
+      decision_requests: string;
+    }>(
+      `SELECT
+        (SELECT COUNT(*)::text FROM audit_logs
+          WHERE action='approval_wall.prepared_action_created') created_audits,
+        (SELECT COUNT(*)::text FROM audit_logs
+          WHERE action LIKE 'approval.prepared_action.%') decision_audits,
+        (SELECT COUNT(*)::text FROM runtime_events
+          WHERE event_type LIKE 'approval.prepared_action.%') decision_events,
+        (SELECT COUNT(*)::text FROM human_approval_decision_requests)
+          decision_requests`,
+    );
+    require(
+      Number(ownerEvidence.rows[0].created_audits) === 5
+        && Number(ownerEvidence.rows[0].decision_audits) === 5
+        && Number(ownerEvidence.rows[0].decision_events) === 5
+        && Number(ownerEvidence.rows[0].decision_requests) === 5,
+      "PreparedAction create or Human decision evidence is incomplete",
+    );
 
     console.log(JSON.stringify({
-      contract: "prepared_action_typescript_postgres_owner_v1",
+      contract: "prepared_action_typescript_postgres_owner_v2",
       ok: true,
       control_plane: "typescript_postgres",
       schema_contract: migration.schema_contract,
       fresh_schema: true,
       worker_routes: {
+        prepare: true,
         get: true,
         claim_execution: true,
         fail_execution: true,
@@ -1041,7 +1380,19 @@ async function main() {
       },
       bearer_auth: true,
       workspace_agent_binding: true,
-      action_hash_fail_closed: true,
+      current_assignment_binding: true,
+      create_idempotency_replay: true,
+      create_idempotency_conflict: true,
+      human_session_decisions: {
+        owner_approve: true,
+        collaborator_approve: true,
+        reject: true,
+        replay: true,
+        single_winner_race: true,
+        origin_csrf: true,
+        machine_token_rejected: true,
+      },
+      action_hash_verified: true,
       concurrent_claim_attempts: claimAttempts.length,
       exclusive_claim_winners: 1,
       exact_claim_replays_blocked: claimAttempts.length - 1,

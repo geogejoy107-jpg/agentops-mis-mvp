@@ -283,6 +283,31 @@ type PreparedActionResult = {
   body: Record<string, unknown>;
 };
 
+type PreparedActionAuthoringToolRow = {
+  tool_call_id: string;
+  run_id: string;
+  agent_id: string;
+  tool_name: string;
+  normalized_args_json: string;
+  target_resource: string | null;
+  risk_level: string;
+  status: string;
+  side_effect_id: string | null;
+  ended_at: string | null;
+};
+
+type PreparedActionAuthoringPlanRow = {
+  plan_id: string;
+  workspace_id: string;
+  task_id: string | null;
+  run_id: string | null;
+  agent_id: string;
+  status: string;
+  plan_hash: string | null;
+  verified_at: string | null;
+  verification_result_hash: string | null;
+};
+
 function identifier(value: unknown, field: string) {
   const normalized = String(value ?? "").trim();
   if (!SAFE_IDENTIFIER.test(normalized)) {
@@ -293,6 +318,54 @@ function identifier(value: unknown, field: string) {
     );
   }
   return normalized;
+}
+
+function canonicalJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJsonValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, canonicalJsonValue(item)]),
+    );
+  }
+  return value;
+}
+
+function requestJsonObject(value: unknown, field: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ControlPlaneHttpError(
+      400,
+      `${field}_invalid`,
+      `${field} must be a JSON object.`,
+    );
+  }
+  const normalized = canonicalJsonValue(value) as Record<string, unknown>;
+  return {
+    value: normalized,
+    json: JSON.stringify(normalized),
+  };
+}
+
+function preparedActionIdempotencyKey(request: Request, body: Record<string, unknown>) {
+  const headerValue = String(request.headers.get("idempotency-key") || "").trim();
+  const bodyValue = String(body.idempotency_key || "").trim();
+  if (headerValue && bodyValue && headerValue !== bodyValue) {
+    throw new ControlPlaneHttpError(
+      409,
+      "prepared_action_idempotency_conflict",
+      "Header and body idempotency keys do not match.",
+    );
+  }
+  const value = headerValue || bodyValue;
+  if (!/^[A-Za-z0-9._:-]{16,120}$/.test(value)) {
+    throw new ControlPlaneHttpError(
+      400,
+      "idempotency_key_required",
+      "PreparedAction idempotency key must use 16-120 safe identifier characters.",
+    );
+  }
+  return value;
 }
 
 function assertAllowedFields(
@@ -1556,6 +1629,370 @@ function baseResponse(graph: BoundAction) {
     raw_response_omitted: true,
     token_omitted: true,
   };
+}
+
+export async function preparePreparedAction(
+  request: Request,
+  body: Record<string, unknown>,
+): Promise<PreparedActionResult> {
+  assertAllowedFields(
+    body,
+    new Set([
+      "workspace_id",
+      "agent_id",
+      "task_id",
+      "run_id",
+      "tool_call_id",
+      "action_type",
+      "normalized_args",
+      "target_resource",
+      "risk_level",
+      "policy_version",
+      "checkpoint",
+      "idempotency_key",
+      "expires_in_seconds",
+      "reason",
+    ]),
+    "PreparedAction prepare",
+  );
+  return withPostgresTransaction(async (client) => {
+    const identity = await authorize(client, request, "toolcalls:write", body);
+    await assertPreparedActionSchemaReady(client);
+    const taskId = identifier(body.task_id, "task_id");
+    const runId = identifier(body.run_id, "run_id");
+    const toolCallId = identifier(body.tool_call_id, "tool_call_id");
+    const idempotencyKey = preparedActionIdempotencyKey(request, body);
+    const actionType = identifier(body.action_type, "action_type");
+    const policyVersion = identifier(body.policy_version, "policy_version");
+    const riskLevel = identifier(body.risk_level, "risk_level");
+    if (
+      actionType !== ACTION_TYPE
+      || policyVersion !== "approval-wall-codex-workspace-write-v2"
+      || !["high", "critical"].includes(riskLevel)
+    ) {
+      throw new ControlPlaneHttpError(
+        409,
+        "prepared_action_authoring_contract_invalid",
+        "Only the governed Codex workspace-write PreparedAction contract is supported.",
+      );
+    }
+    const normalizedArgs = requestJsonObject(
+      body.normalized_args,
+      "normalized_args",
+    );
+    const checkpoint = requestJsonObject(body.checkpoint, "checkpoint");
+    assertNoRawStoredPayload(normalizedArgs.value, checkpoint.value);
+    const targetResource = String(body.target_resource || "").trim();
+    if (
+      !targetResource
+      || targetResource.length > 512
+      || /[\u0000-\u001f\u007f]/.test(targetResource)
+    ) {
+      throw new ControlPlaneHttpError(
+        400,
+        "target_resource_invalid",
+        "PreparedAction target_resource is required and must be bounded.",
+      );
+    }
+    const expiresInSeconds = boundedInteger(
+      body.expires_in_seconds,
+      7_200,
+      60,
+      172_800,
+    );
+
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `agentops-prepared-action:${identity.workspaceId}:${runId}:${idempotencyKey}`,
+    ]);
+    const task = (await client.query<TaskRow>(
+      `SELECT task_id,workspace_id,owner_agent_id,status,updated_at
+      FROM tasks WHERE task_id=$1 FOR UPDATE`,
+      [taskId],
+    )).rows[0];
+    const run = (await client.query<RunRow>(
+      `SELECT run_id,workspace_id,task_id,agent_id,runtime_type,status,
+        started_at,ended_at,approval_required,agent_plan_id,plan_hash
+      FROM runs WHERE run_id=$1 FOR UPDATE`,
+      [runId],
+    )).rows[0];
+    const tool = (await client.query<PreparedActionAuthoringToolRow>(
+      `SELECT tool_call_id,run_id,agent_id,tool_name,normalized_args_json,
+        target_resource,risk_level,status,side_effect_id,ended_at
+      FROM tool_calls WHERE tool_call_id=$1 FOR UPDATE`,
+      [toolCallId],
+    )).rows[0];
+    const plan = run?.agent_plan_id
+      ? (await client.query<PreparedActionAuthoringPlanRow>(
+        `SELECT plan_id,workspace_id,task_id,run_id,agent_id,status,plan_hash,
+          verified_at,verification_result_hash
+        FROM agent_plans WHERE plan_id=$1 FOR UPDATE`,
+        [run.agent_plan_id],
+      )).rows[0]
+      : undefined;
+    if (!task || !run || !tool || !plan) {
+      throw new ControlPlaneHttpError(
+        404,
+        "prepared_action_parent_not_found",
+        "PreparedAction task, run, tool call, or verified plan was not found.",
+      );
+    }
+    const toolArgs = parseJsonObject(tool.normalized_args_json, "tool normalized args");
+    if (
+      task.workspace_id !== identity.workspaceId
+      || task.owner_agent_id !== identity.agentId
+      || !["running", "waiting_approval"].includes(task.status)
+      || run.workspace_id !== identity.workspaceId
+      || run.task_id !== task.task_id
+      || run.agent_id !== identity.agentId
+      || run.runtime_type !== "codex"
+      || !["running", "waiting_approval"].includes(run.status)
+      || run.ended_at !== null
+      || tool.run_id !== run.run_id
+      || tool.agent_id !== identity.agentId
+      || tool.tool_name !== ACTION_TYPE
+      || !["running", "waiting_approval"].includes(tool.status)
+      || tool.side_effect_id !== null
+      || tool.ended_at !== null
+      || tool.target_resource !== targetResource
+      || tool.risk_level !== riskLevel
+      || stableHash(toolArgs) !== stableHash(normalizedArgs.value)
+      || plan.workspace_id !== identity.workspaceId
+      || plan.task_id !== task.task_id
+      || (plan.run_id !== null && plan.run_id !== run.run_id)
+      || plan.agent_id !== identity.agentId
+      || plan.status !== "approved"
+      || !plan.verified_at
+      || plan.plan_hash !== run.plan_hash
+      || !SHA256_HEX.test(String(plan.plan_hash || ""))
+      || !SHA256_HEX.test(String(plan.verification_result_hash || ""))
+      || normalizedArgs.value.task_id !== task.task_id
+      || normalizedArgs.value.run_id !== run.run_id
+      || normalizedArgs.value.agent_plan_id !== plan.plan_id
+      || normalizedArgs.value.agent_plan_hash !== plan.plan_hash
+      || normalizedArgs.value.agent_plan_verification_result_hash
+        !== plan.verification_result_hash
+    ) {
+      throw new ControlPlaneHttpError(
+        409,
+        "prepared_action_current_assignment_invalid",
+        "PreparedAction is not bound to the Agent's current task, run, tool call, and verified plan.",
+      );
+    }
+
+    const existing = (await client.query<PreparedActionRow & {
+      approval_decision: string;
+    }>(
+      `SELECT action.*,approval.decision AS approval_decision
+      FROM prepared_actions action
+      JOIN approvals approval ON approval.approval_id=action.approval_id
+      WHERE action.workspace_id=$1 AND action.run_id=$2
+        AND action.idempotency_key=$3
+      FOR UPDATE OF action,approval`,
+      [identity.workspaceId, runId, idempotencyKey],
+    )).rows[0];
+    if (existing) {
+      const storedTtlSeconds = (
+        Date.parse(existing.expires_at || "")
+        - Date.parse(existing.created_at)
+      ) / 1_000;
+      if (
+        existing.task_id !== taskId
+        || existing.tool_call_id !== toolCallId
+        || existing.requested_by_agent_id !== identity.agentId
+        || existing.action_type !== actionType
+        || existing.normalized_args_json !== normalizedArgs.json
+        || existing.target_resource !== targetResource
+        || existing.risk_level !== riskLevel
+        || existing.policy_version !== policyVersion
+        || existing.checkpoint_json !== checkpoint.json
+        || storedTtlSeconds !== expiresInSeconds
+      ) {
+        throw new ControlPlaneHttpError(
+          409,
+          "prepared_action_idempotency_conflict",
+          "PreparedAction idempotency key is already bound to another request.",
+        );
+      }
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          provider: "agentops-approval-wall",
+          control_plane: "typescript_postgres",
+          operation: "prepared_action_prepare",
+          outcome: "unchanged",
+          prepared_action: publicPreparedAction(
+            existing,
+            normalizedArgs.value,
+            checkpoint.value,
+          ),
+          approval: {
+            approval_id: existing.approval_id,
+            decision: existing.approval_decision,
+          },
+          side_effect_performed: false,
+          token_omitted: true,
+        },
+      };
+    }
+
+    const created = new Date();
+    const createdAt = created.toISOString();
+    const expiresAt = new Date(
+      created.getTime() + expiresInSeconds * 1_000,
+    ).toISOString();
+    const actionId = `pa_${randomUUID().replaceAll("-", "").slice(0, 24)}`;
+    const approvalId =
+      `ap_prepared_action_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
+    const actionBase = {
+      action_id: actionId,
+      workspace_id: identity.workspaceId,
+      task_id: task.task_id,
+      run_id: run.run_id,
+      tool_call_id: tool.tool_call_id,
+      approval_id: approvalId,
+      requested_by_agent_id: identity.agentId,
+      action_type: actionType,
+      normalized_args_json: normalizedArgs.json,
+      target_resource: targetResource,
+      risk_level: riskLevel,
+      policy_version: policyVersion,
+      checkpoint_json: checkpoint.json,
+      idempotency_key: idempotencyKey,
+      expires_at: expiresAt,
+    };
+    const actionHash = preparedActionHash(actionBase);
+    const reason = safeSummary(
+      body.reason,
+      "Prepared action requires Human approval before exact execution.",
+    );
+    await client.query(
+      `INSERT INTO approvals(
+        approval_id,approval_kind,task_id,run_id,tool_call_id,
+        requested_by_agent_id,approver_user_id,decision,reason,expires_at,
+        created_at,decided_at
+      ) VALUES($1,'prepared_action',$2,$3,$4,$5,NULL,'pending',$6,$7,$8,NULL)`,
+      [
+        approvalId,
+        task.task_id,
+        run.run_id,
+        tool.tool_call_id,
+        identity.agentId,
+        reason,
+        expiresAt,
+        createdAt,
+      ],
+    );
+    await client.query(
+      `INSERT INTO prepared_actions(
+        action_id,workspace_id,task_id,run_id,tool_call_id,approval_id,
+        requested_by_agent_id,action_type,normalized_args_json,target_resource,
+        risk_level,policy_version,checkpoint_json,action_hash,idempotency_key,
+        status,provider_side_effect_id,result_summary,created_at,approved_at,
+        consumed_at,expires_at
+      ) VALUES(
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+        'prepared',NULL,NULL,$16,NULL,NULL,$17
+      )`,
+      [
+        actionId,
+        identity.workspaceId,
+        task.task_id,
+        run.run_id,
+        tool.tool_call_id,
+        approvalId,
+        identity.agentId,
+        actionType,
+        normalizedArgs.json,
+        targetResource,
+        riskLevel,
+        policyVersion,
+        checkpoint.json,
+        actionHash,
+        idempotencyKey,
+        createdAt,
+        expiresAt,
+      ],
+    );
+    const runUpdate = await client.query(
+      `UPDATE runs SET status='waiting_approval',approval_required=1
+      WHERE run_id=$1 AND workspace_id=$2 AND agent_id=$3
+        AND status IN ('running','waiting_approval') AND ended_at IS NULL`,
+      [run.run_id, identity.workspaceId, identity.agentId],
+    );
+    const taskUpdate = await client.query(
+      `UPDATE tasks SET status='waiting_approval',updated_at=$1
+      WHERE task_id=$2 AND workspace_id=$3 AND owner_agent_id=$4
+        AND status IN ('running','waiting_approval')`,
+      [createdAt, task.task_id, identity.workspaceId, identity.agentId],
+    );
+    const toolUpdate = await client.query(
+      `UPDATE tool_calls SET status='waiting_approval'
+      WHERE tool_call_id=$1 AND run_id=$2 AND agent_id=$3
+        AND status IN ('running','waiting_approval')
+        AND side_effect_id IS NULL AND ended_at IS NULL`,
+      [tool.tool_call_id, run.run_id, identity.agentId],
+    );
+    if (
+      runUpdate.rowCount !== 1
+      || taskUpdate.rowCount !== 1
+      || toolUpdate.rowCount !== 1
+    ) {
+      throw new ControlPlaneHttpError(
+        409,
+        "prepared_action_current_assignment_invalid",
+        "PreparedAction parent state changed before authoring completed.",
+      );
+    }
+    await appendRuntimeEvent(client, {
+      workspaceId: identity.workspaceId,
+      eventType: "prepared_action.prepare",
+      status: "waiting_approval",
+      runId: run.run_id,
+      taskId: task.task_id,
+      agentId: identity.agentId,
+      inputSummary: actionType,
+      outputSummary: reason,
+      rawPayloadHash: actionHash,
+    });
+    await appendAudit(client, {
+      workspaceId: identity.workspaceId,
+      actorType: "agent",
+      actorId: identity.agentId,
+      action: "approval_wall.prepared_action_created",
+      entityType: "prepared_actions",
+      entityId: actionId,
+      after: {
+        action_id: actionId,
+        approval_id: approvalId,
+        action_hash: actionHash,
+        status: "prepared",
+      },
+      metadata: {
+        task_id: task.task_id,
+        run_id: run.run_id,
+        tool_call_id: tool.tool_call_id,
+        idempotency_key_hash: stableHash(idempotencyKey),
+        normalized_args_hash: stableHash(normalizedArgs.value),
+        checkpoint_hash: stableHash(checkpoint.value),
+        raw_body_omitted: true,
+        token_omitted: true,
+      },
+    });
+    const graph = await loadBoundAction(client, identity, actionId);
+    return {
+      status: 201,
+      body: {
+        ok: true,
+        ...baseResponse(graph),
+        operation: "prepared_action_prepare",
+        outcome: "created",
+        status: "waiting_approval",
+        resume_required_after_approval: true,
+        side_effect_performed: false,
+      },
+    };
+  });
 }
 
 export async function getPreparedAction(
