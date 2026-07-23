@@ -117,6 +117,7 @@ jobs:
           timeout 120s python3 scripts/sqlite_reliability_smoke.py
           timeout 120s python3 scripts/sqlite_concurrency_smoke.py
           timeout 120s python3 scripts/audit_chain_concurrency_smoke.py
+          timeout 120s python3 scripts/task_requester_validation_smoke.py
           timeout 120s python3 scripts/migration_rollback_smoke.py
           timeout 120s python3 scripts/workspace_agent_membership_migration_smoke.py
           timeout 120s python3 scripts/agent_plan_approval_subject_migration_smoke.py

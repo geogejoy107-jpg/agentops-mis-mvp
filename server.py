@@ -5896,6 +5896,20 @@ def create_task_api(conn, body: dict) -> tuple[dict, int]:
                 "hint": "Register the agent first or choose an existing agent before creating the task.",
             }, 400
 
+    requester_id = redact_text(
+        body.get("requester_id") or "usr_customer_demo",
+        120,
+    )
+    if not conn.execute(
+        "SELECT 1 FROM users WHERE user_id=?",
+        (requester_id,),
+    ).fetchone():
+        return {
+            "error": "requester_user_not_found",
+            "message": "Task requester user does not exist.",
+            "token_omitted": True,
+        }, 400
+
     collaborators = body.get("collaborator_agent_ids") or []
     if isinstance(collaborators, str):
         collaborators = [item.strip() for item in collaborators.split(",") if item.strip()]
@@ -5918,7 +5932,7 @@ def create_task_api(conn, body: dict) -> tuple[dict, int]:
         "workspace_id": requested_workspace,
         "title": title,
         "description": description,
-        "requester_id": redact_text(body.get("requester_id") or "usr_customer_demo", 120),
+        "requester_id": requester_id,
         "owner_agent_id": owner_agent_id,
         "collaborator_agent_ids": json.dumps(collaborators, ensure_ascii=False),
         "status": coerce_choice(body.get("status"), VALID_TASK_STATUSES, "planned"),
