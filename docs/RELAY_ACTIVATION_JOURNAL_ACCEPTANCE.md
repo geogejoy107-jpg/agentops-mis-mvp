@@ -123,7 +123,8 @@ Expected result:
 This acceptance is not evidence of confirmed service activation. The remaining
 sequence is:
 
-1. add the lifecycle-lock-bound production store opener;
+1. initialize the exact production namespace in an install or migration
+   transaction that owns the lifecycle lock;
 2. implement the narrow systemd mutation adapter;
 3. implement confirmed controller, crash recovery, and ownership-safe rollback;
 4. pass real Linux systemd interruption tests;

@@ -2,10 +2,10 @@
 
 Status: pure Activation Plan Core v0, strict daemon config parser, read-only
 FD-anchored host prerequisite scanner, production read-only systemd adapter and
-activate preview CLI, private immutable activation journal core, and read-only
-installed-status journal validation implemented and locally accepted;
-production journal opening, confirmed mutation, controller, rollback and
-recovery remain planned and unimplemented
+activate preview CLI, private immutable activation journal core, read-only
+installed-status journal validation, and lifecycle-lock-bound private
+production store opener implemented and locally accepted; confirmed mutation,
+controller, rollback and recovery remain planned and unimplemented
 
 ## Objective
 
@@ -28,15 +28,19 @@ prerequisite scan before compiling the public projection. None of these
 modules performs mutation. `agentops_mis_cli.relay_activation_journal` adds
 strict canonical hash-chained revisions, ownership transitions, observation
 evidence hashes, immutable receipts, no-replace publication, and fail-closed
-recovery projection through a private fixture store only. It does not open the
-production journal root or expose a writer through the CLI. The live daemon
+recovery projection. Its private production opener owns the lifecycle lock for
+the entire store lifetime, opens only an already exact journal namespace, and
+revalidates namespace bindings around every operation. Missing, empty, or
+partial namespaces fail closed without being initialized by the opener. It
+does not expose a writer through the CLI. The live daemon
 separately shares the bounded strict config parser used by the scanner. See
 `RELAY_ACTIVATION_PLAN_CORE_ACCEPTANCE.md` and
 `RELAY_CONFIG_PARSER_ACCEPTANCE.md`,
 `RELAY_ACTIVATION_SCANNER_ACCEPTANCE.md`, and
 `RELAY_ACTIVATION_PREVIEW_ACCEPTANCE.md`, and
 `RELAY_ACTIVATION_JOURNAL_ACCEPTANCE.md` plus
-`RELAY_ACTIVATION_JOURNAL_STATUS_ACCEPTANCE.md`.
+`RELAY_ACTIVATION_JOURNAL_STATUS_ACCEPTANCE.md` and
+`RELAY_ACTIVATION_PRODUCTION_STORE_ACCEPTANCE.md`.
 
 ## Command Contract
 

@@ -1,11 +1,13 @@
 """Immutable journal primitives for a future confirmed Relay activation."""
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import re
 import stat
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -92,6 +94,7 @@ class RelayActivationJournalError(Exception):
 
     def __init__(self, error_id: str) -> None:
         if error_id not in {
+            "activation_journal_busy",
             "activation_journal_invalid",
             "activation_journal_recovery_required",
             "activation_journal_write_failed",
@@ -962,6 +965,102 @@ def _open_directory_at(
     except Exception:
         os.close(descriptor)
         raise
+
+
+def _validate_safe_parent_directory_metadata(
+    metadata: os.stat_result,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+    final: bool,
+) -> None:
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != expected_uid
+        or metadata.st_gid != expected_gid
+        or metadata.st_nlink < 2
+        or (
+            stat.S_IMODE(metadata.st_mode) != 0o700
+            if final
+            else stat.S_IMODE(metadata.st_mode) & 0o022
+        )
+    ):
+        raise RelayActivationJournalError("activation_journal_invalid")
+
+
+def _open_existing_directory_chain(
+    root_fd: int,
+    parts: tuple[str, ...],
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> int:
+    if (
+        type(root_fd) is not int
+        or root_fd < 0
+        or not parts
+        or any(
+            not isinstance(part, str)
+            or not part
+            or "/" in part
+            or part in {".", ".."}
+            for part in parts
+        )
+    ):
+        raise RelayActivationJournalError("activation_journal_invalid")
+    descriptor = -1
+    try:
+        descriptor = os.dup(root_fd)
+        for index, part in enumerate(parts):
+            child = -1
+            try:
+                before = os.stat(
+                    part,
+                    dir_fd=descriptor,
+                    follow_symlinks=False,
+                )
+                child = os.open(
+                    part,
+                    _directory_flags(),
+                    dir_fd=descriptor,
+                )
+                opened = os.fstat(child)
+                after = os.stat(
+                    part,
+                    dir_fd=descriptor,
+                    follow_symlinks=False,
+                )
+                if not (
+                    _fingerprint(before)
+                    == _fingerprint(opened)
+                    == _fingerprint(after)
+                ):
+                    raise RelayActivationJournalError(
+                        "activation_journal_invalid"
+                    )
+                _validate_safe_parent_directory_metadata(
+                    opened,
+                    expected_uid=expected_uid,
+                    expected_gid=expected_gid,
+                    final=index == len(parts) - 1,
+                )
+            except Exception:
+                if child >= 0:
+                    os.close(child)
+                raise
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except RelayActivationJournalError:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise
+    except OSError:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise RelayActivationJournalError(
+            "activation_journal_invalid"
+        ) from None
 
 
 def _read_file_at(
@@ -1959,6 +2058,443 @@ def inspect_activation_journal_directory(
                         os.close(descriptor)
                     except OSError:
                         pass
+
+
+_PRODUCTION_ADMIN_PARTS = ("var", "lib", "agentops-relayctl")
+
+
+def _validate_lifecycle_lock_metadata(
+    metadata: os.stat_result,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> None:
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != expected_uid
+        or metadata.st_gid != expected_gid
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_nlink != 1
+        or metadata.st_size != 0
+    ):
+        raise RelayActivationJournalError("activation_journal_invalid")
+
+
+class _LockedActivationJournalStore:
+    """Production journal store that owns the lifecycle lock."""
+
+    def __init__(
+        self,
+        *,
+        root_path: Path,
+        root_fd: int,
+        root_metadata: os.stat_result,
+        admin_fd: int,
+        lock_fd: int,
+        lock_metadata: os.stat_result,
+        store: _ActivationJournalStore,
+    ) -> None:
+        self.root_path = root_path
+        self.root_fd = root_fd
+        self.root_metadata = root_metadata
+        self.admin_fd = admin_fd
+        self.lock_fd = lock_fd
+        self.lock_metadata = lock_metadata
+        self._store = store
+        self.closed = False
+
+    def __enter__(self) -> "_LockedActivationJournalStore":
+        if self.closed:
+            raise RelayActivationJournalError("activation_journal_invalid")
+        return self
+
+    def __del__(self) -> None:
+        try:
+            self._close(validate=False)
+        except Exception:
+            pass
+
+    def __exit__(
+        self,
+        exc_type: object,
+        _exc: object,
+        _traceback: object,
+    ) -> None:
+        try:
+            self.close()
+        except RelayActivationJournalError:
+            if exc_type is None:
+                raise
+
+    def close(self) -> None:
+        self._close(validate=True)
+
+    def _close(self, *, validate: bool) -> None:
+        if self.closed:
+            return
+        validation_failed = False
+        if validate:
+            try:
+                self._validate_bindings()
+            except (OSError, RelayActivationJournalError):
+                validation_failed = True
+        self.closed = True
+        self._store.close()
+        try:
+            fcntl.flock(self.lock_fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        for descriptor in (self.lock_fd, self.admin_fd, self.root_fd):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if validation_failed:
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+
+    def _validate_bindings(self) -> None:
+        if self.closed:
+            raise RelayActivationJournalError("activation_journal_invalid")
+        current_root = os.lstat(self.root_path)
+        if not (
+            _fingerprint(current_root)
+            == _fingerprint(os.fstat(self.root_fd))
+            == _fingerprint(self.root_metadata)
+        ):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+        reopened_admin = _open_existing_directory_chain(
+            self.root_fd,
+            _PRODUCTION_ADMIN_PARTS,
+            expected_uid=self.root_metadata.st_uid,
+            expected_gid=self.root_metadata.st_gid,
+        )
+        try:
+            if _fingerprint(os.fstat(reopened_admin)) != _fingerprint(
+                os.fstat(self.admin_fd)
+            ):
+                raise RelayActivationJournalError(
+                    "activation_journal_recovery_required"
+                )
+        finally:
+            os.close(reopened_admin)
+        lock_path = os.stat(
+            "lifecycle.lock",
+            dir_fd=self.admin_fd,
+            follow_symlinks=False,
+        )
+        lock_opened = os.fstat(self.lock_fd)
+        _validate_lifecycle_lock_metadata(
+            lock_opened,
+            expected_uid=self.root_metadata.st_uid,
+            expected_gid=self.root_metadata.st_gid,
+        )
+        if not (
+            _fingerprint(lock_path)
+            == _fingerprint(lock_opened)
+            == _fingerprint(self.lock_metadata)
+        ):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+        if _bounded_directory_names(self.admin_fd, 2) != (
+            "activation",
+            "lifecycle.lock",
+        ):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+        if (
+            _fingerprint(
+                os.stat(
+                    "activation",
+                    dir_fd=self.admin_fd,
+                    follow_symlinks=False,
+                )
+            )
+            != _fingerprint(os.fstat(self._store.activation_fd))
+            or _bounded_directory_names(self._store.activation_fd, 2)
+            != ("receipts", "transactions")
+            or _fingerprint(
+                os.stat(
+                    "transactions",
+                    dir_fd=self._store.activation_fd,
+                    follow_symlinks=False,
+                )
+            )
+            != _fingerprint(os.fstat(self._store.transactions_fd))
+            or _fingerprint(
+                os.stat(
+                    "receipts",
+                    dir_fd=self._store.activation_fd,
+                    follow_symlinks=False,
+                )
+            )
+            != _fingerprint(os.fstat(self._store.receipts_fd))
+        ):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+
+    def _guarded(self, callback):
+        if self.closed:
+            raise RelayActivationJournalError(
+                "activation_journal_invalid"
+            )
+        try:
+            self._validate_bindings()
+        except (OSError, RelayActivationJournalError):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            ) from None
+        try:
+            result = callback()
+        except RelayActivationJournalError:
+            try:
+                self._validate_bindings()
+            except (OSError, RelayActivationJournalError):
+                raise RelayActivationJournalError(
+                    "activation_journal_recovery_required"
+                ) from None
+            raise
+        except OSError:
+            try:
+                self._validate_bindings()
+            except (OSError, RelayActivationJournalError):
+                pass
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            ) from None
+        try:
+            self._validate_bindings()
+        except (OSError, RelayActivationJournalError):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            ) from None
+        return result
+
+    def inspect_plan(self, plan_sha256: str) -> dict[str, object]:
+        return self._guarded(lambda: self._store.inspect_plan(plan_sha256))
+
+    def inspect_store(self) -> dict[str, object]:
+        return self._guarded(self._store.inspect_store)
+
+    def snapshot_sha256(self) -> str:
+        return self._guarded(self._store.snapshot_sha256)
+
+    def identity_summary(self) -> dict[str, tuple[str, ...]]:
+        return self._guarded(self._store.identity_summary)
+
+    def publish_revision(self, raw: bytes) -> dict[str, object]:
+        return self._guarded(lambda: self._store.publish_revision(raw))
+
+    def publish_receipt(self, raw: bytes) -> dict[str, object]:
+        return self._guarded(lambda: self._store.publish_receipt(raw))
+
+
+def _acquire_locked_production_store(
+    root: Path,
+) -> _LockedActivationJournalStore:
+    """Open the production namespace while owning its lifecycle lock."""
+
+    if not isinstance(root, Path) or not root.is_absolute():
+        raise RelayActivationJournalError("activation_journal_invalid")
+    root_fd = -1
+    admin_fd = -1
+    lock_fd = -1
+    activation_fd = -1
+    transactions_fd = -1
+    receipts_fd = -1
+    store: _ActivationJournalStore | None = None
+    session: _LockedActivationJournalStore | None = None
+    lock_acquired = False
+    success = False
+    try:
+        before = os.lstat(root)
+        root_fd = os.open(root, _directory_flags())
+        opened = os.fstat(root_fd)
+        after = os.lstat(root)
+        if not (
+            _fingerprint(before)
+            == _fingerprint(opened)
+            == _fingerprint(after)
+            and stat.S_ISDIR(opened.st_mode)
+            and opened.st_uid in {0, os.geteuid()}
+            and not stat.S_IMODE(opened.st_mode) & 0o022
+        ):
+            raise RelayActivationJournalError(
+                "activation_journal_invalid"
+            )
+        expected_uid = opened.st_uid
+        expected_gid = opened.st_gid
+        admin_fd = _open_existing_directory_chain(
+            root_fd,
+            _PRODUCTION_ADMIN_PARTS,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        before_lock = os.stat(
+            "lifecycle.lock",
+            dir_fd=admin_fd,
+            follow_symlinks=False,
+        )
+        _validate_lifecycle_lock_metadata(
+            before_lock,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        lock_fd = os.open(
+            "lifecycle.lock",
+            (
+                os.O_RDWR
+                | _file_flags()
+                | getattr(os, "O_NONBLOCK", 0)
+            ),
+            dir_fd=admin_fd,
+        )
+        opened_lock = os.fstat(lock_fd)
+        after_lock = os.stat(
+            "lifecycle.lock",
+            dir_fd=admin_fd,
+            follow_symlinks=False,
+        )
+        _validate_lifecycle_lock_metadata(
+            opened_lock,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        if not (
+            _fingerprint(before_lock)
+            == _fingerprint(opened_lock)
+            == _fingerprint(after_lock)
+        ):
+            raise RelayActivationJournalError(
+                "activation_journal_invalid"
+            )
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RelayActivationJournalError(
+                "activation_journal_busy"
+            ) from None
+        lock_acquired = True
+        if _fingerprint(
+            os.stat(
+                "lifecycle.lock",
+                dir_fd=admin_fd,
+                follow_symlinks=False,
+            )
+        ) != _fingerprint(os.fstat(lock_fd)):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+        admin_names = _bounded_directory_names(admin_fd, 2)
+        if admin_names != ("activation", "lifecycle.lock"):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+        activation_fd = _open_directory_at(
+            admin_fd,
+            "activation",
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+            create=False,
+        )
+        activation_names = _bounded_directory_names(activation_fd, 2)
+        if activation_names != ("receipts", "transactions"):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+        transactions_fd = _open_directory_at(
+            activation_fd,
+            "transactions",
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+            create=False,
+        )
+        receipts_fd = _open_directory_at(
+            activation_fd,
+            "receipts",
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+            create=False,
+        )
+        store = _ActivationJournalStore(
+            activation_fd=activation_fd,
+            transactions_fd=transactions_fd,
+            receipts_fd=receipts_fd,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        activation_fd = -1
+        transactions_fd = -1
+        receipts_fd = -1
+        session = _LockedActivationJournalStore(
+            root_path=root,
+            root_fd=root_fd,
+            root_metadata=opened,
+            admin_fd=admin_fd,
+            lock_fd=lock_fd,
+            lock_metadata=opened_lock,
+            store=store,
+        )
+        root_fd = -1
+        admin_fd = -1
+        lock_fd = -1
+        store = None
+        session._validate_bindings()
+        success = True
+        return session
+    except RelayActivationJournalError as exc:
+        if (
+            lock_acquired
+            and exc.error_id == "activation_journal_invalid"
+        ):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            ) from None
+        raise
+    except OSError:
+        raise RelayActivationJournalError(
+            (
+                "activation_journal_recovery_required"
+                if lock_acquired
+                else "activation_journal_invalid"
+            )
+        ) from None
+    finally:
+        if not success:
+            if session is not None:
+                session._close(validate=False)
+            elif store is not None:
+                store.close()
+            for descriptor in (
+                receipts_fd,
+                transactions_fd,
+                activation_fd,
+                lock_fd,
+                admin_fd,
+                root_fd,
+            ):
+                if descriptor >= 0:
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass
+
+
+@contextmanager
+def _open_locked_production_store(root: Path):
+    """Yield one production store for exactly one locked lexical scope."""
+
+    session = _acquire_locked_production_store(root)
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 def _open_fixture_store(root: Path) -> _ActivationJournalStore:

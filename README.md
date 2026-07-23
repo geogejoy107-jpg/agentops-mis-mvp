@@ -155,11 +155,14 @@ journal core 已分别按
 [`docs/RELAY_ACTIVATION_JOURNAL_ACCEPTANCE.md`](docs/RELAY_ACTIVATION_JOURNAL_ACCEPTANCE.md)
 与
 [`docs/RELAY_ACTIVATION_JOURNAL_STATUS_ACCEPTANCE.md`](docs/RELAY_ACTIVATION_JOURNAL_STATUS_ACCEPTANCE.md)
+与
+[`docs/RELAY_ACTIVATION_PRODUCTION_STORE_ACCEPTANCE.md`](docs/RELAY_ACTIVATION_PRODUCTION_STORE_ACCEPTANCE.md)
 实现。`agentops-relayctl --root / activate` 仍只会读取状态和生成有界 plan；
 只读 status 已能将完整 journal 历史纳入安装树校验，并对未完成、损坏或扫描中
-变化的 journal 返回恢复态；生产目录 writer、confirmed controller、systemd 写
-操作和真实恢复仍未实现。这仍不代表公共
-Relay、DNS/ACME、服务启动或升级/回滚已经完成。
+变化的 journal 返回恢复态；私有 production opener 已绑定 lifecycle lock，并且只会
+打开安装或迁移事务预先创建的精确 journal 命名空间，不会自行初始化目录。CLI writer、
+confirmed controller、命名空间初始化事务、systemd 写操作和真实恢复仍未实现。这仍不
+代表公共 Relay、DNS/ACME、服务启动或升级/回滚已经完成。
 
 `host init` 仍生成一次性 Owner 设置码，并把它、机器 API key 与 Admin key
 存到仓库外的 `~/.agentops/host/`，文件权限为 `0600`。`host start` 默认后台
