@@ -41,6 +41,7 @@ SCOPES = [
     "agents:heartbeat",
     "tasks:read",
     "tasks:claim",
+    "agent_plans:read",
     "agent_plans:write",
     "knowledge:read",
     "knowledge:write",
