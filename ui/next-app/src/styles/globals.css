@@ -1,0 +1,172 @@
+:root {
+  color-scheme: dark;
+  --background: #101214;
+  --surface: #181b1f;
+  --border: #34383e;
+  --text: #f4f4f2;
+  --muted: #a6abb2;
+  --green: #59d499;
+  --amber: #f2bd5d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--background);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.controlPlaneHome {
+  width: min(1080px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 28px 0 48px;
+}
+
+.controlPlaneHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.brandMark {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--green);
+  color: var(--green);
+  font-weight: 800;
+}
+
+.brand strong,
+.brand span {
+  display: block;
+}
+
+.brand span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.statusChip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.statusChip.live {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.statusChip.local {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.controlPlaneOverview {
+  padding: 48px 0;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.controlPlaneOverview h1 {
+  max-width: 720px;
+  margin: 0;
+  font-size: 36px;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.controlPlaneFacts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 36px 0 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.controlPlaneFacts div {
+  min-width: 0;
+  padding: 18px 16px;
+  border-right: 1px solid var(--border);
+}
+
+.controlPlaneFacts div:last-child {
+  border-right: 0;
+}
+
+.controlPlaneFacts dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.controlPlaneFacts dd {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .controlPlaneHome {
+    width: min(100% - 24px, 1080px);
+    padding-top: 16px;
+  }
+
+  .controlPlaneHeader {
+    align-items: flex-start;
+  }
+
+  .controlPlaneOverview {
+    padding-top: 36px;
+  }
+
+  .controlPlaneOverview h1 {
+    font-size: 30px;
+  }
+
+  .controlPlaneFacts {
+    grid-template-columns: 1fr;
+  }
+
+  .controlPlaneFacts div {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .controlPlaneFacts div:last-child {
+    border-bottom: 0;
+  }
+}
