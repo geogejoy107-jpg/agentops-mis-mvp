@@ -722,6 +722,12 @@ async function main() {
     assert.equal(reconciliation.dry_run, false);
     assert.equal(reconciliation.ledger_evidence_complete, false);
     assert.equal(reconciliation.manual_reconciliation_required, true);
+    assert.equal(reconciliation.evidence_failure_stage, "runtime_event");
+    assert.equal(
+      reconciliation.evidence_failure_code,
+      "runtime_event_unavailable",
+    );
+    assert.equal(reconciliation.evidence_failure_status, 503);
     assert.equal(
       reconciliation.error_type,
       "PostProviderEvidencePersistenceFailed",

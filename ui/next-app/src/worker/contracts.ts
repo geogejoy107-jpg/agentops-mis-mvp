@@ -120,6 +120,9 @@ export type CommercialWorkerReceipt = {
   dry_run: boolean;
   ledger_evidence_complete?: boolean;
   manual_reconciliation_required?: boolean;
+  evidence_failure_stage?: string;
+  evidence_failure_code?: string;
+  evidence_failure_status?: number;
   output_summary?: string;
   error_type?: string | null;
   attempt_count?: number;

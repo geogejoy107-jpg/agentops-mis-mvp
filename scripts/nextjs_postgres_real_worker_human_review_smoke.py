@@ -656,6 +656,9 @@ def run_worker(
                 "task_id",
                 "ledger_evidence_complete",
                 "manual_reconciliation_required",
+                "evidence_failure_stage",
+                "evidence_failure_code",
+                "evidence_failure_status",
             )
             if isinstance(last_result or direct_result, dict)
             and key in (last_result or direct_result)

@@ -9,6 +9,7 @@ import type {
   RuntimeAdapterResult,
 } from "./contracts";
 import { WORKER_METHOD_STEPS } from "./contracts";
+import { GatewayHttpError } from "./gatewayClient";
 import { buildWorkerPrompt, taskRequestsExternalWrite } from "./prompt";
 import {
   boundedInteger,
@@ -528,6 +529,7 @@ export class CommercialWorker {
 
     const prompt = buildWorkerPrompt(task, this.#config.runtime, knowledge);
     const result = await this.#executeWithRetries(prompt);
+    let evidenceFailureStage = "runtime_event";
     try {
     const capability = {
       observation_level: "ledger_summary_only",
@@ -576,6 +578,7 @@ export class CommercialWorker {
     const runtimeEventId = stringValue(
       objectValue(runtimeEvent.runtime_event).runtime_event_id,
     );
+    evidenceFailureStage = "tool_call";
     const tool = await this.#gateway.post<Record<string, unknown>>(
       `${API}/tool-calls`,
       {
@@ -620,6 +623,7 @@ export class CommercialWorker {
       objectValue(tool.tool_call).tool_call_id,
       "tool_call_id",
     );
+    evidenceFailureStage = "run_heartbeat";
     await this.#gateway.post(
       `${API}/runs/${encodeURIComponent(runId)}/heartbeat`,
       {
@@ -634,6 +638,7 @@ export class CommercialWorker {
       },
     );
     const evaluationPass = result.ok && knowledge.consumed;
+    evidenceFailureStage = "evaluation";
     const evaluation = await this.#gateway.post<Record<string, unknown>>(
       `${API}/evaluations/submit`,
       {
@@ -680,6 +685,7 @@ export class CommercialWorker {
       ok: result.ok,
       knowledge_packet_hash: knowledge.packetHash,
     });
+    evidenceFailureStage = "artifact";
     const artifact = await this.#gateway.post<Record<string, unknown>>(
       `${API}/artifacts`,
       {
@@ -700,6 +706,7 @@ export class CommercialWorker {
     );
     let memoryId: string | null = null;
     if (result.ok) {
+      evidenceFailureStage = "memory";
       const memory = await this.#gateway.post<Record<string, unknown>>(
         `${API}/memories/propose`,
         {
@@ -723,6 +730,7 @@ export class CommercialWorker {
       );
       memoryId = stringValue(objectValue(memory.memory).memory_id) || null;
     }
+    evidenceFailureStage = "audit";
     const audit = await this.#gateway.post<Record<string, unknown>>(
       `${API}/audit`,
       {
@@ -769,6 +777,7 @@ export class CommercialWorker {
     let approvalOutcome: string | undefined;
     let approvalControlPlane: string | undefined;
     if (evaluationPass) {
+      evidenceFailureStage = "manifest";
       const manifest = await this.#gateway.post<Record<string, unknown>>(
         `${API}/plan-evidence-manifests`,
         {
@@ -791,6 +800,7 @@ export class CommercialWorker {
         manifestPass
         && (this.#config.requestCustomerDeliveryApproval ?? true)
       ) {
+        evidenceFailureStage = "approval";
         const approval = await this.#gateway.post<Record<string, unknown>>(
           `${API}/approvals/request`,
           {
@@ -849,7 +859,8 @@ export class CommercialWorker {
         raw_content_omitted: true,
       },
     };
-    } catch {
+    } catch (error) {
+      const gatewayError = error instanceof GatewayHttpError ? error : null;
       await this.#safeHeartbeat(
         "error",
         "Provider result requires manual ledger reconciliation.",
@@ -866,6 +877,10 @@ export class CommercialWorker {
         dry_run: result.dryRun,
         ledger_evidence_complete: false,
         manual_reconciliation_required: true,
+        evidence_failure_stage: evidenceFailureStage,
+        evidence_failure_code:
+          gatewayError?.code || "unexpected_evidence_persistence_error",
+        evidence_failure_status: gatewayError?.status,
         output_summary:
           "Provider execution finished, but governed ledger evidence is incomplete.",
         error_type: "PostProviderEvidencePersistenceFailed",
