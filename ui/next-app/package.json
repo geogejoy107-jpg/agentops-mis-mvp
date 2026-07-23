@@ -21,6 +21,7 @@
     "test:agent-gateway-evidence-support-contract": "tsx scripts/agent-gateway-evidence-support-contract.ts",
     "test:gateway-lifecycle-contract": "tsx scripts/gateway-lifecycle-contract.ts",
     "test:human-session-approval-contract": "tsx scripts/human-session-approval-contract.ts",
+    "test:prepared-action-owner-contract": "tsx scripts/prepared-action-owner-contract.ts",
     "test:postgres-schema-contract": "tsx scripts/postgres-schema-contract.ts"
   },
   "dependencies": {
