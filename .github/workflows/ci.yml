@@ -269,6 +269,9 @@ jobs:
         run: |
           set -euo pipefail
           npm ci
+          npm audit --audit-level=high
+          npm run test:api-transport-contract
+          npm run test:api-transport-build-contract
           npm run build
 
   commercial-next-boundary:

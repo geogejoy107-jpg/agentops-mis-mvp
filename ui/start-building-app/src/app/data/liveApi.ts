@@ -11,7 +11,7 @@ import type {
   ToolCall,
 } from "./mockData";
 
-const API_BASE = import.meta.env.VITE_AGENTOPS_API_BASE || "/mis-api";
+const API_BASE = __AGENTOPS_API_BASE__;
 
 export interface DashboardMetrics {
   agents_total: number;
