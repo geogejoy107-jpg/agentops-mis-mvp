@@ -1265,6 +1265,18 @@ def emit_jsonl(args, payload: dict) -> bool:
         return False
 
 
+def emit_worker_summary(payload: dict) -> bool:
+    try:
+        print(json_dumps(payload), flush=True)
+        return True
+    except (BrokenPipeError, OSError):
+        try:
+            sys.stdout = open(os.devnull, "w", encoding="utf-8")
+        except OSError:
+            pass
+        return False
+
+
 def worker_result_history_limit(args) -> int:
     if getattr(args, "once", False):
         return 1
@@ -4146,14 +4158,14 @@ def main(argv: list[str] | None = None) -> int:
         apply_local_config_session_policy(args)
     except WorkerCredentialError as exc:
         state.stop("failed_credential_source")
-        print(json_dumps({
+        emit_worker_summary({
             "ok": False,
             "processed": 0,
             "credential_source": str(getattr(args, "credential_source", "direct") or "direct"),
             "error": exc.code,
             "state": state.data,
             "token_omitted": True,
-        }))
+        })
         return 1
     args.api_key = parent_api_key
     api_key_source = (
@@ -4185,7 +4197,7 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             error = state.record_error(exc)
             state.stop("failed_session_create")
-            print(json_dumps({"ok": False, "processed": 0, "results": [{**error, "processed": False, "ok": False}], "state": state.data, "session": {"token_omitted": True}, "sessions": session_history}))
+            emit_worker_summary({"ok": False, "processed": 0, "results": [{**error, "processed": False, "ok": False}], "state": state.data, "session": {"token_omitted": True}, "sessions": session_history})
             return 1
     while True:
         if SHOULD_STOP:
@@ -4288,7 +4300,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     session_cleanup = release_worker_session(client, session_info)
     session_total = int(state.data.get("session_refresh_count") or 0) + (1 if session_info else 0)
-    print(json_dumps({
+    emit_worker_summary({
         "ok": final_ok,
         "processed": processed,
         "results": results,
@@ -4302,7 +4314,7 @@ def main(argv: list[str] | None = None) -> int:
         "sessions_seen": session_total,
         "sessions_omitted": max(session_total - len(session_history), 0),
         "terminal_heartbeat": terminal_heartbeat,
-    }))
+    })
     return 0 if final_ok else 1
 
 

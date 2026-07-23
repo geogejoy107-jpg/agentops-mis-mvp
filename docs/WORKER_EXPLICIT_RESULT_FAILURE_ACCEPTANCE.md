@@ -18,6 +18,8 @@ task intake, approval policy, or ledger authority.
 - A continuing daemon uses error backoff and honors `--max-errors`.
 - A daemon without `--continue-on-error` stops after the explicit failure.
 - A later healthy idle result clears stale consecutive-error state.
+- A detached or failed stdout pipe cannot overturn the Worker exit decision after
+  the state and ledger work are complete.
 
 ## Verification
 

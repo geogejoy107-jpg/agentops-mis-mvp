@@ -118,6 +118,31 @@ def main() -> int:
     require(attempts == 1, f"disabled JSONL retried failed output {attempts} times", failures)
     require(getattr(failure_args, "_jsonl_log_disabled", False) is True, "failed JSONL did not latch disabled state", failures)
 
+    summary_attempts = 0
+
+    def fail_summary_print(*_args, **_kwargs):
+        nonlocal summary_attempts
+        summary_attempts += 1
+        raise BrokenPipeError("detached terminal")
+
+    try:
+        builtins.print = fail_summary_print
+        summary_emitted = worker.emit_worker_summary({
+            "ok": True,
+            "processed": 1,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        })
+    finally:
+        builtins.print = original_print
+        replacement_stdout = sys.stdout
+        sys.stdout = original_stdout
+        if replacement_stdout is not original_stdout:
+            replacement_stdout.close()
+    require(summary_emitted is False, "failed final Worker summary output was not suppressed", failures)
+    require(summary_attempts == 1, f"final Worker summary retried failed output {summary_attempts} times", failures)
+
     daemon_args = worker.build_parser().parse_args(["--max-tasks", "0"])
     history: list[dict] = []
     omitted = 0
@@ -195,6 +220,7 @@ def main() -> int:
         ),
         "foreground_jsonl_preserved": emitted is True,
         "failed_output_nonfatal": first is False and second is False and attempts == 1,
+        "failed_final_summary_nonfatal": summary_emitted is False and summary_attempts == 1,
         "daemon_result_history_bounded": len(history) == 20 and omitted == 7,
         "daemon_session_history_bounded": len(sessions) == 20 and sessions_omitted == 7,
         "explicit_failure_semantics": worker.worker_result_failed({"processed": False, "ok": False}),
