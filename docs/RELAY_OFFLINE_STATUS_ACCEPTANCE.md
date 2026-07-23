@@ -47,6 +47,10 @@ The smoke verifies:
 - a formal bundle plus confirmed install returns `installed_valid`;
 - transaction, transaction-temporary, release-staging, and unit-temporary
   markers return `recovery_required`;
+- absent, empty, complete active, and complete rolled-back activation journal
+  histories are accepted without changing the public valid-status shape;
+- incomplete, malformed, unknown, wrong-release, or concurrently replaced
+  activation journal namespaces return `recovery_required`;
 - missing, extra, and tampered release files return `invalid`;
 - malformed, noncanonical, or identity/count-inconsistent `release.json`
   returns `invalid`;
@@ -93,3 +97,6 @@ This acceptance does **not** claim:
 
 Status is a truthful installed-tree readback, not a service or deployment
 doctor.
+
+The activation-journal extension is recorded separately in
+`RELAY_ACTIVATION_JOURNAL_STATUS_ACCEPTANCE.md`.

@@ -25,6 +25,19 @@ from types import ModuleType
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from agentops_mis_cli.relay_activation_journal import (  # noqa: E402
+    GENESIS_REVISION_SHA256,
+    ActivationJournalIdentity,
+    _open_fixture_store,
+    build_activation_receipt,
+    build_activation_revision,
+    parse_activation_receipt,
+    parse_activation_revision,
+)
+
 ADMIN = ROOT / "agentops_mis_cli" / "relay_admin.py"
 BACKEND = ROOT / "agentops_mis_cli" / "_build_backend.py"
 STATUS_SCHEMA = "agentops.relay.offline-status.v0"
@@ -89,9 +102,235 @@ def canonical_json(value: object) -> bytes:
     )
 
 
+def create_journal_fixture(
+    root: Path,
+    state: str,
+    *,
+    release_id: str | None = None,
+    version_id: str | None = None,
+) -> None:
+    admin = root / "var" / "lib" / "agentops-relayctl"
+    release_directories = [
+        path
+        for path in (
+            root / "opt" / "agentops-mis-relay" / "releases"
+        ).iterdir()
+        if path.is_dir()
+    ]
+    if len(release_directories) != 1:
+        raise RuntimeError("journal fixture release is ambiguous")
+    release_metadata = json.loads(
+        (release_directories[0] / "release.json").read_text(
+            encoding="ascii"
+        )
+    )
+    journal_identity = ActivationJournalIdentity(
+        plan_sha256="a" * 64,
+        release_id=release_id or release_directories[0].name,
+        version_id=version_id or release_metadata["version"],
+        pre_unit_file_state="disabled",
+        pre_active_state="inactive",
+        pre_enablement_inventory_sha256="2" * 64,
+        unit_identity_sha256="3" * 64,
+    )
+    records: list[bytes] = []
+
+    def append(
+        *,
+        phase: str,
+        step_id: str,
+        intent_id: str | None = None,
+        observation_id: str | None = None,
+        owns_enable: bool = False,
+        owns_start: bool = False,
+        terminal_state: str | None = None,
+        receipt_sha256: str | None = None,
+    ) -> bytes:
+        raw = build_activation_revision(
+            journal_identity,
+            revision=len(records) + 1,
+            previous_revision_sha256=(
+                GENESIS_REVISION_SHA256
+                if not records
+                else parse_activation_revision(
+                    records[-1]
+                ).record_sha256
+            ),
+            phase=phase,
+            step_id=step_id,
+            intent_id=intent_id,
+            observation_id=observation_id,
+            observation_sha256=(
+                hashlib.sha256(
+                    (observation_id or "").encode("ascii")
+                ).hexdigest()
+                if phase == "observed"
+                else None
+            ),
+            owns_enable=owns_enable,
+            owns_start=owns_start,
+            terminal_state=terminal_state,
+            receipt_sha256=receipt_sha256,
+        )
+        records.append(raw)
+        return raw
+
+    with _open_fixture_store(admin) as store:
+        if state in {"empty", "unknown", "wrong_mode"}:
+            return
+        store.publish_revision(
+            append(phase="prepared", step_id="transaction_open")
+        )
+        if state in {"prepared", "temporary", "tampered"}:
+            return
+        for values in (
+            {
+                "phase": "intent",
+                "step_id": "daemon_reload",
+                "intent_id": "daemon_reload_requested",
+            },
+            {
+                "phase": "observed",
+                "step_id": "daemon_reload",
+                "intent_id": "daemon_reload_requested",
+                "observation_id": "daemon_reload_completed",
+            },
+            {
+                "phase": "intent",
+                "step_id": "enable",
+                "intent_id": "enable_requested",
+            },
+            {
+                "phase": "observed",
+                "step_id": "enable",
+                "intent_id": "enable_requested",
+                "observation_id": "enable_observed",
+                "owns_enable": True,
+            },
+            {
+                "phase": "intent",
+                "step_id": "start",
+                "intent_id": "start_requested",
+                "owns_enable": True,
+            },
+            {
+                "phase": "observed",
+                "step_id": "start",
+                "intent_id": "start_requested",
+                "observation_id": "start_observed",
+                "owns_enable": True,
+                "owns_start": True,
+            },
+        ):
+            store.publish_revision(append(**values))
+        terminal_state = "active"
+        owns_enable = True
+        owns_start = True
+        result_id = "activation_succeeded"
+        if state == "rolled_back":
+            for values in (
+                {
+                    "phase": "intent",
+                    "step_id": "rollback_stop",
+                    "intent_id": "rollback_stop_requested",
+                    "owns_enable": True,
+                    "owns_start": True,
+                },
+                {
+                    "phase": "observed",
+                    "step_id": "rollback_stop",
+                    "intent_id": "rollback_stop_requested",
+                    "observation_id": "rollback_stop_observed",
+                    "owns_enable": True,
+                },
+                {
+                    "phase": "intent",
+                    "step_id": "rollback_disable",
+                    "intent_id": "rollback_disable_requested",
+                    "owns_enable": True,
+                },
+                {
+                    "phase": "observed",
+                    "step_id": "rollback_disable",
+                    "intent_id": "rollback_disable_requested",
+                    "observation_id": "rollback_disable_observed",
+                },
+                {
+                    "phase": "intent",
+                    "step_id": "verify",
+                    "intent_id": "rollback_verify_requested",
+                },
+                {
+                    "phase": "observed",
+                    "step_id": "verify",
+                    "intent_id": "rollback_verify_requested",
+                    "observation_id": "rollback_verified",
+                },
+            ):
+                store.publish_revision(append(**values))
+            terminal_state = "service_state_rolled_back"
+            owns_enable = False
+            owns_start = False
+            result_id = "rollback_succeeded"
+        else:
+            for values in (
+                {
+                    "phase": "intent",
+                    "step_id": "verify",
+                    "intent_id": "verify_requested",
+                    "owns_enable": True,
+                    "owns_start": True,
+                },
+                {
+                    "phase": "observed",
+                    "step_id": "verify",
+                    "intent_id": "verify_requested",
+                    "observation_id": "active_verified",
+                    "owns_enable": True,
+                    "owns_start": True,
+                },
+            ):
+                store.publish_revision(append(**values))
+        receipt = build_activation_receipt(
+            journal_identity,
+            terminal_revision=len(records) + 1,
+            previous_revision_sha256=parse_activation_revision(
+                records[-1]
+            ).record_sha256,
+            terminal_state=terminal_state,
+            owns_enable=owns_enable,
+            owns_start=owns_start,
+            result_id=result_id,
+        )
+        store.publish_receipt(receipt)
+        if state == "orphan_receipt":
+            return
+        store.publish_revision(
+            append(
+                phase="terminal",
+                step_id="terminal",
+                owns_enable=owns_enable,
+                owns_start=owns_start,
+                terminal_state=terminal_state,
+                receipt_sha256=parse_activation_receipt(
+                    receipt
+                ).receipt_sha256,
+            )
+        )
+
+
 def require(condition: bool, message: str, failures: list[str]) -> None:
     if not condition:
         failures.append(message)
+
+
+def descriptor_count() -> int | None:
+    for directory in ("/proc/self/fd", "/dev/fd"):
+        try:
+            return len(os.listdir(directory))
+        except OSError:
+            continue
+    return None
 
 
 def git_output(*args: str) -> str:
@@ -685,6 +924,334 @@ def main() -> int:
                 failures,
             )
 
+        journal_valid_cases = ("empty", "complete", "rolled_back")
+        for journal_state in journal_valid_cases:
+            case_root = copy_root(
+                valid,
+                temporary / f"journal-valid-{journal_state}",
+            )
+            create_journal_fixture(case_root, journal_state)
+            for label, runner, runner_env in runners:
+                code, payload, _ = run_status(
+                    runner,
+                    case_root,
+                    runner_env,
+                    failures,
+                    f"journal-valid-{journal_state}:{label}",
+                )
+                assert_status(
+                    code,
+                    payload,
+                    expected_code=0,
+                    expected_state="installed_valid",
+                    expected_keys=VALID_KEYS,
+                    failures=failures,
+                    label=f"journal-valid-{journal_state}:{label}",
+                )
+
+        def journal_prepared(root: Path) -> None:
+            create_journal_fixture(root, "prepared")
+
+        def journal_orphan_receipt(root: Path) -> None:
+            create_journal_fixture(root, "orphan_receipt")
+
+        def journal_temporary(root: Path) -> None:
+            create_journal_fixture(root, "temporary")
+            plan = (
+                root
+                / "var"
+                / "lib"
+                / "agentops-relayctl"
+                / "activation"
+                / "transactions"
+                / ("a" * 64)
+            )
+            temporary_revision = plan / ".revision-000002.json.tmp"
+            temporary_revision.write_bytes(b"x")
+            temporary_revision.chmod(0o600)
+
+        def journal_tampered(root: Path) -> None:
+            create_journal_fixture(root, "tampered")
+            revision = (
+                root
+                / "var"
+                / "lib"
+                / "agentops-relayctl"
+                / "activation"
+                / "transactions"
+                / ("a" * 64)
+                / "revision-000001.json"
+            )
+            revision.write_bytes(b"{}\n")
+
+        def journal_unknown(root: Path) -> None:
+            create_journal_fixture(root, "unknown")
+            unknown = (
+                root
+                / "var"
+                / "lib"
+                / "agentops-relayctl"
+                / "activation"
+                / "unexpected"
+            )
+            unknown.write_bytes(b"x")
+            unknown.chmod(0o600)
+
+        def journal_wrong_mode(root: Path) -> None:
+            create_journal_fixture(root, "wrong_mode")
+            activation = (
+                root
+                / "var"
+                / "lib"
+                / "agentops-relayctl"
+                / "activation"
+            )
+            activation.chmod(0o755)
+
+        def journal_missing_receipts(root: Path) -> None:
+            activation = (
+                root
+                / "var"
+                / "lib"
+                / "agentops-relayctl"
+                / "activation"
+            )
+            (activation / "transactions").mkdir(
+                parents=True,
+                mode=0o700,
+            )
+
+        def journal_symlink_transactions(root: Path) -> None:
+            activation = (
+                root
+                / "var"
+                / "lib"
+                / "agentops-relayctl"
+                / "activation"
+            )
+            (activation / "receipts").mkdir(
+                parents=True,
+                mode=0o700,
+            )
+            (activation / "transactions").symlink_to(
+                "receipts",
+                target_is_directory=True,
+            )
+
+        def journal_wrong_release(root: Path) -> None:
+            release_metadata = json.loads(
+                next(
+                    (
+                        root
+                        / "opt"
+                        / "agentops-mis-relay"
+                        / "releases"
+                    ).iterdir()
+                )
+                .joinpath("release.json")
+                .read_text(encoding="ascii")
+            )
+            create_journal_fixture(
+                root,
+                "complete",
+                release_id=f"{release_metadata['version']}-ffffffffffff",
+            )
+
+        journal_recovery_cases = (
+            ("prepared", journal_prepared),
+            ("orphan-receipt", journal_orphan_receipt),
+            ("temporary", journal_temporary),
+            ("tampered", journal_tampered),
+            ("unknown", journal_unknown),
+            ("wrong-mode", journal_wrong_mode),
+            ("missing-receipts", journal_missing_receipts),
+            ("symlink-transactions", journal_symlink_transactions),
+            ("wrong-release", journal_wrong_release),
+        )
+        for case_name, mutate in journal_recovery_cases:
+            case_root = copy_root(
+                valid,
+                temporary / f"journal-recovery-{case_name}",
+            )
+            mutate(case_root)
+            for label, runner, runner_env in runners:
+                code, payload, _ = run_status(
+                    runner,
+                    case_root,
+                    runner_env,
+                    failures,
+                    f"journal-recovery-{case_name}:{label}",
+                )
+                assert_status(
+                    code,
+                    payload,
+                    expected_code=1,
+                    expected_state="recovery_required",
+                    expected_keys=RECOVERY_KEYS,
+                    failures=failures,
+                    label=f"journal-recovery-{case_name}:{label}",
+                )
+
+        journal_race_root = copy_root(
+            valid,
+            temporary / "journal-snapshot-race",
+        )
+        create_journal_fixture(journal_race_root, "complete")
+        journal_race_module = load_module(
+            ADMIN,
+            "_relay_status_journal_race_admin",
+        )
+        original_activation_snapshot = (
+            journal_race_module._status_activation_snapshot
+        )
+        activation_snapshot_calls = 0
+        journal_raced = False
+
+        def race_activation_snapshot(*args, **kwargs):
+            nonlocal activation_snapshot_calls, journal_raced
+            activation_snapshot_calls += 1
+            if activation_snapshot_calls == 2:
+                plan = (
+                    journal_race_root
+                    / "var"
+                    / "lib"
+                    / "agentops-relayctl"
+                    / "activation"
+                    / "transactions"
+                    / ("a" * 64)
+                )
+                terminal = sorted(plan.glob("revision-*.json"))[-1]
+                metadata = terminal.stat()
+                os.utime(
+                    terminal,
+                    ns=(
+                        metadata.st_atime_ns,
+                        metadata.st_mtime_ns + 1,
+                    ),
+                )
+                journal_raced = True
+            return original_activation_snapshot(*args, **kwargs)
+
+        journal_race_module._status_activation_snapshot = (
+            race_activation_snapshot
+        )
+        try:
+            journal_race_payload, journal_race_code = (
+                journal_race_module.relay_status(journal_race_root)
+            )
+        finally:
+            journal_race_module._status_activation_snapshot = (
+                original_activation_snapshot
+            )
+        assert_status(
+            journal_race_code,
+            journal_race_payload,
+            expected_code=1,
+            expected_state="recovery_required",
+            expected_keys=RECOVERY_KEYS,
+            failures=failures,
+            label="journal-snapshot-race",
+        )
+        require(
+            journal_raced and activation_snapshot_calls == 2,
+            "journal snapshot race was not exercised between scans",
+            failures,
+        )
+
+        journal_swap_root = copy_root(
+            valid,
+            temporary / "journal-path-swap",
+        )
+        create_journal_fixture(journal_swap_root, "complete")
+        journal_swap_module = load_module(
+            ADMIN,
+            "_relay_status_journal_swap_admin",
+        )
+        original_journal_inspector = (
+            journal_swap_module.inspect_activation_journal_directory
+        )
+        journal_inspector_calls = 0
+        journal_path_swapped = False
+
+        def swap_journal_after_inspection(*args, **kwargs):
+            nonlocal journal_inspector_calls, journal_path_swapped
+            journal_inspector_calls += 1
+            result = original_journal_inspector(*args, **kwargs)
+            if journal_inspector_calls == 2:
+                admin = (
+                    journal_swap_root
+                    / "var"
+                    / "lib"
+                    / "agentops-relayctl"
+                )
+                activation = admin / "activation"
+                activation.rename(admin / "activation-replaced")
+                activation.mkdir(mode=0o700)
+                (activation / "receipts").mkdir(mode=0o700)
+                (activation / "transactions").mkdir(mode=0o700)
+                journal_path_swapped = True
+            return result
+
+        journal_swap_module.inspect_activation_journal_directory = (
+            swap_journal_after_inspection
+        )
+        try:
+            journal_swap_payload, journal_swap_code = (
+                journal_swap_module.relay_status(journal_swap_root)
+            )
+        finally:
+            journal_swap_module.inspect_activation_journal_directory = (
+                original_journal_inspector
+            )
+        assert_status(
+            journal_swap_code,
+            journal_swap_payload,
+            expected_code=1,
+            expected_state="recovery_required",
+            expected_keys=RECOVERY_KEYS,
+            failures=failures,
+            label="journal-path-swap",
+        )
+        require(
+            journal_path_swapped and journal_inspector_calls == 2,
+            "journal path swap was not exercised after the final scan",
+            failures,
+        )
+
+        journal_fd_root = copy_root(
+            valid,
+            temporary / "journal-fd-lifecycle",
+        )
+        create_journal_fixture(journal_fd_root, "complete")
+        journal_fd_module = load_module(
+            ADMIN,
+            "_relay_status_journal_fd_admin",
+        )
+        journal_fd_before = descriptor_count()
+        journal_fd_results = [
+            journal_fd_module.relay_status(journal_fd_root)
+            for _ in range(12)
+        ]
+        journal_fd_after = descriptor_count()
+        journal_fd_leak_free = (
+            all(
+                code == 0
+                and payload.get("state_id") == "installed_valid"
+                and set(payload) == VALID_KEYS
+                for payload, code in journal_fd_results
+            )
+            and (
+                journal_fd_before is None
+                or journal_fd_after is None
+                or journal_fd_before == journal_fd_after
+            )
+        )
+        require(
+            journal_fd_leak_free,
+            "journal status leaked descriptors or changed public output",
+            failures,
+        )
+
         require(snapshot(protected_config) == config_before, "config canary changed", failures)
         require(snapshot(protected_epoch) == epoch_before, "epoch canary changed", failures)
 
@@ -982,10 +1549,34 @@ def main() -> int:
         status_after = git_output("status", "--porcelain=v1", "--untracked-files=all")
         require(status_after == status_before, "status smoke changed repository status", failures)
         result = {
-            "cases": len(recovery_cases) + len(invalid_cases) + 5,
+            "cases": (
+                len(recovery_cases)
+                + len(invalid_cases)
+                + len(journal_valid_cases)
+                + len(journal_recovery_cases)
+                + 7
+            ),
             "default_python": sys.version.split()[0],
             "failures": failures,
             "installed_entrypoint": "verified" if entrypoint is not None else "unavailable",
+            "journal_read_only_cases": (
+                len(journal_valid_cases)
+                + len(journal_recovery_cases)
+                + 2
+            ),
+            "journal_path_swap_rejected": (
+                journal_path_swapped
+                and journal_swap_code == 1
+                and journal_swap_payload.get("state_id")
+                == "recovery_required"
+            ),
+            "journal_fd_leak_free": journal_fd_leak_free,
+            "journal_snapshot_race_rejected": (
+                journal_raced
+                and journal_race_code == 1
+                and journal_race_payload.get("state_id")
+                == "recovery_required"
+            ),
             "ok": not failures,
             "protected_canaries_preserved": (
                 snapshot(protected_config) == config_before

@@ -22,6 +22,14 @@ from typing import Any
 
 
 sys.dont_write_bytecode = True
+if __package__ in {None, ""}:
+    source_root = str(Path(__file__).resolve().parents[1])
+    if source_root not in sys.path:
+        sys.path.insert(0, source_root)
+
+from agentops_mis_cli.relay_activation_journal import (  # noqa: E402
+    inspect_activation_journal_directory,
+)
 
 BUNDLE_SCHEMA = "agentops.relay.release-bundle.v1"
 PLAN_SCHEMA = "agentops.relay.offline-install-plan.v0"
@@ -118,6 +126,10 @@ class RelayAdminError(Exception):
 
 class RelayStatusInvalid(Exception):
     """Internal sentinel for a bounded, redacted invalid status."""
+
+
+class RelayStatusRecovery(Exception):
+    """Internal sentinel for a bounded recoverable status."""
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -1383,14 +1395,18 @@ def _status_open_directory_at(
 
 
 def _status_list_directory(descriptor: int) -> tuple[str, ...]:
+    names: list[str] = []
     try:
-        names = os.listdir(descriptor)
+        with os.scandir(descriptor) as entries:
+            for entry in entries:
+                if len(names) >= MAX_STATUS_DIRECTORY_ENTRIES:
+                    raise RelayStatusInvalid
+                _status_safe_native_name(entry.name)
+                names.append(entry.name)
+    except RelayStatusInvalid:
+        raise
     except OSError as exc:
         raise RelayStatusInvalid from exc
-    if len(names) > MAX_STATUS_DIRECTORY_ENTRIES:
-        raise RelayStatusInvalid
-    for name in names:
-        _status_safe_native_name(name)
     return tuple(sorted(names))
 
 
@@ -1930,6 +1946,124 @@ def _status_expected_directories(file_names: set[str]) -> set[str]:
     return directories
 
 
+def _status_activation_snapshot(
+    root_descriptor: int,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+    expected_release_id: str,
+) -> dict[str, object] | None:
+    if (
+        not isinstance(expected_release_id, str)
+        or not RELEASE_ID_PATTERN.fullmatch(expected_release_id)
+    ):
+        raise RelayStatusInvalid
+    admin_parts = ("var", "lib", "agentops-relayctl")
+    _status_validate_safe_parent_chain(
+        root_descriptor,
+        admin_parts,
+        expected_uid=expected_uid,
+        expected_gid=expected_gid,
+    )
+    admin_names = _status_validate_directory_at(
+        root_descriptor,
+        admin_parts,
+        expected_uid=expected_uid,
+        expected_gid=expected_gid,
+        expected_mode=0o700,
+    )
+    if set(admin_names) not in (
+        {"lifecycle.lock"},
+        {"activation", "lifecycle.lock"},
+    ):
+        raise RelayStatusInvalid
+    lifecycle = _status_read_file_at(
+        root_descriptor,
+        (*admin_parts, "lifecycle.lock"),
+        maximum=0,
+    )
+    if (
+        lifecycle.data
+        or lifecycle.mode != 0o600
+        or lifecycle.uid != expected_uid
+        or lifecycle.gid != expected_gid
+        or lifecycle.nlink != 1
+    ):
+        raise RelayStatusInvalid
+    if "activation" not in admin_names:
+        return None
+    activation_descriptor = None
+    try:
+        activation_descriptor = _status_open_directory_at(
+            root_descriptor,
+            (*admin_parts, "activation"),
+            missing_ok=False,
+        )
+        if activation_descriptor is None:
+            raise RelayStatusRecovery
+        journal_status = inspect_activation_journal_directory(
+            activation_descriptor,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        current_activation = _status_lstat_at(
+            root_descriptor,
+            (*admin_parts, "activation"),
+        )
+        if (
+            current_activation is None
+            or not stat.S_ISDIR(current_activation.st_mode)
+            or _metadata_fingerprint(current_activation)
+            != _metadata_fingerprint(os.fstat(activation_descriptor))
+        ):
+            raise RelayStatusRecovery
+        snapshot_sha256 = journal_status.get("snapshot_sha256")
+        completed = journal_status.get("completed_transaction_count")
+        release_ids = journal_status.get("release_ids")
+        unit_ids = journal_status.get("unit_ids")
+        version_ids = journal_status.get("version_ids")
+        if (
+            journal_status.get("ok") is not True
+            or journal_status.get("state") != "ready"
+            or journal_status.get("recovery_required") is not False
+            or not isinstance(snapshot_sha256, str)
+            or not SHA256_PATTERN.fullmatch(snapshot_sha256)
+            or type(completed) is not int
+            or completed < 0
+            or not isinstance(release_ids, tuple)
+            or not isinstance(unit_ids, tuple)
+            or not isinstance(version_ids, tuple)
+            or (
+                completed == 0
+                and (release_ids or unit_ids or version_ids)
+            )
+            or (
+                completed > 0
+                and (
+                    release_ids != (expected_release_id,)
+                    or unit_ids != (UNIT_NAME,)
+                    or len(version_ids) != 1
+                    or not expected_release_id.startswith(
+                        f"{version_ids[0]}-"
+                    )
+                )
+            )
+        ):
+            raise RelayStatusRecovery
+        return {
+            "completed_transaction_count": completed,
+            "release_ids": release_ids,
+            "snapshot_sha256": snapshot_sha256,
+            "unit_ids": unit_ids,
+            "version_ids": version_ids,
+        }
+    except RelayStatusInvalid:
+        raise RelayStatusRecovery from None
+    finally:
+        if activation_descriptor is not None:
+            os.close(activation_descriptor)
+
+
 def _status_installed_valid(
     root_descriptor: int,
     *,
@@ -1980,6 +2114,12 @@ def _status_installed_valid(
     ):
         raise RelayStatusInvalid
     release_id = release_names[0]
+    activation_before = _status_activation_snapshot(
+        root_descriptor,
+        expected_uid=expected_uid,
+        expected_gid=expected_gid,
+        expected_release_id=release_id,
+    )
     expected_release_target = f"releases/{release_id}"
     if (
         _status_read_symlink_at(
@@ -2010,28 +2150,6 @@ def _status_installed_valid(
         != stable_target
     ):
         raise RelayStatusInvalid
-    admin_parts = ("var", "lib", "agentops-relayctl")
-    _status_validate_directory_at(
-        root_descriptor,
-        admin_parts,
-        expected_uid=expected_uid,
-        expected_gid=expected_gid,
-        expected_mode=0o700,
-        expected_names={"lifecycle.lock"},
-    )
-    lifecycle = _status_read_file_at(
-        root_descriptor,
-        (*admin_parts, "lifecycle.lock"),
-        maximum=0,
-    )
-    if (
-        lifecycle.data
-        or lifecycle.mode != 0o600
-        or lifecycle.uid != expected_uid
-        or lifecycle.gid != expected_gid
-        or lifecycle.nlink != 1
-    ):
-        raise RelayStatusInvalid
     release_parts = (*releases_parts, release_id)
     release_files, release_directories = _status_scan_release_tree(
         root_descriptor,
@@ -2048,6 +2166,12 @@ def _status_installed_valid(
     metadata = _status_release_metadata(release_json)
     if metadata["release_id"] != release_id:
         raise RelayStatusInvalid
+    if (
+        activation_before is not None
+        and activation_before["completed_transaction_count"] > 0
+        and activation_before["version_ids"] != (metadata["version"],)
+    ):
+        raise RelayStatusRecovery
     site_prefix = "private/site-packages/"
     site_files = {
         name[len(site_prefix) :]: observed.data
@@ -2090,6 +2214,14 @@ def _status_installed_valid(
         or installed_unit.nlink != 1
     ):
         raise RelayStatusInvalid
+    activation_after = _status_activation_snapshot(
+        root_descriptor,
+        expected_uid=expected_uid,
+        expected_gid=expected_gid,
+        expected_release_id=release_id,
+    )
+    if activation_after != activation_before:
+        raise RelayStatusRecovery
     return {
         "installed": True,
         "ok": True,
@@ -2237,14 +2369,26 @@ def _status_scan_anchored(root_descriptor: int) -> tuple[dict[str, object], int]
             },
             0,
         )
-    return (
-        _status_installed_valid(
+    try:
+        installed = _status_installed_valid(
             root_descriptor,
             expected_uid=root_metadata.st_uid,
             expected_gid=root_metadata.st_gid,
-        ),
-        0,
-    )
+        )
+    except RelayStatusRecovery:
+        return (
+            {
+                "installed": False,
+                "ok": False,
+                "operation_id": "status",
+                "recovery_marker_count": 1,
+                "recovery_required": True,
+                "schema_id": STATUS_SCHEMA,
+                "state_id": "recovery_required",
+            },
+            1,
+        )
+    return installed, 0
 
 
 def relay_status(root: Path) -> tuple[dict[str, object], int]:

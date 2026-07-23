@@ -859,6 +859,50 @@ def descriptor_cases(failures: list[str]) -> None:
     if before is not None and after is not None:
         require(before == after, "fixture store leaked descriptors", failures)
 
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        prepare_root(root)
+        child = root / "child"
+        child.mkdir(mode=0o700)
+        parent_fd = os.open(root, journal._directory_flags())
+        original_stat = journal.os.stat
+        stat_calls = 0
+
+        def fail_after_directory_open(*args: object, **kwargs: object):
+            nonlocal stat_calls
+            if args and args[0] == "child":
+                stat_calls += 1
+                if stat_calls % 2 == 0:
+                    raise FileNotFoundError
+            return original_stat(*args, **kwargs)
+
+        failure_before = descriptor_count()
+        journal.os.stat = fail_after_directory_open
+        try:
+            for index in range(12):
+                expect_error(
+                    lambda: journal._open_directory_at(
+                        parent_fd,
+                        "child",
+                        expected_uid=os.geteuid(),
+                        expected_gid=os.getegid(),
+                        create=False,
+                    ),
+                    expected="activation_journal_invalid",
+                    label=f"directory post-open stat failure {index}",
+                    failures=failures,
+                )
+        finally:
+            journal.os.stat = original_stat
+        failure_after = descriptor_count()
+        os.close(parent_fd)
+        if failure_before is not None and failure_after is not None:
+            require(
+                failure_before == failure_after,
+                "post-open directory stat failure leaked descriptors",
+                failures,
+            )
+
 
 def main() -> int:
     failures: list[str] = []
@@ -923,6 +967,7 @@ def main() -> int:
         json.dumps(
             {
                 "failure_injection_cases": 4,
+                "descriptor_failure_leak_free": True,
                 "publication_race_rejected": True,
                 "bounded_enumeration": True,
                 "ok": True,

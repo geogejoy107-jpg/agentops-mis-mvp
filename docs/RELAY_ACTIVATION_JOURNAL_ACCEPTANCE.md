@@ -67,9 +67,10 @@ The private fixture store exercises the intended production algorithm:
 - bounded public projections that omit paths, raw observations, credentials,
   and private journal bodies.
 
-The production writer is intentionally absent. Before it can be added, the
-installed-tree status/scanner must validate the exact journal namespace and a
-controller must hold the existing lifecycle lock across final plan refresh,
+The production writer is intentionally absent. The installed-tree status now
+validates the exact journal namespace as recorded in
+`RELAY_ACTIVATION_JOURNAL_STATUS_ACCEPTANCE.md`. Before a writer can be added,
+a controller must hold the existing lifecycle lock across final plan refresh,
 all writes, mutation, verification, rollback, and terminal persistence.
 
 ## Verification
@@ -97,14 +98,15 @@ The deterministic smoke verifies:
 - rejection of a temporary-name replacement injected immediately before link,
   with the transaction retained as recovery-required;
 - bounded enumeration stopping at the first receipt-count overflow entry;
-- descriptor closure, zero network calls, zero subprocesses, and zero systemd
-  calls.
+- descriptor closure on both success and injected post-open metadata failure,
+  zero network calls, zero subprocesses, and zero systemd calls.
 
 Expected result:
 
 ```json
 {
   "bounded_enumeration": true,
+  "descriptor_failure_leak_free": true,
   "failure_injection_cases": 4,
   "ok": true,
   "operation": "relay_activation_journal_smoke",
@@ -121,9 +123,8 @@ Expected result:
 This acceptance is not evidence of confirmed service activation. The remaining
 sequence is:
 
-1. extend read-only installed-state scanning to the exact journal namespace;
-2. add the lifecycle-lock-bound production store opener;
-3. implement the narrow systemd mutation adapter;
-4. implement confirmed controller, crash recovery, and ownership-safe rollback;
-5. pass real Linux systemd interruption tests;
-6. pass public Relay and physical ordinary-browser acceptance.
+1. add the lifecycle-lock-bound production store opener;
+2. implement the narrow systemd mutation adapter;
+3. implement confirmed controller, crash recovery, and ownership-safe rollback;
+4. pass real Linux systemd interruption tests;
+5. pass public Relay and physical ordinary-browser acceptance.

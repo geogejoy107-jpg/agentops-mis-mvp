@@ -2,9 +2,10 @@
 
 Status: pure Activation Plan Core v0, strict daemon config parser, read-only
 FD-anchored host prerequisite scanner, production read-only systemd adapter and
-activate preview CLI, and private immutable activation journal core implemented
-and locally accepted; production journal opening, confirmed mutation,
-controller, rollback and recovery remain planned and unimplemented
+activate preview CLI, private immutable activation journal core, and read-only
+installed-status journal validation implemented and locally accepted;
+production journal opening, confirmed mutation, controller, rollback and
+recovery remain planned and unimplemented
 
 ## Objective
 
@@ -34,7 +35,8 @@ separately shares the bounded strict config parser used by the scanner. See
 `RELAY_CONFIG_PARSER_ACCEPTANCE.md`,
 `RELAY_ACTIVATION_SCANNER_ACCEPTANCE.md`, and
 `RELAY_ACTIVATION_PREVIEW_ACCEPTANCE.md`, and
-`RELAY_ACTIVATION_JOURNAL_ACCEPTANCE.md`.
+`RELAY_ACTIVATION_JOURNAL_ACCEPTANCE.md` plus
+`RELAY_ACTIVATION_JOURNAL_STATUS_ACCEPTANCE.md`.
 
 ## Command Contract
 
@@ -207,8 +209,10 @@ Activation state is namespaced under:
 /var/lib/agentops-relayctl/activation/receipts/<receipt-sha256>.json
 ```
 
-The activation implementation must update read-only status allowlists for that
-exact bounded namespace; it must not reuse the install `transaction.json`.
+The read-only status implementation accepts only that exact bounded namespace,
+requires complete one-to-one terminal revision and receipt bindings for the
+installed release, and returns `recovery_required` for incomplete or changing
+state. It must not reuse the install `transaction.json`.
 Terminal receipts are immutable, bounded, credential-free, and retained under
 an explicit count policy. The existing `lifecycle.lock` is held from the final
 plan refresh through terminal receipt persistence, rollback, or durable

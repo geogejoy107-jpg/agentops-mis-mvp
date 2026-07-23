@@ -919,6 +919,7 @@ def _open_directory_at(
         or (exclusive_create and not create)
     ):
         raise RelayActivationJournalError("activation_journal_invalid")
+    descriptor = -1
     try:
         if create:
             try:
@@ -938,6 +939,8 @@ def _open_directory_at(
         opened = os.fstat(descriptor)
         after = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     except OSError:
+        if descriptor >= 0:
+            os.close(descriptor)
         raise RelayActivationJournalError(
             "activation_journal_invalid"
         ) from None
@@ -1605,6 +1608,146 @@ class _ActivationJournalStore:
                 "state": "recovery_required",
             }
 
+    def snapshot_sha256(self) -> str:
+        if self.inspect_store().get("state") != "ready":
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+        plan_names = _bounded_directory_names(
+            self.transactions_fd,
+            MAX_JOURNAL_PLANS,
+        )
+        receipt_names = _bounded_directory_names(
+            self.receipts_fd,
+            MAX_JOURNAL_RECEIPTS,
+        )
+        plans: list[dict[str, object]] = []
+        for plan_sha256 in plan_names:
+            plan_fd = self._plan_directory(plan_sha256, create=False)
+            try:
+                before = _fingerprint(os.fstat(plan_fd))
+                revision_names = _bounded_directory_names(
+                    plan_fd,
+                    MAX_JOURNAL_REVISIONS,
+                )
+                records = []
+                for name in revision_names:
+                    raw = _read_file_at(
+                        plan_fd,
+                        name,
+                        expected_uid=self.expected_uid,
+                        expected_gid=self.expected_gid,
+                    )
+                    records.append(
+                        {
+                            "content_sha256": _sha256(raw),
+                            "metadata": _fingerprint(
+                                os.stat(
+                                    name,
+                                    dir_fd=plan_fd,
+                                    follow_symlinks=False,
+                                )
+                            ),
+                            "name": name,
+                        }
+                    )
+                after = _fingerprint(os.fstat(plan_fd))
+                if (
+                    before != after
+                    or _bounded_directory_names(
+                        plan_fd,
+                        MAX_JOURNAL_REVISIONS,
+                    )
+                    != revision_names
+                ):
+                    raise RelayActivationJournalError(
+                        "activation_journal_recovery_required"
+                    )
+                plans.append(
+                    {
+                        "directory_metadata": before,
+                        "plan_sha256": plan_sha256,
+                        "records": records,
+                    }
+                )
+            finally:
+                os.close(plan_fd)
+        receipts = []
+        for name in receipt_names:
+            raw = _read_file_at(
+                self.receipts_fd,
+                name,
+                expected_uid=self.expected_uid,
+                expected_gid=self.expected_gid,
+            )
+            receipts.append(
+                {
+                    "content_sha256": _sha256(raw),
+                    "metadata": _fingerprint(
+                        os.stat(
+                            name,
+                            dir_fd=self.receipts_fd,
+                            follow_symlinks=False,
+                        )
+                    ),
+                    "name": name,
+                }
+            )
+        if (
+            _bounded_directory_names(
+                self.transactions_fd,
+                MAX_JOURNAL_PLANS,
+            )
+            != plan_names
+            or _bounded_directory_names(
+                self.receipts_fd,
+                MAX_JOURNAL_RECEIPTS,
+            )
+            != receipt_names
+        ):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+        return _sha256(
+            _canonical_json(
+                {
+                    "activation_metadata": _fingerprint(
+                        os.fstat(self.activation_fd)
+                    ),
+                    "plans": plans,
+                    "receipts": receipts,
+                    "receipts_metadata": _fingerprint(
+                        os.fstat(self.receipts_fd)
+                    ),
+                    "transactions_metadata": _fingerprint(
+                        os.fstat(self.transactions_fd)
+                    ),
+                }
+            )
+        )
+
+    def identity_summary(self) -> dict[str, tuple[str, ...]]:
+        if self.inspect_store().get("state") != "ready":
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+        release_ids: set[str] = set()
+        unit_ids: set[str] = set()
+        version_ids: set[str] = set()
+        for plan_sha256 in _bounded_directory_names(
+            self.transactions_fd,
+            MAX_JOURNAL_PLANS,
+        ):
+            identity = self._load_chain(plan_sha256)[0].identity
+            release_ids.add(identity.release_id)
+            unit_ids.add(identity.unit_id)
+            version_ids.add(identity.version_id)
+        return {
+            "release_ids": tuple(sorted(release_ids)),
+            "unit_ids": tuple(sorted(unit_ids)),
+            "version_ids": tuple(sorted(version_ids)),
+        }
+
     def inspect_store(self) -> dict[str, object]:
         if self.closed:
             raise RelayActivationJournalError("activation_journal_invalid")
@@ -1690,6 +1833,132 @@ class _ActivationJournalStore:
             "schema_id": ACTIVATION_JOURNAL_SCHEMA,
             "state": "ready",
         }
+
+
+def inspect_activation_journal_directory(
+    activation_fd: int,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> dict[str, object]:
+    """Inspect one already-open activation directory without host mutation."""
+
+    recovery = {
+        "ok": False,
+        "operation_id": "activate",
+        "recovery_required": True,
+        "schema_id": ACTIVATION_JOURNAL_SCHEMA,
+        "state": "recovery_required",
+    }
+    if (
+        type(activation_fd) is not int
+        or activation_fd < 0
+        or type(expected_uid) is not int
+        or expected_uid < 0
+        or type(expected_gid) is not int
+        or expected_gid < 0
+    ):
+        return recovery
+    owned_activation_fd = -1
+    transactions_fd = -1
+    receipts_fd = -1
+    store: _ActivationJournalStore | None = None
+    try:
+        owned_activation_fd = os.dup(activation_fd)
+        activation_metadata = os.fstat(owned_activation_fd)
+        _validate_directory_metadata(
+            activation_metadata,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        if _bounded_directory_names(owned_activation_fd, 2) != (
+            "receipts",
+            "transactions",
+        ):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+        transactions_fd = _open_directory_at(
+            owned_activation_fd,
+            "transactions",
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+            create=False,
+        )
+        receipts_fd = _open_directory_at(
+            owned_activation_fd,
+            "receipts",
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+            create=False,
+        )
+        store = _ActivationJournalStore(
+            activation_fd=owned_activation_fd,
+            transactions_fd=transactions_fd,
+            receipts_fd=receipts_fd,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        owned_activation_fd = -1
+        transactions_fd = -1
+        receipts_fd = -1
+        result = store.inspect_store()
+        snapshot_sha256 = (
+            store.snapshot_sha256()
+            if result.get("state") == "ready"
+            else None
+        )
+        identity_summary = (
+            store.identity_summary()
+            if result.get("state") == "ready"
+            else None
+        )
+        if (
+            _fingerprint(os.fstat(store.activation_fd))
+            != _fingerprint(activation_metadata)
+            or _bounded_directory_names(store.activation_fd, 2)
+            != ("receipts", "transactions")
+            or _fingerprint(
+                os.stat(
+                    "transactions",
+                    dir_fd=store.activation_fd,
+                    follow_symlinks=False,
+                )
+            )
+            != _fingerprint(os.fstat(store.transactions_fd))
+            or _fingerprint(
+                os.stat(
+                    "receipts",
+                    dir_fd=store.activation_fd,
+                    follow_symlinks=False,
+                )
+            )
+            != _fingerprint(os.fstat(store.receipts_fd))
+        ):
+            return recovery
+        if snapshot_sha256 is None or identity_summary is None:
+            return result
+        return {
+            **result,
+            **identity_summary,
+            "snapshot_sha256": snapshot_sha256,
+        }
+    except (OSError, RelayActivationJournalError):
+        return recovery
+    finally:
+        if store is not None:
+            store.close()
+        else:
+            for descriptor in (
+                receipts_fd,
+                transactions_fd,
+                owned_activation_fd,
+            ):
+                if descriptor >= 0:
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass
 
 
 def _open_fixture_store(root: Path) -> _ActivationJournalStore:
