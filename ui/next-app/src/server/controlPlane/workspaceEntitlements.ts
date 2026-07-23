@@ -13,6 +13,7 @@ export type WorkspaceEntitlementEvaluation =
       workspaceId: string;
       operation: "enrollment_issue";
       agentId: string;
+      replacingEnrollmentId?: string;
     }>
   | Readonly<{
       workspaceId: string;
@@ -39,6 +40,7 @@ export type WorkspaceEntitlementReason =
   | "entitlement_not_effective"
   | "capability_disabled"
   | "usage_state_invalid"
+  | "replacement_enrollment_invalid"
   | "agent_quota_exceeded"
   | "active_enrollment_quota_exceeded"
   | "active_session_quota_exceeded"
@@ -248,6 +250,7 @@ async function readEnrollmentUsage(
   workspaceId: string,
   agentId: string,
   evaluatedAt: Date,
+  replacingEnrollmentId: string | null,
 ) {
   const result = await client.query<EnrollmentUsageRow>(
     `WITH scoped AS (
@@ -265,6 +268,7 @@ async function readEnrollmentUsage(
            AS invalid_expiry
        FROM agent_gateway_tokens
        WHERE workspace_id=$1
+         AND ($4::text IS NULL OR token_id<>$4)
      )
      SELECT
        COUNT(DISTINCT agent_id) FILTER(WHERE active_now)::text AS active_agents,
@@ -272,9 +276,33 @@ async function readEnrollmentUsage(
        COALESCE(BOOL_OR(agent_id=$3 AND active_now),FALSE) AS target_agent_active,
        COUNT(*) FILTER(WHERE invalid_expiry)::text AS invalid_expiries
      FROM scoped`,
-    [workspaceId, evaluatedAt.toISOString(), agentId],
+    [workspaceId, evaluatedAt.toISOString(), agentId, replacingEnrollmentId],
   );
   return result.rows[0];
+}
+
+async function lockReplacementEnrollment(
+  client: PoolClient,
+  workspaceId: string,
+  agentId: string,
+  replacingEnrollmentId: string,
+  evaluatedAt: Date,
+) {
+  const result = await client.query<{
+    status: string;
+    expires_at: string | null;
+  }>(
+    `SELECT status,expires_at
+    FROM agent_gateway_tokens
+    WHERE token_id=$1 AND workspace_id=$2 AND agent_id=$3
+    FOR UPDATE`,
+    [replacingEnrollmentId, workspaceId, agentId],
+  );
+  const row = result.rows[0];
+  if (!row || row.status !== "active") return false;
+  if (row.expires_at === null) return true;
+  const expiresAt = asDate(row.expires_at);
+  return Boolean(expiresAt && expiresAt.getTime() > evaluatedAt.getTime());
 }
 
 async function readSessionUsage(
@@ -451,7 +479,36 @@ export async function evaluateWorkspaceEntitlement(
         capabilityEnabled,
       });
     }
-    const row = await readEnrollmentUsage(client, workspaceId, agentId, evaluatedAt);
+    const replacingEnrollmentId = identifier(input.replacingEnrollmentId);
+    if (
+      input.replacingEnrollmentId !== undefined
+      && (
+        !replacingEnrollmentId
+        || !await lockReplacementEnrollment(
+          client,
+          workspaceId,
+          agentId,
+          replacingEnrollmentId,
+          evaluatedAt,
+        )
+      )
+    ) {
+      return decision(input, {
+        allow: false,
+        reason: "replacement_enrollment_invalid",
+        evaluatedAt,
+        lockAcquired: true,
+        entitlement,
+        capabilityEnabled,
+      });
+    }
+    const row = await readEnrollmentUsage(
+      client,
+      workspaceId,
+      agentId,
+      evaluatedAt,
+      replacingEnrollmentId || null,
+    );
     const activeAgents = nonNegativeInteger(row?.active_agents);
     const activeEnrollments = nonNegativeInteger(row?.active_enrollments);
     const invalidExpiries = nonNegativeInteger(row?.invalid_expiries);

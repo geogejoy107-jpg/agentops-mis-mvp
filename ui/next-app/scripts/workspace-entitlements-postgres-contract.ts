@@ -508,7 +508,7 @@ async function run() {
         maxAgents: 2,
         maxActiveEnrollments: 1,
       });
-      await seedActiveToken(
+      const enrollmentQuotaToken = await seedActiveToken(
         fixture,
         "ws_entitlement_enrollment_quota",
         AGENT_A,
@@ -521,6 +521,24 @@ async function run() {
           agentId: AGENT_A,
         }),
         "active_enrollment_quota_exceeded",
+      );
+      const replacementAllowed = await evaluate(connectionString, {
+        workspaceId: "ws_entitlement_enrollment_quota",
+        operation: "enrollment_issue",
+        agentId: AGENT_A,
+        replacingEnrollmentId: enrollmentQuotaToken,
+      });
+      assert.equal(replacementAllowed.allow, true);
+      assert.equal(replacementAllowed.usage?.active_agents?.projected, 1);
+      assert.equal(replacementAllowed.usage?.active_enrollments?.projected, 1);
+      assertDenied(
+        await evaluate(connectionString, {
+          workspaceId: "ws_entitlement_enrollment_quota",
+          operation: "enrollment_issue",
+          agentId: AGENT_B,
+          replacingEnrollmentId: enrollmentQuotaToken,
+        }),
+        "replacement_enrollment_invalid",
       );
 
       await upsertEntitlement(fixture, "ws_entitlement_session_quota", {
@@ -633,6 +651,7 @@ async function run() {
       time_window_fail_closed: true,
       capability_fail_closed: true,
       enrollment_quotas_enforced: true,
+      enrollment_rotation_is_quota_neutral: true,
       session_quota_enforced: true,
       utc_monthly_run_and_cost_quotas_enforced: true,
       allowed_decisions_structured: true,

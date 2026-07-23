@@ -168,7 +168,7 @@ As of 2026-07-24:
   Next.js `/api/mis` control plane and fail at build time if Python proxy mode,
   `/mis-api`, credential-bearing URLs, or insecure remote HTTP are selected.
   Free Local retains the explicit loopback Python compatibility path.
-- Lane 1 has a checksum-pinned nine-migration manifest, schema contract v8,
+- Lane 1 has a checksum-pinned ten-migration manifest, schema contract v9,
   transactional TypeScript runner/readiness ownership, and real PostgreSQL 16
   bootstrap and contract coverage.
 - Lane 2 has direct TypeScript/PostgreSQL owners for Agent identity, sessions,
@@ -184,11 +184,16 @@ As of 2026-07-24:
   Human review flow against the same source fingerprint. Both receipts reported
   the TypeScript Worker started, no Python Worker or Python API started,
   `provider_call_performed=true`, and `dry_run=false`.
-- Lane 5 is in progress: the commercial UI transport boundary is owned, while
-  Human and Agent task/run/evidence read models are being completed.
-- Lane 6 remains partial. Agent registration, child sessions, and heartbeat are
-  owned; Human enrollment administration, commercial entitlements, quotas, and
-  policy ownership remain open.
+- Lane 5 now has direct Human and Agent task, run, artifact, and evidence-graph
+  read owners. Commercial Vite builds use the Next `/api/mis` transport and
+  Human Session CSRF authority for review and enrollment mutations; Free Local
+  retains its explicit compatibility transport.
+- Lane 6 remains partial. Direct Human enrollment create/list/revoke/rotate,
+  session list/revoke, one-time hash-only credentials, and PostgreSQL workspace
+  entitlement/quota evaluation are owned. New enrollment, child-session, and
+  run-start writes fail closed with committed denial audit evidence. Approval-
+  gated enrollment request/decision/issue and remaining commercial policy
+  surfaces are still open.
 - Lane 7 remains open for customer packaging, BYOC, upgrade, backup/restore,
   rollback, supply-chain receipts, and final promotion.
 
@@ -197,9 +202,9 @@ Release, handoff, and merge authority remain false until the remaining read,
 enrollment, entitlement, deployment, and promotion gates pass and the final
 source commit is rerun through both real runtimes.
 
-The next slices are Lane 5 Human and Agent read models, then Lane 6 enrollment
-and entitlement ownership, followed by Lane 7 customer-environment deployment,
-upgrade, rollback, and final dual-runtime promotion.
+The next slices are the remaining Lane 6 approval-gated enrollment and policy
+owners, followed by Lane 7 customer-environment deployment, upgrade, rollback,
+and final same-SHA dual-runtime promotion.
 
 ## Definition Of Done
 

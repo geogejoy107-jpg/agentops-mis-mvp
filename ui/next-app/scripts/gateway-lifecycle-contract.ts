@@ -162,6 +162,27 @@ async function seedFixture(
       past,
     ],
   );
+  await admin.query(
+    `INSERT INTO workspace_entitlements(
+      workspace_id,edition,status,capabilities_json,max_agents,
+      max_active_enrollments,max_active_sessions_per_agent,max_monthly_runs,
+      max_monthly_cost_usd,effective_at,expires_at,created_at,updated_at,
+      updated_by_user_id
+    ) VALUES
+      ('ws_gateway_a','team_governance','active',$1::jsonb,10,10,10,100,100,
+       $2,$3,$2,$2,'usr_gateway_owner'),
+      ('ws_gateway_b','team_governance','active',$1::jsonb,10,10,10,100,100,
+       $2,$3,$2,$2,'usr_gateway_owner')`,
+    [
+      JSON.stringify({
+        enrollment_issue: true,
+        session_issue: true,
+        run_start: true,
+      }),
+      createdAt,
+      future,
+    ],
+  );
 }
 
 async function runContract() {
@@ -277,6 +298,48 @@ async function runContract() {
     assert.equal(replay.body.replayed, true);
     assert(!Object.prototype.hasOwnProperty.call(replay.body, "session_token"));
     assert.equal(replay.body.token_omitted, true);
+    await admin.query(
+      `UPDATE workspace_entitlements SET status='suspended',updated_at=clock_timestamp()
+      WHERE workspace_id='ws_gateway_a'`,
+    );
+    const replayWhileSuspended = await createGatewaySession(
+      gatewayRequest("POST", "session/create", parentToken, sessionBody),
+    );
+    assert.equal(replayWhileSuspended.status, 200);
+    assert.equal(replayWhileSuspended.body.replayed, true);
+    const entitlementDenied = await createGatewaySession(
+      gatewayRequest("POST", "session/create", parentToken, {
+        ...sessionBody,
+        request_id: "session_contract_entitlement_denied",
+      }),
+    );
+    assert.equal(entitlementDenied.status, 403);
+    assert.equal(entitlementDenied.body.error, "workspace_entitlement_denied");
+    assert.equal(
+      (entitlementDenied.body.entitlement_decision as Record<string, unknown>)
+        .reason_code,
+      "entitlement_suspended",
+    );
+    assert.equal(entitlementDenied.body.session_token_generated, false);
+    assert.equal(Object.hasOwn(entitlementDenied.body, "session_token"), false);
+    const entitlementDenialAudit = await admin.query<{
+      count: string;
+      metadata_json: string;
+    }>(
+      `SELECT count(*)::text AS count,max(metadata_json) AS metadata_json
+      FROM audit_logs
+      WHERE workspace_id='ws_gateway_a'
+        AND action='agent_gateway.session_entitlement_denied'`,
+    );
+    assert.equal(entitlementDenialAudit.rows[0].count, "1");
+    assert.match(
+      entitlementDenialAudit.rows[0].metadata_json,
+      /entitlement_suspended/,
+    );
+    await admin.query(
+      `UPDATE workspace_entitlements SET status='active',updated_at=clock_timestamp()
+      WHERE workspace_id='ws_gateway_a'`,
+    );
 
     const sessionStatus = await getGatewayStatus(
       gatewayRequest("GET", "status", sessionToken),
@@ -541,6 +604,8 @@ async function runContract() {
       cross_workspace_blocked: true,
       expiry_enforced: true,
       parent_revocation_enforced: true,
+      entitlement_fail_closed_and_audited: true,
+      idempotent_replay_precedes_entitlement_check: true,
       raw_content_persisted: false,
       python_started: false,
       token_omitted: true,

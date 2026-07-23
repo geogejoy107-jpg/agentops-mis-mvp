@@ -34,6 +34,9 @@ export default defineConfig(({ mode }) => {
     ],
     define: {
       __AGENTOPS_API_BASE__: JSON.stringify(transport.apiBase),
+      __AGENTOPS_HUMAN_SESSION_REQUIRED__: JSON.stringify(
+        transport.humanSessionRequired,
+      ),
     },
     resolve: {
       alias: {

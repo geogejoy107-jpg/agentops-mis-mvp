@@ -9,18 +9,28 @@ TypeScript/PostgreSQL owners:
 
 - `POST /agent-gateway/register`
 - `POST /agent-gateway/session/create`
+- `GET /agent-gateway/sessions`
+- `POST /agent-gateway/session/revoke`
 - `POST /agent-gateway/heartbeat`
 - `GET /agent-gateway/status`
+- `GET /agent-gateway/enrollments`
+- `POST /agent-gateway/enrollment/create`
+- `POST /agent-gateway/enrollment/revoke`
+- `POST /agent-gateway/enrollment/rotate`
 - `GET /agent-gateway/tasks/pull`
 - `GET /agent-gateway/tasks/:taskId`
 - `POST /agent-gateway/tasks/:taskId/claim`
 - `POST /agent-gateway/agent-plans`
 - `GET /agent-gateway/agent-plans/:planId/verify`
 - `POST /agent-gateway/runs/start`
+- `GET /agent-gateway/runs`
+- `GET /agent-gateway/runs/:runId`
+- `GET /agent-gateway/runs/:runId/graph`
 - `POST /agent-gateway/runs/:runId/heartbeat`
 - `POST /agent-gateway/tool-calls`
 - `POST /agent-gateway/evaluations/submit`
 - `POST /agent-gateway/artifacts`
+- `GET /agent-gateway/artifacts`
 - `POST /agent-gateway/plan-evidence-manifests`
 - `POST /agent-gateway/runtime-events`
 - `POST /agent-gateway/audit`
@@ -72,6 +82,14 @@ schema, applies the current migration runner, and covers:
 route ownership, bounded bodies, explicit Free Local proxy switch, and absence
 of Python process/proxy calls in production owners.
 
+The schema contract is now `agentops_commercial_postgres_v9` with ten
+checksum-pinned migrations. Workspace entitlement evaluation is serialized by
+a transaction-scoped workspace advisory lock. New enrollment, child-session,
+and run-start writes fail closed on missing, inactive, suspended, expired,
+disabled, or exhausted entitlement and commit a bounded denial audit. Existing
+idempotent writes replay before quota evaluation, enrollment rotation is
+quota-neutral, and revocation remains available while entitlement is suspended.
+
 The complete Human review acceptance also covers the first-party Human Session
 owners for login, logout, current session, approval list/detail/decision,
 candidate Memory review, and operator loop supervision.
@@ -86,11 +104,9 @@ TypeScript Worker and PostgreSQL 16, performed a real provider call with
 The broader commercial product still needs direct production ownership and
 acceptance for:
 
-- Human Session task, run, graph, tool, evaluation, artifact, audit, and
-  evidence read models
-- Agent-scoped list and detail read models needed by supervision workflows
-- Human enrollment administration, one-time credential issue/revocation,
-  entitlements, quotas, and commercial policy decisions
+- approval-gated enrollment request, Human decision, and one-time
+  issue-after-approval ownership
+- remaining commercial policy and entitlement administration surfaces
 - remaining browser dashboard, agent, connector, and deployment workflows
 - BYOC packaging, upgrade, backup/restore, rollback, and promotion receipts
 

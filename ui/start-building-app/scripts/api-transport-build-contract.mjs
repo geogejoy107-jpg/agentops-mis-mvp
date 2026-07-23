@@ -68,6 +68,9 @@ try {
   assert.equal(commercialBundle.includes("/api/mis"), true);
   assert.equal(commercialBundle.includes("/mis-api"), false);
   assert.equal(commercialBundle.includes("127.0.0.1:8787"), false);
+  assert.equal(commercialBundle.includes("/human-auth/session"), true);
+  assert.equal(commercialBundle.includes("X-AgentOps-CSRF"), true);
+  assert.equal(commercialBundle.includes("Idempotency-Key"), true);
 
   const forbiddenProxy = build("forbidden-proxy", {
     VITE_AGENTOPS_DEPLOYMENT_MODE: "production",
@@ -95,6 +98,7 @@ try {
     contract: "commercial_ui_api_transport_build_v1",
     free_local_bundle_python_compatibility_path: true,
     commercial_bundle_next_postgres_path: true,
+    commercial_human_session_write_authority: true,
     python_proxy_target_omitted_from_bundles: true,
     commercial_proxy_build_rejected: true,
     commercial_insecure_http_build_rejected: true,

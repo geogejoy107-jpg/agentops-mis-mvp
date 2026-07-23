@@ -15,6 +15,7 @@ assert.deepEqual(freeLocal, {
   controlPlaneMode: "proxy",
   production: false,
   apiBase: "/mis-api",
+  humanSessionRequired: false,
   pythonProxyEnabled: true,
 });
 
@@ -23,6 +24,7 @@ const localPostgres = resolveAgentOpsApiTransport({
   VITE_AGENTOPS_CONTROL_PLANE_MODE: "postgres",
 });
 assert.equal(localPostgres.apiBase, "/api/mis");
+assert.equal(localPostgres.humanSessionRequired, true);
 assert.equal(localPostgres.pythonProxyEnabled, false);
 
 for (const deploymentMode of ["production", "prod", "shared", "hosted"]) {
@@ -31,6 +33,7 @@ for (const deploymentMode of ["production", "prod", "shared", "hosted"]) {
   });
   assert.equal(commercial.controlPlaneMode, "postgres");
   assert.equal(commercial.apiBase, "/api/mis");
+  assert.equal(commercial.humanSessionRequired, true);
   assert.equal(commercial.pythonProxyEnabled, false);
 }
 
@@ -81,6 +84,7 @@ process.stdout.write(`${JSON.stringify({
   free_local_python_proxy_default: true,
   local_postgres_supported: true,
   commercial_next_postgres_default: true,
+  commercial_human_session_writes: true,
   commercial_python_proxy_rejected: true,
   commercial_https_remote_only: true,
   credential_url_rejected: true,

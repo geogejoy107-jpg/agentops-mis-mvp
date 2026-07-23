@@ -163,9 +163,9 @@ async function runContract() {
       "migrate",
       { connectionString },
     );
-    assert.equal(migration.schema_contract, "agentops_commercial_postgres_v8");
+    assert.equal(migration.schema_contract, "agentops_commercial_postgres_v9");
     assert.equal(migration.applied_count, POSTGRES_MIGRATION_MANIFEST.length);
-    assert.equal(POSTGRES_MIGRATION_MANIFEST.length, 9);
+    assert.equal(POSTGRES_MIGRATION_MANIFEST.length, 10);
 
     process.env.AGENTOPS_POSTGRES_DSN = connectionString;
     process.env.AGENTOPS_DEPLOYMENT_MODE = "production";

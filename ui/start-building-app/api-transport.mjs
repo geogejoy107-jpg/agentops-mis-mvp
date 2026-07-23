@@ -120,6 +120,7 @@ export function resolveAgentOpsApiTransport(environment = {}) {
       production,
       controlPlaneMode,
     ),
+    humanSessionRequired: controlPlaneMode === "postgres",
     pythonProxyEnabled: !production && controlPlaneMode === "proxy",
   });
 }

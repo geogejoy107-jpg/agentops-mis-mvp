@@ -10,11 +10,12 @@ import { boundedJsonObject } from "./boundedJson";
 import { controlPlaneMode } from "./config";
 import { withPostgresTransaction } from "./db";
 import { ControlPlaneHttpError } from "./http";
-import { appendAudit } from "./ledger";
+import { appendAudit, stableHash } from "./ledger";
+import { evaluateWorkspaceEntitlement } from "./workspaceEntitlements";
 
 export const GATEWAY_LIFECYCLE_MAX_BODY_BYTES = 16 * 1024;
 
-const VALID_SCOPES = [
+export const AGENT_GATEWAY_VALID_SCOPES = [
   "agent_plans:read",
   "agent_plans:write",
   "agents:heartbeat",
@@ -35,6 +36,7 @@ const VALID_SCOPES = [
   "tasks:read",
   "toolcalls:write",
 ] as const;
+const VALID_SCOPES = AGENT_GATEWAY_VALID_SCOPES;
 const VALID_RUNTIME_TYPES = new Set(["mock", "hermes", "openclaw", "codex"]);
 const HEARTBEAT_STATUSES = new Set(["idle", "running", "paused", "error"]);
 const REGISTER_FIELDS = new Set([
@@ -756,6 +758,63 @@ export async function createGatewaySession(request: Request): Promise<LifecycleR
           ttl_sec: replayTtl(existing),
           session_token_omitted: true,
           token_omitted: true,
+        },
+      };
+    }
+
+    const entitlementDecision = await evaluateWorkspaceEntitlement(client, {
+      workspaceId: identity.workspaceId,
+      operation: "session_issue",
+      agentId: identity.agentId,
+    });
+    if (!entitlementDecision.allow) {
+      const denialRequestHash = stableHash({
+        workspace_id: identity.workspaceId,
+        agent_id: identity.agentId,
+        operation: "session_issue",
+        parent_token_ref: safeRef("token", identity.credentialId),
+        request_key: requestKey,
+      });
+      await appendAudit(client, {
+        workspaceId: identity.workspaceId,
+        actorType: "agent",
+        actorId: identity.agentId,
+        action: "agent_gateway.session_entitlement_denied",
+        entityType: "workspace_entitlements",
+        entityId: identity.workspaceId,
+        after: {
+          decision: entitlementDecision.decision,
+          reason_code: entitlementDecision.reason_code,
+          operation: entitlementDecision.operation,
+          usage: entitlementDecision.usage,
+        },
+        metadata: {
+          entitlement_decision: entitlementDecision,
+          credential_mode: identity.mode,
+          parent_token_ref: safeRef("token", identity.credentialId),
+          request_ref: suppliedRequestId
+            ? safeRef("request", suppliedRequestId)
+            : null,
+          session_token_generated: false,
+          token_omitted: true,
+          raw_config_omitted: true,
+        },
+        requestHash: denialRequestHash,
+      });
+      return {
+        status: 403,
+        body: {
+          ok: false,
+          error: "workspace_entitlement_denied",
+          message: "Workspace entitlement does not permit a new Agent Gateway session.",
+          created: false,
+          replayed: false,
+          workspace_id: identity.workspaceId,
+          agent_id: identity.agentId,
+          entitlement_decision: entitlementDecision,
+          session_token_generated: false,
+          token_omitted: true,
+          raw_config_omitted: true,
         },
       };
     }

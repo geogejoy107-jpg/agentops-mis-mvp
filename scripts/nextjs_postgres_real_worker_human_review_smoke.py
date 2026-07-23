@@ -410,7 +410,8 @@ def run_npm(npm: str, runtime_dsn: str, args: list[str], *, stdin: str | None = 
 
 
 def seed_foundation(adapter: NodePgAdapter) -> None:
-    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    now_value = dt.datetime.now(dt.timezone.utc)
+    now = now_value.isoformat()
     adapter.execute(
         "INSERT INTO users(user_id,name,email,role,created_at) VALUES(?,?,?,?,?)",
         (REQUESTER_ID, "Real Worker Requester", "real-worker-requester@local.invalid", "customer", now),
@@ -437,6 +438,34 @@ def seed_foundation(adapter: NodePgAdapter) -> None:
             None,
             now,
             now,
+        ),
+    )
+    adapter.execute(
+        """INSERT INTO workspace_entitlements(
+            workspace_id,edition,status,capabilities_json,max_agents,
+            max_active_enrollments,max_active_sessions_per_agent,max_monthly_runs,
+            max_monthly_cost_usd,effective_at,expires_at,created_at,updated_at,
+            updated_by_user_id
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            WORKSPACE_ID,
+            "enterprise_byoc",
+            "active",
+            json.dumps({
+                "enrollment_issue": True,
+                "session_issue": True,
+                "run_start": True,
+            }),
+            max(10, len(SCOPES)),
+            max(10, len(SCOPES)),
+            10,
+            1000,
+            1000,
+            (now_value - dt.timedelta(minutes=1)).isoformat(),
+            (now_value + dt.timedelta(hours=8)).isoformat(),
+            now,
+            now,
+            REQUESTER_ID,
         ),
     )
     adapter.commit()
