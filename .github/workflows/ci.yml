@@ -70,6 +70,7 @@ jobs:
             scripts/relay_activation_plan_smoke.py \
             scripts/relay_activation_preview_smoke.py \
             scripts/relay_activation_scan_smoke.py \
+            scripts/relay_linux_systemd_recovery_acceptance.py \
             scripts/relay_systemd_mutation_smoke.py \
             scripts/relay_config_parser_smoke.py \
             scripts/relay_offline_status_smoke.py \
@@ -101,6 +102,29 @@ jobs:
           timeout 120s python3 scripts/private_host_log_rotation_smoke.py
           timeout 120s python3 scripts/worker_service_heartbeat_cadence_smoke.py
           timeout 120s python3 scripts/worker_intake_heartbeat_fleet_smoke.py
+
+  relay-linux-systemd:
+    name: Relay recovery on real Linux systemd
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run disposable systemd recovery acceptance
+        run: |
+          set -euo pipefail
+          python_bin="$(command -v python3)"
+          sudo env \
+            AGENTOPS_RELAY_LINUX_SYSTEMD_ACCEPTANCE=1 \
+            PYTHONDONTWRITEBYTECODE=1 \
+            "$python_bin" \
+            scripts/relay_linux_systemd_recovery_acceptance.py
 
   backend-deterministic:
     name: Backend deterministic smokes
