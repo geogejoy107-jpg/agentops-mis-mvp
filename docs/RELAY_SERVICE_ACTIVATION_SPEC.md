@@ -392,11 +392,13 @@ duplicates or unknown output. `LoadState` must be `loaded`; `UnitFileState` is
 limited to `enabled` or `disabled`; active units require
 `ActiveState=active`, `SubState=running`, a nonzero `MainPID`, and a nonempty
 canonical `InvocationID`; inactive units require `ActiveState=inactive`,
-`SubState=dead`, and `MainPID=0`. `Result` must be empty or `success`,
-`ExecMainStatus` must be zero, `FragmentPath` must resolve to the exact
-installed unit, and `NeedDaemonReload` is limited to `yes` or `no`. These raw
-properties and paths remain private plan inputs and are not copied to public
-JSON.
+`SubState=dead`, and `MainPID=0`. `Result` must be empty or `success`. Active
+units require `ExecMainStatus=0`; inactive units accept zero, or exactly 15
+only when `Result=success`, because the fixed service uses systemd's default
+`SIGTERM` stop and systemd may retain that signal as `ExecMainStatus`.
+`FragmentPath` must resolve to the exact installed unit, and
+`NeedDaemonReload` is limited to `yes` or `no`. These raw properties and paths
+remain private plan inputs and are not copied to public JSON.
 
 ## Verification Split
 

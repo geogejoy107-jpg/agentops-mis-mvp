@@ -13,6 +13,7 @@ MAX_SYSTEMD_SHOW_BYTES = 16 * 1024
 MAX_IDENTITY_SIZE = 256 * 1024 * 1024
 MAX_ROUTE_KEYS = 256
 MAX_ENABLEMENT_LINKS = 1
+CONTROLLED_STOP_EXEC_STATUS = 15
 UNIT_NAME = "agentops-mis-relay.service"
 UNIT_PATH = f"/etc/systemd/system/{UNIT_NAME}"
 ENABLEMENT_LINK_PATH = (
@@ -370,20 +371,23 @@ def parse_systemd_show_bytes(data: bytes) -> SystemdSnapshot:
     fragment_path = _canonical_host_path(values["FragmentPath"])
     need_reload = values["NeedDaemonReload"]
     invocation_id = values["InvocationID"]
-    exec_status = _canonical_decimal(values["ExecMainStatus"])
+    exec_status = _canonical_decimal(
+        values["ExecMainStatus"],
+        maximum=255,
+    )
     main_pid = _canonical_decimal(values["MainPID"])
 
     if (
         load_state != "loaded"
         or unit_file_state not in {"enabled", "disabled"}
         or result not in {"", "success"}
-        or exec_status != 0
         or need_reload not in {"yes", "no"}
     ):
         raise RelayActivationError("systemd_state_invalid")
     if active_state == "active":
         if (
             sub_state != "running"
+            or exec_status != 0
             or main_pid == 0
             or not INVOCATION_ID_PATTERN.fullmatch(invocation_id)
         ):
@@ -392,6 +396,13 @@ def parse_systemd_show_bytes(data: bytes) -> SystemdSnapshot:
         if (
             sub_state != "dead"
             or main_pid != 0
+            or (
+                exec_status not in {0, CONTROLLED_STOP_EXEC_STATUS}
+            )
+            or (
+                exec_status == CONTROLLED_STOP_EXEC_STATUS
+                and result != "success"
+            )
             or (
                 invocation_id
                 and not INVOCATION_ID_PATTERN.fullmatch(invocation_id)
@@ -421,7 +432,8 @@ def _validate_systemd_snapshot(systemd: SystemdSnapshot) -> None:
         or systemd.unit_file_state not in {"enabled", "disabled"}
         or systemd.result not in {"", "success"}
         or type(systemd.exec_main_status) is not int
-        or systemd.exec_main_status != 0
+        or systemd.exec_main_status < 0
+        or systemd.exec_main_status > 255
         or type(systemd.need_daemon_reload) is not bool
         or type(systemd.main_pid) is not int
         or systemd.main_pid < 0
@@ -435,6 +447,7 @@ def _validate_systemd_snapshot(systemd: SystemdSnapshot) -> None:
     if systemd.active_state == "active":
         if (
             systemd.sub_state != "running"
+            or systemd.exec_main_status != 0
             or systemd.main_pid == 0
             or not INVOCATION_ID_PATTERN.fullmatch(systemd.invocation_id)
         ):
@@ -443,6 +456,15 @@ def _validate_systemd_snapshot(systemd: SystemdSnapshot) -> None:
         if (
             systemd.sub_state != "dead"
             or systemd.main_pid != 0
+            or (
+                systemd.exec_main_status
+                not in {0, CONTROLLED_STOP_EXEC_STATUS}
+            )
+            or (
+                systemd.exec_main_status
+                == CONTROLLED_STOP_EXEC_STATUS
+                and systemd.result != "success"
+            )
             or (
                 systemd.invocation_id
                 and not INVOCATION_ID_PATTERN.fullmatch(

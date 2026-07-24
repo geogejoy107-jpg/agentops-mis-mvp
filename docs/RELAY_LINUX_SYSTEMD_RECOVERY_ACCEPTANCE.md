@@ -32,7 +32,10 @@ through `read_systemd_show`, and invokes the production
 `_run_bound_systemd_mutation` adapter from the confirmed recovery executor.
 The parser accepts either an empty invocation ID or the strict retained
 32-hex invocation ID that systemd may report after a previously active unit
-returns to `inactive`; all other inactive-state constraints remain unchanged.
+returns to `inactive`. It also accepts `ExecMainStatus=15`, which the fixed
+unit's successful default `SIGTERM` stop may retain, but only while the unit is
+inactive, its `Result` is `success`, and its `MainPID` is zero.
+Active units still require `ExecMainStatus=0`; failed results remain invalid.
 
 It exercises:
 

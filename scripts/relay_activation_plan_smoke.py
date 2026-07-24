@@ -304,6 +304,16 @@ def main() -> int:
                 )
             ),
         )
+        stopped_inactive = compile_activation_plan(
+            enabled_prerequisites,
+            parse_systemd_show_bytes(
+                systemd_bytes(
+                    UnitFileState="enabled",
+                    ExecMainStatus="15",
+                    InvocationID="5" * 32,
+                )
+            ),
+        )
         disabled_active = compile_activation_plan(
             base_prerequisites,
             parse_systemd_show_bytes(
@@ -326,6 +336,13 @@ def main() -> int:
             and retained_inactive.systemd is not None
             and retained_inactive.systemd.invocation_id == "4" * 32,
             "inactive state rejected a retained valid invocation id",
+            failures,
+        )
+        require(
+            stopped_inactive.ok is True
+            and stopped_inactive.systemd is not None
+            and stopped_inactive.systemd.exec_main_status == 15,
+            "inactive clean stop rejected a bounded signal status",
             failures,
         )
         require(
@@ -600,7 +617,21 @@ def main() -> int:
             "active": systemd_bytes(ActiveState="failed"),
             "sub": systemd_bytes(SubState="running"),
             "result": systemd_bytes(Result="failed"),
-            "exec-status": systemd_bytes(ExecMainStatus="1"),
+            "active-exec-status": systemd_bytes(
+                ActiveState="active",
+                SubState="running",
+                ExecMainStatus="15",
+                InvocationID="2" * 32,
+                MainPID="42",
+            ),
+            "inactive-exec-status": systemd_bytes(
+                Result="",
+                ExecMainStatus="15",
+            ),
+            "inactive-unexpected-signal": systemd_bytes(
+                ExecMainStatus="9",
+            ),
+            "exec-status-overflow": systemd_bytes(ExecMainStatus="256"),
             "fragment": systemd_bytes(FragmentPath="/tmp/../unsafe.service"),
             "double-root": systemd_bytes(FragmentPath="//etc/systemd/system/unsafe"),
             "reload": systemd_bytes(NeedDaemonReload="maybe"),
@@ -769,7 +800,7 @@ def main() -> int:
         "private_inputs_omitted": True,
         "prerequisite_invalid_cases": 21,
         "schema_id": ACTIVATION_PLAN_SCHEMA,
-        "systemd_invalid_cases": 15,
+        "systemd_invalid_cases": len(invalid_systemd_cases),
     }
     print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
     return 0 if not failures else 1
