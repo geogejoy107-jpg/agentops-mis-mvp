@@ -20,12 +20,17 @@ if str(ROOT) not in sys.path:
 
 from agentops_mis_cli.relay_activation import (  # noqa: E402
     ENABLEMENT_LINK_PATH,
+    INVOCATION_ID_PATTERN,
+    MAX_SYSTEMD_SHOW_BYTES,
     SYSTEMCTL_PATHS,
+    SYSTEMD_PROPERTIES,
     UNIT_PATH,
+    UNIT_NAME,
     ActivationPrerequisiteSnapshot,
     FileIdentity,
     LinkIdentity,
     compile_activation_plan,
+    parse_systemd_show_bytes,
 )
 from agentops_mis_cli.relay_activation_evidence import (  # noqa: E402
     build_activation_journal_identity,
@@ -73,6 +78,7 @@ WantedBy=multi-user.target
 """
 UNIT_CHANGED_BYTES = UNIT_BYTES + b"\n# recovery acceptance\n"
 MAX_STEP_COUNT = 16
+SYSTEMD_SHOW_TIMEOUT_SECONDS = 5
 
 
 class AcceptanceFailure(Exception):
@@ -166,6 +172,94 @@ def _systemctl_identity() -> FileIdentity:
         except AcceptanceFailure:
             continue
     raise AcceptanceFailure
+
+
+def _diagnose_rollback_stop(identity: FileIdentity) -> str:
+    """Return one bounded classifier without retaining systemd output."""
+
+    try:
+        result = subprocess.run(
+            (
+                identity.canonical_path,
+                "--system",
+                "show",
+                UNIT_NAME,
+                "--no-pager",
+                "--property=" + ",".join(SYSTEMD_PROPERTIES),
+            ),
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            cwd="/",
+            env={
+                "LANG": "C",
+                "LC_ALL": "C",
+                "PATH": "/usr/bin:/bin",
+            },
+            timeout=SYSTEMD_SHOW_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        return "rollback_rollback_stop_diagnostic_command"
+    raw = result.stdout
+    if (
+        result.returncode != 0
+        or not isinstance(raw, bytes)
+        or not raw
+        or len(raw) > MAX_SYSTEMD_SHOW_BYTES
+        or b"\x00" in raw
+        or b"\r" in raw
+    ):
+        return "rollback_rollback_stop_diagnostic_command"
+    try:
+        lines = raw.decode("ascii").splitlines()
+    except UnicodeDecodeError:
+        return "rollback_rollback_stop_diagnostic_shape"
+    values: dict[str, str] = {}
+    for line in lines:
+        if "=" not in line:
+            return "rollback_rollback_stop_diagnostic_shape"
+        name, value = line.split("=", 1)
+        if (
+            name not in SYSTEMD_PROPERTIES
+            or name in values
+            or len(value) > 4096
+        ):
+            return "rollback_rollback_stop_diagnostic_shape"
+        values[name] = value
+    if set(values) != set(SYSTEMD_PROPERTIES):
+        return "rollback_rollback_stop_diagnostic_shape"
+    expected = (
+        ("LoadState", {"loaded"}, "load_state"),
+        ("UnitFileState", {"enabled"}, "unit_file_state"),
+        ("ActiveState", {"inactive"}, "active_state"),
+        ("SubState", {"dead"}, "sub_state"),
+        ("Result", {"", "success"}, "result"),
+        ("ExecMainStatus", {"0"}, "exec_status"),
+        ("FragmentPath", {UNIT_PATH}, "fragment_path"),
+        ("NeedDaemonReload", {"no"}, "daemon_reload"),
+        ("MainPID", {"0"}, "main_pid"),
+    )
+    for name, allowed, classifier in expected:
+        if values[name] not in allowed:
+            return f"rollback_rollback_stop_diagnostic_{classifier}"
+    invocation_id = values["InvocationID"]
+    if (
+        invocation_id
+        and not INVOCATION_ID_PATTERN.fullmatch(invocation_id)
+    ):
+        return "rollback_rollback_stop_diagnostic_invocation_id"
+    try:
+        snapshot = parse_systemd_show_bytes(raw)
+    except Exception:
+        return "rollback_rollback_stop_diagnostic_parser"
+    if (
+        snapshot.active_state != "inactive"
+        or snapshot.unit_file_state != "enabled"
+        or snapshot.need_daemon_reload
+    ):
+        return "rollback_rollback_stop_diagnostic_observation"
+    return "rollback_rollback_stop_diagnostic_valid_late_state"
 
 
 def _enablement_links() -> tuple[LinkIdentity, ...]:
@@ -486,15 +580,22 @@ def _run() -> dict[str, object]:
                             raise AcceptanceFailure
                         stage = f"rollback_{step_id}"
                         rollback_steps.append(step_id)
-                        _run_confirmed_recovery_step_with(
-                            plan.plan_sha256,
-                            "rollback",
-                            str(decision["decision_sha256"]),
-                            store=store,
-                            scanner=scanner,
-                            systemd_reader=read_systemd_show,
-                            mutation_runner=_run_bound_systemd_mutation,
-                        )
+                        try:
+                            _run_confirmed_recovery_step_with(
+                                plan.plan_sha256,
+                                "rollback",
+                                str(decision["decision_sha256"]),
+                                store=store,
+                                scanner=scanner,
+                                systemd_reader=read_systemd_show,
+                                mutation_runner=_run_bound_systemd_mutation,
+                            )
+                        except Exception:
+                            if step_id == "rollback_stop":
+                                raise AcceptanceFailure(
+                                    _diagnose_rollback_stop(systemctl)
+                                ) from None
+                            raise
                     else:
                         action_id = str(decision.get("action_id"))
                         if action_id not in {

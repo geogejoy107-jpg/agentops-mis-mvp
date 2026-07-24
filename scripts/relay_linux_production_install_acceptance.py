@@ -32,6 +32,7 @@ from agentops_mis_cli.relay_activation_scan import (  # noqa: E402
     scan_activation_prerequisites,
 )
 from agentops_mis_cli.relay_admin import (  # noqa: E402
+    RelayAdminError,
     _plan_for_install,
     _publish_install,
     inspect_bundle,
@@ -64,6 +65,20 @@ ABSENT_PATHS = (
     RUNTIME_ROOT,
     UNIT,
     ENABLEMENT_LINK,
+)
+INSTALL_PLAN_ERROR_IDS = frozenset(
+    {
+        "install_parent_invalid",
+        "install_parent_mode_invalid",
+        "install_parent_owner_invalid",
+        "install_path_escape",
+        "installed_state_conflict",
+        "installed_state_invalid",
+        "recovery_required",
+        "root_unavailable",
+        "same_version_release_conflict",
+        "upgrade_required",
+    }
 )
 
 
@@ -394,7 +409,17 @@ def _run() -> dict[str, object]:
         stage = "offline_bundle_inspect"
         bundle = inspect_bundle(bundle_path, bundle_sha256)
         stage = "offline_install_plan"
-        plan = _plan_for_install(Path("/"), bundle)
+        try:
+            plan = _plan_for_install(Path("/"), bundle)
+        except RelayAdminError as exc:
+            diagnostic = (
+                exc.error_id
+                if exc.error_id in INSTALL_PLAN_ERROR_IDS
+                else "other"
+            )
+            raise AcceptanceFailure(
+                f"offline_install_plan_{diagnostic}"
+            ) from None
         if plan.no_op:
             raise AcceptanceFailure
         stage = "offline_install_publish"
