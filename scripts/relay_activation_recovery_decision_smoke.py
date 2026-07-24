@@ -29,6 +29,7 @@ from agentops_mis_cli.relay_activation import (  # noqa: E402
 )
 from agentops_mis_cli.relay_activation_evidence import (  # noqa: E402
     build_activation_journal_identity,
+    build_activation_rollback_verification_observation,
     build_activation_step_observation,
 )
 from agentops_mis_cli.relay_activation_journal import (  # noqa: E402
@@ -50,6 +51,8 @@ PRIVATE_CANARY = "RECOVERY_DECISION_PRIVATE_CANARY"
 INTENTS = {
     "daemon_reload": "daemon_reload_requested",
     "enable": "enable_requested",
+    "rollback_disable": "rollback_disable_requested",
+    "rollback_stop": "rollback_stop_requested",
     "start": "start_requested",
     "verify": "verify_requested",
 }
@@ -249,13 +252,14 @@ def append_intent(
     *,
     owns_enable: bool,
     owns_start: bool,
+    intent_id: str | None = None,
 ) -> None:
     append_revision(
         records,
         identity,
         phase="intent",
         step_id=step_id,
-        intent_id=INTENTS[step_id],
+        intent_id=intent_id or INTENTS[step_id],
         owns_enable=owns_enable,
         owns_start=owns_start,
     )
@@ -270,19 +274,29 @@ def append_observed(
     *,
     owns_enable: bool,
     owns_start: bool,
+    intent_id: str | None = None,
+    rollback_verify: bool = False,
 ) -> None:
-    observation = build_activation_step_observation(
-        identity,
-        step_id=step_id,
-        prerequisites=current_prerequisites,
-        systemd=current_systemd,
+    observation = (
+        build_activation_rollback_verification_observation(
+            identity,
+            prerequisites=current_prerequisites,
+            systemd=current_systemd,
+        )
+        if rollback_verify
+        else build_activation_step_observation(
+            identity,
+            step_id=step_id,
+            prerequisites=current_prerequisites,
+            systemd=current_systemd,
+        )
     )
     append_revision(
         records,
         identity,
         phase="observed",
         step_id=step_id,
-        intent_id=INTENTS[step_id],
+        intent_id=intent_id or INTENTS[step_id],
         observation_id=observation.observation_id,
         observation_sha256=observation.observation_sha256,
         owns_enable=owns_enable,
@@ -512,6 +526,207 @@ def main() -> int:
         "owned start did not permit exact inverse",
         failures,
     )
+
+    rollback_records = list(records)
+    append_intent(
+        rollback_records,
+        identity,
+        "rollback_stop",
+        owns_enable=True,
+        owns_start=True,
+    )
+    stopped_systemd = systemd(enabled=True)
+    rollback_stop_observation = compile_activation_recovery_decision(
+        snapshot(rollback_records),
+        enabled_prerequisites,
+        stopped_systemd,
+        requested_outcome="rollback",
+    )
+    require(
+        rollback_stop_observation.action_id == "inverse"
+        and rollback_stop_observation.operation_id
+        == "record_observation"
+        and rollback_stop_observation.step_id == "rollback_stop",
+        "completed rollback stop was not recordable",
+        failures,
+    )
+    append_observed(
+        rollback_records,
+        identity,
+        "rollback_stop",
+        enabled_prerequisites,
+        stopped_systemd,
+        owns_enable=True,
+        owns_start=False,
+    )
+    rollback_disable = compile_activation_recovery_decision(
+        snapshot(rollback_records),
+        enabled_prerequisites,
+        stopped_systemd,
+        requested_outcome="rollback",
+    )
+    require(
+        rollback_disable.action_id == "inverse"
+        and rollback_disable.operation_id == "run_step"
+        and rollback_disable.step_id == "rollback_disable",
+        "rollback stop did not select disable",
+        failures,
+    )
+    append_intent(
+        rollback_records,
+        identity,
+        "rollback_disable",
+        owns_enable=True,
+        owns_start=False,
+    )
+    restored_prerequisites = prerequisites()
+    restored_systemd = systemd()
+    rollback_disable_observation = (
+        compile_activation_recovery_decision(
+            snapshot(rollback_records),
+            restored_prerequisites,
+            restored_systemd,
+            requested_outcome="rollback",
+        )
+    )
+    require(
+        rollback_disable_observation.action_id == "inverse"
+        and rollback_disable_observation.operation_id
+        == "record_observation"
+        and rollback_disable_observation.step_id
+        == "rollback_disable",
+        "completed rollback disable was not recordable",
+        failures,
+    )
+    append_observed(
+        rollback_records,
+        identity,
+        "rollback_disable",
+        restored_prerequisites,
+        restored_systemd,
+        owns_enable=False,
+        owns_start=False,
+    )
+    rollback_verify = compile_activation_recovery_decision(
+        snapshot(rollback_records),
+        restored_prerequisites,
+        restored_systemd,
+        requested_outcome="rollback",
+    )
+    resume_after_rollback = compile_activation_recovery_decision(
+        snapshot(rollback_records),
+        restored_prerequisites,
+        restored_systemd,
+        requested_outcome="resume",
+    )
+    require(
+        rollback_verify.action_id == "inverse"
+        and rollback_verify.operation_id == "run_step"
+        and rollback_verify.step_id == "verify"
+        and resume_after_rollback.action_id == "blocked"
+        and resume_after_rollback.reason_id
+        == "rollback_contract_incomplete",
+        "rollback did not require verification or blocked resume",
+        failures,
+    )
+    append_intent(
+        rollback_records,
+        identity,
+        "verify",
+        owns_enable=False,
+        owns_start=False,
+        intent_id="rollback_verify_requested",
+    )
+    rollback_verify_observation = (
+        compile_activation_recovery_decision(
+            snapshot(rollback_records),
+            restored_prerequisites,
+            restored_systemd,
+            requested_outcome="rollback",
+        )
+    )
+    require(
+        rollback_verify_observation.action_id == "inverse"
+        and rollback_verify_observation.operation_id
+        == "record_observation"
+        and rollback_verify_observation.step_id == "verify",
+        "completed rollback verification was not recordable",
+        failures,
+    )
+    append_observed(
+        rollback_records,
+        identity,
+        "verify",
+        restored_prerequisites,
+        restored_systemd,
+        owns_enable=False,
+        owns_start=False,
+        intent_id="rollback_verify_requested",
+        rollback_verify=True,
+    )
+    rollback_receipt_decision = (
+        compile_activation_recovery_decision(
+            snapshot(rollback_records),
+            restored_prerequisites,
+            restored_systemd,
+            requested_outcome="rollback",
+        )
+    )
+    require(
+        rollback_receipt_decision.action_id == "inverse"
+        and rollback_receipt_decision.operation_id
+        == "publish_rollback_receipt",
+        "verified rollback did not select receipt",
+        failures,
+    )
+    rollback_last = parse_activation_revision(rollback_records[-1])
+    rollback_receipt = build_activation_receipt(
+        identity,
+        terminal_revision=rollback_last.revision + 1,
+        previous_revision_sha256=rollback_last.record_sha256,
+        terminal_state="service_state_rolled_back",
+        owns_enable=False,
+        owns_start=False,
+        result_id="rollback_succeeded",
+    )
+    rollback_terminalize = compile_activation_recovery_decision(
+        snapshot(rollback_records, rollback_receipt),
+        restored_prerequisites,
+        restored_systemd,
+        requested_outcome="rollback",
+    )
+    parsed_rollback_receipt = parse_activation_receipt(
+        rollback_receipt
+    )
+    append_revision(
+        rollback_records,
+        identity,
+        phase="terminal",
+        step_id="terminal",
+        owns_enable=False,
+        owns_start=False,
+        terminal_state="service_state_rolled_back",
+        receipt_sha256=(
+            parsed_rollback_receipt.receipt_sha256
+        ),
+    )
+    rollback_complete = compile_activation_recovery_decision(
+        snapshot(rollback_records, rollback_receipt),
+        restored_prerequisites,
+        restored_systemd,
+        requested_outcome="rollback",
+    )
+    rollback_terminal_contract = (
+        rollback_terminalize.action_id == "terminalize"
+        and rollback_complete.action_id == "complete"
+        and rollback_complete.reason_id == "journal_complete"
+    )
+    require(
+        rollback_terminal_contract,
+        "rollback receipt did not terminalize idempotently",
+        failures,
+    )
+
     changed_link_before_verify = (
         compile_activation_recovery_decision(
             snapshot(records),
@@ -742,6 +957,7 @@ def main() -> int:
         "private_prerequisite_drift_blocked": (
             changed_config.reason_id == "plan_binding_unproven"
         ),
+        "rollback_terminal_contract": rollback_terminal_contract,
         "systemd_mutation_performed": False,
         "write_scope": "none",
     }

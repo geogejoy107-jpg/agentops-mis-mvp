@@ -10,6 +10,7 @@ from agentops_mis_cli.relay_activation import (
 )
 from agentops_mis_cli.relay_activation_evidence import (
     RelayActivationEvidenceError,
+    build_activation_rollback_verification_observation,
     build_activation_step_observation,
 )
 from agentops_mis_cli.relay_activation_journal import (
@@ -37,6 +38,7 @@ ACTIVATION_RECOVERY_CONTROLLER_SCHEMA = (
 _NO_MUTATION_OPERATIONS = frozenset(
     {
         "none",
+        "publish_rollback_receipt",
         "publish_success_receipt",
         "publish_terminal_revision",
         "record_observation",
@@ -114,13 +116,15 @@ def _result_projection(
         not in {
             "none",
             "observed_revision",
+            "rollback_receipt",
             "success_receipt",
             "terminal_revision",
         }
         or (
             terminal
             and (
-                last.terminal_state not in {"active", "rolled_back"}
+                last.terminal_state
+                not in {"active", "service_state_rolled_back"}
                 or receipt_sha256 is None
             )
         )
@@ -183,12 +187,28 @@ def _publish_observation(
         raise RelayActivationRecoveryControllerError(
             "activation_recovery_required"
         )
+    rollback_verify = (
+        last.step_id == "verify"
+        and last.intent_id == "rollback_verify_requested"
+        and any(
+            revision.step_id in {"rollback_disable", "rollback_stop"}
+            for revision in snapshot.revisions
+        )
+    )
     try:
-        observation = build_activation_step_observation(
-            last.identity,
-            step_id=last.step_id,
-            prerequisites=prerequisites,
-            systemd=systemd,
+        observation = (
+            build_activation_rollback_verification_observation(
+                last.identity,
+                prerequisites=prerequisites,
+                systemd=systemd,
+            )
+            if rollback_verify
+            else build_activation_step_observation(
+                last.identity,
+                step_id=last.step_id,
+                prerequisites=prerequisites,
+                systemd=systemd,
+            )
         )
     except RelayActivationEvidenceError:
         raise RelayActivationRecoveryControllerError(
@@ -253,6 +273,50 @@ def _publish_success_receipt(
         owns_enable=last.owns_enable,
         owns_start=last.owns_start,
         result_id="activation_succeeded",
+    )
+    expected = parse_activation_receipt(raw)
+    store.publish_receipt(raw)
+    after = _load_after(store, decision)
+    if (
+        after.revisions != snapshot.revisions
+        or after.receipt != expected
+    ):
+        raise RelayActivationRecoveryControllerError(
+            "activation_recovery_required"
+        )
+    return after
+
+
+def _publish_rollback_receipt(
+    store: _RecoveryStore,
+    decision: ActivationRecoveryDecision,
+    snapshot: ActivationJournalRecoverySnapshot,
+) -> ActivationJournalRecoverySnapshot:
+    last = snapshot.revisions[-1]
+    if (
+        last.phase != "observed"
+        or last.step_id != "verify"
+        or last.intent_id != "rollback_verify_requested"
+        or last.observation_id != "rollback_verified"
+        or last.owns_enable
+        or last.owns_start
+        or snapshot.receipt is not None
+        or not any(
+            revision.step_id in {"rollback_disable", "rollback_stop"}
+            for revision in snapshot.revisions
+        )
+    ):
+        raise RelayActivationRecoveryControllerError(
+            "activation_recovery_required"
+        )
+    raw = build_activation_receipt(
+        last.identity,
+        terminal_revision=last.revision + 1,
+        previous_revision_sha256=last.record_sha256,
+        terminal_state="service_state_rolled_back",
+        owns_enable=False,
+        owns_start=False,
+        result_id="rollback_succeeded",
     )
     expected = parse_activation_receipt(raw)
     store.publish_receipt(raw)
@@ -343,13 +407,14 @@ def _run_confirmed_recovery_write_with(
             raise RelayActivationRecoveryControllerError(
                 "activation_recovery_action_not_supported"
             )
-        expected_action = {
-            "none": "complete",
-            "publish_success_receipt": "resume",
-            "publish_terminal_revision": "terminalize",
-            "record_observation": "resume",
+        expected_actions = {
+            "none": {"complete"},
+            "publish_rollback_receipt": {"inverse"},
+            "publish_success_receipt": {"resume"},
+            "publish_terminal_revision": {"terminalize"},
+            "record_observation": {"inverse", "resume"},
         }[decision.operation_id]
-        if decision.action_id != expected_action:
+        if decision.action_id not in expected_actions:
             raise RelayActivationRecoveryControllerError(
                 "activation_recovery_required"
             )
@@ -376,6 +441,13 @@ def _run_confirmed_recovery_write_with(
                 observation.snapshot,
             )
             write_id = "success_receipt"
+        elif decision.operation_id == "publish_rollback_receipt":
+            after = _publish_rollback_receipt(
+                tracked_store,
+                decision,
+                observation.snapshot,
+            )
+            write_id = "rollback_receipt"
         else:
             after = _publish_terminal_revision(
                 tracked_store,

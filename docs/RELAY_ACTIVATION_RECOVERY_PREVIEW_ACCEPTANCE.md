@@ -89,5 +89,7 @@ This slice selects no action and changes no host state. It does not:
 The private writer in
 `RELAY_ACTIVATION_RECOVERY_CONTROLLER_ACCEPTANCE.md` now reloads this same
 journal head and binds `decision_sha256` for one non-systemd observation,
-receipt, terminal, or complete action. Scanner-bound systemd recovery steps and
-the rollback terminal contract remain the next gates.
+forward or rollback receipt, terminal, or complete action. The rollback
+terminal contract is now fixture-accepted; scanner-bound systemd recovery
+steps, production-store composition, and real Linux interruption acceptance
+remain the next gates.

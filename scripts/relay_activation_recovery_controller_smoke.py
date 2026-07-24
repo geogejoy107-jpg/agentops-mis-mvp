@@ -510,6 +510,173 @@ def main() -> int:
                 and complete_result.get("state") == "active"
             )
 
+    rollback_records = completed_records[:-2]
+    append_intent(
+        rollback_records,
+        identity,
+        "rollback_stop",
+        owns_enable=True,
+        owns_start=True,
+    )
+    append_observed(
+        rollback_records,
+        identity,
+        "rollback_stop",
+        enabled_prerequisites,
+        enabled_systemd,
+        owns_enable=True,
+        owns_start=False,
+    )
+    append_intent(
+        rollback_records,
+        identity,
+        "rollback_disable",
+        owns_enable=True,
+        owns_start=False,
+    )
+    restored_prerequisites = prerequisites()
+    restored_systemd = systemd()
+    append_observed(
+        rollback_records,
+        identity,
+        "rollback_disable",
+        restored_prerequisites,
+        restored_systemd,
+        owns_enable=False,
+        owns_start=False,
+    )
+    append_intent(
+        rollback_records,
+        identity,
+        "verify",
+        owns_enable=False,
+        owns_start=False,
+        intent_id="rollback_verify_requested",
+    )
+
+    with tempfile.TemporaryDirectory(
+        prefix="relay-recovery-controller-rollback-"
+    ) as temporary:
+        root = Path(temporary)
+        root.chmod(0o700)
+        with _open_fixture_store(root) as raw_store:
+            for raw in rollback_records:
+                raw_store.publish_revision(raw)
+            store = CountingStore(raw_store)
+            rollback_observation_preview = preview(
+                store,
+                plan_sha256,
+                "rollback",
+                restored_prerequisites,
+                restored_systemd,
+            )
+            store.reset()
+            rollback_observation_result = run(
+                store,
+                plan_sha256,
+                "rollback",
+                str(
+                    rollback_observation_preview[
+                        "decision_sha256"
+                    ]
+                ),
+                restored_prerequisites,
+                restored_systemd,
+            )
+            rollback_observation_snapshot = (
+                raw_store._load_recovery_snapshot(plan_sha256)
+            )
+            rollback_observation_one_write = (
+                store.revision_writes == 1
+                and store.receipt_writes == 0
+                and rollback_observation_result.get("write_id")
+                == "observed_revision"
+                and rollback_observation_snapshot.revisions[
+                    -1
+                ].observation_id
+                == "rollback_verified"
+                and rollback_observation_snapshot.revisions[-1].owns_enable
+                is False
+                and rollback_observation_snapshot.revisions[-1].owns_start
+                is False
+            )
+
+            rollback_receipt_preview = preview(
+                store,
+                plan_sha256,
+                "rollback",
+                restored_prerequisites,
+                restored_systemd,
+            )
+            store.reset()
+            rollback_receipt_result = run(
+                store,
+                plan_sha256,
+                "rollback",
+                str(rollback_receipt_preview["decision_sha256"]),
+                restored_prerequisites,
+                restored_systemd,
+            )
+            rollback_receipt_one_write = (
+                store.receipt_writes == 1
+                and store.revision_writes == 0
+                and rollback_receipt_result.get("write_id")
+                == "rollback_receipt"
+                and rollback_receipt_result.get("recovery_required")
+                is True
+            )
+
+            rollback_terminal_preview = preview(
+                store,
+                plan_sha256,
+                "rollback",
+                restored_prerequisites,
+                restored_systemd,
+            )
+            store.reset()
+            rollback_terminal_result = run(
+                store,
+                plan_sha256,
+                "rollback",
+                str(rollback_terminal_preview["decision_sha256"]),
+                restored_prerequisites,
+                restored_systemd,
+            )
+            rollback_terminal_one_write = (
+                store.revision_writes == 1
+                and store.receipt_writes == 0
+                and rollback_terminal_result.get("write_id")
+                == "terminal_revision"
+                and rollback_terminal_result.get("state")
+                == "service_state_rolled_back"
+                and rollback_terminal_result.get("recovery_required")
+                is False
+            )
+
+            rollback_complete_preview = preview(
+                store,
+                plan_sha256,
+                "rollback",
+                restored_prerequisites,
+                restored_systemd,
+            )
+            store.reset()
+            rollback_complete_result = run(
+                store,
+                plan_sha256,
+                "rollback",
+                str(rollback_complete_preview["decision_sha256"]),
+                restored_prerequisites,
+                restored_systemd,
+            )
+            rollback_complete_zero_write = (
+                store.revision_writes == 0
+                and store.receipt_writes == 0
+                and rollback_complete_result.get("write_id") == "none"
+                and rollback_complete_result.get("state")
+                == "service_state_rolled_back"
+            )
+
     source_path = (
         ROOT
         / "agentops_mis_cli"
@@ -573,6 +740,10 @@ def main() -> int:
             "complete": complete_result,
             "observation": observation_result,
             "receipt": receipt_result,
+            "rollback_complete": rollback_complete_result,
+            "rollback_observation": rollback_observation_result,
+            "rollback_receipt": rollback_receipt_result,
+            "rollback_terminal": rollback_terminal_result,
             "terminal": terminal_result,
         },
         ensure_ascii=True,
@@ -586,6 +757,21 @@ def main() -> int:
     require(
         private_payload_omitted,
         "recovery controller exposed private payload",
+        failures,
+    )
+    require(
+        rollback_observation_one_write,
+        "rollback verification did not publish exactly one observation",
+        failures,
+    )
+    require(
+        rollback_receipt_one_write,
+        "verified rollback did not publish exactly one receipt",
+        failures,
+    )
+    require(
+        rollback_terminal_one_write and rollback_complete_zero_write,
+        "rollback did not terminalize once and then complete idempotently",
         failures,
     )
     result = {
@@ -608,6 +794,14 @@ def main() -> int:
         "post_write_failure_retained": post_write_state_retained,
         "private_payload_omitted": private_payload_omitted,
         "receipt_one_write": receipt_one_write,
+        "rollback_observation_one_write": (
+            rollback_observation_one_write
+        ),
+        "rollback_receipt_one_write": rollback_receipt_one_write,
+        "rollback_terminal_contract": (
+            rollback_terminal_one_write
+            and rollback_complete_zero_write
+        ),
         "systemd_action_zero_write": (
             unsupported_run_step and unsupported_zero_write
         ),

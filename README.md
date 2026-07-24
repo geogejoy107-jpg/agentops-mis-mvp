@@ -189,9 +189,10 @@ snapshot 能读取精确 chain 并
 complete/terminalize/resume/inverse/blocked 决策；私有只读 recovery preview 已在同一
 lifecycle lock 内组合精确 snapshot、稳定 scanner/systemd/scanner 观察和决策哈希，
 私有 exact-confirmed recovery controller 也已支持一次 observation/receipt/terminal
-写入或幂等 complete；真实 systemd `run_step` 仍会零写拒绝，且没有 CLI caller。
-systemd recovery executor、rollback terminal contract、partial 自动恢复和真实 Linux
-systemd 验收仍未实现。
+写入或幂等 complete，并已闭环专用 rollback verification、
+`rollback_succeeded` receipt 与 `service_state_rolled_back` terminal；真实 systemd
+`run_step` 仍会零写拒绝，且没有 production recovery opener 或 CLI caller。
+systemd recovery executor、partial 自动恢复和真实 Linux systemd 验收仍未实现。
 这仍不代表公共 Relay、DNS/ACME、服务启动或升级/回滚已经完成。
 
 `host init` 仍生成一次性 Owner 设置码，并把它、机器 API key 与 Admin key

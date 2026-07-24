@@ -10,6 +10,7 @@ observation against the same store, and performs at most one of:
 
 - append one already-observed journal revision;
 - publish one forward success receipt;
+- publish one verified rollback receipt;
 - append one terminal revision for an existing exact receipt; or
 - return an already-complete terminal state without writing.
 
@@ -33,6 +34,12 @@ For each supported action:
   appends exactly one `observed` revision;
 - `publish_success_receipt` requires a forward verified observation and
   publishes exactly one `activation_succeeded` receipt;
+- rollback `record_observation` uses the dedicated restored-state evidence,
+  requires both ownership flags to be clear, and appends exactly one
+  `rollback_verified` revision;
+- `publish_rollback_receipt` requires that exact observed rollback verification
+  and publishes exactly one `rollback_succeeded` receipt bound to
+  `service_state_rolled_back`;
 - `publish_terminal_revision` binds an existing exact orphan receipt in exactly
   one terminal revision; and
 - `complete` validates and projects the existing terminal state with no write.
@@ -75,6 +82,9 @@ Expected summary:
   "post_write_failure_retained": true,
   "private_payload_omitted": true,
   "receipt_one_write": true,
+  "rollback_observation_one_write": true,
+  "rollback_receipt_one_write": true,
+  "rollback_terminal_contract": true,
   "systemd_action_zero_write": true,
   "systemd_mutation_performed": false,
   "terminal_one_write": true,
@@ -85,13 +95,15 @@ Expected summary:
 The smoke exercises invalid and stale confirmation, blocked rollback, an
 unsupported forward mutation, observation completion after an interrupted
 daemon reload, success-receipt publication, orphan-receipt terminalization,
-idempotent complete, and a fault injected after a durable revision write.
+dedicated rollback verification, rollback-receipt publication, rollback
+terminalization, idempotent complete for both terminal states, and a fault
+injected after a durable revision write.
 
 ## Truth Boundary
 
 This slice does not execute `daemon-reload`, `enable`, `start`, `stop`, or
-`disable`. It does not complete the rollback verification/receipt contract and
-does not expose a recovery command. The next writer slice must bind the same
-confirmed decision to exactly one scanner-bound systemd step, then separately
-finish rollback verification and terminal receipt semantics before any CLI is
-enabled.
+`disable`, open the production recovery store, or expose a recovery command.
+It does complete the rollback verification/receipt/terminal contract against
+the injected exact store. The next writer slice must bind the same confirmed
+decision to exactly one scanner-bound systemd step and then pass interruption
+tests before any CLI is enabled.

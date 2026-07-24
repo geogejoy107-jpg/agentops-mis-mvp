@@ -15,6 +15,7 @@ from agentops_mis_cli.relay_activation_evidence import (
     RelayActivationEvidenceError,
     _enablement_inventory_sha256,
     _unit_identity_sha256,
+    build_activation_rollback_verification_observation,
     build_activation_step_observation,
 )
 from agentops_mis_cli.relay_activation_journal import (
@@ -41,6 +42,7 @@ _ACTIONS = frozenset(
 _OPERATIONS = frozenset(
     {
         "none",
+        "publish_rollback_receipt",
         "publish_success_receipt",
         "publish_terminal_revision",
         "record_observation",
@@ -354,8 +356,16 @@ def _current_observation(
     step_id: str,
     prerequisites: ActivationPrerequisiteSnapshot,
     systemd: SystemdSnapshot,
+    *,
+    rollback_verify: bool = False,
 ):
     try:
+        if rollback_verify:
+            return build_activation_rollback_verification_observation(
+                revision.identity,
+                prerequisites=prerequisites,
+                systemd=systemd,
+            )
         return build_activation_step_observation(
             revision.identity,
             step_id=step_id,
@@ -370,6 +380,8 @@ def _revision_state_matches(
     revision: ActivationJournalRevision,
     prerequisites: ActivationPrerequisiteSnapshot,
     systemd: SystemdSnapshot,
+    *,
+    rollback_verify: bool = False,
 ) -> tuple[bool, str | None]:
     if revision.phase == "prepared":
         return _pre_state_matches(revision, prerequisites, systemd), None
@@ -380,6 +392,7 @@ def _revision_state_matches(
         revision.step_id,
         prerequisites,
         systemd,
+        rollback_verify=rollback_verify,
     )
     if (
         observation is None
@@ -528,6 +541,10 @@ def compile_activation_recovery_decision(
         raise RelayActivationRecoveryError()
     _validate_snapshot(snapshot)
     last = snapshot.revisions[-1]
+    rollback_started = any(
+        revision.step_id in _ROLLBACK_STEPS
+        for revision in snapshot.revisions
+    )
     if last.phase == "terminal":
         return _decision(
             snapshot,
@@ -559,13 +576,26 @@ def compile_activation_recovery_decision(
             step_id=last.step_id,
             reason_id="plan_binding_unproven",
         )
+    if rollback_started and requested_outcome != "rollback":
+        return _decision(
+            snapshot,
+            requested_outcome,
+            action_id="blocked",
+            operation_id="none",
+            step_id=last.step_id,
+            reason_id="rollback_contract_incomplete",
+        )
 
     if last.phase == "intent":
+        rollback_verify = (
+            rollback_started and last.step_id == "verify"
+        )
         observation = _current_observation(
             last,
             last.step_id,
             prerequisites,
             systemd,
+            rollback_verify=rollback_verify,
         )
         if observation is not None:
             if last.step_id in {"enable", "start"}:
@@ -603,7 +633,12 @@ def compile_activation_recovery_decision(
             return _decision(
                 snapshot,
                 requested_outcome,
-                action_id="resume",
+                action_id=(
+                    "inverse"
+                    if last.step_id in _ROLLBACK_STEPS
+                    or rollback_verify
+                    else "resume"
+                ),
                 operation_id="record_observation",
                 step_id=last.step_id,
                 reason_id="resume_ready",
@@ -615,6 +650,25 @@ def compile_activation_recovery_decision(
             prerequisites,
             systemd,
         )
+        if rollback_verify:
+            if not matches:
+                return _decision(
+                    snapshot,
+                    requested_outcome,
+                    action_id="blocked",
+                    operation_id="none",
+                    step_id="verify",
+                    reason_id="state_drift",
+                )
+            return _decision(
+                snapshot,
+                requested_outcome,
+                action_id="inverse",
+                operation_id="run_step",
+                step_id="verify",
+                reason_id="resume_ready",
+                observation_sha256=observation_sha256,
+            )
         if last.step_id in _ROLLBACK_STEPS:
             if not matches:
                 return _decision(
@@ -689,10 +743,12 @@ def compile_activation_recovery_decision(
             reason_id="resume_ready",
         )
 
+    rollback_verify = rollback_started and last.step_id == "verify"
     matches, observation_sha256 = _revision_state_matches(
         last,
         prerequisites,
         systemd,
+        rollback_verify=rollback_verify,
     )
     if not matches:
         return _decision(
@@ -702,6 +758,26 @@ def compile_activation_recovery_decision(
             operation_id="none",
             step_id=last.step_id,
             reason_id="state_drift",
+        )
+    if rollback_verify:
+        if last.owns_enable or last.owns_start:
+            return _decision(
+                snapshot,
+                requested_outcome,
+                action_id="blocked",
+                operation_id="none",
+                step_id="verify",
+                reason_id="ownership_unproven",
+                observation_sha256=observation_sha256,
+            )
+        return _decision(
+            snapshot,
+            requested_outcome,
+            action_id="inverse",
+            operation_id="publish_rollback_receipt",
+            step_id="verify",
+            reason_id="resume_ready",
+            observation_sha256=observation_sha256,
         )
     if last.step_id in _ROLLBACK_STEPS:
         if last.owns_start or last.owns_enable:
@@ -715,10 +791,10 @@ def compile_activation_recovery_decision(
         return _decision(
             snapshot,
             requested_outcome,
-            action_id="blocked",
-            operation_id="none",
-            step_id=None,
-            reason_id="rollback_contract_incomplete",
+            action_id="inverse",
+            operation_id="run_step",
+            step_id="verify",
+            reason_id="resume_ready",
             observation_sha256=observation_sha256,
         )
     if requested_outcome == "rollback":
