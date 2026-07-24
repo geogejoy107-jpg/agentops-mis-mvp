@@ -1,6 +1,7 @@
 """Read-only, lifecycle-lock-bound Relay activation recovery preview."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -16,6 +17,7 @@ from agentops_mis_cli.relay_activation_journal import (
 )
 from agentops_mis_cli.relay_activation_recovery import (
     ACTIVATION_RECOVERY_DECISION_SCHEMA,
+    ActivationRecoveryDecision,
     RelayActivationRecoveryError,
     compile_activation_recovery_decision,
     project_activation_recovery_decision,
@@ -59,15 +61,23 @@ Scanner = Callable[[], ActivationPrerequisiteSnapshot]
 SystemdReader = Callable[[ActivationPrerequisiteSnapshot], SystemdSnapshot]
 
 
-def _preview_activation_recovery_with(
+@dataclass(frozen=True)
+class _ActivationRecoveryObservation:
+    snapshot: ActivationJournalRecoverySnapshot
+    prerequisites: ActivationPrerequisiteSnapshot
+    systemd: SystemdSnapshot
+    decision: ActivationRecoveryDecision
+
+
+def _observe_activation_recovery_with(
     plan_sha256: str,
     requested_outcome: str,
     *,
     snapshot_loader: SnapshotLoader,
     scanner: Scanner,
     systemd_reader: SystemdReader,
-) -> dict[str, object]:
-    """Compile one stable recovery decision without writes or mutation."""
+) -> _ActivationRecoveryObservation:
+    """Return one private stable observation without projecting its payload."""
 
     if (
         not isinstance(plan_sha256, str)
@@ -126,7 +136,49 @@ def _preview_activation_recovery_with(
             systemd,
             requested_outcome=requested_outcome,
         )
-        projection = project_activation_recovery_decision(decision)
+        return _ActivationRecoveryObservation(
+            snapshot=snapshot_after,
+            prerequisites=prerequisites_after,
+            systemd=systemd,
+            decision=decision,
+        )
+    except RelayActivationRecoveryPreviewError:
+        raise
+    except RelayActivationScanError as exc:
+        raise RelayActivationRecoveryPreviewError(exc.error_id) from None
+    except RelaySystemdShowError as exc:
+        raise RelayActivationRecoveryPreviewError(exc.error_id) from None
+    except (RelayActivationJournalError, RelayActivationRecoveryError):
+        raise RelayActivationRecoveryPreviewError(
+            "activation_recovery_required"
+        ) from None
+    except Exception:
+        raise RelayActivationRecoveryPreviewError(
+            "activation_recovery_preview_failed"
+        ) from None
+
+
+def _preview_activation_recovery_with(
+    plan_sha256: str,
+    requested_outcome: str,
+    *,
+    snapshot_loader: SnapshotLoader,
+    scanner: Scanner,
+    systemd_reader: SystemdReader,
+) -> dict[str, object]:
+    """Compile one stable recovery decision without writes or mutation."""
+
+    try:
+        observation = _observe_activation_recovery_with(
+            plan_sha256,
+            requested_outcome,
+            snapshot_loader=snapshot_loader,
+            scanner=scanner,
+            systemd_reader=systemd_reader,
+        )
+        projection = project_activation_recovery_decision(
+            observation.decision
+        )
         projected_hash = projection.get("decision_sha256")
         if (
             projection.get("schema_id")
@@ -142,14 +194,6 @@ def _preview_activation_recovery_with(
         return projection
     except RelayActivationRecoveryPreviewError:
         raise
-    except RelayActivationScanError as exc:
-        raise RelayActivationRecoveryPreviewError(exc.error_id) from None
-    except RelaySystemdShowError as exc:
-        raise RelayActivationRecoveryPreviewError(exc.error_id) from None
-    except (RelayActivationJournalError, RelayActivationRecoveryError):
-        raise RelayActivationRecoveryPreviewError(
-            "activation_recovery_required"
-        ) from None
     except Exception:
         raise RelayActivationRecoveryPreviewError(
             "activation_recovery_preview_failed"

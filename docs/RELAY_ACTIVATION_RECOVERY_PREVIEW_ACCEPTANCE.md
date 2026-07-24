@@ -86,6 +86,8 @@ This slice selects no action and changes no host state. It does not:
 - execute or terminalize one recovery step; or
 - claim real interrupted Linux systemd acceptance.
 
-The next gate is an exact-confirmed, one-step recovery writer that reloads this
-same journal head and binds `decision_sha256` before any durable write or
-systemd mutation.
+The private writer in
+`RELAY_ACTIVATION_RECOVERY_CONTROLLER_ACCEPTANCE.md` now reloads this same
+journal head and binds `decision_sha256` for one non-systemd observation,
+receipt, terminal, or complete action. Scanner-bound systemd recovery steps and
+the rollback terminal contract remain the next gates.

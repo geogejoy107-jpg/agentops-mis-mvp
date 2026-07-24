@@ -105,7 +105,9 @@ The private production recovery preview in
 while it loads the exact snapshot, performs scanner/systemd/scanner stable
 observation, reloads the unchanged snapshot, and compiles this decision.
 A later exact confirmation must bind the decision hash before any one-step
-write or mutation.
+write or mutation. The private non-systemd writer in
+`RELAY_ACTIVATION_RECOVERY_CONTROLLER_ACCEPTANCE.md` now enforces that binding
+for observation, success-receipt, terminal-revision, and complete actions.
 
 Durable execution receipts for ambiguous ownership-changing intents, rollback
 final verification and terminal receipt semantics, single-step execution,
