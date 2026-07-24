@@ -270,10 +270,11 @@ Implementation slices:
      installed status now validates that exact namespace as recorded in
      `RELAY_ACTIVATION_JOURNAL_STATUS_ACCEPTANCE.md`; the private
      lifecycle-lock-bound, strict open-only production opener is implemented
-     in `RELAY_ACTIVATION_PRODUCTION_STORE_ACCEPTANCE.md`; exact namespace
-     initialization must be owned by a future install/migration transaction,
-     while confirmed mutation, controller, rollback and recovery remain
-     unimplemented;
+     in `RELAY_ACTIVATION_PRODUCTION_STORE_ACCEPTANCE.md`; confirmed
+     first-install now owns exact namespace initialization as recorded in
+     `RELAY_ACTIVATION_NAMESPACE_INSTALL_ACCEPTANCE.md`, while partial
+     namespace resume, confirmed mutation, controller, rollback and recovery
+     remain unimplemented;
    - upgrade, rollback, uninstall, Linux account provisioning, service
      activation and public infrastructure acceptance: pending;
    - public endpoint, DNS/ACME provisioning, stable per-Host Console origin,

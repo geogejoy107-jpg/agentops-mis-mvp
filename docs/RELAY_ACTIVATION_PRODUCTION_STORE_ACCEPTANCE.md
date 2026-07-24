@@ -92,11 +92,12 @@ Expected summary:
 
 ## Remaining Gates
 
-This opener has no caller in `main()` and performs no systemd action. A future
-installer or migration transaction must first create the exact namespace while
-holding the same lifecycle lock. The exact-confirmed controller, narrow
-mutation adapter, step evidence compiler, ownership-safe rollback, crash
-recovery, completed-history retention, real root-owned Linux systemd
-acceptance, public Relay, and physical ordinary-browser acceptance remain
-open. Installer lock hardening is recorded in
-`RELAY_OFFLINE_INSTALL_ACCEPTANCE.md`.
+This opener has no caller in `main()` and performs no systemd action.
+Confirmed first-install now creates the exact namespace while holding the same
+lifecycle lock, as recorded in
+`RELAY_ACTIVATION_NAMESPACE_INSTALL_ACCEPTANCE.md`. Partial namespace resume,
+the exact-confirmed controller, narrow mutation adapter, step evidence
+compiler, ownership-safe rollback, crash recovery, completed-history
+retention, real root-owned Linux systemd acceptance, public Relay, and
+physical ordinary-browser acceptance remain open. Installer lock hardening is
+recorded in `RELAY_OFFLINE_INSTALL_ACCEPTANCE.md`.

@@ -123,9 +123,10 @@ Expected result:
 This acceptance is not evidence of confirmed service activation. The remaining
 sequence is:
 
-1. initialize the exact production namespace in an install or migration
-   transaction that owns the lifecycle lock;
-2. implement the narrow systemd mutation adapter;
-3. implement confirmed controller, crash recovery, and ownership-safe rollback;
-4. pass real Linux systemd interruption tests;
-5. pass public Relay and physical ordinary-browser acceptance.
+1. implement the narrow systemd mutation adapter;
+2. implement confirmed controller, crash recovery, and ownership-safe rollback;
+3. pass real Linux systemd interruption tests;
+4. pass public Relay and physical ordinary-browser acceptance.
+
+Confirmed first-install namespace initialization is recorded separately in
+`RELAY_ACTIVATION_NAMESPACE_INSTALL_ACCEPTANCE.md`.

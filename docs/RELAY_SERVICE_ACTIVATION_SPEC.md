@@ -3,9 +3,10 @@
 Status: pure Activation Plan Core v0, strict daemon config parser, read-only
 FD-anchored host prerequisite scanner, production read-only systemd adapter and
 activate preview CLI, private immutable activation journal core, read-only
-installed-status journal validation, and lifecycle-lock-bound private
-production store opener implemented and locally accepted; confirmed mutation,
-controller, rollback and recovery remain planned and unimplemented
+installed-status journal validation, lifecycle-lock-owned first-install
+namespace initialization, and lifecycle-lock-bound private production store
+opener implemented and locally accepted; confirmed mutation, controller,
+rollback and recovery remain planned and unimplemented
 
 ## Objective
 
@@ -32,7 +33,10 @@ recovery projection. Its private production opener owns the lifecycle lock for
 the entire store lifetime, opens only an already exact journal namespace, and
 revalidates namespace bindings around every operation. Missing, empty, or
 partial namespaces fail closed without being initialized by the opener. It
-does not expose a writer through the CLI. The live daemon
+does not expose a writer through the CLI. Confirmed first-install separately
+binds the desired namespace and observed missing/exact-empty state into its
+plan and durable transaction marker before creating the exact empty topology.
+The live daemon
 separately shares the bounded strict config parser used by the scanner. See
 `RELAY_ACTIVATION_PLAN_CORE_ACCEPTANCE.md` and
 `RELAY_CONFIG_PARSER_ACCEPTANCE.md`,
@@ -40,6 +44,7 @@ separately shares the bounded strict config parser used by the scanner. See
 `RELAY_ACTIVATION_PREVIEW_ACCEPTANCE.md`, and
 `RELAY_ACTIVATION_JOURNAL_ACCEPTANCE.md` plus
 `RELAY_ACTIVATION_JOURNAL_STATUS_ACCEPTANCE.md` and
+`RELAY_ACTIVATION_NAMESPACE_INSTALL_ACCEPTANCE.md` and
 `RELAY_ACTIVATION_PRODUCTION_STORE_ACCEPTANCE.md`.
 
 ## Command Contract

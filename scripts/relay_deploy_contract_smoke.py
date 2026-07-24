@@ -116,6 +116,7 @@ def main() -> int:
     sdist_has_status_acceptance = False
     sdist_has_activation_journal_acceptance = False
     sdist_has_activation_journal_status_acceptance = False
+    sdist_has_activation_namespace_install_acceptance = False
     sdist_has_activation_production_store_acceptance = False
     sdist_has_activation_plan_acceptance = False
     sdist_has_activation_preview_acceptance = False
@@ -267,6 +268,12 @@ def main() -> int:
                     )
                     for name in names
                 )
+                sdist_has_activation_namespace_install_acceptance = any(
+                    name.endswith(
+                        "/docs/RELAY_ACTIVATION_NAMESPACE_INSTALL_ACCEPTANCE.md"
+                    )
+                    for name in names
+                )
                 sdist_has_activation_production_store_acceptance = any(
                     name.endswith(
                         "/docs/RELAY_ACTIVATION_PRODUCTION_STORE_ACCEPTANCE.md"
@@ -398,6 +405,11 @@ def main() -> int:
     require(
         sdist_has_activation_journal_status_acceptance,
         "source distribution omits the activation-journal-status acceptance",
+        failures,
+    )
+    require(
+        sdist_has_activation_namespace_install_acceptance,
+        "source distribution omits the activation-namespace-install acceptance",
         failures,
     )
     require(
@@ -565,6 +577,9 @@ def main() -> int:
         ),
         "sdist_includes_activation_journal_status_acceptance": (
             sdist_has_activation_journal_status_acceptance
+        ),
+        "sdist_includes_activation_namespace_install_acceptance": (
+            sdist_has_activation_namespace_install_acceptance
         ),
         "sdist_includes_activation_production_store_acceptance": (
             sdist_has_activation_production_store_acceptance

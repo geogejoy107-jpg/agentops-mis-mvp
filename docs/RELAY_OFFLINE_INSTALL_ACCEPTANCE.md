@@ -75,6 +75,9 @@ The first confirmed install publishes:
 
 /etc/systemd/system/agentops-mis-relay.service
 /var/lib/agentops-relayctl/lifecycle.lock
+/var/lib/agentops-relayctl/activation/
+  receipts/
+  transactions/
 ```
 
 Release files are staged under the release filesystem, fsynced, and renamed
@@ -90,6 +93,13 @@ partial transaction as complete. A caught publish failure removes only exact
 artifacts owned by that plan; an unresolvable interrupted state fails closed as
 `recovery_required`, including a crash that leaves only the pre-publication
 transaction temporary file.
+
+The exact install plan also binds activation namespace schema, desired entries,
+mode, and observed `missing` or `exact_empty` state. The canonical transaction
+marker is durable before namespace creation starts. Fresh install creates the
+empty topology through held-directory-FD operations; an exact empty topology
+is preserved. Partial, unknown, or preinstall history states fail closed. See
+`RELAY_ACTIVATION_NAMESPACE_INSTALL_ACCEPTANCE.md`.
 
 The installer creates the lifecycle lock with `O_EXCL`, or opens an already
 safe lock without changing it. The lock must be an empty, owner/group-matched,
@@ -167,8 +177,9 @@ The smoke:
 10. rejects a symlinked install parent without changing the external target;
 11. turns retained transaction and pre-publication temporary markers into
    `recovery_required`;
-12. injects a mid-publish link failure and proves exact artifacts are rolled
-   back to the same install plan;
+12. injects a mid-publish link failure and proves exact install artifacts are
+   rolled back while the safe empty namespace remains durable and is bound
+   into the next plan;
 13. verifies protected config/epoch inode, content, mtime, mode, UID, and GID;
 14. scans output for environment and bundle-body canaries; and
 15. rejects six unsafe existing lock forms without repairing or changing them,
@@ -188,7 +199,7 @@ This acceptance is not evidence of:
 - `systemctl`, daemon reload, enable, start, restart, or boot recovery;
 - a real Linux VM, firewall, public endpoint, DNS, ACME, or stock browser;
 - route-key/TLS provisioning, rotation, or revocation;
-- upgrade, rollback, uninstall, purge, or crash-recovery automation.
+- upgrade, rollback, uninstall, purge, or crash-recovery automation;
 - complete root-to-admin `openat` parent-chain anchoring against a same-owner
   hostile filesystem; and
 - transaction creation, commit unlink, and rollback performed entirely through

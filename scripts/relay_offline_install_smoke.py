@@ -1038,13 +1038,23 @@ def main() -> int:
                     lock = admin_state / "lifecycle.lock"
                     lock.write_bytes(b"")
                     lock.chmod(0o644)
-                plan = admin._plan_for_install(root, inspected_bundle)
                 before = tree_digest(root)
                 try:
-                    admin._publish_install(plan)
-                    rejected = False
+                    plan = admin._plan_for_install(
+                        root,
+                        inspected_bundle,
+                    )
                 except admin.RelayAdminError as exc:
-                    rejected = exc.error_id == "lifecycle_lock_failed"
+                    rejected = exc.error_id == "recovery_required"
+                else:
+                    try:
+                        admin._publish_install(plan)
+                        rejected = False
+                    except admin.RelayAdminError as exc:
+                        rejected = exc.error_id in {
+                            "lifecycle_lock_failed",
+                            "recovery_required",
+                        }
                 publish_preflight_zero_write = (
                     publish_preflight_zero_write
                     and rejected
@@ -1188,8 +1198,9 @@ def main() -> int:
             )
             rollback_clean = (
                 rollback_error == "install_publish_failed"
-                and refreshed_rollback_plan.plan_sha256
-                == rollback_plan.plan_sha256
+                and rollback_plan.activation_namespace_state == "missing"
+                and refreshed_rollback_plan.activation_namespace_state
+                == "exact_empty"
                 and not refreshed_rollback_plan.no_op
                 and not any(
                     os.path.lexists(path)

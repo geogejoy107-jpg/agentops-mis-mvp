@@ -35,6 +35,7 @@ BUNDLE_SCHEMA = "agentops.relay.release-bundle.v1"
 PLAN_SCHEMA = "agentops.relay.offline-install-plan.v0"
 INSTALLED_SCHEMA = "agentops.relay.installed-release.v0"
 TRANSACTION_SCHEMA = "agentops.relay.install-transaction.v0"
+ACTIVATION_NAMESPACE_SCHEMA = "agentops.relay.activation-namespace.v0"
 STATUS_SCHEMA = "agentops.relay.offline-status.v0"
 VERSION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
@@ -197,11 +198,19 @@ class InstallPaths:
 
 @dataclass(frozen=True)
 class InstallPlan:
+    activation_namespace_state: str
     bundle: RelayBundle
     paths: InstallPaths
     plan_sha256: str
     root_fingerprint: str
     no_op: bool
+
+
+@dataclass(frozen=True)
+class InstallActivationNamespace:
+    activation: tuple[int, int, int, int, int, int]
+    receipts: tuple[int, int, int, int, int, int]
+    transactions: tuple[int, int, int, int, int, int]
 
 
 @dataclass(frozen=True)
@@ -1048,13 +1057,55 @@ def _check_install_state(paths: InstallPaths, bundle: RelayBundle) -> bool:
     return True
 
 
+def _preinstall_activation_namespace_state(paths: InstallPaths) -> str:
+    if not _path_exists(paths.admin_state):
+        return "missing"
+    try:
+        root_metadata = paths.root.lstat()
+        admin_descriptor, _admin_fingerprint = (
+            _open_install_admin_directory(
+                paths.admin_state,
+                expected_uid=root_metadata.st_uid,
+                expected_gid=root_metadata.st_gid,
+            )
+        )
+    except (OSError, RelayAdminError) as exc:
+        raise RelayAdminError("recovery_required") from exc
+    try:
+        names = _bounded_install_directory_names(admin_descriptor, 2)
+        if names in ((), ("lifecycle.lock",)):
+            return "missing"
+        if names != ("activation", "lifecycle.lock"):
+            raise RelayAdminError("recovery_required")
+        _inspect_install_activation_namespace(
+            admin_descriptor,
+            expected_uid=root_metadata.st_uid,
+            expected_gid=root_metadata.st_gid,
+        )
+        return "exact_empty"
+    finally:
+        os.close(admin_descriptor)
+
+
 def _plan_for_install(root: Path, bundle: RelayBundle) -> InstallPlan:
     paths = InstallPaths.for_bundle(root, bundle)
     if _recovery_artifact_present(paths):
         raise RelayAdminError("recovery_required")
     no_op = _check_install_state(paths, bundle)
+    activation_namespace_state = (
+        "installed"
+        if no_op
+        else _preinstall_activation_namespace_state(paths)
+    )
     plan_data = {
         "action_id": "install",
+        "activation_namespace_entries": [
+            "receipts",
+            "transactions",
+        ],
+        "activation_namespace_mode": "0700",
+        "activation_namespace_schema": ACTIVATION_NAMESPACE_SCHEMA,
+        "activation_namespace_state": activation_namespace_state,
         "archive_sha256": bundle.archive_sha256,
         "bundle_schema": bundle.schema,
         "current_state_id": bundle.release_id if no_op else "absent",
@@ -1070,6 +1121,7 @@ def _plan_for_install(root: Path, bundle: RelayBundle) -> InstallPlan:
         "wheel_sha256": bundle.wheel_sha256,
     }
     return InstallPlan(
+        activation_namespace_state=activation_namespace_state,
         bundle=bundle,
         paths=paths,
         plan_sha256=_sha256(_canonical_json(plan_data)),
@@ -1447,6 +1499,413 @@ def _open_install_lifecycle_lock(
                 pass
 
 
+def _install_directory_fingerprint(
+    metadata: os.stat_result,
+) -> tuple[int, int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_nlink,
+    )
+
+
+def _install_transaction_data(plan: InstallPlan) -> bytes:
+    return _canonical_json(
+        {
+            "activation_namespace_schema": ACTIVATION_NAMESPACE_SCHEMA,
+            "activation_namespace_state": plan.activation_namespace_state,
+            "archive_sha256": plan.bundle.archive_sha256,
+            "plan_sha256": plan.plan_sha256,
+            "release_id": plan.bundle.release_id,
+            "schema": TRANSACTION_SCHEMA,
+            "state_id": "prepared",
+        }
+    )
+
+
+def _validate_install_transaction_at(
+    admin_descriptor: int,
+    *,
+    expected: bytes,
+    expected_uid: int,
+    expected_gid: int,
+) -> None:
+    descriptor = -1
+    try:
+        before = os.stat(
+            "transaction.json",
+            dir_fd=admin_descriptor,
+            follow_symlinks=False,
+        )
+        descriptor = os.open(
+            "transaction.json",
+            (
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            ),
+            dir_fd=admin_descriptor,
+        )
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != expected_uid
+            or opened.st_gid != expected_gid
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_nlink != 1
+            or opened.st_size != len(expected)
+            or _install_lock_fingerprint(before)
+            != _install_lock_fingerprint(opened)
+        ):
+            raise RelayAdminError("recovery_required")
+        chunks: list[bytes] = []
+        remaining = opened.st_size
+        while remaining:
+            chunk = os.read(descriptor, remaining)
+            if not chunk:
+                raise RelayAdminError("recovery_required")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1) or b"".join(chunks) != expected:
+            raise RelayAdminError("recovery_required")
+        after_opened = os.fstat(descriptor)
+        after_path = os.stat(
+            "transaction.json",
+            dir_fd=admin_descriptor,
+            follow_symlinks=False,
+        )
+        if not (
+            _install_lock_fingerprint(opened)
+            == _install_lock_fingerprint(after_opened)
+            == _install_lock_fingerprint(after_path)
+        ):
+            raise RelayAdminError("recovery_required")
+    except RelayAdminError:
+        raise
+    except OSError as exc:
+        raise RelayAdminError("recovery_required") from exc
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def _validate_install_activation_directory(
+    metadata: os.stat_result,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> None:
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != expected_uid
+        or metadata.st_gid != expected_gid
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or metadata.st_nlink < 2
+    ):
+        raise RelayAdminError("recovery_required")
+
+
+def _bounded_install_directory_names(
+    descriptor: int,
+    maximum: int,
+) -> tuple[str, ...]:
+    names: list[str] = []
+    try:
+        with os.scandir(descriptor) as entries:
+            for entry in entries:
+                names.append(entry.name)
+                if len(names) > maximum:
+                    raise RelayAdminError("recovery_required")
+    except RelayAdminError:
+        raise
+    except OSError as exc:
+        raise RelayAdminError("recovery_required") from exc
+    return tuple(sorted(names))
+
+
+def _open_install_activation_directory_at(
+    parent_descriptor: int,
+    name: str,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> int:
+    descriptor = -1
+    success = False
+    try:
+        before = os.stat(
+            name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        descriptor = os.open(
+            name,
+            (
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            ),
+            dir_fd=parent_descriptor,
+        )
+        opened = os.fstat(descriptor)
+        after = os.stat(
+            name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        for metadata in (before, opened, after):
+            _validate_install_activation_directory(
+                metadata,
+                expected_uid=expected_uid,
+                expected_gid=expected_gid,
+            )
+        if not (
+            _install_directory_fingerprint(before)
+            == _install_directory_fingerprint(opened)
+            == _install_directory_fingerprint(after)
+        ):
+            raise RelayAdminError("recovery_required")
+        success = True
+        return descriptor
+    except RelayAdminError:
+        raise
+    except OSError as exc:
+        raise RelayAdminError("recovery_required") from exc
+    finally:
+        if not success and descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def _create_install_activation_directory_at(
+    parent_descriptor: int,
+    name: str,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> int:
+    descriptor = -1
+    success = False
+    try:
+        os.mkdir(name, 0o700, dir_fd=parent_descriptor)
+        descriptor = os.open(
+            name,
+            (
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            ),
+            dir_fd=parent_descriptor,
+        )
+        os.fchmod(descriptor, 0o700)
+        opened = os.fstat(descriptor)
+        current = os.stat(
+            name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        for metadata in (opened, current):
+            _validate_install_activation_directory(
+                metadata,
+                expected_uid=expected_uid,
+                expected_gid=expected_gid,
+            )
+        if _install_directory_fingerprint(
+            opened
+        ) != _install_directory_fingerprint(current):
+            raise RelayAdminError("recovery_required")
+        success = True
+        return descriptor
+    except RelayAdminError:
+        raise
+    except OSError as exc:
+        raise RelayAdminError("recovery_required") from exc
+    finally:
+        if not success and descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def _inspect_install_activation_namespace(
+    admin_descriptor: int,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+    expected: InstallActivationNamespace | None = None,
+    transaction_optional: bool = False,
+) -> InstallActivationNamespace:
+    names = _bounded_install_directory_names(
+        admin_descriptor,
+        3 if transaction_optional else 2,
+    )
+    allowed_names = {
+        ("activation", "lifecycle.lock"),
+    }
+    if transaction_optional:
+        allowed_names.add(
+            ("activation", "lifecycle.lock", "transaction.json")
+        )
+    if names not in allowed_names:
+        raise RelayAdminError("recovery_required")
+    activation_descriptor = -1
+    receipts_descriptor = -1
+    transactions_descriptor = -1
+    try:
+        activation_descriptor = _open_install_activation_directory_at(
+            admin_descriptor,
+            "activation",
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        if _bounded_install_directory_names(activation_descriptor, 2) != (
+            "receipts",
+            "transactions",
+        ):
+            raise RelayAdminError("recovery_required")
+        receipts_descriptor = _open_install_activation_directory_at(
+            activation_descriptor,
+            "receipts",
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        transactions_descriptor = _open_install_activation_directory_at(
+            activation_descriptor,
+            "transactions",
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        if (
+            _bounded_install_directory_names(receipts_descriptor, 0)
+            or _bounded_install_directory_names(
+                transactions_descriptor,
+                0,
+            )
+        ):
+            raise RelayAdminError("recovery_required")
+        observed = InstallActivationNamespace(
+            activation=_install_directory_fingerprint(
+                os.fstat(activation_descriptor)
+            ),
+            receipts=_install_directory_fingerprint(
+                os.fstat(receipts_descriptor)
+            ),
+            transactions=_install_directory_fingerprint(
+                os.fstat(transactions_descriptor)
+            ),
+        )
+        if expected is not None and observed != expected:
+            raise RelayAdminError("recovery_required")
+        return observed
+    except RelayAdminError:
+        raise
+    except OSError as exc:
+        raise RelayAdminError("recovery_required") from exc
+    finally:
+        for descriptor in (
+            transactions_descriptor,
+            receipts_descriptor,
+            activation_descriptor,
+        ):
+            if descriptor >= 0:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+
+
+def _initialize_install_activation_namespace(
+    admin_descriptor: int,
+    *,
+    plan: InstallPlan,
+    expected_uid: int,
+    expected_gid: int,
+) -> InstallActivationNamespace:
+    _validate_install_transaction_at(
+        admin_descriptor,
+        expected=_install_transaction_data(plan),
+        expected_uid=expected_uid,
+        expected_gid=expected_gid,
+    )
+    names = _bounded_install_directory_names(admin_descriptor, 3)
+    if names == (
+        "activation",
+        "lifecycle.lock",
+        "transaction.json",
+    ):
+        return _inspect_install_activation_namespace(
+            admin_descriptor,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+            transaction_optional=True,
+        )
+    if names != ("lifecycle.lock", "transaction.json"):
+        raise RelayAdminError("recovery_required")
+    activation_descriptor = -1
+    child_fingerprints: dict[
+        str,
+        tuple[int, int, int, int, int, int],
+    ] = {}
+    try:
+        activation_descriptor = _create_install_activation_directory_at(
+            admin_descriptor,
+            "activation",
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        )
+        for name in ("receipts", "transactions"):
+            child = _create_install_activation_directory_at(
+                activation_descriptor,
+                name,
+                expected_uid=expected_uid,
+                expected_gid=expected_gid,
+            )
+            try:
+                os.fsync(child)
+                child_fingerprints[name] = (
+                    _install_directory_fingerprint(os.fstat(child))
+                )
+            finally:
+                os.close(child)
+        os.fsync(activation_descriptor)
+        os.fsync(admin_descriptor)
+        created = InstallActivationNamespace(
+            activation=_install_directory_fingerprint(
+                os.fstat(activation_descriptor)
+            ),
+            receipts=child_fingerprints["receipts"],
+            transactions=child_fingerprints["transactions"],
+        )
+    except RelayAdminError:
+        raise
+    except OSError as exc:
+        raise RelayAdminError("recovery_required") from exc
+    finally:
+        if activation_descriptor >= 0:
+            try:
+                os.close(activation_descriptor)
+            except OSError:
+                pass
+    return _inspect_install_activation_namespace(
+        admin_descriptor,
+        expected_uid=expected_uid,
+        expected_gid=expected_gid,
+        expected=created,
+        transaction_optional=True,
+    )
+
+
 def _mkdir_fresh(path: Path, mode: int = 0o755) -> None:
     try:
         os.mkdir(path, mode)
@@ -1475,15 +1934,7 @@ def _populate_release(stage: Path, bundle: RelayBundle) -> None:
 
 
 def _write_transaction(path: Path, plan: InstallPlan) -> None:
-    data = _canonical_json(
-        {
-            "archive_sha256": plan.bundle.archive_sha256,
-            "plan_sha256": plan.plan_sha256,
-            "release_id": plan.bundle.release_id,
-            "schema": TRANSACTION_SCHEMA,
-            "state_id": "prepared",
-        }
-    )
+    data = _install_transaction_data(plan)
     temporary = path.parent / f".transaction-{plan.plan_sha256[:16]}.tmp"
     if _path_exists(temporary):
         raise RelayAdminError("recovery_required")
@@ -1554,6 +2005,7 @@ def _publish_install_anchored(
     )
     stage = paths.releases / f".installing-{plan.plan_sha256[:16]}"
     unit_stage = paths.unit.parent / f".{UNIT_NAME}.{plan.plan_sha256[:16]}.tmp"
+    activation_namespace: InstallActivationNamespace | None = None
     try:
         _validate_install_lock_binding(
             paths.admin_state,
@@ -1562,12 +2014,6 @@ def _publish_install_anchored(
             lock_descriptor,
             lock_fingerprint,
         )
-        for directory in (
-            paths.releases,
-            paths.stable_launcher.parent,
-            paths.unit.parent,
-        ):
-            _mkdir_chain(paths.root, directory)
         refreshed = _plan_for_install(paths.root, plan.bundle)
         if refreshed.plan_sha256 != plan.plan_sha256 or refreshed.no_op:
             raise RelayAdminError("plan_stale")
@@ -1575,6 +2021,20 @@ def _publish_install_anchored(
             raise RelayAdminError("recovery_required")
         _write_transaction(paths.transaction, plan)
         try:
+            activation_namespace = (
+                _initialize_install_activation_namespace(
+                    admin_descriptor,
+                    plan=plan,
+                    expected_uid=root_metadata.st_uid,
+                    expected_gid=root_metadata.st_gid,
+                )
+            )
+            for directory in (
+                paths.releases,
+                paths.stable_launcher.parent,
+                paths.unit.parent,
+            ):
+                _mkdir_chain(paths.root, directory)
             _populate_release(stage, plan.bundle)
             _write_new_file(unit_stage, plan.bundle.unit_data, 0o644)
             os.rename(stage, paths.release)
@@ -1595,6 +2055,19 @@ def _publish_install_anchored(
             _validate_installed_release(paths, plan.bundle)
             if not _root_path_matches(original_root, plan.root_fingerprint):
                 raise RelayAdminError("plan_stale")
+            _inspect_install_activation_namespace(
+                admin_descriptor,
+                expected_uid=root_metadata.st_uid,
+                expected_gid=root_metadata.st_gid,
+                expected=activation_namespace,
+                transaction_optional=True,
+            )
+            _validate_install_transaction_at(
+                admin_descriptor,
+                expected=_install_transaction_data(plan),
+                expected_uid=root_metadata.st_uid,
+                expected_gid=root_metadata.st_gid,
+            )
             _validate_install_lock_binding(
                 paths.admin_state,
                 admin_descriptor,
@@ -1605,6 +2078,8 @@ def _publish_install_anchored(
             paths.transaction.unlink()
             _fsync_directory(paths.transaction.parent)
         except (OSError, RelayAdminError) as exc:
+            if activation_namespace is None:
+                raise RelayAdminError("recovery_required") from exc
             if not _rollback_install(plan, stage, unit_stage):
                 raise RelayAdminError("recovery_required") from exc
             if isinstance(exc, RelayAdminError):
@@ -1612,6 +2087,14 @@ def _publish_install_anchored(
             raise RelayAdminError("install_publish_failed") from exc
     finally:
         try:
+            if activation_namespace is not None:
+                _inspect_install_activation_namespace(
+                    admin_descriptor,
+                    expected_uid=root_metadata.st_uid,
+                    expected_gid=root_metadata.st_gid,
+                    expected=activation_namespace,
+                    transaction_optional=True,
+                )
             _validate_install_lock_binding(
                 paths.admin_state,
                 admin_descriptor,

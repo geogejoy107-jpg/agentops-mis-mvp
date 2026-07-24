@@ -1016,10 +1016,7 @@ def main() -> int:
                 / "agentops-relayctl"
                 / "activation"
             )
-            (activation / "transactions").mkdir(
-                parents=True,
-                mode=0o700,
-            )
+            (activation / "receipts").rmdir()
 
         def journal_symlink_transactions(root: Path) -> None:
             activation = (
@@ -1029,10 +1026,7 @@ def main() -> int:
                 / "agentops-relayctl"
                 / "activation"
             )
-            (activation / "receipts").mkdir(
-                parents=True,
-                mode=0o700,
-            )
+            (activation / "transactions").rmdir()
             (activation / "transactions").symlink_to(
                 "receipts",
                 target_is_directory=True,
