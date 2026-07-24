@@ -192,6 +192,8 @@ def systemd(
     active: bool = False,
     need_reload: bool = False,
     invocation_id: str = "1" * 32,
+    exec_main_status: int = 0,
+    retain_inactive_invocation: bool = False,
 ) -> SystemdSnapshot:
     return SystemdSnapshot(
         load_state="loaded",
@@ -199,10 +201,14 @@ def systemd(
         active_state="active" if active else "inactive",
         sub_state="running" if active else "dead",
         result="success",
-        exec_main_status=0,
+        exec_main_status=exec_main_status,
         fragment_path=UNIT_PATH,
         need_daemon_reload=need_reload,
-        invocation_id=invocation_id if active else "",
+        invocation_id=(
+            invocation_id
+            if active or retain_inactive_invocation
+            else ""
+        ),
         main_pid=1701 if active else 0,
     )
 
@@ -535,7 +541,11 @@ def main() -> int:
         owns_enable=True,
         owns_start=True,
     )
-    stopped_systemd = systemd(enabled=True)
+    stopped_systemd = systemd(
+        enabled=True,
+        exec_main_status=15,
+        retain_inactive_invocation=True,
+    )
     rollback_stop_observation = compile_activation_recovery_decision(
         snapshot(rollback_records),
         enabled_prerequisites,

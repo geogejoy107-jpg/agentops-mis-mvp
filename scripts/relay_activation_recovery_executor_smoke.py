@@ -117,7 +117,11 @@ class FakeRuntime:
         elif operation == "start":
             self.systemd = systemd(enabled=True, active=True)
         elif operation == "stop":
-            self.systemd = systemd(enabled=True)
+            self.systemd = systemd(
+                enabled=True,
+                exec_main_status=15,
+                retain_inactive_invocation=True,
+            )
         elif operation == "disable":
             self.prerequisites = prerequisites()
             self.systemd = systemd()
@@ -233,6 +237,11 @@ def build_records():
         owns_start=False,
     )
     active_systemd = systemd(enabled=True, active=True)
+    stopped_systemd = systemd(
+        enabled=True,
+        exec_main_status=15,
+        retain_inactive_invocation=True,
+    )
     append_observed(
         start_observed,
         identity,
@@ -256,7 +265,7 @@ def build_records():
         identity,
         "rollback_stop",
         enabled_prerequisites,
-        enabled_systemd,
+        stopped_systemd,
         owns_enable=True,
         owns_start=False,
     )
@@ -291,6 +300,7 @@ def build_records():
         "pre_systemd": pre_systemd,
         "prepared": prepared,
         "start_observed": start_observed,
+        "stopped_systemd": stopped_systemd,
         "stopped_observed": stopped_observed,
     }
 
@@ -371,6 +381,7 @@ def main() -> int:
     enabled_prerequisites = fixtures["enabled_prerequisites"]
     enabled_systemd = fixtures["enabled_systemd"]
     active_systemd = fixtures["active_systemd"]
+    stopped_systemd = fixtures["stopped_systemd"]
 
     results: list[dict[str, object]] = []
     results.append(
@@ -482,7 +493,7 @@ def main() -> int:
             outcome="rollback",
             runtime=FakeRuntime(
                 enabled_prerequisites,
-                enabled_systemd,
+                stopped_systemd,
             ),
             expected_step="rollback_disable",
             expected_mutations=("disable",),
