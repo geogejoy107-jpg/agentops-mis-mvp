@@ -79,7 +79,9 @@ Expected summary:
 
 The private success controller now owns plan refresh, lifecycle lock, forward
 journal revisions, per-step observations, ownership decisions and terminal
-receipt. Exact rollback, crash recovery, and the CLI boundary remain open. Real
-daemon reload, enable, start, stop, disable, boot persistence, and interruption
-tests require a disposable Linux systemd host with root authority. Public Relay
-and physical ordinary-browser acceptance also remain open.
+receipt. The private recovery executor now composes this adapter for one
+confirmed forward or inverse recovery step, while exact non-systemd rollback
+terminalization is also fixture-accepted. Real daemon reload, enable, start,
+stop, disable, boot persistence, and interruption tests still require a
+disposable Linux systemd host with root authority. The CLI, public Relay, and
+physical ordinary-browser acceptance remain open.

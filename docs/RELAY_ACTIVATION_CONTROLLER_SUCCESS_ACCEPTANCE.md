@@ -112,14 +112,14 @@ Expected summary:
 
 ## Remaining Gates
 
-Before CLI activation can be enabled, the project still needs an exact
-transaction resume and rollback controller for every interruption boundary,
-including ownership proof before stop/disable, terminalization after a durable
-receipt, and bounded operator recovery output.
+Before CLI activation can be enabled, the project still needs real-Linux
+validation of transaction resume and rollback at every interruption boundary,
+plus bounded operator recovery output.
 The lifecycle-lock-guarded recovery snapshot now provides the validated chain
 and optional legal terminal receipt input. The pure recovery decision compiler
-can select a bounded hash-bound action from a caller-owned stable observation,
-but no production recovery controller confirms or executes that action yet.
+selects a bounded hash-bound action; the private recovery controllers confirm
+and write non-systemd actions, and the private executor advances one
+scanner-bound `run_step`. None is exposed through the CLI.
 
 Real daemon reload, enable, start, stop, disable, boot persistence, and
 interruption testing require a disposable Linux systemd host with root

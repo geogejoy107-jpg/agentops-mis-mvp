@@ -104,6 +104,7 @@ injected after a durable revision write.
 This slice does not execute `daemon-reload`, `enable`, `start`, `stop`, or
 `disable`, open the production recovery store, or expose a recovery command.
 It does complete the rollback verification/receipt/terminal contract against
-the injected exact store. The next writer slice must bind the same confirmed
-decision to exactly one scanner-bound systemd step and then pass interruption
-tests before any CLI is enabled.
+the injected exact store. The separate private executor in
+`RELAY_ACTIVATION_RECOVERY_EXECUTOR_ACCEPTANCE.md` now binds the same confirmed
+decision to exactly one scanner-bound systemd step. Real Linux interruption
+tests remain required before any CLI is enabled.

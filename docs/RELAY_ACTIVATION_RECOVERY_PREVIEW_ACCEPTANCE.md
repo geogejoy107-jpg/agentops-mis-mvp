@@ -90,6 +90,7 @@ The private writer in
 `RELAY_ACTIVATION_RECOVERY_CONTROLLER_ACCEPTANCE.md` now reloads this same
 journal head and binds `decision_sha256` for one non-systemd observation,
 forward or rollback receipt, terminal, or complete action. The rollback
-terminal contract is now fixture-accepted; scanner-bound systemd recovery
-steps, production-store composition, and real Linux interruption acceptance
-remain the next gates.
+terminal contract is fixture-accepted. The private executor now composes one
+confirmed scanner-bound recovery step with the production store; real Linux
+interruption acceptance and an operator-facing confirmation surface remain the
+next gates.

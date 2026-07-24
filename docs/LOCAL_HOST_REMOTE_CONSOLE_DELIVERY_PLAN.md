@@ -292,9 +292,11 @@ Implementation slices:
      `RELAY_ACTIVATION_RECOVERY_PREVIEW_ACCEPTANCE.md`; exact-confirmed
      non-systemd forward and rollback observation/receipt/terminal writes are
      implemented in
-     `RELAY_ACTIVATION_RECOVERY_CONTROLLER_ACCEPTANCE.md`; scanner-bound
-     recovery mutations, production recovery-store composition and partial
-     namespace resume remain unimplemented;
+     `RELAY_ACTIVATION_RECOVERY_CONTROLLER_ACCEPTANCE.md`; private scanner-bound
+     one-step recovery execution and production-store composition are
+     fixture-accepted in
+     `RELAY_ACTIVATION_RECOVERY_EXECUTOR_ACCEPTANCE.md`; real Linux interruption
+     acceptance and partial namespace resume remain unimplemented;
    - upgrade, rollback, uninstall, Linux account provisioning, service
      activation and public infrastructure acceptance: pending;
    - public endpoint, DNS/ACME provisioning, stable per-Host Console origin,

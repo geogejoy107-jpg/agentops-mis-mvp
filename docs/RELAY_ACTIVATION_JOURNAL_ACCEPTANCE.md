@@ -7,8 +7,9 @@ primitives in `agentops_mis_cli.relay_activation_journal`. The private
 exact-confirmed success controller now composes these primitives, while
 the guarded recovery snapshot reads exact chains and terminal-bindable
 receipts, and the pure recovery compiler selects bounded hash-bound decisions.
-The exact-confirmed non-systemd recovery writer now exercises both active and
-rollback terminalization; recovery systemd execution remains future work.
+The exact-confirmed non-systemd recovery writer exercises both active and
+rollback terminalization, and the private recovery executor advances one
+scanner-bound step. Real Linux recovery execution remains future work.
 
 This slice does **not** unlock `--confirm-activate`, open the production
 `/var/lib/agentops-relayctl` tree, invoke systemd mutations, acquire the
@@ -129,12 +130,10 @@ Expected result:
 This acceptance is not evidence of confirmed service activation. The remaining
 sequence is:
 
-1. connect scanner-bound recovery `run_step` execution to the confirmed
-   decision;
-2. compose recovery writes with the production locked store;
-3. pass real Linux systemd interruption tests;
-4. expose an operator confirmation surface only after those gates;
-5. pass public Relay and physical ordinary-browser acceptance.
+1. pass real Linux systemd interruption tests for the private executor;
+2. validate receipt/terminal recovery after real process interruption;
+3. expose an operator confirmation surface only after those gates;
+4. pass public Relay and physical ordinary-browser acceptance.
 
 Confirmed first-install namespace initialization is recorded separately in
 `RELAY_ACTIVATION_NAMESPACE_INSTALL_ACCEPTANCE.md`; the private process adapter

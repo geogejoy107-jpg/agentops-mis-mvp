@@ -112,7 +112,10 @@ write or mutation. The private non-systemd writer in
 `RELAY_ACTIVATION_RECOVERY_CONTROLLER_ACCEPTANCE.md` now enforces that binding
 for observation, success-receipt, terminal-revision, and complete actions.
 
-Scanner-bound execution of a confirmed `run_step`, a production recovery
-opener, operator-facing confirmation, CLI exposure, and interrupted real Linux
-systemd acceptance remain unimplemented. Ambiguous ownership-changing intents
-remain deliberately blocked rather than guessed.
+The private executor in
+`RELAY_ACTIVATION_RECOVERY_EXECUTOR_ACCEPTANCE.md` now binds one confirmed
+`run_step` to the production locked store, scanner, and mutation adapter; its
+stateful execution is fixture-accepted. Operator-facing confirmation, CLI
+exposure, and interrupted real Linux systemd acceptance remain unimplemented.
+Ambiguous ownership-changing intents remain deliberately blocked rather than
+guessed.
