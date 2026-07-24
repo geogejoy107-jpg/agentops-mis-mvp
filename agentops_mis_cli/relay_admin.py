@@ -2896,7 +2896,10 @@ def _status_installed_valid(
     *,
     expected_uid: int,
     expected_gid: int,
+    activation_locked: bool = False,
 ) -> dict[str, object]:
+    if type(activation_locked) is not bool:
+        raise RelayStatusInvalid
     opt_parts = ("opt", "agentops-mis-relay")
     releases_parts = (*opt_parts, "releases")
     for chain in (
@@ -2941,11 +2944,15 @@ def _status_installed_valid(
     ):
         raise RelayStatusInvalid
     release_id = release_names[0]
-    activation_before = _status_activation_snapshot(
-        root_descriptor,
-        expected_uid=expected_uid,
-        expected_gid=expected_gid,
-        expected_release_id=release_id,
+    activation_before = (
+        None
+        if activation_locked
+        else _status_activation_snapshot(
+            root_descriptor,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+            expected_release_id=release_id,
+        )
     )
     expected_release_target = f"releases/{release_id}"
     if (
@@ -3041,11 +3048,15 @@ def _status_installed_valid(
         or installed_unit.nlink != 1
     ):
         raise RelayStatusInvalid
-    activation_after = _status_activation_snapshot(
-        root_descriptor,
-        expected_uid=expected_uid,
-        expected_gid=expected_gid,
-        expected_release_id=release_id,
+    activation_after = (
+        None
+        if activation_locked
+        else _status_activation_snapshot(
+            root_descriptor,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+            expected_release_id=release_id,
+        )
     )
     if activation_after != activation_before:
         raise RelayStatusRecovery
@@ -3201,6 +3212,42 @@ def _status_scan_anchored(root_descriptor: int) -> tuple[dict[str, object], int]
             root_descriptor,
             expected_uid=root_metadata.st_uid,
             expected_gid=root_metadata.st_gid,
+        )
+    except RelayStatusRecovery:
+        return (
+            {
+                "installed": False,
+                "ok": False,
+                "operation_id": "status",
+                "recovery_marker_count": 1,
+                "recovery_required": True,
+                "schema_id": STATUS_SCHEMA,
+                "state_id": "recovery_required",
+            },
+            1,
+        )
+    return installed, 0
+
+
+def _status_scan_activation_locked_anchored(
+    root_descriptor: int,
+) -> tuple[dict[str, object], int]:
+    """Validate the installed tree while a separate live lock guards journal."""
+
+    root_metadata = os.fstat(root_descriptor)
+    if (
+        not stat.S_ISDIR(root_metadata.st_mode)
+        or root_metadata.st_uid not in {0, os.geteuid()}
+        or stat.S_IMODE(root_metadata.st_mode) & 0o022
+        or _status_recovery_marker_count(root_descriptor)
+    ):
+        raise RelayStatusInvalid
+    try:
+        installed = _status_installed_valid(
+            root_descriptor,
+            expected_uid=root_metadata.st_uid,
+            expected_gid=root_metadata.st_gid,
+            activation_locked=True,
         )
     except RelayStatusRecovery:
         return (

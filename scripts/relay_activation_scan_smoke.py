@@ -37,6 +37,16 @@ from agentops_mis_cli.relay_activation import (  # noqa: E402
     parse_systemd_show_bytes,
     project_activation_plan,
 )
+from agentops_mis_cli.relay_activation_evidence import (  # noqa: E402
+    build_activation_journal_identity,
+)
+from agentops_mis_cli.relay_activation_journal import (  # noqa: E402
+    GENESIS_REVISION_SHA256,
+    _LockedActivationScanCapability,
+    _open_locked_production_store,
+    build_activation_revision,
+    parse_activation_revision,
+)
 from agentops_mis_cli.relay_admin import (  # noqa: E402
     BUNDLE_SCHEMA,
     EXPECTED_WHEEL_MODULES,
@@ -333,6 +343,24 @@ def scan_guarded(root: Path):
     return snapshot, counters
 
 
+def scan_guarded_locked(root: Path, capability):
+    before = descriptor_count()
+    with scanner_guard(root) as counters:
+        snapshot = (
+            scanner._scan_fixture_activation_prerequisites_while_locked(
+                root,
+                account_resolver=fixture_resolver,
+                capability=capability,
+            )
+        )
+    after = descriptor_count()
+    if before is not None and after != before:
+        raise AssertionError("locked scanner leaked file descriptors")
+    if counters["writes"] or counters["unanchored_opens"]:
+        raise AssertionError("locked scanner side-effect guard failed")
+    return snapshot, counters
+
+
 def expect_rejected(
     root: Path,
     failures: list[str],
@@ -417,6 +445,7 @@ def rewrite_config(root: Path, payload: dict[str, object]) -> None:
 def main() -> int:
     failures: list[str] = []
     rejected_cases = 0
+    active_transaction_locked_scan = False
     with tempfile.TemporaryDirectory(
         prefix="relay-activation-scan-"
     ) as temporary_name:
@@ -464,6 +493,158 @@ def main() -> int:
             counters["read_opens"] > 20,
             "scanner did not exercise anchored file traversal",
             failures,
+        )
+
+        locked_root = temporary / "locked-active-transaction"
+        shutil.copytree(valid, locked_root, symlinks=True)
+        activation = (
+            locked_root
+            / "var"
+            / "lib"
+            / "agentops-relayctl"
+            / "activation"
+        )
+        ensure_directory(activation, 0o700)
+        ensure_directory(activation / "receipts", 0o700)
+        ensure_directory(activation / "transactions", 0o700)
+        locked_initial, _locked_initial_counters = scan_guarded(
+            locked_root
+        )
+        locked_systemd = parse_systemd_show_bytes(
+            disabled_systemd_bytes()
+        )
+        locked_plan = compile_activation_plan(
+            locked_initial,
+            locked_systemd,
+        )
+        require(
+            locked_plan.plan_sha256 is not None,
+            "locked scanner fixture plan did not compile",
+            failures,
+        )
+        locked_identity = build_activation_journal_identity(
+            locked_initial,
+            locked_systemd,
+            confirmed_plan_sha256=str(locked_plan.plan_sha256),
+        )
+        prepared = build_activation_revision(
+            locked_identity,
+            revision=1,
+            previous_revision_sha256=GENESIS_REVISION_SHA256,
+            phase="prepared",
+            step_id="transaction_open",
+        )
+        capability = None
+        ordinary_rejected = False
+        mismatched_root_rejected = False
+        journal_drift_rejected = False
+        with _open_locked_production_store(locked_root) as locked_store:
+            capability = locked_store._activation_scan_capability()
+            locked_store.publish_revision(prepared)
+            failures_before = len(failures)
+            expect_rejected(
+                locked_root,
+                failures,
+                "ordinary scanner accepted active transaction",
+            )
+            ordinary_rejected = len(failures) == failures_before
+            locked_snapshot, locked_counters = scan_guarded_locked(
+                locked_root,
+                capability,
+            )
+            require(
+                locked_snapshot.release_id == locked_initial.release_id
+                and locked_counters["read_opens"] > 20,
+                "live locked capability did not preserve exact scan",
+                failures,
+            )
+            try:
+                scanner._scan_fixture_activation_prerequisites_while_locked(
+                    valid,
+                    account_resolver=fixture_resolver,
+                    capability=capability,
+                )
+            except scanner.RelayActivationScanError:
+                mismatched_root_rejected = True
+            require(
+                mismatched_root_rejected,
+                "locked capability was reusable for another root",
+                failures,
+            )
+            forged_capability_rejected = False
+
+            class ForgedCapability(_LockedActivationScanCapability):
+                pass
+
+            forged_capability = object.__new__(ForgedCapability)
+            try:
+                scanner._scan_fixture_activation_prerequisites_while_locked(
+                    locked_root,
+                    account_resolver=fixture_resolver,
+                    capability=forged_capability,
+                )
+            except scanner.RelayActivationScanError:
+                forged_capability_rejected = True
+            require(
+                forged_capability_rejected,
+                "forged locked capability subtype was accepted",
+                failures,
+            )
+            prepared_revision = parse_activation_revision(prepared)
+            intent = build_activation_revision(
+                locked_identity,
+                revision=2,
+                previous_revision_sha256=(
+                    prepared_revision.record_sha256
+                ),
+                phase="intent",
+                step_id="daemon_reload",
+                intent_id="daemon_reload_requested",
+            )
+            resolver_calls = 0
+
+            def drifting_resolver(
+                name: str,
+            ) -> tuple[int, int, tuple[int, ...]]:
+                nonlocal resolver_calls
+                resolver_calls += 1
+                if resolver_calls == 2:
+                    locked_store.publish_revision(intent)
+                return fixture_resolver(name)
+
+            try:
+                scanner._scan_fixture_activation_prerequisites_while_locked(
+                    locked_root,
+                    account_resolver=drifting_resolver,
+                    capability=capability,
+                )
+            except scanner.RelayActivationScanError:
+                journal_drift_rejected = True
+            require(
+                journal_drift_rejected and resolver_calls == 2,
+                "journal drift during locked scan was not rejected",
+                failures,
+            )
+        closed_capability_rejected = False
+        try:
+            scanner._scan_fixture_activation_prerequisites_while_locked(
+                locked_root,
+                account_resolver=fixture_resolver,
+                capability=capability,
+            )
+        except scanner.RelayActivationScanError:
+            closed_capability_rejected = True
+        require(
+            closed_capability_rejected,
+            "closed locked capability remained usable",
+            failures,
+        )
+        active_transaction_locked_scan = (
+            ordinary_rejected
+            and mismatched_root_rejected
+            and forged_capability_rejected
+            and closed_capability_rejected
+            and journal_drift_rejected
         )
 
         original_geteuid = os.geteuid
@@ -1030,10 +1211,14 @@ def main() -> int:
         )
 
     payload = {
+        "active_transaction_locked_scan": (
+            active_transaction_locked_scan
+        ),
         "anchored_read_only": not failures,
         "compile_activation_plan": not failures,
         "exact_wheel_module_set": not failures,
         "fd_leak_free": not failures,
+        "journal_drift_rejected": journal_drift_rejected,
         "live_release_tree_hash": not failures,
         "ok": not failures,
         "rejected_cases": rejected_cases,

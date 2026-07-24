@@ -9,6 +9,9 @@ The production entrypoint opens the exact activation journal while holding the
 existing installer lifecycle lock, refreshes the private plan, writes the
 prepared revision before any mutation, and composes the scanner, systemd reader,
 canonical evidence compiler, journal, and scanner-bound mutation adapter.
+All production rescans use a same-root capability from that live lock, so the
+durable prepared/intent state does not self-block installed-tree validation;
+ordinary status and activation preview still report `recovery_required`.
 
 The controller remains absent from `agentops-relayctl`. This slice does not
 unlock `--confirm-activate`, recover an interrupted transaction, automatically
@@ -37,6 +40,8 @@ stable prerequisite scan + systemd read + stable rescan
 Every step rechecks the complete last observed prerequisite and systemd
 snapshot before publishing its intent. Every post-step observation comes from
 a new scan/read/scan sequence and the canonical activation evidence compiler.
+The locked scan binds the journal tree hash before and after each prerequisite
+observation and fails if another revision or receipt appears mid-scan.
 Enable ownership is acquired only by the durable enable observation; start
 ownership is acquired only by the durable start observation.
 
@@ -95,6 +100,7 @@ Expected summary:
   "disabled_initial_revision_count": 10,
   "enabled_initial_revision_count": 8,
   "failure_requires_recovery": true,
+  "locked_rescan_capability": true,
   "network_used": false,
   "ok": true,
   "private_payload_omitted": true,

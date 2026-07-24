@@ -5,8 +5,9 @@ FD-anchored host prerequisite scanner, production read-only systemd adapter and
 activate preview CLI, private immutable activation journal core, read-only
 installed-status journal validation, lifecycle-lock-owned first-install
 namespace initialization, lifecycle-lock-bound private production store
-opener, canonical activation evidence compiler, and private scanner-bound
-systemd mutation process adapter plus private exact-confirmed success controller
+opener and active-transaction scanner capability, canonical activation evidence
+compiler, and private scanner-bound systemd mutation process adapter plus
+private exact-confirmed success controller
 and lifecycle-lock-guarded recovery snapshot plus deterministic recovery
 decision compiler implemented and locally accepted; CLI activation, recovery
 execution and rollback terminalization remain planned and unimplemented
@@ -25,6 +26,10 @@ The current `agentops_mis_cli.relay_activation` module implements strict
 systemd-state parsing, private plan-hash compilation and bounded public
 projection. `agentops_mis_cli.relay_activation_scan` now creates its private
 prerequisite snapshot from one read-only, FD-anchored host observation.
+Its ordinary entry point still requires `installed_valid`; its private
+same-root capability path can validate the installed tree while a live
+lifecycle lock protects an active journal transaction, and binds the raw
+journal snapshot hash before and after the scan.
 `agentops_mis_cli.relay_systemd_read` reads exactly one bounded systemd `show`
 snapshot through the scanner-bound opened executable FD, and
 `agentops_mis_cli.relay_activation_preview` requires a second exact
@@ -56,7 +61,8 @@ recorded in `RELAY_ACTIVATION_EVIDENCE_ACCEPTANCE.md`; it does not append a
 journal revision or call the process adapter.
 The private success controller that composes these boundaries is recorded in
 `RELAY_ACTIVATION_CONTROLLER_SUCCESS_ACCEPTANCE.md`. It remains absent from the
-CLI and maps every post-prepared failure to retained recovery state.
+CLI, uses the locked scanner capability for every production rescan, and maps
+every post-prepared failure to retained recovery state.
 The read-only exact-chain and optional terminal-receipt recovery input is
 recorded in `RELAY_ACTIVATION_RECOVERY_SNAPSHOT_ACCEPTANCE.md`. The pure
 hash-bound decision compiler is recorded in
