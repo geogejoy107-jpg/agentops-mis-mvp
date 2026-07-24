@@ -121,6 +121,7 @@ def main() -> int:
     sdist_has_activation_plan_acceptance = False
     sdist_has_activation_preview_acceptance = False
     sdist_has_activation_scanner_acceptance = False
+    sdist_has_systemd_mutation_acceptance = False
     sdist_has_config_parser_acceptance = False
     sdist_has_activation_spec = False
     sdist_has_pkg_info = False
@@ -292,6 +293,12 @@ def main() -> int:
                     )
                     for name in names
                 )
+                sdist_has_systemd_mutation_acceptance = any(
+                    name.endswith(
+                        "/docs/RELAY_SYSTEMD_MUTATION_ADAPTER_ACCEPTANCE.md"
+                    )
+                    for name in names
+                )
                 sdist_has_config_parser_acceptance = any(
                     name.endswith("/docs/RELAY_CONFIG_PARSER_ACCEPTANCE.md")
                     for name in names
@@ -425,6 +432,11 @@ def main() -> int:
     require(
         sdist_has_activation_scanner_acceptance,
         "source distribution omits the activation-scanner acceptance",
+        failures,
+    )
+    require(
+        sdist_has_systemd_mutation_acceptance,
+        "source distribution omits the systemd-mutation acceptance",
         failures,
     )
     require(
@@ -589,6 +601,9 @@ def main() -> int:
         ),
         "sdist_includes_activation_scanner_acceptance": (
             sdist_has_activation_scanner_acceptance
+        ),
+        "sdist_includes_systemd_mutation_acceptance": (
+            sdist_has_systemd_mutation_acceptance
         ),
         "sdist_includes_config_parser_acceptance": (
             sdist_has_config_parser_acceptance

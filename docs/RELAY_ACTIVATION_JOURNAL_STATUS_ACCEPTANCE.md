@@ -80,10 +80,12 @@ Expected source-run summary:
 ## Remaining Gates
 
 This is read-only recovery detection, not recovery automation. Partial
-namespace resume, the confirmed controller, systemd mutation adapter,
-interruption recovery, retention across multiple installed release histories,
-real Linux systemd tests, public Relay, and physical ordinary-browser
-acceptance remain open. Confirmed first-install initialization and the private
-strict open-only production opener are recorded in
+namespace resume, confirmed-controller use of the private systemd mutation
+adapter, interruption recovery, retention across multiple installed release
+histories, real Linux systemd tests, public Relay, and physical
+ordinary-browser acceptance remain open. Confirmed first-install
+initialization, the private strict open-only production opener, and the private
+mutation process boundary are recorded in
 `RELAY_ACTIVATION_NAMESPACE_INSTALL_ACCEPTANCE.md` and
-`RELAY_ACTIVATION_PRODUCTION_STORE_ACCEPTANCE.md`.
+`RELAY_ACTIVATION_PRODUCTION_STORE_ACCEPTANCE.md` and
+`RELAY_SYSTEMD_MUTATION_ADAPTER_ACCEPTANCE.md`.

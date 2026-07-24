@@ -106,5 +106,6 @@ Expected summary:
 This is first-install namespace initialization, not activation recovery. Safe
 resume or rollback of a marker-owned partial namespace, full root-to-admin
 `openat` parent-chain anchoring, transaction operations entirely through the
-held admin FD, confirmed systemd mutation, real Linux interruption tests,
-public Relay, and physical ordinary-browser acceptance remain open.
+held admin FD, confirmed-controller use of the private systemd mutation
+adapter, real Linux interruption tests, public Relay, and physical
+ordinary-browser acceptance remain open.

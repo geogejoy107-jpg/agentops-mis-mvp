@@ -96,8 +96,9 @@ This opener has no caller in `main()` and performs no systemd action.
 Confirmed first-install now creates the exact namespace while holding the same
 lifecycle lock, as recorded in
 `RELAY_ACTIVATION_NAMESPACE_INSTALL_ACCEPTANCE.md`. Partial namespace resume,
-the exact-confirmed controller, narrow mutation adapter, step evidence
-compiler, ownership-safe rollback, crash recovery, completed-history
-retention, real root-owned Linux systemd acceptance, public Relay, and
-physical ordinary-browser acceptance remain open. Installer lock hardening is
-recorded in `RELAY_OFFLINE_INSTALL_ACCEPTANCE.md`.
+the exact-confirmed controller, its use of the private mutation adapter, step
+evidence compiler, ownership-safe rollback, crash recovery, completed-history
+retention, real root-owned Linux systemd acceptance, public Relay, and physical
+ordinary-browser acceptance remain open. The private process boundary is
+recorded in `RELAY_SYSTEMD_MUTATION_ADAPTER_ACCEPTANCE.md`; installer lock
+hardening is recorded in `RELAY_OFFLINE_INSTALL_ACCEPTANCE.md`.

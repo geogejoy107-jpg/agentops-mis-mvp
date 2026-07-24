@@ -159,13 +159,16 @@ journal core 已分别按
 [`docs/RELAY_ACTIVATION_NAMESPACE_INSTALL_ACCEPTANCE.md`](docs/RELAY_ACTIVATION_NAMESPACE_INSTALL_ACCEPTANCE.md)
 与
 [`docs/RELAY_ACTIVATION_PRODUCTION_STORE_ACCEPTANCE.md`](docs/RELAY_ACTIVATION_PRODUCTION_STORE_ACCEPTANCE.md)
+与
+[`docs/RELAY_SYSTEMD_MUTATION_ADAPTER_ACCEPTANCE.md`](docs/RELAY_SYSTEMD_MUTATION_ADAPTER_ACCEPTANCE.md)
 实现。`agentops-relayctl --root / activate` 仍只会读取状态和生成有界 plan；
 只读 status 已能将完整 journal 历史纳入安装树校验，并对未完成、损坏或扫描中
 变化的 journal 返回恢复态；私有 production opener 已绑定 lifecycle lock，并且只会
 打开 confirmed first-install 事务创建的精确 journal 命名空间，不会自行初始化目录。
 安装计划与 transaction marker 已绑定 missing/exact-empty 状态，partial/history/unknown
-状态会进入恢复态。CLI writer、confirmed controller、partial 自动恢复、systemd 写操作
-和真实恢复仍未实现。这仍不代表公共 Relay、DNS/ACME、服务启动或升级/回滚已经完成。
+状态会进入恢复态。私有 scanner-bound systemd mutation process adapter 已实现但没有
+CLI caller；CLI writer、confirmed controller、partial 自动恢复和真实恢复仍未实现。
+这仍不代表公共 Relay、DNS/ACME、服务启动或升级/回滚已经完成。
 
 `host init` 仍生成一次性 Owner 设置码，并把它、机器 API key 与 Admin key
 存到仓库外的 `~/.agentops/host/`，文件权限为 `0600`。`host start` 默认后台

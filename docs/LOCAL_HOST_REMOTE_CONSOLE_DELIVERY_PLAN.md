@@ -273,8 +273,9 @@ Implementation slices:
      in `RELAY_ACTIVATION_PRODUCTION_STORE_ACCEPTANCE.md`; confirmed
      first-install now owns exact namespace initialization as recorded in
      `RELAY_ACTIVATION_NAMESPACE_INSTALL_ACCEPTANCE.md`, while partial
-     namespace resume, confirmed mutation, controller, rollback and recovery
-     remain unimplemented;
+     namespace resume, confirmed controller, rollback and recovery remain
+     unimplemented; the private scanner-bound systemd mutation process adapter
+     is implemented but remains unreachable from the CLI;
    - upgrade, rollback, uninstall, Linux account provisioning, service
      activation and public infrastructure acceptance: pending;
    - public endpoint, DNS/ACME provisioning, stable per-Host Console origin,

@@ -4,9 +4,10 @@ Status: pure Activation Plan Core v0, strict daemon config parser, read-only
 FD-anchored host prerequisite scanner, production read-only systemd adapter and
 activate preview CLI, private immutable activation journal core, read-only
 installed-status journal validation, lifecycle-lock-owned first-install
-namespace initialization, and lifecycle-lock-bound private production store
-opener implemented and locally accepted; confirmed mutation, controller,
-rollback and recovery remain planned and unimplemented
+namespace initialization, lifecycle-lock-bound private production store
+opener, and private scanner-bound systemd mutation process adapter implemented
+and locally accepted; confirmed controller, rollback and recovery remain
+planned and unimplemented
 
 ## Objective
 
@@ -46,6 +47,8 @@ separately shares the bounded strict config parser used by the scanner. See
 `RELAY_ACTIVATION_JOURNAL_STATUS_ACCEPTANCE.md` and
 `RELAY_ACTIVATION_NAMESPACE_INSTALL_ACCEPTANCE.md` and
 `RELAY_ACTIVATION_PRODUCTION_STORE_ACCEPTANCE.md`.
+The private process adapter is recorded in
+`RELAY_SYSTEMD_MUTATION_ADAPTER_ACCEPTANCE.md`; it has no CLI caller.
 
 ## Command Contract
 
@@ -310,8 +313,9 @@ systemctl --system show agentops-mis-relay.service --no-pager \
   --property=LoadState,UnitFileState,ActiveState,SubState,Result,ExecMainStatus,FragmentPath,NeedDaemonReload,InvocationID,MainPID
 ```
 
-These mutation operations remain reserved for the unimplemented confirmed
-transaction and rollback slices:
+These mutation operations are implemented only as a private scanner-bound
+process adapter and remain unreachable until the confirmed transaction and
+rollback slices call them:
 
 ```text
 systemctl --system daemon-reload
