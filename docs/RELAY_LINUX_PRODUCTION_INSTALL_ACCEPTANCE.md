@@ -35,6 +35,15 @@ The script refuses to run unless:
 - every fixed Relay install, admin, runtime, config, unit, launcher, and
   enablement path is absent.
 
+GitHub's hosted Ubuntu image intentionally makes `/opt` and
+`/usr/local/bin` writable for tool installation. The production installer
+correctly rejects those parent modes. This disposable acceptance therefore
+requires the separate explicit
+`AGENTOPS_RELAY_LINUX_PRODUCTION_HARDEN_INSTALL_PARENTS=1` opt-in, clears only
+group/other write bits on those two root-owned directory identities, and
+restores their exact original modes during every cleanup path. The installer
+itself remains fail-closed and unchanged.
+
 The acceptance does not start the Relay daemon, invoke `systemctl`, open a
 listener, access the network, or ingest a customer credential. Its TLS and
 route material are synthetic test fixtures on an ephemeral VM. Output is
@@ -51,6 +60,7 @@ The Linux-only command is:
 ```bash
 sudo env \
   AGENTOPS_RELAY_LINUX_PRODUCTION_ACCEPTANCE=1 \
+  AGENTOPS_RELAY_LINUX_PRODUCTION_HARDEN_INSTALL_PARENTS=1 \
   AGENTOPS_RELAY_LINUX_PRODUCTION_BUNDLE=/absolute/path/to/bundle.tar.gz \
   AGENTOPS_RELAY_LINUX_PRODUCTION_BUNDLE_SHA256=<sha256> \
   PYTHONDONTWRITEBYTECODE=1 \
@@ -64,6 +74,7 @@ Expected bounded result:
   "account_provisioned": true,
   "cleanup_ok": true,
   "installed_tree": true,
+  "install_parent_modes_restored": true,
   "journal_unchanged": true,
   "network_used": false,
   "ok": true,

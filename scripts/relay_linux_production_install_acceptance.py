@@ -12,6 +12,7 @@ import shutil
 import stat
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -41,6 +42,9 @@ from agentops_mis_cli.relay_admin import (  # noqa: E402
 
 
 OPT_IN = "AGENTOPS_RELAY_LINUX_PRODUCTION_ACCEPTANCE"
+PARENT_HARDEN_OPT_IN = (
+    "AGENTOPS_RELAY_LINUX_PRODUCTION_HARDEN_INSTALL_PARENTS"
+)
 BUNDLE_ENV = "AGENTOPS_RELAY_LINUX_PRODUCTION_BUNDLE"
 BUNDLE_SHA_ENV = "AGENTOPS_RELAY_LINUX_PRODUCTION_BUNDLE_SHA256"
 SERVICE_ACCOUNT = "agentops-relay"
@@ -80,12 +84,26 @@ INSTALL_PLAN_ERROR_IDS = frozenset(
         "upgrade_required",
     }
 )
+INSTALL_PARENT_PATHS = (
+    Path("/opt"),
+    Path("/usr/local/bin"),
+)
 
 
 class AcceptanceFailure(Exception):
     def __init__(self, stage: str = "unknown") -> None:
         self.stage = stage
         super().__init__("linux_production_install_acceptance_failed")
+
+
+@dataclass(frozen=True)
+class ParentModeSnapshot:
+    path: Path
+    device_id: int
+    inode: int
+    owner_id: int
+    group_id: int
+    mode: int
 
 
 def _canonical_json(value: object) -> bytes:
@@ -108,6 +126,114 @@ def _account_present() -> bool:
     else:
         group_present = True
     return user_present or group_present
+
+
+def _parent_mode_snapshot(path: Path) -> ParentModeSnapshot:
+    try:
+        metadata = os.lstat(path)
+    except OSError:
+        raise AcceptanceFailure("install_parent_invalid") from None
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_gid != 0
+        or (stat.S_IMODE(metadata.st_mode) & 0o700) != 0o700
+    ):
+        raise AcceptanceFailure("install_parent_invalid")
+    return ParentModeSnapshot(
+        path=path,
+        device_id=metadata.st_dev,
+        inode=metadata.st_ino,
+        owner_id=metadata.st_uid,
+        group_id=metadata.st_gid,
+        mode=stat.S_IMODE(metadata.st_mode),
+    )
+
+
+def _same_parent(
+    snapshot: ParentModeSnapshot,
+    metadata: os.stat_result,
+) -> bool:
+    return (
+        stat.S_ISDIR(metadata.st_mode)
+        and not stat.S_ISLNK(metadata.st_mode)
+        and metadata.st_dev == snapshot.device_id
+        and metadata.st_ino == snapshot.inode
+        and metadata.st_uid == snapshot.owner_id
+        and metadata.st_gid == snapshot.group_id
+    )
+
+
+def _restore_install_parent_modes(
+    snapshots: tuple[ParentModeSnapshot, ...],
+) -> bool:
+    ok = True
+    for snapshot in reversed(snapshots):
+        try:
+            before = os.lstat(snapshot.path)
+            if not _same_parent(snapshot, before):
+                ok = False
+                continue
+            os.chmod(
+                snapshot.path,
+                snapshot.mode,
+                follow_symlinks=False,
+            )
+            after = os.lstat(snapshot.path)
+            if (
+                not _same_parent(snapshot, after)
+                or stat.S_IMODE(after.st_mode) != snapshot.mode
+            ):
+                ok = False
+        except OSError:
+            ok = False
+    return ok
+
+
+def _harden_install_parents() -> tuple[ParentModeSnapshot, ...]:
+    snapshots = tuple(
+        _parent_mode_snapshot(path)
+        for path in INSTALL_PARENT_PATHS
+    )
+    changed = tuple(
+        snapshot
+        for snapshot in snapshots
+        if snapshot.mode & 0o022
+    )
+    if not changed:
+        return ()
+    if os.environ.get(PARENT_HARDEN_OPT_IN) != "1":
+        raise AcceptanceFailure("install_parent_hardening_required")
+    applied: list[ParentModeSnapshot] = []
+    try:
+        for snapshot in changed:
+            before = os.lstat(snapshot.path)
+            if not _same_parent(snapshot, before):
+                raise AcceptanceFailure(
+                    "install_parent_changed"
+                )
+            applied.append(snapshot)
+            os.chmod(
+                snapshot.path,
+                snapshot.mode & ~0o022,
+                follow_symlinks=False,
+            )
+            after = os.lstat(snapshot.path)
+            if (
+                not _same_parent(snapshot, after)
+                or stat.S_IMODE(after.st_mode) & 0o022
+            ):
+                raise AcceptanceFailure(
+                    "install_parent_hardening_failed"
+                )
+    except Exception:
+        if not _restore_install_parent_modes(tuple(applied)):
+            raise AcceptanceFailure(
+                "install_parent_restore_failed"
+            ) from None
+        raise
+    return changed
 
 
 def _run_quiet(argv: tuple[str, ...]) -> bool:
@@ -341,7 +467,11 @@ def _remove_directory(path: Path) -> bool:
     return not os.path.lexists(path)
 
 
-def _cleanup(*, account_created: bool) -> bool:
+def _cleanup(
+    *,
+    account_created: bool,
+    parent_modes: tuple[ParentModeSnapshot, ...],
+) -> bool:
     ok = True
     try:
         if os.path.lexists(STABLE_LAUNCHER):
@@ -389,11 +519,13 @@ def _cleanup(*, account_created: bool) -> bool:
             groupdel = shutil.which("groupdel")
             if not groupdel or not _run_quiet((groupdel, SERVICE_ACCOUNT)):
                 ok = False
-    return (
+    product_cleanup_ok = (
         ok
         and not _account_present()
         and not any(os.path.lexists(path) for path in ABSENT_PATHS)
     )
+    parents_restored = _restore_install_parent_modes(parent_modes)
+    return product_cleanup_ok and parents_restored
 
 
 def _run() -> dict[str, object]:
@@ -402,7 +534,12 @@ def _run() -> dict[str, object]:
     stage = "account_provisioning"
     account_created = False
     cleanup_ok = False
+    parent_modes: tuple[ParentModeSnapshot, ...] = ()
     try:
+        stage = "install_parent_hardening"
+        parent_modes = _harden_install_parents()
+
+        stage = "account_provisioning"
         uid, gid = _create_service_account()
         account_created = True
 
@@ -460,6 +597,7 @@ def _run() -> dict[str, object]:
         return {
             "account_provisioned": True,
             "installed_tree": True,
+            "install_parent_modes_restored": True,
             "journal_unchanged": True,
             "network_used": False,
             "ok": True,
@@ -477,7 +615,8 @@ def _run() -> dict[str, object]:
         raise AcceptanceFailure(stage) from None
     finally:
         cleanup_ok = _cleanup(
-            account_created=account_created or _account_present()
+            account_created=account_created or _account_present(),
+            parent_modes=parent_modes,
         )
         if not cleanup_ok:
             raise AcceptanceFailure("cleanup")
@@ -490,7 +629,8 @@ def main() -> int:
     except AcceptanceFailure as exc:
         result = {
             "cleanup_ok": (
-                not _account_present()
+                exc.stage != "cleanup"
+                and not _account_present()
                 and not any(os.path.lexists(path) for path in ABSENT_PATHS)
             ),
             "failure_id": "linux_production_install_acceptance_failed",
