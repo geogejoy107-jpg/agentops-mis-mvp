@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agentops_mis_cli.relay_activation import (  # noqa: E402
+    CONTROLLED_STOP_EXEC_STATUS,
     ENABLEMENT_LINK_PATH,
     INVOCATION_ID_PATTERN,
     MAX_SYSTEMD_SHOW_BYTES,
@@ -235,7 +236,6 @@ def _diagnose_rollback_stop(identity: FileIdentity) -> str:
         ("ActiveState", {"inactive"}, "active_state"),
         ("SubState", {"dead"}, "sub_state"),
         ("Result", {"", "success"}, "result"),
-        ("ExecMainStatus", {"0"}, "exec_status"),
         ("FragmentPath", {UNIT_PATH}, "fragment_path"),
         ("NeedDaemonReload", {"no"}, "daemon_reload"),
         ("MainPID", {"0"}, "main_pid"),
@@ -243,6 +243,26 @@ def _diagnose_rollback_stop(identity: FileIdentity) -> str:
     for name, allowed, classifier in expected:
         if values[name] not in allowed:
             return f"rollback_rollback_stop_diagnostic_{classifier}"
+    exec_status_value = values["ExecMainStatus"]
+    if (
+        not exec_status_value
+        or not exec_status_value.isascii()
+        or not exec_status_value.isdecimal()
+        or (
+            len(exec_status_value) > 1
+            and exec_status_value.startswith("0")
+        )
+        or int(exec_status_value) > 255
+        or (
+            int(exec_status_value)
+            not in {0, CONTROLLED_STOP_EXEC_STATUS}
+        )
+        or (
+            int(exec_status_value) == CONTROLLED_STOP_EXEC_STATUS
+            and values["Result"] != "success"
+        )
+    ):
+        return "rollback_rollback_stop_diagnostic_exec_status"
     invocation_id = values["InvocationID"]
     if (
         invocation_id
