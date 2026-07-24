@@ -1809,8 +1809,14 @@ class _ActivationJournalStore:
                 "state": "recovery_required",
             }
 
-    def snapshot_sha256(self) -> str:
-        if self.inspect_store().get("state") != "ready":
+    def _snapshot_sha256(self, *, require_ready: bool) -> str:
+        if (
+            type(require_ready) is not bool
+            or (
+                require_ready
+                and self.inspect_store().get("state") != "ready"
+            )
+        ):
             raise RelayActivationJournalError(
                 "activation_journal_recovery_required"
             )
@@ -1926,6 +1932,9 @@ class _ActivationJournalStore:
                 }
             )
         )
+
+    def snapshot_sha256(self) -> str:
+        return self._snapshot_sha256(require_ready=True)
 
     def identity_summary(self) -> dict[str, tuple[str, ...]]:
         if self.inspect_store().get("state") != "ready":
@@ -2387,6 +2396,13 @@ class _LockedActivationJournalStore:
     def snapshot_sha256(self) -> str:
         return self._guarded(self._store.snapshot_sha256)
 
+    def _recovery_snapshot_sha256(self) -> str:
+        return self._guarded(
+            lambda: self._store._snapshot_sha256(
+                require_ready=False
+            )
+        )
+
     def identity_summary(self) -> dict[str, tuple[str, ...]]:
         return self._guarded(self._store.identity_summary)
 
@@ -2398,11 +2414,40 @@ class _LockedActivationJournalStore:
             lambda: self._store._load_recovery_snapshot(plan_sha256)
         )
 
+    def _activation_scan_capability(
+        self,
+    ) -> "_LockedActivationScanCapability":
+        return self._guarded(
+            lambda: _LockedActivationScanCapability(self)
+        )
+
     def publish_revision(self, raw: bytes) -> dict[str, object]:
         return self._guarded(lambda: self._store.publish_revision(raw))
 
     def publish_receipt(self, raw: bytes) -> dict[str, object]:
         return self._guarded(lambda: self._store.publish_receipt(raw))
+
+
+class _LockedActivationScanCapability:
+    """Prove that one exact root is scanned under its live lifecycle lock."""
+
+    def __init__(self, session: _LockedActivationJournalStore) -> None:
+        if type(session) is not _LockedActivationJournalStore:
+            raise RelayActivationJournalError(
+                "activation_journal_invalid"
+            )
+        self.__session = session
+
+    def _snapshot_sha256_for_root(self, root: Path) -> str:
+        if (
+            not isinstance(root, Path)
+            or not root.is_absolute()
+            or root != self.__session.root_path
+        ):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+        return self.__session._recovery_snapshot_sha256()
 
 
 def _acquire_locked_production_store(

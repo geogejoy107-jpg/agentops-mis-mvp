@@ -644,6 +644,38 @@ def main() -> int:
         )
         for node in ast.walk(admin_tree)
     )
+    controller_source = (
+        ROOT
+        / "agentops_mis_cli"
+        / "relay_activation_controller.py"
+    ).read_text(encoding="utf-8")
+    controller_tree = ast.parse(controller_source)
+    locked_scanner_called = any(
+        isinstance(node, ast.Call)
+        and (
+            (
+                isinstance(node.func, ast.Name)
+                and node.func.id
+                == "_scan_activation_prerequisites_while_locked"
+            )
+            or (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr
+                == "_scan_activation_prerequisites_while_locked"
+            )
+        )
+        for node in ast.walk(controller_tree)
+    )
+    unlocked_scanner_imported = any(
+        isinstance(node, ast.ImportFrom)
+        and node.module
+        == "agentops_mis_cli.relay_activation_scan"
+        and any(
+            alias.name == "scan_activation_prerequisites"
+            for alias in node.names
+        )
+        for node in ast.walk(controller_tree)
+    )
     cli_output = io.StringIO()
     with contextlib.redirect_stdout(cli_output), contextlib.redirect_stderr(
         cli_output
@@ -669,6 +701,11 @@ def main() -> int:
         and cli_payload.get("error_id")
         == "activation_mutation_unavailable",
         "private controller became reachable through the CLI",
+        failures,
+    )
+    require(
+        locked_scanner_called and not unlocked_scanner_imported,
+        "production controller did not retain locked scanner capability",
         failures,
     )
 
@@ -707,6 +744,9 @@ def main() -> int:
             failure_error == "activation_recovery_required"
         ),
         "failures": failures,
+        "locked_rescan_capability": (
+            locked_scanner_called and not unlocked_scanner_imported
+        ),
         "network_used": False,
         "ok": not failures,
         "operation": "relay_activation_controller_smoke",

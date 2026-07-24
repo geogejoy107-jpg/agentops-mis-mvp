@@ -280,8 +280,10 @@ Implementation slices:
      exact-confirmed success controller now composes the lock, refreshed plan,
      prepared/intent/observed revisions, fixed mutations, receipt and terminal
      revision as recorded in
-     `RELAY_ACTIVATION_CONTROLLER_SUCCESS_ACCEPTANCE.md`, but remains
-     unreachable from the CLI; the lifecycle-lock-guarded exact-chain and
+     `RELAY_ACTIVATION_CONTROLLER_SUCCESS_ACCEPTANCE.md`; its production
+     rescans now use a same-root live-lock capability so active transaction
+     status cannot self-block the controller, but it remains unreachable from
+     the CLI; the lifecycle-lock-guarded exact-chain and
      orphan-receipt recovery snapshot is implemented in
      `RELAY_ACTIVATION_RECOVERY_SNAPSHOT_ACCEPTANCE.md`; the pure hash-bound
      decision compiler is implemented in

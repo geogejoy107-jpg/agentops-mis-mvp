@@ -35,7 +35,11 @@ from agentops_mis_cli.relay_admin import (
     _status_file_fingerprint,
     _status_file_flags,
     _status_safe_native_name,
+    _status_scan_activation_locked_anchored,
     _status_scan_anchored,
+)
+from agentops_mis_cli.relay_activation_journal import (
+    _LockedActivationScanCapability,
 )
 from agentops_mis_cli.relay_daemon import (
     MAX_CONFIG_BYTES,
@@ -932,8 +936,14 @@ def _scan_anchored(
     account: _AccountIdentity,
     logical_root_uid: int,
     logical_root_gid: int,
+    activation_locked: bool,
 ) -> ActivationPrerequisiteSnapshot:
-    status_payload, status_code = _status_scan_anchored(root_descriptor)
+    status_reader = (
+        _status_scan_activation_locked_anchored
+        if activation_locked
+        else _status_scan_anchored
+    )
+    status_payload, status_code = status_reader(root_descriptor)
     if (
         status_code != 0
         or status_payload.get("state_id") != "installed_valid"
@@ -1182,7 +1192,7 @@ def _scan_anchored(
         if len(set(inode_keys)) != len(inode_keys):
             raise _ScanInvalid
 
-        status_after, status_after_code = _status_scan_anchored(root_descriptor)
+        status_after, status_after_code = status_reader(root_descriptor)
         if (
             status_after_code != status_code
             or status_after != status_payload
@@ -1252,10 +1262,22 @@ def _scan_root(
     *,
     account_resolver: AccountResolver,
     fixture: bool,
+    activation_capability: _LockedActivationScanCapability | None = None,
 ) -> ActivationPrerequisiteSnapshot:
     root_descriptor = -1
     snapshot: ActivationPrerequisiteSnapshot | None = None
     try:
+        if (
+            activation_capability is not None
+            and type(activation_capability)
+            is not _LockedActivationScanCapability
+        ):
+            raise _ScanInvalid
+        journal_snapshot_before = (
+            activation_capability._snapshot_sha256_for_root(root)
+            if activation_capability is not None
+            else None
+        )
         if not fixture and os.geteuid() != 0:
             raise _ScanInvalid
         if not root.is_absolute():
@@ -1284,6 +1306,7 @@ def _scan_root(
             account=account,
             logical_root_uid=0,
             logical_root_gid=0,
+            activation_locked=activation_capability is not None,
         )
         if _account_from_tuple(
             account_resolver(SERVICE_ACCOUNT_NAME)
@@ -1296,6 +1319,11 @@ def _scan_root(
         if (
             _fingerprint(held_after) != _fingerprint(opened)
             or _fingerprint(path_after) != _fingerprint(opened)
+            or (
+                activation_capability is not None
+                and activation_capability._snapshot_sha256_for_root(root)
+                != journal_snapshot_before
+            )
         ):
             raise _ScanInvalid
         snapshot = candidate
@@ -1322,6 +1350,19 @@ def scan_activation_prerequisites() -> ActivationPrerequisiteSnapshot:
     )
 
 
+def _scan_activation_prerequisites_while_locked(
+    capability: _LockedActivationScanCapability,
+) -> ActivationPrerequisiteSnapshot:
+    """Scan the real host while one exact journal lifecycle lock remains live."""
+
+    return _scan_root(
+        Path("/"),
+        account_resolver=_resolve_production_account,
+        fixture=False,
+        activation_capability=capability,
+    )
+
+
 def _scan_fixture_activation_prerequisites(
     root: Path,
     *,
@@ -1333,4 +1374,20 @@ def _scan_fixture_activation_prerequisites(
         root,
         account_resolver=account_resolver,
         fixture=True,
+    )
+
+
+def _scan_fixture_activation_prerequisites_while_locked(
+    root: Path,
+    *,
+    account_resolver: AccountResolver,
+    capability: _LockedActivationScanCapability,
+) -> ActivationPrerequisiteSnapshot:
+    """Test-only locked scan for an isolated absolute fixture root."""
+
+    return _scan_root(
+        root,
+        account_resolver=account_resolver,
+        fixture=True,
+        activation_capability=capability,
     )

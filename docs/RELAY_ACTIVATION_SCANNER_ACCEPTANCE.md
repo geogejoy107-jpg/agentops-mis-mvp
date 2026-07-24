@@ -15,6 +15,12 @@ The production entry point always scans `/`. It exposes no root, account
 resolver, command path, fixture or mutation override, and this slice adds no
 `agentops-relayctl activate` command.
 
+An additional private entry point accepts only a capability issued by a live
+`_LockedActivationJournalStore` for the same root. It exists so an exact
+confirmed activation or recovery transaction can continue validating the
+installed tree after its durable `prepared` revision makes ordinary status
+correctly return `recovery_required`.
+
 ## Implemented Contract
 
 - hold one no-follow host-root descriptor for the entire scan and revalidate
@@ -27,6 +33,12 @@ resolver, command path, fixture or mutation override, and this slice adds no
   config bytes, TLS material, route-key bytes and path length;
 - require the exact installed tree to pass anchored status validation both
   before and after observation while all captured descriptors remain held;
+- keep ordinary status fail-closed for an active journal transaction, while a
+  live same-root lifecycle-lock capability permits only the installed-tree
+  portion of status validation;
+- bind the capability to one root and one raw journal tree snapshot hash before
+  and after scanning, rejecting a forged subtype, closed session, another root,
+  or any journal revision/receipt drift during the scan;
 - compute a live release-tree hash over canonical paths, content hashes and
   numeric filesystem identities rather than reusing provenance metadata;
 - resolve and revalidate the exact `agentops-relay` UID, primary GID and
@@ -66,17 +78,22 @@ It also rejects twenty-four unsafe or raced fixtures, including:
   absent-link creation, same-target enablement-link replacement and in-place
   file mutation.
 
-The smoke checks bounded error output, omitted exception chains, descriptor
-cleanup, an exact wheel-module inventory and the absence of a scanner CLI. It
-runs in the Python 3.10/3.11 compatibility matrix and in the deterministic
-backend job.
+The smoke also publishes a durable prepared revision and proves that the
+ordinary scanner rejects it while the live same-root capability succeeds. It
+then rejects forged capability subtypes, capability reuse after close,
+cross-root reuse, and a valid journal intent appended during the scan. It checks
+bounded error output, omitted exception chains, descriptor cleanup, an exact
+wheel-module inventory and the absence of a scanner CLI. It runs in the Python
+3.10/3.11 compatibility matrix and in the deterministic backend job.
 
 ## Truth Boundary
 
-This scanner proves only one read-only host observation. It does not:
+This scanner proves only one read-only host observation. The locked variant
+also proves that the lifecycle lock, root binding, and journal snapshot remained
+unchanged for that observation. It does not:
 
 - call `systemctl`, parse live systemd state or expose a preview command;
-- lock the lifecycle across a later confirmation;
+- expose the lifecycle capability outside private activation/recovery code;
 - write transaction markers or mutate daemon reload, enablement or service
   state;
 - provision accounts, configuration, TLS material, route keys, DNS or ACME;

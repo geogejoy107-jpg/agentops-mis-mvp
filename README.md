@@ -177,7 +177,10 @@ journal core 已分别按
 状态会进入恢复态。精确 plan 到 journal identity 以及六个执行/回滚步骤的有界证据
 编译器已实现；私有 scanner-bound systemd mutation process adapter 和只处理成功路径
 的 exact-confirmed controller 已完成，能够按 prepared、intent、observed、receipt、
-terminal 顺序闭环；受 lifecycle lock 保护的 recovery snapshot 能读取精确 chain 并
+terminal 顺序闭环。controller 的 production rescan 现在使用同 root、同 lifecycle
+lock 签发的私有 capability，因此写入 prepared 后不会被普通 status 的 recovery 状态
+反向阻断；普通 status/preview 仍保持 fail-closed。受 lifecycle lock 保护的 recovery
+snapshot 能读取精确 chain 并
 识别合法 orphan receipt，纯 recovery decision compiler 也能给出哈希绑定的
 complete/terminalize/resume/inverse/blocked 决策，但二者仍没有 CLI caller。CLI writer、
 recovery executor、rollback terminal contract、partial 自动恢复和真实 Linux systemd

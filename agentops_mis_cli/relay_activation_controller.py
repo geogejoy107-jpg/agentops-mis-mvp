@@ -27,7 +27,7 @@ from agentops_mis_cli.relay_activation_journal import (
     parse_activation_revision,
 )
 from agentops_mis_cli.relay_activation_scan import (
-    scan_activation_prerequisites,
+    _scan_activation_prerequisites_while_locked,
 )
 from agentops_mis_cli.relay_systemd_mutation import (
     _run_bound_systemd_mutation,
@@ -404,10 +404,15 @@ def _run_confirmed_activation(
 
     try:
         with _open_locked_production_store(Path("/")) as store:
+            capability = store._activation_scan_capability()
             return _run_confirmed_activation_with(
                 confirmed_plan_sha256,
                 store=store,
-                scanner=scan_activation_prerequisites,
+                scanner=lambda: (
+                    _scan_activation_prerequisites_while_locked(
+                        capability
+                    )
+                ),
                 systemd_reader=read_systemd_show,
                 mutation_runner=_run_bound_systemd_mutation,
             )
