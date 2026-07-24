@@ -5,9 +5,9 @@ FD-anchored host prerequisite scanner, production read-only systemd adapter and
 activate preview CLI, private immutable activation journal core, read-only
 installed-status journal validation, lifecycle-lock-owned first-install
 namespace initialization, lifecycle-lock-bound private production store
-opener, and private scanner-bound systemd mutation process adapter implemented
-and locally accepted; confirmed controller, rollback and recovery remain
-planned and unimplemented
+opener, canonical activation evidence compiler, and private scanner-bound
+systemd mutation process adapter implemented and locally accepted; confirmed
+controller, rollback and recovery remain planned and unimplemented
 
 ## Objective
 
@@ -49,6 +49,9 @@ separately shares the bounded strict config parser used by the scanner. See
 `RELAY_ACTIVATION_PRODUCTION_STORE_ACCEPTANCE.md`.
 The private process adapter is recorded in
 `RELAY_SYSTEMD_MUTATION_ADAPTER_ACCEPTANCE.md`; it has no CLI caller.
+The side-effect-free plan, journal-identity, and per-step evidence binding is
+recorded in `RELAY_ACTIVATION_EVIDENCE_ACCEPTANCE.md`; it does not append a
+journal revision or call the process adapter.
 
 ## Command Contract
 
@@ -246,10 +249,13 @@ in place.
 The implemented private journal core additionally binds the initial
 enabled/disabled and active/inactive labels, hashes of the initial enablement
 inventory and installed unit identity, and one step-specific observation hash
-for every observed revision. The future controller must define those
-observation hashes over canonical evidence: enable ownership binds the exact
+for every observed revision. The implemented side-effect-free evidence
+compiler derives that exact journal identity from a refreshed confirmed plan
+and defines canonical post-step hashes: enable ownership binds the exact
 post-enable link inventory, while start ownership binds the exact post-start
-InvocationID plus unit identity. Raw systemd output is not journaled.
+InvocationID plus unit identity. It also defines bounded daemon-reload,
+verification, rollback-stop, and rollback-disable observations. Raw systemd
+output and private canonical payloads are not returned or journaled.
 
 Confirmed execution order:
 
