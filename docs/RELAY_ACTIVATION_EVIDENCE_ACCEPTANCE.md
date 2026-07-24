@@ -97,11 +97,14 @@ Expected summary:
 
 ## Remaining Gates
 
-The exact-confirmed controller must still hold the lifecycle lock, refresh and
-match the plan, initialize or open the production journal, append the prepared
-revision before mutation, invoke one private mutation at a time, rescan and
-compile each observation, append terminal state, publish one immutable receipt,
-and recover or roll back after interruption.
+The private exact-confirmed success controller now holds the lifecycle lock,
+refreshes and matches the plan, opens the production journal, appends the
+prepared revision before mutation, invokes one private mutation at a time,
+rescans and compiles each observation, publishes one immutable receipt, and
+appends terminal state. It is not exposed through the CLI.
+
+Exact interruption resume and activation-owned rollback remain required before
+the CLI can use that controller.
 
 Real daemon reload, enable, start, stop, disable, reboot persistence, and crash
 recovery require a disposable Linux systemd host with root authority. Public

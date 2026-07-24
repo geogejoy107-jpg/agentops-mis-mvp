@@ -114,6 +114,7 @@ def main() -> int:
     sdist_has_release_acceptance = False
     sdist_has_install_acceptance = False
     sdist_has_status_acceptance = False
+    sdist_has_activation_controller_acceptance = False
     sdist_has_activation_evidence_acceptance = False
     sdist_has_activation_journal_acceptance = False
     sdist_has_activation_journal_status_acceptance = False
@@ -264,6 +265,12 @@ def main() -> int:
                     )
                     for name in names
                 )
+                sdist_has_activation_controller_acceptance = any(
+                    name.endswith(
+                        "/docs/RELAY_ACTIVATION_CONTROLLER_SUCCESS_ACCEPTANCE.md"
+                    )
+                    for name in names
+                )
                 sdist_has_activation_evidence_acceptance = any(
                     name.endswith(
                         "/docs/RELAY_ACTIVATION_EVIDENCE_ACCEPTANCE.md"
@@ -409,6 +416,11 @@ def main() -> int:
     require(
         sdist_has_activation_plan_acceptance,
         "source distribution omits the activation-plan-core acceptance",
+        failures,
+    )
+    require(
+        sdist_has_activation_controller_acceptance,
+        "source distribution omits the activation-controller acceptance",
         failures,
     )
     require(
@@ -601,6 +613,9 @@ def main() -> int:
         ),
         "sdist_includes_activation_journal_status_acceptance": (
             sdist_has_activation_journal_status_acceptance
+        ),
+        "sdist_includes_activation_controller_acceptance": (
+            sdist_has_activation_controller_acceptance
         ),
         "sdist_includes_activation_evidence_acceptance": (
             sdist_has_activation_evidence_acceptance

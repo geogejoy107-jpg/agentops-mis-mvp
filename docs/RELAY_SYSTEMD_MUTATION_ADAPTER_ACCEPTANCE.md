@@ -33,8 +33,9 @@ The adapter:
 - maps every failure to `systemd_mutation_failed` without returning paths,
   subprocess output, credentials, or exception text.
 
-The production helper remains private and has no caller in `relay_admin.py`.
-`--confirm-activate` therefore still returns
+The production helper remains private. The private exact-confirmed success
+controller now calls it only after a durable journal intent, but
+`relay_admin.py` has no controller caller. `--confirm-activate` therefore still returns
 `activation_mutation_unavailable`.
 
 ## Verification
@@ -76,9 +77,9 @@ Expected summary:
 
 ## Remaining Gates
 
-The exact-confirmed controller must still own plan refresh, lifecycle lock,
-journal revisions, per-step observations, ownership decisions, terminal
-receipt, rollback, and crash recovery. Real daemon reload, enable, start, stop,
-disable, boot persistence, and interruption tests require a disposable Linux
-systemd host with root authority. Public Relay and physical ordinary-browser
-acceptance also remain open.
+The private success controller now owns plan refresh, lifecycle lock, forward
+journal revisions, per-step observations, ownership decisions and terminal
+receipt. Exact rollback, crash recovery, and the CLI boundary remain open. Real
+daemon reload, enable, start, stop, disable, boot persistence, and interruption
+tests require a disposable Linux systemd host with root authority. Public Relay
+and physical ordinary-browser acceptance also remain open.

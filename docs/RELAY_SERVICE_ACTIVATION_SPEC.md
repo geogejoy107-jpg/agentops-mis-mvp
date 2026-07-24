@@ -6,8 +6,9 @@ activate preview CLI, private immutable activation journal core, read-only
 installed-status journal validation, lifecycle-lock-owned first-install
 namespace initialization, lifecycle-lock-bound private production store
 opener, canonical activation evidence compiler, and private scanner-bound
-systemd mutation process adapter implemented and locally accepted; confirmed
-controller, rollback and recovery remain planned and unimplemented
+systemd mutation process adapter plus private exact-confirmed success controller
+implemented and locally accepted; CLI activation, rollback and recovery remain
+planned and unimplemented
 
 ## Objective
 
@@ -52,6 +53,9 @@ The private process adapter is recorded in
 The side-effect-free plan, journal-identity, and per-step evidence binding is
 recorded in `RELAY_ACTIVATION_EVIDENCE_ACCEPTANCE.md`; it does not append a
 journal revision or call the process adapter.
+The private success controller that composes these boundaries is recorded in
+`RELAY_ACTIVATION_CONTROLLER_SUCCESS_ACCEPTANCE.md`. It remains absent from the
+CLI and maps every post-prepared failure to retained recovery state.
 
 ## Command Contract
 
@@ -68,8 +72,8 @@ activation-only check runs after side-effect-free argument parsing so root
 values that happen to equal `activate` do not change `status`, `inspect`, or
 `install` semantics.
 
-The following confirmed flow is reserved for a later transaction slice and is
-not implemented:
+The following confirmed CLI flow remains reserved for the rollback and recovery
+slice and is not implemented:
 
 ```bash
 agentops-relayctl \
@@ -81,8 +85,9 @@ agentops-relayctl \
 
 The current CLI parses `--confirm-activate` and `--plan-sha256` only to reject
 either one with `activation_mutation_unavailable` before scanning or starting
-a subprocess. A future real mutation will require both exact values. Recovery
-also remains a future separate command that must bind to a retained
+a subprocess. The private success controller already requires the exact plan
+hash but is intentionally unreachable until interruption recovery is complete.
+Recovery remains a future separate command that must bind to a retained
 transaction hash:
 
 ```bash
@@ -246,6 +251,14 @@ revision, existing final name, or ambiguous temporary file remains
 file fsync, and parent-directory fsync. No transaction or receipt is modified
 in place.
 
+The implemented private success controller holds the production journal
+lifecycle lock, requires an exact ready store, refreshes and matches the
+confirmed plan, writes the prepared revision before the first mutation, and
+persists each intent before running its fixed adapter command. It rescans before
+and after every step, writes the immutable receipt before the terminal revision,
+and returns only bounded hashes and state. Every post-prepared failure retains
+`recovery_required`; this slice does not guess or roll back.
+
 The implemented private journal core additionally binds the initial
 enabled/disabled and active/inactive labels, hashes of the initial enablement
 inventory and installed unit identity, and one step-specific observation hash
@@ -320,8 +333,9 @@ systemctl --system show agentops-mis-relay.service --no-pager \
 ```
 
 These mutation operations are implemented only as a private scanner-bound
-process adapter and remain unreachable until the confirmed transaction and
-rollback slices call them:
+process adapter. The private success controller calls them after durable intent,
+but they remain unreachable from the CLI until rollback and recovery are
+implemented:
 
 ```text
 systemctl --system daemon-reload

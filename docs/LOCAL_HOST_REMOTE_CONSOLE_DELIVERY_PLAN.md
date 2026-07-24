@@ -276,9 +276,13 @@ Implementation slices:
      namespace resume remains unimplemented; the side-effect-free exact
      plan-to-journal and six-step observation compiler is implemented in
      `RELAY_ACTIVATION_EVIDENCE_ACCEPTANCE.md`, and the private scanner-bound
-     systemd mutation process adapter is implemented but remains unreachable
-     from the CLI; confirmed controller, rollback execution and crash recovery
-     remain unimplemented;
+     systemd mutation process adapter is implemented; the private
+     exact-confirmed success controller now composes the lock, refreshed plan,
+     prepared/intent/observed revisions, fixed mutations, receipt and terminal
+     revision as recorded in
+     `RELAY_ACTIVATION_CONTROLLER_SUCCESS_ACCEPTANCE.md`, but remains
+     unreachable from the CLI; rollback execution, crash recovery and partial
+     namespace resume remain unimplemented;
    - upgrade, rollback, uninstall, Linux account provisioning, service
      activation and public infrastructure acceptance: pending;
    - public endpoint, DNS/ACME provisioning, stable per-Host Console origin,

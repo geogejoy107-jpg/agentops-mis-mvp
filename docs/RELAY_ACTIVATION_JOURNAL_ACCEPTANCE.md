@@ -3,8 +3,9 @@
 ## Scope
 
 This acceptance covers the immutable, credential-free activation journal
-primitives in `agentops_mis_cli.relay_activation_journal`. It is a private
-foundation for a future confirmed Relay activation controller.
+primitives in `agentops_mis_cli.relay_activation_journal`. The private
+exact-confirmed success controller now composes these primitives, while
+rollback and recovery remain future work.
 
 This slice does **not** unlock `--confirm-activate`, open the production
 `/var/lib/agentops-relayctl` tree, invoke systemd mutations, acquire the

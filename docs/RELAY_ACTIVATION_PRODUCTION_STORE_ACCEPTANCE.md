@@ -92,13 +92,17 @@ Expected summary:
 
 ## Remaining Gates
 
-This opener has no caller in `main()` and performs no systemd action.
+This opener has no caller in `main()`. The private exact-confirmed success
+controller now uses it to hold the lifecycle lock across the forward
+transaction, but the opener itself performs no systemd action.
 Confirmed first-install now creates the exact namespace while holding the same
 lifecycle lock, as recorded in
 `RELAY_ACTIVATION_NAMESPACE_INSTALL_ACCEPTANCE.md`. Partial namespace resume,
-the exact-confirmed controller, its use of the private mutation adapter, step
-evidence compiler, ownership-safe rollback, crash recovery, completed-history
-retention, real root-owned Linux systemd acceptance, public Relay, and physical
-ordinary-browser acceptance remain open. The private process boundary is
-recorded in `RELAY_SYSTEMD_MUTATION_ADAPTER_ACCEPTANCE.md`; installer lock
+ownership-safe rollback, crash recovery, completed-history retention, the CLI
+boundary, real root-owned Linux systemd acceptance, public Relay, and physical
+ordinary-browser acceptance remain open. The private forward controller and
+step evidence compiler are recorded in
+`RELAY_ACTIVATION_CONTROLLER_SUCCESS_ACCEPTANCE.md` and
+`RELAY_ACTIVATION_EVIDENCE_ACCEPTANCE.md`; the private process boundary is
+recorded in `RELAY_SYSTEMD_MUTATION_ADAPTER_ACCEPTANCE.md`, and installer lock
 hardening is recorded in `RELAY_OFFLINE_INSTALL_ACCEPTANCE.md`.
