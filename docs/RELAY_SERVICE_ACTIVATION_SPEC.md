@@ -7,8 +7,8 @@ installed-status journal validation, lifecycle-lock-owned first-install
 namespace initialization, lifecycle-lock-bound private production store
 opener, canonical activation evidence compiler, and private scanner-bound
 systemd mutation process adapter plus private exact-confirmed success controller
-implemented and locally accepted; CLI activation, rollback and recovery remain
-planned and unimplemented
+and lifecycle-lock-guarded recovery snapshot implemented and locally accepted;
+CLI activation, recovery decisions and rollback remain planned and unimplemented
 
 ## Objective
 
@@ -56,6 +56,9 @@ journal revision or call the process adapter.
 The private success controller that composes these boundaries is recorded in
 `RELAY_ACTIVATION_CONTROLLER_SUCCESS_ACCEPTANCE.md`. It remains absent from the
 CLI and maps every post-prepared failure to retained recovery state.
+The read-only exact-chain and optional terminal-receipt recovery input is
+recorded in `RELAY_ACTIVATION_RECOVERY_SNAPSHOT_ACCEPTANCE.md`; it does not
+decide or execute a recovery action.
 
 ## Command Contract
 
@@ -288,6 +291,10 @@ must compare the bound pre-state, current state, unit identity, and step
 ownership before choosing an inverse action. If ownership cannot be proven, it
 retains the transaction and returns `recovery_required`; it never guesses
 whether a timed-out command took effect or reverses later operator state.
+The implemented private recovery snapshot supplies the exact validated chain
+and at most one receipt that can legally bind its current or next terminal
+revision. It rejects premature or mismatched receipts and remains read-only;
+fresh systemd comparison and the recovery decision are still future work.
 
 On failure, the controller may stop only a service it started and disable only
 a unit it enabled. It must never undo pre-existing operator state.

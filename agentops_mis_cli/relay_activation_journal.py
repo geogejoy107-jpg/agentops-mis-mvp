@@ -149,6 +149,12 @@ class ActivationJournalReceipt:
     receipt_sha256: str
 
 
+@dataclass(frozen=True)
+class ActivationJournalRecoverySnapshot:
+    revisions: tuple[ActivationJournalRevision, ...]
+    receipt: ActivationJournalReceipt | None
+
+
 def _canonical_json(value: object) -> bytes:
     try:
         return (
@@ -1557,6 +1563,102 @@ class _ActivationJournalStore:
             )
         return receipt
 
+    def _load_recovery_snapshot(
+        self,
+        plan_sha256: str,
+    ) -> ActivationJournalRecoverySnapshot:
+        """Load one exact chain plus its optional terminal-bound receipt."""
+
+        revisions = self._load_chain(plan_sha256)
+        last = revisions[-1]
+        receipt_names = _bounded_directory_names(
+            self.receipts_fd,
+            MAX_JOURNAL_RECEIPTS,
+        )
+        if (
+            len(receipt_names) > MAX_JOURNAL_RECEIPTS
+            or any(
+                _RECEIPT_NAME_PATTERN.fullmatch(name) is None
+                for name in receipt_names
+            )
+        ):
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+        matches: list[ActivationJournalReceipt] = []
+        for name in receipt_names:
+            match = _RECEIPT_NAME_PATTERN.fullmatch(name)
+            if match is None:
+                raise RelayActivationJournalError(
+                    "activation_journal_recovery_required"
+                )
+            receipt = self._load_receipt(match.group(1))
+            if receipt.identity.plan_sha256 != plan_sha256:
+                continue
+            expected_terminal_revision = (
+                last.revision
+                if last.phase == "terminal"
+                else last.revision + 1
+            )
+            expected_previous_sha256 = (
+                last.previous_revision_sha256
+                if last.phase == "terminal"
+                else last.record_sha256
+            )
+            if (
+                not _identity_matches(receipt.identity, last.identity)
+                or receipt.terminal_revision
+                != expected_terminal_revision
+                or receipt.previous_revision_sha256
+                != expected_previous_sha256
+                or receipt.owns_enable != last.owns_enable
+                or receipt.owns_start != last.owns_start
+            ):
+                raise RelayActivationJournalError(
+                    "activation_journal_recovery_required"
+                )
+            matches.append(receipt)
+        if len(matches) > 1:
+            raise RelayActivationJournalError(
+                "activation_journal_recovery_required"
+            )
+        receipt = matches[0] if matches else None
+        if last.phase == "terminal":
+            if receipt is None:
+                raise RelayActivationJournalError(
+                    "activation_journal_recovery_required"
+                )
+            _validate_terminal_binding(last, receipt)
+        elif receipt is not None:
+            terminal = parse_activation_revision(
+                build_activation_revision(
+                    last.identity,
+                    revision=receipt.terminal_revision,
+                    previous_revision_sha256=(
+                        receipt.previous_revision_sha256
+                    ),
+                    phase="terminal",
+                    step_id="terminal",
+                    owns_enable=receipt.owns_enable,
+                    owns_start=receipt.owns_start,
+                    terminal_state=receipt.terminal_state,
+                    receipt_sha256=receipt.receipt_sha256,
+                )
+            )
+            try:
+                validate_activation_revision_chain(
+                    (*revisions, terminal)
+                )
+                _validate_terminal_binding(terminal, receipt)
+            except RelayActivationJournalError:
+                raise RelayActivationJournalError(
+                    "activation_journal_recovery_required"
+                ) from None
+        return ActivationJournalRecoverySnapshot(
+            revisions=revisions,
+            receipt=receipt,
+        )
+
     def publish_revision(self, raw: bytes) -> dict[str, object]:
         revision = parse_activation_revision(raw)
         create_plan = revision.revision == 1
@@ -2287,6 +2389,14 @@ class _LockedActivationJournalStore:
 
     def identity_summary(self) -> dict[str, tuple[str, ...]]:
         return self._guarded(self._store.identity_summary)
+
+    def _load_recovery_snapshot(
+        self,
+        plan_sha256: str,
+    ) -> ActivationJournalRecoverySnapshot:
+        return self._guarded(
+            lambda: self._store._load_recovery_snapshot(plan_sha256)
+        )
 
     def publish_revision(self, raw: bytes) -> dict[str, object]:
         return self._guarded(lambda: self._store.publish_revision(raw))

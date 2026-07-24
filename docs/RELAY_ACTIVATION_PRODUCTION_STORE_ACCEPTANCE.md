@@ -103,6 +103,8 @@ boundary, real root-owned Linux systemd acceptance, public Relay, and physical
 ordinary-browser acceptance remain open. The private forward controller and
 step evidence compiler are recorded in
 `RELAY_ACTIVATION_CONTROLLER_SUCCESS_ACCEPTANCE.md` and
-`RELAY_ACTIVATION_EVIDENCE_ACCEPTANCE.md`; the private process boundary is
-recorded in `RELAY_SYSTEMD_MUTATION_ADAPTER_ACCEPTANCE.md`, and installer lock
-hardening is recorded in `RELAY_OFFLINE_INSTALL_ACCEPTANCE.md`.
+`RELAY_ACTIVATION_EVIDENCE_ACCEPTANCE.md`; the guarded read-only recovery
+snapshot is recorded in `RELAY_ACTIVATION_RECOVERY_SNAPSHOT_ACCEPTANCE.md`;
+the private process boundary is recorded in
+`RELAY_SYSTEMD_MUTATION_ADAPTER_ACCEPTANCE.md`, and installer lock hardening is
+recorded in `RELAY_OFFLINE_INSTALL_ACCEPTANCE.md`.

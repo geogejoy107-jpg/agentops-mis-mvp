@@ -110,6 +110,9 @@ Before CLI activation can be enabled, the project still needs an exact
 transaction resume and rollback controller for every interruption boundary,
 including ownership proof before stop/disable, terminalization after a durable
 receipt, and bounded operator recovery output.
+The lifecycle-lock-guarded recovery snapshot now provides the validated chain
+and optional legal terminal receipt input, but it does not yet select or
+execute an action.
 
 Real daemon reload, enable, start, stop, disable, boot persistence, and
 interruption testing require a disposable Linux systemd host with root
