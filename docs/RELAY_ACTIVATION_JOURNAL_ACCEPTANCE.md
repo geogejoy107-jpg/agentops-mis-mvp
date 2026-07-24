@@ -73,9 +73,10 @@ The private fixture store exercises the intended production algorithm:
   and private journal bodies.
 
 The journal module itself exposes no public writer. Private lifecycle-bound
-controllers compose its production store for activation, while recovery writes
-remain injected-store-only. The installed-tree status validates the exact
-journal namespace as recorded in
+controllers compose its production store for activation and exact-confirmed
+recovery writes; mutation and write behaviors remain fixture-executed until
+real Linux acceptance. The installed-tree status validates the exact journal
+namespace as recorded in
 `RELAY_ACTIVATION_JOURNAL_STATUS_ACCEPTANCE.md`. Before a writer can be added,
 a controller must hold the existing lifecycle lock across final plan refresh,
 all writes, mutation, verification, rollback, and terminal persistence.

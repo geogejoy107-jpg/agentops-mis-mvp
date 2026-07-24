@@ -14,7 +14,9 @@ observation against the same store, and performs at most one of:
 - append one terminal revision for an existing exact receipt; or
 - return an already-complete terminal state without writing.
 
-It has no production opener, systemd mutation adapter, CLI, API, or browser
+Its private production entrypoint opens the exact store under the lifecycle
+lock, obtains the same-root locked scanner capability, and uses the production
+read-only systemd adapter. It has no mutation adapter, CLI, API, or browser
 caller.
 
 ## Confirmation And Write Contract
@@ -81,6 +83,8 @@ Expected summary:
   "ok": true,
   "post_write_failure_retained": true,
   "private_payload_omitted": true,
+  "production_lock_composed": true,
+  "production_one_write": true,
   "receipt_one_write": true,
   "rollback_observation_one_write": true,
   "rollback_receipt_one_write": true,
@@ -97,14 +101,16 @@ unsupported forward mutation, observation completion after an interrupted
 daemon reload, success-receipt publication, orphan-receipt terminalization,
 dedicated rollback verification, rollback-receipt publication, rollback
 terminalization, idempotent complete for both terminal states, and a fault
-injected after a durable revision write.
+injected after a durable revision write. It also replaces the production
+opener, locked scanner, and systemd reader with bounded fixtures and proves one
+store/capability pair receives exactly one write.
 
 ## Truth Boundary
 
 This slice does not execute `daemon-reload`, `enable`, `start`, `stop`, or
-`disable`, open the production recovery store, or expose a recovery command.
-It does complete the rollback verification/receipt/terminal contract against
-the injected exact store. The separate private executor in
+`disable` or expose a recovery command. It composes the production recovery
+store and completes the rollback verification/receipt/terminal contract
+against the injected exact store. The separate private executor in
 `RELAY_ACTIVATION_RECOVERY_EXECUTOR_ACCEPTANCE.md` now binds the same confirmed
 decision to exactly one scanner-bound systemd step. Real Linux interruption
 tests remain required before any CLI is enabled.

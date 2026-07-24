@@ -1,6 +1,7 @@
 """Exact-confirmed, non-mutating Relay activation recovery writes."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Protocol
 
 from agentops_mis_cli.relay_activation import (
@@ -16,6 +17,7 @@ from agentops_mis_cli.relay_activation_evidence import (
 from agentops_mis_cli.relay_activation_journal import (
     ActivationJournalRecoverySnapshot,
     RelayActivationJournalError,
+    _open_locked_production_store,
     build_activation_receipt,
     build_activation_revision,
     parse_activation_receipt,
@@ -30,6 +32,10 @@ from agentops_mis_cli.relay_activation_recovery_preview import (
     SystemdReader,
     _observe_activation_recovery_with,
 )
+from agentops_mis_cli.relay_activation_scan import (
+    _scan_activation_prerequisites_while_locked,
+)
+from agentops_mis_cli.relay_systemd_read import read_systemd_show
 
 
 ACTIVATION_RECOVERY_CONTROLLER_SCHEMA = (
@@ -55,6 +61,7 @@ class RelayActivationRecoveryControllerError(Exception):
             "activation_recovery_action_not_supported",
             "activation_recovery_confirmation_invalid",
             "activation_recovery_confirmation_stale",
+            "activation_recovery_controller_busy",
             "activation_recovery_controller_failed",
             "activation_recovery_required",
         }:
@@ -491,4 +498,41 @@ def _run_confirmed_recovery_write_with(
                 if tracked_store.write_attempted
                 else "activation_recovery_controller_failed"
             )
+        ) from None
+
+
+def _run_confirmed_recovery_write(
+    plan_sha256: str,
+    requested_outcome: str,
+    confirmed_decision_sha256: str,
+) -> dict[str, object]:
+    """Private production entrypoint; intentionally absent from the CLI."""
+
+    try:
+        with _open_locked_production_store(Path("/")) as store:
+            capability = store._activation_scan_capability()
+            return _run_confirmed_recovery_write_with(
+                plan_sha256,
+                requested_outcome,
+                confirmed_decision_sha256,
+                store=store,
+                scanner=lambda: (
+                    _scan_activation_prerequisites_while_locked(
+                        capability
+                    )
+                ),
+                systemd_reader=read_systemd_show,
+            )
+    except RelayActivationRecoveryControllerError:
+        raise
+    except RelayActivationJournalError as exc:
+        error_id = (
+            "activation_recovery_controller_busy"
+            if exc.error_id == "activation_journal_busy"
+            else "activation_recovery_required"
+        )
+        raise RelayActivationRecoveryControllerError(error_id) from None
+    except Exception:
+        raise RelayActivationRecoveryControllerError(
+            "activation_recovery_controller_failed"
         ) from None

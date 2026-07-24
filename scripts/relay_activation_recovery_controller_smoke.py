@@ -23,8 +23,12 @@ from agentops_mis_cli.relay_activation_evidence import (  # noqa: E402
 from agentops_mis_cli.relay_activation_journal import (  # noqa: E402
     _open_fixture_store,
 )
+from agentops_mis_cli import (  # noqa: E402
+    relay_activation_recovery_controller as controller_module,
+)
 from agentops_mis_cli.relay_activation_recovery_controller import (  # noqa: E402
     RelayActivationRecoveryControllerError,
+    _run_confirmed_recovery_write,
     _run_confirmed_recovery_write_with,
 )
 from agentops_mis_cli.relay_activation_recovery_preview import (  # noqa: E402
@@ -320,6 +324,111 @@ def main() -> int:
                 == "observed"
                 and observation_snapshot.revisions[-1].step_id
                 == "daemon_reload"
+            )
+
+    production_calls: dict[str, object] = {}
+    capability = object()
+
+    class ProductionSession:
+        def __init__(self, store: CountingStore) -> None:
+            self.store = store
+
+        def __enter__(self):
+            production_calls["entered"] = True
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            production_calls["exited"] = True
+
+        def _activation_scan_capability(self):
+            return capability
+
+        def _load_recovery_snapshot(self, candidate: str):
+            return self.store._load_recovery_snapshot(candidate)
+
+        def publish_revision(self, raw: bytes):
+            return self.store.publish_revision(raw)
+
+        def publish_receipt(self, raw: bytes):
+            return self.store.publish_receipt(raw)
+
+    with tempfile.TemporaryDirectory(
+        prefix="relay-recovery-controller-production-"
+    ) as temporary:
+        root = Path(temporary)
+        root.chmod(0o700)
+        with _open_fixture_store(root) as raw_store:
+            for raw in observation_records:
+                raw_store.publish_revision(raw)
+            store = CountingStore(raw_store)
+            production_preview = preview(
+                store,
+                plan_sha256,
+                "resume",
+                pre_prerequisites,
+                post_daemon_systemd,
+            )
+            store.reset()
+            session = ProductionSession(store)
+            original_opener = (
+                controller_module._open_locked_production_store
+            )
+            original_scanner = (
+                controller_module
+                ._scan_activation_prerequisites_while_locked
+            )
+            original_reader = controller_module.read_systemd_show
+            try:
+                controller_module._open_locked_production_store = (
+                    lambda candidate: (
+                        production_calls.__setitem__(
+                            "root",
+                            candidate,
+                        )
+                        or session
+                    )
+                )
+                controller_module._scan_activation_prerequisites_while_locked = (
+                    lambda candidate: (
+                        production_calls.__setitem__(
+                            "capability",
+                            candidate,
+                        )
+                        or pre_prerequisites
+                    )
+                )
+                controller_module.read_systemd_show = (
+                    lambda candidate: (
+                        post_daemon_systemd
+                        if candidate == pre_prerequisites
+                        else None
+                    )
+                )
+                production_result = _run_confirmed_recovery_write(
+                    plan_sha256,
+                    "resume",
+                    str(production_preview["decision_sha256"]),
+                )
+            finally:
+                controller_module._open_locked_production_store = (
+                    original_opener
+                )
+                controller_module._scan_activation_prerequisites_while_locked = (
+                    original_scanner
+                )
+                controller_module.read_systemd_show = original_reader
+            production_one_write = (
+                store.revision_writes == 1
+                and store.receipt_writes == 0
+                and production_result.get("write_id")
+                == "observed_revision"
+                and production_calls
+                == {
+                    "capability": capability,
+                    "entered": True,
+                    "exited": True,
+                    "root": Path("/"),
+                }
             )
 
     with tempfile.TemporaryDirectory(
@@ -684,10 +793,17 @@ def main() -> int:
     )
     source = source_path.read_text(encoding="utf-8")
     source_tree = ast.parse(source)
-    no_production_or_mutation_surface = (
+    production_lock_composed = all(
+        name in source
+        for name in (
+            "_open_locked_production_store",
+            "_scan_activation_prerequisites_while_locked",
+            "read_systemd_show",
+        )
+    )
+    no_mutation_surface = (
         "relay_systemd_mutation" not in source
         and "_run_bound_systemd_mutation" not in source
-        and "_open_locked_production_store" not in source
         and not any(
             isinstance(node, ast.FunctionDef)
             and node.name == "main"
@@ -709,18 +825,31 @@ def main() -> int:
         )
         or (
             isinstance(node, ast.Name)
-            and node.id == "_run_confirmed_recovery_write_with"
+            and node.id
+            in {
+                "_run_confirmed_recovery_write",
+                "_run_confirmed_recovery_write_with",
+            }
         )
         or (
             isinstance(node, ast.Attribute)
-            and node.attr == "_run_confirmed_recovery_write_with"
+            and node.attr
+            in {
+                "_run_confirmed_recovery_write",
+                "_run_confirmed_recovery_write_with",
+            }
         )
         for tree in cli_trees
         for node in ast.walk(tree)
     )
     require(
-        no_production_or_mutation_surface,
-        "non-systemd recovery controller gained production mutation",
+        production_lock_composed and no_mutation_surface,
+        "production writer composition gained a mutation surface",
+        failures,
+    )
+    require(
+        production_one_write,
+        "production writer did not use one locked store and capability",
         failures,
     )
     require(
@@ -739,6 +868,7 @@ def main() -> int:
         {
             "complete": complete_result,
             "observation": observation_result,
+            "production": production_result,
             "receipt": receipt_result,
             "rollback_complete": rollback_complete_result,
             "rollback_observation": rollback_observation_result,
@@ -793,6 +923,8 @@ def main() -> int:
         "operation": "relay_activation_recovery_controller_smoke",
         "post_write_failure_retained": post_write_state_retained,
         "private_payload_omitted": private_payload_omitted,
+        "production_lock_composed": production_lock_composed,
+        "production_one_write": production_one_write,
         "receipt_one_write": receipt_one_write,
         "rollback_observation_one_write": (
             rollback_observation_one_write

@@ -316,7 +316,8 @@ revision. It rejects premature or mismatched receipts and remains read-only;
 the pure recovery decision compiler can combine that input with a caller-owned
 stable observation to choose complete, terminalize, one forward resume, one
 ownership-proven inverse, or blocked. Production lock-bound stable observation,
-decision confirmation, and non-systemd fixture-store writes are implemented.
+decision confirmation, and non-systemd production-store writes are composed
+and fixture-executed.
 That writer records a dedicated restored-state rollback verification, publishes
 the exact rollback receipt, and terminalizes idempotently. Production-store
 composition and one scanner-bound recovery mutation are implemented in the
