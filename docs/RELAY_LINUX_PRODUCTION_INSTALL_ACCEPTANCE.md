@@ -20,6 +20,9 @@ VM it:
    complete disposable installation and account.
 
 The workflow job is `Relay production install scan on real Linux`.
+The exact current-commit bundle is built as the unprivileged CI user. Only its
+absolute path and SHA-256 are passed into the root acceptance process, which
+re-verifies the bundle before planning or writing the installation.
 
 ## Safety Guard
 
@@ -48,6 +51,8 @@ The Linux-only command is:
 ```bash
 sudo env \
   AGENTOPS_RELAY_LINUX_PRODUCTION_ACCEPTANCE=1 \
+  AGENTOPS_RELAY_LINUX_PRODUCTION_BUNDLE=/absolute/path/to/bundle.tar.gz \
+  AGENTOPS_RELAY_LINUX_PRODUCTION_BUNDLE_SHA256=<sha256> \
   PYTHONDONTWRITEBYTECODE=1 \
   python3 scripts/relay_linux_production_install_acceptance.py
 ```

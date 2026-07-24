@@ -7,11 +7,11 @@ import hashlib
 import json
 import os
 import pwd
+import re
 import shutil
 import stat
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 
@@ -37,10 +37,11 @@ from agentops_mis_cli.relay_admin import (  # noqa: E402
     inspect_bundle,
     relay_status,
 )
-from scripts.build_relay_release import build_release  # noqa: E402
 
 
 OPT_IN = "AGENTOPS_RELAY_LINUX_PRODUCTION_ACCEPTANCE"
+BUNDLE_ENV = "AGENTOPS_RELAY_LINUX_PRODUCTION_BUNDLE"
+BUNDLE_SHA_ENV = "AGENTOPS_RELAY_LINUX_PRODUCTION_BUNDLE_SHA256"
 SERVICE_ACCOUNT = "agentops-relay"
 INSTALL_ROOT = Path("/opt/agentops-mis-relay")
 STABLE_LAUNCHER = Path("/usr/local/bin/agentops-relay")
@@ -53,6 +54,7 @@ ENABLEMENT_LINK = Path(ENABLEMENT_LINK_PATH)
 UNIT_SOURCE = (
     ROOT / "packaging" / "relay" / "systemd" / "agentops-mis-relay.service"
 )
+SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 ABSENT_PATHS = (
     INSTALL_ROOT,
     STABLE_LAUNCHER,
@@ -120,6 +122,36 @@ def _preflight() -> None:
         or UNIT_SOURCE.is_symlink()
     ):
         raise AcceptanceFailure("preflight")
+
+
+def _bundle_input() -> tuple[Path, str]:
+    path_value = os.environ.get(BUNDLE_ENV)
+    expected_sha256 = os.environ.get(BUNDLE_SHA_ENV)
+    if (
+        not isinstance(path_value, str)
+        or not path_value
+        or len(path_value) > 4096
+        or "\x00" in path_value
+        or any(
+            ord(character) < 32 or ord(character) == 127
+            for character in path_value
+        )
+        or not isinstance(expected_sha256, str)
+        or not SHA256_PATTERN.fullmatch(expected_sha256)
+    ):
+        raise AcceptanceFailure("preflight")
+    path = Path(path_value)
+    try:
+        if (
+            not path.is_absolute()
+            or path_value != path.as_posix()
+            or path.is_symlink()
+            or not path.is_file()
+        ):
+            raise AcceptanceFailure("preflight")
+    except OSError:
+        raise AcceptanceFailure("preflight") from None
+    return path, expected_sha256
 
 
 def _create_service_account() -> tuple[int, int]:
@@ -351,6 +383,7 @@ def _cleanup(*, account_created: bool) -> bool:
 
 def _run() -> dict[str, object]:
     _preflight()
+    bundle_path, bundle_sha256 = _bundle_input()
     stage = "account_provisioning"
     account_created = False
     cleanup_ok = False
@@ -358,21 +391,14 @@ def _run() -> dict[str, object]:
         uid, gid = _create_service_account()
         account_created = True
 
-        stage = "offline_install"
-        with tempfile.TemporaryDirectory(
-            prefix="relay-linux-production-install-"
-        ) as temporary:
-            output = Path(temporary)
-            release = build_release(output)
-            bundle_path = output / str(release["bundle"])
-            bundle = inspect_bundle(
-                bundle_path,
-                str(release["bundle_sha256"]),
-            )
-            plan = _plan_for_install(Path("/"), bundle)
-            if plan.no_op:
-                raise AcceptanceFailure
-            _publish_install(plan)
+        stage = "offline_bundle_inspect"
+        bundle = inspect_bundle(bundle_path, bundle_sha256)
+        stage = "offline_install_plan"
+        plan = _plan_for_install(Path("/"), bundle)
+        if plan.no_op:
+            raise AcceptanceFailure
+        stage = "offline_install_publish"
+        _publish_install(plan)
 
         stage = "runtime_provisioning"
         _provision_runtime_material(uid, gid)
