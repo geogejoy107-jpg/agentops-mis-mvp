@@ -111,8 +111,9 @@ transaction resume and rollback controller for every interruption boundary,
 including ownership proof before stop/disable, terminalization after a durable
 receipt, and bounded operator recovery output.
 The lifecycle-lock-guarded recovery snapshot now provides the validated chain
-and optional legal terminal receipt input, but it does not yet select or
-execute an action.
+and optional legal terminal receipt input. The pure recovery decision compiler
+can select a bounded hash-bound action from a caller-owned stable observation,
+but no production recovery controller confirms or executes that action yet.
 
 Real daemon reload, enable, start, stop, disable, boot persistence, and
 interruption testing require a disposable Linux systemd host with root

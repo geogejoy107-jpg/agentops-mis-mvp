@@ -283,8 +283,12 @@ Implementation slices:
      `RELAY_ACTIVATION_CONTROLLER_SUCCESS_ACCEPTANCE.md`, but remains
      unreachable from the CLI; the lifecycle-lock-guarded exact-chain and
      orphan-receipt recovery snapshot is implemented in
-     `RELAY_ACTIVATION_RECOVERY_SNAPSHOT_ACCEPTANCE.md`; recovery decisions,
-     rollback execution and partial namespace resume remain unimplemented;
+     `RELAY_ACTIVATION_RECOVERY_SNAPSHOT_ACCEPTANCE.md`; the pure hash-bound
+     decision compiler is implemented in
+     `RELAY_ACTIVATION_RECOVERY_DECISION_ACCEPTANCE.md`; production stable-read
+     composition, exact decision confirmation, recovery writes, rollback
+     execution/terminalization and partial namespace resume remain
+     unimplemented;
    - upgrade, rollback, uninstall, Linux account provisioning, service
      activation and public infrastructure acceptance: pending;
    - public endpoint, DNS/ACME provisioning, stable per-Host Console origin,

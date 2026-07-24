@@ -6,7 +6,8 @@ This acceptance covers the immutable, credential-free activation journal
 primitives in `agentops_mis_cli.relay_activation_journal`. The private
 exact-confirmed success controller now composes these primitives, while
 the guarded recovery snapshot reads exact chains and terminal-bindable
-receipts. Recovery decisions and rollback remain future work.
+receipts, and the pure recovery compiler selects bounded hash-bound decisions.
+Recovery execution and rollback terminalization remain future work.
 
 This slice does **not** unlock `--confirm-activate`, open the production
 `/var/lib/agentops-relayctl` tree, invoke systemd mutations, acquire the

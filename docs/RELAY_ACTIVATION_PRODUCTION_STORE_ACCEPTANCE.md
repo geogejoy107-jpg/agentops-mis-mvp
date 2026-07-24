@@ -105,6 +105,8 @@ step evidence compiler are recorded in
 `RELAY_ACTIVATION_CONTROLLER_SUCCESS_ACCEPTANCE.md` and
 `RELAY_ACTIVATION_EVIDENCE_ACCEPTANCE.md`; the guarded read-only recovery
 snapshot is recorded in `RELAY_ACTIVATION_RECOVERY_SNAPSHOT_ACCEPTANCE.md`;
+the side-effect-free recovery decision contract is recorded in
+`RELAY_ACTIVATION_RECOVERY_DECISION_ACCEPTANCE.md`;
 the private process boundary is recorded in
 `RELAY_SYSTEMD_MUTATION_ADAPTER_ACCEPTANCE.md`, and installer lock hardening is
 recorded in `RELAY_OFFLINE_INSTALL_ACCEPTANCE.md`.

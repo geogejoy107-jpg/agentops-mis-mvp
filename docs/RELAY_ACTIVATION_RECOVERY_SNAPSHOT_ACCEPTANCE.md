@@ -80,10 +80,11 @@ Expected summary:
 
 ## Remaining Gates
 
-The next recovery slice must combine this snapshot with a fresh stable
-prerequisite/systemd observation and produce a deterministic, hash-bound
-decision: terminalize an already durable receipt, resume one exact forward
-step, run one ownership-proven inverse step, or remain blocked.
+The pure compiler in `RELAY_ACTIVATION_RECOVERY_DECISION_ACCEPTANCE.md` now
+combines this snapshot with a caller-owned stable prerequisite/systemd
+observation and produces a deterministic, hash-bound complete, terminalize,
+resume, inverse, or blocked decision.
 
-Mutation recovery, automatic rollback, operator confirmation, CLI exposure,
-and real interrupted Linux systemd acceptance remain unimplemented.
+Production lifecycle-lock-bound stable scanning, mutation recovery, automatic
+rollback, operator confirmation, CLI exposure, and real interrupted Linux
+systemd acceptance remain unimplemented.
