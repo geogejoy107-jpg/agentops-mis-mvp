@@ -48,6 +48,7 @@ from agentops_mis_cli.relay_activation_recovery_executor import (  # noqa: E402
     _run_confirmed_recovery_step_with,
 )
 from agentops_mis_cli.relay_activation_recovery_preview import (  # noqa: E402
+    RelayActivationRecoveryPreviewError,
     _preview_activation_recovery_with,
 )
 from agentops_mis_cli.relay_systemd_mutation import (  # noqa: E402
@@ -582,13 +583,19 @@ def _run() -> dict[str, object]:
                 stage = "rollback_execution"
                 for _index in range(MAX_STEP_COUNT):
                     stage = "rollback_preview"
-                    decision = _preview_activation_recovery_with(
-                        plan.plan_sha256,
-                        "rollback",
-                        snapshot_loader=store._load_recovery_snapshot,
-                        scanner=scanner,
-                        systemd_reader=read_systemd_show,
-                    )
+                    try:
+                        decision = _preview_activation_recovery_with(
+                            plan.plan_sha256,
+                            "rollback",
+                            snapshot_loader=store._load_recovery_snapshot,
+                            scanner=scanner,
+                            systemd_reader=read_systemd_show,
+                        )
+                    except RelayActivationRecoveryPreviewError as exc:
+                        raise AcceptanceFailure(
+                            "rollback_preview_error_"
+                            + exc.error_id
+                        ) from None
                     operation = decision.get("operation_id")
                     if operation == "run_step":
                         step_id = str(decision.get("step_id"))
@@ -618,12 +625,88 @@ def _run() -> dict[str, object]:
                             raise
                     else:
                         action_id = str(decision.get("action_id"))
-                        if action_id not in {
-                            "publish_rollback_receipt",
-                            "complete",
-                        }:
-                            raise AcceptanceFailure
-                        stage = f"rollback_{action_id}"
+                        expected_write = {
+                            (
+                                "inverse",
+                                "publish_rollback_receipt",
+                            ): "publish_rollback_receipt",
+                            (
+                                "terminalize",
+                                "publish_terminal_revision",
+                            ): "publish_terminal_revision",
+                            ("complete", "none"): "complete",
+                        }.get((action_id, str(operation)))
+                        if expected_write is None:
+                            reason_id = str(
+                                decision.get("reason_id")
+                            )
+                            step_id = str(
+                                decision.get("step_id")
+                            )
+                            bounded = {
+                                "action_id": action_id,
+                                "operation_id": str(operation),
+                                "reason_id": reason_id,
+                                "step_id": step_id,
+                            }
+                            allowed = {
+                                "action_id": {
+                                    "blocked",
+                                    "complete",
+                                    "inverse",
+                                    "resume",
+                                    "terminalize",
+                                },
+                                "operation_id": {
+                                    "none",
+                                    "publish_rollback_receipt",
+                                    "publish_success_receipt",
+                                    "publish_terminal_revision",
+                                    "record_observation",
+                                    "run_step",
+                                },
+                                "reason_id": {
+                                    "journal_complete",
+                                    "no_owned_change",
+                                    "ownership_ambiguous",
+                                    "ownership_unproven",
+                                    "plan_binding_unproven",
+                                    "receipt_ready",
+                                    "resume_ready",
+                                    "rollback_contract_incomplete",
+                                    "state_drift",
+                                },
+                                "step_id": {
+                                    "None",
+                                    "daemon_reload",
+                                    "enable",
+                                    "rollback_disable",
+                                    "rollback_stop",
+                                    "start",
+                                    "terminal",
+                                    "verify",
+                                },
+                            }
+                            if any(
+                                bounded[key] not in allowed[key]
+                                for key in bounded
+                            ):
+                                raise AcceptanceFailure(
+                                    "rollback_preview_unexpected"
+                                )
+                            raise AcceptanceFailure(
+                                "rollback_preview_"
+                                + "_".join(
+                                    bounded[key]
+                                    for key in (
+                                        "action_id",
+                                        "operation_id",
+                                        "reason_id",
+                                        "step_id",
+                                    )
+                                )
+                            )
+                        stage = f"rollback_{expected_write}"
                         result = _run_confirmed_recovery_write_with(
                             plan.plan_sha256,
                             "rollback",
@@ -632,7 +715,7 @@ def _run() -> dict[str, object]:
                             scanner=scanner,
                             systemd_reader=read_systemd_show,
                         )
-                        if action_id == "complete":
+                        if expected_write == "complete":
                             final_state = str(result.get("state"))
                             break
                 else:
