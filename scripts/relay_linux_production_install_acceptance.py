@@ -1,0 +1,467 @@
+#!/usr/bin/env python3
+"""Exercise the production Relay scanner/store on a disposable Linux install."""
+from __future__ import annotations
+
+import grp
+import hashlib
+import json
+import os
+import pwd
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from agentops_mis_cli.relay_activation import (  # noqa: E402
+    ENABLEMENT_LINK_PATH,
+    UNIT_PATH,
+)
+from agentops_mis_cli.relay_activation_journal import (  # noqa: E402
+    _open_locked_production_store,
+)
+from agentops_mis_cli.relay_activation_scan import (  # noqa: E402
+    _scan_activation_prerequisites_while_locked,
+    scan_activation_prerequisites,
+)
+from agentops_mis_cli.relay_admin import (  # noqa: E402
+    _plan_for_install,
+    _publish_install,
+    inspect_bundle,
+    relay_status,
+)
+from scripts.build_relay_release import build_release  # noqa: E402
+
+
+OPT_IN = "AGENTOPS_RELAY_LINUX_PRODUCTION_ACCEPTANCE"
+SERVICE_ACCOUNT = "agentops-relay"
+INSTALL_ROOT = Path("/opt/agentops-mis-relay")
+STABLE_LAUNCHER = Path("/usr/local/bin/agentops-relay")
+CONFIG_ROOT = Path("/etc/agentops-mis-relay")
+ADMIN_ROOT = Path("/var/lib/agentops-relayctl")
+STATE_ROOT = Path("/var/lib/agentops-mis-relay")
+RUNTIME_ROOT = Path("/run/agentops-mis-relay")
+UNIT = Path(UNIT_PATH)
+ENABLEMENT_LINK = Path(ENABLEMENT_LINK_PATH)
+UNIT_SOURCE = (
+    ROOT / "packaging" / "relay" / "systemd" / "agentops-mis-relay.service"
+)
+ABSENT_PATHS = (
+    INSTALL_ROOT,
+    STABLE_LAUNCHER,
+    CONFIG_ROOT,
+    ADMIN_ROOT,
+    STATE_ROOT,
+    RUNTIME_ROOT,
+    UNIT,
+    ENABLEMENT_LINK,
+)
+
+
+class AcceptanceFailure(Exception):
+    def __init__(self, stage: str = "unknown") -> None:
+        self.stage = stage
+        super().__init__("linux_production_install_acceptance_failed")
+
+
+def _canonical_json(value: object) -> bytes:
+    return (
+        json.dumps(value, ensure_ascii=True, indent=2, sort_keys=True) + "\n"
+    ).encode("ascii")
+
+
+def _account_present() -> bool:
+    try:
+        pwd.getpwnam(SERVICE_ACCOUNT)
+    except KeyError:
+        user_present = False
+    else:
+        user_present = True
+    try:
+        grp.getgrnam(SERVICE_ACCOUNT)
+    except KeyError:
+        group_present = False
+    else:
+        group_present = True
+    return user_present or group_present
+
+
+def _run_quiet(argv: tuple[str, ...]) -> bool:
+    try:
+        result = subprocess.run(
+            argv,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+    except Exception:
+        return False
+    return result.returncode == 0
+
+
+def _preflight() -> None:
+    if (
+        os.environ.get(OPT_IN) != "1"
+        or not sys.platform.startswith("linux")
+        or os.geteuid() != 0
+        or not Path("/run/systemd/system").is_dir()
+        or _account_present()
+        or any(os.path.lexists(path) for path in ABSENT_PATHS)
+        or not UNIT_SOURCE.is_file()
+        or UNIT_SOURCE.is_symlink()
+    ):
+        raise AcceptanceFailure("preflight")
+
+
+def _create_service_account() -> tuple[int, int]:
+    useradd = shutil.which("useradd")
+    if not useradd or not _run_quiet(
+        (
+            useradd,
+            "--system",
+            "--user-group",
+            "--no-create-home",
+            "--home-dir",
+            "/nonexistent",
+            "--shell",
+            "/usr/sbin/nologin",
+            SERVICE_ACCOUNT,
+        )
+    ):
+        raise AcceptanceFailure
+    try:
+        user = pwd.getpwnam(SERVICE_ACCOUNT)
+        group = grp.getgrnam(SERVICE_ACCOUNT)
+    except KeyError:
+        raise AcceptanceFailure from None
+    if (
+        user.pw_name != SERVICE_ACCOUNT
+        or group.gr_name != SERVICE_ACCOUNT
+        or user.pw_uid == 0
+        or user.pw_gid == 0
+        or user.pw_gid != group.gr_gid
+    ):
+        raise AcceptanceFailure
+    return user.pw_uid, user.pw_gid
+
+
+def _mkdir_owned(path: Path, mode: int, uid: int, gid: int) -> None:
+    try:
+        os.mkdir(path, mode)
+        os.chown(path, uid, gid, follow_symlinks=False)
+        os.chmod(path, mode, follow_symlinks=False)
+        metadata = os.lstat(path)
+    except OSError:
+        raise AcceptanceFailure from None
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != uid
+        or metadata.st_gid != gid
+        or stat.S_IMODE(metadata.st_mode) != mode
+    ):
+        raise AcceptanceFailure
+
+
+def _write_owned(
+    path: Path,
+    data: bytes,
+    mode: int,
+    uid: int,
+    gid: int,
+) -> None:
+    descriptor = -1
+    complete = False
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+            mode,
+        )
+        os.fchown(descriptor, uid, gid)
+        os.fchmod(descriptor, mode)
+        view = memoryview(data)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise AcceptanceFailure
+            view = view[written:]
+        os.fsync(descriptor)
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != uid
+            or metadata.st_gid != gid
+            or stat.S_IMODE(metadata.st_mode) != mode
+            or metadata.st_nlink != 1
+            or metadata.st_size != len(data)
+        ):
+            raise AcceptanceFailure
+        complete = True
+    except AcceptanceFailure:
+        raise
+    except OSError:
+        raise AcceptanceFailure from None
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if not complete:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+
+def _provision_runtime_material(uid: int, gid: int) -> None:
+    _mkdir_owned(CONFIG_ROOT, 0o755, 0, 0)
+    _mkdir_owned(CONFIG_ROOT / "tls", 0o755, 0, 0)
+    _mkdir_owned(CONFIG_ROOT / "routes", 0o755, 0, 0)
+    _mkdir_owned(STATE_ROOT, 0o700, uid, gid)
+    _mkdir_owned(RUNTIME_ROOT, 0o700, uid, gid)
+
+    config = {
+        "browser_listen": {"host": "127.0.0.1", "port": 443},
+        "connector_listen": {"host": "127.0.0.1", "port": 9443},
+        "connector_tls": {
+            "cert_file": "/etc/agentops-mis-relay/tls/relay-cert.pem",
+            "key_file": "/etc/agentops-mis-relay/tls/relay-key.pem",
+        },
+        "routes": [
+            {
+                "hostname": "acceptance.example.invalid",
+                "key_file": (
+                    "/etc/agentops-mis-relay/routes/acceptance.key"
+                ),
+                "route": "rte_linux_acceptance",
+            }
+        ],
+        "schema_version": 1,
+        "state_path": "/var/lib/agentops-mis-relay/epochs.json",
+        "status_path": "/run/agentops-mis-relay/status.json",
+    }
+    route_key = hashlib.sha256(
+        b"agentops relay linux production acceptance"
+    ).hexdigest().encode("ascii") + b"\n"
+    _write_owned(CONFIG_ROOT / "config.json", _canonical_json(config), 0o640, 0, gid)
+    _write_owned(
+        CONFIG_ROOT / "tls" / "relay-cert.pem",
+        b"synthetic acceptance certificate\n",
+        0o640,
+        0,
+        gid,
+    )
+    _write_owned(
+        CONFIG_ROOT / "tls" / "relay-key.pem",
+        b"synthetic acceptance private material\n",
+        0o600,
+        uid,
+        gid,
+    )
+    _write_owned(
+        CONFIG_ROOT / "routes" / "acceptance.key",
+        route_key,
+        0o600,
+        uid,
+        gid,
+    )
+
+
+def _remove_directory(path: Path) -> bool:
+    if not os.path.lexists(path):
+        return True
+    try:
+        metadata = os.lstat(path)
+        if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+            return False
+        shutil.rmtree(path)
+    except OSError:
+        return False
+    return not os.path.lexists(path)
+
+
+def _cleanup(*, account_created: bool) -> bool:
+    ok = True
+    try:
+        if os.path.lexists(STABLE_LAUNCHER):
+            if (
+                not STABLE_LAUNCHER.is_symlink()
+                or os.readlink(STABLE_LAUNCHER)
+                != "../../../opt/agentops-mis-relay/current/bin/agentops-relay"
+            ):
+                ok = False
+            else:
+                STABLE_LAUNCHER.unlink()
+    except OSError:
+        ok = False
+    try:
+        if os.path.lexists(UNIT):
+            metadata = os.lstat(UNIT)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or UNIT.read_bytes() != UNIT_SOURCE.read_bytes()
+            ):
+                ok = False
+            else:
+                UNIT.unlink()
+    except OSError:
+        ok = False
+    if os.path.lexists(ENABLEMENT_LINK):
+        ok = False
+    for path in (
+        CONFIG_ROOT,
+        STATE_ROOT,
+        RUNTIME_ROOT,
+        ADMIN_ROOT,
+        INSTALL_ROOT,
+    ):
+        ok = _remove_directory(path) and ok
+    if account_created:
+        userdel = shutil.which("userdel")
+        if not userdel or not _run_quiet((userdel, SERVICE_ACCOUNT)):
+            ok = False
+        try:
+            grp.getgrnam(SERVICE_ACCOUNT)
+        except KeyError:
+            pass
+        else:
+            groupdel = shutil.which("groupdel")
+            if not groupdel or not _run_quiet((groupdel, SERVICE_ACCOUNT)):
+                ok = False
+    return (
+        ok
+        and not _account_present()
+        and not any(os.path.lexists(path) for path in ABSENT_PATHS)
+    )
+
+
+def _run() -> dict[str, object]:
+    _preflight()
+    stage = "account_provisioning"
+    account_created = False
+    cleanup_ok = False
+    try:
+        uid, gid = _create_service_account()
+        account_created = True
+
+        stage = "offline_install"
+        with tempfile.TemporaryDirectory(
+            prefix="relay-linux-production-install-"
+        ) as temporary:
+            output = Path(temporary)
+            release = build_release(output)
+            bundle_path = output / str(release["bundle"])
+            bundle = inspect_bundle(
+                bundle_path,
+                str(release["bundle_sha256"]),
+            )
+            plan = _plan_for_install(Path("/"), bundle)
+            if plan.no_op:
+                raise AcceptanceFailure
+            _publish_install(plan)
+
+        stage = "runtime_provisioning"
+        _provision_runtime_material(uid, gid)
+        status, status_code = relay_status(Path("/"))
+        if (
+            status_code != 0
+            or status.get("state_id") != "installed_valid"
+            or status.get("installed") is not True
+        ):
+            raise AcceptanceFailure
+
+        stage = "production_scan"
+        ordinary = scan_activation_prerequisites()
+        if ordinary.release_id != bundle.release_id:
+            raise AcceptanceFailure
+
+        stage = "production_store"
+        with _open_locked_production_store(Path("/")) as store:
+            journal_before = store.snapshot_sha256()
+            capability = store._activation_scan_capability()
+            locked = _scan_activation_prerequisites_while_locked(capability)
+            store_state = store.inspect_store()
+            journal_after = store.snapshot_sha256()
+            if (
+                locked != ordinary
+                or journal_before != journal_after
+                or store_state.get("ok") is not True
+                or store_state.get("state") != "ready"
+                or store_state.get("completed_transaction_count") != 0
+            ):
+                raise AcceptanceFailure
+
+        stage = "complete"
+        return {
+            "account_provisioned": True,
+            "installed_tree": True,
+            "journal_unchanged": True,
+            "network_used": False,
+            "ok": True,
+            "operation": "relay_linux_production_install_acceptance",
+            "production_scanner": True,
+            "production_store": True,
+            "stage": stage,
+            "systemd_mutated": False,
+        }
+    except AcceptanceFailure as exc:
+        raise AcceptanceFailure(
+            stage if exc.stage == "unknown" else exc.stage
+        ) from None
+    except Exception:
+        raise AcceptanceFailure(stage) from None
+    finally:
+        cleanup_ok = _cleanup(
+            account_created=account_created or _account_present()
+        )
+        if not cleanup_ok:
+            raise AcceptanceFailure("cleanup")
+
+
+def main() -> int:
+    try:
+        result = _run()
+        result["cleanup_ok"] = True
+    except AcceptanceFailure as exc:
+        result = {
+            "cleanup_ok": (
+                not _account_present()
+                and not any(os.path.lexists(path) for path in ABSENT_PATHS)
+            ),
+            "failure_id": "linux_production_install_acceptance_failed",
+            "linux": sys.platform.startswith("linux"),
+            "network_used": False,
+            "ok": False,
+            "operation": "relay_linux_production_install_acceptance",
+            "stage": exc.stage,
+        }
+    except Exception:
+        result = {
+            "cleanup_ok": False,
+            "failure_id": "linux_production_install_acceptance_failed",
+            "linux": sys.platform.startswith("linux"),
+            "network_used": False,
+            "ok": False,
+            "operation": "relay_linux_production_install_acceptance",
+            "stage": "unknown",
+        }
+    print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
+    return 0 if result.get("ok") is True else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

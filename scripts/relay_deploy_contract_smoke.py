@@ -128,6 +128,7 @@ def main() -> int:
     sdist_has_activation_plan_acceptance = False
     sdist_has_activation_preview_acceptance = False
     sdist_has_activation_scanner_acceptance = False
+    sdist_has_linux_production_install_acceptance = False
     sdist_has_linux_systemd_recovery_acceptance = False
     sdist_has_systemd_mutation_acceptance = False
     sdist_has_config_parser_acceptance = False
@@ -343,6 +344,12 @@ def main() -> int:
                     )
                     for name in names
                 )
+                sdist_has_linux_production_install_acceptance = any(
+                    name.endswith(
+                        "/docs/RELAY_LINUX_PRODUCTION_INSTALL_ACCEPTANCE.md"
+                    )
+                    for name in names
+                )
                 sdist_has_linux_systemd_recovery_acceptance = any(
                     name.endswith(
                         "/docs/RELAY_LINUX_SYSTEMD_RECOVERY_ACCEPTANCE.md"
@@ -523,6 +530,11 @@ def main() -> int:
     require(
         sdist_has_activation_scanner_acceptance,
         "source distribution omits the activation-scanner acceptance",
+        failures,
+    )
+    require(
+        sdist_has_linux_production_install_acceptance,
+        "source distribution omits the Linux production-install acceptance",
         failures,
     )
     require(
@@ -718,6 +730,9 @@ def main() -> int:
         ),
         "sdist_includes_activation_scanner_acceptance": (
             sdist_has_activation_scanner_acceptance
+        ),
+        "sdist_includes_linux_production_install_acceptance": (
+            sdist_has_linux_production_install_acceptance
         ),
         "sdist_includes_linux_systemd_recovery_acceptance": (
             sdist_has_linux_systemd_recovery_acceptance

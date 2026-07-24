@@ -70,6 +70,7 @@ jobs:
             scripts/relay_activation_plan_smoke.py \
             scripts/relay_activation_preview_smoke.py \
             scripts/relay_activation_scan_smoke.py \
+            scripts/relay_linux_production_install_acceptance.py \
             scripts/relay_linux_systemd_recovery_acceptance.py \
             scripts/relay_systemd_mutation_smoke.py \
             scripts/relay_config_parser_smoke.py \
@@ -125,6 +126,29 @@ jobs:
             PYTHONDONTWRITEBYTECODE=1 \
             "$python_bin" \
             scripts/relay_linux_systemd_recovery_acceptance.py
+
+  relay-linux-production-install:
+    name: Relay production install scan on real Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run disposable production install acceptance
+        run: |
+          set -euo pipefail
+          python_bin="$(command -v python3)"
+          sudo env \
+            AGENTOPS_RELAY_LINUX_PRODUCTION_ACCEPTANCE=1 \
+            PYTHONDONTWRITEBYTECODE=1 \
+            "$python_bin" \
+            scripts/relay_linux_production_install_acceptance.py
 
   backend-deterministic:
     name: Backend deterministic smokes
