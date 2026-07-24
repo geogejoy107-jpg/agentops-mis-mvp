@@ -361,6 +361,63 @@ def _relay_status_ready() -> bool:
     return False
 
 
+def _diagnose_forward_start(systemctl_path: str) -> str:
+    command = (systemctl_path, "--system")
+    if (
+        _command_result(
+            (*command, "is-active", "agentops-mis-relay.service")
+        )
+        == 0
+    ):
+        return "forward_start_diagnostic_active_late_state"
+    check_command = (
+        str(STABLE_LAUNCHER),
+        "check",
+        "--config",
+        str(CONFIG_ROOT / "config.json"),
+    )
+    if _command_result(check_command) != 0:
+        return "forward_start_diagnostic_root_check"
+    runuser = Path("/usr/sbin/runuser")
+    try:
+        runuser_metadata = os.lstat(runuser)
+    except OSError:
+        return "forward_start_diagnostic_runuser"
+    if (
+        not stat.S_ISREG(runuser_metadata.st_mode)
+        or stat.S_ISLNK(runuser_metadata.st_mode)
+        or runuser_metadata.st_uid != 0
+        or stat.S_IMODE(runuser_metadata.st_mode) & 0o022
+        or not stat.S_IMODE(runuser_metadata.st_mode) & 0o111
+    ):
+        return "forward_start_diagnostic_runuser"
+    if (
+        _command_result(
+            (
+                str(runuser),
+                "--user",
+                "agentops-relay",
+                "--",
+                *check_command,
+            )
+        )
+        != 0
+    ):
+        return "forward_start_diagnostic_service_check"
+    if not _port_available(BROWSER_PORT):
+        return "forward_start_diagnostic_browser_port"
+    if not _port_available(CONNECTOR_PORT):
+        return "forward_start_diagnostic_connector_port"
+    if (
+        _command_result(
+            (*command, "is-failed", "agentops-mis-relay.service")
+        )
+        == 0
+    ):
+        return "forward_start_diagnostic_failed_state"
+    return "forward_start_diagnostic_inactive_state"
+
+
 def _preview_once(
     plan_sha256: str,
     requested_outcome: str,
@@ -603,12 +660,19 @@ def _run() -> dict[str, object]:
             }:
                 raise AcceptanceFailure("forward_decision")
             stage = f"forward_{step_id}"
-            _run_step_once(
-                plan_sha256,
-                "resume",
-                str(decision["decision_sha256"]),
-                store_open_count,
-            )
+            try:
+                _run_step_once(
+                    plan_sha256,
+                    "resume",
+                    str(decision["decision_sha256"]),
+                    store_open_count,
+                )
+            except Exception:
+                if step_id == "start":
+                    raise AcceptanceFailure(
+                        _diagnose_forward_start(systemctl_path)
+                    ) from None
+                raise
             forward_steps.append(step_id)
         else:
             raise AcceptanceFailure("forward_limit")
