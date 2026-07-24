@@ -9,8 +9,9 @@ opener and active-transaction scanner capability, canonical activation evidence
 compiler, and private scanner-bound systemd mutation process adapter plus
 private exact-confirmed success controller
 and lifecycle-lock-guarded recovery snapshot plus deterministic recovery
-decision compiler implemented and locally accepted; CLI activation, recovery
-execution and rollback terminalization remain planned and unimplemented
+decision compiler plus read-only locked recovery preview implemented and locally
+accepted; CLI activation, recovery execution and rollback terminalization remain
+planned and unimplemented
 
 ## Objective
 
@@ -66,8 +67,10 @@ every post-prepared failure to retained recovery state.
 The read-only exact-chain and optional terminal-receipt recovery input is
 recorded in `RELAY_ACTIVATION_RECOVERY_SNAPSHOT_ACCEPTANCE.md`. The pure
 hash-bound decision compiler is recorded in
-`RELAY_ACTIVATION_RECOVERY_DECISION_ACCEPTANCE.md`; neither component executes
-a recovery action.
+`RELAY_ACTIVATION_RECOVERY_DECISION_ACCEPTANCE.md`. Their lifecycle-lock-bound,
+scanner/systemd/scanner stable composition is recorded in
+`RELAY_ACTIVATION_RECOVERY_PREVIEW_ACCEPTANCE.md`; none of these components
+executes a recovery action.
 
 ## Command Contract
 

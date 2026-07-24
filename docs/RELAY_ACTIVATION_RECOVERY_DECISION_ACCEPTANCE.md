@@ -100,14 +100,12 @@ chains, private prerequisite drift, deterministic hashes, and bounded output.
 
 ## Remaining Gates
 
-The production recovery controller must hold the lifecycle lock while it loads
-the exact snapshot, performs scanner/systemd/scanner stable observation, and
-compiles this decision. A later exact confirmation must bind the decision hash
-before any one-step write or mutation.
-
-The same-root live-lock scanner capability now permits that observation without
-weakening ordinary status, but the recovery preview/controller has not yet
-composed the capability, snapshot, systemd read, and decision in one API.
+The private production recovery preview in
+`RELAY_ACTIVATION_RECOVERY_PREVIEW_ACCEPTANCE.md` now holds the lifecycle lock
+while it loads the exact snapshot, performs scanner/systemd/scanner stable
+observation, reloads the unchanged snapshot, and compiles this decision.
+A later exact confirmation must bind the decision hash before any one-step
+write or mutation.
 
 Durable execution receipts for ambiguous ownership-changing intents, rollback
 final verification and terminal receipt semantics, single-step execution,

@@ -85,6 +85,7 @@ combines this snapshot with a caller-owned stable prerequisite/systemd
 observation and produces a deterministic, hash-bound complete, terminalize,
 resume, inverse, or blocked decision.
 
-Production lifecycle-lock-bound stable scanning, mutation recovery, automatic
-rollback, operator confirmation, CLI exposure, and real interrupted Linux
-systemd acceptance remain unimplemented.
+Production lifecycle-lock-bound stable scanning and decision projection are now
+composed in `RELAY_ACTIVATION_RECOVERY_PREVIEW_ACCEPTANCE.md`. Mutation
+recovery, automatic rollback, operator confirmation, CLI exposure, and real
+interrupted Linux systemd acceptance remain unimplemented.
