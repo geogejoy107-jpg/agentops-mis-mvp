@@ -418,6 +418,68 @@ def _diagnose_forward_start(systemctl_path: str) -> str:
     return "forward_start_diagnostic_inactive_state"
 
 
+def _unexpected_decision_stage(
+    prefix: str,
+    decision: dict[str, object],
+) -> str:
+    bounded = {
+        "action": str(decision.get("action_id")),
+        "operation": str(decision.get("operation_id")),
+        "reason": str(decision.get("reason_id")),
+        "step": str(decision.get("step_id")),
+    }
+    allowed = {
+        "action": {
+            "blocked",
+            "complete",
+            "inverse",
+            "resume",
+            "terminalize",
+        },
+        "operation": {
+            "none",
+            "publish_rollback_receipt",
+            "publish_success_receipt",
+            "publish_terminal_revision",
+            "record_observation",
+            "run_step",
+        },
+        "reason": {
+            "journal_complete",
+            "no_owned_change",
+            "ownership_ambiguous",
+            "ownership_unproven",
+            "plan_binding_unproven",
+            "receipt_ready",
+            "resume_ready",
+            "rollback_contract_incomplete",
+            "state_drift",
+        },
+        "step": {
+            "None",
+            "daemon_reload",
+            "enable",
+            "rollback_disable",
+            "rollback_stop",
+            "start",
+            "terminal",
+            "verify",
+        },
+    }
+    if (
+        prefix not in {"forward", "rollback"}
+        or any(bounded[key] not in allowed[key] for key in bounded)
+    ):
+        return "decision_diagnostic_invalid"
+    return (
+        f"{prefix}_decision_"
+        + "_".join(
+            bounded[key]
+            for key in ("action", "operation", "reason", "step")
+        )
+    )
+
+
 def _preview_once(
     plan_sha256: str,
     requested_outcome: str,
@@ -650,7 +712,9 @@ def _run() -> dict[str, object]:
             if operation == "publish_success_receipt":
                 break
             if operation != "run_step":
-                raise AcceptanceFailure("forward_decision")
+                raise AcceptanceFailure(
+                    _unexpected_decision_stage("forward", decision)
+                )
             step_id = str(decision.get("step_id"))
             if step_id not in {
                 "daemon_reload",
@@ -658,7 +722,9 @@ def _run() -> dict[str, object]:
                 "start",
                 "verify",
             }:
-                raise AcceptanceFailure("forward_decision")
+                raise AcceptanceFailure(
+                    _unexpected_decision_stage("forward", decision)
+                )
             stage = f"forward_{step_id}"
             try:
                 _run_step_once(
@@ -700,7 +766,9 @@ def _run() -> dict[str, object]:
                     "rollback_disable",
                     "verify",
                 }:
-                    raise AcceptanceFailure("rollback_decision")
+                    raise AcceptanceFailure(
+                        _unexpected_decision_stage("rollback", decision)
+                    )
                 stage = f"rollback_{step_id}"
                 try:
                     _run_step_once(
@@ -730,7 +798,9 @@ def _run() -> dict[str, object]:
                 ("complete", "none"): "complete",
             }.get((str(decision.get("action_id")), operation))
             if expected_write is None:
-                raise AcceptanceFailure("rollback_decision")
+                raise AcceptanceFailure(
+                    _unexpected_decision_stage("rollback", decision)
+                )
             stage = f"rollback_{expected_write}"
             result = _run_write_once(
                 plan_sha256,
