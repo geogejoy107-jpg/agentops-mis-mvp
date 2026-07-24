@@ -430,6 +430,7 @@ def _run() -> dict[str, object]:
 
                 stage = "forward_execution"
                 for _index in range(MAX_STEP_COUNT):
+                    stage = "forward_preview"
                     decision = _preview_activation_recovery_with(
                         plan.plan_sha256,
                         "resume",
@@ -442,7 +443,16 @@ def _run() -> dict[str, object]:
                         break
                     if operation != "run_step":
                         raise AcceptanceFailure
-                    forward_steps.append(str(decision.get("step_id")))
+                    step_id = str(decision.get("step_id"))
+                    if step_id not in {
+                        "daemon_reload",
+                        "enable",
+                        "start",
+                        "verify",
+                    }:
+                        raise AcceptanceFailure
+                    stage = f"forward_{step_id}"
+                    forward_steps.append(step_id)
                     _run_confirmed_recovery_step_with(
                         plan.plan_sha256,
                         "resume",
@@ -457,6 +467,7 @@ def _run() -> dict[str, object]:
 
                 stage = "rollback_execution"
                 for _index in range(MAX_STEP_COUNT):
+                    stage = "rollback_preview"
                     decision = _preview_activation_recovery_with(
                         plan.plan_sha256,
                         "rollback",
@@ -466,9 +477,15 @@ def _run() -> dict[str, object]:
                     )
                     operation = decision.get("operation_id")
                     if operation == "run_step":
-                        rollback_steps.append(
-                            str(decision.get("step_id"))
-                        )
+                        step_id = str(decision.get("step_id"))
+                        if step_id not in {
+                            "rollback_stop",
+                            "rollback_disable",
+                            "verify",
+                        }:
+                            raise AcceptanceFailure
+                        stage = f"rollback_{step_id}"
+                        rollback_steps.append(step_id)
                         _run_confirmed_recovery_step_with(
                             plan.plan_sha256,
                             "rollback",
@@ -479,6 +496,13 @@ def _run() -> dict[str, object]:
                             mutation_runner=_run_bound_systemd_mutation,
                         )
                     else:
+                        action_id = str(decision.get("action_id"))
+                        if action_id not in {
+                            "publish_rollback_receipt",
+                            "complete",
+                        }:
+                            raise AcceptanceFailure
+                        stage = f"rollback_{action_id}"
                         result = _run_confirmed_recovery_write_with(
                             plan.plan_sha256,
                             "rollback",
@@ -487,7 +511,7 @@ def _run() -> dict[str, object]:
                             scanner=scanner,
                             systemd_reader=read_systemd_show,
                         )
-                        if decision.get("action_id") == "complete":
+                        if action_id == "complete":
                             final_state = str(result.get("state"))
                             break
                 else:
