@@ -372,15 +372,20 @@ def main() -> int:
         popen_calls += 1
         raise AssertionError("non-Linux mutation reached subprocess")
 
-    non_linux_error = run_error(
-        "stop",
-        binding_factory=lambda _value: non_linux_binding,
-        process_runner=lambda item, name: _run_systemd_mutation_process(
-            item,
-            name,
-            popen_factory=forbidden_popen,
-        ),
-    )
+    original_platform = mutation.sys.platform
+    try:
+        mutation.sys.platform = "darwin"
+        non_linux_error = run_error(
+            "stop",
+            binding_factory=lambda _value: non_linux_binding,
+            process_runner=lambda item, name: _run_systemd_mutation_process(
+                item,
+                name,
+                popen_factory=forbidden_popen,
+            ),
+        )
+    finally:
+        mutation.sys.platform = original_platform
     require(
         non_linux_error == mutation.SYSTEMD_MUTATION_ERROR_ID
         and popen_calls == 0
