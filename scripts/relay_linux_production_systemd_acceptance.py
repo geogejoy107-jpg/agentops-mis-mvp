@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path
 
 
@@ -480,6 +481,116 @@ def _unexpected_decision_stage(
     )
 
 
+def _plan_binding_diagnostic(
+    initial_prerequisites,
+    initial_systemd,
+    plan_sha256: str,
+    store_open_count: list[int],
+) -> str:
+    """Return only the first bounded identity category that drifted."""
+
+    store_open_count[0] += 1
+    with _open_locked_production_store(Path("/")) as store:
+        capability = store._activation_scan_capability()
+        current = _scan_activation_prerequisites_while_locked(capability)
+
+    categories = (
+        (
+            "install_flags",
+            (
+                initial_prerequisites.root,
+                initial_prerequisites.installed_state,
+                initial_prerequisites.service_account_ready,
+                initial_prerequisites.config_ready,
+                initial_prerequisites.tls_material_ready,
+                initial_prerequisites.route_keys_ready,
+                initial_prerequisites.recovery_required,
+            ),
+            (
+                current.root,
+                current.installed_state,
+                current.service_account_ready,
+                current.config_ready,
+                current.tls_material_ready,
+                current.route_keys_ready,
+                current.recovery_required,
+            ),
+        ),
+        (
+            "release_tree",
+            (
+                initial_prerequisites.release_id,
+                initial_prerequisites.version_id,
+                initial_prerequisites.release_tree_sha256,
+            ),
+            (
+                current.release_id,
+                current.version_id,
+                current.release_tree_sha256,
+            ),
+        ),
+        ("unit", initial_prerequisites.unit, current.unit),
+        ("config", initial_prerequisites.config, current.config),
+        (
+            "certificate",
+            initial_prerequisites.certificate,
+            current.certificate,
+        ),
+        (
+            "private_key",
+            initial_prerequisites.private_key,
+            current.private_key,
+        ),
+        ("route_keys", initial_prerequisites.route_keys, current.route_keys),
+        (
+            "state_directory",
+            initial_prerequisites.state_directory,
+            current.state_directory,
+        ),
+        (
+            "runtime_directory",
+            initial_prerequisites.runtime_directory,
+            current.runtime_directory,
+        ),
+        (
+            "trusted_parent_chain",
+            initial_prerequisites.trusted_parent_chain_sha256,
+            current.trusted_parent_chain_sha256,
+        ),
+        (
+            "service_identity",
+            (
+                initial_prerequisites.service_uid,
+                initial_prerequisites.service_gid,
+                initial_prerequisites.service_group_ids,
+            ),
+            (
+                current.service_uid,
+                current.service_gid,
+                current.service_group_ids,
+            ),
+        ),
+        ("systemctl", initial_prerequisites.systemctl, current.systemctl),
+    )
+    for category, initial_value, current_value in categories:
+        if initial_value != current_value:
+            return f"forward_plan_binding_{category}"
+
+    reconstructed = compile_activation_plan(
+        replace(
+            current,
+            enablement_links=initial_prerequisites.enablement_links,
+        ),
+        initial_systemd,
+    )
+    if (
+        reconstructed.ok is not True
+        or reconstructed.plan_sha256 != plan_sha256
+    ):
+        return "forward_plan_binding_systemd_reconstruction"
+    return "forward_plan_binding_unclassified"
+
+
 def _preview_once(
     plan_sha256: str,
     requested_outcome: str,
@@ -712,6 +823,20 @@ def _run() -> dict[str, object]:
             if operation == "publish_success_receipt":
                 break
             if operation != "run_step":
+                if (
+                    decision.get("action_id") == "blocked"
+                    and decision.get("operation_id") == "none"
+                    and decision.get("reason_id") == "plan_binding_unproven"
+                    and decision.get("step_id") == "start"
+                ):
+                    raise AcceptanceFailure(
+                        _plan_binding_diagnostic(
+                            initial_prerequisites,
+                            initial_systemd,
+                            plan_sha256,
+                            store_open_count,
+                        )
+                    )
                 raise AcceptanceFailure(
                     _unexpected_decision_stage("forward", decision)
                 )
