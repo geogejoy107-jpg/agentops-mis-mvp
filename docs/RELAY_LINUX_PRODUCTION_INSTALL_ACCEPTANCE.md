@@ -104,6 +104,8 @@ production journal-opener evidence. It does not claim:
 - that the guarded operator activation CLI is ready for exposure.
 
 The existing real-systemd recovery acceptance proves the mutation adapter
-separately. The next gate combines these two evidence lines with process
-interruption injection against the production installed tree. Only that
-combined gate can unlock the guarded operator CLI.
+separately. `RELAY_LINUX_PRODUCTION_SYSTEMD_ACCEPTANCE.md` now combines the
+production tree, journal, packaged Relay process, and real systemd with
+controller-store reopen boundaries. The next gate injects actual process death
+inside intent/mutation/observation and receipt/terminal windows. Only that
+interruption gate can unlock the guarded operator CLI.

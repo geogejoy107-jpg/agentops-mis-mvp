@@ -71,6 +71,7 @@ jobs:
             scripts/relay_activation_preview_smoke.py \
             scripts/relay_activation_scan_smoke.py \
             scripts/relay_linux_production_install_acceptance.py \
+            scripts/relay_linux_production_systemd_acceptance.py \
             scripts/relay_linux_systemd_recovery_acceptance.py \
             scripts/relay_systemd_mutation_smoke.py \
             scripts/relay_config_parser_smoke.py \
@@ -128,9 +129,9 @@ jobs:
             scripts/relay_linux_systemd_recovery_acceptance.py
 
   relay-linux-production-install:
-    name: Relay production install scan on real Linux
+    name: Relay production install and systemd recovery on real Linux
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -176,6 +177,19 @@ jobs:
             PYTHONDONTWRITEBYTECODE=1 \
             "$python_bin" \
             scripts/relay_linux_production_install_acceptance.py
+
+      - name: Run production journal and systemd acceptance
+        run: |
+          set -euo pipefail
+          python_bin="$(command -v python3)"
+          sudo env \
+            AGENTOPS_RELAY_LINUX_PRODUCTION_SYSTEMD_ACCEPTANCE=1 \
+            AGENTOPS_RELAY_LINUX_PRODUCTION_HARDEN_INSTALL_PARENTS=1 \
+            AGENTOPS_RELAY_LINUX_PRODUCTION_BUNDLE="${{ steps.bundle.outputs.bundle }}" \
+            AGENTOPS_RELAY_LINUX_PRODUCTION_BUNDLE_SHA256="${{ steps.bundle.outputs.bundle_sha256 }}" \
+            PYTHONDONTWRITEBYTECODE=1 \
+            "$python_bin" \
+            scripts/relay_linux_production_systemd_acceptance.py
 
   backend-deterministic:
     name: Backend deterministic smokes
