@@ -30,6 +30,9 @@ both success and failure. A pre-existing or replaced unit is never deleted.
 The smoke binds the real root-owned `systemctl` file identity, reads live state
 through `read_systemd_show`, and invokes the production
 `_run_bound_systemd_mutation` adapter from the confirmed recovery executor.
+The parser accepts either an empty invocation ID or the strict retained
+32-hex invocation ID that systemd may report after a previously active unit
+returns to `inactive`; all other inactive-state constraints remain unchanged.
 
 It exercises:
 
