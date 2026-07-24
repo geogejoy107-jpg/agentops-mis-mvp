@@ -86,6 +86,8 @@ observation and produces a deterministic, hash-bound complete, terminalize,
 resume, inverse, or blocked decision.
 
 Production lifecycle-lock-bound stable scanning and decision projection are now
-composed in `RELAY_ACTIVATION_RECOVERY_PREVIEW_ACCEPTANCE.md`. Mutation
-recovery, automatic rollback, operator confirmation, CLI exposure, and real
-interrupted Linux systemd acceptance remain unimplemented.
+composed in `RELAY_ACTIVATION_RECOVERY_PREVIEW_ACCEPTANCE.md`. One confirmed
+scanner-bound recovery step is production-composed and fixture-accepted in
+`RELAY_ACTIVATION_RECOVERY_EXECUTOR_ACCEPTANCE.md`; operator confirmation, CLI
+exposure, automatic multi-step recovery, and real interrupted Linux systemd
+acceptance remain unimplemented.

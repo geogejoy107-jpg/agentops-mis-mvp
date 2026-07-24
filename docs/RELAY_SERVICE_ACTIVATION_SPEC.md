@@ -11,8 +11,10 @@ private exact-confirmed success controller
 and lifecycle-lock-guarded recovery snapshot plus deterministic recovery
 decision compiler plus read-only locked recovery preview implemented and locally
 accepted, with exact-confirmed non-systemd recovery writes also accepted; CLI
-activation and recovery systemd execution remain planned and unimplemented;
-fixture-store rollback verification, receipt, and terminalization are accepted
+activation remains planned and unimplemented; private one-step recovery
+execution is production-composed and fixture-accepted but lacks real Linux
+systemd acceptance; fixture-store rollback verification, receipt, and
+terminalization are accepted
 
 ## Objective
 
@@ -317,7 +319,9 @@ ownership-proven inverse, or blocked. Production lock-bound stable observation,
 decision confirmation, and non-systemd fixture-store writes are implemented.
 That writer records a dedicated restored-state rollback verification, publishes
 the exact rollback receipt, and terminalizes idempotently. Production-store
-composition and recovery mutations remain future work. An interrupted
+composition and one scanner-bound recovery mutation are implemented in the
+private executor, with a fresh decision confirmation required for every next
+step. Real Linux interruption acceptance remains future work. An interrupted
 enable/start intent without a durable observation is blocked as
 ownership-ambiguous even when the current state resembles its postcondition.
 Every nonterminal decision must also reproduce the exact original plan hash
@@ -370,8 +374,9 @@ systemctl --system show agentops-mis-relay.service --no-pager \
 
 These mutation operations are implemented only as a private scanner-bound
 process adapter. The private success controller calls them after durable intent,
-but they remain unreachable from the CLI until rollback and recovery are
-implemented:
+and the private recovery executor maps one confirmed decision to one durable
+step. They remain unreachable from the CLI until real Linux interruption
+acceptance is complete:
 
 ```text
 systemctl --system daemon-reload

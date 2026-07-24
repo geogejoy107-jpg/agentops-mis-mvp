@@ -65,6 +65,7 @@ EXPECTED_WHEEL_MODULES = frozenset(
         "agentops_mis_cli/relay_activation_preview.py",
         "agentops_mis_cli/relay_activation_recovery.py",
         "agentops_mis_cli/relay_activation_recovery_controller.py",
+        "agentops_mis_cli/relay_activation_recovery_executor.py",
         "agentops_mis_cli/relay_activation_recovery_preview.py",
         "agentops_mis_cli/relay_activation_scan.py",
         "agentops_mis_cli/relay_admin.py",

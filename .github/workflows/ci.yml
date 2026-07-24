@@ -45,6 +45,7 @@ jobs:
             agentops_mis_cli/relay_activation_journal.py \
             agentops_mis_cli/relay_activation_preview.py \
             agentops_mis_cli/relay_activation_recovery_controller.py \
+            agentops_mis_cli/relay_activation_recovery_executor.py \
             agentops_mis_cli/relay_activation_recovery_preview.py \
             agentops_mis_cli/relay_activation_scan.py \
             agentops_mis_cli/relay_admin.py \
@@ -63,6 +64,7 @@ jobs:
             scripts/relay_activation_production_store_smoke.py \
             scripts/relay_activation_recovery_controller_smoke.py \
             scripts/relay_activation_recovery_decision_smoke.py \
+            scripts/relay_activation_recovery_executor_smoke.py \
             scripts/relay_activation_recovery_preview_smoke.py \
             scripts/relay_activation_recovery_snapshot_smoke.py \
             scripts/relay_activation_plan_smoke.py \
@@ -87,6 +89,7 @@ jobs:
           timeout 120s python3 scripts/relay_activation_production_store_smoke.py
           timeout 120s python3 scripts/relay_activation_recovery_controller_smoke.py
           timeout 120s python3 scripts/relay_activation_recovery_decision_smoke.py
+          timeout 120s python3 scripts/relay_activation_recovery_executor_smoke.py
           timeout 120s python3 scripts/relay_activation_recovery_preview_smoke.py
           timeout 120s python3 scripts/relay_activation_recovery_snapshot_smoke.py
           timeout 120s python3 scripts/relay_activation_plan_smoke.py
@@ -204,6 +207,7 @@ jobs:
           timeout 120s python3 scripts/relay_activation_production_store_smoke.py
           timeout 120s python3 scripts/relay_activation_recovery_controller_smoke.py
           timeout 120s python3 scripts/relay_activation_recovery_decision_smoke.py
+          timeout 120s python3 scripts/relay_activation_recovery_executor_smoke.py
           timeout 120s python3 scripts/relay_activation_recovery_preview_smoke.py
           timeout 120s python3 scripts/relay_activation_recovery_snapshot_smoke.py
           timeout 120s python3 scripts/relay_activation_plan_smoke.py
