@@ -290,9 +290,10 @@ Implementation slices:
      `RELAY_ACTIVATION_RECOVERY_DECISION_ACCEPTANCE.md`; the lifecycle-lock-bound
      stable-read composition is implemented in
      `RELAY_ACTIVATION_RECOVERY_PREVIEW_ACCEPTANCE.md`; exact-confirmed
-     non-systemd observation/receipt/terminal writes are implemented in
+     non-systemd forward and rollback observation/receipt/terminal writes are
+     implemented in
      `RELAY_ACTIVATION_RECOVERY_CONTROLLER_ACCEPTANCE.md`; scanner-bound
-     recovery mutations, rollback execution/terminalization and partial
+     recovery mutations, production recovery-store composition and partial
      namespace resume remain unimplemented;
    - upgrade, rollback, uninstall, Linux account provisioning, service
      activation and public infrastructure acceptance: pending;

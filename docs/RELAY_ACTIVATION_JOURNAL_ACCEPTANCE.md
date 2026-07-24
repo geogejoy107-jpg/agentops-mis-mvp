@@ -7,7 +7,8 @@ primitives in `agentops_mis_cli.relay_activation_journal`. The private
 exact-confirmed success controller now composes these primitives, while
 the guarded recovery snapshot reads exact chains and terminal-bindable
 receipts, and the pure recovery compiler selects bounded hash-bound decisions.
-Recovery execution and rollback terminalization remain future work.
+The exact-confirmed non-systemd recovery writer now exercises both active and
+rollback terminalization; recovery systemd execution remains future work.
 
 This slice does **not** unlock `--confirm-activate`, open the production
 `/var/lib/agentops-relayctl` tree, invoke systemd mutations, acquire the
@@ -70,8 +71,10 @@ The private fixture store exercises the intended production algorithm:
 - bounded public projections that omit paths, raw observations, credentials,
   and private journal bodies.
 
-The production writer is intentionally absent. The installed-tree status now
-validates the exact journal namespace as recorded in
+The journal module itself exposes no public writer. Private lifecycle-bound
+controllers compose its production store for activation, while recovery writes
+remain injected-store-only. The installed-tree status validates the exact
+journal namespace as recorded in
 `RELAY_ACTIVATION_JOURNAL_STATUS_ACCEPTANCE.md`. Before a writer can be added,
 a controller must hold the existing lifecycle lock across final plan refresh,
 all writes, mutation, verification, rollback, and terminal persistence.
@@ -126,10 +129,12 @@ Expected result:
 This acceptance is not evidence of confirmed service activation. The remaining
 sequence is:
 
-1. connect the private systemd mutation adapter through a confirmed controller;
-2. implement crash recovery and ownership-safe rollback;
+1. connect scanner-bound recovery `run_step` execution to the confirmed
+   decision;
+2. compose recovery writes with the production locked store;
 3. pass real Linux systemd interruption tests;
-4. pass public Relay and physical ordinary-browser acceptance.
+4. expose an operator confirmation surface only after those gates;
+5. pass public Relay and physical ordinary-browser acceptance.
 
 Confirmed first-install namespace initialization is recorded separately in
 `RELAY_ACTIVATION_NAMESPACE_INSTALL_ACCEPTANCE.md`; the private process adapter

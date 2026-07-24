@@ -307,3 +307,64 @@ def build_activation_step_observation(
         raise
     except Exception:
         raise RelayActivationEvidenceError() from None
+
+
+def build_activation_rollback_verification_observation(
+    identity: ActivationJournalIdentity,
+    *,
+    prerequisites: ActivationPrerequisiteSnapshot,
+    systemd: SystemdSnapshot,
+) -> ActivationStepObservation:
+    """Hash proof that rollback restored the exact pre-activation state."""
+
+    try:
+        _validate_journal_identity(identity)
+        current_plan = compile_activation_plan(prerequisites, systemd)
+        unit_sha256 = _unit_identity_sha256(prerequisites.unit)
+        inventory_sha256 = _enablement_inventory_sha256(
+            prerequisites.enablement_links
+        )
+        if (
+            current_plan.ok is not True
+            or current_plan.release_id != identity.release_id
+            or current_plan.version_id != identity.version_id
+            or unit_sha256 != identity.unit_identity_sha256
+            or inventory_sha256
+            != identity.pre_enablement_inventory_sha256
+            or systemd.need_daemon_reload
+            or systemd.unit_file_state
+            != identity.pre_unit_file_state
+            or systemd.active_state != identity.pre_active_state
+        ):
+            raise RelayActivationEvidenceError()
+        payload = {
+            "enablement_inventory_sha256": inventory_sha256,
+            "recovery_outcome": "rollback",
+            "schema_id": ACTIVATION_EVIDENCE_SCHEMA,
+            "step_id": "verify",
+            "systemd": {
+                "active_state": systemd.active_state,
+                "exec_main_status": systemd.exec_main_status,
+                "invocation_id": systemd.invocation_id,
+                "load_state": systemd.load_state,
+                "main_pid": systemd.main_pid,
+                "need_daemon_reload": systemd.need_daemon_reload,
+                "result": systemd.result,
+                "sub_state": systemd.sub_state,
+                "unit_file_state": systemd.unit_file_state,
+            },
+            "unit_id": UNIT_NAME,
+            "unit_identity_sha256": unit_sha256,
+        }
+        observation_sha256 = _sha256(payload)
+        if not SHA256_PATTERN.fullmatch(observation_sha256):
+            raise RelayActivationEvidenceError()
+        return ActivationStepObservation(
+            step_id="verify",
+            observation_id="rollback_verified",
+            observation_sha256=observation_sha256,
+        )
+    except RelayActivationEvidenceError:
+        raise
+    except Exception:
+        raise RelayActivationEvidenceError() from None

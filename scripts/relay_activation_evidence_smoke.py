@@ -30,6 +30,7 @@ from agentops_mis_cli.relay_activation import (  # noqa: E402
 from agentops_mis_cli.relay_activation_evidence import (  # noqa: E402
     RelayActivationEvidenceError,
     build_activation_journal_identity,
+    build_activation_rollback_verification_observation,
     build_activation_step_observation,
 )
 
@@ -270,6 +271,19 @@ def main() -> int:
             current_systemd,
         ) in states.items()
     }
+    rollback_verify = build_activation_rollback_verification_observation(
+        identity,
+        prerequisites=prerequisites(),
+        systemd=systemd(),
+    )
+    repeated_rollback_verify = (
+        build_activation_rollback_verification_observation(
+            identity,
+            prerequisites=prerequisites(),
+            systemd=systemd(),
+        )
+    )
+    observations["rollback_verify"] = rollback_verify
     repeat_verify = build_activation_step_observation(
         identity,
         step_id="verify",
@@ -284,7 +298,9 @@ def main() -> int:
             }
         )
         == len(observations)
-        and observations["verify"] == repeat_verify,
+        and observations["verify"] == repeat_verify
+        and rollback_verify == repeated_rollback_verify
+        and rollback_verify.observation_id == "rollback_verified",
         "step observations were not unique and deterministic",
         failures,
     )
@@ -376,6 +392,13 @@ def main() -> int:
             systemd=systemd(enabled=True, active=True),
         )
     )
+    rollback_state_error = error_id(
+        lambda: build_activation_rollback_verification_observation(
+            identity,
+            prerequisites=prerequisites(enabled=True),
+            systemd=systemd(enabled=True),
+        )
+    )
     errors = (
         wrong_hash_error,
         already_active_error,
@@ -383,6 +406,7 @@ def main() -> int:
         invalid_step_error,
         wrong_state_error,
         tampered_identity_error,
+        rollback_state_error,
     )
     require(
         all(

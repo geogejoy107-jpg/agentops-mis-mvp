@@ -11,8 +11,8 @@ private exact-confirmed success controller
 and lifecycle-lock-guarded recovery snapshot plus deterministic recovery
 decision compiler plus read-only locked recovery preview implemented and locally
 accepted, with exact-confirmed non-systemd recovery writes also accepted; CLI
-activation, recovery systemd execution and rollback terminalization remain
-planned and unimplemented
+activation and recovery systemd execution remain planned and unimplemented;
+fixture-store rollback verification, receipt, and terminalization are accepted
 
 ## Objective
 
@@ -314,13 +314,16 @@ revision. It rejects premature or mismatched receipts and remains read-only;
 the pure recovery decision compiler can combine that input with a caller-owned
 stable observation to choose complete, terminalize, one forward resume, one
 ownership-proven inverse, or blocked. Production lock-bound stable observation,
-decision confirmation, writes, mutations, and rollback terminalization remain
-future work. An interrupted enable/start intent without a durable observation
-is blocked as ownership-ambiguous even when the current state resembles its
-postcondition. Every nonterminal decision must also reproduce the exact
-original plan hash from the current private prerequisite identities and the
-journal-bound pre-systemd state, so config/key/account/systemctl/release drift
-cannot pass through a step-only observation hash.
+decision confirmation, and non-systemd fixture-store writes are implemented.
+That writer records a dedicated restored-state rollback verification, publishes
+the exact rollback receipt, and terminalizes idempotently. Production-store
+composition and recovery mutations remain future work. An interrupted
+enable/start intent without a durable observation is blocked as
+ownership-ambiguous even when the current state resembles its postcondition.
+Every nonterminal decision must also reproduce the exact original plan hash
+from the current private prerequisite identities and the journal-bound
+pre-systemd state, so config/key/account/systemctl/release drift cannot pass
+through a step-only observation hash.
 
 On failure, the controller may stop only a service it started and disable only
 a unit it enabled. It must never undo pre-existing operator state.

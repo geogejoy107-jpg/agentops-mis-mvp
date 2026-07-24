@@ -5,6 +5,8 @@
 This acceptance covers the private, side-effect-free compiler that binds one
 exact refreshed activation plan to its immutable journal identity and compiles
 bounded ownership evidence after each reserved activation or rollback step.
+It also defines a dedicated final rollback verification observation that proves
+the exact pre-activation service state and enablement inventory were restored.
 
 It does not expose a CLI writer, call systemd, append journal revisions, decide
 which step runs next, publish a receipt, or implement crash recovery.
@@ -41,6 +43,7 @@ The compiler accepts only these fixed step IDs:
 | `verify` | enabled and active | unit identity, link-inventory hash, and bounded systemd health |
 | `rollback_stop` | originally inactive, now enabled and inactive | unit identity and bounded state |
 | `rollback_disable` | originally disabled, now disabled with original active state and inventory restored | unit identity and exact restored link-inventory hash |
+| rollback `verify` | both ownership flags cleared, original unit/active states and inventory restored, reload not needed | unit identity, restored inventory hash, and bounded systemd health |
 
 Every current snapshot is revalidated through the Activation Plan Core. A
 changed release, version, unit identity, unsafe state, pending daemon reload,
@@ -75,7 +78,8 @@ python3 scripts/relay_deploy_contract_smoke.py
 git diff --check
 ```
 
-The deterministic smoke verifies all six observations, exact plan binding,
+The deterministic smoke verifies all six step observations plus the dedicated
+rollback verification observation, exact plan binding,
 unit and enablement ownership changes, Invocation ID changes, stale and invalid
 input rejection, bounded errors, private-payload omission, and zero network or
 systemd mutation.
@@ -87,7 +91,7 @@ Expected summary:
   "deterministic_plan_bound_identity": true,
   "invalid_inputs_redacted": true,
   "network_used": false,
-  "observation_count": 6,
+  "observation_count": 7,
   "ok": true,
   "ownership_identity_changes_detected": true,
   "private_payload_omitted": true,
@@ -103,8 +107,11 @@ prepared revision before mutation, invokes one private mutation at a time,
 rescans and compiles each observation, publishes one immutable receipt, and
 appends terminal state. It is not exposed through the CLI.
 
-Exact interruption resume and activation-owned rollback remain required before
-the CLI can use that controller.
+The exact-confirmed non-systemd recovery writer now records the dedicated
+rollback verification, publishes one `rollback_succeeded` receipt, appends the
+`service_state_rolled_back` terminal revision, and then completes idempotently
+in fixture journals. Scanner-bound recovery mutations and a production
+recovery opener remain required before the CLI can use that controller.
 
 Real daemon reload, enable, start, stop, disable, reboot persistence, and crash
 recovery require a disposable Linux systemd host with root authority. Public

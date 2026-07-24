@@ -38,7 +38,7 @@ The bounded actions are:
 | `complete` | The exact terminal revision and receipt already agree. |
 | `terminalize` | A legal orphan receipt can bind the next terminal revision. |
 | `resume` | Retry one unchanged forward step, record a non-ambiguous observation, continue the next fixed step, or publish the success receipt. |
-| `inverse` | Run one ownership-proven `rollback_stop` or `rollback_disable` step. |
+| `inverse` | Run or record one ownership-proven rollback step, verify restored state, or publish the rollback receipt. |
 | `blocked` | State drift, missing ownership proof, or an incomplete rollback contract prevents an automatic action. |
 
 An interrupted `enable` or `start` intent is never converted into ownership
@@ -87,6 +87,7 @@ Expected summary:
   "ownership_inverse_cases": 2,
   "private_payload_omitted": true,
   "private_prerequisite_drift_blocked": true,
+  "rollback_terminal_contract": true,
   "systemd_mutation_performed": false,
   "write_scope": "none"
 }
@@ -95,8 +96,10 @@ Expected summary:
 The smoke covers prepared recovery, mutation retry, non-owning observation
 completion, every forward step, success receipt publication, orphan receipt
 terminalization, idempotent completed history, explicit rollback planning,
-InvocationID and enablement-inventory drift, ambiguous ownership, malformed
-chains, private prerequisite drift, deterministic hashes, and bounded output.
+rollback verification/receipt/terminal completion, refusal to resume after
+rollback starts, InvocationID and enablement-inventory drift, ambiguous
+ownership, malformed chains, private prerequisite drift, deterministic hashes,
+and bounded output.
 
 ## Remaining Gates
 
@@ -109,7 +112,7 @@ write or mutation. The private non-systemd writer in
 `RELAY_ACTIVATION_RECOVERY_CONTROLLER_ACCEPTANCE.md` now enforces that binding
 for observation, success-receipt, terminal-revision, and complete actions.
 
-Durable execution receipts for ambiguous ownership-changing intents, rollback
-final verification and terminal receipt semantics, single-step execution,
-operator confirmation, CLI exposure, and interrupted real Linux systemd
-acceptance remain unimplemented.
+Scanner-bound execution of a confirmed `run_step`, a production recovery
+opener, operator-facing confirmation, CLI exposure, and interrupted real Linux
+systemd acceptance remain unimplemented. Ambiguous ownership-changing intents
+remain deliberately blocked rather than guessed.
