@@ -168,6 +168,8 @@ journal core 已分别按
 与
 [`docs/RELAY_ACTIVATION_RECOVERY_DECISION_ACCEPTANCE.md`](docs/RELAY_ACTIVATION_RECOVERY_DECISION_ACCEPTANCE.md)
 与
+[`docs/RELAY_ACTIVATION_RECOVERY_PREVIEW_ACCEPTANCE.md`](docs/RELAY_ACTIVATION_RECOVERY_PREVIEW_ACCEPTANCE.md)
+与
 [`docs/RELAY_SYSTEMD_MUTATION_ADAPTER_ACCEPTANCE.md`](docs/RELAY_SYSTEMD_MUTATION_ADAPTER_ACCEPTANCE.md)
 实现。`agentops-relayctl --root / activate` 仍只会读取状态和生成有界 plan；
 只读 status 已能将完整 journal 历史纳入安装树校验，并对未完成、损坏或扫描中
@@ -182,9 +184,10 @@ lock 签发的私有 capability，因此写入 prepared 后不会被普通 statu
 反向阻断；普通 status/preview 仍保持 fail-closed。受 lifecycle lock 保护的 recovery
 snapshot 能读取精确 chain 并
 识别合法 orphan receipt，纯 recovery decision compiler 也能给出哈希绑定的
-complete/terminalize/resume/inverse/blocked 决策，但二者仍没有 CLI caller。CLI writer、
-recovery executor、rollback terminal contract、partial 自动恢复和真实 Linux systemd
-验收仍未实现。
+complete/terminalize/resume/inverse/blocked 决策；私有只读 recovery preview 已在同一
+lifecycle lock 内组合精确 snapshot、稳定 scanner/systemd/scanner 观察和决策哈希，
+但仍没有 CLI caller。CLI writer、recovery executor、rollback terminal contract、
+partial 自动恢复和真实 Linux systemd 验收仍未实现。
 这仍不代表公共 Relay、DNS/ACME、服务启动或升级/回滚已经完成。
 
 `host init` 仍生成一次性 Owner 设置码，并把它、机器 API key 与 Admin key
