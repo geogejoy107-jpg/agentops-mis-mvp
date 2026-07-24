@@ -295,6 +295,15 @@ def main() -> int:
             enabled_prerequisites,
             parse_systemd_show_bytes(systemd_bytes(UnitFileState="enabled")),
         )
+        retained_inactive = compile_activation_plan(
+            enabled_prerequisites,
+            parse_systemd_show_bytes(
+                systemd_bytes(
+                    UnitFileState="enabled",
+                    InvocationID="4" * 32,
+                )
+            ),
+        )
         disabled_active = compile_activation_plan(
             base_prerequisites,
             parse_systemd_show_bytes(
@@ -310,6 +319,13 @@ def main() -> int:
             project_activation_plan(enabled_inactive).get("requested")
             == {"daemon_reload": True, "enable": False, "start": True},
             "enabled inactive action plan mismatch",
+            failures,
+        )
+        require(
+            retained_inactive.ok is True
+            and retained_inactive.systemd is not None
+            and retained_inactive.systemd.invocation_id == "4" * 32,
+            "inactive state rejected a retained valid invocation id",
             failures,
         )
         require(
@@ -593,6 +609,9 @@ def main() -> int:
                 SubState="running",
                 InvocationID="not-an-id",
                 MainPID="42",
+            ),
+            "inactive-invocation": systemd_bytes(
+                InvocationID="not-an-id",
             ),
             "pid": systemd_bytes(
                 ActiveState="active",

@@ -389,7 +389,14 @@ def parse_systemd_show_bytes(data: bytes) -> SystemdSnapshot:
         ):
             raise RelayActivationError("systemd_state_invalid")
     elif active_state == "inactive":
-        if sub_state != "dead" or main_pid != 0 or invocation_id:
+        if (
+            sub_state != "dead"
+            or main_pid != 0
+            or (
+                invocation_id
+                and not INVOCATION_ID_PATTERN.fullmatch(invocation_id)
+            )
+        ):
             raise RelayActivationError("systemd_state_invalid")
     else:
         raise RelayActivationError("systemd_state_invalid")
@@ -436,7 +443,12 @@ def _validate_systemd_snapshot(systemd: SystemdSnapshot) -> None:
         if (
             systemd.sub_state != "dead"
             or systemd.main_pid != 0
-            or systemd.invocation_id
+            or (
+                systemd.invocation_id
+                and not INVOCATION_ID_PATTERN.fullmatch(
+                    systemd.invocation_id
+                )
+            )
         ):
             raise RelayActivationError("systemd_state_invalid")
     else:
