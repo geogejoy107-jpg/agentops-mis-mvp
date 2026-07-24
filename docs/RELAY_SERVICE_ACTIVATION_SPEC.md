@@ -10,7 +10,8 @@ compiler, and private scanner-bound systemd mutation process adapter plus
 private exact-confirmed success controller
 and lifecycle-lock-guarded recovery snapshot plus deterministic recovery
 decision compiler plus read-only locked recovery preview implemented and locally
-accepted; CLI activation, recovery execution and rollback terminalization remain
+accepted, with exact-confirmed non-systemd recovery writes also accepted; CLI
+activation, recovery systemd execution and rollback terminalization remain
 planned and unimplemented
 
 ## Objective
@@ -71,6 +72,10 @@ hash-bound decision compiler is recorded in
 scanner/systemd/scanner stable composition is recorded in
 `RELAY_ACTIVATION_RECOVERY_PREVIEW_ACCEPTANCE.md`; none of these components
 executes a recovery action.
+The exact-confirmed private writer in
+`RELAY_ACTIVATION_RECOVERY_CONTROLLER_ACCEPTANCE.md` can append one confirmed
+observation, success receipt, or terminal revision, while every systemd action
+remains zero-write and unreachable from the CLI.
 
 ## Command Contract
 
