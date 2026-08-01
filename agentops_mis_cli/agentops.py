@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime as dt
+import getpass
 import hashlib
 import io
 import json
@@ -29,6 +30,12 @@ from urllib.request import Request, urlopen
 
 from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
 from agentops_mis_cli.http_transport import credential_opener, credential_transport_url_allowed, safe_credential_error
+from agentops_mis_cli.platform_paths import (
+    default_config_path,
+    harden_private_file,
+    is_windows,
+    windows_private_file_is_acceptable,
+)
 from agentops_mis_cli.redaction import redact_text
 from agentops_mis_core.operator_start_check import compact_start_check_local_run_path, operator_agent_loop_packet
 
@@ -37,7 +44,7 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8787"
 LOCAL_DEMO_DEFAULT_URL = os.environ.get("AGENTOPS_LOCAL_DEMO_DEFAULT_URL", DEFAULT_BASE_URL).rstrip("/")
 DEFAULT_WORKSPACE_ID = "local-demo"
 DEFAULT_REQUEST_TIMEOUT = 30
-CONFIG_PATH = Path(os.environ.get("AGENTOPS_CONFIG", "~/.agentops/config.json")).expanduser()
+CONFIG_PATH = default_config_path()
 REORDERABLE_GLOBAL_OPTIONS = {
     "--base-url": True,
     "--api-key": True,
@@ -89,13 +96,18 @@ def save_config(config: dict):
     temporary = CONFIG_PATH.with_name(f".{CONFIG_PATH.name}.{uuid.uuid4().hex}.tmp")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR)
     try:
+        harden_private_file(temporary)
+        if is_windows() and not windows_private_file_is_acceptable(temporary):
+            raise OSError("windows_private_acl_verification_failed")
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = -1
             handle.write(json.dumps(config, ensure_ascii=False, indent=2) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, CONFIG_PATH)
-        CONFIG_PATH.chmod(stat.S_IRUSR | stat.S_IWUSR)
     finally:
+        if descriptor >= 0:
+            os.close(descriptor)
         temporary.unlink(missing_ok=True)
 
 
@@ -433,6 +445,12 @@ def cmd_login(args) -> dict:
     prior_key_origin = str(config.get("api_key_base_url") or prior_base_url).rstrip("/")
     base_url = (args.base_url or os.environ.get("AGENTOPS_BASE_URL") or config.get("base_url") or DEFAULT_BASE_URL).rstrip("/")
     explicit_api_key = args.api_key
+    if getattr(args, "prompt_api_key", False):
+        if explicit_api_key is not None or "AGENTOPS_API_KEY" in os.environ:
+            raise RuntimeError("--prompt-api-key cannot be combined with --api-key or AGENTOPS_API_KEY")
+        explicit_api_key = getpass.getpass("AgentOps enrollment token: ").strip()
+        if not explicit_api_key:
+            raise RuntimeError("A non-empty enrollment token is required")
     if explicit_api_key is None and "AGENTOPS_API_KEY" in os.environ:
         explicit_api_key = os.environ.get("AGENTOPS_API_KEY", "")
     api_key = explicit_api_key if explicit_api_key is not None else (config.get("api_key", "") if prior_key_origin and prior_key_origin == base_url else "")
@@ -5409,10 +5427,21 @@ def cmd_worker_service_check(args, client: AgentOpsClient) -> dict:
 
     check_args = argparse.Namespace(
         manager=args.manager,
+        base_url=client.base_url,
         workspace_id=client.workspace_id,
         agent_id=args.agent_id or client.agent_id or worker_mod.DEFAULT_AGENT_ID,
         adapter=args.adapter,
+        confirm_run=bool(args.confirm_run),
+        use_session=bool(args.use_session),
+        session_ttl_sec=args.session_ttl_sec,
+        session_refresh_margin_sec=args.session_refresh_margin_sec,
+        poll_interval=args.poll_interval,
         label=args.label or "",
+        working_directory=args.working_directory or str(worker_mod.DEFAULT_WORKER_CWD),
+        runtime_dir=args.runtime_dir or "",
+        worker_command=args.worker_command or "",
+        hermes_gateway_url=args.hermes_gateway_url or "",
+        codex_bin=args.codex_bin or "",
         service_path=args.service_path or "",
         api_key_placeholder=args.api_key_placeholder,
         credential_source=args.credential_source,
@@ -5421,6 +5450,8 @@ def cmd_worker_service_check(args, client: AgentOpsClient) -> dict:
     )
     payload = worker_mod.check_service_installation(check_args)
     payload["command"] = "agentops worker service-check"
+    if payload.get("ok") is not True:
+        payload["_exit_code"] = 1
     return payload
 
 
@@ -5447,6 +5478,7 @@ def cmd_worker_service_install(args, client: AgentOpsClient) -> dict:
         config_path=args.config_path,
         worker_command=args.worker_command or "",
         hermes_gateway_url=args.hermes_gateway_url or "",
+        codex_bin=args.codex_bin or "",
         service_path=args.service_path or "",
         confirm_install=bool(args.confirm_install),
         overwrite=bool(args.overwrite),
@@ -5454,6 +5486,8 @@ def cmd_worker_service_install(args, client: AgentOpsClient) -> dict:
     )
     payload = worker_mod.install_service_file(install_args)
     payload["command"] = "agentops worker service-install"
+    if payload.get("ok") is not True:
+        payload["_exit_code"] = 1
     return payload
 
 
@@ -5463,10 +5497,21 @@ def cmd_worker_service_control(args, client: AgentOpsClient) -> dict:
     control_args = argparse.Namespace(
         manager=args.manager,
         action=args.service_action,
+        base_url=client.base_url,
         workspace_id=client.workspace_id,
         agent_id=args.agent_id or client.agent_id or worker_mod.DEFAULT_AGENT_ID,
         adapter=args.adapter,
+        confirm_run=bool(args.confirm_run),
+        use_session=bool(args.use_session),
+        session_ttl_sec=args.session_ttl_sec,
+        session_refresh_margin_sec=args.session_refresh_margin_sec,
+        poll_interval=args.poll_interval,
         label=args.label or "",
+        working_directory=args.working_directory or str(worker_mod.DEFAULT_WORKER_CWD),
+        runtime_dir=args.runtime_dir or "",
+        worker_command=args.worker_command or "",
+        hermes_gateway_url=args.hermes_gateway_url or "",
+        codex_bin=args.codex_bin or "",
         service_path=args.service_path or "",
         api_key_placeholder=args.api_key_placeholder,
         credential_source=args.credential_source,
@@ -5476,6 +5521,8 @@ def cmd_worker_service_control(args, client: AgentOpsClient) -> dict:
     )
     payload = worker_mod.control_service(control_args)
     payload["command"] = "agentops worker service-control"
+    if payload.get("ok") is not True:
+        payload["_exit_code"] = 1
     return payload
 
 
@@ -5688,6 +5735,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     login = sub.add_parser("login", help="Store local AgentOps MIS CLI config.")
     add_global_args(login, suppress_defaults=True)
+    login.add_argument("--prompt-api-key", action="store_true", help="Read the enrollment token without echoing it or placing it in shell history.")
     login.set_defaults(handler="login")
 
     status = sub.add_parser("status", help="Check Agent Gateway connectivity and safe auth metadata.")
@@ -6742,19 +6790,29 @@ def build_parser() -> argparse.ArgumentParser:
     worker_preflight.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", "/opt/homebrew/bin/openclaw"))
     worker_preflight.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", ""))
     worker_preflight.set_defaults(handler="worker_preflight")
-    worker_service_check = worker_sub.add_parser("service-check", help="Read-only check for a launchd/systemd worker service file.")
-    worker_service_check.add_argument("--manager", choices=["launchd", "systemd"], required=True)
+    worker_service_check = worker_sub.add_parser("service-check", help="Read-only check for a launchd/systemd/Windows Task Scheduler worker service file.")
+    worker_service_check.add_argument("--manager", choices=["launchd", "systemd", "windows-task"], required=True)
     worker_service_check.add_argument("--agent-id", default=None)
     worker_service_check.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
+    worker_service_check.add_argument("--confirm-run", action="store_true")
+    worker_service_check.add_argument("--use-session", action="store_true")
+    worker_service_check.add_argument("--session-ttl-sec", type=int, default=900)
+    worker_service_check.add_argument("--session-refresh-margin-sec", type=float, default=60)
+    worker_service_check.add_argument("--poll-interval", type=float, default=5.0)
     worker_service_check.add_argument("--label", default="")
+    worker_service_check.add_argument("--working-directory", default="")
+    worker_service_check.add_argument("--runtime-dir", default="")
+    worker_service_check.add_argument("--worker-command", default="")
+    worker_service_check.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", ""))
+    worker_service_check.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", ""))
     worker_service_check.add_argument("--service-path", default="")
     worker_service_check.add_argument("--api-key-placeholder", default="<paste one-time token here>")
     worker_service_check.add_argument("--credential-source", choices=["auto", "direct", "local_config"], default="auto")
     worker_service_check.add_argument("--config-path", default=str(CONFIG_PATH))
     worker_service_check.add_argument("--timeout", type=int, default=5)
     worker_service_check.set_defaults(handler="worker_service_check")
-    worker_service_install = worker_sub.add_parser("service-install", help="Dry-run or write a safe launchd/systemd worker service file.")
-    worker_service_install.add_argument("--manager", choices=["launchd", "systemd"], required=True)
+    worker_service_install = worker_sub.add_parser("service-install", help="Dry-run or write a safe launchd/systemd/Windows Task Scheduler worker service file.")
+    worker_service_install.add_argument("--manager", choices=["launchd", "systemd", "windows-task"], required=True)
     worker_service_install.add_argument("--agent-id", default=None)
     worker_service_install.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
     worker_service_install.add_argument("--confirm-run", action="store_true")
@@ -6771,23 +6829,34 @@ def build_parser() -> argparse.ArgumentParser:
     worker_service_install.add_argument("--config-path", default=str(CONFIG_PATH))
     worker_service_install.add_argument("--worker-command", default="", help="Worker executable command for service templates. Defaults to installed agentops-worker or python -m fallback.")
     worker_service_install.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", ""), help="Persist an explicit credential-free Hermes HTTP(S) base URL for a Hermes service.")
+    worker_service_install.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", ""), help="Persist the exact local Codex executable; Windows requires a native .exe.")
     worker_service_install.add_argument("--service-path", default="")
     worker_service_install.add_argument("--confirm-install", action="store_true", help="Write the service file. Default is dry-run.")
     worker_service_install.add_argument("--overwrite", action="store_true")
     worker_service_install.add_argument("--timeout", type=int, default=5)
     worker_service_install.set_defaults(handler="worker_service_install")
-    worker_service_control = worker_sub.add_parser("service-control", help="Preview or explicitly run launchd/systemd load, unload, or restart for a worker service.")
-    worker_service_control.add_argument("--manager", choices=["launchd", "systemd"], required=True)
+    worker_service_control = worker_sub.add_parser("service-control", help="Preview or explicitly run OS service load, unload, or restart for a worker service.")
+    worker_service_control.add_argument("--manager", choices=["launchd", "systemd", "windows-task"], required=True)
     worker_service_control.add_argument("--action", dest="service_action", choices=["load", "unload", "restart"], required=True)
     worker_service_control.add_argument("--agent-id", default=None)
     worker_service_control.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "codex"], default="mock")
+    worker_service_control.add_argument("--confirm-run", action="store_true")
+    worker_service_control.add_argument("--use-session", action="store_true")
+    worker_service_control.add_argument("--session-ttl-sec", type=int, default=900)
+    worker_service_control.add_argument("--session-refresh-margin-sec", type=float, default=60)
+    worker_service_control.add_argument("--poll-interval", type=float, default=5.0)
     worker_service_control.add_argument("--label", default="")
+    worker_service_control.add_argument("--working-directory", default="")
+    worker_service_control.add_argument("--runtime-dir", default="")
+    worker_service_control.add_argument("--worker-command", default="")
+    worker_service_control.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", ""))
+    worker_service_control.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", ""))
     worker_service_control.add_argument("--service-path", default="")
     worker_service_control.add_argument("--api-key-placeholder", default="<paste one-time token here>")
     worker_service_control.add_argument("--credential-source", choices=["auto", "direct", "local_config"], default="auto")
     worker_service_control.add_argument("--config-path", default=str(CONFIG_PATH))
     worker_service_control.add_argument("--timeout", type=int, default=10)
-    worker_service_control.add_argument("--confirm-control", action="store_true", help="Actually call launchctl/systemctl. Default is preview only.")
+    worker_service_control.add_argument("--confirm-control", action="store_true", help="Actually call the selected OS service manager. Default is preview only.")
     worker_service_control.set_defaults(handler="worker_service_control")
     worker_start = worker_sub.add_parser("start", help="Start a local worker daemon through the MIS supervisor.")
     worker_start.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")

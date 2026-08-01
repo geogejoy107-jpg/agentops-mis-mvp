@@ -105,6 +105,14 @@ Host 基础，不是已认证的远程访问模式；不要通过修改绑定地
 loopback Host 运行。普通用户只需在主机安装并启动 AgentOps；另一台电脑的
 正式产品路径只需要浏览器，不需要安装 Tailscale、VPN 或开发环境：
 
+Windows 10/11 同时支持正式的 `agentops` 操控 CLI 和
+`agentops-worker` 执行端，不再局限于浏览器访问。它提供用户级 PowerShell
+安装器、`%LOCALAPPDATA%` 私有配置和 Windows Task Scheduler 常驻 Worker。
+Codex 可作为受治理只读 Worker，也可通过 AgentOps 插件/CLI 主动领取并回写
+MIS 任务；
+权威 Host 仍部署在 macOS/Linux。安装与实跑步骤见
+[`docs/WINDOWS_CLIENT_WORKER_RUNBOOK.md`](docs/WINDOWS_CLIENT_WORKER_RUNBOOK.md)。
+
 ```bash
 python3 -m pip install .
 agentops host init
@@ -709,11 +717,11 @@ agentops worker service-control --manager launchd --action restart --adapter moc
 ```
 
 安装版 worker 默认把 state 写入 `~/.agentops/workers`；repo 内 wrapper 默认写入 `.agentops_runtime/workers`。可用 `AGENTOPS_WORKER_RUNTIME_DIR` 覆盖 state 目录，用 `AGENTOPS_WORKER_CWD` 覆盖 OpenClaw adapter 的执行目录。
-`service-template` 只生成带 token placeholder 的 launchd/systemd 模板，不会自动安装、加载服务，也不会写入真实 token。
-`agentops-worker service-install` 和 `agentops worker service-install` 默认只做 dry-run；加 `--confirm-install` 后才把安全模板写到 launchd/systemd 路径，文件权限为 `0600`，仍不会写入真实 token、不会加载服务、不会启动 worker。
+`service-template` 只生成带 token placeholder 的 launchd/systemd/Windows Task Scheduler 模板，不会自动安装、加载服务，也不会写入真实 token。
+`agentops-worker service-install` 和 `agentops worker service-install` 默认只做 dry-run；加 `--confirm-install` 后才把安全模板写到对应的 OS 服务路径，仍不会写入真实 token、不会加载服务、不会启动 worker。POSIX 文件使用 `0600`，Windows 文件使用当前用户加 SYSTEM/Administrators 的受限 ACL。
 `agentops worker preflight` 和 `agentops-worker preflight` 都是只读 adapter 预检：检查 Gateway/adapter 可用性，不执行真实任务、不写账本、不保存 prompt/response。
-`agentops-worker service-check` 和 `agentops worker service-check` 是只读服务诊断：检查 launchd/systemd 模板文件、adapter 参数、session/confirm-run 保护、自动重启策略（launchd `KeepAlive=true` / systemd `Restart=always`）、服务加载状态和 token-like 泄露风险，不会安装、加载、重启服务，也不会打印服务文件原文。
-`agentops-worker service-control` 和 `agentops worker service-control` 默认只预览 launchd/systemd load/unload/restart 命令；只有加 `--confirm-control` 才调用本机服务管理器。Hermes/OpenClaw 服务模板如果缺少 `--confirm-run` 会拒绝 load/restart，含 token-like 内容的服务文件也会被拦截。确认执行 `load` 时如果服务已经 loaded，会作为幂等 no-op 返回 `service_control_skipped:true`，不会重复调用 launchd/systemd，也不会计为 live runtime execution。
+`agentops-worker service-check` 和 `agentops worker service-check` 是只读服务诊断：检查 launchd/systemd/Windows Task Scheduler 模板、adapter 参数、session/confirm-run 保护、自动重启策略、服务加载状态和 token-like 泄露风险，不会安装、加载、重启服务，也不会打印服务文件原文。
+`agentops-worker service-control` 和 `agentops worker service-control` 默认只预览 OS service load/unload/restart 命令；只有加 `--confirm-control` 才调用本机服务管理器。Hermes/OpenClaw 服务模板如果缺少 `--confirm-run` 会拒绝 load/restart，含 token-like 内容的服务文件也会被拦截。确认执行 `load` 时如果服务已经 loaded，会作为幂等 no-op 返回 `service_control_skipped:true`，不会重复调用服务管理器，也不会计为 live runtime execution。
 完整本地/远程 worker 运维路径见 `docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md`。
 
 单轮 mock：
