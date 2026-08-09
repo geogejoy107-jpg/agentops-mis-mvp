@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentops.local/schemas/template-event-v1.schema.json",
+  "title": "AgentOps MIS Template Event Envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id", "event_type", "schema_version", "workspace_id", "project_id",
+    "template_id", "profile_id", "task_id", "run_id", "actor", "occurred_at",
+    "idempotency_key", "correlation_id", "sequence", "payload", "evidence_refs"
+  ],
+  "properties": {
+    "event_id": {"$ref": "#/$defs/machineId"},
+    "event_type": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z0-9][a-z0-9_]*)+$"},
+    "schema_version": {"const": "template-event/v1"},
+    "workspace_id": {"$ref": "#/$defs/machineId"},
+    "project_id": {"$ref": "#/$defs/nullableMachineId"},
+    "template_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
+    "profile_id": {"$ref": "#/$defs/nullableMachineId"},
+    "task_id": {"$ref": "#/$defs/nullableMachineId"},
+    "run_id": {"$ref": "#/$defs/nullableMachineId"},
+    "actor": {
+      "type": "object", "additionalProperties": false, "required": ["type", "id"],
+      "properties": {"type": {"enum": ["user", "agent", "system", "runtime"]}, "id": {"$ref": "#/$defs/machineId"}}
+    },
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "idempotency_key": {"$ref": "#/$defs/machineId"},
+    "correlation_id": {"$ref": "#/$defs/machineId"},
+    "sequence": {"type": "integer", "minimum": 0},
+    "payload": {"type": "object"},
+    "evidence_refs": {"type": "array", "items": {"type": "string", "pattern": "^(artifact|evaluation|audit|evidence|run):[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"}}
+  },
+  "$defs": {
+    "machineId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
+    "nullableMachineId": {"oneOf": [{"$ref": "#/$defs/machineId"}, {"type": "null"}]}
+  }
+}

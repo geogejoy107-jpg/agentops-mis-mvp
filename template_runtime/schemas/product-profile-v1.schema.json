@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentops.local/schemas/product-profile-v1.schema.json",
+  "title": "AgentOps MIS Product Profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "id", "template_id", "name", "version", "description",
+    "configuration", "budgets", "policies", "evaluators", "submission"
+  ],
+  "properties": {
+    "schema_version": {"const": "product-profile/v1"},
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
+    "template_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
+    "name": {"type": "string", "minLength": 1},
+    "version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"},
+    "description": {"type": "string", "minLength": 1},
+    "configuration": {"type": "object"},
+    "budgets": {"type": "object"},
+    "policies": {"$ref": "#/$defs/namespacedReferences"},
+    "evaluators": {"$ref": "#/$defs/namespacedReferences"},
+    "submission": {"type": "object"}
+  },
+  "$defs": {
+    "namespacedReferences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "version", "contract_version", "entrypoint"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z0-9][a-z0-9_]*)+$"},
+          "version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"},
+          "contract_version": {"type": "string", "minLength": 1},
+          "entrypoint": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z0-9][a-z0-9_]*)*(?::[a-z][a-z0-9_]*)?$"},
+          "description": {"type": "string"},
+          "configuration": {"type": "object"},
+          "metadata": {"type": "object"}
+        }
+      }
+    }
+  }
+}

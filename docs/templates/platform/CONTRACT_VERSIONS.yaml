@@ -1,0 +1,9 @@
+status: candidate
+canonical: false
+base_commit: 99ce51d693f1d646ea84acc2f7f376bde1a95a9a
+template_manifest_version: template-manifest/v1
+shared_api_version: template-platform-api/v1
+event_schema_version: template-event/v1
+runtime_contract_version: openjiuwen-runtime/v1
+migration_contract_version: template-migration/v1
+profile_contract_version: product-profile/v1

@@ -1,0 +1,41 @@
+"""Shared contracts for the AgentOps MIS Template Platform."""
+
+from .contracts import (
+    CORE_AUTHORITY_OBJECTS,
+    CORE_AUTHORITY_IDS,
+    EVENT_SCHEMA_VERSION,
+    MANIFEST_SCHEMA_VERSION,
+    MIGRATION_CONTRACT_VERSION,
+    PROFILE_CONTRACT_VERSION,
+    RUNTIME_CONTRACT_VERSION,
+    SHARED_API_VERSION,
+    TEMPLATE_LIFECYCLE_TRANSITIONS,
+    ContractViolation,
+    canonical_json_sha256,
+    manifest_content_sha256,
+    normalize_template_id,
+    validate_lifecycle_transition,
+    validate_event_envelope,
+    validate_product_profile,
+    validate_template_manifest,
+)
+
+__all__ = [
+    "CORE_AUTHORITY_OBJECTS",
+    "CORE_AUTHORITY_IDS",
+    "EVENT_SCHEMA_VERSION",
+    "MANIFEST_SCHEMA_VERSION",
+    "MIGRATION_CONTRACT_VERSION",
+    "PROFILE_CONTRACT_VERSION",
+    "RUNTIME_CONTRACT_VERSION",
+    "SHARED_API_VERSION",
+    "TEMPLATE_LIFECYCLE_TRANSITIONS",
+    "ContractViolation",
+    "canonical_json_sha256",
+    "manifest_content_sha256",
+    "normalize_template_id",
+    "validate_lifecycle_transition",
+    "validate_event_envelope",
+    "validate_product_profile",
+    "validate_template_manifest",
+]

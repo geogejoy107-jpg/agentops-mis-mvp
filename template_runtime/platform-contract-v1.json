@@ -1,0 +1,111 @@
+{
+  "contract_id": "agentops-mis-template-platform/v1",
+  "canonical": false,
+  "versions": {
+    "manifest": "template-manifest/v1",
+    "api": "template-platform-api/v1",
+    "event": "template-event/v1",
+    "runtime": "openjiuwen-runtime/v1",
+    "migration": "template-migration/v1",
+    "profile": "product-profile/v1",
+    "sdk": "template-sdk/v1"
+  },
+  "authority": {
+    "owner": "mis_core",
+    "ids": [
+      "mis_core.workspace", "mis_core.project", "mis_core.agent", "mis_core.task",
+      "mis_core.plan", "mis_core.run", "mis_core.tool_call",
+      "mis_core.prepared_action", "mis_core.approval", "mis_core.artifact",
+      "mis_core.evaluation", "mis_core.memory_review", "mis_core.audit",
+      "mis_core.evidence", "mis_core.project_delta", "mis_core.identity",
+      "mis_core.permission"
+    ]
+  },
+  "registry": {
+    "package_identity": ["publisher", "template_id", "version"],
+    "installation_identity": ["workspace_id", "template_id"],
+    "operations": ["discover", "validate", "dedupe", "resolve", "installations", "compatibility", "disable", "archive"],
+    "optimistic_concurrency": true,
+    "workspace_scope_required": true
+  },
+  "lifecycle": {
+    "operations": ["install", "activate", "disable", "upgrade", "rollback", "uninstall"],
+    "required_phases": ["preview", "approval", "execute_once", "readback", "receipt"],
+    "migration_required_for_upgrade": true,
+    "historical_records": "archive",
+    "transition_guard": "template_runtime.contracts.validate_lifecycle_transition"
+  },
+  "sdk": {
+    "port": "template_runtime.protocols.TemplateSDKPort",
+    "registrations": ["domain_repository", "workflow", "agent_team", "skill", "tool", "policy", "evaluator", "memory_policy", "ui_extension", "report", "api_route", "cli_command", "fixture", "testing_hook", "exporter"],
+    "namespace_isolation": "template_id",
+    "duplicate_authority": "deny"
+  },
+  "event_outbox": {
+    "port": "template_runtime.protocols.TransactionalOutboxPort",
+    "same_transaction": true,
+    "idempotent_consumers": true,
+    "monotonic_sequence_per_run": true,
+    "replay": true,
+    "dead_letter": true,
+    "delivery_receipt": true
+  },
+  "runtime": {
+    "port": "template_runtime.protocols.OpenJiuwenRuntimePort",
+    "upstream_pin_required": true,
+    "dependency_lock_and_hashes_required": true,
+    "provider_model_policy_hash_required": true,
+    "tool_decisions": ["allow", "ask", "deny"],
+    "ask_maps_to": ["mis_core.prepared_action", "mis_core.approval"],
+    "resume": ["checkpoint_ref", "action_hash", "consume_once"],
+    "raw_prompt_response_storage": "deny",
+    "missing_dependency_result": "unavailable",
+    "false_success": "deny"
+  },
+  "permissions": {
+    "scopes": ["workspace", "template", "project", "run"],
+    "risks": ["low", "medium", "high", "critical"],
+    "decisions": ["allow", "ask", "deny"],
+    "default": "deny",
+    "cross_template": "deny_without_explicit_shared_policy"
+  },
+  "migration": {
+    "port": "template_runtime.protocols.TemplateMigrationPort",
+    "phases": ["dry_run", "backup", "approval", "execute_once", "readback", "receipt"],
+    "rollback_required": true,
+    "checksum_required": true,
+    "silent_data_loss": "deny",
+    "historical_readability": true
+  },
+  "ui": {
+    "shell": "shared_app_shell",
+    "required_surfaces": ["catalog", "install_preview", "installed", "detail", "versions_upgrades", "permissions_tools", "profiles", "health_diagnostics"],
+    "required_states": ["loading", "empty", "degraded", "error", "recovery", "permission_denied"],
+    "template_route_prefix": "/solutions/<template_id>/"
+  },
+  "api_cli": {
+    "typed_api_prefix": "/api/v1/templates",
+    "cli_prefix": "agentops template",
+    "machine_receipts": true,
+    "stable_error_enum": "template_runtime.protocols.TemplateErrorCode"
+  },
+  "observability": {
+    "required": ["health", "readiness", "runtime_health", "template_health", "queue_health", "structured_logs", "metrics", "correlation_ids", "audit_search", "alert_thresholds", "cost_usage"],
+    "raw_secret_or_prompt": "omit"
+  },
+  "signature_trust": {
+    "algorithms": ["ed25519", "sigstore"],
+    "payload": "canonical_json_without_integrity",
+    "trust_store_required": true,
+    "revocation_check_required": true,
+    "verification_receipt_required": true,
+    "self_asserted_verified": "deny"
+  },
+  "domain_paths": {
+    "research": ["templates/research_lab/**", "profiles/bdci_2026_research/**", "profiles/research_lab_full/**", "tests/templates/research_lab/**", "docs/templates/research_lab/**"],
+    "career": ["templates/career_sim/**", "profiles/bdci_2026_career/**", "tests/templates/career_sim/**", "docs/templates/career_sim/**"],
+    "quant": ["templates/quant_research/**", "profiles/bdci_2026_quant/**", "tests/templates/quant_research/**", "docs/templates/quant_research/**"]
+  },
+  "forbidden_domain_paths": ["agentops_mis_core/**", "agentops_mis_runtime/**", "agentops_mis_cli/**", "template_runtime/**", "server.py", "ui/start-building-app/src/app/shared/**", "migrations/shared/**", "docs/adr/shared/**"],
+  "required_test_families": ["manifest_schema_semantic", "namespace_authority", "registry_resolution", "lifecycle_receipts", "migration_backup_rollback", "outbox_replay_dlq", "permission_approval", "runtime_real_compatibility", "api_cli_contract", "ui_states", "observability", "cross_template_isolation", "security_sbom", "real_domain_e2e", "release_readback"]
+}
