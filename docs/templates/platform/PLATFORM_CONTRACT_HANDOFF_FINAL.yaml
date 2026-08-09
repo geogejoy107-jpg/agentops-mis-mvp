@@ -1,0 +1,91 @@
+PLATFORM_CONTRACT_READY: true
+repository: geogejoy107-jpg/agentops-mis-mvp
+integration_branch: integration/template-platform-v1
+contract_commit_sha: 1bce8f9e0312df9a29635a6988b62cd297b1ab14
+template_manifest_version: template-manifest/v1
+shared_api_version: template-platform-api/v1
+event_schema_version: template-event/v1
+runtime_contract_version: openjiuwen-runtime/v1
+migration_contract_version: template-migration/v1
+profile_contract_version: product-profile/v1
+sdk_contract_version: template-sdk/v1
+required_pr_target: integration/template-platform-v1
+
+allowed_paths:
+  research:
+    - templates/research_lab/**
+    - profiles/bdci_2026_research/**
+    - profiles/research_lab_full/**
+    - tests/templates/research_lab/**
+    - docs/templates/research_lab/**
+  career:
+    - templates/career_sim/**
+    - profiles/bdci_2026_career/**
+    - tests/templates/career_sim/**
+    - docs/templates/career_sim/**
+  quant:
+    - templates/quant_research/**
+    - profiles/bdci_2026_quant/**
+    - tests/templates/quant_research/**
+    - docs/templates/quant_research/**
+
+forbidden_shared_paths:
+  - agentops_mis_core/**
+  - agentops_mis_runtime/**
+  - agentops_mis_cli/**
+  - template_runtime/**
+  - server.py
+  - ui/start-building-app/src/app/shared/**
+  - migrations/shared/**
+  - docs/adr/shared/**
+
+required_contract_tests:
+  - manifest_schema_semantic
+  - namespace_authority
+  - registry_resolution
+  - lifecycle_receipts
+  - outbox_replay_dlq
+  - api_cli_contract
+  - cross_template_isolation
+required_security_tests:
+  - permission_approval
+  - signature_trust_and_revocation
+  - secret_and_prompt_redaction
+  - dependency_and_sbom_scan
+required_migration_tests:
+  - migration_dry_run
+  - backup_restore
+  - rollback
+  - historical_readability
+
+known_contract_change_process: >-
+  Domain lines submit a Change Request to C0; C0 updates the shared contract in a
+  dedicated commit, independently verifies it, then requires every affected line
+  to rebase onto the new exact contract commit and rerun contract tests.
+
+contract_review:
+  result: PASS
+  staged_diff_sha256: 1e84b18ec00ae0f8cda3f2e5198c7907f68b20324dafc665ed8d2a6d9c8de096
+  python_3_11: 26 tests passed with 1 optional jsonschema skip
+  python_3_14: 26 tests passed with 1 optional jsonschema skip
+  jsonschema_venv: 26 of 26 tests passed
+
+open_blockers:
+  - id: openjiuwen_runtime_dependency
+    status: NOT_INSTALLED
+    effect: WP2 real runtime compatibility and domain E2E remain unverified
+  - id: research_gpu_slurm
+    status: UNKNOWN
+    effect: real remote GPU and Slurm acceptance remain unverified
+  - id: career_official_simulator
+    status: NOT_AVAILABLE
+    effect: official simulator integration acceptance remains unverified
+  - id: quant_official_data
+    status: NOT_AVAILABLE
+    effect: official data snapshot acceptance remains unverified
+  - id: governed_production_deploy
+    status: AUTHORIZATION_REQUIRED
+    effect: deployment, readback, and release receipt are not authorized yet
+
+source_pack_sha256: f0b39687e21157b01d93c22c9820728c9a8a450d94f8ee22ffbc485decdd813b
+canonical: false
