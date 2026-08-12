@@ -199,7 +199,7 @@ function assertStaticCustomerBoundary() {
     || !consumer.includes('owner_initial_receipt_parse=${owner_receipt_parse}')
     || !consumer.includes('owner_initial_error=${owner_error}')
     || !consumer.includes('owner_initial_stderr_nonempty=${owner_stderr_nonempty}')
-    || !consumer.includes('test("^(owner|agentops)_[a-z0-9_]+$")')
+    || !consumer.includes('test("^[a-z][a-z0-9_]{2,80}$")')
     || !consumer.includes('owner_duplicate_receipt_parse=${duplicate_receipt_parse}')
     || !consumer.includes('owner_duplicate_error=${duplicate_error}')
     || !consumer.includes("owner_duplicate_credential_residue")

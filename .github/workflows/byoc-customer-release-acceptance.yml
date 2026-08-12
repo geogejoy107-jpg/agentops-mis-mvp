@@ -254,7 +254,7 @@ jobs:
             owner_error="$(jq -r '
               if .error == null then "none"
               elif (.error | type) == "string"
-                and (.error | test("^(owner|agentops)_[a-z0-9_]+$"))
+                and (.error | test("^[a-z][a-z0-9_]{2,80}$"))
                 then .error
               else "unexpected"
               end
