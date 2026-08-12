@@ -30,7 +30,7 @@ invalidates the previous review and requires a new independent review.
 
 | Lane | Exact candidate | Required reviewer state |
 | --- | --- | --- |
-| C0 Shared Runtime | New candidate not frozen yet | A non-author must review the new staged hash after the current fixer finishes. |
+| C0 Shared Runtime | Staged diff `ad58468f5a529f163b0fe1bbd69f5103538f14971889cdbdff7590e55d2006ba`; index tree `d08bb6bc583bafd4b9f66ccd1a0ecfbb1792d58c` | A non-author must review this exact staged object; both Python versions have 94/94 passing when `jsonschema` is available, and the production UI build passes. |
 | C1 Research | `b6fb216661215eb524c1ed3ff1c24453c474f46e` is failed/reopened | A new exact commit is required, then review by a non-author. |
 | C2 Career | `2eb0d6699aedb83ab8fb67658aebdbaf2ed3b422` | Independent exact-commit review running. |
 | C3 Quant | Fix candidate `cd77b3ba2355c19fb8bf87e1fdf6ceaf99cc6d10` | New exact review by a non-author is required; the failed parent remains non-integrable. |
