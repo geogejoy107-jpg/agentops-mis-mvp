@@ -18,7 +18,7 @@ import { join, resolve } from "node:path";
 const CONTRACT = "agentops_openclaw_phase_a03_container_acceptance_v1";
 const PUBLIC_SOCKET = "/run/agentops-openclaw-public/broker.sock";
 const PRIVATE_SOCKET = "/run/agentops-openclaw-private/executor.sock";
-const IMAGE = /^[a-z0-9][a-z0-9._:/-]*(?:@sha256:[0-9a-f]{64}|:[A-Za-z0-9._-]+)$/;
+const IMAGE = /^[a-z0-9][a-z0-9._:/-]*@sha256:[0-9a-f]{64}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 
 function fail(code) {
@@ -105,7 +105,7 @@ const req=http.request({socketPath:socket,path:"/health",method:"GET"},res=>{
 
 const forbiddenOpenProbe = String.raw`
 const fs=require("node:fs");
-const accepted=new Set(["ENOENT","EACCES","EPERM","EROFS","ENXIO","ENODEV"]);
+const accepted=new Set(["ENOENT","EACCES","EPERM","EROFS"]);
 const paths=JSON.parse(process.env.A03_FORBIDDEN_PATHS);
 const results={};
 for(const path of paths){
@@ -378,6 +378,8 @@ async function mainAcceptance() {
       real_linux_docker_execution: true,
       phase_a03_three_service_topology_verified: true,
       phase_a03_candidate_source_only: true,
+      worker_attack_probe_container: true,
+      product_worker_started: false,
       worker_uid_1000_verified: true,
       broker_uid_1100_verified: true,
       executor_uid_1001_verified: true,
@@ -405,6 +407,7 @@ async function mainAcceptance() {
       real_openclaw_runtime_execution: false,
       so_peercred_verified: false,
       hostile_runtime_isolation_verified: false,
+      private_socket_identity_pinned_across_connect: false,
       broker_can_read_forwarded_protocol_payload: true,
       executor_and_runtime_same_uid: true,
     };
@@ -413,7 +416,8 @@ async function mainAcceptance() {
       compose(composeFile, project, environment, ["down", "--volumes", "--remove-orphans", "--timeout", "10"], { timeout: 90_000 });
       const containers = docker(["container", "ls", "--all", "--quiet", "--filter", `label=com.docker.compose.project=${project}`]).trim();
       const volumes = docker(["volume", "ls", "--quiet", "--filter", `label=com.docker.compose.project=${project}`]).trim();
-      cleanupVerified = !containers && !volumes;
+      const networks = docker(["network", "ls", "--quiet", "--filter", `label=com.docker.compose.project=${project}`]).trim();
+      cleanupVerified = !containers && !volumes && !networks;
     } finally {
       rmSync(root, { recursive: true, force: true });
       localCleanupVerified = !existsSync(root);
@@ -423,6 +427,7 @@ async function mainAcceptance() {
   }
   if (!receipt) fail("a03_receipt_unavailable");
   receipt.docker_container_volume_cleanup_verified = true;
+  receipt.docker_network_cleanup_verified = true;
   receipt.local_fixture_cleanup_verified = true;
   receipt.cleanup_confirmed = true;
   process.stdout.write(`${JSON.stringify(receipt)}\n`);

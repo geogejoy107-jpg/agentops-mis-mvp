@@ -64,14 +64,19 @@ assert.match(compose, /o: uid=1001,gid=2200,mode=0750/);
 
 for (const honestClaim of [
   "phase_a03_candidate_source_only: true",
+  "worker_attack_probe_container: true",
+  "product_worker_started: false",
   "real_openclaw_runtime_execution: false",
   "so_peercred_verified: false",
   "hostile_runtime_isolation_verified: false",
+  "private_socket_identity_pinned_across_connect: false",
 ]) {
   assert.ok(acceptance.includes(honestClaim), `missing_honest_claim:${honestClaim}`);
 }
 assert.doesNotMatch(acceptance, /so_peercred_verified:\s*true/);
 assert.doesNotMatch(acceptance, /hostile_runtime_isolation_verified:\s*true/);
+assert.doesNotMatch(acceptance, /private_socket_identity_pinned_across_connect:\s*true/);
+assert.doesNotMatch(acceptance, /accepted=new Set\([^\n]*(?:ENXIO|ENODEV)/);
 
 process.stdout.write(`${JSON.stringify({
   contract: "agentops_openclaw_phase_a03_image_identity_v1",
