@@ -150,6 +150,7 @@ function assertStaticCustomerBoundary() {
   if (
     !compose.includes("profiles: [worker-hermes]")
     || !compose.includes("profiles: [worker-openclaw]")
+    || (compose.match(/\n\s+init: true/g) || []).length !== 2
     || (compose.match(/^\s{4}init: true$/gm) || []).length !== 2
     || !compose.includes("AGENTOPS_AGENT_TOKEN_SOURCE_FILE: /run/secrets/agent_token")
     || !compose.includes("/usr/local/lib/agentops/worker-entrypoint.mjs")
@@ -159,6 +160,7 @@ function assertStaticCustomerBoundary() {
     || !workerEntrypoint.includes("AGENTOPS_AGENT_TOKEN_SOURCE_FILE: tokenSource")
     || !workerEntrypoint.includes("process.kill(-child.pid, signal)")
     || !workerEntrypoint.includes('signalChildGroup(child, "SIGKILL")')
+    || !workerEntrypoint.includes("stopping && !forcedStop")
     || !workerEntrypoint.includes("worker_receipt_boundary_invalid")
     || !workerHealthcheck.includes("process.kill(payload.pid, 0)")
     || !workerHealthcheck.includes("payload.pid < 1")
@@ -166,9 +168,12 @@ function assertStaticCustomerBoundary() {
     || !workerContainerAcceptance.includes("provider_connections")
     || !workerContainerAcceptance.includes("agent_token_exposed_by_container")
     || !workerContainerAcceptance.includes('"--network", "none"')
+    || !workerContainerAcceptance.includes('"--init"')
     || !workerContainerAcceptance.includes("authorization_matches")
     || !workerContainerAcceptance.includes("token_in_environment: false")
     || !workerContainerAcceptance.includes("acceptance_worker_environment_probe_failed")
+    || !workerContainerAcceptance.includes("acceptance_worker_graceful_stop_failed")
+    || !workerContainerAcceptance.includes("worker_init_reaper_verified: true")
     || !workerContainerAcceptance.includes("org.opencontainers.image.revision")
   ) {
     fail("release_worker_boundary_invalid");

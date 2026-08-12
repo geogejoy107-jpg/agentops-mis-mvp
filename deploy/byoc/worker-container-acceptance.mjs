@@ -183,6 +183,7 @@ try {
   docker([
     "run", "--detach", "--name", workerName,
     "--platform", "linux/amd64",
+    "--init",
     "--network", `container:${stubName}`,
     "--user", "1000:1000", "--read-only", "--cap-drop", "ALL",
     "--security-opt", "no-new-privileges:true",
@@ -243,7 +244,12 @@ try {
     "exec", workerName, "node", "-e",
     "const f=require('node:fs');const rows=f.readdirSync('/proc').filter(x=>/^\\d+$/.test(x)).flatMap(x=>{try{return [f.readFileSync('/proc/'+x+'/cmdline').toString('utf8').split('\\0').filter(Boolean)]}catch{return []}});process.stdout.write(JSON.stringify(rows))",
   ], [0], "acceptance_worker_argv_probe_failed"));
-  assert.ok(Number.isSafeInteger(health.pid) && health.pid >= 1);
+  const initArgv = JSON.parse(docker([
+    "exec", workerName, "node", "-e",
+    "const f=require('node:fs');process.stdout.write(JSON.stringify(f.readFileSync('/proc/1/cmdline').toString('utf8').split('\\0').filter(Boolean)))",
+  ], [0], "acceptance_worker_init_probe_failed"));
+  assert.ok(initArgv.some((item) => /(?:docker-init|tini)$/.test(item)));
+  assert.ok(Number.isSafeInteger(health.pid) && health.pid > 1);
   assert.ok(Number.isSafeInteger(health.child_pid) && health.child_pid >= 1);
   const processEnvironment = JSON.parse(docker([
     "exec", workerName, "node", "-e",
@@ -286,6 +292,25 @@ try {
     "/api/mis/agent-gateway/heartbeat",
   ].includes(item.path)));
 
+  docker(
+    ["stop", "--time", "10", workerName],
+    [0],
+    "acceptance_worker_graceful_stop_failed",
+  );
+  const stoppedInspection = JSON.parse(docker(
+    ["inspect", workerName],
+    [0],
+    "acceptance_worker_stopped_inspect_failed",
+  ))[0];
+  assert.equal(stoppedInspection.State?.Running, false);
+  assert.equal(stoppedInspection.State?.ExitCode, 0);
+  const stoppedLogs = docker(
+    ["logs", workerName],
+    [0],
+    "acceptance_worker_stopped_logs_failed",
+  );
+  if (stoppedLogs.includes(token)) fail("agent_token_exposed_after_worker_stop");
+
   process.stdout.write(`${JSON.stringify({
     ok: true,
     contract: "agentops_byoc_typescript_worker_container_v1",
@@ -294,6 +319,8 @@ try {
     source_checkout_required: false,
     worker_container_started: true,
     worker_health_verified: true,
+    worker_init_reaper_verified: true,
+    graceful_stop_verified: true,
     no_task_receipt_verified: true,
     network_egress_disabled: true,
     agent_token_authorization_verified: true,

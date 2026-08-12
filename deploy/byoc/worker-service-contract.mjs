@@ -36,6 +36,7 @@ try {
     }
     assert.equal((compose.match(/^\s{4}init: true$/gm) || []).length, 2);
     assert.match(compose, /restart: unless-stopped/);
+    assert.equal((compose.match(/\n\s+init: true/g) || []).length, 2);
     assert.match(compose, /AGENTOPS_AGENT_TOKEN_SOURCE_FILE: \/run\/secrets\/agent_token/);
     assert.match(compose, /node, \/usr\/local\/lib\/agentops\/worker-entrypoint\.mjs/);
     assert.match(compose, /node, \/usr\/local\/lib\/agentops\/worker-healthcheck\.mjs/);
@@ -52,6 +53,7 @@ try {
   assert.match(entrypoint, /detached: true/);
   assert.match(entrypoint, /process\.kill\(-child\.pid, signal\)/);
   assert.match(entrypoint, /signalChildGroup\(child, "SIGKILL"\)/);
+  assert.match(entrypoint, /stopping && !forcedStop/);
 
   const tokenPath = join(root, "agent-token");
   writeFileSync(tokenPath, `${token}\n`, { mode: 0o600 });
@@ -126,6 +128,7 @@ try {
     container_pid_one_supported: true,
     container_init_reaper_required: true,
     process_group_shutdown_bounded: true,
+    docker_init_reaper_enabled: true,
     real_provider_execution_performed: false,
     token_omitted: true,
   })}\n`);

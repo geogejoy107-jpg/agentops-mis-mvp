@@ -49,6 +49,12 @@ rejected from direct environment configuration. Commercial control-plane and
 Hermes URLs require HTTPS; the OpenClaw binary/config/workspace mounts are
 read-only.
 
+Each Worker service enables Docker init for PID 1 descendant reaping. The Node
+supervisor runs behind it, forwards stop signals to the complete TypeScript
+Worker/provider process group, interrupts active provider calls and retry/poll
+waits, and applies a bounded forced-stop fallback before Compose's grace period
+expires.
+
 ## Run One Task
 
 Install and verify the Next application first:

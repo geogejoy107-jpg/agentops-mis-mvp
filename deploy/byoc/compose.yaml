@@ -238,6 +238,7 @@ services:
   worker-hermes:
     profiles: [worker-hermes]
     image: ${AGENTOPS_IMAGE:-agentops-mis-byoc:local}
+    init: true
     restart: unless-stopped
     stop_grace_period: 30s
     user: "1000:1000"
@@ -286,6 +287,7 @@ services:
   worker-openclaw:
     profiles: [worker-openclaw]
     image: ${AGENTOPS_IMAGE:-agentops-mis-byoc:local}
+    init: true
     restart: unless-stopped
     stop_grace_period: 30s
     user: "1000:1000"
