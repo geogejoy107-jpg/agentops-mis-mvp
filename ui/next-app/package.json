@@ -21,6 +21,7 @@
     "typecheck": "tsc --noEmit",
     "test:supply-chain-contract": "tsx scripts/supply-chain-contract.ts",
     "test:control-plane-mode-contract": "tsx scripts/control-plane-mode-contract.ts",
+    "test:commercial-api-ownership-contract": "tsx contracts/commercial-api-ownership-contract.ts",
     "test:configuration-secrets-contract": "tsx scripts/configuration-secrets-contract.ts",
     "test:postgres-role-boundary-contract": "tsx scripts/postgres-role-boundary-contract.ts",
     "test:byoc-packaging-contract": "tsx scripts/byoc-packaging-contract.ts",
