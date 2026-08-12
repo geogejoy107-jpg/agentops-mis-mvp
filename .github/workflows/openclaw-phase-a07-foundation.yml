@@ -174,10 +174,8 @@ jobs:
           container_id="$(docker create "${guest_image}")"
           trap 'docker rm -f "${container_id}" >/dev/null 2>&1 || true' EXIT
           docker export "${container_id}" | tar -x -C "${rootfs}"
-          runtime_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "${guest_image}" 2>/dev/null | sed -n 's/.*@\(sha256:[a-f0-9]\{64\}\)$/\1/p')"
-          if [ -z "${runtime_digest}" ]; then
-            runtime_digest="sha256:$(docker image inspect --format '{{.Id}}' "${guest_image}" | sed 's/^sha256://')"
-          fi
+          runtime_digest="$(docker image inspect --format '{{.Id}}' "${guest_image}")"
+          [[ "${runtime_digest}" =~ ^sha256:[a-f0-9]{64}$ ]]
           cat > "${config}" <<'JSON'
           {
             "agents": {
