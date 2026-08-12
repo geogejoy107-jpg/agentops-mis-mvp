@@ -84,6 +84,9 @@ for (const honestClaim of [
 for (const attackClaim of [
   "wrong_public_peer_connection_rejected: true",
   "wrong_private_peer_connection_rejected: true",
+  "public_backend_execute_request_delta:",
+  "private_backend_execute_request_delta:",
+  "allowed_round_trip_backend_execute_counters_verified: true",
 ]) {
   assert.ok(acceptance.includes(attackClaim), `acceptance_attack_claim_required:${attackClaim}`);
 }

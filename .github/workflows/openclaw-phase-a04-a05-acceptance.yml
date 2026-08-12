@@ -108,6 +108,9 @@ jobs:
             and .wrong_private_peer_connection_rejected == true
             and .public_backend_process_identity_unchanged == true
             and .private_backend_process_identity_unchanged == true
+            and .public_backend_execute_request_delta == 0
+            and .private_backend_execute_request_delta == 0
+            and .allowed_round_trip_backend_execute_counters_verified == true
             and .peercred_check_precedes_upstream_connect_contract_verified == true
             and .production_executor_operational_healthcheck_verified == true
             and .production_executor_operational_startup_ordering_verified == true

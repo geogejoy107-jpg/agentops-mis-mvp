@@ -103,7 +103,9 @@ try {
     ) || []).length,
     2,
   );
-  assert.match(providerEntrypoint, /state = \{ activeRequest: null, shuttingDown: false \}/);
+  assert.match(providerEntrypoint, /executeRequestsReceived:\s*0/);
+  assert.match(providerEntrypoint, /execute_requests_received:\s*state\.executeRequestsReceived/);
+  assert.match(providerEntrypoint, /state\.executeRequestsReceived \+= 1/);
   assert.match(providerEntrypoint, /state\.activeRequest = requestSlot/);
   assert.match(providerEntrypoint, /provider_socket_directory_unavailable/);
   assert.match(providerEntrypoint, /provider_socket_directory_permissions_invalid/);

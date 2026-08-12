@@ -375,10 +375,17 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
   provider.stderr.on("data", (chunk) => { providerOutput += chunk; });
 
   const health = await waitForSocket(provider);
-  assert.deepEqual(Object.keys(health.body).sort(), ["busy", "ok", "ready", "schema"]);
+  assert.deepEqual(Object.keys(health.body).sort(), [
+    "busy",
+    "execute_requests_received",
+    "ok",
+    "ready",
+    "schema",
+  ]);
   assert.equal(health.body.schema, "agentops_openclaw_provider_health_v1");
   assert.equal(health.body.ok, true);
   assert.equal(health.body.busy, false);
+  assert.equal(health.body.execute_requests_received, 0);
   assert.equal(statSync(socketPath).mode & 0o777, 0o660);
   assert.equal(statSync(socketPath).gid, process.getgid());
   const healthResult = spawnSync(process.execPath, [healthcheck], {
@@ -505,6 +512,8 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
 
   const successPrompt = `contract success ${secretCanary}`;
   const success = await call({ body: executionRequest(successPrompt) });
+  const healthAfterSuccess = await call({ method: "GET", path: "/health" });
+  assert.equal(healthAfterSuccess.body.execute_requests_received > 0, true);
   assert.equal(success.status, 200);
   assertExactResponse(success.body, true);
   assert.doesNotMatch(success.raw, new RegExp(secretCanary));

@@ -10,6 +10,7 @@ const EXPECTED_ACTION_REFS = new Set([
 const EXPECTED_LOCAL_WORKFLOW_REFS = new Set([
   "./.github/workflows/byoc-compose-acceptance.yml",
   "./.github/workflows/byoc-cross-schema-v9-v11-acceptance.yml",
+  "./.github/workflows/openclaw-phase-a04-a05-acceptance.yml",
 ]);
 const POSTGRES_IMAGE =
   "postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777";
@@ -29,6 +30,10 @@ async function run() {
     ),
     new URL(
       "../../../.github/workflows/byoc-cross-schema-v9-v11-acceptance.yml",
+      import.meta.url,
+    ),
+    new URL(
+      "../../../.github/workflows/openclaw-phase-a04-a05-acceptance.yml",
       import.meta.url,
     ),
   ];
@@ -124,11 +129,11 @@ async function run() {
   assert.match(ci, /name:\s+Commercial promotion gate/);
   assert.match(
     ci,
-    /needs:[\s\S]*backend-deterministic[\s\S]*ui-build[\s\S]*commercial-next-boundary[\s\S]*byoc-compose-acceptance[\s\S]*byoc-cross-schema-acceptance/,
+    /needs:[\s\S]*backend-deterministic[\s\S]*ui-build[\s\S]*commercial-next-boundary[\s\S]*byoc-compose-acceptance[\s\S]*byoc-cross-schema-acceptance[\s\S]*openclaw-a04-a05-acceptance/,
   );
   assert.match(
     ci,
-    /test "\$BYOC_COMPOSE_RESULT" = success[\s\S]*test "\$BYOC_CROSS_SCHEMA_RESULT" = success/,
+    /test "\$BYOC_COMPOSE_RESULT" = success[\s\S]*test "\$BYOC_CROSS_SCHEMA_RESULT" = success[\s\S]*test "\$OPENCLAW_A04_A05_RESULT" = success/,
   );
 
   const byoc = workflows.find((workflow) =>

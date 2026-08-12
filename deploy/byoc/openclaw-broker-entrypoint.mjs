@@ -492,7 +492,11 @@ function writePrivateResponse(publicResponse, forwarded) {
 export async function startBrokerService(configuration = loadConfiguration()) {
   await preparePublicSocket(configuration);
   const privateIdentity = inspectPrivateSocket(configuration);
-  const state = { activeRequest: null, shuttingDown: false };
+  const state = {
+    activeRequest: null,
+    executeRequestsReceived: 0,
+    shuttingDown: false,
+  };
   const sockets = new Set();
   const server = createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
@@ -510,6 +514,7 @@ export async function startBrokerService(configuration = loadConfiguration()) {
         ok: ready,
         ready,
         busy: state.activeRequest !== null,
+        execute_requests_received: state.executeRequestsReceived,
         a03_mount_path_separation_only: true,
         public_private_socket_paths_distinct: true,
         private_socket_identity_verified: privateSocketIdentityVerified,
@@ -523,6 +528,7 @@ export async function startBrokerService(configuration = loadConfiguration()) {
       boundaryError(response, 404, "RouteNotFound");
       return;
     }
+    state.executeRequestsReceived += 1;
     if (state.shuttingDown || state.activeRequest) {
       request.resume();
       boundaryError(response, 503, "BrokerBusy");
