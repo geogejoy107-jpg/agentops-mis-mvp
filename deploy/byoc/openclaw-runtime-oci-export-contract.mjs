@@ -25,6 +25,7 @@ import {
   inspectOpenClawRuntimeTarArchive,
   parseCanonicalOpenClawRuntimeOciExportProvenance,
   readCommittedOpenClawRuntimeOciExportReceipt,
+  verifyOpenClawRuntimeTarArchiveHeaders,
 } from "./openclaw-runtime-oci-export.mjs";
 
 const sourcePath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "openclaw-runtime-oci-export.mjs");
@@ -69,6 +70,17 @@ function archive(entries) {
   }
   blocks.push(Buffer.alloc(1024));
   return Buffer.concat(blocks);
+}
+
+function paxRecord(key, value) {
+  const body = Buffer.from(`${key}=${value}\n`, "utf8");
+  let digits = 1;
+  for (;;) {
+    const length = digits + 1 + body.length;
+    const nextDigits = String(length).length;
+    if (nextDigits === digits) return Buffer.concat([Buffer.from(`${length} `, "ascii"), body]);
+    digits = nextDigits;
+  }
 }
 
 function inspectFixture(base, name, bytes) {
@@ -116,6 +128,10 @@ for (const required of [
   'const publishedGuestDescriptor = openSync(',
   'receipt = publishProvenanceReceipt(',
   'const guestDescriptorAfter = fstatSync(publishedGuestDescriptor, { bigint: true })',
+  'const MAX_LOCAL_PAX_BYTES = 16 * 1024',
+  'const MAX_LOCAL_PAX_RECORDS = 2',
+  'expected.local_pax_header_sha256 !== header.local_pax_header_sha256',
+  'expected.local_pax_payload_sha256 !== header.local_pax_payload_sha256',
 ]) assert.ok(source.includes(required), `missing static boundary: ${required}`);
 
 assert.equal(/shell\s*:\s*true/.test(source), false);
@@ -201,13 +217,123 @@ try {
     body: Buffer.from("prefix-path\n"),
   }]))();
   assert.equal(prefixed.entry_count, 1);
+  const longPath = `opt/openclaw/node_modules/${"deep-segment/".repeat(24)}package.json`;
+  const longLink = `${"../".repeat(20)}opt/openclaw/runtime-target`;
+  const localPax = inspectFixture(base, "local-pax-path-linkpath", archive([
+    {
+      name: "PaxHeaders.0/runtime-link",
+      type: "x",
+      body: Buffer.concat([paxRecord("path", longPath), paxRecord("linkpath", longLink)]),
+    },
+    { name: "runtime-link", type: "2", link: "placeholder" },
+  ]))();
+  assert.equal(localPax.entry_count, 1);
+  assert.equal(localPax.headers[0].name, longPath);
+  assert.match(localPax.headers[0].local_pax_header_sha256, /^[a-f0-9]{64}$/);
+  assert.match(localPax.headers[0].local_pax_payload_sha256, /^[a-f0-9]{64}$/);
+  const streamOnePath = "bound/path-one";
+  const streamTwoPath = "bound/path-two";
+  assert.equal(Buffer.byteLength(streamOnePath), Buffer.byteLength(streamTwoPath));
+  const entity = { name: "placeholder", body: Buffer.from("same entity body\n") };
+  const streamOneBytes = archive([
+    { name: "PaxHeaders.0/placeholder", type: "x", body: paxRecord("path", streamOnePath) },
+    entity,
+  ]);
+  const streamTwoBytes = archive([
+    { name: "PaxHeaders.0/placeholder", type: "x", body: paxRecord("path", streamTwoPath) },
+    entity,
+  ]);
+  const streamOneInspect = inspectFixture(base, "pax-bound-stream-one", streamOneBytes)();
+  const streamTwoPathname = path.join(base, "pax-bound-stream-two.tar");
+  writeFileSync(streamTwoPathname, streamTwoBytes, { mode: 0o600 });
+  assert.throws(
+    () => verifyOpenClawRuntimeTarArchiveHeaders(streamTwoPathname, streamOneInspect.headers),
+    /runtime_oci_export_tar_second_stream_mismatch/,
+  );
+
+  const malformedPaxLength = Buffer.from(paxRecord("path", "safe/path"));
+  malformedPaxLength[0] = 0x39;
+  const invalidUtf8 = Buffer.from(paxRecord("path", "safe/path"));
+  invalidUtf8[invalidUtf8.length - 2] = 0xff;
+  const oversizedPax = Buffer.alloc(16 * 1024 + 1, 0x61);
+  const nonzeroPaxPadding = archive([
+    { name: "PaxHeaders.0/path", type: "x", body: paxRecord("path", "safe/path") },
+    { name: "placeholder", body: Buffer.from("x") },
+  ]);
+  nonzeroPaxPadding[512 + paxRecord("path", "safe/path").length] = 1;
 
   for (const [name, bytes, pattern] of [
     ["traversal", archive([{ name: "../escape", body: Buffer.from("x") }]), /runtime_oci_export_tar_path_rejected/],
     ["absolute", archive([{ name: "/escape", body: Buffer.from("x") }]), /runtime_oci_export_tar_path_rejected/],
     ["hardlink", archive([{ name: "hard", type: "1", link: "target" }]), /runtime_oci_export_tar_hardlink_rejected/],
     ["device", archive([{ name: "device", type: "3" }]), /runtime_oci_export_tar_special_or_extension_rejected/],
-    ["pax", archive([{ name: "pax", type: "x" }]), /runtime_oci_export_tar_special_or_extension_rejected/],
+    ["pax-empty", archive([{ name: "pax", type: "x" }]), /runtime_oci_export_tar_pax_size_rejected/],
+    ["pax-unbound", archive([{ name: "pax", type: "x", body: paxRecord("path", "safe/path") }]), /runtime_oci_export_tar_pax_unbound_rejected/],
+    ["pax-consecutive", archive([
+      { name: "pax-one", type: "x", body: paxRecord("path", "safe/one") },
+      { name: "pax-two", type: "x", body: paxRecord("path", "safe/two") },
+      { name: "placeholder", body: Buffer.from("x") },
+    ]), /runtime_oci_export_tar_pax_unbound_rejected/],
+    ["pax-unknown", archive([
+      { name: "pax", type: "x", body: paxRecord("comment", "value") },
+      { name: "placeholder", body: Buffer.from("x") },
+    ]), /runtime_oci_export_tar_pax_key_rejected/],
+    ["pax-numeric", archive([
+      { name: "pax", type: "x", body: paxRecord("mtime", "0") },
+      { name: "placeholder", body: Buffer.from("x") },
+    ]), /runtime_oci_export_tar_pax_key_rejected/],
+    ["pax-duplicate", archive([
+      { name: "pax", type: "x", body: Buffer.concat([paxRecord("path", "safe/one"), paxRecord("path", "safe/two")]) },
+      { name: "placeholder", body: Buffer.from("x") },
+    ]), /runtime_oci_export_tar_pax_duplicate_key_rejected/],
+    ["pax-malformed-length", archive([
+      { name: "pax", type: "x", body: malformedPaxLength },
+      { name: "placeholder", body: Buffer.from("x") },
+    ]), /runtime_oci_export_tar_pax_record_rejected/],
+    ["pax-leading-zero-length", archive([
+      { name: "pax", type: "x", body: Buffer.from("014 path=safe\n", "ascii") },
+      { name: "placeholder", body: Buffer.from("x") },
+    ]), /runtime_oci_export_tar_pax_record_rejected/],
+    ["pax-invalid-utf8", archive([
+      { name: "pax", type: "x", body: invalidUtf8 },
+      { name: "placeholder", body: Buffer.from("x") },
+    ]), /runtime_oci_export_tar_pax_value_rejected/],
+    ["pax-nul", archive([
+      { name: "pax", type: "x", body: paxRecord("path", "safe\0path") },
+      { name: "placeholder", body: Buffer.from("x") },
+    ]), /runtime_oci_export_tar_pax_payload_rejected/],
+    ["pax-oversized", archive([
+      { name: "pax", type: "x", body: oversizedPax },
+      { name: "placeholder", body: Buffer.from("x") },
+    ]), /runtime_oci_export_tar_pax_size_rejected/],
+    ["pax-noncanonical-path", archive([
+      { name: "pax", type: "x", body: paxRecord("path", "./safe/path") },
+      { name: "placeholder", body: Buffer.from("x") },
+    ]), /runtime_oci_export_tar_pax_value_rejected/],
+    ["pax-traversal", archive([
+      { name: "pax", type: "x", body: paxRecord("path", "../escape") },
+      { name: "placeholder", body: Buffer.from("x") },
+    ]), /runtime_oci_export_tar_path_rejected/],
+    ["pax-absolute", archive([
+      { name: "pax", type: "x", body: paxRecord("path", "/escape") },
+      { name: "placeholder", body: Buffer.from("x") },
+    ]), /runtime_oci_export_tar_path_rejected/],
+    ["pax-linkpath-regular", archive([
+      { name: "pax", type: "x", body: paxRecord("linkpath", "safe/target") },
+      { name: "placeholder", body: Buffer.from("x") },
+    ]), /runtime_oci_export_tar_pax_linkpath_rejected/],
+    ["pax-linkpath-escape", archive([
+      {
+        name: "pax",
+        type: "x",
+        body: Buffer.concat([
+          paxRecord("path", "a/runtime-link"),
+          paxRecord("linkpath", "../../escape"),
+        ]),
+      },
+      { name: "placeholder", type: "2", link: "safe-target" },
+    ]), /runtime_oci_export_tar_symlink_rejected/],
+    ["pax-padding", nonzeroPaxPadding, /runtime_oci_export_tar_pax_padding_rejected/],
     ["pax-global", archive([{ name: "pax-global", type: "g" }]), /runtime_oci_export_tar_special_or_extension_rejected/],
     ["gnu-longname", archive([{ name: "gnu-longname", type: "L" }]), /runtime_oci_export_tar_special_or_extension_rejected/],
     ["gnu-longlink", archive([{ name: "gnu-longlink", type: "K" }]), /runtime_oci_export_tar_special_or_extension_rejected/],
@@ -311,7 +437,7 @@ function syntheticProvenance() {
   return {
     export_archive_sha256: "b".repeat(64),
     export_policy: {
-      archive_format: "strict_ustar_only_gnu_longname_and_pax_extensions_rejected_fail_closed",
+      archive_format: "strict_ustar_with_single_entry_path_linkpath_pax_only_gnu_global_and_other_extensions_rejected_fail_closed",
       extraction: "two_identical_stopped_container_exports_strict_ustar_then_gnu_tar_stream",
       root_directory: "normalized_root_0_0_0555",
     },
@@ -463,8 +589,12 @@ function createImageContext(context) {
 function createExtensionRequiredContext(context) {
   const root = path.join(context, "rootfs");
   mkdirSync(path.join(root, "bin"), { recursive: true, mode: 0o555 });
+  mkdirSync(path.join(root, "opt/agentops-worker/workspace"), { recursive: true, mode: 0o555 });
+  mkdirSync(path.join(root, "run/secrets"), { recursive: true, mode: 0o555 });
   writeFileSync(path.join(root, "bin/runtime"), "extension-contract-v1\n", { mode: 0o555 });
   chmodSync(path.join(root, "bin/runtime"), 0o555);
+  writeFileSync(path.join(root, "run/secrets/openclaw_config"), "", { mode: 0o400 });
+  chmodSync(path.join(root, "run/secrets/openclaw_config"), 0o400);
   const longPath = path.join(root, ...Array.from({ length: 24 }, () => "segment1234"));
   mkdirSync(longPath, { recursive: true, mode: 0o555 });
   writeFileSync(path.join(longPath, "beyond-ustar.txt"), "extension-required\n", { mode: 0o444 });
@@ -474,6 +604,7 @@ function createExtensionRequiredContext(context) {
     'FROM scratch\nCOPY rootfs /\nCMD ["/bin/runtime"]\n',
     { mode: 0o444 },
   );
+  return path.relative(root, path.join(longPath, "beyond-ustar.txt"));
 }
 
 function pushedDigest(reference) {
@@ -615,20 +746,26 @@ async function realOciContract() {
 
     const extensionContext = path.join(working, "extension-image");
     mkdirSync(extensionContext, { mode: 0o700 });
-    createExtensionRequiredContext(extensionContext);
+    const extensionRelativePath = createExtensionRequiredContext(extensionContext);
     const extensionTag = `${registry}/agentops/openclaw-export:extension-required`;
     mustCommand(DOCKER, ["build", "--platform", "linux/amd64", "--tag", extensionTag, "."], {
       cwd: extensionContext, stdio: ["ignore", "ignore", "ignore"],
     });
     mustCommand(DOCKER, ["push", extensionTag], { stdio: ["ignore", "ignore", "ignore"] });
     const extensionExact = pushedDigest(extensionTag);
-    const extensionRejected = command(process.execPath, [
-      sourcePath, "--oci", extensionExact, "--output", path.join(working, "extension-output"),
-      "--provenance-output", path.join(working, "extension-provenance.json"),
+    const extensionOutput = path.join(working, "extension-output");
+    const extensionProvenance = path.join(working, "extension-provenance.json");
+    const extensionAccepted = command(process.execPath, [
+      sourcePath, "--oci", extensionExact, "--output", extensionOutput,
+      "--provenance-output", extensionProvenance,
       "--allow-insecure-loopback-registry-contract", "true",
     ]);
-    assert.equal(extensionRejected.status, 1);
-    assert.match(extensionRejected.stderr, /runtime_oci_export_tar_(?:special_or_extension|path)_rejected/);
+    assert.equal(extensionAccepted.status, 0, extensionAccepted.stderr.trim());
+    assert.equal(readFileSync(path.join(extensionOutput, extensionRelativePath), "utf8"), "extension-required\n");
+    assert.equal(
+      readCommittedOpenClawRuntimeOciExportReceipt(extensionProvenance).committed,
+      true,
+    );
 
     const wrongDigest = `${amdExact.split("@")[0]}@sha256:${"b".repeat(64)}`;
     const wrongName = `${registry}/agentops/not-the-image@${amdExact.split("@")[1]}`;
@@ -703,7 +840,7 @@ async function realOciContract() {
     assert.match(listRejected.stderr, /runtime_oci_export_manifest_list_or_platform_rejected/);
     return Object.freeze({
       digest_root_merkle_binding_verified: true,
-      actual_docker_ustar_prefix_accepted_and_extension_required_path_rejected: true,
+      actual_docker_local_path_pax_accepted_and_committed: true,
       manifest_list_rejected: true,
       provenance_canonical_metadata_no_clobber_and_path_policy_verified: true,
       provenance_commit_marker_consumer_verified: true,
@@ -738,7 +875,9 @@ process.stdout.write(`${JSON.stringify({
   provenance_v2_guest_identity_fd_merkle_static_boundary_verified: true,
   provenance_v2_pure_parser_has_no_filesystem_identity_dependency: true,
   strict_ustar_path_hardlink_special_symlink_policy_verified: true,
-  ustar_prefix_long_path_accepted_gnu_pax_extensions_fail_closed: true,
+  local_path_linkpath_pax_bounded_canonical_and_next_entry_bound: true,
+  local_pax_payload_two_stream_binding_executed: true,
+  gnu_global_unknown_numeric_and_unsafe_pax_extensions_fail_closed: true,
   two_export_header_and_full_stream_binding_static_boundary_verified: true,
   real_oci_export_performed: real !== null,
   real_oci_export_reason: real === null

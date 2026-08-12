@@ -53,6 +53,8 @@ const SAFE_ENV = Object.freeze({
   PATH: "/usr/bin:/bin",
 });
 const MAX_METADATA_BYTES = 1024 * 1024;
+const MAX_LOCAL_PAX_BYTES = 16 * 1024;
+const MAX_LOCAL_PAX_RECORDS = 2;
 const TAR_BLOCK_BYTES = 512;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 
@@ -485,8 +487,10 @@ export function parseCanonicalOpenClawRuntimeOciExportProvenance(inputBytes) {
     || receipt.rootfs.file_count < 1
     || !Number.isSafeInteger(receipt.rootfs.byte_count)
     || receipt.rootfs.byte_count < 0
-    || receipt.export_policy.archive_format
-      !== "strict_ustar_only_gnu_longname_and_pax_extensions_rejected_fail_closed"
+    || ![
+      "strict_ustar_only_gnu_longname_and_pax_extensions_rejected_fail_closed",
+      "strict_ustar_with_single_entry_path_linkpath_pax_only_gnu_global_and_other_extensions_rejected_fail_closed",
+    ].includes(receipt.export_policy.archive_format)
     || receipt.export_policy.extraction
       !== "two_identical_stopped_container_exports_strict_ustar_then_gnu_tar_stream"
     || receipt.export_policy.root_directory !== "normalized_root_0_0_0555"
@@ -827,10 +831,114 @@ function safeSymlinkTarget(entryName, target) {
   return target;
 }
 
-function parseTarHeader(block) {
+function assertTarHeaderFormat(block) {
   tarChecksum(block);
   const magic = block.subarray(257, 263).toString("latin1");
   if (magic !== "ustar\0" && magic !== "ustar ") fail("runtime_oci_export_tar_format_rejected");
+}
+
+function tarOwnerAndMode(block) {
+  const mode = tarOctal(block.subarray(100, 108), "runtime_oci_export_tar_mode_invalid");
+  const uid = tarOctal(block.subarray(108, 116), "runtime_oci_export_tar_owner_invalid");
+  const gid = tarOctal(block.subarray(116, 124), "runtime_oci_export_tar_owner_invalid");
+  if (
+    mode > 0o7777
+    || (mode & 0o6000) !== 0
+    || uid > 0xffff
+    || gid > 0xffff
+  ) fail("runtime_oci_export_tar_owner_or_mode_rejected");
+}
+
+function parseLocalPaxHeader(block) {
+  assertTarHeaderFormat(block);
+  if (block[156] !== 0x78) fail("runtime_oci_export_tar_special_or_extension_rejected");
+  tarOwnerAndMode(block);
+  const prefix = tarText(block.subarray(345, 500), "runtime_oci_export_tar_path_rejected");
+  const leaf = tarText(block.subarray(0, 100), "runtime_oci_export_tar_path_rejected");
+  canonicalArchivePath(prefix ? `${prefix}/${leaf}` : leaf, "regular");
+  if (tarText(block.subarray(157, 257), "runtime_oci_export_tar_link_rejected")) {
+    fail("runtime_oci_export_tar_link_rejected");
+  }
+  const size = tarOctal(block.subarray(124, 136), "runtime_oci_export_tar_size_invalid");
+  if (size < 1 || size > MAX_LOCAL_PAX_BYTES) {
+    fail("runtime_oci_export_tar_pax_size_rejected");
+  }
+  return Object.freeze({
+    header_sha256: createHash("sha256").update(block).digest("hex"),
+    size,
+  });
+}
+
+function parseCanonicalLocalPaxPayload(payload, headerSha256) {
+  if (payload.length < 1 || payload.length > MAX_LOCAL_PAX_BYTES || payload.includes(0)) {
+    fail("runtime_oci_export_tar_pax_payload_rejected");
+  }
+  const values = Object.create(null);
+  let offset = 0;
+  let records = 0;
+  while (offset < payload.length) {
+    const space = payload.indexOf(0x20, offset);
+    if (space < 0) fail("runtime_oci_export_tar_pax_record_rejected");
+    const lengthBytes = payload.subarray(offset, space);
+    if (
+      lengthBytes.length < 1
+      || lengthBytes.length > 5
+      || lengthBytes[0] === 0x30
+      || !lengthBytes.every((byte) => byte >= 0x30 && byte <= 0x39)
+    ) fail("runtime_oci_export_tar_pax_record_rejected");
+    const length = Number.parseInt(lengthBytes.toString("ascii"), 10);
+    if (
+      !Number.isSafeInteger(length)
+      || String(length) !== lengthBytes.toString("ascii")
+      || length < 5
+      || offset + length > payload.length
+    ) {
+      fail("runtime_oci_export_tar_pax_record_rejected");
+    }
+    const record = payload.subarray(offset, offset + length);
+    if (record[length - 1] !== 0x0a) fail("runtime_oci_export_tar_pax_record_rejected");
+    const body = record.subarray(space - offset + 1, record.length - 1);
+    const equals = body.indexOf(0x3d);
+    if (equals < 1) fail("runtime_oci_export_tar_pax_record_rejected");
+    const keyBytes = body.subarray(0, equals);
+    if (!keyBytes.every((byte) => (
+      (byte >= 0x61 && byte <= 0x7a) || byte === 0x5f
+    ))) fail("runtime_oci_export_tar_pax_key_rejected");
+    const key = keyBytes.toString("ascii");
+    if (key !== "path" && key !== "linkpath") {
+      fail("runtime_oci_export_tar_pax_key_rejected");
+    }
+    if (Object.hasOwn(values, key)) fail("runtime_oci_export_tar_pax_duplicate_key_rejected");
+    const valueBytes = body.subarray(equals + 1);
+    if (valueBytes.length < 1) fail("runtime_oci_export_tar_pax_value_rejected");
+    let value;
+    try {
+      value = UTF8.decode(valueBytes);
+    } catch (error) {
+      fail("runtime_oci_export_tar_pax_value_rejected", error);
+    }
+    if (
+      value.includes("\0")
+      || /[\u0000-\u001f\u007f]/.test(value)
+      || value.normalize("NFC") !== value
+    ) {
+      fail("runtime_oci_export_tar_pax_value_rejected");
+    }
+    values[key] = value;
+    records += 1;
+    if (records > MAX_LOCAL_PAX_RECORDS) fail("runtime_oci_export_tar_pax_record_count_rejected");
+    offset += length;
+  }
+  if (offset !== payload.length || records < 1) fail("runtime_oci_export_tar_pax_record_rejected");
+  return Object.freeze({
+    header_sha256: headerSha256,
+    payload_sha256: createHash("sha256").update(payload).digest("hex"),
+    values: Object.freeze(values),
+  });
+}
+
+function parseTarHeader(block, localPax = null) {
+  assertTarHeaderFormat(block);
   const typeByte = block[156];
   const type = typeByte === 0 || typeByte === 0x30
     ? "regular"
@@ -844,24 +952,28 @@ function parseTarHeader(block) {
     : "runtime_oci_export_tar_special_or_extension_rejected");
   const prefix = tarText(block.subarray(345, 500), "runtime_oci_export_tar_path_rejected");
   const leaf = tarText(block.subarray(0, 100), "runtime_oci_export_tar_path_rejected");
-  const name = canonicalArchivePath(prefix ? `${prefix}/${leaf}` : leaf, type);
-  const mode = tarOctal(block.subarray(100, 108), "runtime_oci_export_tar_mode_invalid");
-  const uid = tarOctal(block.subarray(108, 116), "runtime_oci_export_tar_owner_invalid");
-  const gid = tarOctal(block.subarray(116, 124), "runtime_oci_export_tar_owner_invalid");
+  const name = canonicalArchivePath(
+    localPax?.values.path ?? (prefix ? `${prefix}/${leaf}` : leaf),
+    type,
+  );
   if (
-    mode > 0o7777
-    || (mode & 0o6000) !== 0
-    || uid > 0xffff
-    || gid > 0xffff
-  ) {
-    fail("runtime_oci_export_tar_owner_or_mode_rejected");
-  }
+    localPax?.values.path !== undefined
+    && localPax.values.path !== name
+    && !(type === "directory" && localPax.values.path === `${name}/`)
+  ) fail("runtime_oci_export_tar_pax_value_rejected");
+  tarOwnerAndMode(block);
   const size = tarOctal(block.subarray(124, 136), "runtime_oci_export_tar_size_invalid");
   if (type !== "regular" && size !== 0) fail("runtime_oci_export_tar_size_invalid");
-  const link = tarText(block.subarray(157, 257), "runtime_oci_export_tar_symlink_rejected");
+  if (localPax?.values.linkpath !== undefined && type !== "symlink") {
+    fail("runtime_oci_export_tar_pax_linkpath_rejected");
+  }
+  const link = localPax?.values.linkpath
+    ?? tarText(block.subarray(157, 257), "runtime_oci_export_tar_symlink_rejected");
   if (type === "symlink") safeSymlinkTarget(name, link);
   else if (link) fail("runtime_oci_export_tar_link_rejected");
   return Object.freeze({
+    local_pax_header_sha256: localPax?.header_sha256 ?? null,
+    local_pax_payload_sha256: localPax?.payload_sha256 ?? null,
     header_sha256: createHash("sha256").update(block).digest("hex"),
     name,
     size,
@@ -876,6 +988,9 @@ class TarArchiveValidator {
     this.dataBlocks = 0;
     this.ended = false;
     this.entries = new Map();
+    this.extension = null;
+    this.extensionChunks = null;
+    this.extensionBytesRemaining = 0;
     this.headers = [];
     this.expectedHeaders = expectedHeaders;
     this.zeroBlocks = 0;
@@ -893,17 +1008,42 @@ class TarArchiveValidator {
 
   #block(block) {
     if (this.dataBlocks > 0) {
+      if (this.extensionChunks) {
+        const bytes = Math.min(this.extensionBytesRemaining, TAR_BLOCK_BYTES);
+        this.extensionChunks.push(Buffer.from(block.subarray(0, bytes)));
+        if (bytes < TAR_BLOCK_BYTES && block.subarray(bytes).some((value) => value !== 0)) {
+          fail("runtime_oci_export_tar_pax_padding_rejected");
+        }
+        this.extensionBytesRemaining -= bytes;
+      }
       this.dataBlocks -= 1;
+      if (this.dataBlocks === 0 && this.extensionChunks) {
+        if (this.extensionBytesRemaining !== 0) fail("runtime_oci_export_tar_truncated");
+        const payload = Buffer.concat(this.extensionChunks);
+        this.extension = parseCanonicalLocalPaxPayload(payload, this.extension.header_sha256);
+        this.extensionChunks = null;
+      }
       return;
     }
     const zero = block.every((value) => value === 0);
     if (zero) {
+      if (this.extension) fail("runtime_oci_export_tar_pax_unbound_rejected");
       this.zeroBlocks += 1;
       if (this.zeroBlocks >= 2) this.ended = true;
       return;
     }
     if (this.ended || this.zeroBlocks !== 0) fail("runtime_oci_export_tar_trailing_data_rejected");
-    const header = parseTarHeader(block);
+    if (block[156] === 0x78) {
+      if (this.extension) fail("runtime_oci_export_tar_pax_unbound_rejected");
+      this.extension = parseLocalPaxHeader(block);
+      this.extensionChunks = [];
+      this.extensionBytesRemaining = this.extension.size;
+      this.dataBlocks = Math.ceil(this.extension.size / TAR_BLOCK_BYTES);
+      return;
+    }
+    const localPax = this.extension;
+    this.extension = null;
+    const header = parseTarHeader(block, localPax);
     if (this.entries.has(header.name)) fail("runtime_oci_export_tar_duplicate_path_rejected");
     const segments = header.name.split("/");
     let ancestor = "";
@@ -922,6 +1062,8 @@ class TarArchiveValidator {
     if (this.expectedHeaders && (
       !expected
       || expected.header_sha256 !== header.header_sha256
+      || expected.local_pax_header_sha256 !== header.local_pax_header_sha256
+      || expected.local_pax_payload_sha256 !== header.local_pax_payload_sha256
       || expected.name !== header.name
       || expected.size !== header.size
       || expected.type !== header.type
@@ -931,7 +1073,13 @@ class TarArchiveValidator {
   }
 
   finish() {
-    if (this.buffer.length !== 0 || this.dataBlocks !== 0 || !this.ended) {
+    if (
+      this.buffer.length !== 0
+      || this.dataBlocks !== 0
+      || this.extension
+      || this.extensionChunks
+      || !this.ended
+    ) {
       fail("runtime_oci_export_tar_truncated");
     }
     if (this.expectedHeaders && this.headers.length !== this.expectedHeaders.length) {
@@ -948,6 +1096,23 @@ class TarArchiveValidator {
 export function inspectOpenClawRuntimeTarArchive(archivePath) {
   const descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_CLOEXEC);
   const validator = new TarArchiveValidator();
+  try {
+    const buffer = Buffer.allocUnsafe(256 * 1024);
+    for (;;) {
+      const bytes = readSync(descriptor, buffer, 0, buffer.length, null);
+      if (bytes === 0) break;
+      validator.update(buffer.subarray(0, bytes));
+    }
+    return validator.finish();
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+export function verifyOpenClawRuntimeTarArchiveHeaders(archivePath, expectedHeaders) {
+  if (!Array.isArray(expectedHeaders)) fail("runtime_oci_export_tar_expected_headers_invalid");
+  const descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_CLOEXEC);
+  const validator = new TarArchiveValidator(expectedHeaders);
   try {
     const buffer = Buffer.allocUnsafe(256 * 1024);
     for (;;) {
@@ -1124,7 +1289,7 @@ export async function exportOpenClawRuntimeOciRootfs(input) {
       const provenance = Object.freeze({
         export_archive_sha256: exportSha256,
         export_policy: Object.freeze({
-          archive_format: "strict_ustar_only_gnu_longname_and_pax_extensions_rejected_fail_closed",
+          archive_format: "strict_ustar_with_single_entry_path_linkpath_pax_only_gnu_global_and_other_extensions_rejected_fail_closed",
           extraction: "two_identical_stopped_container_exports_strict_ustar_then_gnu_tar_stream",
           root_directory: "normalized_root_0_0_0555",
         }),
