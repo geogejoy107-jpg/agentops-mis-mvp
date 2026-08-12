@@ -131,9 +131,11 @@ cancellation signal, while post-provider failure evidence is still reconciled.
 The BYOC Worker supervisor first sends shutdown to the TypeScript Worker process
 that owns the cancellation handler. If it does not exit in time, the supervisor
 applies a bounded forced stop to the complete detached process group inside the
-Compose grace period. Under the OpenClaw profile, Compose supervises the
-provider sidecar independently and the Worker cancels provider work over the
-Unix socket.
+Compose grace period. Signal handlers are installed before the Worker starts,
+and invalid or oversized receipts, token-bearing stderr, and health-state write
+failures use the same bounded cleanup path while remaining failed outcomes.
+Under the OpenClaw profile, Compose supervises the provider sidecar independently
+and the Worker cancels provider work over the Unix socket.
 
 ```bash
 npm run worker:commercial -- \

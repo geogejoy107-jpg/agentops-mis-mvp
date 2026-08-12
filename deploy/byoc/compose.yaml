@@ -308,6 +308,8 @@ services:
       OPENCLAW_CONFIG_PATH: /run/secrets/openclaw_config
       OPENCLAW_STATE_DIR: /run/openclaw-state
       AGENTOPS_WORKER_CWD: /opt/agentops-worker/workspace
+      OPENCLAW_AGENT: ${AGENTOPS_OPENCLAW_AGENT:-main}
+      OPENCLAW_TIMEOUT_SECONDS: ${AGENTOPS_OPENCLAW_TIMEOUT_SECONDS:-180}
     secrets:
       - source: openclaw_config
         target: openclaw_config

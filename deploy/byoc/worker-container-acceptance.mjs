@@ -72,6 +72,57 @@ function docker(arguments_, acceptedStatuses = [0], failureCode = "docker_comman
   return result.stdout;
 }
 
+function cleanupDocker(arguments_) {
+  const result = spawnSync("docker", arguments_, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 30_000,
+  });
+  return {
+    ok: !result.error && result.status === 0 && result.signal === null,
+    stdout: typeof result.stdout === "string" ? result.stdout : "",
+  };
+}
+
+function cleanupResources() {
+  const failures = [];
+  const containers = [
+    openClawWorkerName,
+    openClawProviderName,
+    workerName,
+    stubName,
+  ];
+  for (const name of containers) {
+    if (!cleanupDocker(["rm", "--force", name]).ok) {
+      failures.push("acceptance_container_cleanup_failed");
+    }
+  }
+  if (!cleanupDocker(["volume", "rm", "--force", openClawSocketVolume]).ok) {
+    failures.push("acceptance_volume_cleanup_failed");
+  }
+  for (const name of containers) {
+    const probe = cleanupDocker([
+      "container", "ls", "--all", "--quiet", "--filter", `name=^/${name}$`,
+    ]);
+    if (!probe.ok || probe.stdout.trim()) {
+      failures.push("acceptance_container_cleanup_unconfirmed");
+    }
+  }
+  const volumeProbe = cleanupDocker([
+    "volume", "ls", "--quiet", "--filter", `name=^${openClawSocketVolume}$`,
+  ]);
+  if (!volumeProbe.ok || volumeProbe.stdout.trim()) {
+    failures.push("acceptance_volume_cleanup_unconfirmed");
+  }
+  try {
+    rmSync(root, { recursive: true, force: true });
+  } catch {
+    failures.push("acceptance_local_cleanup_failed");
+  }
+  if (existsSync(root)) failures.push("acceptance_local_cleanup_unconfirmed");
+  return failures[0] || null;
+}
+
 function sleep(milliseconds) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
@@ -242,6 +293,8 @@ request.end(body);
 `;
 
 let receipt;
+let successReceipt = null;
+let acceptanceFailure = null;
 let activeCheck = "initialization";
 try {
   activeCheck = "release_manifest";
@@ -507,6 +560,8 @@ try {
     "--env", "OPENCLAW_CONFIG_PATH=/run/secrets/openclaw_config",
     "--env", "OPENCLAW_STATE_DIR=/run/openclaw-state",
     "--env", "AGENTOPS_WORKER_CWD=/opt/agentops-worker/workspace",
+    "--env", "OPENCLAW_AGENT=acceptance-mock-agent",
+    "--env", "OPENCLAW_TIMEOUT_SECONDS=10",
     "--entrypoint", "node", image,
     "/usr/local/lib/agentops/openclaw-provider-entrypoint.mjs",
   ], [0], "acceptance_openclaw_provider_start_failed");
@@ -673,6 +728,18 @@ try {
     /^(?:OPENCLAW_BIN|OPENCLAW_CONFIG_PATH|OPENCLAW_STATE_DIR|AGENTOPS_WORKER_CWD)=/.test(item)
     || item.includes(providerSentinel)
   )) fail("acceptance_openclaw_worker_provider_environment_detected");
+  const environmentValue = (environment, name) => {
+    const prefix = `${name}=`;
+    const matches = environment.filter((item) => item.startsWith(prefix));
+    return matches.length === 1 ? matches[0].slice(prefix.length) : null;
+  };
+  for (const name of ["OPENCLAW_AGENT", "OPENCLAW_TIMEOUT_SECONDS"]) {
+    const providerValue = environmentValue(providerEnvironment, name);
+    const workerValue = environmentValue(openClawWorkerEnvironment, name);
+    if (!providerValue || providerValue !== workerValue) {
+      fail("acceptance_openclaw_provider_worker_configuration_mismatch");
+    }
+  }
 
   const workerProviderProbe = JSON.parse(docker([
     "exec", openClawWorkerName, "node", "-e",
@@ -760,7 +827,7 @@ try {
     if (exposed.includes(token)) fail("acceptance_openclaw_agent_token_exposed");
   }
 
-  process.stdout.write(`${JSON.stringify({
+  successReceipt = {
     ok: true,
     contract: "agentops_byoc_typescript_worker_container_v1",
     source_revision: manifest.source_revision,
@@ -802,18 +869,22 @@ try {
     real_provider_execution_evidence_source: "separate_exact_head_harness",
     openclaw_raw_prompt_omitted: true,
     openclaw_raw_response_omitted: true,
-  })}\n`);
+    cleanup_confirmed: true,
+    cleanup_secret_output_omitted: true,
+  };
 } catch (error) {
-  const code = typeof error?.code === "string" && /^[a-z][a-z0-9_]{2,80}$/.test(error.code)
+  acceptanceFailure = typeof error?.code === "string" && /^[a-z][a-z0-9_]{2,80}$/.test(error.code)
     ? error.code
     : `acceptance_${activeCheck}_assertion_failed`;
-  process.stderr.write(`${code}\n`);
-  process.exitCode = 1;
 } finally {
-  spawnSync("docker", ["rm", "--force", openClawWorkerName], { stdio: "ignore" });
-  spawnSync("docker", ["rm", "--force", openClawProviderName], { stdio: "ignore" });
-  spawnSync("docker", ["rm", "--force", workerName], { stdio: "ignore" });
-  spawnSync("docker", ["rm", "--force", stubName], { stdio: "ignore" });
-  spawnSync("docker", ["volume", "rm", "--force", openClawSocketVolume], { stdio: "ignore" });
-  rmSync(root, { recursive: true, force: true });
+  const cleanupFailure = cleanupResources();
+  if (acceptanceFailure) {
+    process.stderr.write(`${acceptanceFailure}\n`);
+    process.exitCode = 1;
+  } else if (cleanupFailure) {
+    process.stderr.write(`${cleanupFailure}\n`);
+    process.exitCode = 1;
+  } else {
+    process.stdout.write(`${JSON.stringify(successReceipt)}\n`);
+  }
 }

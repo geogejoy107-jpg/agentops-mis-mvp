@@ -256,7 +256,7 @@ function childEnvironment(tokenSource) {
 }
 
 function signalChildGroup(child, signal) {
-  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
   try {
     process.kill(-child.pid, signal);
   } catch (error) {
@@ -265,7 +265,7 @@ function signalChildGroup(child, signal) {
 }
 
 function signalChild(child, signal) {
-  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
   try {
     child.kill(signal);
   } catch (error) {
@@ -286,39 +286,73 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
   const command = workerCommand(runtime);
   const leaseSeconds = boundedInteger("AGENTOPS_WORKER_HEALTH_LEASE_SECONDS", 120, 30, 600);
   let stopping = false;
+  let failureCode = null;
   let status = "starting";
   let lastReceiptAt = Date.now();
   let lastReceipt = null;
+  let child = null;
+  let shutdownSignal = null;
+  let forceStop;
+  let forcedStop = false;
+  const handlers = new Map();
+
+  const stopChild = (signal, { graceful = false, failure = null } = {}) => {
+    if (graceful) stopping = true;
+    if (!shutdownSignal) shutdownSignal = signal;
+    if (failure && !failureCode) failureCode = failure;
+    status = failureCode ? "failed" : "stopping";
+    signalChild(child, signal);
+    if (!forceStop) {
+      forceStop = setTimeout(() => {
+        forcedStop = true;
+        status = "failed";
+        signalChildGroup(child, "SIGKILL");
+      }, 20_000);
+      forceStop.unref();
+    }
+  };
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+    const handler = () => stopChild(signal, { graceful: true });
+    handlers.set(signal, handler);
+    process.on(signal, handler);
+  }
+
   writeState({ status, runtime, pid: process.pid, lease_seconds: leaseSeconds, updated_at_ms: lastReceiptAt }, statePath);
 
-  const child = spawn(command[0], command.slice(1), {
+  child = spawn(command[0], command.slice(1), {
     cwd: "/opt/agentops/ui/next-app",
     env: childEnvironment(tokenSource),
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });
+  if (shutdownSignal) signalChild(child, shutdownSignal);
   const refresh = setInterval(() => {
-    writeState({
-      status,
-      runtime,
-      pid: process.pid,
-      child_pid: child.pid || null,
-      lease_seconds: leaseSeconds,
-      updated_at_ms: Date.now(),
-      last_receipt_at_ms: lastReceiptAt,
-      last_receipt: lastReceipt,
-      token_omitted: true,
-    }, statePath);
+    try {
+      writeState({
+        status,
+        runtime,
+        pid: process.pid,
+        child_pid: child.pid || null,
+        lease_seconds: leaseSeconds,
+        updated_at_ms: Date.now(),
+        last_receipt_at_ms: lastReceiptAt,
+        last_receipt: lastReceipt,
+        token_omitted: true,
+      }, statePath);
+    } catch {
+      stopChild("SIGTERM", { failure: "worker_health_state_write_failed" });
+    }
   }, Math.min(10_000, Math.floor(leaseSeconds * 1_000 / 3)));
   refresh.unref();
 
   let stdout = "";
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
+    if (failureCode) return;
     stdout += chunk;
     if (Buffer.byteLength(stdout, "utf8") > 1024 * 1024) {
-      signalChildGroup(child, "SIGTERM");
-      status = "failed";
+      stdout = "";
+      stopChild("SIGTERM", { failure: "worker_stdout_limit_exceeded" });
       return;
     }
     while (stdout.includes("\n")) {
@@ -326,7 +360,14 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
       const line = stdout.slice(0, index);
       stdout = stdout.slice(index + 1);
       if (!line.trim()) continue;
-      const receipt = sanitizeReceipt(JSON.parse(line), runtime);
+      let receipt;
+      try {
+        receipt = sanitizeReceipt(JSON.parse(line), runtime);
+      } catch {
+        stdout = "";
+        stopChild("SIGTERM", { failure: "worker_receipt_invalid" });
+        return;
+      }
       lastReceipt = receipt;
       lastReceiptAt = Date.now();
       status = receipt.ok ? "ready" : "failed";
@@ -338,7 +379,10 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
         raw_prompt_omitted: true,
         raw_response_omitted: true,
       })}\n`);
-      if (!receipt.ok && child.exitCode === null) signalChildGroup(child, "SIGTERM");
+      if (!receipt.ok) {
+        stopChild("SIGTERM", { failure: "worker_receipt_failed" });
+        return;
+      }
     }
   });
   child.stderr.setEncoding("utf8");
@@ -346,41 +390,20 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
     const text = String(chunk).trim();
     if (!text) return;
     if (text.includes(token)) {
-      status = "failed";
-      if (child.exitCode === null) signalChildGroup(child, "SIGTERM");
+      stopChild("SIGTERM", { failure: "worker_stderr_token_exposure" });
       return;
     }
     process.stderr.write("agentops_worker_child_error_detail_omitted\n");
   });
 
-  const handlers = new Map();
-  let forceStop;
-  let forcedStop = false;
-  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-    const handler = () => {
-      stopping = true;
-      status = "stopping";
-      signalChild(child, signal);
-      if (!forceStop) {
-        forceStop = setTimeout(() => {
-          forcedStop = true;
-          status = "failed";
-          signalChildGroup(child, "SIGKILL");
-        }, 20_000);
-        forceStop.unref();
-      }
-    };
-    handlers.set(signal, handler);
-    process.on(signal, handler);
-  }
-  const result = await new Promise((resolveResult, reject) => {
-    child.once("error", reject);
+  const result = await new Promise((resolveResult) => {
+    child.once("error", () => resolveResult({ code: null, signal: null }));
     child.once("exit", (code, signal) => resolveResult({ code, signal }));
   });
   clearInterval(refresh);
   if (forceStop) clearTimeout(forceStop);
   for (const [signal, handler] of handlers) process.removeListener(signal, handler);
-  status = stopping && !forcedStop && result.code === 0
+  status = stopping && !failureCode && !forcedStop && result.code === 0
     ? "stopped"
     : "failed";
   writeState({

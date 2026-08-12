@@ -57,6 +57,8 @@ try {
     assert.match(provider, /OPENCLAW_BIN:/);
     assert.match(provider, /OPENCLAW_CONFIG_PATH:/);
     assert.match(provider, /AGENTOPS_WORKER_CWD:/);
+    assert.match(provider, /OPENCLAW_AGENT:.*AGENTOPS_OPENCLAW_AGENT/);
+    assert.match(provider, /OPENCLAW_TIMEOUT_SECONDS:.*AGENTOPS_OPENCLAW_TIMEOUT_SECONDS/);
     assert.match(provider, /agentops_openclaw_provider_socket:\/run\/agentops-openclaw/);
     assert.doesNotMatch(provider, /AGENTOPS_AGENT_TOKEN|openclaw_agent_token/);
     assert.match(provider, /- openclaw_provider_egress/);
@@ -85,10 +87,17 @@ try {
   assert.match(entrypoint, /process\.kill\(-child\.pid, signal\)/);
   assert.match(entrypoint, /signalChild\(child, signal\)/);
   assert.match(entrypoint, /signalChildGroup\(child, "SIGKILL"\)/);
+  assert.match(entrypoint, /process\.on\(signal, handler\)[\s\S]*child = spawn/);
+  assert.match(entrypoint, /if \(shutdownSignal\) signalChild\(child, shutdownSignal\)/);
+  assert.match(entrypoint, /worker_receipt_invalid/);
+  assert.match(entrypoint, /worker_stdout_limit_exceeded/);
+  assert.match(entrypoint, /worker_stderr_token_exposure/);
+  assert.match(entrypoint, /worker_health_state_write_failed/);
+  assert.match(entrypoint, /stopChild\("SIGTERM", \{ failure:/);
   assert.match(entrypoint, /forcedStop = true/);
-  assert.match(entrypoint, /stopping && !forcedStop && result\.code === 0/);
+  assert.match(entrypoint, /stopping && !failureCode && !forcedStop && result\.code === 0/);
   assert.doesNotMatch(entrypoint, /result\.signal.*return 0/);
-  assert.match(entrypoint, /stopping && !forcedStop/);
+  assert.match(entrypoint, /stopping && !failureCode && !forcedStop/);
   assert.match(entrypoint, /OPENCLAW_PROVIDER_SOCKET/);
   assert.doesNotMatch(
     entrypoint,

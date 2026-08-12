@@ -277,6 +277,8 @@ jobs:
             and .real_provider_execution_evidence_source == "separate_exact_head_harness"
             and .openclaw_raw_prompt_omitted == true
             and .openclaw_raw_response_omitted == true
+            and .cleanup_confirmed == true
+            and .cleanup_secret_output_omitted == true
           ' "${receipt}" >/dev/null
 
       - name: Initialize first Owner through the source-free customer command
