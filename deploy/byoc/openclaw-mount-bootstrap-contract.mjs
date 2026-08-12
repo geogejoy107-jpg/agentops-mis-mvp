@@ -17,6 +17,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const contractPath = fileURLToPath(import.meta.url);
+const contractText = readFileSync(contractPath, "utf8");
 const sourcePath = fileURLToPath(new URL("./openclaw-mount-bootstrap.c", import.meta.url));
 const sourceText = readFileSync(sourcePath, "utf8");
 const dockerfileText = readFileSync(new URL("./Dockerfile", import.meta.url), "utf8");
@@ -68,7 +70,35 @@ const expectedPrefixedEnvironment = [
   "OPENCLAW_WORKSPACE",
 ];
 
+function embeddedProbeSourceAudit() {
+  const prefix = "writeFileSync(probeSource, String.raw`";
+  const suffix = "\n`, { mode: 0o600 });";
+  const start = contractText.indexOf(prefix);
+  assert.notEqual(start, -1);
+  const contentStart = start + prefix.length;
+  const end = contractText.indexOf(suffix, contentStart);
+  assert.notEqual(end, -1);
+  const probeSourceText = contractText.slice(contentStart, end);
+  assert.match(
+    probeSourceText,
+    /O_PATH \| O_CLOEXEC \| O_NOFOLLOW \| \(directory \? O_DIRECTORY : 0\)/,
+  );
+  assert.match(probeSourceText, /"\/proc\/self\/fdinfo\/%d"/);
+  assert.match(probeSourceText, /sscanf\(line, "mnt_id:\\t%lu"/);
+  assert.match(probeSourceText, /struct probe_mount_record/);
+  assert.match(probeSourceText, /char \*mount_id_text/);
+  assert.match(probeSourceText, /char \*parent_id_text/);
+  assert.match(probeSourceText, /char \*mount_point_text/);
+  assert.match(probeSourceText, /char \*mount_options/);
+  assert.match(probeSourceText, /probe_mount_descends_from/);
+  assert.match(probeSourceText, /probe_mount_options_hardened/);
+  assert.match(probeSourceText, /record->mount_id == config_mount_id/);
+  assert.match(probeSourceText, /workspace_visible_mounts < 2U/);
+  assert.doesNotMatch(probeSourceText, /\bmatches\b/);
+}
+
 function sourceAudit() {
+  embeddedProbeSourceAudit();
   assert.match(sourceText, /#ifndef __linux__/);
   assert.match(sourceText, /getpid\(\) != \(pid_t\)1/);
   assert.match(sourceText, /EXECUTOR_INIT_FALSE_REQUIRED/);
@@ -252,6 +282,7 @@ if (insideLinuxRuntime) {
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/capability.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -270,46 +301,240 @@ static int bit(const struct __user_cap_data_struct data[2], int capability, int 
     return (data[index].inheritable & mask) != 0U;
 }
 
-static int options_verified(const char *target, int recursive) {
-    FILE *input = fopen("/proc/self/mountinfo", "r");
+struct probe_mount_record {
+    unsigned long mount_id;
+    unsigned long parent_id;
+    char *mount_point;
+    char *mount_options;
+};
+
+static int probe_decode_mountinfo_field(
+    const char *source,
+    char *destination,
+    size_t destination_capacity
+) {
+    size_t source_length = strlen(source);
+    size_t source_index = 0U;
+    size_t destination_index = 0U;
+    while (source[source_index] != '\0') {
+        unsigned char value;
+        if (destination_index + 1U >= destination_capacity) return 0;
+        if (source[source_index] != '\\') {
+            destination[destination_index] = source[source_index];
+            source_index += 1U;
+            destination_index += 1U;
+            continue;
+        }
+        if (source_index + 3U >= source_length
+            || source[source_index + 1U] < '0' || source[source_index + 1U] > '7'
+            || source[source_index + 2U] < '0' || source[source_index + 2U] > '7'
+            || source[source_index + 3U] < '0' || source[source_index + 3U] > '7') return 0;
+        value = (unsigned char)(((unsigned int)(source[source_index + 1U] - '0') << 6U)
+            | ((unsigned int)(source[source_index + 2U] - '0') << 3U)
+            | (unsigned int)(source[source_index + 3U] - '0'));
+        if (value != (unsigned char)' ' && value != (unsigned char)'\t'
+            && value != (unsigned char)'\n' && value != (unsigned char)'\\') return 0;
+        destination[destination_index] = (char)value;
+        source_index += 4U;
+        destination_index += 1U;
+    }
+    destination[destination_index] = '\0';
+    return 1;
+}
+
+static int probe_option_present(const char *options, const char *expected) {
+    const char *cursor = options;
+    size_t expected_length = strlen(expected);
+    while (*cursor != '\0') {
+        const char *separator = strchr(cursor, ',');
+        size_t option_length = separator == NULL
+            ? strlen(cursor)
+            : (size_t)(separator - cursor);
+        if (option_length == expected_length
+            && strncmp(cursor, expected, option_length) == 0) return 1;
+        if (separator == NULL) return 0;
+        cursor = separator + 1;
+    }
+    return 0;
+}
+
+static int probe_mount_options_hardened(const char *options) {
+    return probe_option_present(options, "ro") && probe_option_present(options, "nosuid")
+        && probe_option_present(options, "nodev") && probe_option_present(options, "noexec")
+        && !probe_option_present(options, "rw") && !probe_option_present(options, "suid")
+        && !probe_option_present(options, "dev") && !probe_option_present(options, "exec");
+}
+
+static int probe_mount_point_in_tree(const char *mount_point, const char *target) {
+    size_t target_length = strlen(target);
+    return strcmp(mount_point, target) == 0
+        || (strncmp(mount_point, target, target_length) == 0
+            && mount_point[target_length] == '/');
+}
+
+static int probe_parse_mountinfo_line(char *line, struct probe_mount_record *record) {
+    char *save_pointer = NULL;
+    char *mount_id_text = strtok_r(line, " ", &save_pointer);
+    char *parent_id_text = strtok_r(NULL, " ", &save_pointer);
+    char *device_text = strtok_r(NULL, " ", &save_pointer);
+    char *root_text = strtok_r(NULL, " ", &save_pointer);
+    char *mount_point_text = strtok_r(NULL, " ", &save_pointer);
+    char *mount_options = strtok_r(NULL, " ", &save_pointer);
+    char decoded_mount_point[PATH_MAX];
+    char *end_pointer = NULL;
+    unsigned long mount_id;
+    unsigned long parent_id;
+    (void)device_text;
+    (void)root_text;
+    if (mount_id_text == NULL || parent_id_text == NULL || mount_point_text == NULL
+        || mount_options == NULL || !probe_decode_mountinfo_field(
+            mount_point_text,
+            decoded_mount_point,
+            sizeof(decoded_mount_point)
+        )) return 0;
+    errno = 0;
+    mount_id = strtoul(mount_id_text, &end_pointer, 10);
+    if (errno != 0 || end_pointer == mount_id_text || *end_pointer != '\0'
+        || mount_id == 0UL) return 0;
+    errno = 0;
+    parent_id = strtoul(parent_id_text, &end_pointer, 10);
+    if (errno != 0 || end_pointer == parent_id_text || *end_pointer != '\0'
+        || parent_id == 0UL || parent_id == mount_id) return 0;
+    record->mount_id = mount_id;
+    record->parent_id = parent_id;
+    record->mount_point = strdup(decoded_mount_point);
+    record->mount_options = strdup(mount_options);
+    return record->mount_point != NULL && record->mount_options != NULL;
+}
+
+static const struct probe_mount_record *probe_find_mount_record(
+    const struct probe_mount_record *records,
+    size_t record_count,
+    unsigned long mount_id
+) {
+    size_t record_index;
+    for (record_index = 0U; record_index < record_count; record_index += 1U) {
+        if (records[record_index].mount_id == mount_id) return &records[record_index];
+    }
+    return NULL;
+}
+
+static int probe_mount_descends_from(
+    const struct probe_mount_record *records,
+    size_t record_count,
+    const struct probe_mount_record *candidate,
+    unsigned long root_mount_id
+) {
+    unsigned long current_mount_id = candidate->mount_id;
+    size_t depth;
+    for (depth = 0U; depth <= record_count; depth += 1U) {
+        const struct probe_mount_record *current_record;
+        if (current_mount_id == root_mount_id) return 1;
+        current_record = probe_find_mount_record(records, record_count, current_mount_id);
+        if (current_record == NULL || current_record->parent_id == current_mount_id) return 0;
+        current_mount_id = current_record->parent_id;
+    }
+    return 0;
+}
+
+static unsigned long probe_visible_mount_id(const char *target, int directory) {
+    int descriptor = open(
+        target,
+        O_PATH | O_CLOEXEC | O_NOFOLLOW | (directory ? O_DIRECTORY : 0)
+    );
+    char fdinfo_path[64];
+    FILE *fdinfo = NULL;
     char *line = NULL;
     size_t capacity = 0;
-    int matches = 0;
-    if (input == NULL) return 0;
-    while (getline(&line, &capacity, input) >= 0) {
-        char *save = NULL;
-        char *field = strtok_r(line, " ", &save);
-        int index = 0;
-        char *mount_point = NULL;
-        char *options = NULL;
-        while (field != NULL && index <= 5) {
-            if (index == 4) mount_point = field;
-            if (index == 5) options = field;
-            field = strtok_r(NULL, " ", &save);
-            index += 1;
+    unsigned long mount_id = 0UL;
+    int path_length;
+    if (descriptor < 0) return 0UL;
+    path_length = snprintf(fdinfo_path, sizeof(fdinfo_path), "/proc/self/fdinfo/%d", descriptor);
+    if (path_length > 0 && (size_t)path_length < sizeof(fdinfo_path)) {
+        fdinfo = fopen(fdinfo_path, "r");
+    }
+    if (fdinfo != NULL) {
+        while (getline(&line, &capacity, fdinfo) >= 0) {
+            if (sscanf(line, "mnt_id:\t%lu", &mount_id) == 1 && mount_id != 0UL) break;
+            mount_id = 0UL;
         }
-        size_t target_length = strlen(target);
-        if (mount_point != NULL && options != NULL
-            && (strcmp(mount_point, target) == 0
-                || (recursive && strncmp(mount_point, target, target_length) == 0
-                    && mount_point[target_length] == '/'))) {
-            char padded[512];
-            int length = snprintf(padded, sizeof(padded), ",%s,", options);
-            if (length <= 0 || (size_t)length >= sizeof(padded)
-                || strstr(padded, ",ro,") == NULL || strstr(padded, ",nosuid,") == NULL
-                || strstr(padded, ",nodev,") == NULL || strstr(padded, ",noexec,") == NULL
-                || strstr(padded, ",rw,") != NULL || strstr(padded, ",suid,") != NULL
-                || strstr(padded, ",dev,") != NULL || strstr(padded, ",exec,") != NULL) {
-                free(line);
-                fclose(input);
-                return 0;
-            }
-            matches += 1;
+        free(line);
+        if (fclose(fdinfo) != 0) mount_id = 0UL;
+    }
+    if (close(descriptor) != 0) return 0UL;
+    return mount_id;
+}
+
+static int options_verified(void) {
+    int descriptor = open("/proc/self/mountinfo", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    FILE *input = NULL;
+    struct probe_mount_record *records = NULL;
+    size_t record_count = 0U;
+    size_t record_capacity = 0U;
+    unsigned long config_mount_id = probe_visible_mount_id(CONFIG_TARGET, 0);
+    unsigned long workspace_mount_id = probe_visible_mount_id(WORKSPACE_TARGET, 1);
+    size_t workspace_visible_mounts = 0U;
+    int config_verified = 0;
+    int workspace_verified = 0;
+    int result = 0;
+    char *line = NULL;
+    size_t line_capacity = 0U;
+    size_t record_index;
+    if (descriptor < 0 || config_mount_id == 0UL || workspace_mount_id == 0UL
+        || config_mount_id == workspace_mount_id) goto cleanup;
+    input = fdopen(descriptor, "r");
+    if (input == NULL) goto cleanup;
+    descriptor = -1;
+    while (getline(&line, &line_capacity, input) >= 0) {
+        struct probe_mount_record record = {0};
+        if (record_count == record_capacity) {
+            size_t next_capacity = record_capacity == 0U ? 64U : record_capacity * 2U;
+            struct probe_mount_record *next_records;
+            if (next_capacity < record_capacity) goto cleanup;
+            next_records = realloc(records, next_capacity * sizeof(*records));
+            if (next_records == NULL) goto cleanup;
+            records = next_records;
+            record_capacity = next_capacity;
+        }
+        if (!probe_parse_mountinfo_line(line, &record)) {
+            free(record.mount_point);
+            free(record.mount_options);
+            goto cleanup;
+        }
+        records[record_count] = record;
+        record_count += 1U;
+    }
+    if (ferror(input)) goto cleanup;
+    for (record_index = 0U; record_index < record_count; record_index += 1U) {
+        const struct probe_mount_record *record = &records[record_index];
+        if (record->mount_id == config_mount_id) {
+            if (config_verified || strcmp(record->mount_point, CONFIG_TARGET) != 0
+                || !probe_mount_options_hardened(record->mount_options)) goto cleanup;
+            config_verified = 1;
+        }
+        if (probe_mount_descends_from(records, record_count, record, workspace_mount_id)) {
+            if (!probe_mount_point_in_tree(record->mount_point, WORKSPACE_TARGET)
+                || !probe_mount_options_hardened(record->mount_options)) goto cleanup;
+            workspace_visible_mounts += 1U;
+            if (record->mount_id == workspace_mount_id) workspace_verified = 1;
         }
     }
+    if (!config_verified || !workspace_verified || workspace_visible_mounts < 2U) goto cleanup;
+    result = 1;
+
+cleanup:
     free(line);
-    if (fclose(input) != 0) return 0;
-    return recursive ? matches >= 2 : matches == 1;
+    for (record_index = 0U; record_index < record_count; record_index += 1U) {
+        free(records[record_index].mount_point);
+        free(records[record_index].mount_options);
+    }
+    free(records);
+    if (input != NULL) {
+        if (fclose(input) != 0) result = 0;
+    } else if (descriptor >= 0 && close(descriptor) != 0) {
+        result = 0;
+    }
+    return result;
 }
 
 int main(int argc, char **argv) {
@@ -331,7 +556,7 @@ int main(int argc, char **argv) {
         || workspace == NULL || strcmp(workspace, "/opt/agentops-worker/workspace") != 0) return 21;
     if (getenv("AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_PATH") != NULL
         || getenv("OPENCLAW_PROVIDER_SOCKET") != NULL) return 22;
-    if (!options_verified(CONFIG_TARGET, 0) || !options_verified(WORKSPACE_TARGET, 1)) return 20;
+    if (!options_verified()) return 20;
     header.version = _LINUX_CAPABILITY_VERSION_3;
     if (syscall(SYS_capget, &header, data) != 0) return 12;
     for (int capability = 0; capability <= CAP_LAST_CAP; capability += 1) {
