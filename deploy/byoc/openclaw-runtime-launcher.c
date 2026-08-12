@@ -320,6 +320,9 @@ static int install_seccomp_denylist(void) {
 static int execute_fd(int exec_fd, char **child_argv) {
     static char *const clean_environment[] = {
         (char *)"LANG=C",
+        (char *)"OPENCLAW_CONFIG_PATH=/run/secrets/openclaw_config",
+        (char *)"OPENCLAW_STATE_DIR=/run/openclaw-state",
+        (char *)"OPENCLAW_WORKSPACE=/opt/agentops-worker/workspace",
         (char *)"PATH=/usr/bin:/bin",
         NULL,
     };

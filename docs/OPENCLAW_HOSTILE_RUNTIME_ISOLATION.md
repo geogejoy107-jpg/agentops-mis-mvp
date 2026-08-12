@@ -57,14 +57,29 @@ Client disconnect and shutdown propagate cancellation to the runner. Timeout,
 cancellation, and output overflow return control before pipe EOF so cgroup-wide
 cleanup cannot be held hostage by a detached descendant retaining a pipe.
 
+OpenClaw 2026.5.4 still exposes the agent prompt only as CLI
+`--message <text>`; that CLI remains forbidden. A checked-in Node adapter now
+reads the canonical provider request from stdin and calls OpenClaw's published
+`openclaw/plugin-sdk/agent-runtime` `agentCommand` export. The checked-in source
+completed a real local `modelRun` turn through that API with canonical stdout,
+an empty ephemeral state root after response, and no prompt/response in the
+adapter output. The adapter disables owner authorization, model overrides,
+tools, workspace/chat prompt policy, and external delivery. It gives each
+one-shot run an isolated 0700 state subtree and removes that complete subtree
+before writing stdout; cleanup failure makes the process fail closed. The
+adapter has not yet been assembled into a reproducible digest-pinned Linux
+runtime artifact, so this real local probe does not change A07 release claims.
+
 The exact A07 foundation image and native launcher contract have passed Linux
 CI, but the signed runtime path audit in
 `docs/OPENCLAW_A07_SIGNED_RUNTIME_PATH_AUDIT.md` identifies unresolved
-request-time path binding and host-bind TOCTOU gaps. Current OpenClaw still uses
-`--message <prompt>` and therefore fails the runner's stdin protocol gate before
-dispatch. The egress flag remains operator attestation only, and A01-A19 have
-not passed for the A07 topology. The default release therefore remains A01/A02,
-and the A07 candidate must continue to report:
+request-time path binding and host-bind TOCTOU gaps. The CLI
+`--message <prompt>` path remains forbidden. The checked-in stdin adapter is not
+yet packaged in the signed Linux runtime root, so the claim-bearing A07 topology
+still has no accepted production runtime to dispatch. The egress flag remains
+operator attestation only, and A01-A19 have not passed for the A07 topology. The
+default release therefore remains A01/A02, and the A07 candidate must continue
+to report:
 
 ```text
 real_runtime_process_spawned=false

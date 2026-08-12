@@ -36,6 +36,19 @@ the runner and launcher do not consume them yet. PATH-01 through PATH-04
 therefore remain open until the resolved executable/entrypoint identity is
 carried without pathname reopening into the actual launch sequence.
 
+The source-only stdin adapter removes the prompt-argv blocker without weakening
+the runner gate. It calls OpenClaw's public `agentCommand` export and has passed
+a real local agent turn, but it is not yet part of a claim-bearing runtime
+artifact or Linux launcher acceptance. The official OpenClaw 2026.5.4 tarball
+contains 9,692 files; a full production dependency install measured roughly
+44,670 files and 441 MiB, exceeding the current 20,000-file manifest bound.
+Increasing that bound and copying an operator's global install is rejected as a
+closure. The build must produce a version- and integrity-pinned OCI artifact or
+a verified smaller adapter bundle whose dynamic resources are explicit. The
+preferred closure is a complete platform-specific guest root: launcher-side
+`openat2`, `fchdir`/`chroot`, and `execveat` then keep Node, ESM imports, native
+addons, the ELF interpreter, and shared libraries inside one immutable root.
+
 ## 2. Current Path Trace
 
 The manifest contract uses this metadata:
@@ -136,9 +149,9 @@ An executable fd removes the final executable pathname race only after that fd
 has been opened and matched to the verified record. It does not bind the script
 or Node's subsequent dependency loads.
 
-## 4. Minimum A07 Closure
+## 4. Intermediate A07 Closure
 
-The smallest implementable closure should turn the runner's current lexical
+The smallest independently reviewable step should turn the runner's current lexical
 projection into a signed, root-anchored, immutable execution model without
 claiming a complete hostile-runtime namespace.
 
@@ -202,10 +215,10 @@ This supports a bounded `signed_runtime_path_execution_verified` claim. It does
 not support `hostile_runtime_isolation_verified` because absolute runtime reads
 can still reach the Executor container root.
 
-## 5. Full Guest-Root Closure
+## 5. Required Full Guest-Root Closure
 
-The later hostile-isolation gate should replace path projection with a real
-guest root:
+The final hostile-isolation gate must replace path projection with a real guest
+root. This is the target architecture, not an optional follow-up:
 
 1. Build a complete signed guest root containing Node, its ELF interpreter,
    shared libraries, CA material, entrypoint, modules, and package metadata.

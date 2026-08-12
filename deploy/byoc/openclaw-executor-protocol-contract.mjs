@@ -55,6 +55,8 @@ assert.deepEqual(parseCanonicalExecutorDispatch(bytes, clock), dispatch);
 for (const invalid of [
   { ...request, prompt: `${prompt}!` },
   { ...request, timeout_seconds: 0 },
+  { ...request, agent_name: ".." },
+  { ...request, agent_name: "Main" },
   { ...request, request_id: "../escape" },
   { ...request, raw_response: "forbidden" },
 ]) assert.throws(() => validateExecutorPublicRequest(invalid), /executor_public_/);

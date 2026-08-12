@@ -80,6 +80,9 @@ function sourceAudit() {
   assert.match(sourceText, /SOCK_RAW/);
   assert.match(sourceText, /SYS_execveat/);
   assert.match(sourceText, /fexecve\(/);
+  assert.match(sourceText, /OPENCLAW_CONFIG_PATH=\/run\/secrets\/openclaw_config/);
+  assert.match(sourceText, /OPENCLAW_STATE_DIR=\/run\/openclaw-state/);
+  assert.match(sourceText, /OPENCLAW_WORKSPACE=\/opt\/agentops-worker\/workspace/);
   assert.doesNotMatch(sourceText, /\bsystem\s*\(|\bpopen\s*\(|\bfork\s*\(|\bexec[lvpe]+\s*\(/);
   assert.doesNotMatch(sourceText, /\bopen(?:at)?\s*\(/);
 
@@ -287,7 +290,11 @@ static int identity_probe(void) {
     if (syscall(SYS_capget, &header, data) != 0) return 16;
     if (data[0].effective || data[0].permitted || data[0].inheritable
         || data[1].effective || data[1].permitted || data[1].inheritable) return 17;
-    if (getenv("HOME") != NULL || strcmp(getenv("LANG"), "C") != 0
+    if (getenv("HOME") != NULL || getenv("SECRET_CANARY") != NULL
+        || strcmp(getenv("LANG"), "C") != 0
+        || strcmp(getenv("OPENCLAW_CONFIG_PATH"), "/run/secrets/openclaw_config") != 0
+        || strcmp(getenv("OPENCLAW_STATE_DIR"), "/run/openclaw-state") != 0
+        || strcmp(getenv("OPENCLAW_WORKSPACE"), "/opt/agentops-worker/workspace") != 0
         || strcmp(getenv("PATH"), "/usr/bin:/bin") != 0) return 18;
     puts("runtime_probe_identity_ok");
     return 0;

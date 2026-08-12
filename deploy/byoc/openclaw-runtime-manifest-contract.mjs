@@ -64,7 +64,13 @@ const metadata = {
   cgroup_policy_sha256: digest("2"),
   created_at: "2026-08-12T00:00:00.000Z",
   entrypoint: "/app/main.mjs",
-  environment_name_allowlist: ["HOME", "LANG", "NODE_OPTIONS", "PATH"],
+  environment_name_allowlist: [
+    "LANG",
+    "OPENCLAW_CONFIG_PATH",
+    "OPENCLAW_STATE_DIR",
+    "OPENCLAW_WORKSPACE",
+    "PATH",
+  ],
   expires_at: "2026-09-12T00:00:00.000Z",
   issuer: "agentops-release",
   key_id: "runtime-manifest-key-1",
@@ -118,6 +124,13 @@ try {
   assert.equal(exact.tree.exact_tree_verified, true);
   assert.equal(exact.tree.measured_file_count, 4);
   assert.match(runtimeManifestSha256(bytes), /^[a-f0-9]{64}$/);
+  assert.throws(
+    () => signRuntimeManifest({
+      ...envelope.body,
+      environment_name_allowlist: ["HOME", "LANG", "NODE_OPTIONS", "PATH"],
+    }, metadata.key_id, primary.privateKey),
+    /runtime_manifest_environment_name_allowlist_mismatch/,
+  );
 
   assert.deepEqual(
     canonicalRuntimeManifestBytes({ z: 1, a: { y: false, b: "value" } }),

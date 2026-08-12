@@ -69,6 +69,13 @@ const IMAGE_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SAFE_TOKEN_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,255}$/;
 const ENVIRONMENT_NAME_PATTERN = /^[A-Z_][A-Z0-9_]{0,127}$/;
 const ABSOLUTE_RUNTIME_PATH_PATTERN = /^\/(?:[^/\0]+\/)*[^/\0]+$/;
+const FIXED_RUNTIME_ENVIRONMENT_NAMES = Object.freeze([
+  "LANG",
+  "OPENCLAW_CONFIG_PATH",
+  "OPENCLAW_STATE_DIR",
+  "OPENCLAW_WORKSPACE",
+  "PATH",
+]);
 
 function fail(code) {
   const error = new Error(code);
@@ -281,11 +288,15 @@ export function validateRuntimeManifestBody(value) {
   if (body.argv_template[0] !== body.runtime_executable || body.argv_template[1] !== body.entrypoint) {
     fail("runtime_manifest_argv_template_binding_invalid");
   }
-  sortedUniqueStrings(
+  const environmentNames = sortedUniqueStrings(
     body.environment_name_allowlist,
     environmentName,
     "runtime_manifest_environment_name_allowlist",
   );
+  if (
+    environmentNames.length !== FIXED_RUNTIME_ENVIRONMENT_NAMES.length
+    || environmentNames.some((name, index) => name !== FIXED_RUNTIME_ENVIRONMENT_NAMES[index])
+  ) fail("runtime_manifest_environment_name_allowlist_mismatch");
   const runtimeCreatedPaths = sortedUniqueStrings(
     body.runtime_created_path_allowlist,
     absoluteRuntimePath,

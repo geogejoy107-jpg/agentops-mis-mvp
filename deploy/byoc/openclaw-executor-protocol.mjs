@@ -29,6 +29,7 @@ const PROVIDER_REQUEST_FIELDS = Object.freeze([
   "agent_name", "prompt", "prompt_hash", "schema", "timeout_seconds",
 ]);
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const AGENT_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const BOOT_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
@@ -80,7 +81,9 @@ export function validateExecutorPublicRequest(value) {
   const request = object(value, "executor_public_request_invalid");
   exactFields(request, PUBLIC_FIELDS, "executor_public_request_fields_invalid");
   if (request.schema !== EXECUTOR_PUBLIC_REQUEST_SCHEMA) fail("executor_public_request_schema_invalid");
-  token(request.agent_name, "executor_public_agent_name");
+  if (typeof request.agent_name !== "string" || !AGENT_NAME.test(request.agent_name)) {
+    fail("executor_public_agent_name_invalid");
+  }
   token(request.request_id, "executor_public_request_id");
   token(request.run_id, "executor_public_run_id");
   token(request.nonce, "executor_public_nonce");
