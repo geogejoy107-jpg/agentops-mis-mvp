@@ -93,6 +93,7 @@ COPY --chmod=0555 \
     deploy/byoc/openclaw-runtime-manifest-v2.mjs \
     deploy/byoc/openclaw-runtime-mount-policy.mjs \
     deploy/byoc/openclaw-runtime-rootfs-merkle.mjs \
+    deploy/byoc/openclaw-runtime-release.mjs \
     deploy/byoc/openclaw-runtime-path-resolver-contract.mjs \
     deploy/byoc/worker-entrypoint.mjs \
     deploy/byoc/worker-healthcheck.mjs \

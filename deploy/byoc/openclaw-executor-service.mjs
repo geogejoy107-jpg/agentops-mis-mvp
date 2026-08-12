@@ -26,6 +26,7 @@ import {
 } from "./openclaw-runtime-manifest-v2.mjs";
 import { verifyOpenClawRuntimeMountPolicy } from "./openclaw-runtime-mount-policy.mjs";
 import { computeOpenClawRuntimeRootfsMerkle } from "./openclaw-runtime-rootfs-merkle.mjs";
+import { readCommittedOpenClawRuntimeRelease } from "./openclaw-runtime-release.mjs";
 
 export const EXECUTOR_HEALTH_SCHEMA = "agentops_openclaw_executor_health_v1";
 const MAX_CONFIG_BYTES = 1024 * 1024;
@@ -73,7 +74,10 @@ export function loadExecutorConfiguration(environment = process.env) {
     cgroupRoot: absolute(environment.OPENCLAW_CGROUP_ROOT, "executor_cgroup_root"),
     cgroupPolicyPath: absolute(environment.OPENCLAW_CGROUP_POLICY_PATH, "executor_cgroup_policy"),
     seccompProfilePath: absolute(environment.OPENCLAW_SECCOMP_PROFILE_PATH, "executor_seccomp_profile"),
-    manifestPath: absolute(environment.OPENCLAW_RUNTIME_MANIFEST_PATH, "executor_runtime_manifest"),
+    runtimeReleaseRoot: absolute(
+      environment.OPENCLAW_RUNTIME_RELEASE_ROOT,
+      "executor_runtime_release_root",
+    ),
     manifestTrustRootPath: absolute(
       environment.OPENCLAW_RUNTIME_MANIFEST_TRUST_ROOT_PATH,
       "executor_runtime_manifest_trust_root",
@@ -301,8 +305,13 @@ export async function preflightExecutor(configuration) {
       || (rootBeforeMetadata.mode & 0o022n) !== 0n
     ) fail("executor_runtime_root_metadata_invalid");
     const rootBefore = runtimeIdentity(rootBeforeMetadata);
-    manifestBytes = readSecureFile(configuration.manifestPath);
-    const roots = parseRuntimeManifestTrustRoots(readSecureFile(configuration.manifestTrustRootPath));
+    const trustRootBytes = readSecureFile(configuration.manifestTrustRootPath);
+    const release = readCommittedOpenClawRuntimeRelease(
+      configuration.runtimeReleaseRoot,
+      trustRootBytes,
+    );
+    manifestBytes = release.manifestBytes;
+    const roots = parseRuntimeManifestTrustRoots(trustRootBytes);
     const envelope = parseCanonicalRuntimeManifestV2Envelope(manifestBytes);
     const initialMountEvidence = verifyOpenClawRuntimeMountPolicy({
       guestRoot: configuration.runtimeRoot,

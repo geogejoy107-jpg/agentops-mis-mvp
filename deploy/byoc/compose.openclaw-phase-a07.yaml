@@ -120,8 +120,8 @@ services:
       OPENCLAW_CGROUP_ROOT: /sys/fs/cgroup/agentops-openclaw-executor
       OPENCLAW_CGROUP_POLICY_PATH: /run/policies/openclaw-cgroup-policy.json
       OPENCLAW_SECCOMP_PROFILE_PATH: /run/policies/openclaw-runtime-seccomp.json
-      OPENCLAW_RUNTIME_MANIFEST_PATH: /run/manifests/openclaw-runtime-manifest.json
-      OPENCLAW_RUNTIME_MANIFEST_TRUST_ROOT_PATH: /run/manifests/openclaw-runtime-manifest-trust-roots.json
+      OPENCLAW_RUNTIME_RELEASE_ROOT: /run/manifests/openclaw-runtime-release
+      OPENCLAW_RUNTIME_MANIFEST_TRUST_ROOT_PATH: /run/trust/openclaw-runtime-manifest-trust-roots.json
       OPENCLAW_RUNTIME_MANIFEST_ISSUER: ${AGENTOPS_A07_RUNTIME_MANIFEST_ISSUER:?set AGENTOPS_A07_RUNTIME_MANIFEST_ISSUER}
       OPENCLAW_RUNTIME_MANIFEST_KEY_ID: ${AGENTOPS_A07_RUNTIME_MANIFEST_KEY_ID:?set AGENTOPS_A07_RUNTIME_MANIFEST_KEY_ID}
       OPENCLAW_RECEIPT_SIGNING_KEY_PATH: /run/secrets/openclaw_receipt_signing_key
@@ -166,14 +166,14 @@ services:
         bind:
           create_host_path: false
       - type: bind
-        source: ${AGENTOPS_A07_RUNTIME_MANIFEST_PATH:?set AGENTOPS_A07_RUNTIME_MANIFEST_PATH}
-        target: /run/manifests/openclaw-runtime-manifest.json
+        source: ${AGENTOPS_A07_RUNTIME_RELEASE_ROOT:?set AGENTOPS_A07_RUNTIME_RELEASE_ROOT to the committed mode 0555 release directory}
+        target: /run/manifests/openclaw-runtime-release
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${AGENTOPS_A07_RUNTIME_MANIFEST_TRUST_ROOT_PATH:?set AGENTOPS_A07_RUNTIME_MANIFEST_TRUST_ROOT_PATH}
-        target: /run/manifests/openclaw-runtime-manifest-trust-roots.json
+        target: /run/trust/openclaw-runtime-manifest-trust-roots.json
         read_only: true
         bind:
           create_host_path: false

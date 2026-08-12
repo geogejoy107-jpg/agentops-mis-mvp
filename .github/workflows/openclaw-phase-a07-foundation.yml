@@ -55,6 +55,7 @@ jobs:
           node deploy/byoc/openclaw-runtime-manifest-v2-release-contract.mjs
           node deploy/byoc/openclaw-runtime-rootfs-merkle-contract.mjs
           node deploy/byoc/openclaw-runtime-mount-policy-contract.mjs
+          node deploy/byoc/openclaw-runtime-release-contract.mjs
           node deploy/byoc/openclaw-runtime-artifact/contract.mjs
           node deploy/byoc/openclaw-cgroup-v2-contract.mjs
           node deploy/byoc/openclaw-executor-protocol-contract.mjs

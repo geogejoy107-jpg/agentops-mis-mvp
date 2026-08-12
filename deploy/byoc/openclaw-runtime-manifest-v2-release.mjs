@@ -7,6 +7,7 @@ import {
   constants,
   existsSync,
   fstatSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -35,7 +36,6 @@ export const OPENCLAW_RUNTIME_MANIFEST_V2_TRUST_ROOTS_SCHEMA =
 
 const OUTPUT_FILES = Object.freeze({
   manifest: "openclaw-runtime-manifest.json",
-  trust: "openclaw-runtime-manifest-trust-roots.json",
   receipt: "openclaw-runtime-manifest-metadata-receipt.json",
 });
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -52,6 +52,7 @@ const EXPECTED_OPTIONS = Object.freeze([
   "--output",
   "--private-key",
   "--seccomp-profile-sha256",
+  "--trust-root",
 ]);
 
 function fail(code, cause) {
@@ -197,6 +198,78 @@ function readPrivateKey(keyPathValue, expectedUid) {
   }
 }
 
+function readPinnedTrustRoot(trustPathValue, expectedUid, keyId) {
+  const trustPath = absoluteCanonicalPath(
+    trustPathValue,
+    "runtime_manifest_v2_release_trust_root_path",
+  );
+  let before;
+  try {
+    before = lstatSync(trustPath, { bigint: true });
+  } catch (error) {
+    fail("runtime_manifest_v2_release_trust_root_invalid", error);
+  }
+  if (
+    !before.isFile()
+    || before.isSymbolicLink()
+    || before.nlink !== 1n
+    || before.uid !== BigInt(expectedUid)
+    || (before.mode & 0o222n) !== 0n
+    || before.size < 2n
+    || before.size > 65_536n
+  ) fail("runtime_manifest_v2_release_trust_root_metadata_invalid");
+  if (realpathSync(trustPath) !== trustPath) {
+    fail("runtime_manifest_v2_release_trust_root_path_noncanonical");
+  }
+  let descriptor;
+  try {
+    descriptor = openSync(trustPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_CLOEXEC);
+    const opened = fstatSync(descriptor, { bigint: true });
+    if (opened.dev !== before.dev || opened.ino !== before.ino || opened.nlink !== 1n) {
+      fail("runtime_manifest_v2_release_trust_root_identity_changed");
+    }
+    const bytes = readFileSync(descriptor);
+    const after = lstatSync(trustPath, { bigint: true });
+    if (
+      after.dev !== before.dev
+      || after.ino !== before.ino
+      || after.size !== before.size
+      || after.ctimeNs !== before.ctimeNs
+      || after.mtimeNs !== before.mtimeNs
+    ) fail("runtime_manifest_v2_release_trust_root_identity_changed");
+    let value;
+    try {
+      value = JSON.parse(new TextDecoder("utf8", { fatal: true }).decode(bytes));
+    } catch (error) {
+      fail("runtime_manifest_v2_release_trust_root_invalid", error);
+    }
+    if (!Buffer.from(JSON.stringify(value), "utf8").equals(bytes)) {
+      fail("runtime_manifest_v2_release_trust_root_noncanonical");
+    }
+    if (
+      value?.schema !== OPENCLAW_RUNTIME_MANIFEST_V2_TRUST_ROOTS_SCHEMA
+      || !value.keys
+      || typeof value.keys !== "object"
+      || Array.isArray(value.keys)
+      || Object.keys(value).length !== 2
+      || Object.keys(value.keys).length !== 1
+      || !Object.hasOwn(value.keys, keyId)
+    ) fail("runtime_manifest_v2_release_trust_root_invalid");
+    let publicKey;
+    try {
+      publicKey = createPublicKey(value.keys[keyId]);
+    } catch (error) {
+      fail("runtime_manifest_v2_release_trust_root_invalid", error);
+    }
+    if (publicKey.type !== "public" || publicKey.asymmetricKeyType !== "ed25519") {
+      fail("runtime_manifest_v2_release_trust_root_invalid");
+    }
+    return Object.freeze({ bytes, publicKey });
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
 function releaseBody(input, rootfs) {
   const image = OCI_REFERENCE.exec(input.oci);
   if (!image) fail("runtime_manifest_v2_release_oci_invalid");
@@ -265,6 +338,24 @@ function releaseBody(input, rootfs) {
 function writeReadonly(target, bytes) {
   writeFileSync(target, bytes, { flag: "wx", mode: 0o444 });
   chmodSync(target, 0o444);
+  const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_CLOEXEC);
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function syncDirectory(target) {
+  const descriptor = openSync(
+    target,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_CLOEXEC,
+  );
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 export function buildOpenClawRuntimeManifestV2Release(input) {
@@ -282,6 +373,12 @@ export function buildOpenClawRuntimeManifestV2Release(input) {
   );
   if (path.dirname(output) !== parent) fail("runtime_manifest_v2_release_output_parent_noncanonical");
   const privateKey = readPrivateKey(input["private-key"], releaseUid);
+  const trustRoot = readPinnedTrustRoot(input["trust-root"], releaseUid, input["key-id"]);
+  const privatePublicDer = createPublicKey(privateKey).export({ type: "spki", format: "der" });
+  const pinnedPublicDer = trustRoot.publicKey.export({ type: "spki", format: "der" });
+  if (!privatePublicDer.equals(pinnedPublicDer)) {
+    fail("runtime_manifest_v2_release_signing_key_not_pinned");
+  }
   const rootfs = computeOpenClawRuntimeRootfsMerkle(
     guestRoot,
     OPENCLAW_RUNTIME_CANONICAL_GUEST_MOUNT_PATHS,
@@ -289,11 +386,6 @@ export function buildOpenClawRuntimeManifestV2Release(input) {
   const body = releaseBody(input, rootfs);
   const envelope = signRuntimeManifestV2(body, body.key_id, privateKey);
   const manifestBytes = serializeRuntimeManifestV2Envelope(envelope);
-  const publicKeyPem = createPublicKey(privateKey).export({ type: "spki", format: "pem" });
-  const trustBytes = canonicalRuntimeManifestV2Bytes({
-    keys: { [body.key_id]: publicKeyPem },
-    schema: OPENCLAW_RUNTIME_MANIFEST_V2_TRUST_ROOTS_SCHEMA,
-  });
   const receiptBytes = canonicalRuntimeManifestV2Bytes({
     claims: body.claims,
     cgroup_policy_sha256: body.cgroup_policy_sha256,
@@ -301,13 +393,14 @@ export function buildOpenClawRuntimeManifestV2Release(input) {
     expires_at: body.expires_at,
     files: {
       manifest: { name: OUTPUT_FILES.manifest, sha256: sha256(manifestBytes) },
-      trust_roots: { name: OUTPUT_FILES.trust, sha256: sha256(trustBytes) },
     },
     issuer: body.issuer,
     key_id: body.key_id,
     oci_image: body.oci_image,
     platform: body.platform,
     private_key_copied: false,
+    trust_root_copied: false,
+    trust_root_sha256: sha256(trustRoot.bytes),
     rootfs: body.rootfs,
     schema: OPENCLAW_RUNTIME_MANIFEST_V2_RELEASE_SCHEMA,
     seccomp_profile_sha256: body.seccomp_profile_sha256,
@@ -320,12 +413,15 @@ export function buildOpenClawRuntimeManifestV2Release(input) {
   }
   try {
     writeReadonly(path.join(output, OUTPUT_FILES.manifest), manifestBytes);
-    writeReadonly(path.join(output, OUTPUT_FILES.trust), trustBytes);
     writeReadonly(path.join(output, OUTPUT_FILES.receipt), receiptBytes);
+    syncDirectory(output);
     chmodSync(output, 0o555);
+    syncDirectory(output);
+    syncDirectory(parent);
   } catch (error) {
     try { chmodSync(output, 0o700); } catch {}
     rmSync(output, { recursive: true, force: true });
+    try { syncDirectory(parent); } catch {}
     throw error;
   }
   return Object.freeze({
@@ -333,6 +429,7 @@ export function buildOpenClawRuntimeManifestV2Release(input) {
     manifest_sha256: sha256(manifestBytes),
     output_files: OUTPUT_FILES,
     private_key_copied: false,
+    trust_root_copied: false,
     rootfs_merkle_sha256: body.rootfs.merkle_sha256,
   });
 }

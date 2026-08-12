@@ -41,7 +41,7 @@ const environment = {
   OPENCLAW_CGROUP_ROOT: "/sys/fs/cgroup/agentops-openclaw-executor",
   OPENCLAW_CGROUP_POLICY_PATH: "/run/policy/cgroup.json",
   OPENCLAW_SECCOMP_PROFILE_PATH: "/run/policy/seccomp.json",
-  OPENCLAW_RUNTIME_MANIFEST_PATH: "/run/manifest/runtime.json",
+  OPENCLAW_RUNTIME_RELEASE_ROOT: "/run/manifest/release",
   OPENCLAW_RUNTIME_MANIFEST_TRUST_ROOT_PATH: "/run/manifest/roots.json",
   OPENCLAW_RUNTIME_MANIFEST_ISSUER: "agentops-release",
   OPENCLAW_RUNTIME_MANIFEST_KEY_ID: "manifest-key-1",
@@ -149,6 +149,7 @@ const source = readFileSync(fileURLToPath(new URL("./openclaw-executor-service.m
 assert.match(source, /verifyCanonicalRuntimeManifestV2/);
 assert.match(source, /verifyOpenClawRuntimeMountPolicy/);
 assert.match(source, /computeOpenClawRuntimeRootfsMerkle/);
+assert.match(source, /readCommittedOpenClawRuntimeRelease/);
 assert.match(source, /sameRootfsMeasurement\(initialRootfs, verifiedRootfs\)/);
 assert.match(source, /sameMountEvidence\(initialMountEvidence, verifiedMountEvidence\)/);
 assert.match(source, /verifyOpenedRuntimeExecutableBinding\(execFd, executablePath\)/);

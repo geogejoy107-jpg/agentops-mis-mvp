@@ -87,6 +87,7 @@ for (const moduleName of [
   "openclaw-runtime-mount-policy.mjs",
   "openclaw-runtime-rootfs-merkle.mjs",
   "openclaw-runtime-receipt.mjs",
+  "openclaw-runtime-release.mjs",
 ]) {
   assert.ok(dockerfile.includes(`deploy/byoc/${moduleName}`), `a07_image_module_required:${moduleName}`);
 }
@@ -149,8 +150,8 @@ assert.doesNotMatch(
 for (const target of [
   "/opt/agentops-provider/openclaw/opt/agentops-worker/workspace",
   "/opt/agentops-provider/openclaw/run/secrets/openclaw_config",
-  "/run/manifests/openclaw-runtime-manifest.json",
-  "/run/manifests/openclaw-runtime-manifest-trust-roots.json",
+  "/run/manifests/openclaw-runtime-release",
+  "/run/trust/openclaw-runtime-manifest-trust-roots.json",
   "/run/secrets/openclaw_receipt_signing_key",
   "/run/policies/openclaw-runtime-seccomp.json",
   "/run/policies/openclaw-cgroup-policy.json",

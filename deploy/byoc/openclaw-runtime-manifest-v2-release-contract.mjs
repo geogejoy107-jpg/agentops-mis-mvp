@@ -35,7 +35,6 @@ const KEY_ID = "runtime-manifest-key-2026-08";
 const ISSUER = "agentops-release";
 const FILES = [
   "openclaw-runtime-manifest-metadata-receipt.json",
-  "openclaw-runtime-manifest-trust-roots.json",
   "openclaw-runtime-manifest.json",
 ];
 
@@ -82,7 +81,7 @@ function fixture(base) {
   return root;
 }
 
-function argumentsFor(root, key, output, overrides = {}) {
+function argumentsFor(root, key, trustRoot, output, overrides = {}) {
   const values = {
     "cgroup-policy-sha256": digest("b"),
     created: CREATED,
@@ -94,6 +93,7 @@ function argumentsFor(root, key, output, overrides = {}) {
     output,
     "private-key": key,
     "seccomp-profile-sha256": digest("c"),
+    "trust-root": trustRoot,
     ...overrides,
   };
   return Object.entries(values).flatMap(([name, value]) => [`--${name}`, value]);
@@ -146,34 +146,40 @@ try {
   const privatePem = signing.privateKey.export({ type: "pkcs8", format: "pem" });
   writeFileSync(keyPath, privatePem, { mode: 0o400 });
   chmodSync(keyPath, 0o400);
+  const trustPath = path.join(base, "pinned-trust-roots.json");
+  const trust = {
+    keys: { [KEY_ID]: signing.publicKey.export({ type: "spki", format: "pem" }) },
+    schema: "agentops_openclaw_runtime_manifest_trust_roots_v1",
+  };
+  const trustBytes = canonicalRuntimeManifestV2Bytes(trust);
+  writeFileSync(trustPath, trustBytes, { mode: 0o444 });
+  chmodSync(trustPath, 0o444);
 
   const firstOutput = path.join(base, "release-one");
   const secondOutput = path.join(base, "release-two");
-  const firstResult = JSON.parse(run(argumentsFor(root, keyPath, firstOutput)).stdout);
-  const secondResult = JSON.parse(run(argumentsFor(root, keyPath, secondOutput)).stdout);
+  const firstResult = JSON.parse(run(argumentsFor(root, keyPath, trustPath, firstOutput)).stdout);
+  const secondResult = JSON.parse(run(argumentsFor(root, keyPath, trustPath, secondOutput)).stdout);
   const first = readRelease(firstOutput);
   const second = readRelease(secondOutput);
   assert.deepEqual(second, first);
   assert.equal(firstResult.manifest_sha256, secondResult.manifest_sha256);
   assert.equal(firstResult.private_key_copied, false);
+  assert.equal(firstResult.trust_root_copied, false);
 
   const manifestBytes = first["openclaw-runtime-manifest.json"];
-  const trustBytes = first["openclaw-runtime-manifest-trust-roots.json"];
   const receiptBytes = first["openclaw-runtime-manifest-metadata-receipt.json"];
   const envelope = parseCanonicalRuntimeManifestV2Envelope(manifestBytes);
-  const trust = JSON.parse(trustBytes.toString("utf8"));
   const receipt = JSON.parse(receiptBytes.toString("utf8"));
-  assert.deepEqual(canonicalRuntimeManifestV2Bytes(trust), trustBytes);
   assert.deepEqual(canonicalRuntimeManifestV2Bytes(receipt), receiptBytes);
-  assert.equal(trust.schema, "agentops_openclaw_runtime_manifest_trust_roots_v1");
-  assert.deepEqual(Object.keys(trust.keys), [KEY_ID]);
   assert.deepEqual(Object.values(envelope.body.claims), [false, false, false, false, false]);
   assert.deepEqual(envelope.body.platform, { arch: "amd64", libc: "glibc", os: "linux" });
   assert.equal(receipt.private_key_copied, false);
+  assert.equal(receipt.trust_root_copied, false);
+  assert.equal(receipt.trust_root_sha256, sha256(trustBytes));
   assert.equal(receipt.files.manifest.sha256, sha256(manifestBytes));
-  assert.equal(receipt.files.trust_roots.sha256, sha256(trustBytes));
   assert.ok(!Buffer.concat(Object.values(first)).includes(privatePem.trim()));
   assert.ok(!Buffer.concat(Object.values(first)).includes(Buffer.from(keyPath)));
+  assert.ok(!Buffer.concat(Object.values(first)).includes(trustBytes));
 
   const body = envelope.body;
   const expected = {
@@ -198,19 +204,19 @@ try {
 
   const existingOutput = path.join(base, "existing");
   mkdirSync(existingOutput, { mode: 0o755 });
-  const overwrite = run(argumentsFor(root, keyPath, existingOutput), 1);
+  const overwrite = run(argumentsFor(root, keyPath, trustPath, existingOutput), 1);
   assert.match(overwrite.stderr, /runtime_manifest_v2_release_output_exists/);
   assert.deepEqual(readdirSync(existingOutput), []);
 
   const reservedOutput = path.join(base, "reserved-output");
   mkdirSync(reservedOutput, { mode: 0o700 });
-  const reserved = run(argumentsFor(root, keyPath, reservedOutput), 1);
+  const reserved = run(argumentsFor(root, keyPath, trustPath, reservedOutput), 1);
   assert.match(reserved.stderr, /runtime_manifest_v2_release_output_exists/);
   assert.deepEqual(readdirSync(reservedOutput), []);
 
   chmodSync(keyPath, 0o600);
   assert.match(
-    run(argumentsFor(root, keyPath, path.join(base, "wide-key-output")), 1).stderr,
+    run(argumentsFor(root, keyPath, trustPath, path.join(base, "wide-key-output")), 1).stderr,
     /runtime_manifest_v2_release_private_key_metadata_invalid/,
   );
   chmodSync(keyPath, 0o400);
@@ -218,17 +224,36 @@ try {
   const keyLink = path.join(base, "key-link.pem");
   symlinkSync(keyPath, keyLink);
   assert.match(
-    run(argumentsFor(root, keyLink, path.join(base, "symlink-key-output")), 1).stderr,
+    run(argumentsFor(root, keyLink, trustPath, path.join(base, "symlink-key-output")), 1).stderr,
     /runtime_manifest_v2_release_private_key_metadata_invalid/,
   );
 
   const hardKey = path.join(base, "key-hardlink.pem");
   linkSync(keyPath, hardKey);
   assert.match(
-    run(argumentsFor(root, keyPath, path.join(base, "hardlink-key-output")), 1).stderr,
+    run(argumentsFor(root, keyPath, trustPath, path.join(base, "hardlink-key-output")), 1).stderr,
     /runtime_manifest_v2_release_private_key_metadata_invalid/,
   );
   unlinkSync(hardKey);
+
+  const attacker = generateKeyPairSync("ed25519");
+  const attackerTrustPath = path.join(base, "attacker-trust-roots.json");
+  writeFileSync(attackerTrustPath, canonicalRuntimeManifestV2Bytes({
+    keys: { [KEY_ID]: attacker.publicKey.export({ type: "spki", format: "pem" }) },
+    schema: "agentops_openclaw_runtime_manifest_trust_roots_v1",
+  }), { mode: 0o444 });
+  chmodSync(attackerTrustPath, 0o444);
+  assert.match(
+    run(argumentsFor(root, keyPath, attackerTrustPath, path.join(base, "attacker-output")), 1).stderr,
+    /runtime_manifest_v2_release_signing_key_not_pinned/,
+  );
+
+  chmodSync(trustPath, 0o644);
+  assert.match(
+    run(argumentsFor(root, keyPath, trustPath, path.join(base, "writable-trust-output")), 1).stderr,
+    /runtime_manifest_v2_release_trust_root_metadata_invalid/,
+  );
+  chmodSync(trustPath, 0o444);
 
   for (const [overrides, pattern, name] of [
     [{ created: "2026-08-12T00:00:00Z" }, /runtime_manifest_v2_release_created_invalid/, "timestamp"],
@@ -236,7 +261,7 @@ try {
     [{ "guest-root": `${root}/` }, /runtime_manifest_v2_release_guest_root_noncanonical/, "root"],
     [{ output: `${path.join(base, "noncanonical-output")}/` }, /runtime_manifest_v2_release_output_noncanonical/, "output"],
   ]) {
-    const result = run(argumentsFor(root, keyPath, path.join(base, `rejected-${name}`), overrides), 1);
+    const result = run(argumentsFor(root, keyPath, trustPath, path.join(base, `rejected-${name}`), overrides), 1);
     assert.match(result.stderr, pattern);
   }
 
@@ -246,6 +271,8 @@ try {
     ed25519_verification_performed: true,
     output_mode_0444_verified: true,
     private_key_not_copied: true,
+    pinned_trust_root_verified: true,
+    trust_root_not_copied: true,
     key_metadata_fail_closed: true,
     overwrite_and_noncanonical_inputs_rejected: true,
     claims: envelope.body.claims,
