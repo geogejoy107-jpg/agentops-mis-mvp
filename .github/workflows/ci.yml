@@ -648,6 +648,7 @@ jobs:
           npm run test:loop-supervision-contract
           npm run test:human-read-models-contract
           npm run test:human-task-run-read-postgres-contract
+          npm run test:human-task-dispatch-postgres-contract
           npm run test:human-run-evidence-graph-postgres-contract
           npm run test:prepared-action-owner-contract
           npm run test:owner-bootstrap-contract
