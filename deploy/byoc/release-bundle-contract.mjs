@@ -408,6 +408,11 @@ try {
     [join(moduleDirectory, "openclaw-phase-a03-image-contract.mjs")],
     sourceRepository,
   );
+  run(
+    process.execPath,
+    [join(moduleDirectory, "openclaw-phase-a04-a05-image-contract.mjs")],
+    sourceRepository,
+  );
   const repository = join(temporaryRoot, "repository");
   mkdirSync(repository);
   copyInputs(repository);

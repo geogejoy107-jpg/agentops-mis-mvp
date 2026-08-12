@@ -186,7 +186,8 @@ async function successfulRole(role) {
   assert.equal(state.ready, true);
   assert.equal(state.role, role);
   assert.equal(state.backend_health_verified, true);
-  assert.equal(state.external_gate_health_verified, true);
+  assert.equal(state.external_gate_health_verified, false);
+  assert.equal(state.external_gate_listener_metadata_verified, true);
   assert.equal(state.peercred_gate_process_started, true);
   assert.equal(state.peercred_runtime_verified, false);
   assert.equal(state.linux_peercred_gate_contract_verified, false);
@@ -291,7 +292,7 @@ try {
   assert.equal(await waitForExit(earlyGateProcess.child), 1);
   assert.equal(existsSync(earlyGate.brokerState), false);
   assert.equal(existsSync(earlyGate.brokerInternalSocket), false);
-  assert.match(earlyGateProcess.output(), /boundary_gate_health_child_exited/);
+  assert.match(earlyGateProcess.output(), /boundary_gate_listener_child_exited/);
   assert.doesNotMatch(earlyGateProcess.output(), new RegExp(secret));
 
   await successfulRole("broker");
@@ -301,8 +302,9 @@ try {
     contract: "agentops_openclaw_boundary_supervisor_contract_v1",
     ok: true,
     modes_verified: ["broker", "executor"],
-    backend_health_before_gate_verified: true,
-    external_gate_health_verified: true,
+  backend_health_before_gate_verified: true,
+  external_gate_health_verified: false,
+  external_gate_listener_metadata_verified: true,
     fixed_gate_argv_verified: true,
     gate_credential_environment_omitted: true,
     backend_environment_allowlisted: true,

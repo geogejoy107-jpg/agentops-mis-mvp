@@ -391,6 +391,28 @@ async function waitForHealth(
   fail(`${label}_timeout`);
 }
 
+async function waitForSocketMetadata(
+  socketPath,
+  expectedUid,
+  expectedGid,
+  child,
+  timeoutMs,
+  label,
+  shutdownRequested,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (shutdownRequested()) fail("boundary_shutdown_requested_during_startup");
+    if (child.boundarySpawnErrorCode) fail(`${label}_spawn_failed`);
+    if (child.boundaryTerminal || child.exitCode !== null || child.signalCode !== null) {
+      fail(`${label}_child_exited`);
+    }
+    if (socketIdentity(socketPath, expectedUid, expectedGid)) return;
+    await sleep(50);
+  }
+  fail(`${label}_timeout`);
+}
+
 function writeState(configuration, payload) {
   const temporary = `${configuration.statePath}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(payload)}\n`, {
@@ -456,14 +478,13 @@ export async function runSupervisor(configuration = loadConfiguration()) {
       gateArguments(configuration),
       gateEnvironment(),
     );
-    await waitForHealth(
+    await waitForSocketMetadata(
       configuration.externalSocket,
-      configuration.backendSchema,
       process.getuid?.(),
       configuration.testMode ? process.getgid?.() : configuration.listenGid,
       gate.child,
       configuration.startupTimeoutMs,
-      "boundary_gate_health",
+      "boundary_gate_listener",
       () => requestedSignal !== null,
     );
     writeState(configuration, {
@@ -473,7 +494,8 @@ export async function runSupervisor(configuration = loadConfiguration()) {
       backend_pid: backend.child.pid,
       gate_pid: gate.child.pid,
       backend_health_verified: true,
-      external_gate_health_verified: true,
+      external_gate_health_verified: false,
+      external_gate_listener_metadata_verified: true,
       gate_expected_uid: configuration.expectedUid,
       gate_listen_gid: configuration.listenGid,
       peercred_gate_process_started: true,

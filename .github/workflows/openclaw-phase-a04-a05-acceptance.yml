@@ -1,0 +1,129 @@
+name: OpenClaw Phase A04 A05 Acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/openclaw-phase-a04-a05-acceptance.yml"
+      - "deploy/byoc/Dockerfile"
+      - "deploy/byoc/compose.openclaw-phase-a04-a05.yaml"
+      - "deploy/byoc/openclaw-boundary-supervisor*.mjs"
+      - "deploy/byoc/openclaw-peercred-gate*"
+      - "deploy/byoc/openclaw-phase-a04-a05-*.mjs"
+      - "deploy/byoc/openclaw-broker-*.mjs"
+      - "deploy/byoc/openclaw-provider-*.mjs"
+  push:
+    branches:
+      - main
+      - codex/commercial-control-plane-main-integration
+      - codex/commercial-peercred-a04-a05
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentops-openclaw-a04-a05-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-peercred-attack:
+    name: Real Linux public and private peer credential attacks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact candidate source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact caller commit and offline contracts
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          node deploy/byoc/openclaw-peercred-gate-contract.mjs
+          node deploy/byoc/openclaw-boundary-supervisor-contract.mjs
+          node deploy/byoc/openclaw-phase-a04-a05-image-contract.mjs
+          node deploy/byoc/openclaw-broker-contract.mjs
+          node deploy/byoc/openclaw-provider-contract.mjs
+          node deploy/byoc/worker-service-contract.mjs
+
+      - name: Build exact candidate image and bind immutable digest
+        id: image
+        run: |
+          set -euo pipefail
+          registry_name="agentops-a04-a05-registry-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          image_tag="localhost:5000/agentops-openclaw-a04-a05:${GITHUB_SHA}"
+          docker run --detach --name "${registry_name}" \
+            --publish 127.0.0.1:5000:5000 \
+            registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+          printf 'registry_name=%s\n' "${registry_name}" >> "${GITHUB_OUTPUT}"
+          curl --fail --silent --show-error \
+            --retry 20 --retry-all-errors --retry-delay 1 \
+            http://127.0.0.1:5000/v2/ >/dev/null
+          timeout 25m docker build --pull --platform linux/amd64 \
+            --file deploy/byoc/Dockerfile \
+            --build-arg "AGENTOPS_BUILD_IDENTITY=openclaw-a04-a05-${GITHUB_SHA}" \
+            --build-arg "AGENTOPS_SOURCE_REVISION=${GITHUB_SHA}" \
+            --tag "${image_tag}" .
+          docker push "${image_tag}" >/dev/null
+          digest="$(
+            docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+              "${image_tag}" |
+              awk '/^localhost:5000\/agentops-openclaw-a04-a05@sha256:[0-9a-f]{64}$/ { print }' |
+              sort -u
+          )"
+          test "$(printf '%s\n' "${digest}" | sed '/^$/d' | wc -l | tr -d ' ')" = 1
+          [[ "${digest}" =~ ^localhost:5000/agentops-openclaw-a04-a05@sha256:[0-9a-f]{64}$ ]]
+          docker pull "${digest}" >/dev/null
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${digest}")" = "${GITHUB_SHA}"
+          docker run --rm --entrypoint /bin/sh "${digest}" -c \
+            'test -x /usr/local/bin/agentops-openclaw-peercred-gate; ! command -v cc; ! command -v gcc'
+          printf 'digest=%s\n' "${digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Run real Linux A04 A05 active wrong uid probes
+        run: |
+          set -euo pipefail
+          receipt="${RUNNER_TEMP}/openclaw-phase-a04-a05-receipt.json"
+          timeout 5m node deploy/byoc/openclaw-phase-a04-a05-container-acceptance.mjs \
+            --image "${{ steps.image.outputs.digest }}" \
+            --source-root "${GITHUB_WORKSPACE}" \
+            --source-revision "${GITHUB_SHA}" > "${receipt}"
+          jq -e --arg source "${GITHUB_SHA}" '
+            .ok == true
+            and .contract == "agentops_openclaw_phase_a04_a05_container_acceptance_v1"
+            and .source_commit == $source
+            and .image_digest_verified == true
+            and .image_source_revision_verified == true
+            and .real_linux_docker_execution == true
+            and .peercred_gate_socket_metadata_ready_before_attacks == true
+            and .phase_a04_public_peercred_verified == true
+            and .phase_a05_private_peercred_verified == true
+            and .public_expected_uid == 1000
+            and .private_expected_uid == 1100
+            and .wrong_public_peer_connection_rejected == true
+            and .wrong_private_peer_connection_rejected == true
+            and .public_backend_process_identity_unchanged == true
+            and .private_backend_process_identity_unchanged == true
+            and .peercred_check_precedes_upstream_connect_contract_verified == true
+            and .production_executor_healthcheck_verified == true
+            and .production_executor_before_broker_ordering_verified == true
+            and .kernel_so_peercred_verified == true
+            and .candidate_source_only == true
+            and .interim_provider_identity == true
+            and .worker_attack_probe_container == true
+            and .product_worker_started == false
+            and .real_openclaw_runtime_execution == false
+            and .runtime_receipt_verified == false
+            and .hostile_runtime_isolation_verified == false
+            and .cleanup_confirmed == true
+            and .docker_network_cleanup_verified == true
+            and .docker_volume_cleanup_verified == true
+          ' "${receipt}" >/dev/null
+
+      - name: Remove candidate image and registry
+        if: always()
+        run: |
+          set +e
+          docker rm --force "${{ steps.image.outputs.registry_name }}" >/dev/null 2>&1
+          docker image rm "${{ steps.image.outputs.digest }}" >/dev/null 2>&1
