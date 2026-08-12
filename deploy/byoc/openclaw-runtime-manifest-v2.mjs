@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import {
+  createHash,
   createPrivateKey,
   createPublicKey,
   sign,
@@ -64,6 +65,7 @@ const CLAIM_FIELDS = fields(
   "runtime_path_toctou_closed",
 );
 const EXPECTED_FIELDS = fields(
+  "body_sha256",
   "cgroup_policy_sha256",
   "entrypoint",
   "issuer",
@@ -178,7 +180,12 @@ function absoluteGuestPath(value, label) {
     || path.posix.normalize(value) !== value
   ) fail(`${label}_invalid`);
   const segments = value.slice(1).split("/");
-  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+  if (segments.some((segment) => (
+    !segment
+    || segment === "."
+    || segment === ".."
+    || !/^[A-Za-z0-9._@+-]+$/.test(segment)
+  ))) {
     fail(`${label}_invalid`);
   }
   return value;
@@ -200,8 +207,12 @@ function isWithin(candidate, root) {
 }
 
 function assertDisjointPaths(paths, label) {
-  for (let index = 1; index < paths.length; index += 1) {
-    if (isWithin(paths[index], paths[index - 1])) fail(`${label}_overlap_invalid`);
+  for (let index = 0; index < paths.length; index += 1) {
+    for (let candidate = 0; candidate < index; candidate += 1) {
+      if (isWithin(paths[index], paths[candidate]) || isWithin(paths[candidate], paths[index])) {
+        fail(`${label}_overlap_invalid`);
+      }
+    }
   }
 }
 
@@ -487,6 +498,7 @@ function pinnedKey(trustRoots, keyId) {
 function validateExpected(value) {
   const expected = plainObject(value, "runtime_manifest_v2_expected_bindings_invalid");
   exactFields(expected, EXPECTED_FIELDS, "runtime_manifest_v2_expected_bindings_fields_invalid");
+  sha256(expected.body_sha256, "runtime_manifest_v2_expected_body_sha256");
   token(expected.issuer, "runtime_manifest_v2_expected_issuer");
   token(expected.key_id, "runtime_manifest_v2_expected_key_id");
   validatePlatform(expected.platform, "runtime_manifest_v2_expected_platform");
@@ -518,6 +530,7 @@ export function verifyRuntimeManifestV2(envelopeValue, trustRoots, expectedValue
   const { body, envelope, signature } = validateEnvelope(envelopeValue);
   const expected = validateExpected(expectedValue);
   const bindings = [
+    ["body_sha256", createHash("sha256").update(canonicalRuntimeManifestV2Bytes(body)).digest("hex"), expected.body_sha256],
     ["issuer", body.issuer, expected.issuer],
     ["key_id", body.key_id, expected.key_id],
     ["platform", body.platform, expected.platform],
@@ -536,7 +549,7 @@ export function verifyRuntimeManifestV2(envelopeValue, trustRoots, expectedValue
   const verificationTime = timestamp(expected.verification_time, "runtime_manifest_v2_verification_time");
   if (
     verificationTime < timestamp(body.created_at, "runtime_manifest_v2_created_at")
-    || verificationTime > timestamp(body.expires_at, "runtime_manifest_v2_expires_at")
+    || verificationTime >= timestamp(body.expires_at, "runtime_manifest_v2_expires_at")
   ) fail("runtime_manifest_v2_verification_time_invalid");
 
   const publicKey = pinnedKey(trustRoots, envelope.key_id);

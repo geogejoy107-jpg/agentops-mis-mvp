@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 ARG NODE_IMAGE
 FROM ${NODE_IMAGE}
 
@@ -10,7 +10,7 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm ci --ignore-scripts --omit=dev --no-audit --no-fund \
     && npm cache clean --force \
     && test "$(node --version)" = "v22.23.2" \
-    && test "$(node -p 'require(\"openclaw/package.json\").version')" = "2026.5.4"
+    && test "$(node -p 'require("openclaw/package.json").version')" = "2026.5.4"
 
 COPY --chown=0:0 --chmod=0555 deploy/byoc/openclaw-stdin-provider.mjs \
     /opt/agentops/openclaw-adapter/openclaw-stdin-provider.mjs
@@ -20,6 +20,11 @@ COPY --chown=0:0 --chmod=0444 deploy/byoc/openclaw-runtime-artifact/artifact.jso
 RUN find /opt/openclaw /opt/agentops -xdev -type d -exec chmod 0555 {} + \
     && find /opt/openclaw /opt/agentops -xdev -type f -exec chmod 0444 {} + \
     && chmod 0555 /opt/agentops/openclaw-adapter/openclaw-stdin-provider.mjs \
+    && groupadd --gid 1200 agentops-runtime \
+    && useradd --uid 1200 --gid 1200 --home-dir /run/openclaw-state \
+      --no-create-home --shell /usr/sbin/nologin agentops-runtime \
+    && find / -xdev -type f -perm /6000 -exec chmod a-s {} + \
+    && test -z "$(find / -xdev -type f -perm /6000 -print -quit)" \
     && test -f /opt/openclaw/node_modules/openclaw/dist/plugin-sdk/agent-runtime.js
 
 USER 1200:1200

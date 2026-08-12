@@ -69,14 +69,17 @@ assert.equal(artifact.adapter.guest_path, "/opt/agentops/openclaw-adapter/opencl
 for (const claim of FALSE_CLAIMS) assert.equal(artifact.claims[claim], false, `claim_must_be_false:${claim}`);
 assert.deepEqual(Object.keys(artifact.claims).sort(), FALSE_CLAIMS.sort());
 
-assert.match(dockerfile, /^# syntax=docker\/dockerfile:1\.7/m);
+assert.match(dockerfile, /^# syntax=docker\/dockerfile:1\.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e$/m);
 assert.match(dockerfile, /^ARG NODE_IMAGE$/m);
 assert.match(dockerfile, /^FROM \$\{NODE_IMAGE\}$/m);
 assert.doesNotMatch(dockerfile, /^ARG NODE_IMAGE=/m);
 assert.match(dockerfile, /npm ci --ignore-scripts --omit=dev --no-audit --no-fund/);
+assert.match(dockerfile, /node -p 'require\("openclaw\/package\.json"\)\.version'/);
 assert.match(dockerfile, /COPY --chown=0:0 --chmod=0555 deploy\/byoc\/openclaw-stdin-provider\.mjs/);
 assert.match(dockerfile, /ENTRYPOINT \["\/usr\/local\/bin\/node", "\/opt\/agentops\/openclaw-adapter\/openclaw-stdin-provider\.mjs"\]/);
 assert.doesNotMatch(dockerfile, /npm install\s+-g|COPY\s+\/usr|\.npmrc|ARG\s+.*(?:TOKEN|KEY|SECRET)|ENV\s+.*(?:TOKEN|KEY|SECRET)/i);
+assert.match(dockerfile, /useradd --uid 1200 --gid 1200 --home-dir \/run\/openclaw-state/);
+assert.match(dockerfile, /find \/ -xdev -type f -perm \/6000 -exec chmod a-s/);
 
 assert.match(adapter, /import\("openclaw\/plugin-sdk\/agent-runtime"\)/);
 assert.match(adapter, /for await \(const chunk of stdin\)/);

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 
 import {
   canonicalRuntimeManifestV2Bytes,
@@ -76,6 +76,7 @@ function fixture(overrides = {}) {
 
 function expected(body) {
   return {
+    body_sha256: createHash("sha256").update(canonicalRuntimeManifestV2Bytes(body)).digest("hex"),
     cgroup_policy_sha256: body.cgroup_policy_sha256,
     entrypoint: body.entrypoint,
     issuer: body.issuer,
@@ -128,8 +129,10 @@ for (const [body, pattern] of [
   [fixture({ path_model: "host_absolute_v1" }), /runtime_manifest_v2_path_model_invalid/],
   [fixture({ immutable_code_roots: ["/usr/local", "/opt/openclaw"] }), /runtime_manifest_v2_immutable_code_roots_order_invalid/],
   [fixture({ immutable_code_roots: ["/opt", "/opt/agentops/openclaw-adapter", "/usr/local"] }), /runtime_manifest_v2_immutable_code_roots_overlap_invalid/],
+  [fixture({ immutable_code_roots: ["/opt", "/opt-escape", "/opt/openclaw", "/usr/local"] }), /runtime_manifest_v2_immutable_code_roots_overlap_invalid/],
   [fixture({ immutable_code_roots: ["/opt/../openclaw", "/usr/local"] }), /runtime_manifest_v2_immutable_code_root_invalid/],
   [fixture({ entrypoint: "/opt/agentops/openclaw-adapter/../escape.mjs" }), /runtime_manifest_v2_entrypoint_invalid/],
+  [fixture({ entrypoint: "/opt/agentops/\ud800/escape.mjs" }), /runtime_manifest_v2_entrypoint_invalid/],
   [fixture({ environment_name_allowlist: ["LANG", "LANG", "OPENCLAW_STATE_DIR", "OPENCLAW_WORKSPACE", "PATH"] }), /runtime_manifest_v2_environment_name_allowlist_invalid/],
   [fixture({ mutable_mounts: [fixture().mutable_mounts[0], fixture().mutable_mounts[0], fixture().mutable_mounts[2]] }), /runtime_manifest_v2_mutable_mount_kind_duplicate|runtime_manifest_v2_mutable_mounts_order_invalid/],
   [fixture({ mutable_mounts: fixture().mutable_mounts.map((mount) => mount.kind === "config_file" ? { ...mount, read_only: false } : mount) }), /runtime_manifest_v2_mutable_mount_read_only_invalid/],
@@ -139,6 +142,14 @@ for (const [body, pattern] of [
   [fixture({ claims: { ...fixture().claims, runtime_path_toctou_closed: true } }), /runtime_manifest_v2_claim_scope_invalid/],
   [fixture({ claims: { ...fixture().claims, provider_call_verified: false } }), /runtime_manifest_v2_claims_fields_invalid/],
 ]) rejectsBody(body, pattern);
+
+rejectsBody(fixture({
+  mutable_mounts: [
+    { kind: "config_file", path: "/run", read_only: true },
+    { kind: "workspace_directory", path: "/run-escape", read_only: true },
+    { kind: "state_directory", path: "/run/state", read_only: false },
+  ],
+}), /runtime_manifest_v2_mutable_mounts_overlap_invalid/);
 
 const duplicateRoot = fixture({ immutable_code_roots: ["/opt/agentops/openclaw-adapter", "/opt/openclaw", "/opt/openclaw", "/usr/local"] });
 rejectsBody(duplicateRoot, /runtime_manifest_v2_immutable_code_roots_order_invalid/);
@@ -196,11 +207,31 @@ assert.throws(
   ),
   /runtime_manifest_v2_platform_mismatch/,
 );
+const alternateBody = fixture({
+  argv: [...fixture().argv, { kind: "opaque", value: "--alternate-mode=enabled" }],
+});
+const alternateEnvelope = signed(alternateBody);
+assert.throws(
+  () => verifyCanonicalRuntimeManifestV2(
+    serializeRuntimeManifestV2Envelope(alternateEnvelope),
+    new Map([[alternateEnvelope.key_id, signing.publicKey]]),
+    expected(envelope.body),
+  ),
+  /runtime_manifest_v2_body_sha256_mismatch/,
+);
 assert.throws(
   () => verifyCanonicalRuntimeManifestV2(
     bytes,
     new Map([[envelope.key_id, signing.publicKey]]),
     { ...expected(envelope.body), verification_time: "2026-09-01T00:00:00.000Z" },
+  ),
+  /runtime_manifest_v2_verification_time_invalid/,
+);
+assert.throws(
+  () => verifyCanonicalRuntimeManifestV2(
+    bytes,
+    new Map([[envelope.key_id, signing.publicKey]]),
+    { ...expected(envelope.body), verification_time: envelope.body.expires_at },
   ),
   /runtime_manifest_v2_verification_time_invalid/,
 );

@@ -90,6 +90,8 @@ jobs:
             "${image}" -ec '
               test "$(id -u)" = "1200"
               test "$(id -g)" = "1200"
+              test "$(getent passwd 1200 | cut -d: -f1,6,7)" = "agentops-runtime:/run/openclaw-state:/usr/sbin/nologin"
+              test -z "$(find / -xdev -type f -perm /6000 -print -quit)"
               test "$(stat -c %a /opt/openclaw/node_modules/openclaw/package.json)" = "444"
               test "$(stat -c %a /opt/agentops/openclaw-adapter/openclaw-stdin-provider.mjs)" = "555"
               test -r /opt/openclaw/node_modules/openclaw/LICENSE
