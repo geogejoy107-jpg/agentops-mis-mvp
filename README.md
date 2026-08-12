@@ -24,6 +24,40 @@ customer-facing descriptions.
 - Notion External Base dry-run connector
 - Template + Base switching preview
 
+## OpenCekura Reliability Lab
+
+OpenCekura is the repository's open-source-intended reliability-testing
+vertical. The Reliability Lab v0 campaign/evidence workflow runs versioned YAML
+scenarios with the deterministic Mock adapter, observes ToolCalls, produces
+explainable evaluations and regressions, derives release gates, and reads the
+complete evidence chain in the existing Vite workspace at
+`/workspace/reliability`. The lower-level HTTP adapter is implemented and
+tested, but it is not yet selectable from the v0 campaign CLI.
+
+On Windows PowerShell:
+
+```powershell
+python -m pip install '.[reliability]'
+Set-Location ui/start-building-app
+npm ci
+Set-Location ../..
+python -m open_cekura.cli.main doctor
+python -m open_cekura.cli.main scenario validate examples/open-cekura/scenarios/basic.yaml
+python -m open_cekura.cli.main campaign run --suite examples/open-cekura/scenarios --agent mock --version candidate
+```
+
+This is configured, deterministic simulation and evaluation evidence. It is
+not a production reliability certification and is not an official open-source
+edition of Cekura. See the
+[product specification](docs/open-cekura/PRODUCT_SPEC.md),
+[architecture](docs/open-cekura/ARCHITECTURE.md), and
+[Windows runbook](docs/open-cekura/WINDOWS_DEV_RUNBOOK.md).
+
+Licensing boundary: this repository currently uses the proprietary local MVP
+license in `LICENSE` and `pyproject.toml`. Until the Owner selects and applies
+an open-source license, OpenCekura must not be redistributed or publicly
+described as open-source licensed software.
+
 ## Open Source Base Index
 
 `docs/research/OPEN_SOURCE_BASE_INDEX_V1_1.md` and

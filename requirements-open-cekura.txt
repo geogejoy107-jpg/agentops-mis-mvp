@@ -1,0 +1,2 @@
+.[reliability]
+pytest>=8,<9

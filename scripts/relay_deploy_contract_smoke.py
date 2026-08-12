@@ -137,6 +137,7 @@ def main() -> int:
     sdist_has_pkg_info = False
     sdist_pkg_info_matches = False
     metadata_version_current = False
+    wheel_metadata = b""
     wheel_reproducible = False
     wheel_metadata_normalized = False
     prepared_metadata_round_trip = False
@@ -160,8 +161,17 @@ def main() -> int:
             second = output / "second"
             first.mkdir()
             second.mkdir()
-            wheel_name = backend.build_wheel(str(first))
-            second_wheel_name = backend.build_wheel(str(second))
+            relay_config = {
+                backend.DISTRIBUTION_CONFIG_KEY: backend.RELAY_DISTRIBUTION,
+            }
+            wheel_name = backend.build_wheel(
+                str(first),
+                config_settings=relay_config,
+            )
+            second_wheel_name = backend.build_wheel(
+                str(second),
+                config_settings=relay_config,
+            )
             wheel_reproducible = (
                 wheel_name == second_wheel_name
                 and (first / wheel_name).read_bytes()
@@ -185,8 +195,9 @@ def main() -> int:
                     "",
                 )
                 if metadata_name:
+                    wheel_metadata = wheel.read(metadata_name)
                     metadata_version_current = (
-                        wheel.read(metadata_name)
+                        wheel_metadata
                         .decode("utf-8")
                         .startswith("Metadata-Version: 2.2\n")
                     )
@@ -195,13 +206,17 @@ def main() -> int:
             prepared_root = output / "prepared"
             prepared_wheel_output = output / "prepared-wheel"
             prepared_wheel_output.mkdir()
-            prepared_name = backend.prepare_metadata_for_build_wheel(str(prepared_root))
+            prepared_name = backend.prepare_metadata_for_build_wheel(
+                str(prepared_root),
+                config_settings=relay_config,
+            )
             prepared_dist_info = prepared_root / prepared_name
             custom_metadata = prepared_dist_info / "licenses" / "agentops-build-contract.json"
             custom_metadata.parent.mkdir()
             custom_metadata.write_text('{"schema_version":1}\n', encoding="utf-8")
             prepared_wheel_name = backend.build_wheel(
                 str(prepared_wheel_output),
+                config_settings=relay_config,
                 metadata_directory=str(prepared_root),
             )
             with zipfile.ZipFile(prepared_wheel_output / prepared_wheel_name) as wheel:
@@ -218,8 +233,14 @@ def main() -> int:
                     )
                 )
 
-            sdist_name = backend.build_sdist(str(first))
-            second_sdist_name = backend.build_sdist(str(second))
+            sdist_name = backend.build_sdist(
+                str(first),
+                config_settings=relay_config,
+            )
+            second_sdist_name = backend.build_sdist(
+                str(second),
+                config_settings=relay_config,
+            )
             sdist_reproducible = (
                 sdist_name == second_sdist_name
                 and (first / sdist_name).read_bytes()
@@ -385,8 +406,7 @@ def main() -> int:
                 pkg_info = source.extractfile(pkg_info_name) if pkg_info_name else None
                 sdist_pkg_info_matches = bool(
                     pkg_info
-                    and pkg_info.read()
-                    == backend._metadata().encode("utf-8")
+                    and pkg_info.read() == wheel_metadata
                 )
     except Exception:
         failures.append("offline build artifacts could not be inspected")
