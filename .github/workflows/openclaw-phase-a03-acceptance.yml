@@ -1,0 +1,96 @@
+name: OpenClaw Phase A03 Acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/commercial-hostile-runtime-a03
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentops-openclaw-a03-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-container-attack:
+    name: Real Linux Worker path-isolation attacks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact candidate source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact caller commit and offline contracts
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          node deploy/byoc/openclaw-phase-a03-image-contract.mjs
+          node deploy/byoc/openclaw-broker-contract.mjs
+          node deploy/byoc/worker-service-contract.mjs
+
+      - name: Build exact candidate image and bind immutable digest
+        id: image
+        run: |
+          set -euo pipefail
+          registry_name="agentops-a03-registry-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          image_tag="localhost:5000/agentops-openclaw-a03:${GITHUB_SHA}"
+          docker run --detach --name "${registry_name}" \
+            --publish 127.0.0.1:5000:5000 \
+            registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+          printf 'registry_name=%s\n' "${registry_name}" >> "${GITHUB_OUTPUT}"
+          timeout 25m docker build --pull --platform linux/amd64 \
+            --file deploy/byoc/Dockerfile \
+            --build-arg "AGENTOPS_BUILD_IDENTITY=openclaw-a03-${GITHUB_SHA}" \
+            --build-arg "AGENTOPS_SOURCE_REVISION=${GITHUB_SHA}" \
+            --tag "${image_tag}" .
+          docker push "${image_tag}" >/dev/null
+          digest="$(
+            docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+              "${image_tag}" |
+              awk '/^localhost:5000\/agentops-openclaw-a03@sha256:[0-9a-f]{64}$/ { print }' |
+              sort -u
+          )"
+          test "$(printf '%s\n' "${digest}" | sed '/^$/d' | wc -l | tr -d ' ')" = 1
+          [[ "${digest}" =~ ^localhost:5000/agentops-openclaw-a03@sha256:[0-9a-f]{64}$ ]]
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${digest}")" = "${GITHUB_SHA}"
+          printf 'digest=%s\n' "${digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Run real Linux A03 topology and active denial probes
+        run: |
+          set -euo pipefail
+          receipt="${RUNNER_TEMP}/openclaw-phase-a03-receipt.json"
+          timeout 5m node deploy/byoc/openclaw-phase-a03-container-acceptance.mjs \
+            --image "${{ steps.image.outputs.digest }}" \
+            --source-root "${GITHUB_WORKSPACE}" \
+            --source-revision "${GITHUB_SHA}" > "${receipt}"
+          jq -e --arg source "${GITHUB_SHA}" '
+            .ok == true
+            and .contract == "agentops_openclaw_phase_a03_container_acceptance_v1"
+            and .source_commit == $source
+            and .image_digest_verified == true
+            and .image_source_revision_verified == true
+            and .real_linux_docker_execution == true
+            and .phase_a03_three_service_topology_verified == true
+            and .phase_a03_candidate_source_only == true
+            and .worker_forbidden_path_read_open_denials >= 5
+            and .broker_a06_prep_sensitive_path_read_open_denials >= 4
+            and .worker_public_socket_mutation_denied == true
+            and .broker_private_socket_mutation_denied == true
+            and .public_broker_private_executor_protocol_verified == true
+            and .cleanup_confirmed == true
+            and .real_openclaw_runtime_execution == false
+            and .so_peercred_verified == false
+            and .hostile_runtime_isolation_verified == false
+          ' "${receipt}" >/dev/null
+
+      - name: Remove candidate image and registry
+        if: always()
+        run: |
+          set +e
+          docker rm --force "${{ steps.image.outputs.registry_name }}" >/dev/null 2>&1
+          docker image rm "${{ steps.image.outputs.digest }}" >/dev/null 2>&1
