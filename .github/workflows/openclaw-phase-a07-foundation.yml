@@ -174,7 +174,9 @@ jobs:
           mkdir -p "${rootfs}" "${upper}" "${work}" "${merged}"
           container_id="$(docker create "${guest_image}")"
           trap 'docker rm -f "${container_id}" >/dev/null 2>&1 || true' EXIT
-          docker export "${container_id}" | tar -x -C "${rootfs}"
+          docker export "${container_id}" | sudo tar --numeric-owner -x -C "${rootfs}"
+          test "$(stat -c '%F:%u:%g:%a:%h' "${rootfs}/usr/local/bin/node")" = \
+            "regular file:0:0:755:1"
           runtime_digest="$(docker image inspect --format '{{.Id}}' "${guest_image}")"
           [[ "${runtime_digest}" =~ ^sha256:[a-f0-9]{64}$ ]]
           cat > "${config}" <<'JSON'
