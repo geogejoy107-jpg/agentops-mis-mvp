@@ -60,13 +60,17 @@ cleanup cannot be held hostage by a detached descendant retaining a pipe.
 OpenClaw 2026.5.4 still exposes the agent prompt only as CLI
 `--message <text>`; that CLI remains forbidden. A checked-in Node adapter now
 reads the canonical provider request from stdin and calls OpenClaw's published
-`openclaw/plugin-sdk/agent-runtime` `agentCommand` export. The checked-in source
-completed a real local `modelRun` turn through that API with canonical stdout,
-an empty ephemeral state root after response, and no prompt/response in the
-adapter output. The adapter disables owner authorization, model overrides,
+`openclaw/plugin-sdk/agent-runtime` `agentCommand` export. An operator-local,
+non-claim probe of the checked-in source completed a real `modelRun` turn
+through that API with canonical stdout, an empty ephemeral state root after
+response, and no prompt/response in the adapter output; no repository artifact
+or release claim is derived from that probe. The adapter disables owner
+authorization, model overrides,
 tools, workspace/chat prompt policy, and external delivery. It gives each
-one-shot run an isolated 0700 state subtree and removes that complete subtree
-before writing stdout; cleanup failure makes the process fail closed. The
+one-shot run an isolated 0700 state subtree below a dedicated initially empty
+state root and removes every entry below that root before writing stdout; this
+also catches a same-uid runtime renaming the request subtree. Cleanup failure
+makes the process fail closed. The
 adapter has not yet been assembled into a reproducible digest-pinned Linux
 runtime artifact, so this real local probe does not change A07 release claims.
 

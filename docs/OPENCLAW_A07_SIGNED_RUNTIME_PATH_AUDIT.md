@@ -37,9 +37,10 @@ therefore remain open until the resolved executable/entrypoint identity is
 carried without pathname reopening into the actual launch sequence.
 
 The source-only stdin adapter removes the prompt-argv blocker without weakening
-the runner gate. It calls OpenClaw's public `agentCommand` export and has passed
-a real local agent turn, but it is not yet part of a claim-bearing runtime
-artifact or Linux launcher acceptance. The official OpenClaw 2026.5.4 tarball
+the runner gate. It calls OpenClaw's public `agentCommand` export and passed an
+operator-local non-claim probe, but no repository artifact or release claim is
+derived from that probe. It is not yet part of a claim-bearing runtime artifact
+or Linux launcher acceptance. The official OpenClaw 2026.5.4 tarball
 contains 9,692 files; a full production dependency install measured roughly
 44,670 files and 441 MiB, exceeding the current 20,000-file manifest bound.
 Increasing that bound and copying an operator's global install is rejected as a

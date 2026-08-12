@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -117,7 +118,7 @@ try {
     workspaceDir: workspace,
   }));
   assert.equal(failure.ok, false);
-  assert.equal(failure.provider_call_performed, true);
+  assert.equal(failure.provider_call_performed, false);
   assert.equal(failure.error_type, "OpenClawExecutionFailed");
   assert.equal(failure.error_message, "Provider error detail omitted; OpenClaw execution failed.");
 
@@ -136,6 +137,8 @@ try {
   }));
   assert.equal(cleanupFailure.ok, false);
   assert.equal(cleanupFailure.error_type, "AdapterCleanupFailed");
+  assert.equal(cleanupFailure.provider_call_performed, false);
+  rmSync(join(stateBase, "agents"), { recursive: true, force: true });
 
   await assert.rejects(
     () => executeCanonicalProviderRequest(Buffer.from(`${canonicalBytes(request()).toString("utf8")}\n`), {
@@ -164,8 +167,13 @@ try {
 
   const ephemeral = createEphemeralStateRoot(stateBase);
   writeFileSync(join(ephemeral, "sensitive.jsonl"), rawPrompt, { mode: 0o600 });
+  const renamedEphemeral = join(stateBase, "runtime-renamed-state");
+  renameSync(ephemeral, renamedEphemeral);
   removeEphemeralStateRoot(stateBase, ephemeral);
-  assert.equal(readdirSync(stateBase).some((name) => name.startsWith("agentops-request-")), false);
+  assert.deepEqual(readdirSync(stateBase), []);
+  writeFileSync(join(stateBase, "stale-state"), rawPrompt, { mode: 0o600 });
+  assert.throws(() => createEphemeralStateRoot(stateBase), /stdin_provider_state_root_not_empty/);
+  rmSync(join(stateBase, "stale-state"));
   chmodSync(stateBase, 0o755);
   assert.throws(() => createEphemeralStateRoot(stateBase), /stdin_provider_state_root_metadata_invalid/);
 

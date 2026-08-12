@@ -5,6 +5,7 @@ import {
   chmodSync,
   lstatSync,
   mkdtempSync,
+  readdirSync,
   realpathSync,
   rmSync,
   unlinkSync,
@@ -117,7 +118,7 @@ function responseFromResult(request, result, started, now) {
     ok: !failed && outputPresent,
     output_present: !failed && outputPresent,
     output_tokens: outputTokens(result),
-    provider_call_performed: true,
+    provider_call_performed: !failed && outputPresent,
     raw_payload_hash: digest(wire),
     raw_prompt_omitted: true,
     raw_response_omitted: true,
@@ -126,7 +127,7 @@ function responseFromResult(request, result, started, now) {
   };
 }
 
-function failureResponse(agentName, started, providerCallPerformed, errorType = "OpenClawExecutionFailed", now = Date.now) {
+function failureResponse(agentName, started, errorType = "OpenClawExecutionFailed", now = Date.now) {
   return {
     dry_run: false,
     duration_ms: elapsed(started, now),
@@ -136,7 +137,7 @@ function failureResponse(agentName, started, providerCallPerformed, errorType = 
     ok: false,
     output_present: false,
     output_tokens: 0,
-    provider_call_performed: providerCallPerformed,
+    provider_call_performed: false,
     raw_payload_hash: digest(Buffer.alloc(0)),
     raw_prompt_omitted: true,
     raw_response_omitted: true,
@@ -180,6 +181,7 @@ export function createEphemeralStateRoot(baseStateRoot) {
     || metadata.uid !== process.getuid?.()
     || (metadata.mode & 0o077) !== 0
   ) fail("stdin_provider_state_root_metadata_invalid");
+  if (readdirSync(baseStateRoot).length !== 0) fail("stdin_provider_state_root_not_empty");
   const target = mkdtempSync(path.join(baseStateRoot, "agentops-request-"));
   chmodSync(target, 0o700);
   return target;
@@ -187,17 +189,24 @@ export function createEphemeralStateRoot(baseStateRoot) {
 
 export function removeEphemeralStateRoot(baseStateRoot, target) {
   const base = realpathSync(baseStateRoot);
-  const resolved = realpathSync(target);
-  const metadata = lstatSync(resolved);
+  const expectedParent = realpathSync(path.dirname(target));
+  const baseMetadata = lstatSync(base);
   if (
-    path.dirname(resolved) !== base
-    || !path.basename(resolved).startsWith("agentops-request-")
-    || !metadata.isDirectory()
-    || metadata.isSymbolicLink()
-    || metadata.uid !== process.getuid?.()
-    || (metadata.mode & 0o077) !== 0
+    expectedParent !== base
+    || !path.basename(target).startsWith("agentops-request-")
+    || !baseMetadata.isDirectory()
+    || baseMetadata.isSymbolicLink()
+    || baseMetadata.uid !== process.getuid?.()
+    || (baseMetadata.mode & 0o077) !== 0
   ) fail("stdin_provider_ephemeral_state_metadata_invalid");
-  rmSync(resolved, { force: false, maxRetries: 2, recursive: true, retryDelay: 10 });
+  for (const name of readdirSync(base)) {
+    const entry = path.join(base, name);
+    if (path.dirname(entry) !== base || name === "." || name === "..") {
+      fail("stdin_provider_ephemeral_state_entry_invalid");
+    }
+    rmSync(entry, { force: false, maxRetries: 2, recursive: true, retryDelay: 10 });
+  }
+  if (readdirSync(base).length !== 0) fail("stdin_provider_ephemeral_state_cleanup_incomplete");
 }
 
 export async function executeCanonicalProviderRequest(bytes, {
@@ -213,11 +222,9 @@ export async function executeCanonicalProviderRequest(bytes, {
   }
   const started = now();
   const sessionId = `agentops-${randomUUID()}`;
-  let dispatched = false;
   let result = null;
   let executionFailed = false;
   try {
-    dispatched = true;
     result = await agentCommand({
       abortSignal: AbortSignal.timeout(request.timeout_seconds * 1000),
       agentId: request.agent_name,
@@ -246,10 +253,10 @@ export async function executeCanonicalProviderRequest(bytes, {
   try {
     cleanupSessionFiles(stateRoot, request.agent_name, sessionId);
   } catch {
-    return canonicalBytes(failureResponse(request.agent_name, started, dispatched, "AdapterCleanupFailed", now));
+    return canonicalBytes(failureResponse(request.agent_name, started, "AdapterCleanupFailed", now));
   }
   return canonicalBytes(executionFailed
-    ? failureResponse(request.agent_name, started, dispatched, "OpenClawExecutionFailed", now)
+    ? failureResponse(request.agent_name, started, "OpenClawExecutionFailed", now)
     : responseFromResult(request, result, started, now));
 }
 
@@ -280,7 +287,7 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   main().catch(() => {
-    process.stdout.write(canonicalBytes(failureResponse("openclaw", Date.now(), false, "AdapterRejected")));
+    process.stdout.write(canonicalBytes(failureResponse("openclaw", Date.now(), "AdapterRejected")));
     process.exitCode = 1;
   });
 }
