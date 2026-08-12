@@ -52,6 +52,7 @@
     "test:human-run-evidence-graph-postgres-contract": "tsx scripts/human-run-evidence-graph-postgres-contract.ts",
     "test:human-task-run-read-postgres-contract": "tsx scripts/human-task-run-read-postgres-contract.ts",
     "test:human-task-dispatch-postgres-contract": "tsx scripts/human-task-dispatch-postgres-contract.ts",
+    "test:human-task-operations-postgres-contract": "tsx scripts/human-task-operations-postgres-contract.ts",
     "test:prepared-action-owner-contract": "tsx scripts/prepared-action-owner-contract.ts",
     "test:commercial-worker-contract": "tsx scripts/commercial-worker-contract.ts",
     "test:postgres-schema-contract": "tsx scripts/postgres-schema-contract.ts",
