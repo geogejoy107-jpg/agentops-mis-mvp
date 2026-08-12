@@ -275,6 +275,16 @@ function validateProviderResponseBytes(value) {
   return Object.freeze({ bytes: canonical, value: response });
 }
 
+function completionFailureCode(result) {
+  if (result?.spawned !== true) return "executor_runner_not_spawned";
+  if (result.timedOut === true) return "executor_runner_timed_out";
+  if (result.aborted === true) return "executor_runner_aborted";
+  if (result.code !== 0) return "executor_runner_nonzero_exit";
+  if (result.outputTooLarge === true) return "executor_runner_output_limit_exceeded";
+  if (result.launcherStatus !== "R") return "executor_runner_launcher_handshake_invalid";
+  return "executor_runner_completion_unverified";
+}
+
 function signalNumber(value) {
   if (value === null || value === undefined) return null;
   const table = { SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGKILL: 9, SIGTERM: 15 };
@@ -524,7 +534,7 @@ async function runExecutorDispatchWithDependencies(dispatchBytesValue, configura
         finishedClock.now_boottime_ns,
       );
     }
-    fail("executor_runner_completion_unverified");
+    fail(completionFailureCode(result));
   }
   const body = receiptBody({
     configuration,

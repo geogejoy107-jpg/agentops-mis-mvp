@@ -261,12 +261,17 @@ await assert.rejects(
 );
 assert.equal(successFixture.observations().spawnCalls, 1);
 
-for (const outcome of ["timeout", "spawn-fail", "missing-milestone", "forged-milestone"]) {
+for (const [outcome, error] of [
+  ["timeout", /executor_runner_timed_out/],
+  ["spawn-fail", /executor_runner_not_spawned/],
+  ["missing-milestone", /executor_runner_launcher_handshake_invalid/],
+  ["forged-milestone", /executor_runner_launcher_handshake_invalid/],
+]) {
   const current = fixture({ outcome });
   const bytes = canonicalExecutorProtocolBytes(dispatch(`req-${outcome}`));
   await assert.rejects(
     () => runExecutorDispatchForTest(bytes, current.configuration, current.preflight, current.dependencies),
-    /executor_runner_completion_unverified/,
+    error,
   );
   assert.equal(current.journal.records.get(`req-${outcome}`).state, "uncertain");
   assert.equal(current.observations().killed, 1);
