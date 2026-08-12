@@ -130,6 +130,8 @@ for (const required of [
   'const guestDescriptorAfter = fstatSync(publishedGuestDescriptor, { bigint: true })',
   'const MAX_LOCAL_PAX_BYTES = 16 * 1024',
   'const MAX_LOCAL_PAX_RECORDS = 2',
+  'function stableRuntimeErrorCode(error, depth = 0, seen = new Set())',
+  'const stableCode = stableRuntimeErrorCode(error)',
   'expected.local_pax_header_sha256 !== header.local_pax_header_sha256',
   'expected.local_pax_payload_sha256 !== header.local_pax_payload_sha256',
 ]) assert.ok(source.includes(required), `missing static boundary: ${required}`);

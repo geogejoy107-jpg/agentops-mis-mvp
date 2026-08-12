@@ -64,6 +64,24 @@ function fail(code, cause) {
   throw error;
 }
 
+function stableRuntimeErrorCode(error, depth = 0, seen = new Set()) {
+  if (!error || depth > 8 || seen.has(error)) return undefined;
+  if (typeof error === "object" || typeof error === "function") seen.add(error);
+  if (
+    typeof error?.code === "string"
+    && /^runtime_oci_export_[a-z0-9_]+$/.test(error.code)
+  ) return error.code;
+  const causeCode = stableRuntimeErrorCode(error?.cause, depth + 1, seen);
+  if (causeCode) return causeCode;
+  if (Array.isArray(error?.errors)) {
+    for (const nested of error.errors.slice(0, 16)) {
+      const nestedCode = stableRuntimeErrorCode(nested, depth + 1, seen);
+      if (nestedCode) return nestedCode;
+    }
+  }
+  return undefined;
+}
+
 function exactOciReference(value) {
   if (typeof value !== "string" || value.length > 512 || value.includes("\0")) {
     fail("runtime_oci_export_reference_invalid");
@@ -1194,7 +1212,7 @@ async function exportDirectlyToTar(docker, tar, containerId, stagingRoot, expect
   } catch (error) {
     dockerChild.kill("SIGKILL");
     tarChild.kill("SIGKILL");
-    fail(error?.code ?? "runtime_oci_export_extract_stream_failed", error);
+    fail(stableRuntimeErrorCode(error) ?? "runtime_oci_export_extract_stream_failed", error);
   }
   const [dockerStatus, tarStatus] = await Promise.all([
     dockerClosed,
@@ -1333,9 +1351,8 @@ export async function exportOpenClawRuntimeOciRootfs(input) {
       rmSync(destinations.guest.path, { recursive: true, force: true });
       try { syncDirectory(destinations.guest.parent); } catch {}
     }
-    if (typeof error?.code === "string" && error.code.startsWith("runtime_oci_export_")) {
-      throw error;
-    }
+    const stableCode = stableRuntimeErrorCode(error);
+    if (stableCode) fail(stableCode, error);
     fail("runtime_oci_export_failed", error);
   } finally {
     if (docker) removeContainer(docker, containerId);
