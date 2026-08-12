@@ -21,9 +21,33 @@ The Worker currently owns the governed summary workflow:
 7. request Human customer-delivery approval only when current evidence passes
 8. publish a bounded Worker heartbeat
 
-External writes remain fail closed. The Worker records the intent without
-calling the provider until a runtime-specific PreparedAction owner can bind
-prepare, Human approval, claim, execution, and terminal reconciliation.
+External writes remain fail closed. Until a runtime-specific PreparedAction
+owner can bind prepare, Human approval, claim, execution, and terminal
+reconciliation, the Worker records the blocked intent, terminalizes the run and
+task as `blocked`, closes active Tool Calls, and settles the reservation at zero
+without calling the provider.
+
+## Source-Free BYOC Worker
+
+The customer release bundle includes explicit `worker-hermes` and
+`worker-openclaw` Compose profiles. Neither profile starts by default. After an
+Agent is enrolled and its one-time token is stored in the corresponding
+mode-0600 secret file, start exactly the required runtime:
+
+```bash
+docker compose --env-file deploy/byoc/.env -f deploy/byoc/compose.yaml \
+  --profile worker-hermes up -d worker-hermes
+
+docker compose --env-file deploy/byoc/.env -f deploy/byoc/compose.yaml \
+  --profile worker-openclaw up -d worker-openclaw
+```
+
+Both services use the release image's TypeScript Worker, run as uid/gid 1000,
+drop all Linux capabilities, use a read-only root filesystem, and expose only a
+bounded health lease. Agent tokens are mounted as Compose secrets and are
+rejected from direct environment configuration. Commercial control-plane and
+Hermes URLs require HTTPS; the OpenClaw binary/config/workspace mounts are
+read-only.
 
 ## Run One Task
 
@@ -182,3 +206,32 @@ is limited to bounded execution metadata and a SHA-256 payload hash.
 A success receipt is emitted only after the `.next` artifact hash remains
 unchanged before startup, after acceptance, and after teardown, and after the
 ephemeral schemas and restricted roles are absent from the PostgreSQL catalog.
+
+### Exact-Head Promotion Status
+
+Keep the harness receipt outside the repository, validate it against the exact
+candidate commit, then publish two bounded GitHub commit status contexts:
+
+```bash
+head_sha="$(git rev-parse HEAD)"
+receipt="$(mktemp -t agentops-real-runtime.XXXXXX.json)"
+
+python3 scripts/nextjs_postgres_real_worker_human_review_smoke.py \
+  --postgres-dsn "postgresql://<user>:<password>@127.0.0.1:<port>/<database>" \
+  --worker-implementation typescript \
+  --adapter hermes \
+  --adapter openclaw > "$receipt"
+
+node scripts/commercial-runtime-status.mjs validate \
+  --receipt "$receipt" --sha "$head_sha"
+node scripts/commercial-runtime-status.mjs publish \
+  --receipt "$receipt" --sha "$head_sha"
+rm -f "$receipt"
+```
+
+Publishing requires an authenticated `gh` CLI identity with commit-status write
+authority. It creates `agentops/real-hermes` and `agentops/real-openclaw` only
+after the receipt proves real non-dry-run provider calls, TypeScript Worker plus
+PostgreSQL ownership, verified manifests, Human delivery decisions, settled
+cost reservations, fixture cleanup, and no Python Worker/API. A new commit has
+no inherited runtime authority and must run the acceptance again.

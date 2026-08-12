@@ -50,11 +50,16 @@ function receipt() {
   };
 }
 
-function run(arguments_, value = receipt()) {
+function run(arguments_, value = receipt(), environment = {}) {
   writeFileSync(receiptPath, JSON.stringify(value));
   const result = spawnSync(process.execPath, [script.pathname, ...arguments_], {
     encoding: "utf8",
-    env: { ...process.env, PATH: `${root}:${process.env.PATH}`, GH_CALLS: callsPath },
+    env: {
+      ...process.env,
+      PATH: `${root}:${process.env.PATH}`,
+      GH_CALLS: callsPath,
+      ...environment,
+    },
   });
   return { ...result, payload: JSON.parse(result.stdout) };
 }
@@ -63,7 +68,12 @@ try {
   writeFileSync(fakeGh, `#!/bin/sh
 printf '%s\\n' "$*" >> "$GH_CALLS"
 case "$*" in
-  *commits/*/statuses*) printf '%s\\n' '[{"context":"agentops/real-hermes","state":"success"},{"context":"agentops/real-openclaw","state":"success"}]' ;;
+  *commits/*/statuses*)
+    if [ "\${GH_STATUS_MODE:-success}" = missing ]; then
+      printf '%s\\n' '[{"context":"agentops/real-hermes","state":"success"}]'
+    else
+      printf '%s\\n' '[{"context":"agentops/real-hermes","state":"success"},{"context":"agentops/real-openclaw","state":"success"}]'
+    fi ;;
   *) printf '%s\\n' '{}' ;;
 esac
 `);
@@ -87,6 +97,14 @@ esac
   const verified = run(["verify", "--sha", SHA, "--repo", "owner/repo"]);
   assert.equal(verified.status, 0);
   assert.equal(verified.payload.contexts["agentops/real-hermes"], "success");
+
+  const missing = run(
+    ["verify", "--sha", SHA, "--repo", "owner/repo"],
+    receipt(),
+    { GH_STATUS_MODE: "missing" },
+  );
+  assert.equal(missing.status, 1);
+  assert.equal(missing.payload.error, "runtime_status_exact_head_context_missing");
 
   const wrongSha = run(["validate", "--receipt", receiptPath, "--sha", "b".repeat(40)]);
   assert.equal(wrongSha.status, 1);

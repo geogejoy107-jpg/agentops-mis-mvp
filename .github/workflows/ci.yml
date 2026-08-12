@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  statuses: read
 
 concurrency:
   group: agentops-mis-ci-${{ github.workflow }}-${{ github.ref }}
@@ -748,6 +749,20 @@ jobs:
       - byoc-cross-schema-acceptance
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Require exact-head real Hermes and OpenClaw evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          node scripts/commercial-runtime-status-contract.mjs
+          node scripts/commercial-runtime-status.mjs verify \
+            --repo "$GITHUB_REPOSITORY" \
+            --sha "$GITHUB_SHA"
+
       - name: Require every commercial promotion lane
         env:
           BACKEND_RESULT: ${{ needs.backend-deterministic.result }}
