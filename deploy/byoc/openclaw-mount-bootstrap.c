@@ -214,16 +214,6 @@ static int harden_mount(const char *target, int recursive_bind) {
     };
     const unsigned int recursive_flags = recursive_bind ? AT_RECURSIVE : 0U;
 
-    if (syscall(
-        SYS_mount_setattr,
-        AT_FDCWD,
-        target,
-        recursive_flags,
-        &attributes,
-        sizeof(attributes)
-    ) < 0) {
-        return -1;
-    }
     if (mount(target, target, NULL, bind_flags, NULL) < 0) {
         return -1;
     }

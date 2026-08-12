@@ -93,7 +93,7 @@ function sourceAudit() {
   assert.match(sourceText, /MOUNT_ATTR_RDONLY \| MOUNT_ATTR_NOSUID/);
   assert.match(sourceText, /MOUNT_ATTR_NODEV \| MOUNT_ATTR_NOEXEC/);
   assert.match(sourceText, /mount_point_in_tree/);
-  assert.equal((sourceText.match(/SYS_mount_setattr/g) || []).length, 2);
+  assert.equal((sourceText.match(/SYS_mount_setattr/g) || []).length, 1);
   assert.match(sourceText, /MS_PRIVATE \| \(recursive_bind \? MS_REC : 0UL\)/);
   assert.match(sourceText, /open\("\/proc\/self\/mountinfo", O_RDONLY \| O_CLOEXEC \| O_NOFOLLOW\)/);
   assert.match(sourceText, /config_mount_id != workspace_mount_id/);
