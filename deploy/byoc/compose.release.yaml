@@ -376,7 +376,7 @@ volumes:
     driver_opts:
       type: tmpfs
       device: tmpfs
-      o: uid=1001,gid=1000,mode=0770,nosuid,nodev,noexec,size=1m
+      o: uid=1001,gid=1000,mode=0750,nosuid,nodev,noexec,size=1m
 
 networks:
   control_plane:
