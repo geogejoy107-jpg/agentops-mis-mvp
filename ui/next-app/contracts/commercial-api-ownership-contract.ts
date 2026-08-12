@@ -1,0 +1,343 @@
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import ts from "typescript";
+
+const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROUTE_ROOT = join(APP_ROOT, "app/api/mis");
+const CONTROL_PLANE_ROOT = join(APP_ROOT, "src/server/controlPlane");
+const CONFIG_FILE = "src/server/controlPlane/config.ts";
+const PROXY_FILE = "src/server/controlPlane/proxy.ts";
+const CATCH_ALL_FILE = "app/api/mis/[...path]/route.ts";
+
+const EXPECTED_PROXY_CALL_OWNERS = new Set([
+  "app/api/mis/agent-gateway/approvals/request/route.ts",
+  "app/api/mis/agent-gateway/prepared-actions/route.ts",
+  "app/api/mis/approvals/[approvalId]/[decision]/route.ts",
+  "app/api/mis/approvals/[approvalId]/route.ts",
+  "app/api/mis/approvals/route.ts",
+  "app/api/mis/memories/[memoryId]/[decision]/route.ts",
+  "app/api/mis/memories/export/route.ts",
+  "app/api/mis/memories/route.ts",
+  "src/server/controlPlane/agentGatewayRoute.ts",
+  "src/server/controlPlane/evidenceRouteOwner.ts",
+  "src/server/controlPlane/humanAgentDetail.ts",
+  "src/server/controlPlane/humanReadRoute.ts",
+  "src/server/controlPlane/humanTaskOperations.ts",
+  "src/server/controlPlane/humanWorkerFleetReads.ts",
+]);
+
+const FREE_LOCAL_GUARDS = new Set([
+  "legacyPythonProxyAllowed",
+  "explicitFreeLocalProxyMode",
+]);
+
+type ParsedSource = Readonly<{
+  path: string;
+  source: string;
+  file: ts.SourceFile;
+}>;
+
+function fail(message: string): never {
+  throw new Error(`commercial_api_ownership_contract_failed: ${message}`);
+}
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) fail(message);
+}
+
+function sourcePath(absolutePath: string) {
+  return relative(APP_ROOT, absolutePath).replaceAll("\\", "/");
+}
+
+function collectTypeScriptFiles(root: string): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(root).sort()) {
+    const absolute = join(root, entry);
+    if (statSync(absolute).isDirectory()) {
+      files.push(...collectTypeScriptFiles(absolute));
+    } else if (entry.endsWith(".ts") || entry.endsWith(".tsx")) {
+      files.push(absolute);
+    }
+  }
+  return files;
+}
+
+function parse(relativePath: string): ParsedSource {
+  const absolutePath = join(APP_ROOT, relativePath);
+  const source = readFileSync(absolutePath, "utf8");
+  return {
+    path: relativePath,
+    source,
+    file: ts.createSourceFile(
+      relativePath,
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      relativePath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    ),
+  };
+}
+
+function walk(node: ts.Node, visit: (candidate: ts.Node) => void) {
+  visit(node);
+  node.forEachChild((child) => walk(child, visit));
+}
+
+function callName(node: ts.Node): string | undefined {
+  if (!ts.isCallExpression(node)) return undefined;
+  if (ts.isIdentifier(node.expression)) return node.expression.text;
+  if (ts.isPropertyAccessExpression(node.expression)) return node.expression.name.text;
+  return undefined;
+}
+
+function callsNamed(node: ts.Node, name: string) {
+  let found = false;
+  walk(node, (candidate) => {
+    if (callName(candidate) === name) found = true;
+  });
+  return found;
+}
+
+function stringLiterals(node: ts.Node) {
+  const values = new Set<string>();
+  walk(node, (candidate) => {
+    if (ts.isStringLiteral(candidate)) values.add(candidate.text);
+  });
+  return values;
+}
+
+function functionNamed(file: ts.SourceFile, name: string): ts.FunctionDeclaration {
+  const declaration = file.statements.find(
+    (statement): statement is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(statement) && statement.name?.text === name,
+  );
+  assert(declaration?.body, `${file.fileName}: missing function ${name}`);
+  return declaration;
+}
+
+function exitsWithoutFallthrough(node: ts.Statement): boolean {
+  if (ts.isReturnStatement(node) || ts.isThrowStatement(node)) return true;
+  if (ts.isBlock(node)) {
+    return node.statements.some((statement) => exitsWithoutFallthrough(statement));
+  }
+  return false;
+}
+
+function negatedGuardName(expression: ts.Expression): string | undefined {
+  if (!ts.isPrefixUnaryExpression(expression) || expression.operator !== ts.SyntaxKind.ExclamationToken) {
+    return undefined;
+  }
+  return callName(expression.operand);
+}
+
+function positiveGuardName(expression: ts.Expression): string | undefined {
+  return callName(expression);
+}
+
+function directChildOfBlock(node: ts.Node, block: ts.Block): ts.Statement | undefined {
+  let current = node;
+  while (current.parent && current.parent !== block) current = current.parent;
+  return ts.isStatement(current) ? current : undefined;
+}
+
+function isFreeLocalGuardDominated(call: ts.CallExpression) {
+  let current: ts.Node | undefined = call;
+  while (current?.parent) {
+    const parent: ts.Node = current.parent;
+    if (ts.isIfStatement(parent) && parent.thenStatement === current) {
+      const guard = positiveGuardName(parent.expression);
+      if (guard && FREE_LOCAL_GUARDS.has(guard)) return true;
+    }
+    if (ts.isBlock(parent)) {
+      const child = directChildOfBlock(call, parent);
+      const index = child ? parent.statements.indexOf(child) : -1;
+      for (let cursor = 0; cursor < index; cursor += 1) {
+        const statement = parent.statements[cursor];
+        if (!ts.isIfStatement(statement)) continue;
+        const guard = negatedGuardName(statement.expression);
+        if (
+          guard
+          && FREE_LOCAL_GUARDS.has(guard)
+          && exitsWithoutFallthrough(statement.thenStatement)
+        ) {
+          return true;
+        }
+      }
+    }
+    current = parent;
+  }
+  return false;
+}
+
+function assertDeploymentModeBoundary() {
+  const parsed = parse(CONFIG_FILE);
+  const sourceFile = parsed.file;
+  const freeModes = sourceFile.statements.find(
+    (statement) => ts.isVariableStatement(statement)
+      && statement.declarationList.declarations.some(
+        (declaration) => ts.isIdentifier(declaration.name)
+          && declaration.name.text === "FREE_LOCAL_DEPLOYMENT_MODES",
+      ),
+  );
+  const productionModes = sourceFile.statements.find(
+    (statement) => ts.isVariableStatement(statement)
+      && statement.declarationList.declarations.some(
+        (declaration) => ts.isIdentifier(declaration.name)
+          && declaration.name.text === "PRODUCTION_DEPLOYMENT_MODES",
+      ),
+  );
+  assert(freeModes, `${CONFIG_FILE}: FREE_LOCAL_DEPLOYMENT_MODES missing`);
+  assert(productionModes, `${CONFIG_FILE}: PRODUCTION_DEPLOYMENT_MODES missing`);
+  const freeValues = stringLiterals(freeModes);
+  const productionValues = stringLiterals(productionModes);
+  assert(freeValues.has("free_local"), `${CONFIG_FILE}: free_local must remain explicit`);
+  for (const mode of ["production", "prod", "shared", "hosted"]) {
+    assert(productionValues.has(mode), `${CONFIG_FILE}: ${mode} must remain a production mode`);
+    assert(!freeValues.has(mode), `${CONFIG_FILE}: ${mode} cannot be a Free Local mode`);
+  }
+
+  const controlPlaneMode = functionNamed(sourceFile, "controlPlaneMode");
+  const modeText = controlPlaneMode.body!.getText(sourceFile).replace(/\s+/g, "");
+  const productionFallback = 'isProductionDeployment()?"postgres":"proxy"';
+  assert(
+    modeText.split(productionFallback).length - 1 >= 2,
+    `${CONFIG_FILE}: configured proxy and default mode must both resolve production to postgres`,
+  );
+
+  const legacyAllowed = functionNamed(sourceFile, "legacyPythonProxyAllowed");
+  const returns = legacyAllowed.body!.statements.filter(ts.isReturnStatement);
+  assert(returns.length === 1 && returns[0].expression, `${CONFIG_FILE}: legacy proxy guard shape changed`);
+  const legacyText = returns[0].expression!.getText(sourceFile).replace(/\s+/g, "");
+  assert(
+    legacyText === '!isProductionDeployment()&&controlPlaneMode()==="proxy"',
+    `${CONFIG_FILE}: legacy Python proxy must require non-production proxy mode`,
+  );
+}
+
+function assertExplicitFreeLocalGuard(parsed: ParsedSource) {
+  const declaration = functionNamed(parsed.file, "explicitFreeLocalProxyMode");
+  const text = declaration.body!.getText(parsed.file).replace(/\s+/g, "");
+  assert(text.includes("AGENTOPS_DEPLOYMENT_MODE"), `${parsed.path}: explicit guard lacks deployment mode`);
+  assert(text.includes('==="free_local"'), `${parsed.path}: explicit guard must require free_local`);
+  assert(text.includes("AGENTOPS_CONTROL_PLANE_MODE"), `${parsed.path}: explicit guard lacks control-plane mode`);
+  assert(text.includes("AGENTOPS_TS_CONTROL_PLANE_MODE"), `${parsed.path}: explicit guard lacks legacy control-plane alias`);
+  assert(text.includes('==="proxy"'), `${parsed.path}: explicit guard must require proxy mode`);
+  assert(callsNamed(declaration, "trim") && callsNamed(declaration, "toLowerCase"), `${parsed.path}: explicit guard must normalize modes`);
+  assert(text.includes("&&"), `${parsed.path}: explicit guard must require both mode predicates`);
+}
+
+function assertProxyHelperFailsClosed() {
+  const parsed = parse(PROXY_FILE);
+  const declaration = functionNamed(parsed.file, "proxyControlPlaneRequest");
+  const statements = declaration.body!.statements;
+  assert(statements.length > 1, `${PROXY_FILE}: proxy helper body is incomplete`);
+  const guard = statements[0];
+  assert(ts.isIfStatement(guard), `${PROXY_FILE}: production rejection must be the first operation`);
+  assert(callsNamed(guard.expression, "isProductionDeployment"), `${PROXY_FILE}: first guard must test production`);
+  assert(exitsWithoutFallthrough(guard.thenStatement), `${PROXY_FILE}: production guard must return before I/O`);
+  assert(callsNamed(guard.thenStatement, "json"), `${PROXY_FILE}: production guard must emit a bounded rejection`);
+  assert(
+    stringLiterals(guard.thenStatement).has("typescript_route_owner_required"),
+    `${PROXY_FILE}: production rejection code changed`,
+  );
+  assert(
+    declaration.body!.statements.slice(1).some((statement) => callsNamed(statement, "request")),
+    `${PROXY_FILE}: expected Python upstream transport is no longer structurally identified`,
+  );
+}
+
+function assertCatchAllFailsClosed() {
+  const parsed = parse(CATCH_ALL_FILE);
+  const declaration = functionNamed(parsed.file, "proxy");
+  const statements = declaration.body!.statements;
+  const transportIndex = statements.findIndex((statement) => callsNamed(statement, "proxyRequest"));
+  assert(transportIndex > 0, `${CATCH_ALL_FILE}: catch-all transport call missing`);
+  const guardIndex = statements.findIndex((statement) => {
+    if (!ts.isIfStatement(statement)) return false;
+    return negatedGuardName(statement.expression) === "legacyPythonProxyAllowed"
+      && exitsWithoutFallthrough(statement.thenStatement);
+  });
+  assert(guardIndex >= 0 && guardIndex < transportIndex, `${CATCH_ALL_FILE}: catch-all transport is not dominated by the Free Local guard`);
+  for (const method of ["GET", "POST"]) {
+    const exported = parsed.file.statements.find((statement) =>
+      ts.isVariableStatement(statement)
+      && statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+      && statement.declarationList.declarations.some((declaration) =>
+        ts.isIdentifier(declaration.name)
+        && declaration.name.text === method
+        && declaration.initializer?.getText(parsed.file) === "proxy"),
+    );
+    assert(exported, `${CATCH_ALL_FILE}: ${method} must remain owned by the guarded catch-all`);
+  }
+}
+
+function assertProxyCallOwnership() {
+  const candidates = [
+    ...collectTypeScriptFiles(ROUTE_ROOT),
+    ...collectTypeScriptFiles(CONTROL_PLANE_ROOT),
+  ];
+  const actualOwners = new Set<string>();
+  let guardedCalls = 0;
+
+  for (const absolutePath of candidates) {
+    const path = sourcePath(absolutePath);
+    if (path === PROXY_FILE) continue;
+    const parsed = parse(path);
+    const calls: ts.CallExpression[] = [];
+    walk(parsed.file, (node) => {
+      if (ts.isCallExpression(node) && callName(node) === "proxyControlPlaneRequest") {
+        calls.push(node);
+      }
+    });
+    if (calls.length === 0) continue;
+    actualOwners.add(path);
+    if (calls.some((call) => {
+      let current: ts.Node | undefined = call;
+      while (current) {
+        if (ts.isFunctionDeclaration(current) && current.name?.text === "explicitFreeLocalProxyMode") {
+          return true;
+        }
+        current = current.parent;
+      }
+      return false;
+    })) {
+      fail(`${path}: explicit guard must not invoke the proxy itself`);
+    }
+    if (parsed.source.includes("function explicitFreeLocalProxyMode")) {
+      assertExplicitFreeLocalGuard(parsed);
+    }
+    for (const call of calls) {
+      assert(
+        isFreeLocalGuardDominated(call),
+        `${path}:${parsed.file.getLineAndCharacterOfPosition(call.getStart()).line + 1}: Python proxy call is not dominated by a Free Local guard`,
+      );
+      guardedCalls += 1;
+    }
+  }
+
+  const unexpected = [...actualOwners].filter((owner) => !EXPECTED_PROXY_CALL_OWNERS.has(owner));
+  const missing = [...EXPECTED_PROXY_CALL_OWNERS].filter((owner) => !actualOwners.has(owner));
+  assert(unexpected.length === 0, `unreviewed Python proxy owners: ${unexpected.join(", ")}`);
+  assert(missing.length === 0, `expected proxy owners disappeared without contract review: ${missing.join(", ")}`);
+  assert(guardedCalls > 0, "no guarded compatibility proxy calls were inspected");
+  return { owners: actualOwners.size, guardedCalls };
+}
+
+function main() {
+  assertDeploymentModeBoundary();
+  assertProxyHelperFailsClosed();
+  assertCatchAllFailsClosed();
+  const coverage = assertProxyCallOwnership();
+  process.stdout.write(`${JSON.stringify({
+    contract: "commercial_api_ownership_v1",
+    production_shared_postgres_owner_required: true,
+    catch_all_python_fallback_fail_closed: true,
+    free_local_python_compatibility_preserved: true,
+    proxy_owner_files: coverage.owners,
+    guarded_proxy_calls: coverage.guardedCalls,
+  })}\n`);
+}
+
+main();
