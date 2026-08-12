@@ -263,6 +263,15 @@ function signalChildGroup(child, signal) {
   }
 }
 
+function signalChild(child, signal) {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    child.kill(signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+  }
+}
+
 export async function runWorker({ statePath = STATE_PATH } = {}) {
   if (process.env.NODE_ENV !== "production") fail("worker_production_mode_required");
   if (process.getuid?.() === 0 || process.getgid?.() === 0) fail("worker_root_forbidden");
@@ -350,7 +359,7 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
     const handler = () => {
       stopping = true;
       status = "stopping";
-      signalChildGroup(child, signal);
+      signalChild(child, signal);
       if (!forceStop) {
         forceStop = setTimeout(() => {
           forcedStop = true;

@@ -165,6 +165,7 @@ function assertStaticCustomerBoundary() {
     || !workerEntrypoint.includes("direct_agent_token_environment_forbidden")
     || !workerEntrypoint.includes("AGENTOPS_AGENT_TOKEN_SOURCE_FILE: tokenSource")
     || !workerEntrypoint.includes("process.kill(-child.pid, signal)")
+    || !workerEntrypoint.includes("signalChild(child, signal)")
     || !workerEntrypoint.includes('signalChildGroup(child, "SIGKILL")')
     || !workerEntrypoint.includes("forcedStop = true")
     || !workerEntrypoint.includes("stopping && !forcedStop && result.code === 0")

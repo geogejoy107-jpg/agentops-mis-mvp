@@ -81,6 +81,7 @@ try {
   const entrypoint = readFileSync(join(moduleDirectory, "worker-entrypoint.mjs"), "utf8");
   assert.match(entrypoint, /detached: true/);
   assert.match(entrypoint, /process\.kill\(-child\.pid, signal\)/);
+  assert.match(entrypoint, /signalChild\(child, signal\)/);
   assert.match(entrypoint, /signalChildGroup\(child, "SIGKILL"\)/);
   assert.match(entrypoint, /forcedStop = true/);
   assert.match(entrypoint, /stopping && !forcedStop && result\.code === 0/);
@@ -165,6 +166,7 @@ try {
     container_pid_one_supported: true,
     container_init_reaper_required: true,
     process_group_shutdown_bounded: true,
+    graceful_shutdown_targets_worker_handler: true,
     forced_shutdown_reports_failure: true,
     signal_terminated_child_reports_failure: true,
     docker_init_reaper_enabled: true,
