@@ -122,7 +122,39 @@ function exitsWithoutFallthrough(node: ts.Statement): boolean {
   if (ts.isBlock(node)) {
     return node.statements.some((statement) => exitsWithoutFallthrough(statement));
   }
+  if (ts.isIfStatement(node)) {
+    return node.elseStatement !== undefined
+      && exitsWithoutFallthrough(node.thenStatement)
+      && exitsWithoutFallthrough(node.elseStatement);
+  }
   return false;
+}
+
+function assertExitAnalysisFailsClosed() {
+  const source = ts.createSourceFile(
+    "exit-analysis.ts",
+    `function probe(value: boolean) {
+      if (value) return;
+    }
+    function complete(value: boolean) {
+      if (value) return;
+      else throw new Error("blocked");
+    }`,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const functions = source.statements.filter(ts.isFunctionDeclaration);
+  assert(functions[0]?.body, "exit analysis partial fixture missing");
+  assert(functions[1]?.body, "exit analysis complete fixture missing");
+  assert(
+    exitsWithoutFallthrough(functions[0].body) === false,
+    "partial branch termination must not dominate a proxy call",
+  );
+  assert(
+    exitsWithoutFallthrough(functions[1].body) === true,
+    "complete branch termination must be recognized",
+  );
 }
 
 function negatedGuardName(expression: ts.Expression): string | undefined {
@@ -250,6 +282,14 @@ function assertProxyHelperFailsClosed() {
 
 function assertCatchAllFailsClosed() {
   const parsed = parse(CATCH_ALL_FILE);
+  assert(
+    parsed.source.includes("proxyBaseUrl"),
+    `${CATCH_ALL_FILE}: catch-all must use the canonical Free Local proxy URL parser`,
+  );
+  assert(
+    !parsed.source.includes("process.env.AGENTOPS_API_BASE"),
+    `${CATCH_ALL_FILE}: catch-all cannot bypass the canonical proxy URL parser`,
+  );
   const declaration = functionNamed(parsed.file, "proxy");
   const statements = declaration.body!.statements;
   const transportIndex = statements.findIndex((statement) => callsNamed(statement, "proxyRequest"));
@@ -326,6 +366,7 @@ function assertProxyCallOwnership() {
 }
 
 function main() {
+  assertExitAnalysisFailsClosed();
   assertDeploymentModeBoundary();
   assertProxyHelperFailsClosed();
   assertCatchAllFailsClosed();

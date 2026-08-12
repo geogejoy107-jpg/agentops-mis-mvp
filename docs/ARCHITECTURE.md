@@ -38,7 +38,7 @@ flowchart TB
     FLW[Python Worker] --> PY
   end
 
-  UI -. explicit free_local only .-> PY
+  UI -. non-production local compatibility only .-> PY
   API -. no production fallback .-> PY
 ```
 
@@ -46,7 +46,7 @@ flowchart TB
 
 | 运行模式 | Web/API owner | Worker | 权威数据源 | Python 代理 |
 | --- | --- | --- | --- | --- |
-| Free Local | 本地 UI + Python API，或显式兼容模式的 Next.js | Python Worker | SQLite | 仅 loopback allowlist |
+| Free Local | 本地 UI + Python API，或非生产本地兼容模式的 Next.js | Python Worker | SQLite | 仅 loopback allowlist |
 | Commercial / BYOC | Next.js 16 App Router + TypeScript | TypeScript Worker | PostgreSQL 16 | 禁止，未迁移路由 fail closed |
 
 商业控制面直接持有 Agent identity、task/run lifecycle、Human Session、RBAC、entitlement、approval、prepared action、Memory review、audit 和 evidence。商业 Worker 不直连数据库，只调用受版本约束的 Agent Gateway HTTP contract。

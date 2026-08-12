@@ -2,10 +2,12 @@ import http from "node:http";
 import https from "node:https";
 import { NextRequest, NextResponse } from "next/server";
 
-import { legacyPythonProxyAllowed } from "@/server/controlPlane/config";
+import {
+  legacyPythonProxyAllowed,
+  proxyBaseUrl,
+} from "@/server/controlPlane/config";
 import { removeHumanSessionCookie, removeHumanSessionSetCookie } from "@/server/controlPlane/proxyHeaders";
 
-const TARGET_BASE = process.env.AGENTOPS_API_BASE || "http://127.0.0.1:8765/api";
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "keep-alive",
@@ -61,7 +63,7 @@ export const runtime = "nodejs";
 
 function proxyUrl(path: string[], search: string) {
   const cleanPath = path.map((part) => encodeURIComponent(part)).join("/");
-  return `${TARGET_BASE.replace(/\/$/, "")}/${cleanPath}${search}`;
+  return `${proxyBaseUrl()}/${cleanPath}${search}`;
 }
 
 function isWorkerDispatchPath(path: string[]) {

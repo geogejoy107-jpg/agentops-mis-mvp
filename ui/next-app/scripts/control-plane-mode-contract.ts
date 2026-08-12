@@ -6,6 +6,7 @@ import {
   legacyPythonProxyAllowed,
   postgresApplicationName,
   postgresDsn,
+  proxyBaseUrl,
 } from "../src/server/controlPlane/config";
 
 const ENV_KEYS = [
@@ -21,6 +22,7 @@ const ENV_KEYS = [
   "AGENTOPS_POSTGRES_PASSWORD",
   "AGENTOPS_POSTGRES_PASSWORD_FILE",
   "AGENTOPS_POSTGRES_APPLICATION_NAME",
+  "AGENTOPS_API_BASE",
   "NODE_ENV",
 ] as const;
 
@@ -47,6 +49,23 @@ try {
   assert.equal(isProductionDeployment(), false);
   assert.equal(controlPlaneMode(), "proxy");
   assert.equal(legacyPythonProxyAllowed(), true);
+  assert.equal(proxyBaseUrl(), "http://127.0.0.1:8765/api");
+  mutableEnvironment.AGENTOPS_API_BASE = "http://localhost:8765/api/";
+  assert.equal(proxyBaseUrl(), "http://localhost:8765/api");
+  mutableEnvironment.AGENTOPS_API_BASE = "https://[::1]:8765/api";
+  assert.equal(proxyBaseUrl(), "https://[::1]:8765/api");
+  for (const unsafeBase of [
+    "https://control-plane.example/api",
+    "http://user:secret@127.0.0.1:8765/api",
+    "http://127.0.0.1:8765/api?workspace=other",
+    "http://127.0.0.1:8765/api#fragment",
+    "file:///api",
+    "http://127.0.0.1:8765/",
+    "http://127.0.0.1:8765/admin",
+  ]) {
+    mutableEnvironment.AGENTOPS_API_BASE = unsafeBase;
+    assert.throws(() => proxyBaseUrl(), /AGENTOPS_API_BASE must/);
+  }
 
   clearContractEnvironment();
   mutableEnvironment.AGENTOPS_DEPLOYMENT_MODE = "local";
@@ -103,6 +122,7 @@ try {
     production_proxy_coerced_to_postgres: true,
     production_python_proxy_allowed: false,
     free_local_python_proxy_allowed: true,
+    free_local_python_proxy_loopback_only: true,
     local_postgres_python_proxy_allowed: false,
     unknown_modes_rejected: true,
     postgres_dsn_required: true,
