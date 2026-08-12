@@ -75,6 +75,12 @@ function exactOciReference(value) {
   });
 }
 
+function loopbackRegistry(reference) {
+  const registry = reference.name.split("/", 1)[0];
+  if (!/^(?:127\.0\.0\.1|localhost):[1-9][0-9]{0,4}$/.test(registry)) return false;
+  return Number(registry.slice(registry.lastIndexOf(":") + 1)) <= 65_535;
+}
+
 function canonicalEmptyPath(value, kind) {
   const prefix = kind === "guest"
     ? "runtime_oci_export_output"
@@ -222,7 +228,10 @@ function runPinned(tool, expectedName, args, options = {}) {
   });
   assertPinned(tool, expectedName);
   if (result.error || result.status !== 0 || result.signal) {
-    fail(`runtime_oci_export_${expectedName}_command_failed`, result.error);
+    fail(
+      options.failureCode ?? `runtime_oci_export_${expectedName}_command_failed`,
+      result.error,
+    );
   }
   return result;
 }
@@ -448,7 +457,9 @@ export function parseCanonicalOpenClawRuntimeOciExportProvenance(inputBytes) {
     "runtime_oci_export_provenance_platform_invalid");
   assertExactKeys(receipt.rootfs, ["byte_count", "file_count", "merkle_sha256", "schema"],
     "runtime_oci_export_provenance_rootfs_invalid");
-  assertExactKeys(receipt.export_policy, ["archive_format", "extraction", "root_directory"],
+  assertExactKeys(receipt.export_policy, [
+    "archive_format", "extraction", "registry_transport", "root_directory",
+  ],
     "runtime_oci_export_provenance_policy_invalid");
   assertExactKeys(receipt.export_tool_identity, ["docker", "mv", "tar"],
     "runtime_oci_export_provenance_tool_identity_invalid");
@@ -480,6 +491,13 @@ export function parseCanonicalOpenClawRuntimeOciExportProvenance(inputBytes) {
       !== "strict_ustar_only_gnu_longname_and_pax_extensions_rejected_fail_closed"
     || receipt.export_policy.extraction
       !== "two_identical_stopped_container_exports_strict_ustar_then_gnu_tar_stream"
+    || !["tls_required", "insecure_loopback_contract"].includes(
+      receipt.export_policy.registry_transport,
+    )
+    || (
+      receipt.export_policy.registry_transport === "insecure_loopback_contract"
+      && !loopbackRegistry(exactOciReference(receipt.oci.exact_reference))
+    )
     || receipt.export_policy.root_directory !== "normalized_root_0_0_0555"
   ) fail("runtime_oci_export_provenance_invalid");
   canonicalExistingPath(receipt.guest_root, "runtime_oci_export_provenance_guest_root_invalid");
@@ -660,8 +678,19 @@ function publishProvenanceReceipt(working, destination, value) {
   }
 }
 
-function inspectManifest(docker, reference) {
-  const result = runPinned(docker, "docker", ["manifest", "inspect", "--verbose", reference.exact]);
+function insecureLoopbackRegistryAllowed(reference, input) {
+  if (input !== true) return false;
+  if (!loopbackRegistry(reference)) fail("runtime_oci_export_insecure_registry_forbidden");
+  return true;
+}
+
+function inspectManifest(docker, reference, allowInsecureLoopback) {
+  const args = ["manifest", "inspect", "--verbose"];
+  if (allowInsecureLoopback) args.push("--insecure");
+  args.push(reference.exact);
+  const result = runPinned(docker, "docker", args, {
+    failureCode: "runtime_oci_export_docker_manifest_inspect_failed",
+  });
   let value;
   try {
     value = JSON.parse(result.stdout);
@@ -678,12 +707,14 @@ function inspectManifest(docker, reference) {
   ) fail("runtime_oci_export_manifest_list_or_platform_rejected");
 }
 
-function inspectImage(docker, reference) {
-  runPinned(docker, "docker", ["pull", "--platform", "linux/amd64", reference.exact]);
-  inspectManifest(docker, reference);
+function inspectImage(docker, reference, allowInsecureLoopback) {
+  runPinned(docker, "docker", ["pull", "--platform", "linux/amd64", reference.exact], {
+    failureCode: "runtime_oci_export_docker_pull_failed",
+  });
+  inspectManifest(docker, reference, allowInsecureLoopback);
   const result = runPinned(docker, "docker", [
     "image", "inspect", "--format", "{{json .}}", reference.exact,
-  ]);
+  ], { failureCode: "runtime_oci_export_docker_image_inspect_failed" });
   let value;
   try {
     value = JSON.parse(result.stdout);
@@ -704,7 +735,7 @@ function inspectImage(docker, reference) {
 function createContainer(docker, reference, imageId) {
   const result = runPinned(docker, "docker", [
     "create", "--platform", "linux/amd64", "--network", "none", reference.exact,
-  ]);
+  ], { failureCode: "runtime_oci_export_docker_create_failed" });
   const id = result.stdout.trim();
   if (!/^[a-f0-9]{64}$/.test(id)) fail("runtime_oci_export_container_id_invalid");
   const inspected = runPinned(docker, "docker", [
@@ -1029,6 +1060,10 @@ function canonicalToolIdentity(docker, tar, mv) {
 
 export async function exportOpenClawRuntimeOciRootfs(input) {
   const reference = exactOciReference(input?.oci);
+  const allowInsecureLoopback = insecureLoopbackRegistryAllowed(
+    reference,
+    input?.allow_insecure_loopback_registry_contract,
+  );
   const destinations = canonicalOutputs(input?.output, input?.provenance_output);
   assertReleaseHost();
   validateTrustedParent(destinations.guest);
@@ -1047,7 +1082,7 @@ export async function exportOpenClawRuntimeOciRootfs(input) {
     if (!tarVersion.startsWith("tar (GNU tar) ")) fail("runtime_oci_export_gnu_tar_required");
     const mvVersion = runPinned(mv, "mv", ["--version"]).stdout;
     if (!mvVersion.startsWith("mv (GNU coreutils) ")) fail("runtime_oci_export_gnu_mv_required");
-    const image = inspectImage(docker, reference);
+    const image = inspectImage(docker, reference, allowInsecureLoopback);
     containerId = createContainer(docker, reference, image.image_id);
     working = mkdtempSync(path.join(
       destinations.guest.parent,
@@ -1100,6 +1135,9 @@ export async function exportOpenClawRuntimeOciRootfs(input) {
         export_policy: Object.freeze({
           archive_format: "strict_ustar_only_gnu_longname_and_pax_extensions_rejected_fail_closed",
           extraction: "two_identical_stopped_container_exports_strict_ustar_then_gnu_tar_stream",
+          registry_transport: allowInsecureLoopback
+            ? "insecure_loopback_contract"
+            : "tls_required",
           root_directory: "normalized_root_0_0_0555",
         }),
         export_tool_identity: canonicalToolIdentity(docker, tar, mv),
@@ -1156,18 +1194,25 @@ export async function exportOpenClawRuntimeOciRootfs(input) {
 }
 
 function parseArguments(argv) {
-  const expected = new Set(["--oci", "--output", "--provenance-output"]);
-  if (argv.length !== 6) fail("runtime_oci_export_arguments_invalid");
+  const required = new Set(["--oci", "--output", "--provenance-output"]);
+  const optional = "--allow-insecure-loopback-registry-contract";
+  if (argv.length !== 6 && argv.length !== 8) fail("runtime_oci_export_arguments_invalid");
   const values = {};
   for (let index = 0; index < argv.length; index += 2) {
     const name = argv[index];
-    if (!expected.has(name) || Object.hasOwn(values, name)) {
+    if ((!required.has(name) && name !== optional) || Object.hasOwn(values, name)) {
       fail("runtime_oci_export_arguments_invalid");
     }
     values[name] = argv[index + 1];
   }
-  if (Object.keys(values).length !== expected.size) fail("runtime_oci_export_arguments_invalid");
+  if ([...required].some((name) => !Object.hasOwn(values, name))) {
+    fail("runtime_oci_export_arguments_invalid");
+  }
+  if (Object.hasOwn(values, optional) && values[optional] !== "true") {
+    fail("runtime_oci_export_arguments_invalid");
+  }
   return {
+    allow_insecure_loopback_registry_contract: values[optional] === "true",
     oci: values["--oci"],
     output: values["--output"],
     provenance_output: values["--provenance-output"],

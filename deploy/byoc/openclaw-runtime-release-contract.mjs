@@ -19,6 +19,13 @@ import {
 } from "./openclaw-runtime-manifest-v2.mjs";
 import { readCommittedOpenClawRuntimeRelease } from "./openclaw-runtime-release.mjs";
 
+const releaseReaderSource = await import("node:fs/promises").then(({ readFile }) =>
+  readFile(new URL("./openclaw-runtime-release.mjs", import.meta.url), "utf8"));
+assert.match(
+  releaseReaderSource,
+  /source\.export_policy\.registry_transport !== "tls_required"[\s\S]*runtime_release_insecure_registry_provenance_rejected/,
+);
+
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const digest = (value) => value.repeat(64);
 const base = mkdtempSync(path.join(tmpdir(), "agentops-runtime-release-contract-"));
@@ -89,6 +96,7 @@ const provenance = canonicalRuntimeManifestV2Bytes({
   export_policy: {
     archive_format: "strict_ustar_only_gnu_longname_and_pax_extensions_rejected_fail_closed",
     extraction: "two_identical_stopped_container_exports_strict_ustar_then_gnu_tar_stream",
+    registry_transport: "tls_required",
     root_directory: "normalized_root_0_0_0555",
   },
   export_tool_identity: {
@@ -274,6 +282,7 @@ try {
     manifest_receipt_hash_verified: true,
     provenance_receipt_shape_verified: true,
     oci_and_rootfs_manifest_binding_verified: true,
+    insecure_registry_provenance_rejected: true,
     independent_trust_root_hash_verified: true,
     self_signed_trust_replacement_rejected: true,
   })}\n`);

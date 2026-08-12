@@ -169,6 +169,9 @@ function validateReceipt(value, manifestBytes, provenanceBytes, trustRootBytes) 
   } catch {
     fail("runtime_release_manifest_invalid");
   }
+  if (source.export_policy.registry_transport !== "tls_required") {
+    fail("runtime_release_insecure_registry_provenance_rejected");
+  }
   if (
     !canonicalRuntimeManifestV2Bytes(receipt.oci_image).equals(
       canonicalRuntimeManifestV2Bytes(envelope.body.oci_image),

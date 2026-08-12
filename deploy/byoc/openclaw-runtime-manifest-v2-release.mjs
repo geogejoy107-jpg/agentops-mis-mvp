@@ -365,6 +365,9 @@ function syncDirectory(target) {
 export function buildOpenClawRuntimeManifestV2Release(input) {
   const releaseUid = currentUid();
   const source = readCommittedOpenClawRuntimeOciExportReceipt(input.provenance);
+  if (source.provenance.export_policy.registry_transport !== "tls_required") {
+    fail("runtime_manifest_v2_release_insecure_registry_provenance_rejected");
+  }
   const guestRoot = inspectDirectory(source.guest_root, "runtime_manifest_v2_release_guest_root");
   const output = absoluteCanonicalPath(input.output, "runtime_manifest_v2_release_output");
   if (existsSync(output)) fail("runtime_manifest_v2_release_output_exists");

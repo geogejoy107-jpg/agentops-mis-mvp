@@ -89,7 +89,8 @@ for (const required of [
   'runPinned(mv, "mv", ["--no-clobber", "--no-target-directory", stagingRoot, destination])',
   'process.platform !== "linux"',
   'process.geteuid() !== 0',
-  '["manifest", "inspect", "--verbose", reference.exact]',
+  'const args = ["manifest", "inspect", "--verbose"]',
+  'if (allowInsecureLoopback) args.push("--insecure")',
   'value?.Ref !== reference.exact',
   'value?.Descriptor?.digest !== reference.digest',
   'value?.Descriptor?.platform?.os !== "linux"',
@@ -139,6 +140,18 @@ try {
   const existing = path.join(pathValidationBase, "existing-receipt.json");
   writeFileSync(existing, "occupied\n", { mode: 0o600 });
   for (const [name, args, code] of [
+    ["remote-insecure-registry", [
+      "--oci", `registry.invalid/agentops/openclaw@sha256:${digest}`,
+      "--output", path.join(pathValidationBase, "remote-guest"),
+      "--provenance-output", path.join(pathValidationBase, "remote-receipt.json"),
+      "--allow-insecure-loopback-registry-contract", "true",
+    ], "runtime_oci_export_insecure_registry_forbidden"],
+    ["invalid-insecure-registry-flag", [
+      "--oci", `127.0.0.1:5000/agentops/openclaw@sha256:${digest}`,
+      "--output", path.join(pathValidationBase, "flag-guest"),
+      "--provenance-output", path.join(pathValidationBase, "flag-receipt.json"),
+      "--allow-insecure-loopback-registry-contract", "1",
+    ], "runtime_oci_export_arguments_invalid"],
     ["noncanonical-guest", [
       "--oci", `registry.invalid/agentops/openclaw@sha256:${digest}`,
       "--output", `${pathValidationBase}/nested/../guest`,
@@ -294,6 +307,7 @@ function syntheticProvenance() {
     export_policy: {
       archive_format: "strict_ustar_only_gnu_longname_and_pax_extensions_rejected_fail_closed",
       extraction: "two_identical_stopped_container_exports_strict_ustar_then_gnu_tar_stream",
+      registry_transport: "tls_required",
       root_directory: "normalized_root_0_0_0555",
     },
     export_tool_identity: {
@@ -353,6 +367,8 @@ for (const mutate of [
   (value) => { value.platform.extra = true; },
   (value) => { value.rootfs.extra = true; },
   (value) => { value.export_policy.extra = true; },
+  (value) => { value.export_policy.registry_transport = "insecure_remote"; },
+  (value) => { value.export_policy.registry_transport = "insecure_loopback_contract"; },
   (value) => { value.export_tool_identity.extra = true; },
   (value) => { value.export_tool_identity.docker.extra = true; },
   (value) => { value.export_tool_identity.docker.mode = "0777"; },
@@ -505,10 +521,12 @@ async function realOciContract() {
     const first = command(process.execPath, [
       sourcePath, "--oci", amdExact, "--output", firstOutput,
       "--provenance-output", firstProvenance,
+      "--allow-insecure-loopback-registry-contract", "true",
     ]);
     const second = command(process.execPath, [
       sourcePath, "--oci", amdExact, "--output", secondOutput,
       "--provenance-output", secondProvenance,
+      "--allow-insecure-loopback-registry-contract", "true",
     ]);
     assert.equal(first.status, 0, first.stderr.trim());
     assert.equal(second.status, 0, second.stderr.trim());
@@ -532,6 +550,7 @@ async function realOciContract() {
     assert.equal(firstReceipt.source_image_id.startsWith("sha256:"), true);
     assert.equal(firstReceipt.platform.os, "linux");
     assert.equal(firstReceipt.platform.architecture, "amd64");
+    assert.equal(firstReceipt.export_policy.registry_transport, "insecure_loopback_contract");
     assert.match(firstReceipt.export_archive_sha256, /^[a-f0-9]{64}$/);
     assert.match(firstReceipt.export_tool_identity.docker.sha256, /^[a-f0-9]{64}$/);
     assert.match(firstReceipt.export_tool_identity.mv.sha256, /^[a-f0-9]{64}$/);
@@ -595,6 +614,7 @@ async function realOciContract() {
     const extensionRejected = command(process.execPath, [
       sourcePath, "--oci", extensionExact, "--output", path.join(working, "extension-output"),
       "--provenance-output", path.join(working, "extension-provenance.json"),
+      "--allow-insecure-loopback-registry-contract", "true",
     ]);
     assert.equal(extensionRejected.status, 1);
     assert.match(extensionRejected.stderr, /runtime_oci_export_tar_(?:special_or_extension|path)_rejected/);
@@ -602,15 +622,16 @@ async function realOciContract() {
     const wrongDigest = `${amdExact.split("@")[0]}@sha256:${"b".repeat(64)}`;
     const wrongName = `${registry}/agentops/not-the-image@${amdExact.split("@")[1]}`;
     for (const [name, oci, output, provenanceOutput, pattern] of [
-      ["wrong-digest", wrongDigest, path.join(working, "wrong-digest"), path.join(working, "wrong-digest.json"), /runtime_oci_export_docker_command_failed/],
-      ["wrong-name", wrongName, path.join(working, "wrong-name"), path.join(working, "wrong-name.json"), /runtime_oci_export_docker_command_failed/],
-      ["wrong-platform", armExact, path.join(working, "wrong-platform"), path.join(working, "wrong-platform.json"), /runtime_oci_export_(?:docker_command_failed|manifest_list_or_platform_rejected)/],
+      ["wrong-digest", wrongDigest, path.join(working, "wrong-digest"), path.join(working, "wrong-digest.json"), /runtime_oci_export_docker_(?:pull|manifest_inspect)_failed/],
+      ["wrong-name", wrongName, path.join(working, "wrong-name"), path.join(working, "wrong-name.json"), /runtime_oci_export_docker_(?:pull|manifest_inspect)_failed/],
+      ["wrong-platform", armExact, path.join(working, "wrong-platform"), path.join(working, "wrong-platform.json"), /runtime_oci_export_(?:docker_(?:pull|manifest_inspect)_failed|manifest_list_or_platform_rejected)/],
       ["noncanonical-output", amdExact, `${working}/nested/../escape`, path.join(working, "bad-output.json"), /runtime_oci_export_output_path_invalid/],
       ["noncanonical-provenance", amdExact, path.join(working, "bad-provenance-guest"), `${working}/nested/../receipt.json`, /runtime_oci_export_provenance_output_path_invalid/],
     ]) {
       const rejected = command(process.execPath, [
         sourcePath, "--oci", oci, "--output", output,
         "--provenance-output", provenanceOutput,
+        "--allow-insecure-loopback-registry-contract", "true",
       ]);
       assert.equal(rejected.status, 1, name);
       assert.match(rejected.stderr, pattern, name);
@@ -622,6 +643,7 @@ async function realOciContract() {
     const overwriteRejected = command(process.execPath, [
       sourcePath, "--oci", amdExact, "--output", overwriteGuest,
       "--provenance-output", firstProvenance,
+      "--allow-insecure-loopback-registry-contract", "true",
     ]);
     assert.equal(overwriteRejected.status, 1);
     assert.equal(overwriteRejected.stderr.trim(), "runtime_oci_export_provenance_output_exists");
@@ -632,6 +654,7 @@ async function realOciContract() {
     const parentRejected = command(process.execPath, [
       sourcePath, "--oci", amdExact, "--output", path.join(working, "parent-guest"),
       "--provenance-output", path.join(otherParent, "receipt.json"),
+      "--allow-insecure-loopback-registry-contract", "true",
     ]);
     assert.equal(parentRejected.status, 1);
     assert.equal(parentRejected.stderr.trim(), "runtime_oci_export_provenance_output_parent_mismatch");
@@ -642,6 +665,7 @@ async function realOciContract() {
     const raceArguments = (receipt) => [
       sourcePath, "--oci", amdExact, "--output", racedGuest,
       "--provenance-output", receipt,
+      "--allow-insecure-loopback-registry-contract", "true",
     ];
     const [raceOne, raceTwo] = await Promise.all([
       commandAsync(process.execPath, raceArguments(racedReceiptOne)),
@@ -662,6 +686,7 @@ async function realOciContract() {
       sourcePath, "--oci", `${listTag.split(":").slice(0, -1).join(":")}@${listDigest}`,
       "--output", path.join(working, "manifest-list"),
       "--provenance-output", path.join(working, "manifest-list.json"),
+      "--allow-insecure-loopback-registry-contract", "true",
     ]);
     assert.equal(listRejected.status, 1);
     assert.match(listRejected.stderr, /runtime_oci_export_manifest_list_or_platform_rejected/);
@@ -672,6 +697,7 @@ async function realOciContract() {
       provenance_canonical_metadata_no_clobber_and_path_policy_verified: true,
       provenance_commit_marker_consumer_verified: true,
       provenance_v2_guest_root_identity_mismatch_rejected: true,
+      insecure_registry_exception_loopback_and_contract_only: true,
       wrong_digest_name_platform_and_path_rejected: true,
     });
   } finally {

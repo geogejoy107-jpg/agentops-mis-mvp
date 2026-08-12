@@ -148,6 +148,7 @@ function writeProvenance(base, root) {
     export_policy: {
       archive_format: "strict_ustar_only_gnu_longname_and_pax_extensions_rejected_fail_closed",
       extraction: "two_identical_stopped_container_exports_strict_ustar_then_gnu_tar_stream",
+      registry_transport: "tls_required",
       root_directory: "normalized_root_0_0_0555",
     },
     export_tool_identity: {
