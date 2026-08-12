@@ -596,6 +596,8 @@ async function main() {
       private_expected_uid: 1100,
       wrong_public_peer_uid: WRONG_UID,
       wrong_private_peer_uid: WRONG_UID,
+      wrong_public_peer_connection_rejected: true,
+      wrong_private_peer_connection_rejected: true,
       wrong_public_peer_response_bytes_received: publicAttack.receivedBytes,
       wrong_private_peer_response_bytes_received: privateAttack.receivedBytes,
       public_backend_process_identity_unchanged: publicAttack.backendProcessIdentityUnchanged,

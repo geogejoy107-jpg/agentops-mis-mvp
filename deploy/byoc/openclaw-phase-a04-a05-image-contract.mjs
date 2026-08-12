@@ -81,6 +81,12 @@ for (const honestClaim of [
 ]) {
   assert.ok(acceptance.includes(honestClaim), `acceptance_claim_required:${honestClaim}`);
 }
+for (const attackClaim of [
+  "wrong_public_peer_connection_rejected: true",
+  "wrong_private_peer_connection_rejected: true",
+]) {
+  assert.ok(acceptance.includes(attackClaim), `acceptance_attack_claim_required:${attackClaim}`);
+}
 assert.doesNotMatch(acceptance, /hostile_runtime_isolation_verified:\s*true/);
 assert.doesNotMatch(acceptance, /runtime_receipt_verified:\s*true/);
 
