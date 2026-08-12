@@ -125,5 +125,11 @@ jobs:
         if: always()
         run: |
           set +e
-          docker rm --force "${{ steps.image.outputs.registry_name }}" >/dev/null 2>&1
-          docker image rm "${{ steps.image.outputs.digest }}" >/dev/null 2>&1
+          registry_name="${{ steps.image.outputs.registry_name }}"
+          digest="${{ steps.image.outputs.digest }}"
+          if [ -n "${registry_name}" ]; then
+            docker rm --force "${registry_name}" >/dev/null 2>&1 || true
+          fi
+          if [ -n "${digest}" ]; then
+            docker image rm "${digest}" >/dev/null 2>&1 || true
+          fi

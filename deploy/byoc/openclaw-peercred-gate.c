@@ -58,9 +58,11 @@ static void fixed_error(const char *code) {
 
 static void handle_signal(int signal_number) {
     unsigned char byte = (unsigned char)signal_number;
+    ssize_t written;
     stopping = 1;
     if (signal_write_fd >= 0) {
-        (void)write(signal_write_fd, &byte, sizeof(byte));
+        written = write(signal_write_fd, &byte, sizeof(byte));
+        (void)written;
     }
 }
 
