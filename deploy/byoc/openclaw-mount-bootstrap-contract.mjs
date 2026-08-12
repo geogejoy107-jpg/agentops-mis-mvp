@@ -114,6 +114,7 @@ function sourceAudit() {
   assert.match(sourceText, /#define SUPERVISOR_PATH "\/usr\/local\/lib\/agentops\/openclaw-boundary-supervisor\.mjs"/);
   assert.match(sourceText, /starts_with\(entry, "AGENTOPS_"\)/);
   assert.match(sourceText, /starts_with\(entry, "OPENCLAW_"\)/);
+  assert.match(sourceText, /sysconf\(_SC_ARG_MAX\)/);
   const allowlistBody = /allowed_prefixed_environment\[\] = \{([\s\S]*?)\n\};/.exec(sourceText)?.[1];
   assert(allowlistBody);
   const actualPrefixedEnvironment = [...allowlistBody.matchAll(/"([A-Z0-9_]+)"/g)]

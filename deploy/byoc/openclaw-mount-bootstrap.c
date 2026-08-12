@@ -113,6 +113,10 @@ static int validate_prefixed_environment(void) {
 }
 
 static char **build_environment(void) {
+    long system_argument_limit = sysconf(_SC_ARG_MAX);
+    size_t argument_limit = system_argument_limit > 0 && system_argument_limit <= (long)(16U * 1024U * 1024U)
+        ? (size_t)system_argument_limit
+        : (size_t)(128U * 1024U);
     size_t capacity = sizeof(allowed_prefixed_environment) / sizeof(allowed_prefixed_environment[0])
         + sizeof(allowed_system_environment) / sizeof(allowed_system_environment[0]) + 1U;
     char **clean_environment = calloc(capacity, sizeof(*clean_environment));
@@ -130,8 +134,8 @@ static char **build_environment(void) {
             size_t name_length = strlen(allowed_system_environment[index]);
             size_t value_length = strlen(value);
             char *entry;
-            if (value_length > (size_t)ARG_MAX
-                || name_length > (size_t)ARG_MAX - value_length - 2U) {
+            if (value_length > argument_limit
+                || name_length > argument_limit - value_length - 2U) {
                 free(clean_environment);
                 return NULL;
             }
@@ -155,8 +159,8 @@ static char **build_environment(void) {
             size_t name_length = strlen(allowed_prefixed_environment[index]);
             size_t value_length = strlen(value);
             char *entry;
-            if (value_length > (size_t)ARG_MAX
-                || name_length > (size_t)ARG_MAX - value_length - 2U) {
+            if (value_length > argument_limit
+                || name_length > argument_limit - value_length - 2U) {
                 free(clean_environment);
                 return NULL;
             }
