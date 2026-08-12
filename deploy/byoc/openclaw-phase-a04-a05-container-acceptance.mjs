@@ -135,6 +135,10 @@ for(const name of fs.readdirSync("/proc")){if(!/^\d+$/.test(name))continue;try{c
 if(matches.length!==1)process.exit(3);process.stdout.write(JSON.stringify(matches[0]));
 `;
 
+const socketMetadataProbe = String.raw`
+const fs=require("node:fs");const path=process.argv[1];const uid=Number(process.argv[2]);const gid=Number(process.argv[3]);try{const value=fs.lstatSync(path);if(!value.isSocket()||value.uid!==uid||value.gid!==gid||(value.mode&0o777)!==0o660)process.exit(3)}catch{process.exit(4)}
+`;
+
 const wrongPeerProbe = String.raw`
 const net=require("node:net");const socket=process.argv[1];let received=0;let connected=false;const client=net.createConnection({path:socket});
 client.once("connect",()=>{connected=true;client.write("POST /v1/execute HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: 4096\r\nConnection: keep-alive\r\n\r\n{");process.stdout.write("READY\n")});
@@ -219,10 +223,11 @@ async function runWrongPeerAttack({
     after.pid !== baseline.pid
     || maximumFds !== baseline.fds
     || after.fds !== baseline.fds
-  ) fail("wrong_peer_reached_backend");
+  ) fail("wrong_peer_backend_connection_observed");
   return {
     connected: true,
     receivedBytes: 0,
+    backendProcessIdentityUnchanged: true,
     backendFdBaseline: baseline.fds,
     backendFdMaximum: maximumFds,
   };
@@ -241,7 +246,7 @@ function createFixture(root) {
   writeFileSync(join(workspace, "executor-only"), `${sentinel}\n`, { mode: 0o444 });
   writeFileSync(signing, `${randomBytes(32).toString("hex")}\n`, { mode: 0o444 });
   const executable = join(bin, "openclaw");
-  writeFileSync(executable, `#!/usr/bin/env node\nconst fs=require("node:fs");if(process.getuid?.()!==1001)process.exit(21);if(!fs.readFileSync(process.env.OPENCLAW_CONFIG_PATH,"utf8").includes(${JSON.stringify(sentinel)}))process.exit(22);if(fs.readFileSync("/opt/agentops-worker/workspace/executor-only","utf8").trim()!==${JSON.stringify(sentinel)})process.exit(23);if(!fs.readFileSync("/run/secrets/openclaw_receipt_signing_key","utf8").trim())process.exit(24);process.stdout.write(JSON.stringify({result:{meta:{durationMs:5,finalAssistantVisibleText:"fixture response"},payloads:[{text:"fixture response"}]}}));\n`, { mode: 0o555 });
+  writeFileSync(executable, `#!/usr/bin/env node\nconst fs=require("node:fs");if(process.getuid?.()!==1001)process.exit(21);if(!fs.readFileSync(process.env.OPENCLAW_CONFIG_PATH,"utf8").includes(${JSON.stringify(sentinel)}))process.exit(22);if(fs.readFileSync("/opt/agentops-worker/workspace/executor-only","utf8").trim()!==${JSON.stringify(sentinel)})process.exit(23);process.stdout.write(JSON.stringify({result:{meta:{durationMs:5,finalAssistantVisibleText:"fixture response"},payloads:[{text:"fixture response"}]}}));\n`, { mode: 0o555 });
   chmodSync(executable, 0o555);
   return {
     runtime,
@@ -277,6 +282,26 @@ function verifySource(sourceRoot, revision) {
   if (tracked.status !== 0 || untracked) fail("source_worktree_not_clean");
 }
 
+function verifyPeercredBeforeUpstreamConnect(sourceRoot) {
+  const source = readFileSync(
+    join(sourceRoot, "deploy/byoc/openclaw-peercred-gate.c"),
+    "utf8",
+  );
+  const peercredCheck = source.indexOf("getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED");
+  const expectedUidCheck = source.indexOf("peer.uid != expected_uid", peercredCheck);
+  const rejectionClose = source.indexOf("(void)close(client_fd);", expectedUidCheck);
+  const upstreamConnect = source.indexOf(
+    "upstream_fd = connect_upstream(upstream_path",
+    peercredCheck,
+  );
+  if (
+    peercredCheck < 0
+    || expectedUidCheck < peercredCheck
+    || rejectionClose < expectedUidCheck
+    || upstreamConnect < rejectionClose
+  ) fail("peercred_before_upstream_connect_contract_invalid");
+}
+
 function assertContainerBoundary(inspect, expected) {
   assert.equal(inspect.Config.User, expected.user);
   assert.deepEqual(inspect.HostConfig.GroupAdd, expected.groups);
@@ -295,6 +320,7 @@ async function main() {
   const sourceRevision = option("--source-revision");
   if (!REVISION.test(sourceRevision)) fail("source_revision_invalid");
   verifySource(sourceRoot, sourceRevision);
+  verifyPeercredBeforeUpstreamConnect(sourceRoot);
   const imageIdentity = resolveImage(image, sourceRevision);
   if (docker(["info", "--format", "{{.OSType}}"]).trim() !== "linux") {
     fail("linux_docker_required");
@@ -303,19 +329,7 @@ async function main() {
   const composeFile = join(sourceRoot, "deploy/byoc/compose.openclaw-phase-a04-a05.yaml");
   const root = mkdtempSync(join(tmpdir(), "agentops-openclaw-a04-a05-"));
   chmodSync(root, 0o755);
-  const composeOverride = join(root, "compose.acceptance-override.yaml");
-  writeFileSync(composeOverride, [
-    "services:",
-    "  executor:",
-    "    healthcheck:",
-    "      disable: true",
-    "  broker:",
-    "    depends_on:",
-    "      executor:",
-    "        condition: service_started",
-    "",
-  ].join("\n"), { mode: 0o600 });
-  const composeFiles = [composeFile, composeOverride];
+  const composeFiles = [composeFile];
   const fixture = createFixture(root);
   if (!SHA256.test(fixture.binarySha256)) fail("fixture_binary_digest_invalid");
   const suffix = `${process.pid}-${randomBytes(4).toString("hex")}`;
@@ -334,6 +348,17 @@ async function main() {
   let dockerCleanup = false;
   let localCleanup = false;
   try {
+    const composeConfiguration = JSON.parse(compose(
+      composeFiles,
+      project,
+      environment,
+      ["config", "--format", "json"],
+    ));
+    if (
+      composeConfiguration.services?.broker?.depends_on?.executor?.condition
+        !== "service_healthy"
+      || !composeConfiguration.services?.executor?.healthcheck
+    ) fail("production_compose_health_ordering_invalid");
     compose(
       composeFiles,
       project,
@@ -347,6 +372,17 @@ async function main() {
     waitFor("services_running", () => [worker, broker, executor].every((id) => (
       inspectContainer(id).State.Running === true
     )));
+    waitFor("peercred_gate_sockets_ready", () => {
+      docker([
+        "exec", worker, "node", "-e", socketMetadataProbe,
+        PUBLIC_SOCKET, "1100", "2100",
+      ], { timeout: 5_000, code: "public_gate_socket_not_ready" });
+      docker([
+        "exec", broker, "node", "-e", socketMetadataProbe,
+        PRIVATE_SOCKET, "1001", "2200",
+      ], { timeout: 5_000, code: "private_gate_socket_not_ready" });
+      return true;
+    });
     if (docker(["exec", worker, "uname", "-s"]).trim() !== "Linux") {
       fail("linux_container_kernel_required");
     }
@@ -354,6 +390,9 @@ async function main() {
     const workerInspect = inspectContainer(worker);
     const brokerInspect = inspectContainer(broker);
     const executorInspect = inspectContainer(executor);
+    if (executorInspect.State.Health?.Status !== "healthy") {
+      fail("production_executor_not_healthy");
+    }
     const runtimePaths = [
       "/opt/agentops-provider/openclaw",
       "/run/secrets/openclaw_config",
@@ -406,13 +445,14 @@ async function main() {
         A04_A05_PATHS: JSON.stringify([
           "/opt/agentops-provider/openclaw/bin/openclaw",
           "/run/secrets/openclaw_config",
+          "/opt/agentops-worker/workspace/executor-only",
           "/run/secrets/openclaw_receipt_signing_key",
         ]),
       },
     });
     const brokerMutation = execJson(broker, mutationProbe);
     if (!workerDenials.ok || workerDenials.denied !== 5) fail("worker_path_denials_invalid");
-    if (!brokerDenials.ok || brokerDenials.denied !== 3) fail("broker_path_denials_invalid");
+    if (!brokerDenials.ok || brokerDenials.denied !== 4) fail("broker_path_denials_invalid");
     if (!brokerMutation.ok) fail("broker_private_directory_mutation_allowed");
 
     const publicAttack = await runWrongPeerAttack({
@@ -451,7 +491,9 @@ async function main() {
       candidate_source_only: true,
       real_linux_docker_execution: true,
       real_linux_docker_compose_execution: true,
-      acceptance_healthcheck_noise_disabled: true,
+      peercred_gate_socket_metadata_ready_before_attacks: true,
+      production_executor_healthcheck_verified: true,
+      production_executor_before_broker_ordering_verified: true,
       phase_a04_public_peercred_verified: true,
       phase_a05_private_peercred_verified: true,
       so_peercred_verified: true,
@@ -460,21 +502,22 @@ async function main() {
       private_expected_uid: 1100,
       wrong_public_peer_uid: WRONG_UID,
       wrong_private_peer_uid: WRONG_UID,
-      wrong_public_peer_received_bytes: publicAttack.receivedBytes,
-      wrong_private_peer_received_bytes: privateAttack.receivedBytes,
-      wrong_public_peer_backend_fd_delta:
+      wrong_public_peer_response_bytes_received: publicAttack.receivedBytes,
+      wrong_private_peer_response_bytes_received: privateAttack.receivedBytes,
+      public_backend_process_identity_unchanged: publicAttack.backendProcessIdentityUnchanged,
+      private_backend_process_identity_unchanged: privateAttack.backendProcessIdentityUnchanged,
+      public_backend_fd_delta:
         publicAttack.backendFdMaximum - publicAttack.backendFdBaseline,
-      wrong_private_peer_backend_fd_delta:
+      private_backend_fd_delta:
         privateAttack.backendFdMaximum - privateAttack.backendFdBaseline,
-      wrong_public_peer_rejected_before_broker_backend: true,
-      wrong_private_peer_rejected_before_provider_backend: true,
-      public_wrong_uid_rejected_before_backend_read: true,
-      private_wrong_uid_rejected_before_backend_read: true,
+      public_wrong_uid_rejected_before_backend_connection: true,
+      private_wrong_uid_rejected_before_backend_connection: true,
+      peercred_check_precedes_upstream_connect_contract_verified: true,
       worker_broker_gate_broker_executor_gate_provider_round_trip_verified: true,
       provider_call_performed: protocol.provider_call_performed,
       dry_run: protocol.dry_run,
       worker_private_runtime_config_workspace_signing_denials: workerDenials.denied,
-      broker_runtime_config_signing_denials: brokerDenials.denied,
+      broker_runtime_config_workspace_signing_denials: brokerDenials.denied,
       broker_private_socket_directory_mutation_denied: true,
       interim_provider_identity: true,
       runtime_receipt_verified: false,
