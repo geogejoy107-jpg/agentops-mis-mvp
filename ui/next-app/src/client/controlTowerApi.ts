@@ -71,8 +71,51 @@ export type WorkspaceApproval = {
   } | null;
 };
 
+export type WorkspaceAgent = {
+  agent_id: string;
+  name: string;
+  runtime_type: string;
+  status: string;
+  permission_level: string;
+};
+
+export type TaskDispatchInput = {
+  title: string;
+  description: string;
+  owner_agent_id: string;
+  priority: string;
+  risk_level: string;
+  acceptance_criteria: string;
+  budget_limit_usd: number;
+};
+
+export type TaskDispatchReceipt = {
+  ok: true;
+  operation: "task_dispatch";
+  outcome: "created" | "unchanged";
+  task: WorkspaceTask;
+  task_id: string;
+  workspace_id: string;
+  token_omitted: true;
+};
+
+export type ApprovalDecisionReceipt = {
+  ok: true;
+  operation:
+    | "prepared_action_approval_decision"
+    | "customer_delivery_approval_decision"
+    | "agent_enrollment_approval_decision";
+  outcome: "updated" | "unchanged";
+  approval: {
+    approval_id: string;
+    decision: string;
+  };
+  token_omitted: true;
+};
+
 export type ControlTowerSnapshot = {
   metrics: DashboardMetrics;
+  agents: WorkspaceAgent[];
   tasks: WorkspaceTask[];
   runs: WorkspaceRun[];
   approvals: WorkspaceApproval[];
@@ -162,13 +205,52 @@ export function createControlTowerClient(fetcher: typeof fetch = fetch) {
         workspace_id: workspaceId,
         limit: "20",
       });
-      const [metrics, tasks, runs, approvals] = await Promise.all([
+      const [metrics, agents, tasks, runs, approvals] = await Promise.all([
         request<DashboardMetrics>(`/api/mis/dashboard/metrics?${query}`),
+        request<WorkspaceAgent[]>(`/api/mis/agents?${listQuery}`),
         request<WorkspaceTask[]>(`/api/mis/tasks?${listQuery}`),
         request<WorkspaceRun[]>(`/api/mis/runs?${listQuery}`),
         request<WorkspaceApproval[]>(`/api/mis/approvals?${listQuery}`),
       ]);
-      return { metrics, tasks, runs, approvals };
+      return { metrics, agents, tasks, runs, approvals };
+    },
+    dispatchTask(
+      workspaceId: string,
+      csrfToken: string,
+      idempotencyKey: string,
+      input: TaskDispatchInput,
+    ) {
+      return request<TaskDispatchReceipt>("/api/mis/tasks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-AgentOps-Workspace-Id": workspaceId,
+          "X-AgentOps-CSRF": csrfToken,
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({ workspace_id: workspaceId, ...input }),
+      });
+    },
+    decideApproval(
+      workspaceId: string,
+      csrfToken: string,
+      idempotencyKey: string,
+      approvalId: string,
+      decision: "approve" | "reject",
+    ) {
+      return request<ApprovalDecisionReceipt>(
+        `/api/mis/approvals/${encodeURIComponent(approvalId)}/${decision}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-AgentOps-Workspace-Id": workspaceId,
+            "X-AgentOps-CSRF": csrfToken,
+            "Idempotency-Key": idempotencyKey,
+          },
+          body: JSON.stringify({ workspace_id: workspaceId }),
+        },
+      );
     },
   };
 }

@@ -238,17 +238,44 @@ jobs:
           duplicate_receipt="${RUNNER_TEMP}/customer-owner-duplicate.json"
           duplicate_stderr="${RUNNER_TEMP}/customer-owner-duplicate.stderr"
           owner_password="$(openssl rand -hex 32)"
-          if ! printf '%s\n' "${owner_password}" |
-            "${AGENTOPS_CUSTOMER_RELEASE_ROOT}/owner-init.sh" \
-              --workspace-id ws_customer_acceptance \
-              --username customer-owner \
-              --display-name "Customer Owner" \
-              --password-stdin > "${owner_receipt}" 2> "${owner_stderr}"; then
-            owner_password=
-            exit 1
-          fi
+          set +e
+          printf '%s\n' "${owner_password}" |
+          "${AGENTOPS_CUSTOMER_RELEASE_ROOT}/owner-init.sh" \
+            --workspace-id ws_customer_acceptance \
+            --username customer-owner \
+            --display-name "Customer Owner" \
+            --password-stdin > "${owner_receipt}" 2> "${owner_stderr}"
+          owner_status=$?
+          set -e
           ! grep -Fq -- "${owner_password}" "${owner_receipt}" "${owner_stderr}"
           owner_password=
+          if jq -e 'type == "object"' "${owner_receipt}" >/dev/null 2>&1; then
+            owner_receipt_parse=true
+            owner_error="$(jq -r '
+              if .error == null then "none"
+              elif (.error | type) == "string"
+                and (.error | test("^(owner|agentops)_[a-z0-9_]+$"))
+                then .error
+              else "unexpected"
+              end
+            ' "${owner_receipt}")"
+          else
+            owner_receipt_parse=false
+            owner_error=unparseable
+          fi
+          if [ -s "${owner_stderr}" ]; then
+            owner_stderr_nonempty=true
+          else
+            owner_stderr_nonempty=false
+          fi
+          printf '%s\n' \
+            "owner_initial_status=${owner_status}" \
+            "owner_initial_receipt_parse=${owner_receipt_parse}" \
+            "owner_initial_error=${owner_error}" \
+            "owner_initial_stderr_nonempty=${owner_stderr_nonempty}"
+          if [ "${owner_status}" -ne 0 ]; then
+            exit 1
+          fi
           jq -e '
             .ok == true
             and .operation == "commercial_owner_bootstrap"

@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -13,6 +14,7 @@ import {
   ControlTowerApiError,
   type ControlTowerSnapshot,
   type HumanSession,
+  type TaskDispatchInput,
   createControlTowerClient,
 } from "./controlTowerApi";
 
@@ -92,6 +94,14 @@ export function ControlTower() {
   const [dataError, setDataError] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [dataBusy, setDataBusy] = useState(false);
+  const [taskBusy, setTaskBusy] = useState(false);
+  const [taskMessage, setTaskMessage] = useState("");
+  const [taskError, setTaskError] = useState("");
+  const [taskReplayKey, setTaskReplayKey] = useState("");
+  const [approvalBusyId, setApprovalBusyId] = useState("");
+  const [approvalMessage, setApprovalMessage] = useState("");
+  const [approvalError, setApprovalError] = useState("");
+  const approvalReplayKeys = useRef(new Map<string, string>());
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
@@ -112,6 +122,12 @@ export function ControlTower() {
     setWorkspaceId("");
     setSnapshot(null);
     setLastUpdated(null);
+    setTaskMessage("");
+    setTaskError("");
+    setTaskReplayKey("");
+    setApprovalMessage("");
+    setApprovalError("");
+    approvalReplayKeys.current.clear();
     setPhase("signed-out");
   }, []);
 
@@ -190,6 +206,89 @@ export function ControlTower() {
     }
   }
 
+  async function handleTaskDispatch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!session || !workspaceId) return;
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const input: TaskDispatchInput = {
+      title: String(form.get("title") || "").trim(),
+      description: String(form.get("description") || "").trim(),
+      owner_agent_id: String(form.get("owner_agent_id") || "").trim(),
+      priority: String(form.get("priority") || "medium"),
+      risk_level: String(form.get("risk_level") || "medium"),
+      acceptance_criteria: String(form.get("acceptance_criteria") || "").trim(),
+      budget_limit_usd: Number(form.get("budget_limit_usd") || 0),
+    };
+    const replayKey = taskReplayKey || `human-task-${crypto.randomUUID()}`;
+    setTaskReplayKey(replayKey);
+    setTaskBusy(true);
+    setTaskError("");
+    setTaskMessage("");
+    try {
+      const receipt = await api.dispatchTask(
+        workspaceId,
+        session.csrf_token,
+        replayKey,
+        input,
+      );
+      formElement.reset();
+      setTaskReplayKey("");
+      setTaskMessage(`Task ${shortId(receipt.task_id)} 已派发。`);
+      setRefreshVersion((value) => value + 1);
+    } catch (error) {
+      if (error instanceof ControlTowerApiError && error.status === 401) {
+        clearSession();
+        return;
+      }
+      setTaskError(displayError(error));
+    } finally {
+      setTaskBusy(false);
+    }
+  }
+
+  async function handleApprovalDecision(
+    approvalId: string,
+    decision: "approve" | "reject",
+  ) {
+    if (!session || !workspaceId) return;
+    const confirmed = window.confirm(
+      decision === "approve"
+        ? "确认批准这项待审请求？"
+        : "确认拒绝这项待审请求？",
+    );
+    if (!confirmed) return;
+    const replayBinding = `${workspaceId}:${approvalId}:${decision}`;
+    const replayKey = approvalReplayKeys.current.get(replayBinding)
+      || `human-approval-${crypto.randomUUID()}`;
+    approvalReplayKeys.current.set(replayBinding, replayKey);
+    setApprovalBusyId(approvalId);
+    setApprovalError("");
+    setApprovalMessage("");
+    try {
+      await api.decideApproval(
+        workspaceId,
+        session.csrf_token,
+        replayKey,
+        approvalId,
+        decision,
+      );
+      approvalReplayKeys.current.delete(replayBinding);
+      setApprovalMessage(
+        `Approval ${shortId(approvalId)} 已${decision === "approve" ? "批准" : "拒绝"}。`,
+      );
+      setRefreshVersion((value) => value + 1);
+    } catch (error) {
+      if (error instanceof ControlTowerApiError && error.status === 401) {
+        clearSession();
+        return;
+      }
+      setApprovalError(displayError(error));
+    } finally {
+      setApprovalBusyId("");
+    }
+  }
+
   if (phase === "checking") {
     return (
       <main className={styles.centered} aria-live="polite">
@@ -248,6 +347,12 @@ export function ControlTower() {
   }
 
   const membership = session.memberships.find((item) => item.workspace_id === workspaceId);
+  const canDispatchTasks = ["operator", "workspace-admin", "owner"].includes(
+    membership?.role || "",
+  );
+  const canReview = ["approver", "reviewer", "workspace-admin", "owner"].includes(
+    membership?.role || "",
+  );
   const visibleSnapshot = snapshot?.metrics.workspace_id === workspaceId
     ? snapshot
     : null;
@@ -300,7 +405,18 @@ export function ControlTower() {
         </div>
         <label>
           <span className={styles.fieldLabel}>Workspace</span>
-          <select value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}>
+          <select
+            value={workspaceId}
+            onChange={(event) => {
+              setWorkspaceId(event.target.value);
+              setTaskReplayKey("");
+              setTaskMessage("");
+              setTaskError("");
+              setApprovalMessage("");
+              setApprovalError("");
+              approvalReplayKeys.current.clear();
+            }}
+          >
             {session.memberships.map((item) => (
               <option key={item.workspace_id} value={item.workspace_id}>
                 {item.workspace_id}
@@ -347,6 +463,103 @@ export function ControlTower() {
           <strong>{loadingValue ?? percentage(metrics?.failure_rate)}</strong>
           <small>{loadingValue ?? failedTasks} failed tasks</small>
         </div>
+      </section>
+
+      <section className={styles.workspaceSection} aria-labelledby="dispatch-heading">
+        <div className={styles.sectionHeading}>
+          <div>
+            <p className={styles.eyebrow}>Human dispatch</p>
+            <h2 id="dispatch-heading">Create Task</h2>
+          </div>
+          <span>{visibleSnapshot?.agents.length ?? 0} workspace agents</span>
+        </div>
+        <form
+          className={styles.taskForm}
+          key={workspaceId}
+          onChange={() => setTaskReplayKey("")}
+          onSubmit={handleTaskDispatch}
+        >
+          <label className={styles.taskTitleField}>
+            <span>Title</span>
+            <input maxLength={160} name="title" required type="text" />
+          </label>
+          <label>
+            <span>Agent</span>
+            <select
+              disabled={!canDispatchTasks || !(visibleSnapshot?.agents.length)}
+              name="owner_agent_id"
+              required
+            >
+              <option value="">选择 Agent</option>
+              {visibleSnapshot?.agents.map((agent) => (
+                <option
+                  disabled={agent.status === "disabled"}
+                  key={agent.agent_id}
+                  value={agent.agent_id}
+                >
+                  {agent.name} · {agent.runtime_type} · {agent.status}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Priority</span>
+            <select defaultValue="medium" name="priority">
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </label>
+          <label>
+            <span>Risk</span>
+            <select defaultValue="medium" name="risk_level">
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </select>
+          </label>
+          <label>
+            <span>Budget USD</span>
+            <input
+              defaultValue="0"
+              max="1000000"
+              min="0"
+              name="budget_limit_usd"
+              step="0.01"
+              type="number"
+            />
+          </label>
+          <label className={styles.taskWideField}>
+            <span>Description</span>
+            <textarea maxLength={1200} name="description" rows={3} />
+          </label>
+          <label className={styles.taskWideField}>
+            <span>Acceptance criteria</span>
+            <textarea maxLength={600} name="acceptance_criteria" rows={3} />
+          </label>
+          <div className={styles.formActions}>
+            <button
+              className={styles.primaryButton}
+              disabled={
+                taskBusy
+                || !canDispatchTasks
+                || !(visibleSnapshot?.agents.length)
+              }
+              type="submit"
+            >
+              {taskBusy ? "派发中..." : "创建并派发"}
+            </button>
+            {!canDispatchTasks ? (
+              <span>需要 operator、workspace-admin 或 owner 权限。</span>
+            ) : !visibleSnapshot?.agents.length ? (
+              <span>当前 workspace 没有可派发 Agent。</span>
+            ) : null}
+          </div>
+        </form>
+        {taskMessage ? <p className={styles.successBanner} role="status">{taskMessage}</p> : null}
+        {taskError ? <p className={styles.errorBanner} role="alert">{taskError}</p> : null}
       </section>
 
       <section className={styles.workspaceSection} aria-labelledby="tasks-heading">
@@ -419,12 +632,18 @@ export function ControlTower() {
             <p className={styles.eyebrow}>Human review queue</p>
             <h2 id="approvals-heading">Approvals</h2>
           </div>
-          <span>read only</span>
+          <span>{visibleSnapshot?.approvals.filter((item) => item.decision === "pending").length ?? 0} pending</span>
         </div>
+        {approvalMessage ? (
+          <p className={styles.successBanner} role="status">{approvalMessage}</p>
+        ) : null}
+        {approvalError ? (
+          <p className={styles.errorBanner} role="alert">{approvalError}</p>
+        ) : null}
         <div className={styles.tableScroll}>
           <table>
             <thead>
-              <tr><th>Approval</th><th>Decision</th><th>Kind</th><th>Run</th><th>Agent</th><th>Requested</th></tr>
+              <tr><th>Approval</th><th>Decision</th><th>Kind</th><th>Run</th><th>Agent</th><th>Requested</th><th>Actions</th></tr>
             </thead>
             <tbody>
               {visibleSnapshot?.approvals.map((approval) => (
@@ -435,10 +654,32 @@ export function ControlTower() {
                   <td><code>{shortId(approval.run_id)}</code></td>
                   <td><code>{shortId(approval.requested_by_agent_id)}</code></td>
                   <td>{dateTime(approval.created_at)}</td>
+                  <td>
+                    {approval.decision === "pending" ? (
+                      <div className={styles.rowActions}>
+                        <button
+                          className={styles.approveButton}
+                          disabled={!canReview || approvalBusyId === approval.approval_id}
+                          onClick={() => handleApprovalDecision(approval.approval_id, "approve")}
+                          type="button"
+                        >
+                          批准
+                        </button>
+                        <button
+                          className={styles.rejectButton}
+                          disabled={!canReview || approvalBusyId === approval.approval_id}
+                          onClick={() => handleApprovalDecision(approval.approval_id, "reject")}
+                          type="button"
+                        >
+                          拒绝
+                        </button>
+                      </div>
+                    ) : "-"}
+                  </td>
                 </tr>
               ))}
               {!visibleSnapshot?.approvals.length ? (
-                <EmptyRow columns={6}>{dataBusy ? "正在加载 Approvals..." : "暂无 Approval"}</EmptyRow>
+                <EmptyRow columns={7}>{dataBusy ? "正在加载 Approvals..." : "暂无 Approval"}</EmptyRow>
               ) : null}
             </tbody>
           </table>

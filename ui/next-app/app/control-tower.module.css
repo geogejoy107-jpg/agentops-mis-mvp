@@ -119,7 +119,10 @@
 }
 
 .loginForm input,
-.identityBand select {
+.identityBand select,
+.taskForm input,
+.taskForm select,
+.taskForm textarea {
   min-width: 0;
   min-height: 40px;
   border: 1px solid #4b525a;
@@ -136,7 +139,10 @@
 }
 
 .loginForm input:focus,
-.identityBand select:focus {
+.identityBand select:focus,
+.taskForm input:focus,
+.taskForm select:focus,
+.taskForm textarea:focus {
   border-color: #59d499;
   box-shadow: 0 0 0 2px rgba(89, 212, 153, 0.14);
 }
@@ -171,7 +177,8 @@
 }
 
 .error,
-.errorBanner {
+.errorBanner,
+.successBanner {
   margin: 0;
   color: #ff9a9a;
   font-size: 13px;
@@ -181,6 +188,13 @@
   padding: 12px 14px;
   border-bottom: 1px solid #7e3b3b;
   background: #29191b;
+}
+
+.successBanner {
+  padding: 12px 14px;
+  border-bottom: 1px solid #397c5c;
+  background: #12261d;
+  color: #6fdda8;
 }
 
 .appShell {
@@ -279,6 +293,97 @@
 
 .workspaceSection {
   margin-top: 30px;
+}
+
+.taskForm {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) repeat(4, minmax(120px, 1fr));
+  gap: 14px;
+  padding: 16px;
+  border-top: 1px solid #34383e;
+  border-bottom: 1px solid #34383e;
+  background: #181b1f;
+}
+
+.taskForm label {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 7px;
+  color: #c7cbd0;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.taskForm input,
+.taskForm select,
+.taskForm textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 10px;
+}
+
+.taskForm textarea {
+  resize: vertical;
+}
+
+.taskTitleField {
+  grid-column: span 1;
+}
+
+.taskWideField {
+  grid-column: span 2;
+}
+
+.formActions {
+  display: flex;
+  grid-column: span 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.formActions span {
+  color: #8f969e;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.approveButton,
+.rejectButton {
+  min-width: 50px;
+  min-height: 28px;
+  border-radius: 3px;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.approveButton {
+  border: 1px solid #397c5c;
+  color: #6fdda8;
+}
+
+.rejectButton {
+  border: 1px solid #804747;
+  color: #ff9a9a;
+}
+
+.approveButton:disabled,
+.rejectButton:disabled {
+  cursor: wait;
+  opacity: 0.45;
 }
 
 .sectionHeading {
@@ -413,6 +518,16 @@
   .metrics > div:last-child {
     border-bottom: 0;
   }
+
+  .taskForm {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .taskTitleField,
+  .taskWideField,
+  .formActions {
+    grid-column: span 2;
+  }
 }
 
 @media (max-width: 640px) {
@@ -475,5 +590,16 @@
   .metrics > div:nth-child(2n) {
     min-height: 92px;
     border-right: 0;
+  }
+
+  .taskForm {
+    grid-template-columns: 1fr;
+    padding: 14px;
+  }
+
+  .taskTitleField,
+  .taskWideField,
+  .formActions {
+    grid-column: span 1;
   }
 }
