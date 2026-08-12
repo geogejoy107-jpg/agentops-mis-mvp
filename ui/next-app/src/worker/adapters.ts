@@ -84,7 +84,7 @@ export class HermesAdapter implements RuntimeAdapter {
     this.#maxTokens = boundedInteger(options.maxTokens, 512, 64, 4096);
   }
 
-  async execute(bundle: PromptBundle): Promise<RuntimeAdapterResult> {
+  async execute(bundle: PromptBundle, signal?: AbortSignal): Promise<RuntimeAdapterResult> {
     const started = Date.now();
     const endpoint = new URL(this.#gatewayUrl);
     const basePath = this.#gatewayUrl.pathname.replace(/\/+$/, "");
@@ -93,7 +93,14 @@ export class HermesAdapter implements RuntimeAdapter {
       sha256(endpoint.origin).slice(0, 20)
     }/v1/chat/completions`;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.#timeoutMs);
+    const cancel = () => controller.abort(signal?.reason);
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener("abort", cancel, { once: true });
     let providerCallPerformed = false;
     try {
       providerCallPerformed = true;
@@ -171,7 +178,9 @@ export class HermesAdapter implements RuntimeAdapter {
           : "Provider error detail omitted; Hermes returned no visible content.",
       };
     } catch (error) {
-      const timeoutError = error instanceof Error && error.name === "AbortError";
+      const cancelled = signal?.aborted === true;
+      const timeoutError = !cancelled && timedOut
+        && error instanceof Error && error.name === "AbortError";
       return {
         ok: false,
         runtime: this.runtime,
@@ -179,21 +188,28 @@ export class HermesAdapter implements RuntimeAdapter {
         outputSummary: "Hermes execution failed.",
         rawPayloadHash: stableHash({
           runtime: this.runtime,
-          error_type: timeoutError ? "HermesTimeout" : "HermesExecutionFailed",
+          error_type: cancelled
+            ? "RuntimeCancelled"
+            : timeoutError ? "HermesTimeout" : "HermesExecutionFailed",
         }),
         targetResource,
         durationMs: Date.now() - started,
         outputTokens: 0,
         providerCallPerformed,
         dryRun: false,
-        retryable: true,
-        errorType: timeoutError ? "HermesTimeout" : "HermesExecutionFailed",
-        errorMessage: timeoutError
-          ? "Hermes execution timed out."
-          : "Hermes transport failed; detail omitted.",
+        retryable: !cancelled,
+        errorType: cancelled
+          ? "RuntimeCancelled"
+          : timeoutError ? "HermesTimeout" : "HermesExecutionFailed",
+        errorMessage: cancelled
+          ? "Runtime execution cancelled for controlled shutdown."
+          : timeoutError
+            ? "Hermes execution timed out."
+            : "Hermes transport failed; detail omitted.",
       };
     } finally {
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", cancel);
     }
   }
 }
@@ -253,7 +269,7 @@ export class OpenClawAdapter implements RuntimeAdapter {
     this.#workingDirectory = options.workingDirectory || process.cwd();
   }
 
-  async execute(bundle: PromptBundle): Promise<RuntimeAdapterResult> {
+  async execute(bundle: PromptBundle, signal?: AbortSignal): Promise<RuntimeAdapterResult> {
     await access(this.#binaryPath);
     const started = Date.now();
     const targetResource = `local://openclaw/${this.#agentName}`;
@@ -279,6 +295,7 @@ export class OpenClawAdapter implements RuntimeAdapter {
           timeout: (this.#timeoutSeconds + 30) * 1000,
           maxBuffer: MAX_RUNTIME_RESPONSE_BYTES,
           windowsHide: true,
+          signal,
         },
       );
       const rawPayloadHash = stableHash({ stdout, stderr });
@@ -326,6 +343,7 @@ export class OpenClawAdapter implements RuntimeAdapter {
           : "Provider error detail omitted; OpenClaw returned no visible content.",
       };
     } catch {
+      const cancelled = signal?.aborted === true;
       return {
         ok: false,
         runtime: this.runtime,
@@ -333,16 +351,18 @@ export class OpenClawAdapter implements RuntimeAdapter {
         outputSummary: "OpenClaw execution failed.",
         rawPayloadHash: stableHash({
           runtime: this.runtime,
-          error_type: "OpenClawExecutionFailed",
+          error_type: cancelled ? "RuntimeCancelled" : "OpenClawExecutionFailed",
         }),
         targetResource,
         durationMs: Date.now() - started,
         outputTokens: 0,
         providerCallPerformed,
         dryRun: false,
-        retryable: true,
-        errorType: "OpenClawExecutionFailed",
-        errorMessage: "OpenClaw process failed; detail omitted.",
+        retryable: !cancelled,
+        errorType: cancelled ? "RuntimeCancelled" : "OpenClawExecutionFailed",
+        errorMessage: cancelled
+          ? "Runtime execution cancelled for controlled shutdown."
+          : "OpenClaw process failed; detail omitted.",
       };
     }
   }

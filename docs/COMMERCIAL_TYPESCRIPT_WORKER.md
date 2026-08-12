@@ -60,14 +60,18 @@ npm run typecheck
 npm run test:commercial-worker-contract
 ```
 
-Provide the Agent credential through the environment. Credentials are rejected
-as command-line arguments and are never written to the Worker receipt.
+Provide the Agent credential through an absolute path to a bounded regular
+secret file. Commercial Worker credentials are rejected from command-line
+arguments and environment values and are never written to the Worker receipt.
 
 ```bash
 export AGENTOPS_BASE_URL="https://mis.example.com"
 export AGENTOPS_WORKSPACE_ID="workspace-id"
 export AGENTOPS_AGENT_ID="agent-id"
-export AGENTOPS_AGENT_TOKEN="<agent-token>"
+umask 077
+install -d -m 700 "$HOME/.config/agentops/secrets"
+printf '%s\n' '<agent-token>' > "$HOME/.config/agentops/secrets/commercial-worker-token"
+export AGENTOPS_AGENT_TOKEN_SOURCE_FILE="$HOME/.config/agentops/secrets/commercial-worker-token"
 export AGENTOPS_RUN_ESTIMATED_COST_USD="1.000000"
 ```
 
@@ -102,7 +106,10 @@ Do not use that gate for hosted or shared deployments.
 ## Daemon Mode
 
 The daemon uses the same one-task transaction repeatedly and stops cleanly on
-`SIGINT` or `SIGTERM`.
+`SIGINT`, `SIGTERM`, or `SIGHUP`. Provider calls and retry/poll sleeps receive a
+cancellation signal, while post-provider failure evidence is still reconciled.
+The BYOC supervisor forwards shutdown to the complete Worker/OpenClaw process
+group and applies a bounded forced-stop fallback inside the Compose grace period.
 
 ```bash
 npm run worker:commercial -- \
@@ -235,3 +242,9 @@ after the receipt proves real non-dry-run provider calls, TypeScript Worker plus
 PostgreSQL ownership, verified manifests, Human delivery decisions, settled
 cost reservations, fixture cleanup, and no Python Worker/API. A new commit has
 no inherited runtime authority and must run the acceptance again.
+
+The publisher hashes the exact receipt bytes once, writes a bounded attestation
+as an exact-commit GitHub comment, and points both statuses to that comment. The
+promotion gate verifies the repository owner as publisher, the exact commit,
+shared receipt digest, status descriptions, target URL, and current attestation
+body. It does not trust same-named contexts from another publisher.

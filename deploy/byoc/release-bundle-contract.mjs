@@ -150,12 +150,15 @@ function assertStaticCustomerBoundary() {
   if (
     !compose.includes("profiles: [worker-hermes]")
     || !compose.includes("profiles: [worker-openclaw]")
+    || (compose.match(/^\s{4}init: true$/gm) || []).length !== 2
     || !compose.includes("AGENTOPS_AGENT_TOKEN_SOURCE_FILE: /run/secrets/agent_token")
     || !compose.includes("/usr/local/lib/agentops/worker-entrypoint.mjs")
     || !compose.includes("/usr/local/lib/agentops/worker-healthcheck.mjs")
     || /\n\s+(?:AGENTOPS_API_KEY|AGENTOPS_AGENT_TOKEN):/.test(compose)
     || !workerEntrypoint.includes("direct_agent_token_environment_forbidden")
     || !workerEntrypoint.includes("AGENTOPS_AGENT_TOKEN_SOURCE_FILE: tokenSource")
+    || !workerEntrypoint.includes("process.kill(-child.pid, signal)")
+    || !workerEntrypoint.includes('signalChildGroup(child, "SIGKILL")')
     || !workerEntrypoint.includes("worker_receipt_boundary_invalid")
     || !workerHealthcheck.includes("process.kill(payload.pid, 0)")
     || !workerHealthcheck.includes("payload.pid < 1")
@@ -553,6 +556,7 @@ exit 0
     source_free_typescript_worker_profiles_packaged: true,
     worker_file_secret_and_health_lease_verified: true,
     worker_container_pid_one_supported: true,
+    worker_container_init_reaper_required: true,
     worker_container_customer_acceptance_required: true,
     real_provider_execution_performed: false,
     failed_health_stack_stopped: true,

@@ -17,6 +17,12 @@ until explicitly selected. They require provider-specific Agent token files and
 complete production runtime settings. Provider credentials, OpenClaw binaries,
 and real-provider execution are not bundled or enabled by default.
 
+The TypeScript Worker reads its Agent token directly from the mounted secret
+file; the raw value is absent from argv and every process environment. Its PID 1
+supervisor accepts the container-valid PID, forwards shutdown to the complete
+Worker/provider process group, interrupts provider/retry/poll waits, and retains
+a bounded forced-stop fallback within the Compose grace period.
+
 The release is bound to the exact source commit and the application image's
 immutable registry digest. A release build fails when any selected input is
 untracked or differs from that commit. The package's `SHA256SUMS` proves internal

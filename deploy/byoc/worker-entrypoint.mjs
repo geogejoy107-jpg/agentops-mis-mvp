@@ -255,6 +255,15 @@ function childEnvironment(tokenSource) {
   };
 }
 
+function signalChildGroup(child, signal) {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") child.kill(signal);
+  }
+}
+
 export async function runWorker({ statePath = STATE_PATH } = {}) {
   if (process.env.NODE_ENV !== "production") fail("worker_production_mode_required");
   if (process.getuid?.() === 0 || process.getgid?.() === 0) fail("worker_root_forbidden");
@@ -277,6 +286,7 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
     cwd: "/opt/agentops/ui/next-app",
     env: childEnvironment(tokenSource),
     stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
   });
   const refresh = setInterval(() => {
     writeState({
@@ -298,7 +308,7 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
   child.stdout.on("data", (chunk) => {
     stdout += chunk;
     if (Buffer.byteLength(stdout, "utf8") > 1024 * 1024) {
-      child.kill("SIGTERM");
+      signalChildGroup(child, "SIGTERM");
       status = "failed";
       return;
     }
@@ -319,7 +329,7 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
         raw_prompt_omitted: true,
         raw_response_omitted: true,
       })}\n`);
-      if (!receipt.ok && child.exitCode === null) child.kill("SIGTERM");
+      if (!receipt.ok && child.exitCode === null) signalChildGroup(child, "SIGTERM");
     }
   });
   child.stderr.setEncoding("utf8");
@@ -328,18 +338,23 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
     if (!text) return;
     if (text.includes(token)) {
       status = "failed";
-      if (child.exitCode === null) child.kill("SIGTERM");
+      if (child.exitCode === null) signalChildGroup(child, "SIGTERM");
       return;
     }
     process.stderr.write("agentops_worker_child_error_detail_omitted\n");
   });
 
   const handlers = new Map();
+  let forceStop;
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     const handler = () => {
       stopping = true;
       status = "stopping";
-      if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+      signalChildGroup(child, signal);
+      if (!forceStop) {
+        forceStop = setTimeout(() => signalChildGroup(child, "SIGKILL"), 20_000);
+        forceStop.unref();
+      }
     };
     handlers.set(signal, handler);
     process.on(signal, handler);
@@ -349,6 +364,7 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
     child.once("exit", (code, signal) => resolveResult({ code, signal }));
   });
   clearInterval(refresh);
+  if (forceStop) clearTimeout(forceStop);
   for (const [signal, handler] of handlers) process.removeListener(signal, handler);
   status = stopping && (result.code === 0 || result.signal) ? "stopped" : "failed";
   writeState({

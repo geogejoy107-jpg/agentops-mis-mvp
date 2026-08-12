@@ -75,7 +75,7 @@ export type RuntimeAdapterResult = {
 export interface RuntimeAdapter {
   readonly runtime: CommercialRuntime;
   readonly modelName: string;
-  execute(bundle: PromptBundle): Promise<RuntimeAdapterResult>;
+  execute(bundle: PromptBundle, signal?: AbortSignal): Promise<RuntimeAdapterResult>;
 }
 
 export interface GatewayPort {
@@ -101,6 +101,7 @@ export type CommercialWorkerConfig = {
   requestCustomerDeliveryApproval?: boolean;
   maxAdapterAttempts?: number;
   retryDelayMs?: number;
+  abortSignal?: AbortSignal;
 };
 
 export type CommercialWorkerReceipt = {

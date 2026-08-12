@@ -57,11 +57,13 @@ const state: {
   requests: RecordedRequest[];
   redirectTargetRequests: number;
   hermesTargetRequests: number;
+  hermesDelayMs: number;
 } = {
   scenario: "happy",
   requests: [],
   redirectTargetRequests: 0,
   hermesTargetRequests: 0,
+  hermesDelayMs: 0,
 };
 
 function send(
@@ -143,6 +145,9 @@ async function handle(
       assert.equal(body.model, "hermes-agent");
       assert.ok(Array.isArray(body.messages));
       state.hermesTargetRequests += 1;
+      if (state.hermesDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, state.hermesDelayMs));
+      }
       send(response, 200, {
         choices: [{ message: { content: "Bounded contract response." } }],
         usage: { completion_tokens: 3 },
@@ -471,6 +476,31 @@ class ContractAdapter implements RuntimeAdapter {
   }
 }
 
+class RetryableContractAdapter implements RuntimeAdapter {
+  readonly runtime = "hermes" as const;
+  readonly modelName = "contract-hermes-retryable";
+  calls = 0;
+
+  async execute(): Promise<RuntimeAdapterResult> {
+    this.calls += 1;
+    return {
+      ok: false,
+      runtime: this.runtime,
+      modelName: this.modelName,
+      outputSummary: "Retryable contract failure.",
+      rawPayloadHash: stableHash({ retryable: true }),
+      targetResource: "hermes://contract/retryable",
+      durationMs: 1,
+      outputTokens: 0,
+      providerCallPerformed: true,
+      dryRun: false,
+      retryable: true,
+      errorType: "RetryableContractFailure",
+      errorMessage: "Retryable contract failure.",
+    };
+  }
+}
+
 async function workerSources() {
   const root = path.resolve("src/worker");
   const names = (await readdir(root)).filter((name) => name.endsWith(".ts"));
@@ -599,6 +629,14 @@ function agentTokenBoundaryContract() {
       /commercial_worker_file_agent_token_required/,
     );
 
+    environment.NODE_ENV = "development";
+    environment.AGENTOPS_AGENT_TOKEN = TOKEN;
+    assert.throws(
+      () => readCommercialAgentToken(),
+      /commercial_worker_environment_agent_token_forbidden/,
+    );
+    delete environment.AGENTOPS_AGENT_TOKEN;
+
     environment.AGENTOPS_AGENT_TOKEN_SOURCE_FILE = "relative-agent-token";
     assert.throws(
       () => readCommercialAgentToken(),
@@ -682,6 +720,28 @@ async function main() {
     assert.match(hermesResult.outputSummary, /Provider response omitted/);
     assert.equal(state.hermesTargetRequests, 1);
     assert.match(hermesResult.targetResource, /\/v1\/chat\/completions$/);
+
+    state.hermesDelayMs = 2_000;
+    const hermesCancellation = new AbortController();
+    const cancellationStarted = Date.now();
+    const cancelledHermesPromise = hermes.execute({
+      prompt: "Cancel this bounded contract response.",
+      promptHash: stableHash("Cancel this bounded contract response."),
+      profile: {
+        profileId: "contract-cancellation",
+        version: "worker_prompt_profiles_v1",
+        profileHash: stableHash("contract-cancellation"),
+        objective: "Verify controlled provider cancellation.",
+        outputContract: ["cancelled_response"],
+      },
+    }, hermesCancellation.signal);
+    setTimeout(() => hermesCancellation.abort(), 50);
+    const cancelledHermes = await cancelledHermesPromise;
+    state.hermesDelayMs = 0;
+    assert.equal(cancelledHermes.ok, false);
+    assert.equal(cancelledHermes.errorType, "RuntimeCancelled");
+    assert.equal(cancelledHermes.retryable, false);
+    assert.ok(Date.now() - cancellationStarted < 1_000);
 
     const gateway = new HttpGatewayClient({
       baseUrl,
@@ -825,6 +885,29 @@ async function main() {
     assert.equal(approvalBody.approval_kind, "customer_delivery");
     assert.equal(approvalBody.decision, "pending");
 
+    state.scenario = "happy";
+    state.requests = [];
+    const retryCancellation = new AbortController();
+    const retryAdapter = new RetryableContractAdapter();
+    const retryWorker = new CommercialWorker(gateway, retryAdapter, {
+      workspaceId: WORKSPACE_ID,
+      agentId: AGENT_ID,
+      runtime: "hermes",
+      estimatedCostUsd: "1.000000",
+      confirmRun: true,
+      maxAdapterAttempts: 3,
+      retryDelayMs: 10_000,
+      abortSignal: retryCancellation.signal,
+    });
+    const retryCancellationStarted = Date.now();
+    const retryPromise = retryWorker.runOnce();
+    setTimeout(() => retryCancellation.abort(), 50);
+    const retryCancelled = await retryPromise;
+    assert.equal(retryCancelled.ok, false);
+    assert.equal(retryCancelled.reason, "runtime_failed");
+    assert.equal(retryAdapter.calls, 1);
+    assert.ok(Date.now() - retryCancellationStarted < 1_000);
+
     state.scenario = "external";
     state.requests = [];
     const external = await worker.runOnce();
@@ -955,6 +1038,11 @@ async function main() {
       implementation_language: "typescript",
       source_boundary: sourceBoundary,
       agent_token_boundary: agentTokenBoundary,
+      controlled_shutdown: {
+        provider_abort_propagated: true,
+        retry_sleep_interruptible: true,
+        failed_run_evidence_recorded: true,
+      },
       happy_path: {
         gateway_request_count: happyRequests.length,
         provider_call_performed: happy.provider_call_performed,

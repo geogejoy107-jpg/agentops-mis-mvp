@@ -365,7 +365,7 @@ export class CommercialWorker {
     let final: RuntimeAdapterResult | null = null;
     for (let attempt = 1; attempt <= maximum; attempt += 1) {
       const result = normalizeAdapterResult(
-        await this.#adapter.execute(bundle),
+        await this.#adapter.execute(bundle, this.#config.abortSignal),
         this.#config.runtime,
       );
       history.push({
@@ -383,7 +383,21 @@ export class CommercialWorker {
       if (result.ok || !result.retryable || attempt === maximum) break;
       const delay = (this.#config.retryDelayMs || 0) * attempt;
       if (delay > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        await new Promise<void>((resolve) => {
+          const signal = this.#config.abortSignal;
+          if (signal?.aborted) {
+            resolve();
+            return;
+          }
+          const timeout = setTimeout(done, delay);
+          function done() {
+            clearTimeout(timeout);
+            signal?.removeEventListener("abort", done);
+            resolve();
+          }
+          signal?.addEventListener("abort", done, { once: true });
+        });
+        if (this.#config.abortSignal?.aborted) break;
       }
     }
     if (!final) throw new Error("runtime_adapter_did_not_execute");

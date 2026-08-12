@@ -61,11 +61,11 @@ export function readCommercialAgentToken() {
   if (sourcePath && environmentToken) {
     throw new Error("agent_token_source_conflict");
   }
+  if (environmentToken) {
+    throw new Error("commercial_worker_environment_agent_token_forbidden");
+  }
   if (!sourcePath) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("commercial_worker_file_agent_token_required");
-    }
-    return environmentToken;
+    throw new Error("commercial_worker_file_agent_token_required");
   }
   const bytes = readStableSecret(sourcePath);
   try {

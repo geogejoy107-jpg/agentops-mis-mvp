@@ -244,6 +244,15 @@ async function main() {
       timeoutSeconds: options.openClawTimeoutSeconds,
       workingDirectory: options.workingDirectory,
     });
+  const shutdown = new AbortController();
+  let stopping = false;
+  const stop = () => {
+    stopping = true;
+    shutdown.abort(new Error("commercial_worker_shutdown_requested"));
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  process.once("SIGHUP", stop);
   const worker = new CommercialWorker(gateway, adapter, {
     workspaceId: options.workspaceId,
     agentId: options.agentId,
@@ -255,25 +264,31 @@ async function main() {
     requestCustomerDeliveryApproval:
       options.requestCustomerDeliveryApproval,
     maxAdapterAttempts: options.maxAdapterAttempts,
+    abortSignal: shutdown.signal,
   });
-  let stopping = false;
   let processed = 0;
-  process.once("SIGINT", () => {
-    stopping = true;
-  });
-  process.once("SIGTERM", () => {
-    stopping = true;
-  });
   do {
     const receipt = await worker.runOnce();
     process.stdout.write(`${JSON.stringify(receipt)}\n`);
     if (receipt.processed) processed += 1;
     if (!options.daemon || stopping) {
-      if (!receipt.ok) process.exitCode = 1;
+      if (!receipt.ok && !stopping) process.exitCode = 1;
       break;
     }
     if (options.maxTasks > 0 && processed >= options.maxTasks) break;
-    await new Promise((resolve) => setTimeout(resolve, options.pollIntervalMs));
+    await new Promise<void>((resolve) => {
+      if (shutdown.signal.aborted) {
+        resolve();
+        return;
+      }
+      const timeout = setTimeout(done, options.pollIntervalMs);
+      function done() {
+        clearTimeout(timeout);
+        shutdown.signal.removeEventListener("abort", done);
+        resolve();
+      }
+      shutdown.signal.addEventListener("abort", done, { once: true });
+    });
   } while (!stopping);
 }
 
