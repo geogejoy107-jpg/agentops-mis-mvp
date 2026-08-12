@@ -274,6 +274,46 @@ services:
     networks:
       - control_plane
 
+  openclaw-provider:
+    profiles: [worker-openclaw]
+    image: "${AGENTOPS_IMAGE:?set AGENTOPS_IMAGE to the immutable AgentOps release digest}"
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    user: "1001:1000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run/openclaw-state:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=1001,gid=1000
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=1001,gid=1000
+    entrypoint: [node, /usr/local/lib/agentops/openclaw-provider-entrypoint.mjs]
+    environment:
+      NODE_ENV: production
+      AGENTOPS_DEPLOYMENT_MODE: production
+      OPENCLAW_PROVIDER_SOCKET: /run/agentops-openclaw/provider.sock
+      OPENCLAW_BIN: "${AGENTOPS_OPENCLAW_PROVIDER_BIN:-/opt/agentops-provider/openclaw/bin/openclaw}"
+      OPENCLAW_CONFIG_PATH: /run/secrets/openclaw_config
+      OPENCLAW_STATE_DIR: /run/openclaw-state
+      AGENTOPS_WORKER_CWD: /opt/agentops-worker/workspace
+    secrets:
+      - source: openclaw_config
+        target: openclaw_config
+    volumes:
+      - agentops_openclaw_provider_socket:/run/agentops-openclaw
+      - "${AGENTOPS_OPENCLAW_RUNTIME_PATH:-./openclaw-runtime}:/opt/agentops-provider/openclaw:ro"
+      - "${AGENTOPS_OPENCLAW_WORKSPACE_PATH:-./worker-workspace}:/opt/agentops-worker/workspace:ro"
+    healthcheck:
+      test: [CMD, node, /usr/local/lib/agentops/openclaw-provider-healthcheck.mjs]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+    networks:
+      - openclaw_provider_egress
+
   worker-openclaw:
     profiles: [worker-openclaw]
     image: "${AGENTOPS_IMAGE:?set AGENTOPS_IMAGE to the immutable AgentOps release digest}"
@@ -288,7 +328,6 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /run/agentops-worker:rw,noexec,nosuid,size=1m,mode=0700,uid=1000,gid=1000
-      - /run/openclaw-state:rw,noexec,nosuid,size=64m,mode=0700,uid=1000,gid=1000
       - /tmp:rw,noexec,nosuid,size=64m,mode=0700,uid=1000,gid=1000
     entrypoint: [node, /usr/local/lib/agentops/worker-entrypoint.mjs]
     environment:
@@ -305,21 +344,17 @@ services:
       AGENTOPS_WORKER_HEALTH_LEASE_SECONDS: "${AGENTOPS_WORKER_HEALTH_LEASE_SECONDS:-120}"
       AGENTOPS_ALLOW_INSECURE_LOOPBACK: "false"
       AGENTOPS_ALLOW_HIGH_RISK: "${AGENTOPS_WORKER_ALLOW_HIGH_RISK:-false}"
-      OPENCLAW_BIN: "${AGENTOPS_OPENCLAW_CONTAINER_BIN:-/opt/agentops-provider/openclaw/bin/openclaw}"
+      OPENCLAW_PROVIDER_SOCKET: /run/agentops-openclaw/provider.sock
       OPENCLAW_AGENT: "${AGENTOPS_OPENCLAW_AGENT:-main}"
       OPENCLAW_TIMEOUT_SECONDS: "${AGENTOPS_OPENCLAW_TIMEOUT_SECONDS:-180}"
-      OPENCLAW_CONFIG_PATH: /run/secrets/openclaw_config
-      OPENCLAW_STATE_DIR: /run/openclaw-state
-      AGENTOPS_WORKER_CWD: /opt/agentops-worker/workspace
     secrets:
       - source: openclaw_agent_token
         target: agent_token
-      - source: openclaw_config
-        target: openclaw_config
     volumes:
-      - "${AGENTOPS_OPENCLAW_RUNTIME_PATH:-./openclaw-runtime}:/opt/agentops-provider/openclaw:ro"
-      - "${AGENTOPS_WORKER_WORKSPACE_PATH:-./worker-workspace}:/opt/agentops-worker/workspace:ro"
+      - agentops_openclaw_provider_socket:/run/agentops-openclaw
     depends_on:
+      openclaw-provider:
+        condition: service_healthy
       control-plane:
         condition: service_healthy
     healthcheck:
@@ -333,9 +368,17 @@ services:
 
 volumes:
   agentops_postgres_data:
+  agentops_openclaw_provider_socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=1001,gid=1000,mode=0770,nosuid,nodev,noexec,size=1m
 
 networks:
   control_plane:
+    driver: bridge
+  openclaw_provider_egress:
     driver: bridge
 
 secrets:

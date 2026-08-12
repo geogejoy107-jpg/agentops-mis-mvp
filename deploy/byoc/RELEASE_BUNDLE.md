@@ -11,18 +11,29 @@ manifest, `SHA256SUMS`, and the `COMMITTED` marker. It does not contain the
 source-side bundle builder.
 
 The immutable image also contains the independent commercial TypeScript Worker
-supervisor and healthcheck. Optional `worker-hermes` and `worker-openclaw`
-profiles run from that image without a customer checkout, but remain disabled
-until explicitly selected. They require provider-specific Agent token files and
-complete production runtime settings. Provider credentials, OpenClaw binaries,
-and real-provider execution are not bundled or enabled by default.
+and OpenClaw provider supervisors and healthchecks. Optional `worker-hermes` and
+`worker-openclaw` profiles run from that image without a customer checkout, but
+remain disabled until explicitly selected. They require provider-specific Agent
+token files and complete production runtime settings. Provider credentials,
+OpenClaw binaries, and real-provider execution are not bundled or enabled by
+default.
 
 The TypeScript Worker reads its Agent token directly from the mounted secret
 file; the raw value is absent from argv and every process environment. Docker's
-init process owns PID 1 and reaps descendants. The Worker supervisor forwards
-shutdown to the complete Worker/provider process group, interrupts
-provider/retry/poll waits, and retains a bounded forced-stop fallback within the
+init process owns PID 1 and reaps descendants. The Worker supervisor interrupts
+provider/retry/poll waits and retains a bounded forced-stop fallback within the
 Compose grace period.
+
+The `worker-openclaw` profile creates a separate `openclaw-provider` sidecar from
+the same immutable image. The Worker runs as uid/gid 1000 and mounts only its
+Agent-token secret plus the shared Unix-socket volume. The provider runs as uid
+1001/gid 1000 with a separate read-only root filesystem; it mounts only the
+OpenClaw runtime, config, workspace, its private `/run/openclaw-state` tmpfs, and
+the shared socket volume. It does not mount the Agent token, PostgreSQL secrets,
+the Human Session HMAC key, or any control-plane credential. The provider has no
+host port and is not attached to the control-plane network. The two containers
+communicate through `/run/agentops-openclaw/provider.sock`; Compose requires the
+provider and control plane to be healthy before starting the Worker.
 
 The release is bound to the exact source commit and the application image's
 immutable registry digest. A release build fails when any selected input is

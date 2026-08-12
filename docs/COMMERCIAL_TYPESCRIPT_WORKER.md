@@ -42,18 +42,32 @@ docker compose --env-file deploy/byoc/.env -f deploy/byoc/compose.yaml \
   --profile worker-openclaw up -d worker-openclaw
 ```
 
-Both services use the release image's TypeScript Worker, run as uid/gid 1000,
-drop all Linux capabilities, use a read-only root filesystem, and expose only a
-bounded health lease. Agent tokens are mounted as Compose secrets and are
-rejected from direct environment configuration. Commercial control-plane and
-Hermes URLs require HTTPS; the OpenClaw binary/config/workspace mounts are
-read-only.
+The Hermes profile remains one hardened uid/gid 1000 Worker container. The
+OpenClaw profile instead starts two services from the same immutable image:
 
-Each Worker service enables Docker init for PID 1 descendant reaping. The Node
-supervisor runs behind it, forwards stop signals to the complete TypeScript
-Worker/provider process group, interrupts active provider calls and retry/poll
-waits, and applies a bounded forced-stop fallback before Compose's grace period
-expires.
+- `worker-openclaw` runs the TypeScript Worker as uid/gid 1000. It receives the
+  OpenClaw Agent token and the shared provider-socket volume, but no OpenClaw
+  binary, config, state, or workspace mount.
+- `openclaw-provider` runs the OpenClaw runtime as uid 1001/gid 1000. It receives
+  only the read-only OpenClaw runtime, config, and workspace mounts, its private
+  `/run/openclaw-state` tmpfs, and the shared provider-socket volume. It receives
+  no Agent token, control-plane credential, Human Session HMAC key, or database
+  secret.
+
+Both containers drop all Linux capabilities, set `no-new-privileges`, use a
+read-only root filesystem, and enable Docker init for descendant reaping. They
+communicate only through `/run/agentops-openclaw/provider.sock` in a small shared
+named tmpfs volume. Their different UIDs and separate filesystems prevent the
+provider process from reading the Worker's Agent token. The provider joins a
+separate egress network, has no host port, and does not join the control-plane
+network. Compose starts the Worker only after both the provider socket and the
+control plane are healthy. Commercial control-plane and Hermes URLs require
+HTTPS.
+
+Each Worker supervisor interrupts active provider calls and retry/poll waits,
+then applies a bounded forced-stop fallback before Compose's grace period
+expires. The OpenClaw provider is a separate Compose lifecycle rather than a
+descendant of the Worker process.
 
 ## Run One Task
 
@@ -114,8 +128,10 @@ Do not use that gate for hosted or shared deployments.
 The daemon uses the same one-task transaction repeatedly and stops cleanly on
 `SIGINT`, `SIGTERM`, or `SIGHUP`. Provider calls and retry/poll sleeps receive a
 cancellation signal, while post-provider failure evidence is still reconciled.
-The BYOC supervisor forwards shutdown to the complete Worker/OpenClaw process
-group and applies a bounded forced-stop fallback inside the Compose grace period.
+The BYOC Worker supervisor forwards shutdown to its TypeScript Worker process
+group and applies a bounded forced-stop fallback inside the Compose grace
+period. Under the OpenClaw profile, Compose supervises the provider sidecar
+independently and the Worker cancels provider work over the Unix socket.
 
 ```bash
 npm run worker:commercial -- \
