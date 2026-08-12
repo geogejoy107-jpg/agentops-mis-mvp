@@ -39,9 +39,13 @@ concurrency:
 jobs:
   linux-foundation:
     name: Linux root Executor foundation
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
-    steps:
+    permissions:
+      contents: read
+      packages: write
+    steps: &a07-foundation-steps
       - name: Checkout exact candidate source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -113,14 +117,65 @@ jobs:
             and .real_oci_verification.wrong_digest_name_platform_and_path_rejected == true
           ' "${receipt}" >/dev/null
 
-      - name: Build exact Linux OpenClaw guest-root input
+      - name: Build and export exact Linux OpenClaw guest-root input
+        env:
+          GHCR_TOKEN: ${{ github.event_name != 'pull_request' && github.token || '' }}
         run: |
           set -euo pipefail
           image="agentops-openclaw-guest-root-input:${GITHUB_SHA}"
           node_image="node:22.23.2-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066"
+          registry_image="registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
+          registry_name="agentops-a07-openclaw-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export_parent="${RUNNER_TEMP}/a07-commercial-openclaw-export"
+          guest_root="${export_parent}/guest-root"
+          provenance="${export_parent}/openclaw-runtime-oci-export-provenance.json"
+          release_root="${export_parent}/signed-runtime-release"
+          trust_root="${export_parent}/ephemeral-ci-trust-roots.json"
+          private_key="${export_parent}/ephemeral-ci-signing-key.pem"
+          export_receipt="${RUNNER_TEMP}/a07-commercial-openclaw-export.json"
+          boundary_receipt="${RUNNER_TEMP}/a07-commercial-openclaw-boundary.json"
+          trusted_publish=false
+          ghcr_logged_in=false
+          local_registry_started=false
+          export_complete=false
+          case "${GITHUB_EVENT_NAME}" in
+            push|workflow_dispatch)
+              trusted_publish=true
+              repository_owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+              repository="ghcr.io/${repository_owner}/agentops-mis-openclaw-runtime-a07"
+              pushed_image="${repository}:run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}"
+              ;;
+            pull_request)
+              repository="127.0.0.1:5000/agentops/openclaw-runtime"
+              pushed_image="${repository}:pr-${GITHUB_SHA}"
+              ;;
+            *)
+              echo "unsupported A07 event" >&2
+              exit 1
+              ;;
+          esac
+          cleanup() {
+            status=$?
+            trap - EXIT
+            if [ "${local_registry_started}" = true ]; then
+              docker rm --force --volumes "${registry_name}" >/dev/null 2>&1 || true
+            fi
+            if [ "${ghcr_logged_in}" = true ]; then
+              docker logout ghcr.io >/dev/null 2>&1 || true
+              sudo /usr/bin/docker logout ghcr.io >/dev/null 2>&1 || true
+            fi
+            docker image rm --force "${pushed_image}" "${image}" >/dev/null 2>&1 || true
+            if [ "${export_complete}" != true ]; then
+              sudo rm -rf "${export_parent}"
+            fi
+            exit "${status}"
+          }
+          trap cleanup EXIT
           timeout 20m docker build --platform linux/amd64 \
             --file deploy/byoc/openclaw-runtime-artifact/Dockerfile \
             --build-arg "NODE_IMAGE=${node_image}" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
             --tag "${image}" .
           test "$(docker image inspect --format '{{.Architecture}}' "${image}")" = "amd64"
           docker run --rm --read-only --network none \
@@ -150,6 +205,260 @@ jobs:
             "${image}" -ec '
               test -z "$(find / -xdev -type f -perm /6000 -print -quit)"
             '
+
+          if [ "${trusted_publish}" = true ]; then
+            test -n "${GHCR_TOKEN}"
+            printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io \
+              --username "${GITHUB_ACTOR}" --password-stdin >/dev/null
+            printf '%s' "${GHCR_TOKEN}" | sudo /usr/bin/docker login ghcr.io \
+              --username "${GITHUB_ACTOR}" --password-stdin >/dev/null
+            ghcr_logged_in=true
+            if docker manifest inspect "${pushed_image}" >/dev/null 2>&1; then
+              echo "immutable GHCR run/SHA tag already exists" >&2
+              exit 1
+            fi
+            unset GHCR_TOKEN
+          else
+            docker run --detach --rm --name "${registry_name}" \
+              --publish 127.0.0.1:5000:5000 \
+              "${registry_image}" >/dev/null
+            local_registry_started=true
+            registry_ready=false
+            for _ in $(seq 1 50); do
+              if curl --fail --silent --show-error "http://127.0.0.1:5000/v2/" >/dev/null; then
+                registry_ready=true
+                break
+              fi
+              sleep 0.2
+            done
+            test "${registry_ready}" = true
+          fi
+          docker tag "${image}" "${pushed_image}"
+          docker push "${pushed_image}" >/dev/null
+          exact_reference="$(
+            docker image inspect --format '{{json .RepoDigests}}' "${pushed_image}" \
+              | jq -er --arg prefix "${repository}@sha256:" \
+                '[.[] | select(startswith($prefix))][0] // empty'
+          )"
+          test "${exact_reference%@sha256:*}" = "${repository}"
+          [[ "${exact_reference##*@}" =~ ^sha256:[a-f0-9]{64}$ ]]
+
+          sudo install -d -o root -g root -m 0700 "${export_parent}"
+          exporter=(
+            sudo --preserve-env=PATH "$(command -v node)"
+            deploy/byoc/openclaw-runtime-oci-export.mjs
+            --oci "${exact_reference}"
+            --output "${guest_root}"
+            --provenance-output "${provenance}"
+          )
+          if [ "${trusted_publish}" != true ]; then
+            exporter+=(--allow-insecure-loopback-registry-contract true)
+          fi
+          "${exporter[@]}" > "${export_receipt}"
+          jq -e '
+            .schema == "agentops_openclaw_runtime_oci_export_provenance_v2"
+            and (.provenance_sha256 | test("^[a-f0-9]{64}$"))
+            and (.rootfs_merkle_sha256 | test("^[a-f0-9]{64}$"))
+          ' "${export_receipt}" >/dev/null
+
+          if [ "${trusted_publish}" = true ]; then
+            key_id="a07-ephemeral-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            issuer="agentops-a07-ghcr-ci"
+            created="$(date -u -d '1 minute ago' '+%Y-%m-%dT%H:%M:%S.000Z')"
+            expires="$(date -u -d '1 day' '+%Y-%m-%dT%H:%M:%S.000Z')"
+            cgroup_policy_sha256="$(printf '%s' 'a07-real-runner-cgroup-policy-v1' | sha256sum | awk '{print $1}')"
+            seccomp_profile_sha256="$(printf '%s' 'production-launcher-built-in-seccomp-contract' | sha256sum | awk '{print $1}')"
+            sudo --preserve-env=PATH "$(command -v node)" \
+              --input-type=module - "${private_key}" "${trust_root}" "${key_id}" <<'NODE'
+            import { generateKeyPairSync } from "node:crypto";
+            import { chmodSync, writeFileSync } from "node:fs";
+            const [keyPath, trustPath, keyId] = process.argv.slice(2);
+            const signing = generateKeyPairSync("ed25519");
+            writeFileSync(keyPath, signing.privateKey.export({ type: "pkcs8", format: "pem" }), {
+              flag: "wx",
+              mode: 0o400,
+            });
+            chmodSync(keyPath, 0o400);
+            const trust = {
+              keys: { [keyId]: signing.publicKey.export({ type: "spki", format: "pem" }) },
+              schema: "agentops_openclaw_runtime_manifest_trust_roots_v1",
+            };
+            writeFileSync(trustPath, JSON.stringify(trust), { flag: "wx", mode: 0o444 });
+            chmodSync(trustPath, 0o444);
+            NODE
+            sudo --preserve-env=PATH "$(command -v node)" \
+              deploy/byoc/openclaw-runtime-manifest-v2-release.mjs \
+              --cgroup-policy-sha256 "${cgroup_policy_sha256}" \
+              --created "${created}" \
+              --expires "${expires}" \
+              --issuer "${issuer}" \
+              --key-id "${key_id}" \
+              --output "${release_root}" \
+              --private-key "${private_key}" \
+              --provenance "${provenance}" \
+              --seccomp-profile-sha256 "${seccomp_profile_sha256}" \
+              --trust-root "${trust_root}" >/dev/null
+            sudo rm -f "${private_key}"
+            sudo --preserve-env=PATH "$(command -v node)" \
+              --input-type=module - \
+              "${provenance}" "${release_root}" "${trust_root}" "${exact_reference}" \
+              "${issuer}" "${key_id}" "${cgroup_policy_sha256}" "${seccomp_profile_sha256}" \
+              > "${boundary_receipt}" <<'NODE'
+          import { createHash } from "node:crypto";
+          import { readFileSync } from "node:fs";
+          import { resolve } from "node:path";
+          import { pathToFileURL } from "node:url";
+          const sourceUrl = (name) => pathToFileURL(resolve("deploy/byoc", name)).href;
+          const { readCommittedOpenClawRuntimeOciExportReceipt } = await import(
+            sourceUrl("openclaw-runtime-oci-export.mjs")
+          );
+          const { readCommittedOpenClawRuntimeRelease } = await import(
+            sourceUrl("openclaw-runtime-release.mjs")
+          );
+          const {
+            canonicalRuntimeManifestV2Bytes,
+            parseCanonicalRuntimeManifestV2Envelope,
+            verifyCanonicalRuntimeManifestV2,
+          } = await import(sourceUrl("openclaw-runtime-manifest-v2.mjs"));
+          const [provenancePath, releaseRoot, trustPath, exactReference, issuer, keyId,
+            cgroupPolicySha256, seccompProfileSha256] = process.argv.slice(2);
+          const committed = readCommittedOpenClawRuntimeOciExportReceipt(provenancePath);
+          const provenance = committed.provenance;
+          const trustBytes = readFileSync(trustPath);
+          const trust = JSON.parse(trustBytes.toString("utf8"));
+          const release = readCommittedOpenClawRuntimeRelease(releaseRoot, trustBytes);
+          const envelope = parseCanonicalRuntimeManifestV2Envelope(release.manifestBytes);
+          const body = verifyCanonicalRuntimeManifestV2(release.manifestBytes, trust.keys, {
+            body_sha256: createHash("sha256").update(
+              canonicalRuntimeManifestV2Bytes(envelope.body),
+            ).digest("hex"),
+            cgroup_policy_sha256: cgroupPolicySha256,
+            entrypoint: "/opt/agentops/openclaw-adapter/openclaw-stdin-provider.mjs",
+            issuer,
+            key_id: keyId,
+            oci_image: { digest: provenance.oci.digest, name: provenance.oci.name },
+            platform: { arch: "amd64", libc: "glibc", os: "linux" },
+            rootfs_merkle_sha256: provenance.rootfs.merkle_sha256,
+            runtime_executable: "/usr/local/bin/node",
+            runtime_gid: 1200,
+            runtime_uid: 1200,
+            seccomp_profile_sha256: seccompProfileSha256,
+            verification_time: new Date().toISOString(),
+          });
+          if (
+            provenance.oci.exact_reference !== exactReference
+            || !release.provenanceBytes.equals(committed.provenance_bytes)
+          ) process.exit(1);
+          process.stdout.write(`${JSON.stringify({
+            ci_ephemeral_signed_release_verified: true,
+            committed_provenance_remeasured: committed.committed === true,
+            durable_production_signed_release_verified: false,
+            durable_production_trust_root_configured: false,
+            ed25519_manifest_signature_verified: body.key_id === keyId,
+            exporter_guest_root_ready: committed.guest_root === provenance.guest_root,
+            guest_root: committed.guest_root,
+            immutable_ghcr_digest_reference_verified: provenance.oci.name.startsWith("ghcr.io/"),
+            loopback_contract_provenance: false,
+            oci_exact_reference: provenance.oci.exact_reference,
+            production_release_reader_contract_verified: true,
+            provenance_sha256: committed.provenance_sha256,
+            real_commercial_artifact_exported: true,
+            rootfs_merkle_sha256: provenance.rootfs.merkle_sha256,
+            runtime_digest: provenance.oci.digest,
+            signed_manifest_real_execution_claim: body.claims.real_openclaw_execution_verified,
+            schema: "agentops_openclaw_real_artifact_export_boundary_v2",
+          })}\n`);
+          NODE
+            jq -e '
+              .schema == "agentops_openclaw_real_artifact_export_boundary_v2"
+              and .ci_ephemeral_signed_release_verified == true
+              and .real_commercial_artifact_exported == true
+              and .committed_provenance_remeasured == true
+              and .exporter_guest_root_ready == true
+              and .immutable_ghcr_digest_reference_verified == true
+              and .loopback_contract_provenance == false
+              and .production_release_reader_contract_verified == true
+              and .ed25519_manifest_signature_verified == true
+              and .durable_production_signed_release_verified == false
+              and .durable_production_trust_root_configured == false
+              and .signed_manifest_real_execution_claim == false
+              and (.provenance_sha256 | test("^[a-f0-9]{64}$"))
+              and (.rootfs_merkle_sha256 | test("^[a-f0-9]{64}$"))
+              and (.runtime_digest | test("^sha256:[a-f0-9]{64}$"))
+            ' "${boundary_receipt}" >/dev/null
+          else
+            forbidden_release="${export_parent}/production-release-must-not-exist"
+            set +e
+            signer_error="$(
+              sudo --preserve-env=PATH "$(command -v node)" \
+                deploy/byoc/openclaw-runtime-manifest-v2-release.mjs \
+                --cgroup-policy-sha256 "$(printf 'a%.0s' {1..64})" \
+                --created "2026-08-12T00:00:00.000Z" \
+                --expires "2026-08-13T00:00:00.000Z" \
+                --issuer "agentops-a07-contract" \
+                --key-id "agentops-a07-contract-key" \
+                --output "${forbidden_release}" \
+                --private-key "${export_parent}/private-key-must-not-be-read.pem" \
+                --provenance "${provenance}" \
+                --seccomp-profile-sha256 "$(printf 'b%.0s' {1..64})" \
+                --trust-root "${export_parent}/trust-root-must-not-be-read.json" \
+                2>&1
+            )"
+            signer_status=$?
+            set -e
+            test "${signer_status}" -eq 1
+            test "${signer_error}" = "runtime_manifest_v2_release_insecure_registry_provenance_rejected"
+            test ! -e "${forbidden_release}"
+            sudo --preserve-env=PATH "$(command -v node)" \
+              --input-type=module - "${provenance}" "${exact_reference}" \
+              > "${boundary_receipt}" <<'NODE'
+          import { resolve } from "node:path";
+          import { pathToFileURL } from "node:url";
+          const moduleUrl = pathToFileURL(resolve(
+            "deploy/byoc/openclaw-runtime-oci-export.mjs",
+          )).href;
+          const { readCommittedOpenClawRuntimeOciExportReceipt } = await import(moduleUrl);
+          const committed = readCommittedOpenClawRuntimeOciExportReceipt(process.argv[2]);
+          const provenance = committed.provenance;
+          if (provenance.oci.exact_reference !== process.argv[3]) process.exit(1);
+          process.stdout.write(`${JSON.stringify({
+            ci_ephemeral_signed_release_verified: false,
+            committed_provenance_remeasured: committed.committed === true,
+            durable_production_signed_release_verified: false,
+            durable_production_trust_root_configured: false,
+            ed25519_manifest_signature_verified: false,
+            exporter_guest_root_ready: committed.guest_root === provenance.guest_root,
+            guest_root: committed.guest_root,
+            immutable_ghcr_digest_reference_verified: false,
+            loopback_contract_provenance: provenance.oci.name.startsWith("127.0.0.1:5000/"),
+            oci_exact_reference: provenance.oci.exact_reference,
+            production_release_reader_contract_verified: false,
+            production_signer_loopback_provenance_rejected: true,
+            provenance_sha256: committed.provenance_sha256,
+            real_commercial_artifact_exported: true,
+            rootfs_merkle_sha256: provenance.rootfs.merkle_sha256,
+            runtime_digest: provenance.oci.digest,
+            signed_manifest_real_execution_claim: false,
+            schema: "agentops_openclaw_real_artifact_export_boundary_v2",
+          })}\n`);
+          NODE
+            jq -e '
+              .schema == "agentops_openclaw_real_artifact_export_boundary_v2"
+              and .ci_ephemeral_signed_release_verified == false
+              and .real_commercial_artifact_exported == true
+              and .committed_provenance_remeasured == true
+              and .exporter_guest_root_ready == true
+              and .immutable_ghcr_digest_reference_verified == false
+              and .loopback_contract_provenance == true
+              and .production_signer_loopback_provenance_rejected == true
+              and .production_release_reader_contract_verified == false
+              and .ed25519_manifest_signature_verified == false
+              and .durable_production_signed_release_verified == false
+              and .durable_production_trust_root_configured == false
+              and .signed_manifest_real_execution_claim == false
+            ' "${boundary_receipt}" >/dev/null
+          fi
+          export_complete=true
 
       - name: Run Linux launcher foundation contract
         run: |
@@ -228,22 +537,142 @@ jobs:
       - name: Run strict default runner against exported OpenClaw guest root
         run: |
           set -euo pipefail
-          guest_image="agentops-openclaw-guest-root-input:${GITHUB_SHA}"
           launcher_image="agentops-a07-launcher-test:${GITHUB_SHA}"
+          export_parent="${RUNNER_TEMP}/a07-commercial-openclaw-export"
+          provenance="${export_parent}/openclaw-runtime-oci-export-provenance.json"
+          release_root="${export_parent}/signed-runtime-release"
+          trust_root="${export_parent}/ephemeral-ci-trust-roots.json"
+          export_boundary_receipt="${RUNNER_TEMP}/a07-commercial-openclaw-boundary.json"
+          boundary_receipt="${RUNNER_TEMP}/a07-commercial-openclaw-runner-boundary.json"
           scratch="${RUNNER_TEMP}/a07-real-runner"
-          rootfs="${scratch}/rootfs"
           upper="${scratch}/upper"
           work="${scratch}/work"
           merged="${scratch}/merged"
           config="${scratch}/openclaw.json"
-          mkdir -p "${rootfs}" "${upper}" "${work}" "${merged}"
-          container_id="$(docker create "${guest_image}")"
-          trap 'docker rm -f "${container_id}" >/dev/null 2>&1 || true' EXIT
-          docker export "${container_id}" | sudo tar --numeric-owner -x -C "${rootfs}"
-          test "$(stat -c '%F:%u:%g:%a:%h' "${rootfs}/usr/local/bin/node")" = \
+          cleanup() {
+            status=$?
+            trap - EXIT
+            sudo rm -rf "${export_parent}"
+            rm -rf "${scratch}"
+            exit "${status}"
+          }
+          trap cleanup EXIT
+          mkdir -p "${upper}" "${work}" "${merged}"
+
+          sudo --preserve-env=PATH "$(command -v node)" \
+            --input-type=module - \
+            "${provenance}" "${release_root}" "${trust_root}" \
+            "${export_boundary_receipt}" "${GITHUB_EVENT_NAME}" \
+            > "${boundary_receipt}" <<'NODE'
+          import { createHash } from "node:crypto";
+          import { existsSync, readFileSync } from "node:fs";
+          import { resolve } from "node:path";
+          import { pathToFileURL } from "node:url";
+          const sourceUrl = (name) => pathToFileURL(resolve("deploy/byoc", name)).href;
+          const { readCommittedOpenClawRuntimeOciExportReceipt } = await import(
+            sourceUrl("openclaw-runtime-oci-export.mjs")
+          );
+          const { readCommittedOpenClawRuntimeRelease } = await import(
+            sourceUrl("openclaw-runtime-release.mjs")
+          );
+          const {
+            canonicalRuntimeManifestV2Bytes,
+            parseCanonicalRuntimeManifestV2Envelope,
+            verifyCanonicalRuntimeManifestV2,
+          } = await import(sourceUrl("openclaw-runtime-manifest-v2.mjs"));
+          const [provenancePath, releaseRoot, trustPath, exportBoundaryPath, eventName] =
+            process.argv.slice(2);
+          const trustedPublish = eventName === "push" || eventName === "workflow_dispatch";
+          const committed = readCommittedOpenClawRuntimeOciExportReceipt(provenancePath);
+          const provenance = committed.provenance;
+          const exportBoundary = JSON.parse(readFileSync(exportBoundaryPath, "utf8"));
+          let productionReleaseReaderVerified = false;
+          let ed25519ManifestSignatureVerified = false;
+          if (trustedPublish) {
+            const trustBytes = readFileSync(trustPath);
+            const trust = JSON.parse(trustBytes.toString("utf8"));
+            const release = readCommittedOpenClawRuntimeRelease(releaseRoot, trustBytes);
+            const envelope = parseCanonicalRuntimeManifestV2Envelope(release.manifestBytes);
+            const body = envelope.body;
+            const verified = verifyCanonicalRuntimeManifestV2(release.manifestBytes, trust.keys, {
+              body_sha256: createHash("sha256").update(
+                canonicalRuntimeManifestV2Bytes(body),
+              ).digest("hex"),
+              cgroup_policy_sha256: body.cgroup_policy_sha256,
+              entrypoint: body.entrypoint,
+              issuer: body.issuer,
+              key_id: body.key_id,
+              oci_image: { digest: provenance.oci.digest, name: provenance.oci.name },
+              platform: body.platform,
+              rootfs_merkle_sha256: provenance.rootfs.merkle_sha256,
+              runtime_executable: body.runtime_executable,
+              runtime_gid: 1200,
+              runtime_uid: 1200,
+              seccomp_profile_sha256: body.seccomp_profile_sha256,
+              verification_time: new Date().toISOString(),
+            });
+            productionReleaseReaderVerified = release.provenanceBytes.equals(
+              committed.provenance_bytes,
+            );
+            ed25519ManifestSignatureVerified = verified.key_id === body.key_id;
+          } else if (existsSync(releaseRoot) || !provenance.oci.name.startsWith("127.0.0.1:5000/")) {
+            process.exit(1);
+          }
+          if (
+            exportBoundary.guest_root !== committed.guest_root
+            || exportBoundary.oci_exact_reference !== provenance.oci.exact_reference
+            || exportBoundary.ci_ephemeral_signed_release_verified !== trustedPublish
+            || exportBoundary.durable_production_signed_release_verified !== false
+          ) process.exit(1);
+          process.stdout.write(`${JSON.stringify({
+            ci_ephemeral_signed_release_verified: trustedPublish
+              && productionReleaseReaderVerified
+              && ed25519ManifestSignatureVerified,
+            committed_provenance_remeasured: committed.committed === true,
+            durable_production_signed_release_verified: false,
+            durable_production_trust_root_configured: false,
+            ed25519_manifest_signature_verified: ed25519ManifestSignatureVerified,
+            guest_root: committed.guest_root,
+            loopback_contract_provenance: provenance.oci.name.startsWith("127.0.0.1:5000/"),
+            production_release_reader_contract_verified: productionReleaseReaderVerified,
+            real_commercial_artifact_exported: true,
+            rootfs_merkle_sha256: provenance.rootfs.merkle_sha256,
+            runner_consumes_exporter_guest_root: true,
+            runtime_digest: provenance.oci.digest,
+            signed_manifest_real_execution_claim:
+              exportBoundary.signed_manifest_real_execution_claim,
+            schema: "agentops_openclaw_real_artifact_runner_boundary_v2",
+          })}\n`);
+          NODE
+          jq -e \
+            --arg event_name "${GITHUB_EVENT_NAME}" \
+            --arg guest_root "${export_parent}/guest-root" '
+              .schema == "agentops_openclaw_real_artifact_runner_boundary_v2"
+              and .durable_production_signed_release_verified == false
+              and .real_commercial_artifact_exported == true
+              and .committed_provenance_remeasured == true
+              and .runner_consumes_exporter_guest_root == true
+              and .durable_production_trust_root_configured == false
+              and .signed_manifest_real_execution_claim == false
+              and .guest_root == $guest_root
+              and (.rootfs_merkle_sha256 | test("^[a-f0-9]{64}$"))
+              and (.runtime_digest | test("^sha256:[a-f0-9]{64}$"))
+              and if ($event_name == "push" or $event_name == "workflow_dispatch") then
+                .loopback_contract_provenance == false
+                and .production_release_reader_contract_verified == true
+                and .ed25519_manifest_signature_verified == true
+                and .ci_ephemeral_signed_release_verified == true
+              else
+                .loopback_contract_provenance == true
+                and .production_release_reader_contract_verified == false
+                and .ed25519_manifest_signature_verified == false
+                and .ci_ephemeral_signed_release_verified == false
+              end
+            ' "${boundary_receipt}" >/dev/null
+          guest_root="$(jq -er '.guest_root' "${boundary_receipt}")"
+          runtime_digest="$(jq -er '.runtime_digest' "${boundary_receipt}")"
+          test "$(sudo stat -c '%F:%u:%g:%a:%h' "${guest_root}/usr/local/bin/node")" = \
             "regular file:0:0:755:1"
-          runtime_digest="$(docker image inspect --format '{{.Id}}' "${guest_image}")"
-          [[ "${runtime_digest}" =~ ^sha256:[a-f0-9]{64}$ ]]
           cat > "${config}" <<'JSON'
           {
             "agents": {
@@ -279,15 +708,16 @@ jobs:
           docker run --rm --privileged --cgroupns private --network host \
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777 \
             --volume "${GITHUB_WORKSPACE}:/workspace:ro" \
+            --volume "${guest_root}:/exported-rootfs:ro" \
             --volume "${scratch}:/contract:rw" \
             --workdir /workspace \
             --entrypoint /bin/sh \
             "${launcher_image}" -ec '
               stage=overlay_mount
               trap '\''status=$?; trap - 0; if [ "${status}" -ne 0 ]; then printf "a07_real_runner_stage=%s\n" "${stage}" >&2; fi; exit "${status}"'\'' 0
-              mount --bind /contract/rootfs /contract/rootfs
-              mount -o remount,bind,ro,nosuid,nodev /contract/rootfs
-              mount -t overlay overlay -o lowerdir=/contract/rootfs,upperdir=/contract/upper,workdir=/contract/work /contract/merged
+              mount --bind /exported-rootfs /exported-rootfs
+              mount -o remount,bind,ro,nosuid,nodev /exported-rootfs
+              mount -t overlay overlay -o lowerdir=/exported-rootfs,upperdir=/contract/upper,workdir=/contract/work /contract/merged
               stage=guest_mounts
               mkdir -p \
                 /contract/merged/opt/agentops/real-runner \
@@ -347,6 +777,14 @@ jobs:
             and .runtime_path_toctou_closed == false
             and .runtime_handles_closed_in_finally == true
           ' "${scratch}/receipt.json" >/dev/null
+
+      - name: Remove exported OpenClaw boundary artifacts
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          sudo rm -rf \
+            "${RUNNER_TEMP}/a07-commercial-openclaw-export" \
+            "${RUNNER_TEMP}/a07-real-runner"
 
       - name: Run Linux openat2 path resolver contract
         run: |
@@ -414,3 +852,12 @@ jobs:
             ! command -v cc
             ! command -v gcc
           '
+
+  linux-foundation-pr:
+    name: Linux root Executor foundation
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    steps: *a07-foundation-steps
