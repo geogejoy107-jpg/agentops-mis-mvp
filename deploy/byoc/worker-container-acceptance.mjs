@@ -292,6 +292,74 @@ request.on("error", () => process.exit(3));
 request.end(body);
 `;
 
+const openClawSocketMutationProbe = String.raw`
+const fs = require("node:fs");
+const net = require("node:net");
+const socketPath = "/run/agentops-openclaw/provider.sock";
+const directoryPath = "/run/agentops-openclaw";
+const acceptedDenials = new Set(["EROFS", "EACCES", "EPERM"]);
+const identity = () => {
+  const value = fs.lstatSync(socketPath, { bigint: true });
+  return {
+    dev: String(value.dev),
+    ino: String(value.ino),
+    uid: Number(value.uid),
+    gid: Number(value.gid),
+    mode: Number(value.mode & 0o7777n),
+    socket: value.isSocket(),
+  };
+};
+const denied = (operation, action) => {
+  try {
+    action();
+    return { operation, denied: false, code: null };
+  } catch (error) {
+    const code = typeof error?.code === "string" ? error.code : null;
+    return { operation, denied: acceptedDenials.has(code), code };
+  }
+};
+const before = identity();
+const directory = fs.lstatSync(directoryPath, { bigint: true });
+const results = [
+  denied("unlink", () => fs.unlinkSync(socketPath)),
+  denied("rename", () => fs.renameSync(socketPath, socketPath + ".renamed")),
+  denied("hard_link", () => fs.linkSync(socketPath, directoryPath + "/worker-hard-link")),
+  denied("symlink", () => fs.symlinkSync("/tmp/worker-controlled", directoryPath + "/worker-link")),
+  denied("mkdir", () => fs.mkdirSync(directoryPath + "/worker-directory")),
+];
+const rebindPath = directoryPath + "/worker-rebind.sock";
+const server = net.createServer();
+let settled = false;
+const finish = (result) => {
+  if (settled) return;
+  settled = true;
+  results.push(result);
+  process.stdout.write(JSON.stringify({
+    directory: {
+      uid: Number(directory.uid),
+      gid: Number(directory.gid),
+      mode: Number(directory.mode & 0o7777n),
+      directory: directory.isDirectory(),
+    },
+    before,
+    after: identity(),
+    results,
+  }));
+};
+server.once("error", (error) => {
+  const code = typeof error?.code === "string" ? error.code : null;
+  finish({ operation: "socket_rebind", denied: acceptedDenials.has(code), code });
+});
+server.once("listening", () => {
+  server.close(() => finish({ operation: "socket_rebind", denied: false, code: null }));
+});
+server.listen(rebindPath);
+setTimeout(() => {
+  server.close();
+  finish({ operation: "socket_rebind", denied: false, code: "ETIMEDOUT" });
+}, 5000).unref();
+`;
+
 let receipt;
 let successReceipt = null;
 let acceptanceFailure = null;
@@ -535,7 +603,7 @@ try {
     "--driver", "local",
     "--opt", "type=tmpfs",
     "--opt", "device=tmpfs",
-    "--opt", "o=uid=1001,gid=1000,mode=0770,nosuid,nodev,noexec,size=1m",
+    "--opt", "o=uid=1001,gid=1000,mode=0750,nosuid,nodev,noexec,size=1m",
     openClawSocketVolume,
   ], [0], "acceptance_openclaw_socket_volume_create_failed").trim();
   if (createdVolume !== openClawSocketVolume) {
@@ -587,7 +655,7 @@ try {
     "--security-opt", "no-new-privileges:true",
     "--tmpfs", "/run/agentops-worker:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=1000,gid=1000",
     "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=1000,gid=1000",
-    "--mount", `type=volume,src=${openClawSocketVolume},dst=/run/agentops-openclaw`,
+    "--mount", `type=volume,src=${openClawSocketVolume},dst=/run/agentops-openclaw,readonly`,
     "--mount", `type=bind,src=${tokenPath},dst=/run/secrets/agent_token,readonly`,
     "--env", "NODE_ENV=production",
     "--env", "AGENTOPS_WORKER_ADAPTER=openclaw",
@@ -711,6 +779,9 @@ try {
     || providerSocketMount.Name !== openClawSocketVolume
     || workerSocketMount.Name !== openClawSocketVolume
   ) fail("acceptance_openclaw_shared_socket_volume_invalid");
+  if (providerSocketMount.RW !== true || workerSocketMount.RW !== false) {
+    fail("acceptance_openclaw_socket_mount_permissions_invalid");
+  }
   const providerSources = new Set(providerMounts.map((mount) => mount.Source));
   const sharedMounts = openClawWorkerMounts.filter(
     (mount) => providerSources.has(mount.Source),
@@ -763,6 +834,52 @@ try {
       || /AGENTOPS_(?:AGENT_TOKEN|API_KEY|AGENT_TOKEN_SOURCE_FILE)=/.test(item)
     )
   ) fail("acceptance_openclaw_provider_agent_token_readable");
+
+  activeCheck = "openclaw_worker_socket_mutation";
+  const socketMutationProbe = JSON.parse(docker([
+    "exec", openClawWorkerName, "node", "-e", openClawSocketMutationProbe,
+  ], [0], "acceptance_openclaw_worker_socket_mutation_probe_failed"));
+  const expectedMutationOperations = [
+    "hard_link",
+    "mkdir",
+    "rename",
+    "socket_rebind",
+    "symlink",
+    "unlink",
+  ];
+  if (!Array.isArray(socketMutationProbe.results)) {
+    fail("acceptance_openclaw_worker_socket_mutation_result_invalid");
+  }
+  const observedMutationOperations = socketMutationProbe.results
+    .map((item) => item.operation)
+    .sort();
+  if (
+    observedMutationOperations.length !== expectedMutationOperations.length
+    || observedMutationOperations.some(
+      (operation, index) => operation !== expectedMutationOperations[index],
+    )
+    || socketMutationProbe.results.some((item) =>
+      item.denied !== true || !["EROFS", "EACCES", "EPERM"].includes(item.code)
+    )
+  ) fail("acceptance_openclaw_worker_socket_mutation_not_denied");
+  if (
+    socketMutationProbe.directory?.directory !== true
+    || socketMutationProbe.directory.uid !== 1001
+    || socketMutationProbe.directory.gid !== 1000
+    || socketMutationProbe.directory.mode !== 0o750
+  ) fail("acceptance_openclaw_socket_directory_identity_invalid");
+  const socketIdentityKeys = ["dev", "ino", "uid", "gid", "mode", "socket"];
+  if (
+    !socketMutationProbe.before
+    || !socketMutationProbe.after
+    || socketMutationProbe.before.socket !== true
+    || socketMutationProbe.before.uid !== 1001
+    || socketMutationProbe.before.gid !== 1000
+    || socketMutationProbe.before.mode !== 0o660
+    || socketIdentityKeys.some(
+      (key) => socketMutationProbe.before[key] !== socketMutationProbe.after[key],
+    )
+  ) fail("acceptance_openclaw_public_socket_identity_changed");
 
   activeCheck = "openclaw_socket_protocol";
   const providerResponseRaw = docker([
@@ -861,6 +978,17 @@ try {
     openclaw_worker_uid_verified: true,
     openclaw_exact_image_verified: true,
     openclaw_shared_socket_only_verified: true,
+    openclaw_provider_socket_writable_mount_verified: true,
+    openclaw_worker_socket_readonly_mount_verified: true,
+    openclaw_worker_socket_mutation_denied: true,
+    public_socket_inode_preserved: true,
+    public_socket_owner_preserved: true,
+    public_socket_mode_preserved: true,
+    public_socket_readonly_mount_verified: true,
+    public_socket_protocol_after_mutation_verified: true,
+    openclaw_phase_a_a01_a02_verified: true,
+    openclaw_hostile_runtime_isolation_verified: false,
+    openclaw_hostile_runtime_isolation_scope: "phase_a_a01_a02_only",
     openclaw_worker_provider_mount_isolation_verified: true,
     openclaw_provider_agent_token_isolation_verified: true,
     openclaw_worker_provider_sentinel_unreadable: true,

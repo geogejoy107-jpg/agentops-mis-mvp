@@ -1163,7 +1163,9 @@ def run_worker(
     try:
         if runtime == "openclaw":
             provider_root = Path(tempfile.mkdtemp(prefix="agentops-real-openclaw-provider-"))
-            provider_root.chmod(stat.S_IRWXU)
+            provider_root.chmod(
+                stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP
+            )
             provider_socket = provider_root / "provider.sock"
             provider_env = environment_without_privileged_control_plane_credentials()
             provider_env.update({

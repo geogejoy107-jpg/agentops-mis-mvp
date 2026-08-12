@@ -14,6 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { request } from "node:http";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -117,7 +118,7 @@ function launchCount() {
   return readFileSync(launchCountPath, "utf8").split("\n").filter(Boolean).length;
 }
 
-function executionRequest(prompt, timeoutSeconds = 3) {
+function executionRequest(prompt, timeoutSeconds = 10) {
   return {
     schema: requestSchema,
     agent_name: "main",
@@ -130,7 +131,10 @@ function executionRequest(prompt, timeoutSeconds = 3) {
 function assertExactResponse(payload, ok) {
   assert.deepEqual(Object.keys(payload).sort(), responseFields);
   assert.equal(payload.schema, responseSchema);
-  assert.equal(payload.ok, ok);
+  assert.equal(payload.ok, ok, JSON.stringify({
+    error_type: payload.error_type,
+    provider_call_performed: payload.provider_call_performed,
+  }));
   assert.equal(payload.dry_run, false);
   assert.equal(payload.model_name, "main");
   assert.match(payload.model_name, /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/);
@@ -181,10 +185,15 @@ function processGone(pid) {
 let provider;
 let preExecutionProvider;
 try {
+  chmodSync(root, 0o750);
   assert.match(entrypointSource, /openclaw_bin_nofollow_unavailable/);
   assert.match(entrypointSource, /Number\.isInteger\(constants\.O_NOFOLLOW\)/);
   assert.match(entrypointSource, /constants\.O_RDONLY \| constants\.O_NOFOLLOW/);
   assert.doesNotMatch(entrypointSource, /O_NOFOLLOW\s*\|\|\s*0/);
+  assert.match(entrypointSource, /provider_socket_directory_unavailable/);
+  assert.match(entrypointSource, /provider_socket_directory_permissions_invalid/);
+  assert.match(entrypointSource, /\(directory\.mode & 0o777\) !== 0o750/);
+  assert.match(entrypointSource, /error\?\.code === "ECONNRESET"/);
   const fakeSource = `#!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { appendFileSync, writeFileSync } from "node:fs";
@@ -218,7 +227,7 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
     OPENCLAW_BIN: fakePath,
     OPENCLAW_BIN_SHA256: fakeDigest,
     OPENCLAW_AGENT: "main",
-    OPENCLAW_TIMEOUT_SECONDS: "5",
+    OPENCLAW_TIMEOUT_SECONDS: "15",
     OPENCLAW_WORKSPACE: root,
     OPENCLAW_PROVIDER_SOCKET: socketPath,
     OPENCLAW_PROVIDER_SOCKET_GID: String(process.getgid()),
@@ -251,6 +260,27 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
   assert.equal(symlinkRejected.status, 78);
   assert.match(symlinkRejected.stderr, /agentops_openclaw_provider_start_failed/);
   assert.doesNotMatch(symlinkRejected.stdout + symlinkRejected.stderr, new RegExp(secretCanary));
+
+  chmodSync(root, 0o770);
+  const writableDirectoryRejected = spawnSync(process.execPath, [entrypoint], {
+    cwd: root,
+    encoding: "utf8",
+    env: {
+      ...environment,
+      OPENCLAW_PROVIDER_SOCKET: join(root, "writable-directory-rejected.sock"),
+    },
+  });
+  assert.equal(writableDirectoryRejected.status, 78);
+  assert.match(writableDirectoryRejected.stderr, /agentops_openclaw_provider_start_failed/);
+  assert.doesNotMatch(
+    writableDirectoryRejected.stdout + writableDirectoryRejected.stderr,
+    new RegExp(secretCanary),
+  );
+  assert.doesNotMatch(
+    writableDirectoryRejected.stdout + writableDirectoryRejected.stderr,
+    new RegExp(responseCanary),
+  );
+  chmodSync(root, 0o750);
 
   const preExecutionGraceMs = 1_200;
   preExecutionProvider = spawn(process.execPath, [entrypoint], {
@@ -375,6 +405,21 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
   }
   assert.equal(idleAfterInterrupt, true);
 
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await new Promise((resolveReset) => {
+      const client = createConnection({ path: socketPath });
+      client.once("connect", () => {
+        client.write("POST /v1/execute HTTP/1.1\r\nContent-Length: 100\r\n");
+        client.destroy();
+        resolveReset();
+      });
+      client.once("error", resolveReset);
+    });
+  }
+  const healthyAfterClientResets = await call({ method: "GET", path: "/health" });
+  assert.equal(healthyAfterClientResets.status, 200);
+  assert.equal(healthyAfterClientResets.body.ready, true);
+
   const successPrompt = `contract success ${secretCanary}`;
   const success = await call({ body: executionRequest(successPrompt) });
   assert.equal(success.status, 200);
@@ -485,8 +530,11 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
     runtime_sha256_identity_verified: true,
     runtime_symlink_rejected: true,
     runtime_nofollow_fail_closed_verified: true,
+    socket_directory_mode_0750_verified: true,
+    writable_socket_directory_rejected: true,
     pre_execution_shutdown_verified: true,
     interrupted_request_slot_release_verified: true,
+    reset_client_error_health_verified: true,
     healthcheck_verified: true,
     process_group_signal_verified: true,
     client_disconnect_cancellation_verified: true,

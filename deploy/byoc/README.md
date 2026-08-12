@@ -147,13 +147,22 @@ docker compose --env-file deploy/byoc/.env -f deploy/byoc/compose.yaml \
 
 The Hermes Worker runs as UID/GID `1000`. The OpenClaw profile runs the Worker
 as UID/GID `1000` and its provider sidecar as UID `1001`, GID `1000`; they share
-only a Unix-socket volume. Both use read-only root filesystems, drop all
+only a Unix-socket volume. The provider mounts that volume read-write; the Worker
+mounts it read-only. Its directory is `1001:1000` mode `0750` and
+`provider.sock` is `1001:1000` mode `0660`, so the Worker can connect but cannot
+replace the endpoint. Provider startup fails closed on directory identity or
+mode drift. Both use read-only root filesystems, drop all
 capabilities, keep bounded tmpfs state, and have independent health and restart
 supervision. The provider has no host port and is not attached to the control-
 plane network. The Agent heartbeat, task claim, run heartbeat, cost reservation,
 and approval ledger remain authoritative. Real providers are never enabled by
 the default Compose graph. Keep `AGENTOPS_WORKER_ALLOW_HIGH_RISK=false` unless
 separately approved.
+
+This closes only the public-socket replacement cases A01/A02. The broker and
+mounted OpenClaw runtime still share uid `1001`; do not claim hostile-runtime
+isolation until the separate Broker/Executor identity, peer credential, cgroup,
+runtime-manifest, and signed-receipt gates pass.
 
 4. Keep `AGENTOPS_BIND_ADDRESS=127.0.0.1` unless TLS is terminated by a trusted
    reverse proxy on the same private deployment boundary.

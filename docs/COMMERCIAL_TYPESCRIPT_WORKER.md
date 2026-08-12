@@ -46,18 +46,22 @@ The Hermes profile remains one hardened uid/gid 1000 Worker container. The
 OpenClaw profile instead starts two services from the same immutable image:
 
 - `worker-openclaw` runs the TypeScript Worker as uid/gid 1000. It receives the
-  OpenClaw Agent token and the shared provider-socket volume, but no OpenClaw
-  binary, config, state, or workspace mount.
+  OpenClaw Agent token and a read-only shared provider-socket volume, but no
+  OpenClaw binary, config, state, or workspace mount.
 - `openclaw-provider` runs the OpenClaw runtime as uid 1001/gid 1000. It receives
   only the read-only OpenClaw runtime, config, and workspace mounts, its private
-  `/run/openclaw-state` tmpfs, and the shared provider-socket volume. It receives
-  no Agent token, control-plane credential, Human Session HMAC key, or database
-  secret.
+  `/run/openclaw-state` tmpfs, and the shared provider-socket volume read-write.
+  It receives no Agent token, control-plane credential, Human Session HMAC key,
+  or database secret.
 
 Both containers drop all Linux capabilities, set `no-new-privileges`, use a
 read-only root filesystem, and enable Docker init for descendant reaping. They
 communicate only through `/run/agentops-openclaw/provider.sock` in a small shared
-named tmpfs volume. Their different UIDs and separate filesystems prevent the
+named tmpfs volume. The directory is owned by `1001:1000` with mode `0750`; the
+socket is `1001:1000` mode `0660`. The Worker can traverse and connect but its
+read-only mount cannot unlink, rename, rebind, symlink, or create entries. The
+provider rejects startup when directory ownership or mode differs. Their
+different UIDs and separate filesystems prevent the
 provider process from reading the Worker's Agent token. The provider joins a
 separate egress network, has no host port, and does not join the control-plane
 network. Compose starts the Worker only after both the provider socket and the
@@ -72,6 +76,8 @@ CLI also requires the prompt in its `--message` argument: receipts, logs, API
 responses, and committed evidence omit it, but privileged process inspection can
 see it while the call runs. A separate runtime identity plus an FD/stdin provider
 interface remains a hardening gate before claiming hostile-runtime isolation.
+The read-only public socket mount closes only attack cases A01/A02; it does not
+change that larger claim.
 
 The provider requires a final regular, non-symlink OpenClaw entrypoint plus
 `AGENTOPS_OPENCLAW_PROVIDER_BIN_SHA256`. It fails closed when `O_NOFOLLOW` is

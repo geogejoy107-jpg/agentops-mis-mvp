@@ -64,14 +64,14 @@ try {
     assert.match(provider, /AGENTOPS_WORKER_CWD:/);
     assert.match(provider, /OPENCLAW_AGENT:.*AGENTOPS_OPENCLAW_AGENT/);
     assert.match(provider, /OPENCLAW_TIMEOUT_SECONDS:.*AGENTOPS_OPENCLAW_TIMEOUT_SECONDS/);
-    assert.match(provider, /agentops_openclaw_provider_socket:\/run\/agentops-openclaw/);
+    assert.match(provider, /agentops_openclaw_provider_socket:\/run\/agentops-openclaw:rw/);
     assert.doesNotMatch(provider, /AGENTOPS_AGENT_TOKEN|openclaw_agent_token/);
     assert.match(provider, /- openclaw_provider_egress/);
     assert.doesNotMatch(provider, /- control_plane/);
     assert.match(workerOpenClaw, /user: "1000:1000"/);
     assert.match(workerOpenClaw, /OPENCLAW_PROVIDER_SOCKET:/);
     assert.match(workerOpenClaw, /openclaw_agent_token/);
-    assert.match(workerOpenClaw, /agentops_openclaw_provider_socket:\/run\/agentops-openclaw/);
+    assert.match(workerOpenClaw, /agentops_openclaw_provider_socket:\/run\/agentops-openclaw:ro/);
     assert.doesNotMatch(
       workerOpenClaw,
       /OPENCLAW_(?:BIN|BIN_SHA256|CONFIG_PATH|STATE_DIR)|AGENTOPS_WORKER_CWD|openclaw_config|OPENCLAW_RUNTIME_PATH|OPENCLAW_WORKSPACE_PATH/,
@@ -85,6 +85,8 @@ try {
   assert.match(dockerfile, /openclaw-provider-entrypoint\.mjs/);
   assert.match(dockerfile, /openclaw-provider-healthcheck\.mjs/);
   assert.match(dockerfile, /openclaw-provider-contract\.mjs/);
+  assert.match(dockerfile, /chown 1001:1000 \/run\/agentops-openclaw/);
+  assert.match(dockerfile, /chmod 0750 \/run\/agentops-openclaw/);
   assert.match(providerEntrypoint, /OPENCLAW_BIN_SHA256/);
   assert.match(providerEntrypoint, /constants\.O_RDONLY \| constants\.O_NOFOLLOW/);
   assert.equal(
@@ -95,6 +97,10 @@ try {
   );
   assert.match(providerEntrypoint, /state = \{ activeRequest: null, shuttingDown: false \}/);
   assert.match(providerEntrypoint, /state\.activeRequest = requestSlot/);
+  assert.match(providerEntrypoint, /provider_socket_directory_unavailable/);
+  assert.match(providerEntrypoint, /provider_socket_directory_permissions_invalid/);
+  assert.match(providerEntrypoint, /\(directory\.mode & 0o777\) !== 0o750/);
+  assert.match(providerEntrypoint, /error\?\.code === "ECONNRESET"/);
   assert.doesNotMatch(providerEntrypoint, /O_NOFOLLOW\s*\|\|\s*0/);
   const entrypoint = readFileSync(join(moduleDirectory, "worker-entrypoint.mjs"), "utf8");
   assert.match(entrypoint, /detached: true/);
@@ -207,6 +213,12 @@ try {
     openclaw_runtime_digest_bound: true,
     openclaw_runtime_nofollow_fail_closed: true,
     openclaw_atomic_single_flight: true,
+    openclaw_public_socket_directory_mode: "0750",
+    openclaw_provider_socket_mount_writable: true,
+    openclaw_worker_socket_mount_read_only: true,
+    openclaw_phase_a_a01_a02_static_boundary_verified: true,
+    openclaw_reset_client_error_fail_closed: true,
+    openclaw_hostile_runtime_isolation_verified: false,
     real_provider_execution_performed: false,
     token_omitted: true,
   })}\n`);

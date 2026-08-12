@@ -26,10 +26,14 @@ Compose grace period.
 
 The `worker-openclaw` profile creates a separate `openclaw-provider` sidecar from
 the same immutable image. The Worker runs as uid/gid 1000 and mounts only its
-Agent-token secret plus the shared Unix-socket volume. The provider runs as uid
-1001/gid 1000 with a separate read-only root filesystem; it mounts only the
-OpenClaw runtime, config, workspace, its private `/run/openclaw-state` tmpfs, and
-the shared socket volume. It does not mount the Agent token, PostgreSQL secrets,
+Agent-token secret plus the shared Unix-socket volume read-only. The provider
+runs as uid 1001/gid 1000 with a separate read-only root filesystem; it mounts
+only the OpenClaw runtime, config, workspace, its private `/run/openclaw-state`
+tmpfs, and the shared socket volume read-write. The socket directory is owned by
+`1001:1000` with mode `0750`, and the socket is `1001:1000` with mode `0660`.
+The Worker can traverse the directory and connect, but cannot unlink, rename,
+rebind, or add entries. The provider fails closed if the directory identity or
+mode drifts. It does not mount the Agent token, PostgreSQL secrets,
 the Human Session HMAC key, or any control-plane credential. The provider has no
 host port and is not attached to the control-plane network. The two containers
 communicate through `/run/agentops-openclaw/provider.sock`; Compose requires the

@@ -9,7 +9,6 @@ import {
   constants,
   fstatSync,
   lstatSync,
-  mkdirSync,
   openSync,
   readSync,
   statSync,
@@ -585,7 +584,22 @@ function socketIsLive(socketPath) {
 }
 
 async function prepareSocket(configuration) {
-  mkdirSync(dirname(configuration.socketPath), { recursive: true, mode: 0o770 });
+  const directoryPath = dirname(configuration.socketPath);
+  let directory;
+  try {
+    directory = lstatSync(directoryPath);
+  } catch {
+    fail("provider_socket_directory_unavailable");
+  }
+  if (
+    !directory.isDirectory()
+    || directory.isSymbolicLink()
+    || directory.uid !== process.getuid()
+    || directory.gid !== configuration.socketGid
+    || (directory.mode & 0o777) !== 0o750
+  ) {
+    fail("provider_socket_directory_permissions_invalid");
+  }
   try {
     const existing = lstatSync(configuration.socketPath);
     if (!existing.isSocket()) fail("provider_socket_path_not_socket");
@@ -664,8 +678,13 @@ export async function startProviderService(configuration = loadConfiguration()) 
   server.requestTimeout = (configuration.timeoutSeconds + 35) * 1000;
   server.headersTimeout = 5_000;
   server.keepAliveTimeout = 1_000;
-  server.on("clientError", (_error, socket) => {
-    if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+  server.on("clientError", (error, socket) => {
+    if (error?.code === "ECONNRESET" || !socket.writable) {
+      socket.destroy();
+      return;
+    }
+    socket.once("error", () => socket.destroy());
+    socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
   });
 
   await new Promise((resolveListen, rejectListen) => {

@@ -305,7 +305,7 @@ services:
       - source: openclaw_config
         target: openclaw_config
     volumes:
-      - agentops_openclaw_provider_socket:/run/agentops-openclaw
+      - agentops_openclaw_provider_socket:/run/agentops-openclaw:rw
       - "${AGENTOPS_OPENCLAW_RUNTIME_PATH:-./openclaw-runtime}:/opt/agentops-provider/openclaw:ro"
       - "${AGENTOPS_OPENCLAW_WORKSPACE_PATH:-./worker-workspace}:/opt/agentops-worker/workspace:ro"
     healthcheck:
@@ -354,7 +354,7 @@ services:
       - source: openclaw_agent_token
         target: agent_token
     volumes:
-      - agentops_openclaw_provider_socket:/run/agentops-openclaw
+      - agentops_openclaw_provider_socket:/run/agentops-openclaw:ro
     depends_on:
       openclaw-provider:
         condition: service_healthy

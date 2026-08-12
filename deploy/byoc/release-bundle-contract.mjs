@@ -124,6 +124,7 @@ function assertStaticCustomerBoundary() {
     join(moduleDirectory, "worker-container-acceptance.mjs"),
     "utf8",
   );
+  const dockerfile = readFileSync(join(moduleDirectory, "Dockerfile"), "utf8");
   const openClawProviderEntrypoint = readFileSync(
     join(moduleDirectory, "openclaw-provider-entrypoint.mjs"),
     "utf8",
@@ -196,11 +197,15 @@ function assertStaticCustomerBoundary() {
     || !openClawProvider.includes("AGENTOPS_OPENCLAW_AGENT")
     || !openClawProvider.includes("OPENCLAW_TIMEOUT_SECONDS:")
     || !openClawProvider.includes("AGENTOPS_OPENCLAW_TIMEOUT_SECONDS")
-    || !openClawProvider.includes("agentops_openclaw_provider_socket:/run/agentops-openclaw")
+    || !openClawProvider.includes("agentops_openclaw_provider_socket:/run/agentops-openclaw:rw")
     || !openClawProviderEntrypoint.includes("OPENCLAW_BIN_SHA256")
     || !openClawProviderEntrypoint.includes("constants.O_RDONLY | constants.O_NOFOLLOW")
     || !openClawProviderEntrypoint.includes("verifyBinaryIdentity(configuration.binaryPath, configuration.binarySha256)")
     || !openClawProviderEntrypoint.includes("state.activeRequest = requestSlot")
+    || !openClawProviderEntrypoint.includes("provider_socket_directory_unavailable")
+    || !openClawProviderEntrypoint.includes("provider_socket_directory_permissions_invalid")
+    || !openClawProviderEntrypoint.includes("(directory.mode & 0o777) !== 0o750")
+    || !openClawProviderEntrypoint.includes('error?.code === "ECONNRESET"')
     || /O_NOFOLLOW\s*\|\|\s*0/.test(openClawProviderEntrypoint)
     || openClawProvider.includes("AGENTOPS_AGENT_TOKEN")
     || openClawProvider.includes("openclaw_agent_token")
@@ -209,10 +214,12 @@ function assertStaticCustomerBoundary() {
     || !openClawWorker.includes('user: "1000:1000"')
     || !openClawWorker.includes("OPENCLAW_PROVIDER_SOCKET:")
     || !openClawWorker.includes("openclaw_agent_token")
-    || !openClawWorker.includes("agentops_openclaw_provider_socket:/run/agentops-openclaw")
+    || !openClawWorker.includes("agentops_openclaw_provider_socket:/run/agentops-openclaw:ro")
     || /OPENCLAW_(?:BIN|BIN_SHA256|CONFIG_PATH|STATE_DIR)|AGENTOPS_WORKER_CWD|openclaw_config/.test(openClawWorker)
     || !openClawWorker.includes("- control_plane")
     || openClawWorker.includes("- openclaw_provider_egress")
+    || !dockerfile.includes("chown 1001:1000 /run/agentops-openclaw")
+    || !dockerfile.includes("chmod 0750 /run/agentops-openclaw")
     || !workerContainerAcceptance.includes("agentops_byoc_typescript_worker_container_v1")
     || !workerContainerAcceptance.includes("provider_connections")
     || !workerContainerAcceptance.includes("agent_token_exposed_by_container")
@@ -228,6 +235,16 @@ function assertStaticCustomerBoundary() {
     || !workerContainerAcceptance.includes("openclaw_provider_socket_protocol_verified: true")
     || !workerContainerAcceptance.includes("openclaw_provider_agent_token_isolation_verified: true")
     || !workerContainerAcceptance.includes("openclaw_worker_provider_mount_isolation_verified: true")
+    || !workerContainerAcceptance.includes("openclaw_provider_socket_writable_mount_verified: true")
+    || !workerContainerAcceptance.includes("openclaw_worker_socket_readonly_mount_verified: true")
+    || !workerContainerAcceptance.includes("openclaw_worker_socket_mutation_denied: true")
+    || !workerContainerAcceptance.includes("public_socket_inode_preserved: true")
+    || !workerContainerAcceptance.includes("public_socket_owner_preserved: true")
+    || !workerContainerAcceptance.includes("public_socket_mode_preserved: true")
+    || !workerContainerAcceptance.includes("public_socket_readonly_mount_verified: true")
+    || !workerContainerAcceptance.includes("public_socket_protocol_after_mutation_verified: true")
+    || !workerContainerAcceptance.includes("openclaw_phase_a_a01_a02_verified: true")
+    || !workerContainerAcceptance.includes("openclaw_hostile_runtime_isolation_verified: false")
     || !workerContainerAcceptance.includes("mock_provider_execution_performed: true")
     || !workerContainerAcceptance.includes("real_provider_execution_performed: false")
     || !workerContainerAcceptance.includes('real_provider_execution_evidence_source: "separate_exact_head_harness"')
@@ -303,6 +320,17 @@ function assertStaticCustomerBoundary() {
     || !consumer.includes("and .provider_connections == 0")
     || !consumer.includes("and .network_egress_disabled == true")
     || !consumer.includes("and .agent_token_authorization_verified == true")
+    || !consumer.includes("and .openclaw_provider_socket_writable_mount_verified == true")
+    || !consumer.includes("and .openclaw_worker_socket_readonly_mount_verified == true")
+    || !consumer.includes("and .openclaw_worker_socket_mutation_denied == true")
+    || !consumer.includes("and .public_socket_inode_preserved == true")
+    || !consumer.includes("and .public_socket_owner_preserved == true")
+    || !consumer.includes("and .public_socket_mode_preserved == true")
+    || !consumer.includes("and .public_socket_readonly_mount_verified == true")
+    || !consumer.includes("and .public_socket_protocol_after_mutation_verified == true")
+    || !consumer.includes("and .openclaw_phase_a_a01_a02_verified == true")
+    || !consumer.includes("and .openclaw_hostile_runtime_isolation_verified == false")
+    || !consumer.includes('and .openclaw_hostile_runtime_isolation_scope == "phase_a_a01_a02_only"')
     || !consumer.includes("and .token_in_argv == false")
   ) {
     fail("release_consumer_contract_missing");

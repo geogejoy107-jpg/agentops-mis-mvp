@@ -266,6 +266,17 @@ jobs:
             and .openclaw_worker_uid_verified == true
             and .openclaw_exact_image_verified == true
             and .openclaw_shared_socket_only_verified == true
+            and .openclaw_provider_socket_writable_mount_verified == true
+            and .openclaw_worker_socket_readonly_mount_verified == true
+            and .openclaw_worker_socket_mutation_denied == true
+            and .public_socket_inode_preserved == true
+            and .public_socket_owner_preserved == true
+            and .public_socket_mode_preserved == true
+            and .public_socket_readonly_mount_verified == true
+            and .public_socket_protocol_after_mutation_verified == true
+            and .openclaw_phase_a_a01_a02_verified == true
+            and .openclaw_hostile_runtime_isolation_verified == false
+            and .openclaw_hostile_runtime_isolation_scope == "phase_a_a01_a02_only"
             and .openclaw_worker_provider_mount_isolation_verified == true
             and .openclaw_provider_agent_token_isolation_verified == true
             and .openclaw_worker_provider_sentinel_unreadable == true

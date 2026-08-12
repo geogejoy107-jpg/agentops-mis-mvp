@@ -36,7 +36,7 @@ RUN npm prune --omit=dev --ignore-scripts \
     && chown -R node:node /opt/agentops \
     && mkdir -p /run/agentops-openclaw \
     && chown 1001:1000 /run/agentops-openclaw \
-    && chmod 0770 /run/agentops-openclaw
+    && chmod 0750 /run/agentops-openclaw
 ARG AGENTOPS_BUILD_IDENTITY=local
 ARG AGENTOPS_SOURCE_REVISION=unknown
 LABEL org.opencontainers.image.revision="${AGENTOPS_SOURCE_REVISION}" \
