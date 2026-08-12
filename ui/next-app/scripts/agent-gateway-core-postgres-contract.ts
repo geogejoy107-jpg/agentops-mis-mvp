@@ -28,7 +28,9 @@ import {
 import { recordGatewayHeartbeat } from "../src/server/controlPlane/gatewayLifecycle";
 import {
   claimAgentGatewayTask,
+  createAgentGatewayTask,
   getAgentGatewayTask,
+  listAgentGatewayTasks,
   pullAgentGatewayTasks,
 } from "../src/server/controlPlane/agentGatewayTasks";
 import { closeControlPlanePoolForTests } from "../src/server/controlPlane/db";
@@ -307,6 +309,7 @@ async function seed(client: Client) {
   const future = new Date(Date.now() + 3_600_000).toISOString();
   const scopes = JSON.stringify([
     "tasks:read",
+    "tasks:create",
     "tasks:claim",
     "agent_plans:read",
     "agent_plans:write",
@@ -366,7 +369,6 @@ async function seed(client: Client) {
   for (const [taskId, title] of [
     ["tsk_gateway_race", "Concurrent claim"],
     ["tsk_gateway_lock_order", "Run and heartbeat lock order"],
-    ["tsk_gateway_core", "Production gateway core"],
   ]) {
     await client.query(
       `INSERT INTO tasks(
@@ -524,6 +526,40 @@ async function runContract() {
     } finally {
       await runtimeAclClient.end();
     }
+
+    const createdTask = await createAgentGatewayTask(
+      request(
+        "POST",
+        "/api/mis/agent-gateway/tasks",
+        token,
+        {
+          task_id: "tsk_gateway_core",
+          workspace_id: workspaceId,
+          title: "Production gateway core",
+          description: "Contract task created through the TypeScript API owner.",
+          requester_id: "usr_gateway_core",
+          status: "planned",
+          priority: "high",
+          acceptance_criteria: "Write bounded immutable evidence.",
+          risk_level: "medium",
+          budget_limit_usd: 0,
+        },
+      ),
+    );
+    assert.equal(createdTask.status, 201);
+    assert.equal(createdTask.body.outcome, "created");
+    assert.equal(createdTask.body.task_id, "tsk_gateway_core");
+    const listedTasks = await listAgentGatewayTasks(
+      request(
+        "GET",
+        "/api/mis/agent-gateway/tasks?status=planned&limit=20",
+        token,
+      ),
+    );
+    assert.equal(
+      listedTasks.tasks.some((task) => task.task_id === "tsk_gateway_core"),
+      true,
+    );
 
     await expectCode(
       "unauthorized",

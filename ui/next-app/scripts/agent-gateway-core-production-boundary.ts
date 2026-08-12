@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const routeFiles = [
+  "app/api/mis/agent-gateway/tasks/route.ts",
   "app/api/mis/agent-gateway/tasks/pull/route.ts",
   "app/api/mis/agent-gateway/tasks/[taskId]/route.ts",
   "app/api/mis/agent-gateway/tasks/[taskId]/claim/route.ts",

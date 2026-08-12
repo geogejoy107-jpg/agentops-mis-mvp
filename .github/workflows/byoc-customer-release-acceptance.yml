@@ -260,6 +260,7 @@ jobs:
             and .password_omitted == true
             and .python_started == false
           ' "${owner_receipt}" >/dev/null
+          echo "owner_receipt_verified=true"
 
           compose_file="${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/compose.yaml"
           env_file="${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/.env"
@@ -286,6 +287,7 @@ jobs:
           )"
           printf '%s\n' "${owner_state}" |
             jq -e '.owners == 1 and .credentials == 1 and .audits == 1' >/dev/null
+          echo "owner_database_state_verified=true"
 
           duplicate_password="$(openssl rand -hex 32)"
           set +e
@@ -300,18 +302,50 @@ jobs:
           ! grep -Fq -- "${duplicate_password}" \
             "${duplicate_receipt}" "${duplicate_stderr}"
           duplicate_password=
-          test "${duplicate_status}" -ne 0
+          if jq -e 'type == "object"' "${duplicate_receipt}" >/dev/null 2>&1; then
+            duplicate_receipt_parse=true
+            duplicate_error="$(jq -r '
+              if .error == "owner_already_initialized" then .error
+              elif .error == null then "missing"
+              else "unexpected"
+              end
+            ' "${duplicate_receipt}")"
+          else
+            duplicate_receipt_parse=false
+            duplicate_error=unparseable
+          fi
+          if [ -s "${duplicate_stderr}" ]; then
+            duplicate_stderr_nonempty=true
+          else
+            duplicate_stderr_nonempty=false
+          fi
+          printf '%s\n' \
+            "owner_duplicate_status=${duplicate_status}" \
+            "owner_duplicate_receipt_parse=${duplicate_receipt_parse}" \
+            "owner_duplicate_error=${duplicate_error}" \
+            "owner_duplicate_stderr_nonempty=${duplicate_stderr_nonempty}"
+          test "${duplicate_status}" -ne 0 || {
+            echo "owner_duplicate_nonzero_required" >&2
+            exit 1
+          }
           jq -e '
             .ok == false
             and .error == "owner_already_initialized"
             and .credential_omitted == true
             and .password_omitted == true
             and .python_started == false
-          ' "${duplicate_receipt}" >/dev/null
+          ' "${duplicate_receipt}" >/dev/null || {
+            echo "owner_duplicate_receipt_invalid" >&2
+            exit 1
+          }
           duplicate_count="$("${compose[@]}" exec -T postgres sh -ceu \
             'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --tuples-only --no-align --set=ON_ERROR_STOP=1 --command "SELECT COUNT(*) FROM human_login_credentials WHERE username='"'"'second-customer-owner'"'"'"' |
             tr -d '[:space:]')"
-          test "${duplicate_count}" = "0"
+          test "${duplicate_count}" = "0" || {
+            echo "owner_duplicate_credential_residue" >&2
+            exit 1
+          }
+          echo "owner_duplicate_rejection_verified=true"
 
       - name: Verify declared customer operations runtime
         run: |

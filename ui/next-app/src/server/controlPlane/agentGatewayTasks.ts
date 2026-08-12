@@ -10,6 +10,7 @@ const TASK_STATUSES = new Set(["backlog", "planned", "running", "waiting_approva
 const PRIORITIES = new Set(["low", "medium", "high", "urgent"]);
 const RISK_LEVELS = new Set(["low", "medium", "high", "critical"]);
 export const TASK_CLAIM_MAX_BODY_BYTES = 4 * 1024;
+export const TASK_WRITE_MAX_BODY_BYTES = 32 * 1024;
 
 type TaskRow = {
   task_id: string;
@@ -406,7 +407,7 @@ export async function claimAgentGatewayTask(request: Request, requestedTaskId: s
 
 export async function createAgentGatewayTask(request: Request) {
   const body = await boundedJsonObject(request, {
-    maxBytes: 32 * 1024,
+    maxBytes: TASK_WRITE_MAX_BODY_BYTES,
     label: "Task write",
   });
   return withPostgresTransaction(async (client) => {
