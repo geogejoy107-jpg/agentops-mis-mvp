@@ -10,6 +10,7 @@ REDACTION_RULES: tuple[tuple[str, str], ...] = (
     (r"(?i)(bearer\s+)[a-z0-9._~+/\-=]+", r"\1[REDACTED]"),
     (r"(?i)([\"']?(?:token|secret|password|api[_-]?key)[\"']?\s*:\s*[\"'])[^\"']+([\"'])", r"\1[REDACTED]\2"),
     (r"(?i)(token|secret|password|api[_-]?key)\s*[:=]\s*['\"]?[^'\"\s,;]+", r"\1=[REDACTED]"),
+    (r"(?i)\b(?:credential|secret|token|password|api[_-]?key)_canary_[a-z0-9_-]{12,}\b", "[SECRET_REDACTED]"),
     (r"(?i)\b(?:sk-[a-z0-9._~+/\-=]+|ntn_[a-z0-9._~+/\-=]+)\b", "[SECRET_REDACTED]"),
     (r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b", "[SECRET_REDACTED]"),
     (r"\bgithub_pat_[A-Za-z0-9_]{20,}\b", "[SECRET_REDACTED]"),

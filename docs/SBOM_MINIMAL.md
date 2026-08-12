@@ -12,7 +12,7 @@ recorded in `pyproject.toml`.
 | agentops-mis-cli | 0.1.0 | `pyproject.toml`, `agentops_mis_cli/` | Proprietary local MVP |
 | agentops-mis-backend | local MVP | `server.py` | Proprietary local MVP |
 | agentops-mis-ui | 0.0.1 | `ui/start-building-app/` | UNLICENSED/private |
-| pixel-office-visualizer | local MVP | `ui/start-building-app/src/app/components/pixel/` | First-party React/CSS, no copied third-party art |
+| pixel-office-visualizer | local MVP | `assets/pixel-office/`, `ui/start-building-app/src/app/components/pixel/` | Project-owned source-rendered pack, no copied third-party art |
 
 ## Python Direct Dependencies
 
@@ -64,14 +64,13 @@ dependencies in `pyproject.toml`.
 | lucide-react | 0.487.0 |
 | motion | 12.23.24 |
 | next-themes | 0.4.6 |
-| react-day-picker | 8.10.1 |
+| react-day-picker | 9.14.0 |
 | react-dnd | 16.0.1 |
 | react-dnd-html5-backend | 16.0.1 |
 | react-hook-form | 7.55.0 |
-| react-popper | 2.3.0 |
 | react-resizable-panels | 2.1.7 |
 | react-responsive-masonry | 2.7.1 |
-| react-router | 7.13.0 |
+| react-router | 8.3.0 |
 | react-slick | 0.31.0 |
 | recharts | 2.15.2 |
 | sonner | 2.0.3 |
@@ -83,13 +82,16 @@ dependencies in `pyproject.toml`.
 
 | Package | Version |
 |---|---:|
-| @tailwindcss/vite | 4.1.12 |
+| @tailwindcss/vite | 4.3.3 |
 | @vitejs/plugin-react | 4.7.0 |
-| tailwindcss | 4.1.12 |
-| vite | 6.3.5 |
+| tailwindcss | 4.3.3 |
+| vite | 6.4.3 |
 
 ## Runtime Asset Boundary
 
-No Pixel Office bitmap/sprite/tile assets are declared for the current release.
-Future original art assets must be listed here with source, creator, license and
-export hash before public or commercial use.
+The current release declares `agentops-pixel-office-code-rendered-v1` version
+`1.0.0` in `assets/pixel-office/asset-manifest.json`. It consists of committed
+React/TypeScript geometry, palettes, materials, characters, effects, and HUD
+sources under `PROJECT_OWNED`; it contains zero third-party assets and no bitmap,
+sprite, or tile payload. Future exported art must add source, creator, license,
+and export hash before public or commercial use.

@@ -30,7 +30,8 @@ SECRET_PATTERNS = [
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+"),
     re.compile(r"agtok_[A-Za-z0-9_]+"),
     re.compile(r"agtsess_[A-Za-z0-9_]+"),
-    re.compile(r"sk-[A-Za-z0-9]{8,}"),
+    re.compile(r"sk-[A-Za-z0-9]{20,}"),
+    re.compile(r"sk-(?:proj|svcacct)-[A-Za-z0-9_-]{16,}"),
     re.compile(r"ntn_[A-Za-z0-9]{8,}"),
     re.compile(r"github_pat_[A-Za-z0-9_]+"),
     re.compile(r"gh[opsu]_[A-Za-z0-9_]+"),
@@ -136,6 +137,17 @@ def validate_wiring(failures: list[str]) -> None:
     joined = "\n".join(docs.values())
     secret_hits = [pattern.pattern for pattern in SECRET_PATTERNS if pattern.search(joined)]
     require(not secret_hits, f"secret-like marker found in prepared-action binding docs: {secret_hits}", failures)
+    key_patterns = SECRET_PATTERNS[4:6]
+    for value, expected in {
+        "prefix" + "sk-" + "1" * 20: True,
+        "sk-" + "proj-" + "1234567890abcdef_ABC": True,
+        "human-task-dispatch-postgres-contract": False,
+    }.items():
+        require(
+            any(pattern.search(value) for pattern in key_patterns) is expected,
+            f"secret key pattern boundary mismatch: {value}",
+            failures,
+        )
 
 
 def action_command(prepared_action_id: str, prepared_action_hash: str) -> str:

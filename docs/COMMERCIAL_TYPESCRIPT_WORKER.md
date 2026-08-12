@@ -1,0 +1,332 @@
+# Commercial TypeScript Worker
+
+## Ownership Boundary
+
+The commercial Worker is implemented in `ui/next-app/src/worker/` and runs on
+Node.js 20 or newer. It talks only to the production
+`/api/mis/agent-gateway/*` contract and never opens PostgreSQL directly.
+
+Python and SQLite are not dependencies of this Worker. They remain available
+for Free Local compatibility and trusted acceptance orchestration only.
+
+The Worker currently owns the governed summary workflow:
+
+1. pull and claim one workspace-bound task
+2. retrieve bounded Knowledge evidence
+3. submit and verify an Agent Plan
+4. start a run
+5. call real Hermes or OpenClaw after explicit confirmation
+6. persist Runtime Event, Tool Call, Evaluation, Artifact, candidate Memory,
+   Audit, and Plan Evidence Manifest records
+7. request Human customer-delivery approval only when current evidence passes
+8. publish a bounded Worker heartbeat
+
+External writes remain fail closed. Until a runtime-specific PreparedAction
+owner can bind prepare, Human approval, claim, execution, and terminal
+reconciliation, the Worker records the blocked intent, terminalizes the run and
+task as `blocked`, closes active Tool Calls, and settles the reservation at zero
+without calling the provider.
+
+## Source-Free BYOC Worker
+
+The customer release bundle includes explicit `worker-hermes` and
+`worker-openclaw` Compose profiles. Neither profile starts by default. After an
+Agent is enrolled and its one-time token is stored in the corresponding
+mode-0600 secret file, start exactly the required runtime:
+
+```bash
+docker compose --env-file deploy/byoc/.env -f deploy/byoc/compose.yaml \
+  --profile worker-hermes up -d worker-hermes
+
+docker compose --env-file deploy/byoc/.env -f deploy/byoc/compose.yaml \
+  --profile worker-openclaw up -d worker-openclaw
+```
+
+The Hermes profile remains one hardened uid/gid 1000 Worker container. The
+OpenClaw profile instead starts two services from the same immutable image:
+
+- `worker-openclaw` runs the TypeScript Worker as uid/gid 1000. It receives the
+  OpenClaw Agent token and a read-only shared provider-socket volume, but no
+  OpenClaw binary, config, state, or workspace mount.
+- `openclaw-provider` runs the OpenClaw runtime as uid 1001/gid 1000. It receives
+  only the read-only OpenClaw runtime, config, and workspace mounts, its private
+  `/run/openclaw-state` tmpfs, and the shared provider-socket volume read-write.
+  It receives no Agent token, control-plane credential, Human Session HMAC key,
+  or database secret.
+
+Both containers drop all Linux capabilities, set `no-new-privileges`, use a
+read-only root filesystem, and enable Docker init for descendant reaping. They
+communicate only through `/run/agentops-openclaw/provider.sock` in a small shared
+named tmpfs volume. The directory is owned by `1001:1000` with mode `0750`; the
+socket is `1001:1000` mode `0660`. The Worker can traverse and connect but its
+read-only mount cannot unlink, rename, rebind, symlink, or create entries. The
+provider rejects startup when directory ownership or mode differs. Their
+different UIDs and separate filesystems prevent the
+provider process from reading the Worker's Agent token. The provider joins a
+separate egress network, has no host port, and does not join the control-plane
+network. Compose starts the Worker only after both the provider socket and the
+control plane are healthy. Commercial control-plane and Hermes URLs require
+HTTPS.
+
+The Unix socket is a local transport boundary, not provider-signed provenance.
+The broker and OpenClaw CLI currently share the provider container's OS identity,
+so this design isolates control-plane and Agent credentials from the provider
+container but does not defend the broker from a malicious mounted runtime. The
+CLI also requires the prompt in its `--message` argument: receipts, logs, API
+responses, and committed evidence omit it, but privileged process inspection can
+see it while the call runs. A separate runtime identity plus an FD/stdin provider
+interface remains a hardening gate before claiming hostile-runtime isolation.
+The read-only public socket mount closes only attack cases A01/A02; it does not
+change that larger claim.
+
+The provider requires a final regular, non-symlink OpenClaw entrypoint plus
+`AGENTOPS_OPENCLAW_PROVIDER_BIN_SHA256`. It fails closed when `O_NOFOLLOW` is
+unavailable and verifies stable file identity and digest at startup and before
+every execution. This detects entrypoint drift but does not constitute
+Provider-signed evidence or bind the entrypoint's complete dependency tree; the
+customer-controlled runtime mount remains a trusted operator input.
+
+Each Worker supervisor interrupts active provider calls and retry/poll waits,
+then applies a bounded forced-stop fallback before Compose's grace period
+expires. The OpenClaw provider is a separate Compose lifecycle rather than a
+descendant of the Worker process.
+
+## Run One Task
+
+Install and verify the Next application first:
+
+```bash
+cd ui/next-app
+npm ci
+npm run typecheck
+npm run test:commercial-worker-contract
+```
+
+Provide the Agent credential through an absolute path to a bounded regular
+secret file. Commercial Worker credentials are rejected from command-line
+arguments and environment values and are never written to the Worker receipt.
+
+```bash
+export AGENTOPS_BASE_URL="https://mis.example.com"
+export AGENTOPS_WORKSPACE_ID="workspace-id"
+export AGENTOPS_AGENT_ID="agent-id"
+umask 077
+install -d -m 700 "$HOME/.config/agentops/secrets"
+printf '%s\n' '<agent-token>' > "$HOME/.config/agentops/secrets/commercial-worker-token"
+export AGENTOPS_AGENT_TOKEN_SOURCE_FILE="$HOME/.config/agentops/secrets/commercial-worker-token"
+export AGENTOPS_RUN_ESTIMATED_COST_USD="1.000000"
+```
+
+Run Hermes:
+
+```bash
+npm run worker:commercial -- \
+  --adapter hermes \
+  --estimated-cost-usd "$AGENTOPS_RUN_ESTIMATED_COST_USD" \
+  --confirm-run
+```
+
+Run OpenClaw through the isolated BYOC profile shown above. Normal commercial
+CLI execution requires `--openclaw-provider-socket`; it rejects direct binary
+execution so a provider process cannot inherit the Worker's OS identity and
+read its Agent-token file.
+
+The trusted exact-head acceptance harness resolves the real OpenClaw entrypoint
+to a regular file, binds its SHA-256 digest, starts the provider entrypoint as a
+separate process, and waits for the temporary Unix socket health contract. The
+TypeScript Worker receives only the socket path, while the provider environment
+omits the Agent token. Acceptance fails unless provider shutdown removes the
+socket and its private temporary directory; direct binary execution is not an
+exact-head acceptance mode.
+
+Loopback HTTP is accepted only with an explicit local-development gate:
+
+```bash
+export AGENTOPS_BASE_URL="http://127.0.0.1:3001"
+export AGENTOPS_ALLOW_INSECURE_LOOPBACK=true
+```
+
+Do not use that gate for hosted or shared deployments.
+
+## Daemon Mode
+
+The daemon uses the same one-task transaction repeatedly and stops cleanly on
+`SIGINT`, `SIGTERM`, or `SIGHUP`. Provider calls and retry/poll sleeps receive a
+cancellation signal, while post-provider failure evidence is still reconciled.
+The BYOC Worker supervisor first sends shutdown to the TypeScript Worker process
+that owns the cancellation handler. If it does not exit in time, the supervisor
+applies a bounded forced stop to the complete detached process group inside the
+Compose grace period. Signal handlers are installed before the Worker starts,
+and invalid or oversized receipts, token-bearing stderr, and health-state write
+failures use the same bounded cleanup path while remaining failed outcomes.
+Under the OpenClaw profile, Compose supervises the provider sidecar independently
+and the Worker cancels provider work over the Unix socket.
+
+```bash
+npm run worker:commercial -- \
+  --adapter hermes \
+  --estimated-cost-usd "$AGENTOPS_RUN_ESTIMATED_COST_USD" \
+  --confirm-run \
+  --daemon \
+  --poll-interval-ms 5000
+```
+
+`--max-tasks` can bound a maintenance or acceptance run. High or critical risk
+tasks require `--allow-high-risk`; external-write detection still remains
+PreparedAction-gated.
+
+The estimate is reserved transactionally against the workspace's concurrent,
+monthly-run, and monthly-cost limits. It must be positive, cannot be supplied
+as start-time `cost_usd`, and terminal heartbeat cost cannot exceed the
+reservation. Until an adapter supplies a trusted provider billing receipt, the
+Worker settles the approved estimate instead of reporting an unverified zero.
+The estimate is a trusted Worker-side worst-case bound, not an Agent Gateway
+token's provider-spend authority. Provider credentials remain inside the
+Worker/runtime boundary, and the Gateway rejects any observed or settled cost
+above the reservation.
+
+Before applying the v10 cost-authority migration to an existing installation,
+drain non-enrollment runs in `running` or `waiting_approval`. The migration
+fails before changing the schema when such a run exists, so an operator can
+reconcile it on the previous version and retry without a partial cutover.
+
+## Evidence Semantics
+
+A successful receipt requires all of the following:
+
+- `provider_call_performed=true`
+- `dry_run=false`
+- governed Knowledge evidence consumed
+- current Plan Evidence Manifest verification passed
+- all required ledger records persisted
+
+If the provider ran but later evidence persistence fails, the Worker returns:
+
+- `provider_call_performed=true`
+- `ledger_evidence_complete=false`
+- `manual_reconciliation_required=true`
+- no Plan Evidence Manifest or customer-delivery approval claim
+
+That state must be reconciled before any retry. Mock adapters and deterministic
+contracts are CI evidence only; commercial product acceptance requires frozen
+source plus explicitly confirmed real Hermes and OpenClaw runs.
+
+## Real Runtime Acceptance
+
+Run the frozen-source acceptance harness against an isolated PostgreSQL
+database and the production Next.js server. Its current receipt contract is
+`nextjs_postgres_real_worker_human_review_v6`:
+
+The harness accepts the PostgreSQL URL only through `--postgres-dsn-file`.
+The absolute file must live in a current-user-owned, non-group/world-writable
+directory and be a current-user-owned, non-symlink regular file with one link
+and mode `0400` or `0600`. This local acceptance accepts only a loopback
+PostgreSQL host. Credentialed URLs in process arguments are rejected by
+omission of an argv-based option; child processes receive owner-only file paths
+instead of direct database credentials. Promotion receipts also prove this
+input boundary, source stability, and ephemeral credential-file cleanup before
+they can be published. The trusted local acceptance separates each credential
+into a purpose-specific, stage-scoped file but does not claim hostile same-UID
+process isolation; that stronger boundary belongs to the broker/executor phase.
+
+```bash
+dsn_root="$(mktemp -d -t agentops-postgres-dsn.XXXXXX)"
+chmod 700 "$dsn_root"
+dsn_file="$dsn_root/postgres.dsn"
+trap 'rm -rf "$dsn_root"' EXIT
+chmod 600 "$dsn_file"
+printf '%s\n' 'postgresql://<user>:<password>@127.0.0.1:<port>/<database>' > "$dsn_file"
+
+python3 scripts/nextjs_postgres_real_worker_human_review_smoke.py \
+  --postgres-dsn-file "$dsn_file" \
+  --worker-implementation typescript \
+  --adapter hermes \
+  --adapter openclaw
+```
+
+The Python process is test orchestration only. A passing commercial receipt
+must report the TypeScript Worker started, the Python Worker and Python API did
+not start, a real provider call ran with `dry_run=false`, and `source_commit`
+matches the clean candidate `HEAD`. The harness rejects tracked or untracked
+worktree changes before execution and requires the tracked source fingerprint
+and Git identity to remain unchanged for the full run.
+
+The receipt also binds the immutable Next.js release artifact before startup,
+after acceptance, and after cleanup. Next runtime state under `.next/cache` and
+`.next/trace` is explicitly omitted from that release hash and reported in
+`next_runtime_mutable_artifact_paths_omitted`.
+
+The same acceptance provisions distinct migrator, runtime, and entitlement
+administrator database identities. Normal fixture and product writes use the
+restricted runtime. The BYOC entitlement administrator receives only its admin
+DSN, the operator password, the control-plane HTTPS URL, and non-secret operator
+identity/Origin configuration. The request URL is provided through
+`AGENTOPS_ENTITLEMENT_CONTROL_PLANE_URL`; optional Origin/CSRF binding uses
+`AGENTOPS_ENTITLEMENT_CONTROL_PLANE_ORIGIN`. It waits for control-plane health
+and requires the workspace-scoped v11 challenge route before the one-shot
+command starts; the legacy direct-table path therefore fails closed when that
+API is absent. Non-loopback requests require HTTPS, and the Compose-internal
+plain HTTP service address is not a commercial authentication channel. It never
+receives the runtime/migrator DSN or Human Session HMAC key. Preflight response
+bodies are not read, and URLs, cookies, CSRF values, passwords, and challenge
+tokens are not logged. Next receives only the runtime DSN, while the TypeScript
+Worker receives no database or Human Session credential. Caller
+`DATABASE_URL`, libpq `PG*`, Postgres component, and secret-file variables are
+removed before child-process launch.
+
+Provider-visible assistant text and provider error detail are never persisted as
+summaries. Adapters return fixed omission text, and the Commercial Worker
+independently replaces adapter summary/error fields before writing runtime,
+tool, run, artifact, audit, or receipt evidence. The retained provider evidence
+is limited to bounded execution metadata and a SHA-256 payload hash.
+
+A success receipt is emitted only after the `.next` artifact hash remains
+unchanged before startup, after acceptance, and after teardown, and after the
+ephemeral schemas and restricted roles are absent from the PostgreSQL catalog.
+
+### Exact-Head Promotion Status
+
+Keep the harness receipt outside the repository, validate it against the exact
+candidate commit, then publish two bounded GitHub commit status contexts:
+
+```bash
+head_sha="$(git rev-parse HEAD)"
+receipt="$(mktemp -t agentops-real-runtime.XXXXXX.json)"
+dsn_root="$(mktemp -d -t agentops-postgres-dsn.XXXXXX)"
+chmod 700 "$dsn_root"
+dsn_file="$dsn_root/postgres.dsn"
+trap 'rm -f "$receipt"; rm -rf "$dsn_root"' EXIT
+chmod 600 "$dsn_file"
+printf '%s\n' 'postgresql://<user>:<password>@127.0.0.1:<port>/<database>' > "$dsn_file"
+
+python3 scripts/nextjs_postgres_real_worker_human_review_smoke.py \
+  --postgres-dsn-file "$dsn_file" \
+  --worker-implementation typescript \
+  --adapter hermes \
+  --adapter openclaw > "$receipt"
+
+node scripts/commercial-runtime-status.mjs validate \
+  --receipt "$receipt" --sha "$head_sha"
+node scripts/commercial-runtime-status.mjs publish \
+  --receipt "$receipt" --sha "$head_sha"
+```
+
+Publishing requires an authenticated `gh` CLI identity with commit-status write
+authority. It creates `agentops/real-hermes` and `agentops/real-openclaw` only
+after the receipt proves real non-dry-run provider calls, TypeScript Worker plus
+PostgreSQL ownership, verified manifests, Human delivery decisions, settled
+cost reservations, fixture cleanup, and no Python Worker/API. A new commit has
+no inherited runtime authority and must run the acceptance again.
+
+The publisher hashes the exact receipt bytes once, writes a bounded attestation
+as an exact-commit GitHub comment, and points both statuses to that comment. The
+promotion gate verifies the repository owner as publisher, the exact commit,
+shared receipt digest, status descriptions, target URL, and current attestation
+body. It does not trust same-named contexts from another publisher.
+
+This is an operator attestation whose trust root is the authorized repository
+owner. It proves exact-commit consistency, publisher identity, and receipt
+integrity after publication; it is not a provider-signed proof that makes a
+malicious repository owner unable to fabricate an input receipt. Independent
+provider-signed or fixed GitHub App evidence remains required before treating
+the status as third-party-verifiable execution provenance.

@@ -1,0 +1,3834 @@
+#!/usr/bin/env python3
+"""Test-only orchestration for a real Worker-to-Human-review loop.
+
+Commercial authority stays in the production Next.js/TypeScript/Postgres
+runtime; this harness never starts the Python API.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import hashlib
+import json
+import os
+import re
+import secrets
+import signal
+import shutil
+import socket
+import stat
+import subprocess
+import tempfile
+import time
+import traceback
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+
+DEFAULT_SOURCE_ROOT = Path(__file__).resolve().parents[1]
+ROOT = DEFAULT_SOURCE_ROOT
+NEXT_APP = ROOT / "ui" / "next-app"
+CONTRACT_ID = "nextjs_postgres_real_worker_human_review_v6"
+MAX_POSTGRES_DSN_FILE_BYTES = 16 * 1024
+NEXT_RUNTIME_MUTABLE_ARTIFACT_PATHS = ("cache", "trace")
+WORKSPACE_ID = "ws_real_worker_human_review"
+OTHER_WORKSPACE_ID = "ws_real_worker_human_review_other"
+REQUESTER_ID = "usr_founder"
+OWNER_USERNAME = "real-worker-owner"
+RUN_ESTIMATED_COST_USD = "1.000000"
+SCOPES = [
+    "agents:write",
+    "agents:heartbeat",
+    "tasks:read",
+    "tasks:claim",
+    "agent_plans:read",
+    "agent_plans:write",
+    "knowledge:read",
+    "knowledge:write",
+    "runs:write",
+    "toolcalls:write",
+    "evaluations:submit",
+    "artifacts:write",
+    "memories:propose",
+    "approvals:request",
+    "audit:write",
+    "plan_evidence:write",
+    "runtime_events:write",
+]
+
+NODE_PG_HELPER = r"""
+const fs = require('node:fs');
+const { Client } = require('./ui/next-app/node_modules/pg');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const dsn = fs.readFileSync(process.env.AGENTOPS_NODE_PG_DSN_FILE, 'utf8').replace(/\r?\n$/, '');
+
+function translateQmarks(sql) {
+  let output = '';
+  let inSingle = false;
+  let parameter = 0;
+  for (let index = 0; index < sql.length; index += 1) {
+    const char = sql[index];
+    if (char === "'") {
+      output += char;
+      if (inSingle && sql[index + 1] === "'") {
+        output += sql[index + 1];
+        index += 1;
+      } else {
+        inSingle = !inSingle;
+      }
+    } else if (char === '?' && !inSingle) {
+      parameter += 1;
+      output += `$${parameter}`;
+    } else {
+      output += char;
+    }
+  }
+  return output;
+}
+
+(async () => {
+  const client = new Client({
+    connectionString: dsn,
+    application_name: 'agentops-real-worker-human-review-smoke',
+  });
+  try {
+    await client.connect();
+    const query = input.script ? input.sql : translateQmarks(input.sql);
+    const response = await client.query(query, input.params || []);
+    process.stdout.write(JSON.stringify({ rows: response.rows || [], row_count: response.rowCount || 0 }));
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+})().catch((error) => {
+  process.stderr.write(JSON.stringify({
+    message: String(error && error.message ? error.message : error),
+    code: error && typeof error.code === 'string' ? error.code : null,
+    name: error && typeof error.name === 'string' ? error.name : 'Error',
+  }));
+  process.exitCode = 1;
+});
+"""
+
+
+class NodePgError(RuntimeError):
+    def __init__(self, message: str, sqlstate: str | None):
+        super().__init__(message)
+        self.sqlstate = sqlstate
+
+
+class NodePgAdapter:
+    """Test-only structured Postgres client using the Next runtime's pinned pg."""
+
+    def __init__(self, dsn_file: Path, node_binary: str):
+        self.dsn_file = dsn_file
+        self.node_binary = node_binary
+
+    def _request(self, sql: str, params: tuple[Any, ...] = (), *, script: bool = False) -> dict[str, Any]:
+        env = environment_without_privileged_control_plane_credentials()
+        env["AGENTOPS_NODE_PG_DSN_FILE"] = str(self.dsn_file)
+        assert_direct_credentials_omitted(env)
+        completed = subprocess.run(
+            [self.node_binary, "-e", NODE_PG_HELPER],
+            cwd=ROOT,
+            env=env,
+            input=json.dumps({"sql": sql, "params": list(params), "script": script}, ensure_ascii=False),
+            text=True,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        if completed.returncode != 0:
+            message = completed.stderr[-1000:]
+            sqlstate = None
+            try:
+                failure = json.loads(completed.stderr or "{}")
+                if isinstance(failure, dict):
+                    message = str(failure.get("message") or message)
+                    code = failure.get("code")
+                    sqlstate = str(code) if code else None
+            except json.JSONDecodeError:
+                pass
+            raise NodePgError(
+                f"Node Postgres query failed: {message}",
+                sqlstate,
+            )
+        return json.loads(completed.stdout or "{}")
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any]:
+        return self._request(sql, params)
+
+    def executescript(self, sql: str) -> None:
+        self._request(sql, script=True)
+
+    def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+        rows = self._request(sql, params).get("rows") or []
+        return rows[0] if rows else None
+
+    def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+        return list(self._request(sql, params).get("rows") or [])
+
+    def commit(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+def redact(value: object, sensitive: list[str]) -> str:
+    output = str(value)
+    for secret in sorted((item for item in sensitive if item), key=len, reverse=True):
+        output = output.replace(secret, "[REDACTED]")
+    return output
+
+
+def result(payload: dict[str, Any], sensitive: list[str]) -> None:
+    rendered = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str)
+    print(redact(rendered, sensitive))
+
+
+def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        left.st_dev == right.st_dev
+        and left.st_ino == right.st_ino
+        and left.st_mode == right.st_mode
+        and left.st_uid == right.st_uid
+        and left.st_gid == right.st_gid
+        and left.st_nlink == right.st_nlink
+        and left.st_size == right.st_size
+        and left.st_mtime_ns == right.st_mtime_ns
+        and left.st_ctime_ns == right.st_ctime_ns
+    )
+
+
+def _open_secure_secret_parent(value: str) -> tuple[Path, int]:
+    path = Path(value)
+    if not path.is_absolute():
+        raise ValueError("postgres_dsn_file_absolute_path_required")
+    path = Path(os.path.abspath(path))
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    if not nofollow or not directory:
+        raise ValueError("postgres_dsn_file_nofollow_unavailable")
+    descriptor = os.open(
+        path.anchor,
+        os.O_RDONLY | directory | nofollow | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        components = path.parts[1:-1]
+        for index, component in enumerate(components):
+            child = os.open(
+                component,
+                os.O_RDONLY
+                | directory
+                | nofollow
+                | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=descriptor,
+            )
+            os.close(descriptor)
+            descriptor = child
+            metadata = os.fstat(descriptor)
+            mode = stat.S_IMODE(metadata.st_mode)
+            immediate_parent = index == len(components) - 1
+            writable_ancestor_is_sticky_root = (
+                metadata.st_uid == 0
+                and bool(metadata.st_mode & stat.S_ISVTX)
+            )
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or (
+                    mode & 0o022
+                    and not writable_ancestor_is_sticky_root
+                )
+                or (immediate_parent and metadata.st_uid != os.getuid())
+            ):
+                raise ValueError("postgres_dsn_file_parent_security_invalid")
+        return path, descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _read_postgres_dsn_file_with_identity(
+    value: str,
+) -> tuple[str, os.stat_result]:
+    path, parent_descriptor = _open_secure_secret_parent(value)
+    try:
+        before = os.stat(
+            path.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise ValueError("postgres_dsn_file_regular_file_required")
+        if before.st_uid != os.getuid():
+            raise ValueError("postgres_dsn_file_owner_invalid")
+        if stat.S_IMODE(before.st_mode) not in {0o400, 0o600}:
+            raise ValueError("postgres_dsn_file_permissions_invalid")
+        if before.st_nlink != 1:
+            raise ValueError("postgres_dsn_file_link_count_invalid")
+        if before.st_size < 1 or before.st_size > MAX_POSTGRES_DSN_FILE_BYTES:
+            raise ValueError("postgres_dsn_file_size_invalid")
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        if not nofollow:
+            raise ValueError("postgres_dsn_file_nofollow_unavailable")
+        descriptor = os.open(
+            path.name,
+            os.O_RDONLY
+            | os.O_NONBLOCK
+            | nofollow
+            | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=parent_descriptor,
+        )
+    except Exception:
+        os.close(parent_descriptor)
+        raise
+    try:
+        descriptor_before = os.fstat(descriptor)
+        if not _same_file_identity(before, descriptor_before):
+            raise ValueError("postgres_dsn_file_identity_changed")
+        chunks: list[bytes] = []
+        remaining = MAX_POSTGRES_DSN_FILE_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        contents = b"".join(chunks)
+        if len(contents) > MAX_POSTGRES_DSN_FILE_BYTES:
+            raise ValueError("postgres_dsn_file_size_invalid")
+        descriptor_after = os.fstat(descriptor)
+        after = os.stat(
+            path.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            not _same_file_identity(descriptor_before, descriptor_after)
+            or not _same_file_identity(descriptor_after, after)
+        ):
+            raise ValueError("postgres_dsn_file_identity_changed")
+    finally:
+        os.close(descriptor)
+        os.close(parent_descriptor)
+    dsn = contents.decode("utf-8", errors="strict")
+    if dsn.endswith("\r\n"):
+        dsn = dsn[:-2]
+    elif dsn.endswith("\n"):
+        dsn = dsn[:-1]
+    if not dsn or "\x00" in dsn or "\r" in dsn or "\n" in dsn:
+        raise ValueError("postgres_dsn_file_contents_invalid")
+    parsed = urllib.parse.urlsplit(dsn)
+    if (
+        parsed.scheme not in {"postgres", "postgresql"}
+        or not parsed.hostname
+        or not parsed.username
+        or not parsed.password
+    ):
+        raise ValueError("postgres_dsn_file_url_invalid")
+    if parsed.hostname not in {"127.0.0.1", "::1", "localhost"}:
+        raise ValueError("postgres_dsn_file_loopback_required")
+    return dsn, descriptor_after
+
+
+def read_postgres_dsn_file(value: str) -> str:
+    return _read_postgres_dsn_file_with_identity(value)[0]
+
+
+def assert_postgres_dsn_file_unchanged(
+    value: str,
+    expected_dsn: str,
+    expected_identity: os.stat_result,
+) -> None:
+    current_dsn, current_identity = _read_postgres_dsn_file_with_identity(value)
+    if (
+        not _same_file_identity(expected_identity, current_identity)
+        or not secrets.compare_digest(expected_dsn, current_dsn)
+    ):
+        raise ValueError("postgres_dsn_file_changed_during_acceptance")
+
+
+def write_owner_only_secret(root: Path, name: str, value: str) -> Path:
+    path = root / name
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
+        0o600,
+    )
+    try:
+        payload = value.encode("utf-8")
+        written = 0
+        while written < len(payload):
+            written += os.write(descriptor, payload[written:])
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    return path
+
+
+def create_isolated_secret(label: str, value: str) -> tuple[Path, Path]:
+    root = Path(tempfile.mkdtemp(prefix=f"agentops-real-{label}-"))
+    root.chmod(0o700)
+    try:
+        path = write_owner_only_secret(root, "secret", value)
+        path.chmod(0o400)
+        root.chmod(0o500)
+        return root, path
+    except Exception:
+        root.chmod(0o700)
+        shutil.rmtree(root, ignore_errors=True)
+        raise
+
+
+def remove_isolated_secrets(roots: list[Path]) -> bool:
+    errors: list[str] = []
+    for root in roots:
+        try:
+            if root.exists():
+                root.chmod(0o700)
+                for path in root.iterdir():
+                    path.chmod(0o600)
+                shutil.rmtree(root)
+            if root.exists():
+                errors.append(root.name)
+        except Exception:
+            errors.append(root.name)
+    if errors:
+        raise RuntimeError("credential_root_cleanup_failed")
+    return True
+
+
+def dsn_with_search_path(dsn: str, schema: str) -> str:
+    parsed = urllib.parse.urlsplit(dsn)
+    if parsed.scheme not in {"postgres", "postgresql"}:
+        raise ValueError("postgres DSN must use a postgres URL")
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    existing = [value for key, value in query if key == "options"]
+    query = [(key, value) for key, value in query if key != "options"]
+    query.append(("options", " ".join([*existing, f"-c search_path={schema}"]).strip()))
+    return urllib.parse.urlunsplit((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        urllib.parse.urlencode(query, quote_via=urllib.parse.quote),
+        parsed.fragment,
+    ))
+
+
+def dsn_with_credentials(dsn: str, username: str, password: str) -> str:
+    parsed = urllib.parse.urlsplit(dsn)
+    if parsed.scheme not in {"postgres", "postgresql"} or not parsed.hostname:
+        raise ValueError("postgres DSN must use a postgres URL with a host")
+    host = parsed.hostname
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = (
+        f"{urllib.parse.quote(username, safe='')}:"
+        f"{urllib.parse.quote(password, safe='')}@{host}"
+    )
+    if parsed.port is not None:
+        netloc += f":{parsed.port}"
+    return urllib.parse.urlunsplit((
+        parsed.scheme,
+        netloc,
+        parsed.path,
+        parsed.query,
+        parsed.fragment,
+    ))
+
+
+def dsn_with_search_path_sequence(dsn: str, schemas: tuple[str, ...]) -> str:
+    if not schemas or any(
+        not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema)
+        for schema in schemas
+    ):
+        raise ValueError("postgres_search_path_identifier_invalid")
+    return dsn_with_search_path(dsn, ",".join(schemas))
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _hash_field(digest: Any, value: bytes) -> None:
+    digest.update(len(value).to_bytes(8, "big"))
+    digest.update(value)
+
+
+def stable_next_release_artifact_sha256(root: Path) -> str:
+    """Hash immutable Next release files while omitting documented runtime state."""
+    if root.is_symlink() or not root.is_dir():
+        raise RuntimeError("next_build_artifact_missing_or_unsafe")
+    entries = sorted(
+        (
+            item
+            for item in root.rglob("*")
+            if item.relative_to(root).parts[0]
+            not in NEXT_RUNTIME_MUTABLE_ARTIFACT_PATHS
+        ),
+        key=lambda item: os.fsencode(item.relative_to(root).as_posix()),
+    )
+    if not entries:
+        raise RuntimeError("next_build_artifact_empty")
+    digest = hashlib.sha256()
+    _hash_field(digest, b"agentops-next-release-artifact-sha256-v1")
+    for path in entries:
+        relative = os.fsencode(path.relative_to(root).as_posix())
+        metadata = path.lstat()
+        _hash_field(digest, relative)
+        if stat.S_ISDIR(metadata.st_mode):
+            _hash_field(digest, b"directory")
+        elif stat.S_ISLNK(metadata.st_mode):
+            _hash_field(digest, b"symlink")
+            _hash_field(digest, os.fsencode(os.readlink(path)))
+        elif stat.S_ISREG(metadata.st_mode):
+            _hash_field(digest, b"file")
+            _hash_field(digest, bytes.fromhex(file_sha256(path)))
+        else:
+            raise RuntimeError("next_build_artifact_contains_special_file")
+    return digest.hexdigest()
+
+
+def tracked_worktree_fingerprint(source_root: Path) -> str:
+    """Hash the live contents of every Git-indexed path in a dirty-safe way."""
+    git = shutil.which("git")
+    if not git:
+        raise RuntimeError("git_binary_unavailable")
+    listed = subprocess.run(
+        [git, "-C", str(source_root), "ls-files", "--stage", "-z"],
+        text=False,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    if listed.returncode != 0:
+        raise RuntimeError("tracked_worktree_inventory_failed")
+    records = sorted(record for record in listed.stdout.split(b"\0") if record)
+    digest = hashlib.sha256()
+    _hash_field(digest, b"agentops-tracked-worktree-sha256-v1")
+    for record in records:
+        index_entry, separator, relative = record.partition(b"\t")
+        if not separator or not relative:
+            raise RuntimeError("tracked_worktree_inventory_invalid")
+        path = source_root / os.fsdecode(relative)
+        _hash_field(digest, index_entry)
+        _hash_field(digest, relative)
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            _hash_field(digest, b"missing")
+            continue
+        if stat.S_ISLNK(metadata.st_mode):
+            _hash_field(digest, b"symlink")
+            _hash_field(digest, os.fsencode(os.readlink(path)))
+        elif stat.S_ISREG(metadata.st_mode):
+            _hash_field(digest, b"file")
+            _hash_field(digest, str(stat.S_IMODE(metadata.st_mode) & 0o111).encode("ascii"))
+            _hash_field(digest, bytes.fromhex(file_sha256(path)))
+        elif stat.S_ISDIR(metadata.st_mode):
+            _hash_field(digest, b"directory")
+        else:
+            _hash_field(digest, b"special")
+    return digest.hexdigest()
+
+
+def git_source_state(source_root: Path) -> tuple[str, bool]:
+    git = shutil.which("git")
+    if not git:
+        raise RuntimeError("git_binary_unavailable")
+    commit = subprocess.run(
+        [git, "-C", str(source_root), "rev-parse", "--verify", "HEAD^{commit}"],
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    source_commit = commit.stdout.strip().lower()
+    if commit.returncode != 0 or not re.fullmatch(r"[a-f0-9]{40}", source_commit):
+        raise RuntimeError("source_commit_unavailable")
+    status = subprocess.run(
+        [
+            git,
+            "-C",
+            str(source_root),
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "-z",
+        ],
+        text=False,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    if status.returncode != 0:
+        raise RuntimeError("source_worktree_status_unavailable")
+    return source_commit, status.stdout == b""
+
+
+def resolve_source_root(value: str) -> Path:
+    try:
+        source_root = Path(value).expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError("source_root_unavailable") from exc
+    required = [
+        source_root / "migrations" / "postgres" / "20260724_current_main_commercial_baseline.sql",
+        source_root / "migrations" / "postgres" / "20260731_cost_reservations_v10.sql",
+        source_root / "ui" / "next-app" / "scripts" / "bootstrap-owner.ts",
+        source_root / "ui" / "next-app" / "scripts" / "commercial-worker.ts",
+        source_root / "ui" / "next-app" / "src" / "server" / "controlPlane" / "runCostReservations.ts",
+        source_root / "ui" / "next-app" / "package.json",
+    ]
+    if not source_root.is_dir() or not all(path.is_file() for path in required):
+        raise RuntimeError("source_root_contract_files_missing")
+    git = shutil.which("git")
+    if not git:
+        raise RuntimeError("git_binary_unavailable")
+    top_level = subprocess.run(
+        [git, "-C", str(source_root), "rev-parse", "--show-toplevel"],
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    if top_level.returncode != 0 or Path(top_level.stdout.strip()).resolve() != source_root:
+        raise RuntimeError("source_root_must_be_git_worktree_root")
+    return source_root
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def stop_process(
+    proc: subprocess.Popen[str],
+    *,
+    timeout: int = 5,
+) -> dict[str, Any]:
+    errors: list[str] = []
+    process_group_id = proc.pid
+
+    def record(error: str) -> None:
+        if error not in errors:
+            errors.append(error)
+
+    def exited() -> bool:
+        try:
+            return proc.poll() is not None
+        except Exception as exc:
+            record(f"poll:{exc.__class__.__name__}")
+            return False
+
+    def process_group_alive(label: str) -> bool:
+        try:
+            os.killpg(process_group_id, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except Exception as exc:
+            record(f"{label}:{exc.__class__.__name__}")
+            return True
+
+    def wait_for_process_group_exit(seconds: int, label: str) -> bool:
+        deadline = time.monotonic() + max(0, seconds)
+        while process_group_alive(label):
+            if time.monotonic() >= deadline:
+                return False
+            if not exited():
+                try:
+                    proc.wait(timeout=min(0.1, max(0.01, deadline - time.monotonic())))
+                except subprocess.TimeoutExpired:
+                    pass
+                except Exception as exc:
+                    record(f"wait:{exc.__class__.__name__}")
+            time.sleep(0.02)
+        if not exited():
+            try:
+                proc.wait(timeout=max(0.01, min(0.5, seconds)))
+            except subprocess.TimeoutExpired:
+                record("wait:TimeoutExpired")
+            except Exception as exc:
+                record(f"wait:{exc.__class__.__name__}")
+        return exited()
+
+    if exited() and not process_group_alive("initial_group_check"):
+        return {
+            "stopped": True,
+            "process_group_empty": True,
+            "errors": errors,
+        }
+    try:
+        os.killpg(process_group_id, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except Exception as exc:
+        record(f"sigterm:{exc.__class__.__name__}")
+    group_stopped = wait_for_process_group_exit(timeout, "term_group_check")
+    if not group_stopped:
+        try:
+            os.killpg(process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except Exception as exc:
+            record(f"sigkill:{exc.__class__.__name__}")
+        group_stopped = wait_for_process_group_exit(timeout, "kill_group_check")
+    process_group_empty = not process_group_alive("final_group_check")
+    return {
+        "stopped": exited() and group_stopped and process_group_empty,
+        "process_group_empty": process_group_empty,
+        "errors": errors,
+    }
+
+
+def assert_openclaw_provider_health(health: object) -> None:
+    if (
+        not isinstance(health, dict)
+        or health.get("schema") != "agentops_openclaw_provider_health_v1"
+        or health.get("ok") is not True
+        or health.get("ready") is not True
+        or not isinstance(health.get("busy"), bool)
+    ):
+        raise RuntimeError("openclaw_provider_health_receipt_invalid")
+
+
+def openclaw_worker_arguments(provider_socket: Path) -> list[str]:
+    return [
+        "--openclaw-provider-socket",
+        str(provider_socket),
+        "--openclaw-agent",
+        "main",
+        "--openclaw-timeout-seconds",
+        "180",
+    ]
+
+
+def wait_for_openclaw_provider(
+    socket_path: Path,
+    proc: subprocess.Popen[str],
+    *,
+    timeout: float = 10.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        returncode = proc.poll()
+        if returncode is not None:
+            raise RuntimeError(
+                f"openclaw_provider_exited_before_ready:returncode={returncode}"
+            )
+        try:
+            socket_stat = socket_path.lstat()
+            if not stat.S_ISSOCK(socket_stat.st_mode):
+                raise RuntimeError("openclaw_provider_path_not_socket")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(1.0)
+                client.connect(str(socket_path))
+                client.sendall(
+                    b"GET /health HTTP/1.1\r\n"
+                    b"Host: localhost\r\n"
+                    b"Connection: close\r\n\r\n"
+                )
+                response = bytearray()
+                while len(response) <= 64 * 1024:
+                    chunk = client.recv(4096)
+                    if not chunk:
+                        break
+                    response.extend(chunk)
+            header, separator, body = bytes(response).partition(b"\r\n\r\n")
+            if not separator or not header.startswith(b"HTTP/1.1 200"):
+                raise RuntimeError("openclaw_provider_health_status_invalid")
+            health = json.loads(body.decode("utf-8"))
+            assert_openclaw_provider_health(health)
+            return
+        except (FileNotFoundError, ConnectionError, OSError, json.JSONDecodeError):
+            time.sleep(0.05)
+    raise RuntimeError("openclaw_provider_ready_timeout")
+
+
+def run_process_group(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        stop_receipt = stop_process(proc, timeout=5)
+        try:
+            stdout, stderr = proc.communicate(timeout=1)
+        except Exception:
+            stdout, stderr = "", ""
+        stdout_bytes = stdout.encode("utf-8", errors="replace")
+        stderr_bytes = stderr.encode("utf-8", errors="replace")
+        failure = {
+            "returncode": proc.returncode,
+            "stop_receipt": stop_receipt,
+            "stdout_sha256": hashlib.sha256(stdout_bytes).hexdigest(),
+            "stdout_size_bytes": len(stdout_bytes),
+            "stderr_sha256": hashlib.sha256(stderr_bytes).hexdigest(),
+            "stderr_size_bytes": len(stderr_bytes),
+            "raw_process_output_omitted": True,
+        }
+        raise RuntimeError(
+            "worker_process_timeout:" + json.dumps(failure, sort_keys=True)
+        ) from exc
+    return subprocess.CompletedProcess(
+        command,
+        proc.returncode,
+        stdout,
+        stderr,
+    )
+
+
+def assert_harness_safety_helper_contracts() -> None:
+    assert_subprocess_environment_scrub()
+    assert_openclaw_provider_health({
+        "schema": "agentops_openclaw_provider_health_v1",
+        "ok": True,
+        "ready": True,
+        "busy": False,
+    })
+    try:
+        assert_openclaw_provider_health({
+            "schema": "agentops.openclaw-provider.health.v1",
+            "ok": True,
+            "ready": True,
+            "busy": False,
+        })
+    except RuntimeError as exc:
+        if str(exc) != "openclaw_provider_health_receipt_invalid":
+            raise
+    else:
+        raise RuntimeError("openclaw_provider_health_schema_contract_failed")
+    worker_provider_arguments = openclaw_worker_arguments(
+        Path("/tmp/agentops-provider-contract.sock")
+    )
+    if worker_provider_arguments != [
+            "--openclaw-provider-socket",
+            "/tmp/agentops-provider-contract.sock",
+            "--openclaw-agent",
+            "main",
+            "--openclaw-timeout-seconds",
+            "180",
+        ]:
+        raise RuntimeError("openclaw_worker_socket_only_contract_failed")
+
+    class FailingProcess:
+        pid = 987654321
+
+        def poll(self) -> None:
+            return None
+
+        def wait(self, timeout: int) -> None:
+            del timeout
+            raise OSError("bounded stop helper contract")
+
+    original_killpg = os.killpg
+    try:
+        def fail_killpg(pid: int, sig: signal.Signals) -> None:
+            del pid, sig
+            raise PermissionError("bounded stop helper contract")
+
+        os.killpg = fail_killpg
+        receipt = stop_process(FailingProcess(), timeout=0)  # type: ignore[arg-type]
+    finally:
+        os.killpg = original_killpg
+    if (
+        receipt.get("stopped") is not False
+        or not receipt.get("errors")
+        or not any(
+            str(item).startswith("sigterm:PermissionError")
+            for item in receipt["errors"]
+        )
+    ):
+        raise RuntimeError("stop_process_failure_bounding_contract_failed")
+
+
+def http_json(
+    method: str,
+    url: str,
+    body: dict[str, Any] | None = None,
+    *,
+    headers: dict[str, str] | None = None,
+    timeout: int = 30,
+) -> tuple[int, Any, dict[str, str]]:
+    request_headers = dict(headers or {})
+    data = None
+    if body is not None:
+        data = json.dumps(body, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        request_headers.setdefault("Content-Type", "application/json")
+    request = urllib.request.Request(url, data=data, headers=request_headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            response_headers = {key.lower(): value for key, value in response.headers.items()}
+            return int(response.status), json.loads(raw) if raw else {}, response_headers
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            payload = {"raw_omitted": True}
+        response_headers = {key.lower(): value for key, value in exc.headers.items()}
+        return int(exc.code), payload, response_headers
+
+
+def raw_cookie(headers: dict[str, str]) -> str:
+    prefix = "agentops_human_session="
+    for part in headers.get("set-cookie", "").split(";"):
+        item = part.strip()
+        if item.startswith(prefix):
+            return item[len(prefix):]
+    return ""
+
+
+def wait_for_next(base_url: str, proc: subprocess.Popen[str], sensitive: list[str]) -> None:
+    deadline = time.time() + 90
+    last = ""
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            stdout, stderr = proc.communicate(timeout=2)
+            raise RuntimeError(
+                redact(
+                    f"Next exited early (code={proc.returncode}): {(stdout or '')[-800:]} {(stderr or '')[-800:]}",
+                    sensitive,
+                )
+            )
+        try:
+            status, payload, _ = http_json(
+                "GET",
+                f"{base_url}/api/agent-gateway/tasks/pull?workspace_id={WORKSPACE_ID}&limit=1&status=planned",
+            )
+            if status == 401 and isinstance(payload, dict) and payload.get("error") == "unauthorized":
+                return
+            last = f"{status}:{payload}"
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            last = str(exc)
+        time.sleep(0.25)
+    raise RuntimeError(redact(f"Next Agent Gateway alias did not become ready: {last}", sensitive))
+
+
+def run_next_build(npm: str) -> subprocess.CompletedProcess[str]:
+    safe_keys = ("HOME", "LANG", "LC_ALL", "PATH", "SHELL", "TMPDIR", "TMP", "TEMP")
+    env = {key: os.environ[key] for key in safe_keys if os.environ.get(key)}
+    env.update({
+        "CI": "1",
+        "NEXT_TELEMETRY_DISABLED": "1",
+    })
+    return subprocess.run(
+        [npm, "run", "--silent", "build"],
+        cwd=NEXT_APP,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=600,
+        check=False,
+    )
+
+
+PRIVILEGED_CONTROL_PLANE_ENVIRONMENT = (
+    "POSTGRES_PRISMA_URL",
+    "POSTGRES_URL",
+    "POSTGRES_URL_NON_POOLING",
+)
+
+
+def environment_without_privileged_control_plane_credentials(
+    source: dict[str, str] | None = None,
+) -> dict[str, str]:
+    env = dict(os.environ if source is None else source)
+    for name in tuple(env):
+        if (
+            name.startswith("AGENTOPS_")
+            or name.startswith("PG")
+            or name.startswith("POSTGRES_")
+            or name.startswith("DATABASE_")
+            or name in PRIVILEGED_CONTROL_PLANE_ENVIRONMENT
+        ):
+            env.pop(name, None)
+    return env
+
+
+def assert_subprocess_environment_scrub() -> None:
+    canaries = {
+        "PATH": "/usr/bin",
+        "AGENTOPS_POSTGRES_DSN": "postgresql://runtime-canary.invalid/db",
+        "AGENTOPS_POSTGRES_DSN_FILE": "/tmp/runtime-dsn-canary",
+        "AGENTOPS_POSTGRES_HOST": "component-canary.invalid",
+        "AGENTOPS_POSTGRES_MIGRATOR_PASSWORD": "migrator-canary",
+        "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_DSN":
+            "postgresql://admin-canary.invalid/db",
+        "AGENTOPS_NODE_PG_DSN": "postgresql://node-helper-canary.invalid/db",
+        "AGENTOPS_API_KEY": "gateway-canary",
+        "AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD": "operator-canary",
+        "AGENTOPS_HUMAN_SESSION_HMAC_KEY": "session-canary",
+        "DATABASE_URL": "postgresql://database-url-canary.invalid/db",
+        "DATABASE_AUTH_TOKEN": "database-auth-canary",
+        "POSTGRES_URL": "postgresql://postgres-url-canary.invalid/db",
+        "POSTGRES_PASSWORD": "postgres-password-canary",
+        "POSTGRES_USER": "postgres-user-canary",
+        "POSTGRES_HOST": "postgres-host-canary.invalid",
+        "POSTGRES_DB": "postgres-db-canary",
+        "PGPASSWORD": "libpq-canary",
+        "PGSERVICEFILE": "/tmp/libpq-service-canary",
+    }
+    scrubbed = environment_without_privileged_control_plane_credentials(
+        canaries,
+    )
+    if scrubbed != {"PATH": "/usr/bin"}:
+        raise RuntimeError("privileged_subprocess_environment_scrub_failed")
+
+
+DIRECT_CREDENTIAL_ENVIRONMENT_NAMES = {
+    "AGENTOPS_NODE_PG_DSN",
+    "AGENTOPS_POSTGRES_DSN",
+    "AGENTOPS_POSTGRES_MIGRATOR_DSN",
+    "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_DSN",
+    "AGENTOPS_POSTGRES_RUNTIME_PASSWORD",
+    "AGENTOPS_POSTGRES_MIGRATOR_PASSWORD",
+    "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_PASSWORD",
+    "AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD",
+    "AGENTOPS_HUMAN_SESSION_HMAC_KEY",
+    "DATABASE_URL",
+}
+
+
+def assert_direct_credentials_omitted(environment: dict[str, str]) -> None:
+    if DIRECT_CREDENTIAL_ENVIRONMENT_NAMES.intersection(environment):
+        raise RuntimeError("direct_credential_child_environment_forbidden")
+
+
+def run_npm(
+    npm: str,
+    postgres_dsn_file: Path | None,
+    args: list[str],
+    *,
+    stdin: str | None = None,
+    environment: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    env = environment_without_privileged_control_plane_credentials()
+    env.update({
+        "AGENTOPS_POSTGRES_SSL": "0",
+        **(environment or {}),
+    })
+    if postgres_dsn_file:
+        env["AGENTOPS_POSTGRES_DSN_FILE"] = str(postgres_dsn_file)
+    assert_direct_credentials_omitted(env)
+    return subprocess.run(
+        [npm, "run", "--silent", *args],
+        cwd=NEXT_APP,
+        env=env,
+        input=stdin,
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+
+
+def assert_postgres_statement_forbidden(
+    adapter: NodePgAdapter,
+    sql: str,
+    *,
+    script: bool = False,
+) -> str:
+    try:
+        if script:
+            adapter.executescript(sql)
+        else:
+            adapter.execute(sql)
+    except NodePgError as error:
+        if error.sqlstate == "42501":
+            return error.sqlstate
+        raise RuntimeError(
+            "restricted_database_statement_check_inconclusive:"
+            f"sqlstate={error.sqlstate or 'missing'}"
+        ) from error
+    raise RuntimeError("restricted_database_statement_unexpectedly_allowed")
+
+
+def assert_entitlement_admin_environment_isolated(
+    environment: dict[str, str],
+) -> None:
+    required = {
+        "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_DSN_FILE",
+        "AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD_FILE",
+        "AGENTOPS_ENTITLEMENT_OPERATOR_USERNAME",
+        "AGENTOPS_ENTITLEMENT_CONTROL_PLANE_URL",
+        "AGENTOPS_ENTITLEMENT_CONTROL_PLANE_ORIGIN",
+        "AGENTOPS_POSTGRES_SCHEMA",
+        "AGENTOPS_POSTGRES_RUNTIME_API_SCHEMA",
+        "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_ROLE",
+    }
+    forbidden = {
+        "AGENTOPS_POSTGRES_DSN",
+        "AGENTOPS_POSTGRES_MIGRATOR_DSN",
+        "AGENTOPS_POSTGRES_RUNTIME_DSN",
+        "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_DSN",
+        "AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD",
+        "AGENTOPS_POSTGRES_RUNTIME_ROLE",
+        "AGENTOPS_POSTGRES_RUNTIME_PASSWORD",
+        "AGENTOPS_POSTGRES_MIGRATOR_PASSWORD",
+        "AGENTOPS_HUMAN_SESSION_HMAC_KEY",
+    }
+    if (
+        not required.issubset(environment)
+        or forbidden.intersection(environment)
+    ):
+        raise RuntimeError("entitlement_admin_environment_isolation_failed")
+
+
+def assert_entitlement_admin_receipt_safe(
+    receipt: dict[str, Any],
+    stdout: str,
+    stderr: str,
+) -> None:
+    required_true = {
+        "ok",
+        "audit_appended",
+        "challenge_consumed",
+        "human_session_consumed",
+        "long_lived_credentials_omitted",
+        "challenge_token_omitted",
+        "credentials_omitted",
+        "dsn_omitted",
+        "raw_config_omitted",
+        "control_plane_network_used",
+    }
+    if (
+        receipt.get("contract")
+            != "agentops_workspace_entitlement_administration_v2"
+        or receipt.get("mode") != "confirmed"
+        or receipt.get("outcome") != "created"
+        or any(receipt.get(field) is not True for field in required_true)
+    ):
+        raise RuntimeError("entitlement_administration_v2_receipt_unverified")
+
+    forbidden_keys = {
+        "agentops_human_session",
+        "challenge_token",
+        "cookie",
+        "csrf",
+        "csrf_token",
+        "human_session_id",
+        "set_cookie",
+    }
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                if str(key).lower() in forbidden_keys:
+                    raise RuntimeError(
+                        "entitlement_administration_auth_material_exposed"
+                    )
+                walk(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                walk(nested)
+
+    walk(receipt)
+    rendered = f"{stdout}\n{stderr}".lower()
+    forbidden_output_markers = (
+        "agentops_human_session=",
+        '"challenge_token":',
+        '"csrf_token":',
+        '"set_cookie":',
+    )
+    if any(marker in rendered for marker in forbidden_output_markers):
+        raise RuntimeError("entitlement_administration_auth_material_exposed")
+
+
+def derived_postgres_function_owner_role(
+    application_schema: str,
+    runtime_api_schema: str,
+) -> str:
+    digest = hashlib.sha256(
+        f"{application_schema}\0{runtime_api_schema}".encode("utf-8")
+    ).hexdigest()
+    return f"agentops_fn_{digest[:24]}"
+
+
+def cleanup_postgres_fixture(
+    base_dsn_file: Path,
+    node: str,
+    application_schema: str,
+    runtime_api_schema: str,
+    runtime_role: str,
+    entitlement_admin_role: str,
+    function_owner_role: str,
+) -> dict[str, bool]:
+    cleanup = NodePgAdapter(base_dsn_file, node)
+    errors: list[str] = []
+    role_names = (
+        ("runtime", runtime_role),
+        ("entitlement_admin", entitlement_admin_role),
+        ("function_owner", function_owner_role),
+    )
+    existing_roles: dict[str, bool] = {}
+
+    for label, role in role_names:
+        try:
+            row = cleanup.fetchone(
+                "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=?) AS present",
+                (role,),
+            )
+            existing_roles[role] = bool(row and row.get("present"))
+        except Exception:
+            existing_roles[role] = True
+            errors.append(f"inspect_role:{label}")
+
+    for label, role in role_names:
+        if not existing_roles.get(role):
+            continue
+        try:
+            cleanup.execute(
+                """SELECT pg_terminate_backend(pid)
+                FROM pg_stat_activity
+                WHERE usename=? AND pid<>pg_backend_pid()""",
+                (role,),
+            )
+        except Exception:
+            errors.append(f"terminate_role:{label}")
+
+    for label, schema in (
+        ("runtime_api_schema", runtime_api_schema),
+        ("application_schema", application_schema),
+    ):
+        try:
+            cleanup.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        except Exception:
+            errors.append(f"drop_schema:{label}")
+
+    for label, role in role_names:
+        if not existing_roles.get(role):
+            continue
+        try:
+            cleanup.execute(f'DROP OWNED BY "{role}"')
+        except Exception:
+            errors.append(f"drop_owned:{label}")
+        try:
+            cleanup.execute(f'DROP ROLE IF EXISTS "{role}"')
+        except Exception:
+            errors.append(f"drop_role:{label}")
+
+    try:
+        residue = cleanup.fetchone(
+            """SELECT
+              EXISTS(
+                SELECT 1 FROM pg_namespace
+                WHERE nspname IN (?,?)
+              ) AS schema_present,
+              EXISTS(
+                SELECT 1 FROM pg_roles
+                WHERE rolname IN (?,?,?)
+              ) AS role_present""",
+            (
+                application_schema,
+                runtime_api_schema,
+                runtime_role,
+                entitlement_admin_role,
+                function_owner_role,
+            ),
+        )
+        if (
+            not residue
+            or residue.get("schema_present") is not False
+            or residue.get("role_present") is not False
+        ):
+            errors.append("catalog_residue")
+    except Exception:
+        errors.append("catalog_verification")
+
+    if errors:
+        raise RuntimeError(
+            "postgres_fixture_cleanup_failed:" + ",".join(sorted(errors))
+        )
+    return {
+        "schemas_removed": True,
+        "roles_removed": True,
+        "function_owner_role_removed": True,
+        "catalog_zero_residue_verified": True,
+    }
+
+
+def seed_foundation(adapter: NodePgAdapter) -> None:
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    adapter.execute(
+        "INSERT INTO users(user_id,name,email,role,created_at) VALUES(?,?,?,?,?)",
+        (REQUESTER_ID, "Real Worker Requester", "real-worker-requester@local.invalid", "customer", now),
+    )
+    adapter.execute(
+        """INSERT INTO runtime_connectors(
+            runtime_connector_id,provider,connector_type,profile_name,base_url,binary_path,status,allow_real_run,
+            require_confirm_run,trust_status,trust_note,trust_updated_at,last_health_at,last_error,created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            "rtc_agent_gateway_local",
+            "agent_gateway",
+            "local",
+            "TypeScript/Postgres real Worker acceptance",
+            None,
+            None,
+            "ready",
+            1,
+            1,
+            "trusted",
+            "Ephemeral acceptance fixture.",
+            now,
+            now,
+            None,
+            now,
+            now,
+        ),
+    )
+    adapter.commit()
+
+
+def seed_workers(
+    adapter: NodePgAdapter,
+    adapters: list[str],
+    tokens: dict[str, str],
+) -> None:
+    now = dt.datetime.now(dt.timezone.utc)
+    now_text = now.isoformat()
+    expires = (now + dt.timedelta(hours=2)).isoformat()
+    for runtime in adapters:
+        agent_id = f"agt_real_{runtime}_review"
+        task_id = f"tsk_real_{runtime}_review"
+        adapter.execute(
+            """INSERT INTO agents(
+                agent_id,name,role,description,runtime_type,model_provider,model_name,status,permission_level,
+                allowed_tools,budget_limit_usd,owner_user_id,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                agent_id,
+                f"Real {runtime} Worker",
+                "operator",
+                "Ephemeral real Runtime acceptance Worker.",
+                runtime,
+                runtime,
+                runtime,
+                "idle",
+                "standard",
+                json.dumps(["agent_gateway.task", f"{runtime}.execute", "agent_gateway.audit"]),
+                5.0,
+                REQUESTER_ID,
+                now_text,
+                now_text,
+            ),
+        )
+        adapter.execute(
+            """INSERT INTO tasks(
+                task_id,workspace_id,title,description,requester_id,owner_agent_id,collaborator_agent_ids,
+                status,priority,due_date,acceptance_criteria,risk_level,budget_limit_usd,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                task_id,
+                WORKSPACE_ID,
+                f"Real {runtime} candidate review",
+                "Return a bounded delivery summary from the governed task evidence.",
+                REQUESTER_ID,
+                agent_id,
+                "[]",
+                "planned",
+                "high",
+                None,
+                "A real Runtime call must finish and propose one reviewable memory candidate.",
+                "low",
+                0,
+                now_text,
+                now_text,
+            ),
+        )
+        adapter.execute(
+            """INSERT INTO agent_gateway_tokens(
+                token_id,token_hash,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,
+                created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at
+            ) VALUES(?,?,?,?,?,'active',?,300,?,?,NULL,NULL,NULL)""",
+            (
+                f"tok_real_{runtime}_review",
+                hashlib.sha256(tokens[runtime].encode("utf-8")).hexdigest(),
+                WORKSPACE_ID,
+                agent_id,
+                json.dumps(SCOPES),
+                f"Real {runtime} acceptance token",
+                now_text,
+                expires,
+            ),
+        )
+    adapter.commit()
+
+
+def run_worker(
+    runtime: str,
+    base_url: str,
+    token: str,
+    hermes_url: str,
+    openclaw_bin: str,
+    openclaw_bin_sha256: str,
+    sensitive: list[str],
+    worker_implementation: str,
+    node: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    if worker_implementation != "typescript":
+        raise RuntimeError("commercial_worker_implementation_must_be_typescript")
+    agent_id = f"agt_real_{runtime}_review"
+    command = [
+        node,
+        str(NEXT_APP / "node_modules" / "tsx" / "dist" / "cli.mjs"),
+        str(NEXT_APP / "scripts" / "commercial-worker.ts"),
+        "--base-url",
+        base_url,
+        "--workspace-id",
+        WORKSPACE_ID,
+        "--agent-id",
+        agent_id,
+        "--task-id",
+        f"tsk_real_{runtime}_review",
+        "--adapter",
+        runtime,
+        "--once",
+        "--confirm-run",
+        "--allow-insecure-loopback",
+        "--estimated-cost-usd",
+        RUN_ESTIMATED_COST_USD,
+        "--max-adapter-attempts",
+        "1",
+    ]
+    if runtime == "hermes":
+        command.extend([
+            "--hermes-gateway-url",
+            hermes_url,
+            "--hermes-model",
+            "hermes-agent",
+            "--hermes-timeout-ms",
+            "180000",
+        ])
+    provider_proc: subprocess.Popen[str] | None = None
+    provider_root: Path | None = None
+    provider_socket: Path | None = None
+    provider_ready = False
+    provider_environment_isolated = False
+    provider_cleanup: dict[str, Any] | None = None
+    try:
+        if runtime == "openclaw":
+            provider_root = Path(tempfile.mkdtemp(prefix="agentops-real-openclaw-provider-"))
+            provider_root.chmod(
+                stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP
+            )
+            provider_socket = provider_root / "provider.sock"
+            provider_env = environment_without_privileged_control_plane_credentials()
+            provider_env.update({
+                "NODE_ENV": "production",
+                "OPENCLAW_PROVIDER_SOCKET": str(provider_socket),
+                "OPENCLAW_PROVIDER_SOCKET_GID": str(os.getgid()),
+                "OPENCLAW_PROVIDER_SHUTDOWN_GRACE_MS": "5000",
+                "OPENCLAW_BIN": openclaw_bin,
+                "OPENCLAW_BIN_SHA256": openclaw_bin_sha256,
+                "OPENCLAW_WORKSPACE": str(ROOT),
+                "OPENCLAW_AGENT": "main",
+                "OPENCLAW_TIMEOUT_SECONDS": "180",
+            })
+            provider_environment_isolated = not any(
+                name in provider_env
+                for name in (
+                    "AGENTOPS_AGENT_TOKEN",
+                    "AGENTOPS_AGENT_TOKEN_SOURCE_FILE",
+                )
+            )
+            if not provider_environment_isolated:
+                raise RuntimeError("openclaw_provider_agent_token_environment_exposed")
+            provider_proc = subprocess.Popen(
+                [
+                    node,
+                    str(ROOT / "deploy" / "byoc" / "openclaw-provider-entrypoint.mjs"),
+                ],
+                cwd=ROOT,
+                env=provider_env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+            wait_for_openclaw_provider(provider_socket, provider_proc)
+            provider_ready = True
+            command.extend(openclaw_worker_arguments(provider_socket))
+
+        with tempfile.TemporaryDirectory(prefix="agentops-real-worker-token-") as token_root:
+            token_path = Path(token_root) / "agent-token"
+            token_path.write_text(f"{token}\n", encoding="utf-8")
+            token_path.chmod(stat.S_IRUSR)
+            env = environment_without_privileged_control_plane_credentials()
+            env["AGENTOPS_AGENT_TOKEN_SOURCE_FILE"] = str(token_path)
+            env["NODE_ENV"] = "production"
+            completed = run_process_group(
+                command,
+                cwd=NEXT_APP,
+                env=env,
+                timeout=240,
+            )
+    finally:
+        if provider_proc is not None:
+            stop_receipt = stop_process(provider_proc, timeout=10)
+            try:
+                provider_stdout, provider_stderr = provider_proc.communicate(timeout=1)
+                provider_output_error = None
+            except Exception as output_exc:
+                provider_stdout, provider_stderr = "", ""
+                provider_output_error = output_exc.__class__.__name__
+            socket_removed = bool(
+                provider_socket is not None
+                and not os.path.lexists(provider_socket)
+            )
+            provider_output = f"{provider_stdout}{provider_stderr}"
+            provider_output_bytes = provider_output.encode(
+                "utf-8",
+                errors="replace",
+            )
+            provider_cleanup = {
+                "provider_process_started": True,
+                "provider_socket_ready": provider_ready,
+                "provider_process_stopped": stop_receipt.get("stopped") is True,
+                "provider_process_stop_errors": stop_receipt.get("errors") or [],
+                "provider_process_returncode": provider_proc.returncode,
+                "provider_socket_removed": socket_removed,
+                "provider_agent_token_environment_omitted":
+                    provider_environment_isolated,
+                "provider_output_sha256": hashlib.sha256(
+                    provider_output_bytes
+                ).hexdigest(),
+                "provider_output_size_bytes": len(provider_output_bytes),
+                "provider_output_read_error": provider_output_error,
+                "raw_provider_output_omitted": True,
+            }
+            if token and token in provider_output:
+                raise RuntimeError("openclaw_provider_output_exposed_agent_token")
+        if provider_root is not None:
+            shutil.rmtree(provider_root)
+            provider_root_removed = not os.path.lexists(provider_root)
+            if provider_cleanup is not None:
+                provider_cleanup["provider_temp_root_removed"] = provider_root_removed
+            if not provider_root_removed:
+                raise RuntimeError("openclaw_provider_temp_root_cleanup_failed")
+        if provider_cleanup is not None and (
+            provider_cleanup.get("provider_socket_ready") is not True
+            or provider_cleanup.get("provider_process_stopped") is not True
+            or provider_cleanup.get("provider_process_stop_errors")
+            or provider_cleanup.get("provider_process_returncode") != 0
+            or provider_cleanup.get("provider_socket_removed") is not True
+            or provider_cleanup.get("provider_agent_token_environment_omitted") is not True
+            or provider_cleanup.get("provider_output_read_error") is not None
+            or provider_cleanup.get("provider_temp_root_removed") is not True
+        ):
+            raise RuntimeError(
+                "openclaw_provider_cleanup_unverified:"
+                + json.dumps(provider_cleanup, sort_keys=True)
+            )
+    if token in completed.stdout or token in completed.stderr:
+        raise RuntimeError(f"{runtime} Worker output exposed its Agent Gateway credential")
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        stdout_bytes = completed.stdout.encode("utf-8", errors="replace")
+        stderr_bytes = completed.stderr.encode("utf-8", errors="replace")
+        failure = {
+            "worker_implementation": worker_implementation,
+            "returncode": completed.returncode,
+            "stdout_sha256": hashlib.sha256(stdout_bytes).hexdigest(),
+            "stdout_size_bytes": len(stdout_bytes),
+            "stderr_sha256": hashlib.sha256(stderr_bytes).hexdigest(),
+            "stderr_size_bytes": len(stderr_bytes),
+            "raw_worker_output_omitted": True,
+        }
+        raise RuntimeError(
+            f"{runtime} Worker returned invalid JSON: "
+            f"{json.dumps(failure, sort_keys=True)}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{runtime} Worker returned a non-object receipt")
+    if completed.returncode != 0:
+        state = payload.get("state") if isinstance(payload, dict) else None
+        last_result = state.get("last_result") if isinstance(state, dict) else None
+        last_error = state.get("last_error") if isinstance(state, dict) else None
+        results = payload.get("results") if isinstance(payload, dict) else None
+        first_result = results[0] if isinstance(results, list) and results else None
+        direct_result = payload
+        safe_last_result = {
+            key: (last_result or direct_result).get(key)
+            for key in (
+                "runtime",
+                "dry_run",
+                "ok",
+                "processed",
+                "provider_call_performed",
+                "reason",
+                "error_type",
+                "attempt_count",
+                "run_id",
+                "task_id",
+                "ledger_evidence_complete",
+                "manual_reconciliation_required",
+                "evidence_failure_stage",
+                "evidence_failure_code",
+                "evidence_failure_status",
+            )
+            if isinstance(last_result or direct_result, dict)
+            and key in (last_result or direct_result)
+        }
+        stderr_bytes = completed.stderr.encode("utf-8", errors="replace")
+        failure = {
+            "worker_implementation": worker_implementation,
+            "returncode": completed.returncode,
+            "status": state.get("status") if isinstance(state, dict) else None,
+            "last_result": safe_last_result or None,
+            "last_error": {
+                "error_type": last_error.get("error_type"),
+                "error_message": last_error.get("error_message"),
+            } if isinstance(last_error, dict) else None,
+            "result_error": {
+                "error_type": first_result.get("error_type"),
+                "error_message": first_result.get("error_message"),
+            } if isinstance(first_result, dict) else None,
+            "stderr_sha256": hashlib.sha256(stderr_bytes).hexdigest(),
+            "stderr_size_bytes": len(stderr_bytes),
+            "raw_worker_output_omitted": True,
+        }
+        raise RuntimeError(redact(f"{runtime} Worker failed: {json.dumps(failure, ensure_ascii=False, sort_keys=True)}", sensitive))
+    if not payload.get("ok") or payload.get("processed") != 1:
+        raise RuntimeError(redact(f"{runtime} Worker did not complete one task: {payload}", sensitive))
+    return payload, provider_cleanup
+
+
+def check_runtime_evidence(
+    adapter: NodePgAdapter,
+    runtime: str,
+    worker_payload: dict[str, Any],
+    sensitive: list[str],
+) -> dict[str, Any]:
+    results = worker_payload.get("results")
+    iteration = (
+        results[0]
+        if isinstance(results, list) and results and isinstance(results[0], dict)
+        else worker_payload
+    )
+    run_id = str(iteration.get("run_id") or "")
+    if (
+        not run_id.startswith("run_gw_")
+        or iteration.get("plan_evidence_pass") is not True
+        or iteration.get("provider_call_performed") is not True
+        or iteration.get("dry_run") is not False
+    ):
+        raise RuntimeError(f"{runtime} Worker did not return a verified run/plan-evidence receipt")
+    run = adapter.fetchone("SELECT run_id,status,runtime_type FROM runs WHERE run_id=?", (run_id,))
+    cost_reservation = adapter.fetchone(
+        """SELECT state,estimated_cost_usd::text AS estimated_cost_usd,
+        observed_cost_usd::text AS observed_cost_usd,
+        settled_cost_usd::text AS settled_cost_usd
+        FROM run_cost_reservations WHERE workspace_id=? AND run_id=?""",
+        (WORKSPACE_ID, run_id),
+    )
+    tool = adapter.fetchone(
+        """SELECT tool_name,status,target_resource,normalized_args_json,result_summary
+        FROM tool_calls WHERE run_id=? AND agent_id=?""",
+        (run_id, f"agt_real_{runtime}_review"),
+    )
+    memory = adapter.fetchone(
+        """SELECT memory_id,workspace_id,task_id,agent_id,canonical_text,source_type,source_ref,review_status
+        FROM memories WHERE workspace_id=? AND agent_id=? AND source_type='run_log' AND source_ref=?""",
+        (WORKSPACE_ID, f"agt_real_{runtime}_review", run_id),
+    )
+    manifest = adapter.fetchone(
+        "SELECT manifest_id,status,run_id FROM plan_evidence_manifests WHERE run_id=?",
+        (run_id,),
+    )
+    approval = adapter.fetchone(
+        """SELECT approval_id,approval_kind,task_id,run_id,requested_by_agent_id,
+        approver_user_id,decision,reason,expires_at,created_at,decided_at
+        FROM approvals WHERE run_id=? AND approval_kind='customer_delivery'""",
+        (run_id,),
+    )
+    task = adapter.fetchone(
+        "SELECT status FROM tasks WHERE task_id=? AND workspace_id=?",
+        (f"tsk_real_{runtime}_review", WORKSPACE_ID),
+    )
+    approval_event_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM runtime_events
+        WHERE run_id=? AND event_type='approval.customer_delivery.request'""",
+        (run_id,),
+    ) or {"count": 0})["count"])
+    approval_audit_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM audit_logs
+        WHERE workspace_id=? AND action='agent_gateway.customer_delivery_approval_request'
+          AND entity_type='approvals' AND entity_id=?""",
+        (WORKSPACE_ID, str((approval or {}).get("approval_id") or "")),
+    ) or {"count": 0})["count"])
+    worker_audit = adapter.fetchone(
+        """SELECT actor_type,actor_id,entity_type,entity_id,metadata_json,tamper_chain_hash
+        FROM audit_logs WHERE action='agent_worker.task_processed' AND entity_type='runs' AND entity_id=?""",
+        (run_id,),
+    )
+    adapter.commit()
+    expected_target = "/v1/chat/completions" if runtime == "hermes" else "local://openclaw/main"
+    if not run or run["status"] != "completed" or run["runtime_type"] != runtime:
+        raise RuntimeError(f"{runtime} run ledger did not close as completed")
+    if not (
+        cost_reservation
+        and cost_reservation["state"] == "settled"
+        and cost_reservation["estimated_cost_usd"] == RUN_ESTIMATED_COST_USD
+        and cost_reservation["observed_cost_usd"] == RUN_ESTIMATED_COST_USD
+        and cost_reservation["settled_cost_usd"] == RUN_ESTIMATED_COST_USD
+    ):
+        raise RuntimeError(
+            f"{runtime} run cost reservation did not settle the approved estimate"
+        )
+    if not tool or tool["status"] != "completed" or expected_target not in str(tool["target_resource"]):
+        raise RuntimeError(f"{runtime} tool evidence does not prove the real adapter target")
+    try:
+        tool_args = json.loads(str(tool["normalized_args_json"] or "{}"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{runtime} tool evidence args are invalid") from exc
+    if tool_args.get("provider_call_performed") is not True or tool_args.get("dry_run") is not False:
+        raise RuntimeError(f"{runtime} tool evidence does not prove a non-dry-run provider call")
+    if not manifest or manifest["status"] != "verified":
+        raise RuntimeError(f"{runtime} plan-evidence manifest is not verified")
+    if not (
+        iteration.get("customer_delivery_approval_requested") is True
+        and iteration.get("customer_delivery_approval_outcome") == "created"
+        and iteration.get("customer_delivery_approval_control_plane") == "typescript_postgres"
+        and approval
+        and iteration.get("customer_delivery_approval_id") == approval["approval_id"]
+        and approval["approval_kind"] == "customer_delivery"
+        and approval["task_id"] == f"tsk_real_{runtime}_review"
+        and approval["requested_by_agent_id"] == f"agt_real_{runtime}_review"
+        and approval["approver_user_id"] is None
+        and approval["decision"] == "pending"
+        and approval["decided_at"] is None
+        and task
+        and task["status"] == "waiting_approval"
+        and approval_event_count == approval_audit_count == 1
+    ):
+        raise RuntimeError(
+            f"{runtime} Worker did not create one production-owned customer-delivery approval"
+        )
+    if not memory or memory["review_status"] != "candidate" or memory["source_ref"] != run_id:
+        raise RuntimeError(f"{runtime} real run did not create a bound memory candidate")
+    if not worker_audit or not worker_audit["tamper_chain_hash"]:
+        raise RuntimeError(f"{runtime} Worker audit is absent from the tamper-evident chain")
+    try:
+        audit_metadata = json.loads(str(worker_audit["metadata_json"] or "{}"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{runtime} Worker audit metadata is invalid") from exc
+    if not (
+        worker_audit["actor_type"] == "agent"
+        and worker_audit["actor_id"] == f"agt_real_{runtime}_review"
+        and audit_metadata.get("provider_call_performed") is True
+        and audit_metadata.get("dry_run") is False
+    ):
+        raise RuntimeError(f"{runtime} Worker audit does not bind the server-derived agent/provider-call evidence")
+    evidence = adapter.fetchall(
+        """SELECT input_summary,output_summary,error_message,raw_payload_hash FROM runtime_events
+        WHERE run_id=? OR agent_id=? ORDER BY created_at""",
+        (run_id, f"agt_real_{runtime}_review"),
+    )
+    evidence_text = json.dumps(
+        {
+            "tool": tool,
+            "cost_reservation": cost_reservation,
+            "memory": memory,
+            "approval": approval,
+            "audit": worker_audit,
+            "events": evidence,
+        },
+        ensure_ascii=False,
+        default=str,
+    )
+    for secret in sensitive:
+        if secret and secret in evidence_text:
+            raise RuntimeError(f"{runtime} persisted runtime evidence exposed protected input material")
+    return {
+        "run_id": run_id,
+        "memory_id": str(memory["memory_id"]),
+        "manifest_id": str(manifest["manifest_id"]),
+        "approval_id": str(approval["approval_id"]),
+        "cost_reservation_state": str(cost_reservation["state"]),
+        "cost_reservation_settled": True,
+        "source_type": str(memory["source_type"]),
+        "provider_call_performed": True,
+        "dry_run": False,
+        "delivery_approval_creation_source": "production_next_typescript_postgres_agent_gateway_route",
+        "delivery_approval_request_outcome": "created",
+        "delivery_approval_runtime_event_count": approval_event_count,
+        "delivery_approval_audit_count": approval_audit_count,
+    }
+
+
+def login_owner(base_url: str, public_origin: str, password: str) -> tuple[str, str]:
+    status, payload, headers = http_json(
+        "POST",
+        f"{base_url}/api/mis/human-auth/login",
+        {"username": OWNER_USERNAME, "password": password},
+        headers={"Origin": public_origin},
+    )
+    cookie = raw_cookie(headers)
+    csrf = str(payload.get("csrf_token") or "") if isinstance(payload, dict) else ""
+    if status != 200 or not cookie or not csrf:
+        error_code = str(payload.get("error") or "unknown") if isinstance(payload, dict) else "unknown"
+        raise RuntimeError(
+            f"Human Owner login failed closed with status {status} and error {error_code}"
+        )
+    return cookie, csrf
+
+
+def human_review(
+    adapter: NodePgAdapter,
+    base_url: str,
+    public_origin: str,
+    cookie: str,
+    csrf: str,
+    runtime: str,
+    receipt: dict[str, str],
+) -> dict[str, Any]:
+    list_headers = {
+        "Cookie": f"agentops_human_session={cookie}",
+        "X-AgentOps-Workspace-Id": WORKSPACE_ID,
+    }
+    status, candidates, _ = http_json(
+        "GET",
+        f"{base_url}/api/mis/memories?workspace_id={WORKSPACE_ID}",
+        headers=list_headers,
+    )
+    candidate_ids = {str(item.get("memory_id")) for item in candidates} if isinstance(candidates, list) else set()
+    if status != 200 or receipt["memory_id"] not in candidate_ids:
+        raise RuntimeError(f"{runtime} candidate is absent from the Human workspace queue")
+
+    approval_status, approvals, _ = http_json(
+        "GET",
+        f"{base_url}/api/mis/approvals?workspace_id={WORKSPACE_ID}",
+        headers=list_headers,
+    )
+    approval_ids = {str(item.get("approval_id")) for item in approvals} if isinstance(approvals, list) else set()
+    if approval_status != 200 or receipt["approval_id"] not in approval_ids:
+        error_code = str(approvals.get("error") or "unknown") if isinstance(approvals, dict) else "unknown"
+        raise RuntimeError(
+            f"{runtime} delivery approval is absent from the Human workspace queue "
+            f"with status {approval_status} and error {error_code}"
+        )
+    approval_headers = {
+        **list_headers,
+        "Origin": public_origin,
+        "X-AgentOps-CSRF": csrf,
+        "Idempotency-Key": f"real-worker-{runtime}-delivery-approve-0001",
+    }
+    approval_route = (
+        f"{base_url}/api/mis/approvals/"
+        f"{urllib.parse.quote(receipt['approval_id'])}/approve"
+    )
+    approval_first_status, approval_first, _ = http_json(
+        "POST",
+        approval_route,
+        {"workspace_id": WORKSPACE_ID},
+        headers=approval_headers,
+    )
+    approval_replay_status, approval_replay, _ = http_json(
+        "POST",
+        approval_route,
+        {"workspace_id": WORKSPACE_ID},
+        headers=approval_headers,
+    )
+    key = f"real-worker-{runtime}-approve-0001"
+    write_headers = {
+        **list_headers,
+        "Origin": public_origin,
+        "X-AgentOps-CSRF": csrf,
+        "Idempotency-Key": key,
+    }
+    route = f"{base_url}/api/mis/memories/{urllib.parse.quote(receipt['memory_id'])}/approve"
+    first_status, first, _ = http_json("POST", route, {"workspace_id": WORKSPACE_ID}, headers=write_headers)
+    replay_status, replay, _ = http_json("POST", route, {"workspace_id": WORKSPACE_ID}, headers=write_headers)
+    foreign_headers = {**list_headers, "X-AgentOps-Workspace-Id": OTHER_WORKSPACE_ID}
+    foreign_status, _, _ = http_json(
+        "GET",
+        f"{base_url}/api/mis/memories?workspace_id={OTHER_WORKSPACE_ID}",
+        headers=foreign_headers,
+    )
+    memory = adapter.fetchone(
+        "SELECT review_status,owner_user_id FROM memories WHERE memory_id=? AND workspace_id=?",
+        (receipt["memory_id"], WORKSPACE_ID),
+    )
+    request_count = int((adapter.fetchone(
+        "SELECT COUNT(*) AS count FROM human_memory_review_requests WHERE workspace_id=? AND memory_id=?",
+        (WORKSPACE_ID, receipt["memory_id"]),
+    ) or {"count": 0})["count"])
+    audit_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM audit_logs
+        WHERE actor_type='user' AND action='memory.approved' AND entity_type='memories' AND entity_id=?""",
+        (receipt["memory_id"],),
+    ) or {"count": 0})["count"])
+    event_count = int((adapter.fetchone(
+        "SELECT COUNT(*) AS count FROM runtime_events WHERE event_type='memory.approved' AND task_id=? AND agent_id=?",
+        (f"tsk_real_{runtime}_review", f"agt_real_{runtime}_review"),
+    ) or {"count": 0})["count"])
+    owner = adapter.fetchone(
+        "SELECT user_id FROM human_login_credentials WHERE username=?",
+        (OWNER_USERNAME,),
+    )
+    approval = adapter.fetchone(
+        """SELECT decision,approver_user_id FROM approvals
+        WHERE approval_id=? AND task_id=? AND run_id=?""",
+        (receipt["approval_id"], f"tsk_real_{runtime}_review", receipt["run_id"]),
+    )
+    approval_request_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM human_approval_decision_requests
+        WHERE workspace_id=? AND approval_id=?""",
+        (WORKSPACE_ID, receipt["approval_id"]),
+    ) or {"count": 0})["count"])
+    approval_audit_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM audit_logs
+        WHERE workspace_id=? AND actor_type='user'
+          AND action='approval.customer_delivery.approved'
+          AND entity_type='approvals' AND entity_id=?""",
+        (WORKSPACE_ID, receipt["approval_id"]),
+    ) or {"count": 0})["count"])
+    approval_event_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM runtime_events
+        WHERE event_type='approval.customer_delivery.approved'
+          AND run_id=? AND task_id=? AND agent_id=?""",
+        (receipt["run_id"], f"tsk_real_{runtime}_review", f"agt_real_{runtime}_review"),
+    ) or {"count": 0})["count"])
+    delivery_run = adapter.fetchone(
+        "SELECT status,approval_required FROM runs WHERE run_id=? AND workspace_id=?",
+        (receipt["run_id"], WORKSPACE_ID),
+    )
+    delivery_task = adapter.fetchone(
+        "SELECT status FROM tasks WHERE task_id=? AND workspace_id=?",
+        (f"tsk_real_{runtime}_review", WORKSPACE_ID),
+    )
+    delivery_manifest = adapter.fetchone(
+        """SELECT status FROM plan_evidence_manifests
+        WHERE manifest_id=? AND workspace_id=? AND task_id=? AND run_id=? AND agent_id=?""",
+        (
+            receipt["manifest_id"],
+            WORKSPACE_ID,
+            f"tsk_real_{runtime}_review",
+            receipt["run_id"],
+            f"agt_real_{runtime}_review",
+        ),
+    )
+    adapter.commit()
+    review_checks = {
+        "approval_first_status": approval_first_status == 200,
+        "approval_first_outcome": approval_first.get("outcome") == "updated",
+        "approval_typescript_owner": (
+            approval_first.get("control_plane") == "typescript_postgres"
+        ),
+        "approval_reason_omitted": (
+            (approval_first.get("approval") or {}).get("reason") is None
+        ),
+        "legacy_delivery_gate_omitted": "delivery_approval_gate" not in approval_first,
+        "approval_replay_status": approval_replay_status == 200,
+        "approval_replay_outcome": approval_replay.get("outcome") == "unchanged",
+        "owner_present": bool(owner),
+        "approval_present": bool(approval),
+        "approval_decision": bool(approval and approval["decision"] == "approved"),
+        "approval_actor": bool(
+            approval
+            and owner
+            and approval["approver_user_id"] == owner["user_id"]
+        ),
+        "approval_evidence_counts": (
+            approval_request_count
+            == approval_audit_count
+            == approval_event_count
+            == 1
+        ),
+        "delivery_run_completed": bool(
+            delivery_run and delivery_run["status"] == "completed"
+        ),
+        "delivery_run_gate_cleared": bool(
+            delivery_run and int(delivery_run["approval_required"] or 0) == 0
+        ),
+        "delivery_task_completed": bool(
+            delivery_task and delivery_task["status"] == "completed"
+        ),
+        "delivery_manifest_verified": bool(
+            delivery_manifest and delivery_manifest["status"] == "verified"
+        ),
+        "memory_first_status": first_status == 200,
+        "memory_first_outcome": first.get("outcome") == "updated",
+        "memory_replay_status": replay_status == 200,
+        "memory_replay_outcome": replay.get("outcome") == "unchanged",
+        "memory_cross_workspace_denied": foreign_status == 403,
+        "memory_approved": bool(memory and memory["review_status"] == "approved"),
+        "memory_evidence_counts": request_count == audit_count == event_count == 1,
+    }
+    failed_review_checks = [
+        name for name, passed in review_checks.items() if not passed
+    ]
+    if failed_review_checks:
+        raise RuntimeError(
+            f"{runtime} Human review evidence or replay/isolation contract "
+            f"failed checks: {','.join(failed_review_checks)}"
+        )
+    return {
+        "queue_visible": True,
+        "first_outcome": first.get("outcome"),
+        "replay_outcome": replay.get("outcome"),
+        "cross_workspace_status": foreign_status,
+        "request_count": request_count,
+        "human_audit_count": audit_count,
+        "human_runtime_event_count": event_count,
+        "delivery_approval_queue_visible": True,
+        "delivery_approval_first_outcome": approval_first.get("outcome"),
+        "delivery_approval_replay_outcome": approval_replay.get("outcome"),
+        "delivery_approval_request_count": approval_request_count,
+        "delivery_approval_audit_count": approval_audit_count,
+        "delivery_approval_runtime_event_count": approval_event_count,
+        "delivery_manifest_gate_passed": bool(
+            approval_first_status == 200
+            and delivery_manifest
+            and delivery_manifest["status"] == "verified"
+        ),
+        "delivery_manifest_gate_status": delivery_manifest["status"] if delivery_manifest else None,
+    }
+
+
+def prepare_manifest_authority_guard_fixture(
+    adapter: NodePgAdapter,
+    base_url: str,
+    runtime: str,
+    token: str,
+) -> dict[str, Any]:
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    agent_id = f"agt_real_{runtime}_review"
+    task_id = f"tsk_real_{runtime}_manifest_guard"
+    run_id = f"run_real_{runtime}_manifest_guard"
+    plan_id = f"plan_real_{runtime}_manifest_guard"
+    expected_steps = [
+        "READ",
+        "PLAN",
+        "RETRIEVE",
+        "COMPARE",
+        "EXECUTE",
+        "VERIFY",
+        "RECORD",
+    ]
+    adapter.execute(
+        """INSERT INTO tasks(
+            task_id,workspace_id,title,description,requester_id,owner_agent_id,collaborator_agent_ids,
+            status,priority,due_date,acceptance_criteria,risk_level,budget_limit_usd,created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,'[]','planned','medium',NULL,?,'low',0,?,?)""",
+        (
+            task_id,
+            WORKSPACE_ID,
+            f"{runtime} plan-evidence authority guard",
+            "Isolated negative fixture; no provider call or customer output.",
+            REQUESTER_ID,
+            agent_id,
+            "Selective evidence must fail closed.",
+            now,
+            now,
+        ),
+    )
+    adapter.commit()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-AgentOps-Workspace-Id": WORKSPACE_ID,
+        "X-AgentOps-Agent-Id": agent_id,
+    }
+    claim_status, claim_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/mis/agent-gateway/tasks/"
+        f"{urllib.parse.quote(task_id)}/claim",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "task_id": task_id,
+        },
+        headers=headers,
+    )
+    plan_status, plan_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/mis/agent-gateway/agent-plans",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "plan_id": plan_id,
+            "task_id": task_id,
+            "task_understanding": (
+                "Verify that complete run evidence is authoritative."
+            ),
+            "referenced_specs": [
+                "docs/COMMERCIAL_MIGRATION_CLEAN_ROOM_BREAKDOWN.md",
+            ],
+            "referenced_memories": [
+                "manifest-authority-isolated-fixture",
+            ],
+            "referenced_bases": ["agent-gateway-ledger"],
+            "proposed_files_to_change": [],
+            "risk_level": "low",
+            "approval_required": False,
+            "execution_steps": expected_steps,
+            "verification_plan": (
+                "Require every tool, evaluation, and artifact row."
+            ),
+            "rollback_plan": "Discard the isolated fixture schema.",
+            "status": "submitted",
+        },
+        headers=headers,
+    )
+    verify_status, verify_payload, _ = http_json(
+        "GET",
+        f"{base_url}/api/mis/agent-gateway/agent-plans/"
+        f"{urllib.parse.quote(plan_id)}/verify",
+        headers=headers,
+    )
+    verified_plan = (
+        verify_payload.get("agent_plan")
+        if isinstance(verify_payload, dict)
+        else None
+    )
+    verification = (
+        verify_payload.get("verification")
+        if isinstance(verify_payload, dict)
+        else None
+    )
+    plan_hash = str(
+        (verified_plan or {}).get("plan_hash")
+        if isinstance(verified_plan, dict)
+        else ""
+    )
+    run_status, run_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/mis/agent-gateway/runs/start",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "run_id": run_id,
+            "task_id": task_id,
+            "runtime_type": "codex",
+            "model_provider": "authority-fixture",
+            "model_name": "no-provider-call",
+            "agent_plan_id": plan_id,
+            "plan_hash": plan_hash,
+            "estimated_cost_usd": RUN_ESTIMATED_COST_USD,
+            "input_summary": "Isolated manifest authority fixture.",
+            "delegation_id": f"manifest_guard_{runtime}",
+        },
+        headers=headers,
+    )
+    heartbeat_status, heartbeat_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/mis/agent-gateway/runs/"
+        f"{urllib.parse.quote(run_id)}/heartbeat",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "task_id": task_id,
+            "status": "completed",
+            "output_summary": (
+                "Fixture run completed before evidence verification."
+            ),
+            "cost_usd": RUN_ESTIMATED_COST_USD,
+        },
+        headers=headers,
+    )
+    setup_checks = {
+        "claim": (
+            claim_status == 200
+            and isinstance(claim_payload, dict)
+            and claim_payload.get("outcome") == "claimed"
+        ),
+        "plan": (
+            plan_status == 201
+            and isinstance(plan_payload, dict)
+            and plan_payload.get("outcome") == "created"
+        ),
+        "verification": (
+            verify_status == 200
+            and isinstance(verification, dict)
+            and verification.get("pass") is True
+            and len(plan_hash) == 64
+        ),
+        "run": (
+            run_status == 201
+            and isinstance(run_payload, dict)
+            and run_payload.get("outcome") == "created"
+        ),
+        "heartbeat": (
+            heartbeat_status == 200
+            and isinstance(heartbeat_payload, dict)
+            and heartbeat_payload.get("outcome") == "updated"
+        ),
+    }
+    failed_setup_checks = [
+        name for name, passed in setup_checks.items() if not passed
+    ]
+    if failed_setup_checks:
+        raise RuntimeError(
+            f"{runtime} manifest authority fixture setup failed checks: "
+            f"{','.join(failed_setup_checks)}"
+        )
+    return {
+        "task_id": task_id,
+        "run_id": run_id,
+        "plan_id": plan_id,
+        "plan_hash": plan_hash,
+        "agent_id": agent_id,
+        "expected_steps": expected_steps,
+        "runtime_type": "codex",
+        "provider_call_performed": False,
+    }
+
+
+def verify_manifest_authority_guards(
+    adapter: NodePgAdapter,
+    base_url: str,
+    runtime: str,
+    token: str,
+    receipt: dict[str, str],
+) -> dict[str, Any]:
+    approved_run_id = receipt["run_id"]
+    approved_task_id = f"tsk_real_{runtime}_review"
+    agent_id = f"agt_real_{runtime}_review"
+    approved_manifest = adapter.fetchone(
+        """SELECT plan_id,expected_steps_json,tool_call_ids_json,evaluation_ids_json,artifact_ids_json
+        FROM plan_evidence_manifests WHERE manifest_id=? AND run_id=?""",
+        (receipt["manifest_id"], approved_run_id),
+    )
+    if not approved_manifest:
+        raise RuntimeError(f"{runtime} verified manifest disappeared before authority guard checks")
+    approved_expected_steps = json.loads(str(approved_manifest["expected_steps_json"] or "[]"))
+    approved_tool_call_ids = json.loads(str(approved_manifest["tool_call_ids_json"] or "[]"))
+    approved_evaluation_ids = json.loads(str(approved_manifest["evaluation_ids_json"] or "[]"))
+    approved_artifact_ids = json.loads(str(approved_manifest["artifact_ids_json"] or "[]"))
+    if not approved_expected_steps or not approved_tool_call_ids or not approved_evaluation_ids or not approved_artifact_ids:
+        raise RuntimeError(f"{runtime} verified manifest lacks declared evidence needed for authority guard checks")
+
+    guard = prepare_manifest_authority_guard_fixture(
+        adapter,
+        base_url,
+        runtime,
+        token,
+    )
+    run_id = str(guard["run_id"])
+    task_id = str(guard["task_id"])
+    expected_steps = list(guard["expected_steps"])
+    plan_id = str(guard["plan_id"])
+    tool_call_ids = [f"tc_real_{runtime}_guard_completed"]
+    evaluation_ids = [f"eval_real_{runtime}_guard_passed"]
+    artifact_ids = [f"art_real_{runtime}_guard_report"]
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-AgentOps-Workspace-Id": WORKSPACE_ID,
+    }
+    success_tool_status, success_tool_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/tool-calls",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "tool_call_id": tool_call_ids[0],
+            "run_id": run_id,
+            "task_id": task_id,
+            "tool_name": "agent_gateway.authority_guard",
+            "tool_category": "custom",
+            "risk_level": "low",
+            "status": "completed",
+            "args": {"contract": "plan_evidence_authority_negative_fixture_v1"},
+            "result_summary": "Completed evidence retained for selective-manifest testing.",
+        },
+        headers=headers,
+    )
+    success_evaluation_status, success_evaluation_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/evaluations/submit",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "evaluation_id": evaluation_ids[0],
+            "run_id": run_id,
+            "task_id": task_id,
+            "evaluator_type": "rule",
+            "score": 1,
+            "pass_fail": "pass",
+            "rubric": {"contract": "plan_evidence_authority_negative_fixture_v1"},
+            "notes": "Passing evidence retained for selective-manifest testing.",
+        },
+        headers=headers,
+    )
+    success_artifact_status, success_artifact_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/artifacts",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "artifact_id": artifact_ids[0],
+            "run_id": run_id,
+            "task_id": task_id,
+            "artifact_type": "report",
+            "title": "Manifest authority guard report",
+            "summary": "Bounded isolated fixture artifact.",
+        },
+        headers=headers,
+    )
+    baseline_manifest_id = f"pem_real_{runtime}_guard_verified"
+    baseline_status, baseline_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/plan-evidence-manifests",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "manifest_id": baseline_manifest_id,
+            "plan_id": plan_id,
+            "task_id": task_id,
+            "run_id": run_id,
+            "mismatch_policy": "block",
+            "expected_steps": expected_steps,
+            "tool_call_ids": tool_call_ids,
+            "evaluation_ids": evaluation_ids,
+            "artifact_ids": artifact_ids,
+            "verify_now": True,
+        },
+        headers=headers,
+    )
+    baseline_verification = baseline_payload.get("verification") if isinstance(baseline_payload, dict) else {}
+    if not (
+        success_tool_status == 201
+        and success_evaluation_status == 201
+        and success_artifact_status == 201
+        and baseline_status == 201
+        and isinstance(baseline_verification, dict)
+        and baseline_verification.get("pass") is True
+    ):
+        raise RuntimeError(
+            f"{runtime} isolated manifest authority baseline failed: "
+            f"tool={success_tool_status}:{success_tool_payload} "
+            f"evaluation={success_evaluation_status}:{success_evaluation_payload} "
+            f"artifact={success_artifact_status}:{success_artifact_payload} "
+            f"manifest={baseline_status}:{baseline_payload}"
+        )
+    manifest = {"plan_id": plan_id}
+    conflict_manifest_id = f"pem_real_{runtime}_expected_steps_conflict"
+    conflict_status, conflict_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/plan-evidence-manifests",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "manifest_id": conflict_manifest_id,
+            "plan_id": manifest["plan_id"],
+            "task_id": task_id,
+            "run_id": run_id,
+            "mismatch_policy": "block",
+            "expected_steps": ["READ", "OMIT_FAILED_EVIDENCE", "DELIVER"],
+            "tool_call_ids": tool_call_ids,
+            "evaluation_ids": evaluation_ids,
+            "artifact_ids": artifact_ids,
+            "verify_now": True,
+        },
+        headers=headers,
+    )
+    conflict_count = adapter.fetchone(
+        "SELECT COUNT(*) AS count FROM plan_evidence_manifests WHERE manifest_id=?",
+        (conflict_manifest_id,),
+    )
+    if (
+        conflict_status != 409
+        or not isinstance(conflict_payload, dict)
+        or conflict_payload.get("error") != "plan_evidence_expected_steps_conflict"
+        or int((conflict_count or {}).get("count") or 0) != 0
+    ):
+        raise RuntimeError(f"{runtime} manifest expected_steps override was not rejected before persistence")
+
+    audit_override_manifest_id = f"pem_real_{runtime}_audit_ids_override"
+    audit_override_status, audit_override_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/plan-evidence-manifests",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "manifest_id": audit_override_manifest_id,
+            "plan_id": manifest["plan_id"],
+            "task_id": task_id,
+            "run_id": run_id,
+            "mismatch_policy": "block",
+            "expected_steps": expected_steps,
+            "tool_call_ids": tool_call_ids,
+            "evaluation_ids": evaluation_ids,
+            "artifact_ids": artifact_ids,
+            "audit_ids": ["audit_caller_selected"],
+            "verify_now": True,
+        },
+        headers=headers,
+    )
+    audit_override_row = adapter.fetchone(
+        """SELECT status,audit_ids_json FROM plan_evidence_manifests
+        WHERE manifest_id=?""",
+        (audit_override_manifest_id,),
+    )
+    audit_override_manifest = (
+        audit_override_payload.get("manifest")
+        if isinstance(audit_override_payload, dict)
+        else {}
+    )
+    audit_override_verification = (
+        audit_override_payload.get("verification")
+        if isinstance(audit_override_payload, dict)
+        else {}
+    )
+    if not (
+        audit_override_status == 201
+        and isinstance(audit_override_manifest, dict)
+        and audit_override_manifest.get("audit_ids_json") == "[]"
+        and isinstance(audit_override_verification, dict)
+        and audit_override_verification.get("pass") is True
+        and audit_override_row
+        and audit_override_row.get("status") == "verified"
+        and audit_override_row.get("audit_ids_json") == "[]"
+        and "audit_caller_selected" not in json.dumps(
+            audit_override_payload,
+            sort_keys=True,
+        )
+    ):
+        raise RuntimeError(
+            f"{runtime} caller-selected audit IDs were not replaced by "
+            "server-derived audit evidence"
+        )
+
+    failed_tool_id = f"tc_real_{runtime}_omitted_failed"
+    failed_tool_status, failed_tool_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/tool-calls",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "tool_call_id": failed_tool_id,
+            "run_id": run_id,
+            "task_id": task_id,
+            "tool_name": "agent_gateway.negative_fixture",
+            "tool_category": "custom",
+            "risk_level": "low",
+            "status": "failed",
+            "args": {"contract": "plan_evidence_authority_negative_fixture_v1"},
+            "result_summary": "Intentional failed evidence retained for completeness verification.",
+        },
+        headers=headers,
+    )
+    failed_evaluation_id = f"eval_real_{runtime}_omitted_failed"
+    failed_evaluation_status, failed_evaluation_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/evaluations/submit",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "evaluation_id": failed_evaluation_id,
+            "run_id": run_id,
+            "task_id": task_id,
+            "evaluator_type": "rule",
+            "score": 0.1,
+            "pass_fail": "fail",
+            "rubric": {"contract": "plan_evidence_authority_negative_fixture_v1"},
+            "notes": "Intentional failed evaluation retained for completeness verification.",
+        },
+        headers=headers,
+    )
+    omitted_artifact_id = f"art_real_{runtime}_omitted_additional"
+    omitted_artifact_status, omitted_artifact_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/artifacts",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "artifact_id": omitted_artifact_id,
+            "run_id": run_id,
+            "task_id": task_id,
+            "artifact_type": "report",
+            "title": "Omitted additional guard artifact",
+            "summary": "Intentional additional artifact retained for completeness verification.",
+        },
+        headers=headers,
+    )
+    if failed_tool_status != 201 or failed_evaluation_status != 201 or omitted_artifact_status != 201:
+        raise RuntimeError(
+            f"{runtime} could not persist negative completeness fixtures: "
+            f"tool={failed_tool_status}:{failed_tool_payload} "
+            f"evaluation={failed_evaluation_status}:{failed_evaluation_payload} "
+            f"artifact={omitted_artifact_status}:{omitted_artifact_payload}"
+        )
+
+    selective_manifest_id = f"pem_real_{runtime}_selective_success_only"
+    selective_status, selective_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/plan-evidence-manifests",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "manifest_id": selective_manifest_id,
+            "plan_id": manifest["plan_id"],
+            "task_id": task_id,
+            "run_id": run_id,
+            "mismatch_policy": "block",
+            "expected_steps": expected_steps,
+            "tool_call_ids": tool_call_ids,
+            "evaluation_ids": evaluation_ids,
+            "artifact_ids": artifact_ids,
+            "verify_now": True,
+        },
+        headers=headers,
+    )
+    verification = selective_payload.get("verification") if isinstance(selective_payload, dict) else {}
+    verification = verification if isinstance(verification, dict) else {}
+    failed_checks = {
+        str(item.get("id"))
+        for item in verification.get("failed_checks") or []
+        if isinstance(item, dict)
+    }
+    required_failures = {
+        "tool_evidence_completed",
+        "tool_evidence_complete",
+        "evaluation_evidence_passed",
+        "evaluation_evidence_complete",
+        "artifact_evidence_complete",
+    }
+    persisted = adapter.fetchone(
+        "SELECT status FROM plan_evidence_manifests WHERE manifest_id=? AND run_id=?",
+        (selective_manifest_id, run_id),
+    )
+    if (
+        selective_status != 201
+        or verification.get("pass") is not False
+        or not required_failures.issubset(failed_checks)
+        or not persisted
+        or persisted.get("status") != "blocked"
+    ):
+        raise RuntimeError(f"{runtime} selective success-only evidence was not blocked against the complete run ledger")
+
+    blocked_approval_id = f"ap_customer_worker_delivery_blocked_{run_id}"
+    blocked_status, blocked_payload, _ = http_json(
+        "POST",
+        f"{base_url}/api/agent-gateway/approvals/request",
+        {
+            "workspace_id": WORKSPACE_ID,
+            "agent_id": agent_id,
+            "requested_by_agent_id": agent_id,
+            "approval_id": blocked_approval_id,
+            "approval_kind": "customer_delivery",
+            "decision": "pending",
+            "task_id": task_id,
+            "run_id": run_id,
+            "reason": "Customer delivery requires Human Owner review.",
+        },
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-AgentOps-Workspace-Id": WORKSPACE_ID,
+        },
+    )
+    blocked_approval_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM approvals
+        WHERE approval_id=? OR (run_id=? AND approval_kind='customer_delivery')""",
+        (blocked_approval_id, run_id),
+    ) or {"count": 0})["count"])
+    blocked_run = adapter.fetchone(
+        "SELECT status,approval_required FROM runs WHERE run_id=? AND workspace_id=?",
+        (run_id, WORKSPACE_ID),
+    )
+    blocked_task = adapter.fetchone(
+        "SELECT status FROM tasks WHERE task_id=? AND workspace_id=?",
+        (task_id, WORKSPACE_ID),
+    )
+    blocked_runtime_event_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM runtime_events
+        WHERE run_id=? AND event_type='approval.customer_delivery.request'""",
+        (run_id,),
+    ) or {"count": 0})["count"])
+    blocked_audit_count = int((adapter.fetchone(
+        """SELECT COUNT(*) AS count FROM audit_logs
+        WHERE workspace_id=? AND action='agent_gateway.customer_delivery_approval_request'
+          AND entity_id=?""",
+        (WORKSPACE_ID, blocked_approval_id),
+    ) or {"count": 0})["count"])
+    if not (
+        blocked_status == 409
+        and isinstance(blocked_payload, dict)
+        and blocked_payload.get("error") == "verified_plan_evidence_manifest_required"
+        and blocked_approval_count == 0
+        and blocked_run
+        and blocked_run["status"] == "completed"
+        and int(blocked_run["approval_required"] or 0) == 0
+        and blocked_task
+        and blocked_task["status"] == "completed"
+        and blocked_runtime_event_count == 0
+        and blocked_audit_count == 0
+    ):
+        raise RuntimeError(
+            f"{runtime} production customer-delivery request did not fail closed before persistence"
+        )
+
+    sealed_ids = {
+        "tool": f"tc_real_{runtime}_sealed_append",
+        "evaluation": f"eval_real_{runtime}_sealed_append",
+        "artifact": f"art_real_{runtime}_sealed_append",
+        "manifest": f"pem_real_{runtime}_sealed_append",
+    }
+    sealed_requests = [
+        (
+            "tool",
+            f"{base_url}/api/agent-gateway/tool-calls",
+            {
+                "workspace_id": WORKSPACE_ID,
+                "agent_id": agent_id,
+                "tool_call_id": sealed_ids["tool"],
+                "run_id": approved_run_id,
+                "task_id": approved_task_id,
+                "tool_name": "agent_gateway.sealed_append",
+                "tool_category": "custom",
+                "risk_level": "low",
+                "status": "failed",
+                "args": {"contract": "customer_delivery_evidence_seal_v1"},
+            },
+        ),
+        (
+            "evaluation",
+            f"{base_url}/api/agent-gateway/evaluations/submit",
+            {
+                "workspace_id": WORKSPACE_ID,
+                "agent_id": agent_id,
+                "evaluation_id": sealed_ids["evaluation"],
+                "run_id": approved_run_id,
+                "task_id": approved_task_id,
+                "evaluator_type": "rule",
+                "score": 0,
+                "pass_fail": "fail",
+                "rubric": {"contract": "customer_delivery_evidence_seal_v1"},
+            },
+        ),
+        (
+            "artifact",
+            f"{base_url}/api/agent-gateway/artifacts",
+            {
+                "workspace_id": WORKSPACE_ID,
+                "agent_id": agent_id,
+                "artifact_id": sealed_ids["artifact"],
+                "run_id": approved_run_id,
+                "task_id": approved_task_id,
+                "artifact_type": "report",
+                "title": "Forbidden post-delivery artifact",
+            },
+        ),
+        (
+            "manifest",
+            f"{base_url}/api/agent-gateway/plan-evidence-manifests",
+            {
+                "workspace_id": WORKSPACE_ID,
+                "agent_id": agent_id,
+                "manifest_id": sealed_ids["manifest"],
+                "plan_id": approved_manifest["plan_id"],
+                "task_id": approved_task_id,
+                "run_id": approved_run_id,
+                "mismatch_policy": "block",
+                "expected_steps": approved_expected_steps,
+                "tool_call_ids": approved_tool_call_ids,
+                "evaluation_ids": approved_evaluation_ids,
+                "artifact_ids": approved_artifact_ids,
+                "verify_now": True,
+            },
+        ),
+    ]
+    sealed_statuses: dict[str, int] = {}
+    for kind, route, payload in sealed_requests:
+        status, response_payload, _ = http_json("POST", route, payload, headers=headers)
+        sealed_statuses[kind] = status
+        if status != 409 or response_payload.get("error") != "customer_delivery_evidence_sealed":
+            raise RuntimeError(f"{runtime} approved customer-delivery {kind} evidence was not sealed")
+    sealed_row_counts = {
+        "tool": int((adapter.fetchone("SELECT COUNT(*) AS count FROM tool_calls WHERE tool_call_id=?", (sealed_ids["tool"],)) or {"count": 0})["count"]),
+        "evaluation": int((adapter.fetchone("SELECT COUNT(*) AS count FROM evaluations WHERE evaluation_id=?", (sealed_ids["evaluation"],)) or {"count": 0})["count"]),
+        "artifact": int((adapter.fetchone("SELECT COUNT(*) AS count FROM artifacts WHERE artifact_id=?", (sealed_ids["artifact"],)) or {"count": 0})["count"]),
+        "manifest": int((adapter.fetchone("SELECT COUNT(*) AS count FROM plan_evidence_manifests WHERE manifest_id=?", (sealed_ids["manifest"],)) or {"count": 0})["count"]),
+    }
+    if any(sealed_row_counts.values()):
+        raise RuntimeError(f"{runtime} post-delivery evidence seal persisted rejected rows")
+    return {
+        "expected_steps_server_derived": True,
+        "complete_run_tool_evidence_enforced": True,
+        "complete_run_evaluation_evidence_enforced": True,
+        "complete_run_artifact_evidence_enforced": True,
+        "audit_evidence_server_derived": True,
+        "selective_manifest_status": "blocked",
+        "failed_checks": sorted(required_failures),
+        "customer_delivery_revalidation_status": blocked_status,
+        "customer_delivery_revalidation_blocked": True,
+        "blocked_customer_delivery_request_persisted": False,
+        "approved_customer_delivery_evidence_sealed": True,
+        "sealed_evidence_statuses": sealed_statuses,
+    }
+
+
+def main() -> int:
+    global ROOT, NEXT_APP
+
+    parser = argparse.ArgumentParser(description="Run real Hermes/OpenClaw Worker -> Human Review through Next/Postgres only.")
+    parser.add_argument(
+        "--postgres-dsn-file",
+        required=True,
+        help="Absolute owner-only file containing the external Postgres URL.",
+    )
+    parser.add_argument("--adapter", action="append", choices=["hermes", "openclaw"], default=[])
+    parser.add_argument(
+        "--worker-implementation",
+        choices=["typescript"],
+        default="typescript",
+        help="Commercial provider execution is owned exclusively by the TypeScript Worker.",
+    )
+    parser.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642"))
+    parser.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", shutil.which("openclaw") or "/opt/homebrew/bin/openclaw"))
+    parser.add_argument(
+        "--source-root",
+        default=str(DEFAULT_SOURCE_ROOT),
+        help="Candidate Git worktree root; defaults to the checkout containing this trusted harness.",
+    )
+    args = parser.parse_args()
+
+    try:
+        (
+            args.postgres_dsn,
+            postgres_dsn_file_identity,
+        ) = _read_postgres_dsn_file_with_identity(args.postgres_dsn_file)
+    except Exception as exc:
+        result({
+            "ok": False,
+            "contract": CONTRACT_ID,
+            "error_type": exc.__class__.__name__,
+            "error": str(exc),
+            "next_runtime_mode": "production_start",
+            "python_api_started": False,
+            "worker_implementation": args.worker_implementation,
+            "python_worker_started": False,
+            "postgres_dsn_source": "owner_only_file",
+            "postgres_dsn_argv_omitted": True,
+            "postgres_dsn_input_boundary_verified": False,
+            "credentials_omitted": True,
+        }, [])
+        return 1
+
+    try:
+        ROOT = resolve_source_root(args.source_root)
+    except Exception as exc:
+        result({
+            "ok": False,
+            "contract": CONTRACT_ID,
+            "error_type": exc.__class__.__name__,
+            "error": str(exc),
+            "next_runtime_mode": "production_start",
+            "python_api_started": False,
+            "worker_implementation": args.worker_implementation,
+            "python_worker_started": False,
+            "credentials_omitted": True,
+        }, [])
+        return 1
+    NEXT_APP = ROOT / "ui" / "next-app"
+
+    adapters = list(dict.fromkeys(args.adapter or ["hermes", "openclaw"]))
+    node = shutil.which("node")
+    npm = shutil.which("npm")
+    openclaw_bin_sha256 = ""
+    if not node or not npm or not (NEXT_APP / "node_modules" / "next").exists():
+        result({
+            "ok": False,
+            "contract": CONTRACT_ID,
+            "error": "next_runtime_unavailable",
+            "next_runtime_mode": "production_start",
+            "worker_implementation": args.worker_implementation,
+        }, [])
+        return 1
+    if "openclaw" in adapters:
+        try:
+            openclaw_path = Path(args.openclaw_bin).resolve(strict=True)
+            if not stat.S_ISREG(openclaw_path.stat().st_mode):
+                raise RuntimeError("openclaw_binary_regular_file_required")
+            args.openclaw_bin = str(openclaw_path)
+            openclaw_bin_sha256 = file_sha256(openclaw_path)
+        except Exception as exc:
+            result({
+                "ok": False,
+                "contract": CONTRACT_ID,
+                "error": "openclaw_binary_unavailable_or_invalid",
+                "error_type": exc.__class__.__name__,
+                "next_runtime_mode": "production_start",
+                "worker_implementation": args.worker_implementation,
+            }, [str(args.openclaw_bin)])
+            return 1
+
+    tracked_before = ""
+    tracked_after_build = ""
+    next_artifact_sha256 = ""
+    next_artifact_before_start_sha256 = ""
+    next_artifact_after_acceptance_sha256 = ""
+    next_artifact_after_cleanup_sha256 = ""
+    source_commit = ""
+    tracked_worktree_clean = False
+    try:
+        assert_harness_safety_helper_contracts()
+        source_commit, tracked_worktree_clean = git_source_state(ROOT)
+        if not tracked_worktree_clean:
+            raise RuntimeError("candidate_source_worktree_not_clean")
+        tracked_before = tracked_worktree_fingerprint(ROOT)
+        built = run_next_build(npm)
+        tracked_after_build = tracked_worktree_fingerprint(ROOT)
+        if tracked_after_build != tracked_before:
+            raise RuntimeError(
+                "next_build_modified_tracked_source:"
+                f"before={tracked_before}:after={tracked_after_build}"
+            )
+        if built.returncode != 0:
+            raise RuntimeError(
+                "Next production build failed "
+                f"(code={built.returncode}): {(built.stdout or '')[-1200:]} {(built.stderr or '')[-1200:]}"
+            )
+        next_artifact_sha256 = stable_next_release_artifact_sha256(
+            NEXT_APP / ".next"
+        )
+        tracked_after_prepare = tracked_worktree_fingerprint(ROOT)
+        if tracked_after_prepare != tracked_before:
+            raise RuntimeError(
+                "acceptance_preparation_modified_tracked_source:"
+                f"before={tracked_before}:after={tracked_after_prepare}"
+            )
+        source_commit_after_build, clean_after_build = git_source_state(ROOT)
+        if source_commit_after_build != source_commit or not clean_after_build:
+            raise RuntimeError("candidate_source_identity_changed_during_build")
+        assert_postgres_dsn_file_unchanged(
+            args.postgres_dsn_file,
+            args.postgres_dsn,
+            postgres_dsn_file_identity,
+        )
+    except Exception as exc:
+        original_traceback = traceback.format_exc()
+        source_commit_after_failure = ""
+        clean_after_failure = False
+        try:
+            tracked_after_failure = tracked_worktree_fingerprint(ROOT) if tracked_before else ""
+        except Exception:
+            tracked_after_failure = ""
+        try:
+            source_commit_after_failure, clean_after_failure = git_source_state(
+                ROOT
+            )
+        except Exception:
+            pass
+        source_identity_changed = (
+            not source_commit_after_failure
+            or source_commit_after_failure != source_commit
+            or (tracked_worktree_clean and not clean_after_failure)
+        )
+        mutation_detected = (
+            source_identity_changed
+            or (
+                bool(tracked_before)
+                and (
+                    not tracked_after_failure
+                    or tracked_after_failure != tracked_before
+                )
+            )
+        )
+        result({
+            "ok": False,
+            "contract": CONTRACT_ID,
+            "error_type": "RuntimeError" if mutation_detected else exc.__class__.__name__,
+            "error": (
+                "tracked_worktree_modified_or_unverifiable_during_next_build_or_preparation"
+                if mutation_detected
+                else str(exc)
+            ),
+            "traceback": original_traceback[-4000:],
+            "next_runtime_mode": "production_start",
+            "next_artifact_sha256": next_artifact_sha256 or None,
+            "next_build_completed": bool(next_artifact_sha256),
+            "source_commit": source_commit or None,
+            "tracked_worktree_clean": clean_after_failure,
+            "tracked_worktree_fingerprint_before": tracked_before or None,
+            "tracked_worktree_fingerprint_after_build": tracked_after_build or None,
+            "tracked_worktree_fingerprint_after_acceptance": tracked_after_failure or None,
+            "tracked_worktree_unchanged": bool(tracked_before) and not mutation_detected,
+            "python_api_started": False,
+            "worker_implementation": args.worker_implementation,
+            "python_worker_started": False,
+            "real_runtime_execution_performed": False,
+            "credentials_omitted": True,
+        }, [str(ROOT)])
+        return 1
+
+    runtime_dependency_identity: dict[str, str] = {}
+    if "hermes" in adapters:
+        runtime_dependency_identity["hermes_endpoint_sha256"] = hashlib.sha256(
+            args.hermes_gateway_url.encode("utf-8")
+        ).hexdigest()
+    if "openclaw" in adapters:
+        runtime_dependency_identity["openclaw_binary_sha256"] = openclaw_bin_sha256
+        runtime_dependency_identity["openclaw_provider_entrypoint_sha256"] = file_sha256(
+            ROOT / "deploy" / "byoc" / "openclaw-provider-entrypoint.mjs"
+        )
+
+    fixture_suffix = secrets.token_hex(8)
+    schema = f"agentops_real_worker_review_{fixture_suffix}"
+    runtime_api_schema = f"agentops_real_runtime_api_{fixture_suffix}"
+    runtime_role = f"agentops_real_runtime_{fixture_suffix}"
+    entitlement_admin_role = f"agentops_real_admin_{fixture_suffix}"
+    function_owner_role = derived_postgres_function_owner_role(
+        schema,
+        runtime_api_schema,
+    )
+    migrator_dsn = dsn_with_search_path(args.postgres_dsn, schema)
+    runtime_password = "Runtime-" + secrets.token_urlsafe(24)
+    entitlement_admin_password = "Admin-" + secrets.token_urlsafe(24)
+    runtime_dsn = dsn_with_credentials(
+        migrator_dsn,
+        runtime_role,
+        runtime_password,
+    )
+    entitlement_admin_dsn = dsn_with_search_path_sequence(
+        dsn_with_credentials(
+            args.postgres_dsn,
+            entitlement_admin_role,
+            entitlement_admin_password,
+        ),
+        ("pg_catalog", runtime_api_schema, "pg_temp"),
+    )
+    owner_password = "Owner-" + secrets.token_urlsafe(24)
+    hmac_key = secrets.token_urlsafe(48)
+    tokens = {
+        runtime: f"contract_real_token_{runtime}_{secrets.token_urlsafe(24)}"
+        for runtime in adapters
+    }
+    sensitive = [
+        args.postgres_dsn,
+        runtime_dsn,
+        args.hermes_gateway_url,
+        args.openclaw_bin,
+        str(ROOT),
+        migrator_dsn,
+        entitlement_admin_dsn,
+        owner_password,
+        runtime_password,
+        entitlement_admin_password,
+        hmac_key,
+        *tokens.values(),
+    ]
+    # Runtime locations are redacted from diagnostics, while only credentials and
+    # protected task input are forbidden from the bounded persisted evidence.
+    persisted_sensitive = [
+        args.postgres_dsn,
+        migrator_dsn,
+        runtime_dsn,
+        entitlement_admin_dsn,
+        owner_password,
+        runtime_password,
+        entitlement_admin_password,
+        hmac_key,
+        *tokens.values(),
+    ]
+    credential_roots: list[Path] = []
+    try:
+        base_dsn_root, base_dsn_path = create_isolated_secret(
+            "postgres-base-dsn", args.postgres_dsn
+        )
+        credential_roots.append(base_dsn_root)
+        migrator_dsn_root, migrator_dsn_path = create_isolated_secret(
+            "postgres-migrator-dsn", migrator_dsn
+        )
+        credential_roots.append(migrator_dsn_root)
+        runtime_dsn_root, runtime_dsn_path = create_isolated_secret(
+            "postgres-runtime-dsn", runtime_dsn
+        )
+        credential_roots.append(runtime_dsn_root)
+        entitlement_admin_dsn_root, entitlement_admin_dsn_path = (
+            create_isolated_secret(
+                "postgres-entitlement-admin-dsn",
+                entitlement_admin_dsn,
+            )
+        )
+        credential_roots.append(entitlement_admin_dsn_root)
+        runtime_password_root, runtime_password_path = create_isolated_secret(
+            "postgres-runtime-password", runtime_password
+        )
+        credential_roots.append(runtime_password_root)
+        (
+            entitlement_admin_password_root,
+            entitlement_admin_password_path,
+        ) = create_isolated_secret(
+            "postgres-entitlement-admin-password",
+            entitlement_admin_password,
+        )
+        credential_roots.append(entitlement_admin_password_root)
+        owner_password_root, owner_password_path = create_isolated_secret(
+            "entitlement-operator-password", owner_password
+        )
+        credential_roots.append(owner_password_root)
+        hmac_key_root, hmac_key_path = create_isolated_secret(
+            "human-session-hmac-key", hmac_key
+        )
+        credential_roots.append(hmac_key_root)
+    except Exception:
+        try:
+            remove_isolated_secrets(credential_roots)
+        except Exception:
+            pass
+        raise
+    sensitive.extend([
+        *(str(root) for root in credential_roots),
+        str(base_dsn_path),
+        str(migrator_dsn_path),
+        str(runtime_dsn_path),
+        str(entitlement_admin_dsn_path),
+        str(runtime_password_path),
+        str(entitlement_admin_password_path),
+        str(owner_password_path),
+        str(hmac_key_path),
+    ])
+    setup: NodePgAdapter | None = None
+    adapter: NodePgAdapter | None = None
+    next_proc: subprocess.Popen[str] | None = None
+    worker_receipts: dict[str, Any] = {}
+    provider_service_receipts: dict[str, Any] = {}
+    human_receipts: dict[str, Any] = {}
+    manifest_authority_receipts: dict[str, Any] = {}
+    entitlement_admin_receipt: dict[str, Any] = {}
+    cleanup_receipt: dict[str, bool] = {}
+    process_stop_receipt: dict[str, Any] = {}
+    entitlement_admin_forbidden_operations: dict[str, str] = {}
+    tracked_after_acceptance = ""
+    worker_process_started = False
+    fixture_cleanup_complete = False
+    credential_roots_removed = False
+    try:
+        setup = NodePgAdapter(base_dsn_path, node)
+        setup.execute(f'CREATE SCHEMA "{schema}"')
+        setup.commit()
+        setup.close()
+        setup = None
+
+        role_environment = {
+            "AGENTOPS_DEPLOYMENT_MODE": "production",
+            "AGENTOPS_CONTROL_PLANE_MODE": "postgres",
+            "AGENTOPS_POSTGRES_MIGRATOR_DSN_FILE": str(migrator_dsn_path),
+            "AGENTOPS_POSTGRES_SCHEMA": schema,
+            "AGENTOPS_POSTGRES_RUNTIME_API_SCHEMA": runtime_api_schema,
+            "AGENTOPS_POSTGRES_RUNTIME_ROLE": runtime_role,
+            "AGENTOPS_POSTGRES_RUNTIME_PASSWORD_FILE": str(runtime_password_path),
+            "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_ROLE":
+                entitlement_admin_role,
+            "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_PASSWORD_FILE":
+                str(entitlement_admin_password_path),
+        }
+        migrated = run_npm(
+            npm,
+            migrator_dsn_path,
+            ["migrate:postgres"],
+            environment=role_environment,
+        )
+        if migrated.returncode != 0:
+            raise RuntimeError(redact(f"Commercial schema migration failed: {migrated.stdout} {migrated.stderr}", sensitive))
+        remove_isolated_secrets([
+            runtime_password_root,
+            entitlement_admin_password_root,
+        ])
+        runtime_environment = {
+            "AGENTOPS_DEPLOYMENT_MODE": "production",
+            "AGENTOPS_CONTROL_PLANE_MODE": "postgres",
+            "AGENTOPS_POSTGRES_SCHEMA": schema,
+            "AGENTOPS_POSTGRES_RUNTIME_API_SCHEMA": runtime_api_schema,
+            "AGENTOPS_POSTGRES_RUNTIME_ROLE": runtime_role,
+        }
+        checked = run_npm(
+            npm,
+            runtime_dsn_path,
+            ["check:postgres-schema"],
+            environment=runtime_environment,
+        )
+        if checked.returncode != 0:
+            raise RuntimeError(redact(
+                f"Restricted runtime schema check failed: "
+                f"{checked.stdout} {checked.stderr}",
+                sensitive,
+            ))
+        try:
+            checked_receipt = json.loads(checked.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "restricted_runtime_schema_receipt_invalid"
+            ) from exc
+        if (
+            checked_receipt.get("ok") is not True
+            or checked_receipt.get("operation") != "check"
+            or checked_receipt.get("database_role_boundary_verified")
+                is not True
+        ):
+            raise RuntimeError("restricted_runtime_role_boundary_unverified")
+        adapter = NodePgAdapter(runtime_dsn_path, node)
+        seed_foundation(adapter)
+        adapter.close()
+        adapter = None
+        bootstrapped = run_npm(
+            npm,
+            migrator_dsn_path,
+            [
+                "bootstrap:owner",
+                "--",
+                "--workspace-id",
+                WORKSPACE_ID,
+                "--username",
+                OWNER_USERNAME,
+                "--display-name",
+                "Real Worker Review Owner",
+                "--password-stdin",
+            ],
+            stdin=f"{owner_password}\n",
+            environment=runtime_environment,
+        )
+        if bootstrapped.returncode != 0:
+            raise RuntimeError(redact(f"Owner bootstrap failed: {bootstrapped.stdout} {bootstrapped.stderr}", sensitive))
+        try:
+            bootstrap_receipt = json.loads(bootstrapped.stdout or "{}")
+            owner_user_id = str(
+                (bootstrap_receipt.get("user") or {}).get("user_id") or ""
+            )
+        except (AttributeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("owner_bootstrap_receipt_invalid") from exc
+        if (
+            bootstrap_receipt.get("ok") is not True
+            or not owner_user_id
+        ):
+            raise RuntimeError("owner_bootstrap_identity_unverified")
+
+        next_artifact_before_start_sha256 = stable_next_release_artifact_sha256(
+            NEXT_APP / ".next"
+        )
+        if next_artifact_before_start_sha256 != next_artifact_sha256:
+            raise RuntimeError("next_artifact_changed_before_start")
+        port = free_port()
+        base_url = f"http://127.0.0.1:{port}"
+        public_origin = f"https://127.0.0.1:{port}"
+        env = environment_without_privileged_control_plane_credentials()
+        env.update({
+            "AGENTOPS_DEPLOYMENT_MODE": "production",
+            "AGENTOPS_CONTROL_PLANE_MODE": "postgres",
+            "AGENTOPS_TS_CONTROL_PLANE_MODE": "postgres",
+            "AGENTOPS_POSTGRES_DSN_FILE": str(runtime_dsn_path),
+            "AGENTOPS_POSTGRES_SCHEMA": schema,
+            "AGENTOPS_POSTGRES_RUNTIME_API_SCHEMA": runtime_api_schema,
+            "AGENTOPS_POSTGRES_RUNTIME_ROLE": runtime_role,
+            "AGENTOPS_POSTGRES_SSL": "0",
+            "AGENTOPS_API_BASE": f"http://127.0.0.1:{free_port()}/api",
+            "AGENTOPS_ALLOWED_ORIGINS": public_origin,
+            "AGENTOPS_HUMAN_SESSION_HMAC_KEY_FILE": str(hmac_key_path),
+            "NEXT_TELEMETRY_DISABLED": "1",
+            "NODE_ENV": "production",
+        })
+        assert_direct_credentials_omitted(env)
+        next_proc = subprocess.Popen(
+            [
+                node,
+                str(
+                    NEXT_APP
+                    / "node_modules"
+                    / "next"
+                    / "dist"
+                    / "bin"
+                    / "next"
+                ),
+                "start",
+                "-p",
+                str(port),
+            ],
+            cwd=NEXT_APP,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        wait_for_next(base_url, next_proc, sensitive)
+
+        entitlement_now = dt.datetime.now(dt.timezone.utc)
+        effective_at = (
+            entitlement_now - dt.timedelta(minutes=1)
+        ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        expires_at = (
+            entitlement_now + dt.timedelta(hours=8)
+        ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        entitlement_admin_environment = {
+            "AGENTOPS_DEPLOYMENT_MODE": "production",
+            "AGENTOPS_CONTROL_PLANE_MODE": "postgres",
+            "AGENTOPS_POSTGRES_SCHEMA": schema,
+            "AGENTOPS_POSTGRES_RUNTIME_API_SCHEMA": runtime_api_schema,
+            "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_ROLE":
+                entitlement_admin_role,
+            "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_DSN_FILE":
+                str(entitlement_admin_dsn_path),
+            "AGENTOPS_ENTITLEMENT_CONTROL_PLANE_URL": base_url,
+            "AGENTOPS_ENTITLEMENT_CONTROL_PLANE_ORIGIN": public_origin,
+            "AGENTOPS_ENTITLEMENT_OPERATOR_USERNAME": OWNER_USERNAME,
+            "AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD_FILE":
+                str(owner_password_path),
+        }
+        assert_entitlement_admin_environment_isolated(
+            entitlement_admin_environment
+        )
+        configured = run_npm(
+            npm,
+            None,
+            [
+                "configure:workspace-entitlement",
+                "--",
+                "--workspace-id",
+                WORKSPACE_ID,
+                "--operator-user-id",
+                owner_user_id,
+                "--edition",
+                "enterprise_byoc",
+                "--status",
+                "active",
+                "--capabilities",
+                "enrollment_issue,session_issue,run_start",
+                "--max-agents",
+                str(max(10, len(SCOPES))),
+                "--max-active-enrollments",
+                str(max(10, len(SCOPES))),
+                "--max-active-sessions-per-agent",
+                "10",
+                "--max-concurrent-runs",
+                "10",
+                "--max-monthly-runs",
+                "1000",
+                "--max-monthly-cost-usd",
+                "1000.000000",
+                "--effective-at",
+                effective_at,
+                "--expires-at",
+                expires_at,
+                "--confirm",
+                "--expect-absent",
+            ],
+            environment=entitlement_admin_environment,
+        )
+        if configured.returncode != 0:
+            raise RuntimeError(redact(
+                "Entitlement administration failed: "
+                f"{configured.stdout} {configured.stderr}",
+                sensitive,
+            ))
+        try:
+            entitlement_admin_receipt = json.loads(
+                configured.stdout or "{}"
+            )
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "entitlement_administration_receipt_invalid"
+            ) from exc
+        if not isinstance(entitlement_admin_receipt, dict):
+            raise RuntimeError("entitlement_administration_receipt_invalid")
+        assert_entitlement_admin_receipt_safe(
+            entitlement_admin_receipt,
+            configured.stdout,
+            configured.stderr,
+        )
+
+        challenge_persistence = NodePgAdapter(
+            migrator_dsn_path,
+            node,
+        ).fetchone(
+            """SELECT
+              count(*)::integer AS challenge_count,
+              bool_and(token_sha256 ~ '^[a-f0-9]{64}$')
+                AS token_hash_only,
+              bool_and(
+                position(
+                  'agentops_human_session='
+                  IN to_jsonb(entitlement_admin_challenges)::text
+                )=0
+                AND position(
+                  '"challenge_token"'
+                  IN to_jsonb(entitlement_admin_challenges)::text
+                )=0
+                AND position(
+                  '"csrf_token"'
+                  IN to_jsonb(entitlement_admin_challenges)::text
+                )=0
+              ) AS raw_auth_payload_omitted,
+              NOT EXISTS(
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema=?
+                  AND table_name='entitlement_admin_challenges'
+                  AND column_name IN (
+                    'challenge_token','cookie','csrf','csrf_token'
+                  )
+              ) AS raw_auth_columns_omitted
+            FROM entitlement_admin_challenges
+            WHERE workspace_id=? AND operator_user_id=?""",
+            (schema, WORKSPACE_ID, owner_user_id),
+        )
+        if challenge_persistence != {
+            "challenge_count": 1,
+            "token_hash_only": True,
+            "raw_auth_payload_omitted": True,
+            "raw_auth_columns_omitted": True,
+        }:
+            raise RuntimeError(
+                "entitlement_challenge_persistence_boundary_unverified"
+            )
+        remove_isolated_secrets([migrator_dsn_root])
+
+        admin_adapter = NodePgAdapter(entitlement_admin_dsn_path, node)
+        admin_search_path = admin_adapter.fetchone(
+            "SELECT current_setting('search_path') AS search_path"
+        )
+        normalized_admin_search_path = [
+            part.strip().strip('"')
+            for part in str(
+                (admin_search_path or {}).get("search_path") or ""
+            ).split(",")
+            if part.strip()
+        ]
+        if normalized_admin_search_path != [
+            "pg_catalog",
+            runtime_api_schema,
+            "pg_temp",
+        ]:
+            raise RuntimeError("entitlement_admin_search_path_unverified")
+
+        executable_application_functions = admin_adapter.fetchall(
+            """SELECT
+              namespace_row.nspname AS schema_name,
+              procedure_row.proname AS function_name,
+              oidvectortypes(procedure_row.proargtypes)
+                AS identity_arguments
+            FROM pg_proc AS procedure_row
+            JOIN pg_namespace AS namespace_row
+              ON namespace_row.oid=procedure_row.pronamespace
+            WHERE namespace_row.nspname IN (?,?)
+              AND has_function_privilege(
+                current_user,procedure_row.oid,'EXECUTE'
+              )
+            ORDER BY
+              namespace_row.nspname,
+              procedure_row.proname,
+              oidvectortypes(procedure_row.proargtypes)""",
+            (schema, runtime_api_schema),
+        )
+        if executable_application_functions != [
+            {
+                "schema_name": runtime_api_schema,
+                "function_name":
+                    "agentops_apply_workspace_entitlement_v11",
+                "identity_arguments": "text, text, jsonb",
+            },
+            {
+                "schema_name": runtime_api_schema,
+                "function_name":
+                    "agentops_plan_workspace_entitlement_v11",
+                "identity_arguments": "text, text, jsonb",
+            },
+        ]:
+            raise RuntimeError(
+                "entitlement_admin_execute_allowlist_unverified"
+            )
+        entitlement_admin_forbidden_operations["issue"] = (
+            assert_postgres_statement_forbidden(
+                admin_adapter,
+                f'SELECT "{runtime_api_schema}".'
+                "agentops_issue_workspace_entitlement_admin_challenge_v11("
+                "NULL::text,NULL::text,NULL::text,NULL::text,"
+                "NULL::jsonb,NULL::text,NULL::interval)",
+            )
+        )
+
+        application_tables = admin_adapter.fetchall(
+            """SELECT class_row.relname AS table_name
+            FROM pg_class AS class_row
+            JOIN pg_namespace AS namespace_row
+              ON namespace_row.oid=class_row.relnamespace
+            WHERE namespace_row.nspname=?
+              AND class_row.relkind IN ('r','p')
+            ORDER BY class_row.relname""",
+            (schema,),
+        )
+        if not application_tables:
+            raise RuntimeError("entitlement_admin_app_table_matrix_empty")
+        for table in application_tables:
+            table_name = str(table.get("table_name") or "")
+            quoted_table = table_name.replace('"', '""')
+            assert_postgres_statement_forbidden(
+                admin_adapter,
+                f'SELECT 1 FROM "{schema}"."{quoted_table}" LIMIT 0',
+            )
+        entitlement_admin_forbidden_operations["select"] = "42501"
+
+        for operation, forbidden_sql, script in (
+            (
+                "insert",
+                f'INSERT INTO "{schema}".runs(run_id) SELECT '
+                "'agentops_forbidden_insert_probe' WHERE FALSE",
+                False,
+            ),
+            (
+                "update",
+                f'UPDATE "{schema}".run_cost_reservations '
+                "SET state=state WHERE FALSE",
+                False,
+            ),
+            (
+                "delete",
+                f'DELETE FROM "{schema}".workspace_memberships WHERE FALSE',
+                False,
+            ),
+            (
+                "truncate",
+                f'BEGIN; TRUNCATE TABLE "{schema}".'
+                "agentops_schema_migrations; ROLLBACK;",
+                True,
+            ),
+            (
+                "ddl",
+                f'BEGIN; CREATE TABLE "{schema}".'
+                "agentops_forbidden_admin_ddl_probe(id integer); ROLLBACK;",
+                True,
+            ),
+        ):
+            entitlement_admin_forbidden_operations[operation] = (
+                assert_postgres_statement_forbidden(
+                    admin_adapter,
+                    forbidden_sql,
+                    script=script,
+                )
+            )
+        if set(entitlement_admin_forbidden_operations) != {
+            "select",
+            "insert",
+            "update",
+            "delete",
+            "truncate",
+            "ddl",
+            "issue",
+        } or set(entitlement_admin_forbidden_operations.values()) != {"42501"}:
+            raise RuntimeError(
+                "entitlement_admin_forbidden_operation_matrix_unverified"
+            )
+        remove_isolated_secrets([
+            entitlement_admin_dsn_root,
+            owner_password_root,
+        ])
+
+        adapter = NodePgAdapter(runtime_dsn_path, node)
+        seed_workers(adapter, adapters, tokens)
+
+        for runtime in adapters:
+            worker_process_started = True
+            worker_payload, provider_service_receipt = run_worker(
+                runtime,
+                base_url,
+                tokens[runtime],
+                args.hermes_gateway_url,
+                args.openclaw_bin,
+                openclaw_bin_sha256,
+                sensitive,
+                args.worker_implementation,
+                node,
+            )
+            if provider_service_receipt is not None:
+                provider_service_receipts[runtime] = provider_service_receipt
+            worker_receipts[runtime] = check_runtime_evidence(
+                adapter,
+                runtime,
+                worker_payload,
+                persisted_sensitive,
+            )
+
+        cookie, csrf = login_owner(base_url, public_origin, owner_password)
+        sensitive.extend([cookie, csrf])
+        for runtime in adapters:
+            human_receipts[runtime] = human_review(
+                adapter,
+                base_url,
+                public_origin,
+                cookie,
+                csrf,
+                runtime,
+                worker_receipts[runtime],
+            )
+        for runtime in adapters:
+            manifest_authority_receipts[runtime] = verify_manifest_authority_guards(
+                adapter,
+                base_url,
+                runtime,
+                tokens[runtime],
+                worker_receipts[runtime],
+            )
+
+        process_stop_receipt = stop_process(next_proc)
+        if (
+            process_stop_receipt.get("stopped") is not True
+            or process_stop_receipt.get("errors")
+        ):
+            raise RuntimeError("next_process_stop_failed")
+        next_proc = None
+        next_artifact_after_acceptance_sha256 = stable_next_release_artifact_sha256(
+            NEXT_APP / ".next"
+        )
+        if next_artifact_after_acceptance_sha256 != next_artifact_sha256:
+            raise RuntimeError("next_artifact_changed_during_acceptance")
+        if adapter is not None:
+            try:
+                adapter.close()
+            except Exception:
+                pass
+            adapter = None
+        cleanup_receipt = cleanup_postgres_fixture(
+            base_dsn_path,
+            node,
+            schema,
+            runtime_api_schema,
+            runtime_role,
+            entitlement_admin_role,
+            function_owner_role,
+        )
+        fixture_cleanup_complete = True
+        next_artifact_after_cleanup_sha256 = stable_next_release_artifact_sha256(
+            NEXT_APP / ".next"
+        )
+        if next_artifact_after_cleanup_sha256 != next_artifact_sha256:
+            raise RuntimeError("next_artifact_changed_during_cleanup")
+        tracked_after_acceptance = tracked_worktree_fingerprint(ROOT)
+        if tracked_after_acceptance != tracked_before:
+            raise RuntimeError(
+                "acceptance_modified_tracked_source:"
+                f"before={tracked_before}:after={tracked_after_acceptance}"
+            )
+        source_commit_after_acceptance, clean_after_acceptance = git_source_state(
+            ROOT
+        )
+        if (
+            source_commit_after_acceptance != source_commit
+            or not clean_after_acceptance
+        ):
+            raise RuntimeError(
+                "candidate_source_identity_changed_during_acceptance"
+            )
+        assert_postgres_dsn_file_unchanged(
+            args.postgres_dsn_file,
+            args.postgres_dsn,
+            postgres_dsn_file_identity,
+        )
+        credential_roots_removed = remove_isolated_secrets(credential_roots)
+        result({
+            "ok": True,
+            "contract": CONTRACT_ID,
+            "control_plane": "typescript_postgres",
+            "deployment_mode": "production",
+            "next_runtime_mode": "production_start",
+            "next_internal_transport_scheme": "http_loopback",
+            "human_session_public_origin_scheme": "https",
+            "next_artifact_sha256": next_artifact_sha256,
+            "next_artifact_before_start_sha256":
+                next_artifact_before_start_sha256,
+            "next_artifact_after_acceptance_sha256":
+                next_artifact_after_acceptance_sha256,
+            "next_artifact_after_cleanup_sha256":
+                next_artifact_after_cleanup_sha256,
+            "next_artifact_identity_verified": True,
+            "next_runtime_mutable_artifact_paths_omitted":
+                list(NEXT_RUNTIME_MUTABLE_ARTIFACT_PATHS),
+            "next_build_completed": True,
+            "source_commit": source_commit,
+            "tracked_worktree_clean": True,
+            "tracked_worktree_fingerprint_before": tracked_before,
+            "tracked_worktree_fingerprint_after_build": tracked_after_build,
+            "tracked_worktree_fingerprint_after_acceptance": tracked_after_acceptance,
+            "tracked_worktree_unchanged": True,
+            "python_api_started": False,
+            "python_or_sqlite_commercial_default": False,
+            "database_role_boundary_verified": True,
+            "migrator_runtime_roles_distinct": True,
+            "database_role_credentials_distinct": True,
+            "credential_files_purpose_isolated": True,
+            "credential_files_stage_scoped": True,
+            "same_uid_os_credential_isolation_claimed": False,
+            "subprocess_environment_scrub_verified": True,
+            "worker_database_credentials_omitted": True,
+            "worker_human_session_credentials_omitted": True,
+            "postgres_dsn_source": "owner_only_file",
+            "postgres_dsn_argv_omitted": True,
+            "postgres_dsn_input_boundary_verified": True,
+            "postgres_dsn_loopback_required": True,
+            "postgres_dsn_source_unchanged": True,
+            "direct_database_credentials_in_child_environment_omitted": True,
+            "ephemeral_credential_files_removed": True,
+            "entitlement_admin_executed": True,
+            "entitlement_admin_online_human_challenge_verified": True,
+            "entitlement_admin_environment_isolated": True,
+            "entitlement_admin_search_path_verified": True,
+            "entitlement_admin_search_path": [
+                "pg_catalog",
+                runtime_api_schema,
+                "pg_temp",
+            ],
+            "entitlement_admin_execute_allowlist_verified": True,
+            "entitlement_admin_execute_allowlist": [
+                "agentops_apply_workspace_entitlement_v11",
+                "agentops_plan_workspace_entitlement_v11",
+            ],
+            "entitlement_admin_issue_forbidden": True,
+            "entitlement_admin_all_app_table_select_forbidden": True,
+            "entitlement_admin_app_table_count": len(application_tables),
+            "entitlement_admin_forbidden_dml_verified": True,
+            "entitlement_admin_forbidden_ddl_verified": True,
+            "entitlement_admin_forbidden_operations":
+                entitlement_admin_forbidden_operations,
+            "entitlement_admin_forbidden_sqlstate_verified": True,
+            "entitlement_challenge_consumed": True,
+            "entitlement_challenge_token_hash_only_persisted": True,
+            "entitlement_raw_auth_material_omitted": True,
+            "next_process_stop": process_stop_receipt,
+            "entitlement_administration": entitlement_admin_receipt,
+            "worker_implementation": args.worker_implementation,
+            "typescript_worker_started": (
+                worker_process_started
+                and args.worker_implementation == "typescript"
+            ),
+            "python_worker_started": False,
+            "real_runtime_execution_performed": all(
+                receipt.get("provider_call_performed") is True and receipt.get("dry_run") is False
+                for receipt in worker_receipts.values()
+            ),
+            "openclaw_provider_service_execution_verified": (
+                "openclaw" not in adapters
+                or (
+                    provider_service_receipts.get("openclaw", {}).get(
+                        "provider_process_started"
+                    ) is True
+                    and provider_service_receipts.get("openclaw", {}).get(
+                        "provider_socket_ready"
+                    ) is True
+                    and provider_service_receipts.get("openclaw", {}).get(
+                        "provider_process_stopped"
+                    ) is True
+                    and provider_service_receipts.get("openclaw", {}).get(
+                        "provider_socket_removed"
+                    ) is True
+                    and provider_service_receipts.get("openclaw", {}).get(
+                        "provider_temp_root_removed"
+                    ) is True
+                )
+            ),
+            "openclaw_provider_transport": (
+                "unix_socket" if "openclaw" in adapters else None
+            ),
+            "provider_services": provider_service_receipts,
+            "adapters": adapters,
+            "workers": worker_receipts,
+            "human_reviews": human_receipts,
+            "manifest_authority_guards": manifest_authority_receipts,
+            "manifest_authority_guards_passed": len(manifest_authority_receipts) == len(adapters),
+            "runtime_dependency_identity": runtime_dependency_identity,
+            "real_run_bound_delivery_decisions_completed": all(
+                receipt.get("delivery_manifest_gate_passed") is True
+                and receipt.get("delivery_approval_first_outcome") == "updated"
+                and receipt.get("delivery_approval_replay_outcome") == "unchanged"
+                for receipt in human_receipts.values()
+            ),
+            "worker_created_delivery_approvals": all(
+                receipt.get("delivery_approval_request_outcome") == "created"
+                for receipt in worker_receipts.values()
+            ),
+            "run_cost_reservations_settled": all(
+                receipt.get("cost_reservation_settled") is True
+                for receipt in worker_receipts.values()
+            ),
+            "delivery_approval_creation_source": "production_next_typescript_postgres_agent_gateway_route",
+            "agent_gateway_legacy_path_rewrite_verified": True,
+            "raw_prompt_response_omitted": True,
+            "credentials_omitted": True,
+            "schema_isolated_and_ephemeral": True,
+            "fixture_cleanup": cleanup_receipt,
+            "fixture_cleanup_verified_before_success": True,
+        }, sensitive)
+        return 0
+    except Exception as exc:
+        original_traceback = traceback.format_exc()
+        process_stop_error = ""
+        if next_proc is not None:
+            process_stop_receipt = stop_process(next_proc)
+            if (
+                process_stop_receipt.get("stopped") is not True
+                or process_stop_receipt.get("errors")
+            ):
+                process_stop_error = "next_process_stop_failed"
+            if process_stop_receipt.get("stopped") is True:
+                next_proc = None
+        if adapter is not None:
+            adapter.close()
+            adapter = None
+        cleanup_error = ""
+        if next_proc is None:
+            try:
+                cleanup_receipt = cleanup_postgres_fixture(
+                    base_dsn_path,
+                    node,
+                    schema,
+                    runtime_api_schema,
+                    runtime_role,
+                    entitlement_admin_role,
+                    function_owner_role,
+                )
+                fixture_cleanup_complete = True
+                next_artifact_after_cleanup_sha256 = stable_next_release_artifact_sha256(
+                    NEXT_APP / ".next"
+                )
+            except Exception as cleanup_exc:
+                cleanup_error = str(cleanup_exc)
+        else:
+            cleanup_error = "next_process_still_running"
+        if next_proc is None:
+            try:
+                credential_roots_removed = remove_isolated_secrets(
+                    credential_roots
+                )
+            except Exception:
+                credential_roots_removed = False
+        fingerprint_error = ""
+        source_state_error = ""
+        source_commit_after_failure = ""
+        clean_after_failure = False
+        try:
+            tracked_after_acceptance = tracked_worktree_fingerprint(ROOT)
+        except Exception as fingerprint_exc:
+            tracked_after_acceptance = ""
+            fingerprint_error = str(fingerprint_exc)
+        try:
+            source_commit_after_failure, clean_after_failure = git_source_state(
+                ROOT
+            )
+        except Exception as source_state_exc:
+            source_state_error = str(source_state_exc)
+        mutation_detected = (
+            not tracked_after_acceptance
+            or tracked_after_acceptance != tracked_before
+            or not source_commit_after_failure
+            or source_commit_after_failure != source_commit
+            or not clean_after_failure
+        )
+        result({
+            "ok": False,
+            "contract": CONTRACT_ID,
+            "error_type": "RuntimeError" if mutation_detected else exc.__class__.__name__,
+            "error": (
+                "tracked_worktree_modified_or_unverifiable_during_acceptance"
+                if mutation_detected
+                else redact(str(exc), sensitive)
+            ),
+            "underlying_error_type": exc.__class__.__name__ if mutation_detected else None,
+            "fingerprint_error": redact(fingerprint_error, sensitive) if fingerprint_error else None,
+            "source_state_error": redact(source_state_error, sensitive) if source_state_error else None,
+            "traceback": redact(original_traceback, sensitive)[-4000:],
+            "next_runtime_mode": "production_start",
+            "next_artifact_sha256": next_artifact_sha256,
+            "next_artifact_before_start_sha256":
+                next_artifact_before_start_sha256 or None,
+            "next_artifact_after_acceptance_sha256":
+                next_artifact_after_acceptance_sha256 or None,
+            "next_artifact_after_cleanup_sha256":
+                next_artifact_after_cleanup_sha256 or None,
+            "next_build_completed": True,
+            "next_runtime_mutable_artifact_paths_omitted":
+                list(NEXT_RUNTIME_MUTABLE_ARTIFACT_PATHS),
+            "source_commit": source_commit or None,
+            "tracked_worktree_clean": clean_after_failure,
+            "tracked_worktree_fingerprint_before": tracked_before,
+            "tracked_worktree_fingerprint_after_build": tracked_after_build,
+            "tracked_worktree_fingerprint_after_acceptance": tracked_after_acceptance or None,
+            "tracked_worktree_unchanged": not mutation_detected,
+            "python_api_started": False,
+            "worker_implementation": args.worker_implementation,
+            "typescript_worker_started": (
+                worker_process_started
+                and args.worker_implementation == "typescript"
+            ),
+            "python_worker_started": False,
+            "real_runtime_execution_performed": bool(worker_receipts) and all(
+                receipt.get("provider_call_performed") is True and receipt.get("dry_run") is False
+                for receipt in worker_receipts.values()
+            ),
+            "openclaw_provider_service_execution_verified": False,
+            "openclaw_provider_transport": (
+                "unix_socket" if "openclaw" in adapters else None
+            ),
+            "provider_services": provider_service_receipts or None,
+            "fixture_cleanup": cleanup_receipt or None,
+            "fixture_cleanup_error":
+                redact(cleanup_error, sensitive) if cleanup_error else None,
+            "fixture_cleanup_verified_before_failure_receipt":
+                fixture_cleanup_complete,
+            "next_process_stop": process_stop_receipt or None,
+            "next_process_stop_error": process_stop_error or None,
+            "ephemeral_credential_files_removed": credential_roots_removed,
+            "credentials_omitted": True,
+        }, sensitive)
+        return 1
+    finally:
+        if next_proc is not None:
+            final_stop_receipt = stop_process(next_proc, timeout=15)
+            if final_stop_receipt.get("stopped") is True:
+                next_proc = None
+        if adapter is not None:
+            try:
+                adapter.close()
+            except Exception:
+                pass
+        if setup is not None:
+            try:
+                setup.close()
+            except Exception:
+                pass
+        if next_proc is None and not fixture_cleanup_complete:
+            try:
+                cleanup_postgres_fixture(
+                    base_dsn_path,
+                    node,
+                    schema,
+                    runtime_api_schema,
+                    runtime_role,
+                    entitlement_admin_role,
+                    function_owner_role,
+                )
+            except Exception:
+                pass
+        if next_proc is None and not credential_roots_removed:
+            try:
+                credential_roots_removed = remove_isolated_secrets(
+                    credential_roots
+                )
+            except Exception:
+                pass
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

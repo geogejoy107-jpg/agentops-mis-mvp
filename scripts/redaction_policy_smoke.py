@@ -32,7 +32,8 @@ def smoke() -> dict:
     sensitive = (
         "email joy@example.com phone +1 (415) 555-0123 "
         "Authorization: Bearer sk-demo-secret token=ntn_demo_secret raw ntn_raw_secret "
-        "Api_Key = sk-query-secret password: hunter2"
+        "Api_Key = sk-query-secret password: hunter2 "
+        "credential_canary_NeverPersistThisValue1234"
     )
     redacted_sensitive = server.redact_text(sensitive, 500)
     require("[EMAIL_REDACTED]" in redacted_sensitive, f"email was not redacted: {redacted_sensitive}")
@@ -42,6 +43,7 @@ def smoke() -> dict:
     require("ntn_raw_secret" not in redacted_sensitive, f"raw token secret leaked: {redacted_sensitive}")
     require("sk-query-secret" not in redacted_sensitive, f"api key secret leaked: {redacted_sensitive}")
     require("hunter2" not in redacted_sensitive, f"password leaked: {redacted_sensitive}")
+    require("NeverPersistThisValue1234" not in redacted_sensitive, f"credential canary leaked: {redacted_sensitive}")
 
     mixed_case = (
         "authorization: bearer sk-worker-secret TOKEN = ntn_worker_secret "
@@ -69,7 +71,7 @@ def smoke() -> dict:
     return {
         "ok": True,
         "safe_preserved": ["127.0.0.1:8642", "tsk_worker_hermes_live_20260618065503", "run_gw_6f995c9de929"],
-        "sensitive_redacted": ["email", "phone", "bearer", "token", "api_key", "password", "agent_session", "aws", "google", "jwt", "private_key"],
+        "sensitive_redacted": ["email", "phone", "bearer", "token", "api_key", "password", "credential_canary", "agent_session", "aws", "google", "jwt", "private_key"],
     }
 
 

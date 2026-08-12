@@ -1,0 +1,413 @@
+name: agentops-mis-byoc
+
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${AGENTOPS_POSTGRES_DATABASE:-agentops}
+      POSTGRES_USER: ${AGENTOPS_POSTGRES_MIGRATOR_USER:-agentops_migrator}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_migrator_password
+    secrets:
+      - postgres_migrator_password
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - agentops_postgres_data:/var/lib/postgresql/data
+    networks:
+      - control_plane
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/byoc/Dockerfile
+      args:
+        AGENTOPS_BUILD_IDENTITY: ${AGENTOPS_BUILD_IDENTITY:-local}
+        AGENTOPS_SOURCE_REVISION: ${AGENTOPS_SOURCE_REVISION:-unknown}
+    image: ${AGENTOPS_IMAGE:-agentops-mis-byoc:local}
+    restart: "no"
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run/agentops-runtime-secrets:rw,noexec,nosuid,size=1m,mode=0700,uid=1000,gid=1000
+    entrypoint:
+      - node
+      - /usr/local/lib/agentops/node-secret-entrypoint.mjs
+      - --postgres-migrator
+      - --runtime-role-password
+      - --entitlement-admin-password
+      - --
+    command: ["npm", "run", "migrate:postgres"]
+    environment: &control_plane_database_environment
+      AGENTOPS_DEPLOYMENT_MODE: production
+      AGENTOPS_CONTROL_PLANE_MODE: postgres
+      AGENTOPS_POSTGRES_SCHEMA: public
+      AGENTOPS_POSTGRES_RUNTIME_API_SCHEMA: agentops_runtime_api
+      AGENTOPS_POSTGRES_RUNTIME_ROLE: ${AGENTOPS_POSTGRES_RUNTIME_USER:-agentops_runtime}
+      AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_ROLE: ${AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_USER:-agentops_entitlement_admin}
+      AGENTOPS_POSTGRES_SSL: "false"
+      AGENTOPS_POSTGRES_MIGRATOR_HOST: postgres
+      AGENTOPS_POSTGRES_MIGRATOR_PORT: "5432"
+      AGENTOPS_POSTGRES_MIGRATOR_DATABASE: ${AGENTOPS_POSTGRES_DATABASE:-agentops}
+      AGENTOPS_POSTGRES_MIGRATOR_USER: ${AGENTOPS_POSTGRES_MIGRATOR_USER:-agentops_migrator}
+      AGENTOPS_POSTGRES_MIGRATOR_PASSWORD_SOURCE_FILE: /run/secrets/postgres_migrator_password
+      AGENTOPS_POSTGRES_RUNTIME_PASSWORD_SOURCE_FILE: /run/secrets/postgres_runtime_password
+      AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_PASSWORD_SOURCE_FILE: /run/secrets/postgres_entitlement_admin_password
+    secrets:
+      - postgres_migrator_password
+      - postgres_runtime_password
+      - postgres_entitlement_admin_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - control_plane
+
+  entitlement-admin:
+    profiles:
+      - entitlement-admin
+    image: ${AGENTOPS_IMAGE:-agentops-mis-byoc:local}
+    restart: "no"
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run/agentops-runtime-secrets:rw,noexec,nosuid,size=1m,mode=0700,uid=1000,gid=1000
+    entrypoint:
+      - node
+      - /usr/local/lib/agentops/node-secret-entrypoint.mjs
+      - --postgres-entitlement-admin
+      - --entitlement-operator
+      - --
+      - npm
+      - run
+      - configure:workspace-entitlement
+      - --
+    command: []
+    environment:
+      AGENTOPS_DEPLOYMENT_MODE: production
+      AGENTOPS_CONTROL_PLANE_MODE: postgres
+      AGENTOPS_ENTITLEMENT_CONTROL_PLANE_URL: ${AGENTOPS_ENTITLEMENT_CONTROL_PLANE_URL:?set AGENTOPS_ENTITLEMENT_CONTROL_PLANE_URL to the externally trusted HTTPS origin}
+      AGENTOPS_ENTITLEMENT_CONTROL_PLANE_ORIGIN: ${AGENTOPS_ENTITLEMENT_CONTROL_PLANE_ORIGIN:-}
+      AGENTOPS_ENTITLEMENT_OPERATOR_USERNAME: ${AGENTOPS_ENTITLEMENT_OPERATOR_USERNAME:?set AGENTOPS_ENTITLEMENT_OPERATOR_USERNAME}
+      AGENTOPS_POSTGRES_SCHEMA: public
+      AGENTOPS_POSTGRES_SSL: "false"
+      AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_HOST: postgres
+      AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_PORT: "5432"
+      AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_DATABASE: ${AGENTOPS_POSTGRES_DATABASE:-agentops}
+      AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_USER: ${AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_USER:-agentops_entitlement_admin}
+      AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_PASSWORD_SOURCE_FILE: /run/secrets/postgres_entitlement_admin_password
+      AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD_SOURCE_FILE: /run/secrets/entitlement_operator_password
+    secrets:
+      - postgres_entitlement_admin_password
+      - entitlement_operator_password
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      control-plane:
+        condition: service_healthy
+    networks:
+      - control_plane
+
+  owner-bootstrap:
+    profiles:
+      - owner-bootstrap
+    image: ${AGENTOPS_IMAGE:-agentops-mis-byoc:local}
+    restart: "no"
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run/agentops-runtime-secrets:rw,noexec,nosuid,size=1m,mode=0700,uid=1000,gid=1000
+    entrypoint:
+      - node
+      - /usr/local/lib/agentops/node-secret-entrypoint.mjs
+      - --postgres-migrator
+      - --
+    command:
+      - node
+      - /usr/local/lib/agentops/owner-bootstrap-entrypoint.mjs
+    environment:
+      AGENTOPS_DEPLOYMENT_MODE: production
+      AGENTOPS_CONTROL_PLANE_MODE: postgres
+      AGENTOPS_POSTGRES_SCHEMA: public
+      AGENTOPS_POSTGRES_RUNTIME_API_SCHEMA: agentops_runtime_api
+      AGENTOPS_POSTGRES_RUNTIME_ROLE: ${AGENTOPS_POSTGRES_RUNTIME_USER:-agentops_runtime}
+      AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_ROLE: ${AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_USER:-agentops_entitlement_admin}
+      AGENTOPS_POSTGRES_SSL: "false"
+      AGENTOPS_POSTGRES_MIGRATOR_HOST: postgres
+      AGENTOPS_POSTGRES_MIGRATOR_PORT: "5432"
+      AGENTOPS_POSTGRES_MIGRATOR_DATABASE: ${AGENTOPS_POSTGRES_DATABASE:-agentops}
+      AGENTOPS_POSTGRES_MIGRATOR_USER: ${AGENTOPS_POSTGRES_MIGRATOR_USER:-agentops_migrator}
+      AGENTOPS_POSTGRES_MIGRATOR_PASSWORD_SOURCE_FILE: /run/secrets/postgres_migrator_password
+    secrets:
+      - postgres_migrator_password
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - control_plane
+
+  control-plane:
+    image: ${AGENTOPS_IMAGE:-agentops-mis-byoc:local}
+    restart: unless-stopped
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run/agentops-runtime-secrets:rw,noexec,nosuid,size=1m,mode=0700,uid=1000,gid=1000
+    entrypoint:
+      - node
+      - /usr/local/lib/agentops/node-secret-entrypoint.mjs
+      - --postgres-runtime
+      - --human-session
+      - --
+    command: ["node", "scripts/start.mjs"]
+    environment:
+      <<: *control_plane_database_environment
+      AGENTOPS_POSTGRES_HOST: postgres
+      AGENTOPS_POSTGRES_PORT: "5432"
+      AGENTOPS_POSTGRES_DATABASE: ${AGENTOPS_POSTGRES_DATABASE:-agentops}
+      AGENTOPS_POSTGRES_USER: ${AGENTOPS_POSTGRES_RUNTIME_USER:-agentops_runtime}
+      AGENTOPS_POSTGRES_PASSWORD_SOURCE_FILE: /run/secrets/postgres_runtime_password
+      AGENTOPS_POSTGRES_MIGRATOR_HOST: ""
+      AGENTOPS_POSTGRES_MIGRATOR_PORT: ""
+      AGENTOPS_POSTGRES_MIGRATOR_DATABASE: ""
+      AGENTOPS_POSTGRES_MIGRATOR_USER: ""
+      AGENTOPS_POSTGRES_MIGRATOR_PASSWORD_SOURCE_FILE: ""
+      AGENTOPS_POSTGRES_RUNTIME_PASSWORD_SOURCE_FILE: ""
+      AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_PASSWORD_SOURCE_FILE: ""
+      AGENTOPS_HUMAN_SESSION_HMAC_KEY_SOURCE_FILE: /run/secrets/human_session_hmac_key
+      AGENTOPS_ALLOWED_ORIGINS: ${AGENTOPS_ALLOWED_ORIGINS:?set AGENTOPS_ALLOWED_ORIGINS}
+      AGENTOPS_NEXT_HOST: 0.0.0.0
+      AGENTOPS_NEXT_PORT: "3001"
+    secrets:
+      - postgres_runtime_password
+      - human_session_hmac_key
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - /usr/local/lib/agentops/node-healthcheck.mjs
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    ports:
+      - ${AGENTOPS_BIND_ADDRESS:-127.0.0.1}:${AGENTOPS_PORT:-3001}:3001
+    networks:
+      - control_plane
+
+  worker-hermes:
+    profiles: [worker-hermes]
+    image: ${AGENTOPS_IMAGE:-agentops-mis-byoc:local}
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    user: "1000:1000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run/agentops-worker:rw,noexec,nosuid,size=1m,mode=0700,uid=1000,gid=1000
+      - /tmp:rw,noexec,nosuid,size=64m,mode=0700,uid=1000,gid=1000
+    entrypoint: [node, /usr/local/lib/agentops/worker-entrypoint.mjs]
+    environment:
+      NODE_ENV: production
+      AGENTOPS_DEPLOYMENT_MODE: production
+      AGENTOPS_WORKER_ADAPTER: hermes
+      AGENTOPS_AGENT_TOKEN_SOURCE_FILE: /run/secrets/agent_token
+      AGENTOPS_BASE_URL: ${AGENTOPS_WORKER_CONTROL_PLANE_URL:-}
+      AGENTOPS_WORKSPACE_ID: ${AGENTOPS_WORKER_WORKSPACE_ID:-}
+      AGENTOPS_AGENT_ID: ${AGENTOPS_HERMES_WORKER_AGENT_ID:-}
+      AGENTOPS_RUN_ESTIMATED_COST_USD: ${AGENTOPS_WORKER_ESTIMATED_COST_USD:-}
+      AGENTOPS_POLL_INTERVAL_MS: ${AGENTOPS_WORKER_POLL_INTERVAL_MS:-5000}
+      AGENTOPS_ADAPTER_MAX_ATTEMPTS: ${AGENTOPS_WORKER_ADAPTER_MAX_ATTEMPTS:-2}
+      AGENTOPS_WORKER_HEALTH_LEASE_SECONDS: ${AGENTOPS_WORKER_HEALTH_LEASE_SECONDS:-120}
+      AGENTOPS_ALLOW_INSECURE_LOOPBACK: "false"
+      AGENTOPS_ALLOW_HIGH_RISK: ${AGENTOPS_WORKER_ALLOW_HIGH_RISK:-false}
+      HERMES_GATEWAY_URL: ${AGENTOPS_HERMES_GATEWAY_URL:-}
+      HERMES_MODEL: ${AGENTOPS_HERMES_MODEL:-hermes-agent}
+      HERMES_TIMEOUT_MS: ${AGENTOPS_HERMES_TIMEOUT_MS:-180000}
+      HERMES_MAX_TOKENS: ${AGENTOPS_HERMES_MAX_TOKENS:-512}
+    secrets:
+      - source: hermes_agent_token
+        target: agent_token
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, /usr/local/lib/agentops/worker-healthcheck.mjs]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+    networks:
+      - control_plane
+
+  openclaw-provider:
+    profiles: [worker-openclaw]
+    image: ${AGENTOPS_IMAGE:-agentops-mis-byoc:local}
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    user: "1001:1000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run/openclaw-state:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=1001,gid=1000
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=1001,gid=1000
+    entrypoint: [node, /usr/local/lib/agentops/openclaw-provider-entrypoint.mjs]
+    environment:
+      NODE_ENV: production
+      AGENTOPS_DEPLOYMENT_MODE: production
+      OPENCLAW_PROVIDER_SOCKET: /run/agentops-openclaw/provider.sock
+      OPENCLAW_BIN: ${AGENTOPS_OPENCLAW_PROVIDER_BIN:-/opt/agentops-provider/openclaw/bin/openclaw}
+      OPENCLAW_BIN_SHA256: ${AGENTOPS_OPENCLAW_PROVIDER_BIN_SHA256:?set AGENTOPS_OPENCLAW_PROVIDER_BIN_SHA256 to the mounted OpenClaw entrypoint digest}
+      OPENCLAW_CONFIG_PATH: /run/secrets/openclaw_config
+      OPENCLAW_STATE_DIR: /run/openclaw-state
+      AGENTOPS_WORKER_CWD: /opt/agentops-worker/workspace
+      OPENCLAW_AGENT: ${AGENTOPS_OPENCLAW_AGENT:-main}
+      OPENCLAW_TIMEOUT_SECONDS: ${AGENTOPS_OPENCLAW_TIMEOUT_SECONDS:-180}
+    secrets:
+      - source: openclaw_config
+        target: openclaw_config
+    volumes:
+      - agentops_openclaw_provider_socket:/run/agentops-openclaw:rw
+      - ${AGENTOPS_OPENCLAW_RUNTIME_PATH:-./openclaw-runtime}:/opt/agentops-provider/openclaw:ro
+      - ${AGENTOPS_OPENCLAW_WORKSPACE_PATH:-./worker-workspace}:/opt/agentops-worker/workspace:ro
+    healthcheck:
+      test: [CMD, node, /usr/local/lib/agentops/openclaw-provider-healthcheck.mjs]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+    networks:
+      - openclaw_provider_egress
+
+  worker-openclaw:
+    profiles: [worker-openclaw]
+    image: ${AGENTOPS_IMAGE:-agentops-mis-byoc:local}
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    user: "1000:1000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run/agentops-worker:rw,noexec,nosuid,size=1m,mode=0700,uid=1000,gid=1000
+      - /tmp:rw,noexec,nosuid,size=64m,mode=0700,uid=1000,gid=1000
+    entrypoint: [node, /usr/local/lib/agentops/worker-entrypoint.mjs]
+    environment:
+      NODE_ENV: production
+      AGENTOPS_DEPLOYMENT_MODE: production
+      AGENTOPS_WORKER_ADAPTER: openclaw
+      AGENTOPS_AGENT_TOKEN_SOURCE_FILE: /run/secrets/agent_token
+      AGENTOPS_BASE_URL: ${AGENTOPS_WORKER_CONTROL_PLANE_URL:-}
+      AGENTOPS_WORKSPACE_ID: ${AGENTOPS_WORKER_WORKSPACE_ID:-}
+      AGENTOPS_AGENT_ID: ${AGENTOPS_OPENCLAW_WORKER_AGENT_ID:-}
+      AGENTOPS_RUN_ESTIMATED_COST_USD: ${AGENTOPS_WORKER_ESTIMATED_COST_USD:-}
+      AGENTOPS_POLL_INTERVAL_MS: ${AGENTOPS_WORKER_POLL_INTERVAL_MS:-5000}
+      AGENTOPS_ADAPTER_MAX_ATTEMPTS: ${AGENTOPS_WORKER_ADAPTER_MAX_ATTEMPTS:-2}
+      AGENTOPS_WORKER_HEALTH_LEASE_SECONDS: ${AGENTOPS_WORKER_HEALTH_LEASE_SECONDS:-120}
+      AGENTOPS_ALLOW_INSECURE_LOOPBACK: "false"
+      AGENTOPS_ALLOW_HIGH_RISK: ${AGENTOPS_WORKER_ALLOW_HIGH_RISK:-false}
+      OPENCLAW_PROVIDER_SOCKET: /run/agentops-openclaw/provider.sock
+      OPENCLAW_AGENT: ${AGENTOPS_OPENCLAW_AGENT:-main}
+      OPENCLAW_TIMEOUT_SECONDS: ${AGENTOPS_OPENCLAW_TIMEOUT_SECONDS:-180}
+    secrets:
+      - source: openclaw_agent_token
+        target: agent_token
+    volumes:
+      - agentops_openclaw_provider_socket:/run/agentops-openclaw:ro
+    depends_on:
+      openclaw-provider:
+        condition: service_healthy
+      control-plane:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, /usr/local/lib/agentops/worker-healthcheck.mjs]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+    networks:
+      - control_plane
+
+volumes:
+  agentops_postgres_data:
+  agentops_openclaw_provider_socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=1001,gid=1000,mode=0770,nosuid,nodev,noexec,size=1m
+
+networks:
+  control_plane:
+    driver: bridge
+  openclaw_provider_egress:
+    driver: bridge
+
+secrets:
+  postgres_migrator_password:
+    file: ${AGENTOPS_POSTGRES_MIGRATOR_PASSWORD_FILE:?set AGENTOPS_POSTGRES_MIGRATOR_PASSWORD_FILE}
+  postgres_runtime_password:
+    file: ${AGENTOPS_POSTGRES_RUNTIME_PASSWORD_FILE:?set AGENTOPS_POSTGRES_RUNTIME_PASSWORD_FILE}
+  postgres_entitlement_admin_password:
+    file: ${AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_PASSWORD_FILE:?set AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_PASSWORD_FILE}
+  entitlement_operator_password:
+    file: ${AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD_FILE:?set AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD_FILE}
+  human_session_hmac_key:
+    file: ${AGENTOPS_HUMAN_SESSION_HMAC_KEY_FILE:?set AGENTOPS_HUMAN_SESSION_HMAC_KEY_FILE}
+  hermes_agent_token:
+    file: ${AGENTOPS_HERMES_WORKER_AGENT_TOKEN_FILE:-./secrets/hermes-worker-agent-token}
+  openclaw_agent_token:
+    file: ${AGENTOPS_OPENCLAW_WORKER_AGENT_TOKEN_FILE:-./secrets/openclaw-worker-agent-token}
+  openclaw_config:
+    file: ${AGENTOPS_OPENCLAW_CONFIG_FILE:-./secrets/openclaw-config.json}

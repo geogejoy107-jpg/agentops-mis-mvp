@@ -30,11 +30,21 @@ claims, introduce Postgres requirements, or merge PR #22.
   appear, token-like material appears, or packet docs embed a stale hard-coded
   SHA.
 - [x] The command is wired into CI and the release evidence command manifest.
+- [x] Promotion readiness requires exact-SHA success from top-level `AgentOps MIS
+  CI`, top-level `BYOC Cross-Schema v9 to v11 Acceptance`, the BYOC Compose
+  reusable job inside CI, and top-level `BYOC Customer Release Acceptance`.
 
 ## Known Limitations
 
 - This is handoff status only. Promotion preflight, promotion packet, receipt
-  plan, receipt recording and rerun bundle preview are separate
+  plan, receipt recording and rerun bundle preview remain separate
   generator-smoke guarded packets.
-- Strict promotion remains false until a dedicated promotion preflight gate is
-  implemented and current-head CI is green for that branch.
+- Strict promotion remains false until the exact source commit passes
+  current-head CI and the final real Hermes/OpenClaw acceptance, and until the
+  packaged real clean-install, isolated-restore, same-Schema lifecycle,
+  cross-Schema v9-to-v11, and no-checkout customer-release workflows pass for
+  that exact candidate before merge promotion. The customer-release workflow
+  runs on pushes to the commercial integration branch and supports manual reruns
+  after it exists on the default branch; ordinary PR CI never receives its
+  package-write access. This handoff status is not hosted-service or billing
+  readiness.

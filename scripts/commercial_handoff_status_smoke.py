@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from github_ci_evidence import ci_status as shared_ci_status
+from github_ci_evidence import commercial_workflow_evidence
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +17,10 @@ INDEX = ROOT / "docs" / "COMMERCIAL_EVIDENCE_PACKET_INDEX.md"
 BREAKDOWN = ROOT / "docs" / "COMMERCIAL_MIGRATION_CLEAN_ROOM_BREAKDOWN.md"
 RELEASE_PACKET = ROOT / "docs" / "RELEASE_EVIDENCE_PACKET.md"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+BYOC_COMPOSE_WORKFLOW = ROOT / ".github" / "workflows" / "byoc-compose-acceptance.yml"
+BYOC_CROSS_SCHEMA_WORKFLOW = ROOT / ".github" / "workflows" / "byoc-cross-schema-v9-v11-acceptance.yml"
+BYOC_CUSTOMER_RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "byoc-customer-release-acceptance.yml"
+BYOC_README = ROOT / "deploy" / "byoc" / "README.md"
 INDEX_ACCEPTANCE = ROOT / "docs" / "COMMERCIAL_EVIDENCE_PACKET_INDEX_ACCEPTANCE.md"
 CURRENT_ACCEPTANCE = ROOT / "docs" / "COMMERCIAL_CURRENT_EVIDENCE_STATUS_ACCEPTANCE.md"
 HANDOFF_ACCEPTANCE = ROOT / "docs" / "COMMERCIAL_HANDOFF_STATUS_ACCEPTANCE.md"
@@ -26,6 +30,10 @@ SOURCE_DOCS = [
     BREAKDOWN,
     RELEASE_PACKET,
     CI_WORKFLOW,
+    BYOC_COMPOSE_WORKFLOW,
+    BYOC_CROSS_SCHEMA_WORKFLOW,
+    BYOC_CUSTOMER_RELEASE_WORKFLOW,
+    BYOC_README,
     INDEX_ACCEPTANCE,
     CURRENT_ACCEPTANCE,
     HANDOFF_ACCEPTANCE,
@@ -33,12 +41,14 @@ SOURCE_DOCS = [
 COMMAND = "python3 scripts/commercial_handoff_status_smoke.py"
 
 EXPECTED_LANES = [
-    "Commercial Read Models",
-    "Workspace And RBAC Scope",
-    "Storage Boundary",
-    "Commercial Evidence Packets",
-    "UI Route Retirement And Parity",
-    "Deployment And BYOC Readiness",
+    ("Lane 0", "Runtime Boundary"),
+    ("Lane 1", "PostgreSQL Schema And Startup"),
+    ("Lane 2", "Agent Identity And Plans"),
+    ("Lane 3", "Customer Delivery And Human Review"),
+    ("Lane 4", "Prepared Actions"),
+    ("Lane 5", "Read Models And Supervision"),
+    ("Lane 6", "Enrollment And Entitlements"),
+    ("Lane 7", "Deployment And Promotion"),
 ]
 
 PACKET_STATUS = {
@@ -150,6 +160,10 @@ def validate_sources(texts: dict[Path, str], failures: list[str]) -> None:
     breakdown_text = texts.get(BREAKDOWN, "")
     release_text = texts.get(RELEASE_PACKET, "")
     ci_text = texts.get(CI_WORKFLOW, "")
+    byoc_compose_text = texts.get(BYOC_COMPOSE_WORKFLOW, "")
+    byoc_cross_schema_text = texts.get(BYOC_CROSS_SCHEMA_WORKFLOW, "")
+    byoc_customer_release_text = texts.get(BYOC_CUSTOMER_RELEASE_WORKFLOW, "")
+    byoc_readme_text = texts.get(BYOC_README, "")
     handoff_text = texts.get(HANDOFF_ACCEPTANCE, "")
 
     require("Commercial Handoff Status" in index_text, "index missing Commercial Handoff Status row", failures)
@@ -159,10 +173,65 @@ def validate_sources(texts: dict[Path, str], failures: list[str]) -> None:
     require(COMMAND in ci_text, "CI workflow missing handoff command", failures)
     require("read-only handoff packet" in handoff_text, "handoff acceptance missing read-only packet boundary", failures)
 
-    for lane in EXPECTED_LANES:
-        require(f"Lane {EXPECTED_LANES.index(lane) + 1}: {lane}" in breakdown_text, f"missing clean-room lane: {lane}", failures)
+    for lane_id, lane_name in EXPECTED_LANES:
+        require(
+            f"{lane_id}: {lane_name}" in breakdown_text,
+            f"missing clean-room lane: {lane_name}",
+            failures,
+        )
     require("Do not merge PR #22 directly." in breakdown_text, "PR #22 direct-merge block missing", failures)
-    require("Start with Lane 1 or Lane 4." in breakdown_text, "recommended starting lane missing", failures)
+    for marker in (
+        "Clean install, restore drill, and same-schema image lifecycle",
+        "Run isolated restore and role-boundary drill",
+        "Run real same-schema retained-data lifecycle",
+        "backup_restore_authoritative",
+    ):
+        require(marker in byoc_compose_text, f"BYOC Compose workflow missing contract marker: {marker}", failures)
+    for marker in (
+        "AGENTOPS_HISTORICAL_V9_REVISION",
+        "git merge-base --is-ancestor",
+        "historical-v9.Dockerfile",
+        "grep -E '^v22\\.'",
+        "${GITHUB_SHA}",
+        ".forward_migrations_applied == 3",
+        ".v11_data_probe_written == true",
+        ".backup_restore_authoritative == true",
+        ".down_migration_performed == false",
+        ".old_image_restored == true",
+        ".postgres_volume_preserved == true",
+        ".postgres_cluster_identity_preserved == true",
+    ):
+        require(marker in byoc_cross_schema_text, f"BYOC cross-schema workflow missing contract marker: {marker}", failures)
+    for marker in (
+        "name: BYOC Customer Release Acceptance",
+        "workflow_dispatch:",
+        "codex/commercial-control-plane-main-integration",
+        "packages: write",
+        "Install without checkout or repository state",
+        "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+        "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+        "gh attestation verify",
+        "--signer-workflow",
+        "--source-digest",
+        "host_platform_verified == true",
+        "Verify declared customer operations runtime",
+        "repository_checkout_required == false",
+        "compose_build_performed == false",
+    ):
+        require(marker in byoc_customer_release_text, f"BYOC customer release workflow missing contract marker: {marker}", failures)
+    require("pull_request:" not in byoc_customer_release_text, "BYOC customer release must not grant package publication to PR CI", failures)
+    require("workflow_call:" not in byoc_customer_release_text, "BYOC customer release must remain a top-level exact-branch workflow", failures)
+    for marker in (
+        ".github/workflows/byoc-compose-acceptance.yml",
+        ".github/workflows/byoc-cross-schema-v9-v11-acceptance.yml",
+        ".github/workflows/byoc-customer-release-acceptance.yml",
+        "exactly three manifest migrations",
+        "v11-only",
+        "backup authority",
+        "does not run a down migration",
+        "same candidate",
+    ):
+        require(marker in byoc_readme_text, f"BYOC README missing current promotion boundary: {marker}", failures)
 
     for packet, status in PACKET_STATUS.items():
         require(packet in index_text, f"missing packet row: {packet}", failures)
@@ -174,48 +243,67 @@ def validate_sources(texts: dict[Path, str], failures: list[str]) -> None:
     secret_hits = [pattern.pattern for pattern in SECRET_PATTERNS if pattern.search(joined)]
     require(not secret_hits, f"secret-like marker found in handoff sources: {secret_hits}", failures)
 
-    generated_docs = [INDEX, HANDOFF_ACCEPTANCE]
+    generated_docs = [INDEX, HANDOFF_ACCEPTANCE, BYOC_README]
     hardcoded = [path.name for path in generated_docs if has_hardcoded_sha(texts.get(path, ""))]
     require(not hardcoded, f"hard-coded SHA found in commercial handoff docs: {hardcoded}", failures)
 
 
-def lane_status() -> list[dict[str, str]]:
+def lane_status(promotion_ready: bool, worktree_clean: bool) -> list[dict[str, str]]:
+    status = (
+        "implementation_present_uncommitted_changes"
+        if not worktree_clean
+        else "implementation_complete_exact_head_ci_verified"
+        if promotion_ready
+        else "implementation_complete_exact_head_ci_pending"
+    )
     return [
         {
-            "lane": "Lane 1",
-            "name": "Commercial Read Models",
-            "status": "partially_started",
-            "evidence": "commercial config status and current-evidence status readbacks exist; no billing or cleanup.",
+            "lane": "Lane 0",
+            "name": "Runtime Boundary",
+            "status": status,
+            "evidence": "production Next and shared Vite builds fail closed on Python, SQLite, unsafe transport, and unknown production routes.",
         },
         {
-            "lane": "Lane 4",
-            "name": "Commercial Evidence Packets",
-            "status": "active",
-            "evidence": "packet index, current evidence status and handoff status are generator-smoke guarded.",
+            "lane": "Lane 1",
+            "name": "PostgreSQL Schema And Startup",
+            "status": status,
+            "evidence": "schema v11, thirteen pinned migrations, catalog fingerprinting, restricted runtime/admin roles, and PostgreSQL 16 contracts are implemented.",
         },
         {
             "lane": "Lane 2",
-            "name": "Workspace And RBAC Scope",
-            "status": "queued",
-            "evidence": "requires separate workspace/RBAC scope slice.",
+            "name": "Agent Identity And Plans",
+            "status": status,
+            "evidence": "TypeScript/PostgreSQL owns Agent identity, sessions, tasks, plans, runs, manifests, and governed evidence.",
         },
         {
             "lane": "Lane 3",
-            "name": "Storage Boundary",
-            "status": "queued",
-            "evidence": "requires separate storage helper parity slice.",
+            "name": "Customer Delivery And Human Review",
+            "status": status,
+            "evidence": "TypeScript owns delivery requests and Human Session review with workspace, CSRF, replay, and sealed-evidence gates.",
+        },
+        {
+            "lane": "Lane 4",
+            "name": "Prepared Actions",
+            "status": status,
+            "evidence": "PostgreSQL owns immutable approval bindings, execution leases, terminal receipts, and response-loss reconciliation.",
         },
         {
             "lane": "Lane 5",
-            "name": "UI Route Retirement And Parity",
-            "status": "queued",
-            "evidence": "requires separate route inventory and parity slice.",
+            "name": "Read Models And Supervision",
+            "status": status,
+            "evidence": "TypeScript owns Human and Agent task, run, artifact, evidence-graph, and supervision reads.",
         },
         {
             "lane": "Lane 6",
-            "name": "Deployment And BYOC Readiness",
-            "status": "queued",
-            "evidence": "requires separate local/customer deployment slice; hosted readiness stays unclaimed.",
+            "name": "Enrollment And Entitlements",
+            "status": status,
+            "evidence": "TypeScript/PostgreSQL owns approval-gated enrollment, sessions, entitlements, quotas, cost reservations, and fail-closed denial audits.",
+        },
+        {
+            "lane": "Lane 7",
+            "name": "Deployment And Promotion",
+            "status": status,
+            "evidence": "An immutable-image, checksum-manifested source-free customer bundle drives real Compose clean-install, committed backup, isolated restore, and same-schema retained-volume lifecycle; cross-schema v9-to-v11 rollback is separately exercised, and every candidate still requires exact-head workflow evidence plus same-SHA runtime acceptance.",
         },
     ]
 
@@ -227,12 +315,14 @@ def main() -> int:
 
     head_sha = git_text(["rev-parse", "HEAD"])
     branch = current_branch()
-    ci = shared_ci_status(ROOT, head_sha, branch, required_before_ready=True)
+    promotion_workflows = commercial_workflow_evidence(ROOT, head_sha, branch)
     packets = [
         {"packet": packet, "status": status, "source": "docs/COMMERCIAL_EVIDENCE_PACKET_INDEX.md"}
         for packet, status in PACKET_STATUS.items()
     ]
 
+    worktree_entries = status_entries()
+    candidate_clean = not worktree_entries
     output: dict[str, Any] = {
         "operation": "commercial_handoff_status_smoke",
         "ok": not failures,
@@ -242,13 +332,23 @@ def main() -> int:
             "sha": head_sha,
             "branch": branch,
             "upstream_sync": upstream_sync(),
-            "working_tree_entries": len(status_entries()),
+            "working_tree_entries": len(worktree_entries),
         },
-        "ci": ci,
+        "ci": promotion_workflows["evidence"]["agentops_mis_ci"],
+        "promotion_workflows": promotion_workflows,
         "source_docs": [str(path.relative_to(ROOT)) for path in SOURCE_DOCS],
-        "clean_room_lanes": lane_status(),
+        "clean_room_lanes": lane_status(
+            bool(promotion_workflows["ready"]),
+            candidate_clean,
+        ),
         "packet_status": packets,
-        "next_recommended_generator": "operator_confirmed_receipt_recording",
+        "next_recommended_generator": (
+            "commit_candidate_before_exact_head_ci"
+            if not candidate_clean
+            else "same_sha_real_runtime_acceptance"
+            if promotion_workflows["ready"]
+            else "exact_head_ci_and_byoc_acceptance"
+        ),
         "commercial_limits": {
             "hosted_ready": False,
             "billing_ready": False,

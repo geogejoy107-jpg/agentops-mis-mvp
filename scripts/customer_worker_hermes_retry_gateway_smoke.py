@@ -288,11 +288,20 @@ def run_smoke() -> dict:
             run = detail.get("run") or {}
             tool = next((item for item in (detail.get("tool_calls") or []) if item.get("tool_name") == "agent_worker.hermes"), {})
             args = parse_tool_args(tool)
+            evaluation = next(
+                (item for item in (detail.get("evaluations") or []) if item.get("evaluator_type") == "rule"),
+                {},
+            )
+            rubric = parse_tool_args({
+                "normalized_args_json": evaluation.get("rubric_json") or evaluation.get("rubric"),
+            })
             history = args.get("retry_history") or []
             require(run.get("status") == "completed", f"run did not complete: {run}", failures)
             require(tool.get("status") == "completed", f"tool call did not complete: {tool}", failures)
             require(args.get("attempt_count") == 2 and args.get("max_attempts") == 2, f"retry args missing: {args}", failures)
             require(len(history) == 2 and history[0].get("ok") is False and history[1].get("ok") is True, f"retry history invalid: {history}", failures)
+            require(args.get("provider_call_performed") is True and args.get("dry_run") is False, f"tool provider-call attestation missing: {args}", failures)
+            require(rubric.get("provider_call_performed") is True and rubric.get("dry_run") is False, f"evaluation provider-call attestation missing: {rubric}", failures)
             require((result.get("evidence") or {}).get("evaluations", 0) >= 1, f"missing evaluation evidence: {result.get('evidence')}", failures)
             require(not token_like_leaked(result), "result leaked token-like material", failures)
             return {

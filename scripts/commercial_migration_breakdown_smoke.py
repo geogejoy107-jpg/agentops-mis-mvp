@@ -32,25 +32,35 @@ def main() -> int:
 
     required_markers = {
         "pr_number": "PR #22",
-        "conflicting": "CONFLICTING",
-        "changed_files": "changed files: `254`",
-        "additions": "additions: `55257`",
         "direct_merge_block": "Do not merge PR #22 directly.",
-        "clean_room_rule": "rebuild small product slices from current `origin/main`",
+        "clean_room_rule": "Every production owner is rebuilt as a small commit from current `origin/main`",
         "generated_artifacts_block": "Do not copy generated docs, DB files, caches, `node_modules`, `dist`, `.env`",
-        "lane_1": "Lane 1: Commercial Read Models",
-        "lane_2": "Lane 2: Workspace And RBAC Scope",
-        "lane_3": "Lane 3: Storage Boundary",
-        "lane_4": "Lane 4: Commercial Evidence Packets",
-        "lane_5": "Lane 5: UI Route Retirement And Parity",
-        "lane_6": "Lane 6: Deployment And BYOC Readiness",
-        "no_billing": "no billing provider call",
-        "no_cleanup": "no cleanup execution",
-        "token_omitted": "`token_omitted=true`",
-        "next_slice": "Start with Lane 1 or Lane 4.",
+        "production_stack": "Next.js 16 App Router",
+        "production_write_owner": "Production writes are Next.js/TypeScript/PostgreSQL only.",
+        "lane_0": "Lane 0: Runtime Boundary",
+        "lane_1": "Lane 1: PostgreSQL Schema And Startup",
+        "lane_2": "Lane 2: Agent Identity And Plans",
+        "lane_3": "Lane 3: Customer Delivery And Human Review",
+        "lane_4": "Lane 4: Prepared Actions",
+        "lane_5": "Lane 5: Read Models And Supervision",
+        "lane_6": "Lane 6: Enrollment And Entitlements",
+        "lane_7": "Lane 7: Deployment And Promotion",
+        "real_runtime_gate": "explicitly confirmed Hermes and OpenClaw provider calls",
     }
     for label, marker in required_markers.items():
         require(marker in text, f"missing breakdown marker {label}: {marker}", failures)
+    normalized_text = " ".join(text.split())
+    for marker in (
+        "checksum-manifested source-free customer bundle",
+        "Each promotion candidate must still pass all three BYOC evidence lanes, exact-head CI, and the manual same-SHA dual-runtime acceptance.",
+        "Historical receipts never transfer to a later commit.",
+        "Every final candidate must rerun exact-head CI, all three real BYOC workflows, strict promotion evidence, and same-SHA dual-runtime acceptance",
+    ):
+        require(
+            marker in normalized_text,
+            f"missing current promotion boundary: {marker}",
+            failures,
+        )
 
     forbidden_claims = [
         "merge PR #22 directly",
@@ -74,7 +84,7 @@ def main() -> int:
         "failure_count": len(failures),
         "failures": failures,
         "doc": str(DOC.relative_to(ROOT)),
-        "contract": "PR #22 is a reference branch to decompose into clean-room, reviewable commercial migration slices; it is not a direct merge candidate.",
+        "contract": "PR #22 is a reference lane; commercial production owners are rebuilt on current main with a Next.js/TypeScript/PostgreSQL boundary and real-runtime gates.",
         "safety": {
             "read_only": True,
             "ledger_mutated": False,

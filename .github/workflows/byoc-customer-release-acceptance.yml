@@ -1,0 +1,675 @@
+name: BYOC Customer Release Acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/commercial-control-plane-main-integration
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: agentops-byoc-customer-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish-release:
+    name: Publish exact image and source-free bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    outputs:
+      image: ${{ steps.release.outputs.image }}
+      target_image: ${{ steps.release.outputs.target_image }}
+      artifact: ${{ steps.release.outputs.artifact }}
+      archive_sha256: ${{ steps.release.outputs.archive_sha256 }}
+    steps:
+      - name: Checkout exact release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact caller commit
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Authenticate durable OCI registry
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io \
+            --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build and publish exact commercial image
+        id: release
+        run: |
+          set -euo pipefail
+          repository_owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          image_repository="ghcr.io/${repository_owner}/agentops-mis-byoc"
+          image_tag="${image_repository}:candidate-source-${GITHUB_SHA}"
+          target_image_tag="${image_repository}:candidate-target-${GITHUB_SHA}"
+          build_identity="customer-release-source-${GITHUB_SHA}"
+          target_build_identity="customer-release-target-${GITHUB_SHA}"
+
+          timeout 25m docker build --pull --platform linux/amd64 \
+            --file deploy/byoc/Dockerfile \
+            --build-arg "AGENTOPS_BUILD_IDENTITY=${build_identity}" \
+            --build-arg "AGENTOPS_SOURCE_REVISION=${GITHUB_SHA}" \
+            --tag "${image_tag}" \
+            .
+          timeout 25m docker build --pull --platform linux/amd64 \
+            --file deploy/byoc/Dockerfile \
+            --build-arg "AGENTOPS_BUILD_IDENTITY=${target_build_identity}" \
+            --build-arg "AGENTOPS_SOURCE_REVISION=${GITHUB_SHA}" \
+            --tag "${target_image_tag}" \
+            .
+          docker push "${image_tag}" >/dev/null
+          docker push "${target_image_tag}" >/dev/null
+          docker pull "${image_tag}" >/dev/null
+          docker pull "${target_image_tag}" >/dev/null
+
+          resolve_digest() {
+            docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$1" |
+              awk -v repository="${image_repository}@" \
+                'index($0, repository) == 1 { print }' |
+              sort -u
+          }
+          image="$(resolve_digest "${image_tag}")"
+          target_image="$(resolve_digest "${target_image_tag}")"
+          test "$(printf '%s\n' "${image}" | sed '/^$/d' | wc -l | tr -d ' ')" = 1
+          test "$(printf '%s\n' "${target_image}" | sed '/^$/d' | wc -l | tr -d ' ')" = 1
+          [[ "${image}" =~ ^ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]]
+          [[ "${target_image}" =~ ^ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]]
+          test "${image}" != "${target_image}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image}")" = \
+            "${GITHUB_SHA}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${target_image}")" = \
+            "${GITHUB_SHA}"
+          test "$(docker image inspect --format '{{index .Config.Labels "io.agentops.byoc.build-identity"}}' "${image}")" = \
+            "${build_identity}"
+          test "$(docker image inspect --format '{{index .Config.Labels "io.agentops.byoc.build-identity"}}' "${target_image}")" = \
+            "${target_build_identity}"
+          test "$(docker image inspect --format '{{.Os}}' "${image}")" = "linux"
+          test "$(docker image inspect --format '{{.Os}}' "${target_image}")" = "linux"
+          test "$(docker image inspect --format '{{.Architecture}}' "${image}")" = "amd64"
+          test "$(docker image inspect --format '{{.Architecture}}' "${target_image}")" = "amd64"
+          test "$(docker image inspect --format '{{json .RootFS.Layers}}' "${image}")" = \
+            "$(docker image inspect --format '{{json .RootFS.Layers}}' "${target_image}")"
+          test "$(docker image inspect --format '{{.Id}}' "${image}")" != \
+            "$(docker image inspect --format '{{.Id}}' "${target_image}")"
+
+          release_parent="${RUNNER_TEMP}/agentops-byoc-release"
+          release_name="agentops-mis-byoc-${GITHUB_SHA}"
+          release_root="${release_parent}/${release_name}"
+          archive="${RUNNER_TEMP}/${release_name}.tar.gz"
+          install -d -m 700 "${release_parent}"
+          node deploy/byoc/build-release-bundle.mjs build \
+            --output "${release_root}" \
+            --image "${image}" \
+            --source-revision "${GITHUB_SHA}" >/dev/null
+          "${release_root}/install.sh" --verify-only >/dev/null
+
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+            --format=posix --pax-option=delete=atime,delete=ctime \
+            -cf - -C "${release_parent}" "${release_name}" |
+            gzip -n -9 > "${archive}"
+          test -s "${archive}"
+          archive_sha256="$(sha256sum "${archive}" | awk 'NR == 1 { print $1 }')"
+          [[ "${archive_sha256}" =~ ^[0-9a-f]{64}$ ]]
+          artifact="agentops-byoc-customer-release-${GITHUB_SHA}"
+          {
+            printf 'image=%s\n' "${image}"
+            printf 'target_image=%s\n' "${target_image}"
+            printf 'artifact=%s\n' "${artifact}"
+            printf 'archive=%s\n' "${archive}"
+            printf 'archive_sha256=%s\n' "${archive_sha256}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Sign source-free release provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ steps.release.outputs.archive }}
+
+      - name: Upload exact customer release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.release.outputs.artifact }}
+          path: ${{ steps.release.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 30
+
+  clean-customer-install:
+    name: Install without checkout or repository state
+    needs: publish-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+    env:
+      COMPOSE_PROJECT_NAME: agentops-customer-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Require empty customer workspace
+        run: test -z "$(find "${GITHUB_WORKSPACE}" -mindepth 1 -print -quit)"
+
+      - name: Download customer release only
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.publish-release.outputs.artifact }}
+          path: ${{ runner.temp }}/customer-download
+
+      - name: Verify signed release provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          archive="$({ find "${RUNNER_TEMP}/customer-download" -maxdepth 1 -type f -name '*.tar.gz'; } | head -n 1)"
+          test -n "${archive}"
+          test "$(sha256sum "${archive}" | awk 'NR == 1 { print $1 }')" = \
+            "${{ needs.publish-release.outputs.archive_sha256 }}"
+          gh attestation verify "${archive}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/byoc-customer-release-acceptance.yml" \
+            --source-ref "${GITHUB_REF}" \
+            --source-digest "${GITHUB_SHA}" \
+            --deny-self-hosted-runners \
+            > "${RUNNER_TEMP}/customer-attestation.json"
+
+      - name: Extract bounded release artifact
+        run: |
+          set -euo pipefail
+          archive="$({ find "${RUNNER_TEMP}/customer-download" -maxdepth 1 -type f -name '*.tar.gz'; } | head -n 1)"
+          test -n "${archive}"
+          test "$(find "${RUNNER_TEMP}/customer-download" -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d ' ')" = 1
+          if tar -tzf "${archive}" | grep -Eq '(^/|(^|/)\.\.(/|$)|(^|/)\.git(/|$))'; then
+            echo "unsafe customer release archive" >&2
+            exit 1
+          fi
+          customer_root="${RUNNER_TEMP}/customer"
+          install -d -m 700 "${customer_root}"
+          tar -xzf "${archive}" -C "${customer_root}" --no-same-owner
+          release_root="$({ find "${customer_root}" -mindepth 1 -maxdepth 1 -type d; } | head -n 1)"
+          test -n "${release_root}"
+          test "$(find "${customer_root}" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" = 1
+          test ! -e "${release_root}/.git"
+          test ! -e "${release_root}/Dockerfile"
+          test ! -e "${release_root}/ui"
+          test ! -e "${release_root}/migrations"
+          printf 'AGENTOPS_CUSTOMER_RELEASE_ROOT=%s\n' "${release_root}" >> "${GITHUB_ENV}"
+
+      - name: Authenticate read-only image pull
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io \
+            --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Execute real clean customer install
+        run: |
+          set -euo pipefail
+          receipt="${RUNNER_TEMP}/customer-install-receipt.json"
+          "${AGENTOPS_CUSTOMER_RELEASE_ROOT}/install.sh" > "${receipt}"
+          jq -e --arg source "${GITHUB_SHA}" '
+            .ok == true
+            and .contract == "agentops_byoc_customer_install_v1"
+            and .operation == "install"
+            and .source_revision == $source
+            and .image_digest_verified == true
+            and .host_platform_verified == true
+            and .repository_checkout_required == false
+            and .compose_build_performed == false
+            and .control_plane == "typescript_postgres"
+            and .schema_ready == true
+            and .credentials_omitted == true
+          ' "${receipt}" >/dev/null
+
+      - name: Exercise source-free Worker and OpenClaw sidecar isolation
+        run: |
+          set -euo pipefail
+          receipt="${RUNNER_TEMP}/customer-worker-container.json"
+          timeout 90s node \
+            "${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/worker-container-acceptance.mjs" \
+            --release-root "${AGENTOPS_CUSTOMER_RELEASE_ROOT}" > "${receipt}"
+          jq -e --arg source "${GITHUB_SHA}" '
+            .ok == true
+            and .contract == "agentops_byoc_typescript_worker_container_v1"
+            and .source_revision == $source
+            and .image_digest_verified == true
+            and .source_checkout_required == false
+            and .worker_container_started == true
+            and .worker_health_verified == true
+            and .worker_init_reaper_verified == true
+            and .idle_graceful_stop_verified == true
+            and .no_task_receipt_verified == true
+            and .network_egress_disabled == true
+            and .agent_token_authorization_verified == true
+            and .provider_connections == 0
+            and .provider_call_performed == false
+            and .token_in_argv == false
+            and .token_in_environment == false
+            and .token_in_receipt == false
+            and .token_in_health == false
+            and .token_omitted == true
+            and .openclaw_provider_request_contract == "agentops_openclaw_provider_request_v1"
+            and .openclaw_provider_response_contract == "agentops_openclaw_provider_response_v1"
+            and .openclaw_provider_container_started == true
+            and .openclaw_worker_container_started == true
+            and .openclaw_provider_health_verified == true
+            and .openclaw_provider_socket_protocol_verified == true
+            and .openclaw_provider_uid_verified == true
+            and .openclaw_worker_uid_verified == true
+            and .openclaw_exact_image_verified == true
+            and .openclaw_shared_socket_only_verified == true
+            and .openclaw_provider_socket_writable_mount_verified == true
+            and .openclaw_worker_socket_readonly_mount_verified == true
+            and .openclaw_worker_socket_mutation_denied == true
+            and .public_socket_inode_preserved == true
+            and .public_socket_owner_preserved == true
+            and .public_socket_mode_preserved == true
+            and .public_socket_readonly_mount_verified == true
+            and .public_socket_protocol_after_mutation_verified == true
+            and .openclaw_phase_a_a01_a02_verified == true
+            and .openclaw_hostile_runtime_isolation_verified == false
+            and .openclaw_hostile_runtime_isolation_scope == "phase_a_a01_a02_only"
+            and .openclaw_worker_provider_mount_isolation_verified == true
+            and .openclaw_provider_agent_token_isolation_verified == true
+            and .openclaw_worker_provider_sentinel_unreadable == true
+            and .openclaw_provider_agent_token_unreadable == true
+            and .openclaw_mock_prompt_hash_verified == true
+            and .mock_provider_execution_performed == true
+            and .isolation_verified == true
+            and .real_provider_execution_performed == false
+            and .real_provider_execution_evidence_source == "separate_exact_head_harness"
+            and .openclaw_raw_prompt_omitted == true
+            and .openclaw_raw_response_omitted == true
+            and .cleanup_confirmed == true
+            and .cleanup_secret_output_omitted == true
+          ' "${receipt}" >/dev/null
+
+      - name: Initialize first Owner through the source-free customer command
+        run: |
+          set -euo pipefail
+          set +x
+          owner_receipt="${RUNNER_TEMP}/customer-owner-bootstrap.json"
+          owner_stderr="${RUNNER_TEMP}/customer-owner-bootstrap.stderr"
+          duplicate_receipt="${RUNNER_TEMP}/customer-owner-duplicate.json"
+          duplicate_stderr="${RUNNER_TEMP}/customer-owner-duplicate.stderr"
+          owner_password="$(openssl rand -hex 32)"
+          set +e
+          printf '%s\n' "${owner_password}" |
+          "${AGENTOPS_CUSTOMER_RELEASE_ROOT}/owner-init.sh" \
+            --workspace-id ws_customer_acceptance \
+            --username customer-owner \
+            --display-name "Customer Owner" \
+            --password-stdin > "${owner_receipt}" 2> "${owner_stderr}"
+          owner_status=$?
+          set -e
+          ! grep -Fq -- "${owner_password}" "${owner_receipt}" "${owner_stderr}"
+          owner_password=
+          if jq -e 'type == "object"' "${owner_receipt}" >/dev/null 2>&1; then
+            owner_receipt_parse=true
+            owner_error="$(jq -r '
+              if .error == null then "none"
+              elif (.error | type) == "string"
+                and (.error | test("^[a-z][a-z0-9_]{2,80}$"))
+                then .error
+              else "unexpected"
+              end
+            ' "${owner_receipt}")"
+          else
+            owner_receipt_parse=false
+            owner_error=unparseable
+          fi
+          if [ -s "${owner_stderr}" ]; then
+            owner_stderr_nonempty=true
+          else
+            owner_stderr_nonempty=false
+          fi
+          printf '%s\n' \
+            "owner_initial_status=${owner_status}" \
+            "owner_initial_receipt_parse=${owner_receipt_parse}" \
+            "owner_initial_error=${owner_error}" \
+            "owner_initial_stderr_nonempty=${owner_stderr_nonempty}"
+          if [ "${owner_status}" -ne 0 ]; then
+            exit 1
+          fi
+          jq -e '
+            .ok == true
+            and .operation == "commercial_owner_bootstrap"
+            and .user.user_id != null
+            and .membership.workspace_id == "ws_customer_acceptance"
+            and .membership.role == "owner"
+            and .membership.status == "active"
+            and .credential_omitted == true
+            and .password_omitted == true
+            and .python_started == false
+          ' "${owner_receipt}" >/dev/null
+          echo "owner_receipt_verified=true"
+
+          compose_file="${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/compose.yaml"
+          env_file="${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/.env"
+          compose=(docker compose --env-file "${env_file}" -f "${compose_file}")
+          owner_state="$("${compose[@]}" exec -T postgres sh -ceu \
+            'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --tuples-only --no-align --set=ON_ERROR_STOP=1' <<'SQL'
+          SELECT json_build_object(
+            'owners', (
+              SELECT COUNT(*) FROM workspace_memberships
+              WHERE workspace_id='ws_customer_acceptance'
+                AND role='owner' AND status='active'
+            ),
+            'credentials', (
+              SELECT COUNT(*) FROM human_login_credentials
+              WHERE username='customer-owner' AND status='active'
+            ),
+            'audits', (
+              SELECT COUNT(*) FROM audit_logs
+              WHERE workspace_id='ws_customer_acceptance'
+                AND action='human_auth.owner_bootstrap'
+            )
+          )::text;
+          SQL
+          )"
+          printf '%s\n' "${owner_state}" |
+            jq -e '.owners == 1 and .credentials == 1 and .audits == 1' >/dev/null
+          echo "owner_database_state_verified=true"
+
+          duplicate_password="$(openssl rand -hex 32)"
+          set +e
+          printf '%s\n' "${duplicate_password}" |
+            "${AGENTOPS_CUSTOMER_RELEASE_ROOT}/owner-init.sh" \
+              --workspace-id ws_customer_acceptance \
+              --username second-customer-owner \
+              --display-name "Second Customer Owner" \
+              --password-stdin > "${duplicate_receipt}" 2> "${duplicate_stderr}"
+          duplicate_status=$?
+          set -e
+          ! grep -Fq -- "${duplicate_password}" \
+            "${duplicate_receipt}" "${duplicate_stderr}"
+          duplicate_password=
+          if jq -e 'type == "object"' "${duplicate_receipt}" >/dev/null 2>&1; then
+            duplicate_receipt_parse=true
+            duplicate_error="$(jq -r '
+              if .error == "owner_already_initialized" then .error
+              elif .error == null then "missing"
+              else "unexpected"
+              end
+            ' "${duplicate_receipt}")"
+          else
+            duplicate_receipt_parse=false
+            duplicate_error=unparseable
+          fi
+          if [ -s "${duplicate_stderr}" ]; then
+            duplicate_stderr_nonempty=true
+          else
+            duplicate_stderr_nonempty=false
+          fi
+          printf '%s\n' \
+            "owner_duplicate_status=${duplicate_status}" \
+            "owner_duplicate_receipt_parse=${duplicate_receipt_parse}" \
+            "owner_duplicate_error=${duplicate_error}" \
+            "owner_duplicate_stderr_nonempty=${duplicate_stderr_nonempty}"
+          test "${duplicate_status}" -ne 0 || {
+            echo "owner_duplicate_nonzero_required" >&2
+            exit 1
+          }
+          jq -e '
+            .ok == false
+            and .error == "owner_already_initialized"
+            and .credential_omitted == true
+            and .password_omitted == true
+            and .python_started == false
+          ' "${duplicate_receipt}" >/dev/null || {
+            echo "owner_duplicate_receipt_invalid" >&2
+            exit 1
+          }
+          duplicate_count="$("${compose[@]}" exec -T postgres sh -ceu \
+            'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --tuples-only --no-align --set=ON_ERROR_STOP=1 --command "SELECT COUNT(*) FROM human_login_credentials WHERE username='"'"'second-customer-owner'"'"'"' |
+            tr -d '[:space:]')"
+          test "${duplicate_count}" = "0" || {
+            echo "owner_duplicate_credential_residue" >&2
+            exit 1
+          }
+          echo "owner_duplicate_rejection_verified=true"
+
+      - name: Verify declared customer operations runtime
+        run: |
+          set -euo pipefail
+          node_major="$(node -p 'process.versions.node.split(".")[0]')"
+          test "${node_major}" -ge 20
+
+      - name: Verify image, mounts, and restart persistence
+        run: |
+          set -euo pipefail
+          compose_file="${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/compose.yaml"
+          env_file="${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/.env"
+          image="${{ needs.publish-release.outputs.image }}"
+          compose=(docker compose --env-file "${env_file}" -f "${compose_file}")
+          test "$(awk -F= '/^AGENTOPS_IMAGE=/ { value=substr($0, index($0, "=") + 1) } END { print value }' "${env_file}")" = \
+            "${image}"
+          test -z "$(docker compose --env-file "${env_file}" -f "${compose_file}" config | grep -E '^[[:space:]]+build:' || true)"
+          control_plane="$("${compose[@]}" ps -q control-plane)"
+          postgres="$("${compose[@]}" ps -q postgres)"
+          test -n "${control_plane}"
+          test -n "${postgres}"
+          expected_image_id="$(docker image inspect --format '{{.Id}}' "${image}")"
+          test "$(docker inspect --format '{{.Image}}' "${control_plane}")" = "${expected_image_id}"
+          docker inspect "${control_plane}" | jq -e '
+            .[0].Mounts
+            | all(.[]; .Type != "bind" or (.Destination | startswith("/run/secrets/")))
+          ' >/dev/null
+          system_identifier="$("${compose[@]}" exec -T postgres sh -ceu \
+            'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --tuples-only --no-align --command "SELECT system_identifier FROM pg_control_system()"' |
+            tr -d '[:space:]')"
+          [[ "${system_identifier}" =~ ^[1-9][0-9]{9,24}$ ]]
+
+          "${compose[@]}" restart control-plane >/dev/null
+          timeout 5m "${compose[@]}" up --detach --no-build --pull never \
+            --wait --wait-timeout 240 control-plane >/dev/null
+          test "$("${compose[@]}" exec -T postgres sh -ceu \
+            'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --tuples-only --no-align --command "SELECT system_identifier FROM pg_control_system()"' |
+            tr -d '[:space:]')" = "${system_identifier}"
+          curl --fail --silent --show-error \
+            http://127.0.0.1:3001/api/mis/health |
+            jq -e '.ok == true and .control_plane == "typescript_postgres" and .schema_ready == true' >/dev/null
+          test -z "$(find "${GITHUB_WORKSPACE}" -mindepth 1 -print -quit)"
+
+      - name: Exercise packaged backup and isolated restore
+        run: |
+          set -euo pipefail
+          compose_file="${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/compose.yaml"
+          env_file="${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/.env"
+          backup_bundle="${RUNNER_TEMP}/customer-backup.bundle"
+          backup_receipt="${RUNNER_TEMP}/customer-backup.json"
+          restore_receipt="${RUNNER_TEMP}/customer-restore.json"
+          export AGENTOPS_BYOC_COMPOSE_FILE="${compose_file}"
+          export AGENTOPS_BYOC_ENV_FILE="${env_file}"
+          export AGENTOPS_RESTORE_DATABASE="agentops_customer_restore_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          export AGENTOPS_RESTORE_KEEP=false
+
+          timeout 5m "${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/backup.sh" \
+            "${backup_bundle}" > "${backup_receipt}"
+          jq -e '
+            .ok == true
+            and .contract == "agentops_byoc_backup_v2"
+            and .bundle_committed == true
+            and .backup_created == true
+            and .checksum_created == true
+            and .credentials_omitted == true
+          ' "${backup_receipt}" >/dev/null
+          test "$(cat "${backup_bundle}/COMMITTED")" = \
+            "agentops_byoc_backup_bundle_v2"
+
+          timeout 10m "${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/restore-drill.sh" \
+            "${backup_bundle}" > "${restore_receipt}"
+          jq -e '
+            .ok == true
+            and .contract == "agentops_byoc_restore_drill_v4"
+            and .checksum_verified == true
+            and .restore_provisioning_completed == true
+            and .migration_manifest_verified == true
+            and .schema_fingerprint_verified == true
+            and .runtime_role_boundary_verified == true
+            and .entitlement_admin_role_boundary_verified == true
+            and .function_owner_boundary_verified == true
+            and .production_overwritten == false
+            and .restore_database_kept == false
+            and .cleanup_confirmed == true
+            and .credentials_omitted == true
+          ' "${restore_receipt}" >/dev/null
+
+      - name: Exercise packaged upgrade and backup-authoritative rollback
+        run: |
+          set -euo pipefail
+          compose_file="${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/compose.yaml"
+          env_file="${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/.env"
+          lifecycle_state="${RUNNER_TEMP}/customer-lifecycle-state"
+          source_image="${{ needs.publish-release.outputs.image }}"
+          target_image="${{ needs.publish-release.outputs.target_image }}"
+          lifecycle="${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/retained-data-lifecycle.mjs"
+          compose=(docker compose --env-file "${env_file}" -f "${compose_file}")
+          authority_id="customer_authority_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          probe_id="customer_post_apply_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          export AGENTOPS_BYOC_COMPOSE_FILE="${compose_file}"
+          export AGENTOPS_BYOC_ENV_FILE="${env_file}"
+          export AGENTOPS_BYOC_LIFECYCLE_STATE_DIR="${lifecycle_state}"
+
+          docker pull "${target_image}" >/dev/null
+          source_id="$(docker image inspect --format '{{.Id}}' "${source_image}")"
+          target_id="$(docker image inspect --format '{{.Id}}' "${target_image}")"
+          test "${source_id}" != "${target_id}"
+          test "$(docker image inspect --format '{{.Architecture}}' "${target_image}")" = "amd64"
+          volume_name="$(docker volume ls \
+            --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+            --filter "label=com.docker.compose.volume=agentops_postgres_data" \
+            --format '{{.Name}}')"
+          test -n "${volume_name}"
+          volume_before="$(docker volume inspect \
+            --format '{{.Name}}|{{.Mountpoint}}|{{.CreatedAt}}' "${volume_name}")"
+          cluster_before="$("${compose[@]}" exec -T postgres sh -ceu \
+            'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --tuples-only --no-align --command "SELECT system_identifier FROM pg_control_system()"' | tr -d '[:space:]')"
+
+          audit_count() {
+            "${compose[@]}" exec -T -e "ACCEPTANCE_AUDIT_ID=$1" postgres sh -ceu \
+              'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --tuples-only --no-align --set=ON_ERROR_STOP=1 --set=audit_id="$ACCEPTANCE_AUDIT_ID"' <<'SQL'
+          SELECT count(*) FROM audit_logs WHERE audit_id = :'audit_id';
+          SQL
+          }
+          "${compose[@]}" exec -T -e "ACCEPTANCE_AUDIT_ID=${authority_id}" postgres sh -ceu \
+            'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --set=ON_ERROR_STOP=1 --set=audit_id="$ACCEPTANCE_AUDIT_ID"' <<'SQL'
+          INSERT INTO audit_logs(
+            audit_id,actor_type,actor_id,action,entity_type,entity_id,
+            metadata_json,created_at
+          ) VALUES (
+            :'audit_id','system','customer-release-acceptance',
+            'customer_upgrade_authority','acceptance',:'audit_id',
+            '{"authority":"pre_backup"}','2026-07-31T00:00:00.000Z'
+          );
+          SQL
+
+          plan_receipt="${RUNNER_TEMP}/customer-lifecycle-plan.json"
+          timeout 5m "${lifecycle}" plan --to-image "${target_image}" > "${plan_receipt}"
+          operation_id="$(jq -er '
+            select(
+              .ok == true
+              and .operation == "plan"
+              and .phase == "planned"
+              and .from_schema_contract == .to_schema_contract
+              and .apply_blocked == false
+              and .authority_database_bound == true
+            ) | .operation_id
+          ' "${plan_receipt}")"
+
+          apply_receipt="${RUNNER_TEMP}/customer-lifecycle-apply.json"
+          timeout 20m "${lifecycle}" apply --plan-id "${operation_id}" > "${apply_receipt}"
+          jq -e --arg operation_id "${operation_id}" --arg target_id "${target_id}" '
+            .ok == true
+            and .operation == "apply"
+            and .operation_id == $operation_id
+            and .phase == "applied"
+            and .image_id == $target_id
+            and .backup_commit_marker == "agentops_byoc_backup_bundle_v2"
+          ' "${apply_receipt}" >/dev/null
+
+          "${compose[@]}" exec -T -e "ACCEPTANCE_AUDIT_ID=${probe_id}" postgres sh -ceu \
+            'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --set=ON_ERROR_STOP=1 --set=audit_id="$ACCEPTANCE_AUDIT_ID"' <<'SQL'
+          INSERT INTO audit_logs(
+            audit_id,actor_type,actor_id,action,entity_type,entity_id,
+            metadata_json,created_at
+          ) VALUES (
+            :'audit_id','system','customer-release-acceptance',
+            'customer_upgrade_post_apply_probe','acceptance',:'audit_id',
+            '{"authority":"post_apply_only"}','2026-07-31T00:01:00.000Z'
+          );
+          SQL
+
+          rollback_receipt="${RUNNER_TEMP}/customer-lifecycle-rollback.json"
+          timeout 20m "${lifecycle}" rollback \
+            --confirm-restore-from-backup "${operation_id}" > "${rollback_receipt}"
+          jq -e --arg operation_id "${operation_id}" --arg source_id "${source_id}" '
+            .ok == true
+            and .operation == "rollback"
+            and .operation_id == $operation_id
+            and .phase == "rolled_back"
+            and .image_id == $source_id
+            and .backup_restore_authoritative == true
+            and .down_migration_performed == false
+            and .explicit_confirmation_verified == true
+            and .quarantine_removed == true
+            and .quarantine_cleanup_pending == false
+          ' "${rollback_receipt}" >/dev/null
+
+          test "$(audit_count "${authority_id}" | tr -d '[:space:]')" = "1"
+          test "$(audit_count "${probe_id}" | tr -d '[:space:]')" = "0"
+          final_control_plane="$("${compose[@]}" ps -q control-plane)"
+          test "$(docker inspect --format '{{.Image}}' "${final_control_plane}")" = \
+            "${source_id}"
+          test "$(docker volume inspect \
+            --format '{{.Name}}|{{.Mountpoint}}|{{.CreatedAt}}' "${volume_name}")" = \
+            "${volume_before}"
+          test "$("${compose[@]}" exec -T postgres sh -ceu \
+            'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --tuples-only --no-align --command "SELECT system_identifier FROM pg_control_system()"' | tr -d '[:space:]')" = \
+            "${cluster_before}"
+          curl --fail --silent --show-error http://127.0.0.1:3001/api/mis/health |
+            jq -e '
+              .ok == true
+              and .control_plane == "typescript_postgres"
+              and .schema_ready == true
+              and .schema_fingerprint_verified == true
+              and .python_proxy_performed == false
+              and .sqlite_used == false
+            ' >/dev/null
+          test -z "$(find "${GITHUB_WORKSPACE}" -mindepth 1 -print -quit)"
+
+      - name: Remove customer installation and credentials
+        if: always()
+        run: |
+          set +e
+          if [ -n "${AGENTOPS_CUSTOMER_RELEASE_ROOT:-}" ] && \
+             [ -f "${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/.env" ]; then
+            docker compose \
+              --env-file "${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/.env" \
+              -f "${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/compose.yaml" \
+              down --volumes --remove-orphans --timeout 10
+          fi
+          rm -rf -- \
+            "${RUNNER_TEMP}/customer" \
+            "${RUNNER_TEMP}/customer-download" \
+            "${RUNNER_TEMP}/customer-attestation.json" \
+            "${RUNNER_TEMP}/customer-install-receipt.json" \
+            "${RUNNER_TEMP}/customer-owner-bootstrap.json" \
+            "${RUNNER_TEMP}/customer-owner-bootstrap.stderr" \
+            "${RUNNER_TEMP}/customer-owner-duplicate.json" \
+            "${RUNNER_TEMP}/customer-owner-duplicate.stderr" \
+            "${RUNNER_TEMP}/customer-backup.bundle" \
+            "${RUNNER_TEMP}/customer-backup.json" \
+            "${RUNNER_TEMP}/customer-restore.json" \
+            "${RUNNER_TEMP}/customer-lifecycle-state" \
+            "${RUNNER_TEMP}/customer-lifecycle-plan.json" \
+            "${RUNNER_TEMP}/customer-lifecycle-apply.json" \
+            "${RUNNER_TEMP}/customer-lifecycle-rollback.json"

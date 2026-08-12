@@ -1,0 +1,858 @@
+name: BYOC Docker Compose Acceptance
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentops-byoc-compose-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compose-acceptance:
+    name: Clean install, restore drill, and same-schema image lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      COMPOSE_PROJECT_NAME: agentops-byoc-${{ github.run_id }}-${{ github.run_attempt }}
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact caller commit
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Declare acceptance scope
+        run: |
+          echo "::notice title=BYOC acceptance scope::Validates a clean Compose build/start, production TypeScript/PostgreSQL readiness, committed backup and isolated restore, plus backup-authoritative retained-data apply/rollback between two exact-source images with identical rootfs content and different build identities. This same-schema image lifecycle does not validate image upgrade or rollback across schema versions."
+
+      - name: Create ephemeral BYOC configuration
+        run: |
+          set -euo pipefail
+          umask 077
+
+          byoc_root="${RUNNER_TEMP}/agentops-byoc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          secrets_dir="${byoc_root}/secrets"
+          env_file="${byoc_root}/.env"
+          backup_bundle="${byoc_root}/acceptance-backup.bundle"
+          restore_database="agentops_restore_ci_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          registry="localhost:5000"
+          image_repository="${registry}/agentops-mis-byoc"
+          source_image_tag="${image_repository}:source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          target_image_tag="${image_repository}:target-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          registry_container="agentops-byoc-registry-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          lifecycle_state_dir="${byoc_root}/lifecycle-state"
+          customer_release_root="${byoc_root}/customer-release"
+          authority_id="audit_byoc_authority_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          probe_id="audit_byoc_post_apply_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          inactive_openclaw_provider_bin_sha256="$(printf '%064d' 0)"
+
+          install -d -m 700 "${byoc_root}" "${secrets_dir}"
+          openssl rand -hex 32 > "${secrets_dir}/postgres-migrator-password"
+          openssl rand -hex 32 > "${secrets_dir}/postgres-runtime-password"
+          openssl rand -hex 32 > "${secrets_dir}/postgres-entitlement-admin-password"
+          openssl rand -base64 32 > "${secrets_dir}/entitlement-operator-password"
+          openssl rand -hex 32 > "${secrets_dir}/human-session-hmac-key"
+          chmod 600 "${secrets_dir}"/*
+
+          {
+            printf 'AGENTOPS_IMAGE=%s\n' "${source_image_tag}"
+            printf 'AGENTOPS_BUILD_IDENTITY=source-%s-%s\n' \
+              "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}"
+            printf 'AGENTOPS_SOURCE_REVISION=%s\n' "${GITHUB_SHA}"
+            printf 'AGENTOPS_OPENCLAW_PROVIDER_BIN_SHA256=%s\n' \
+              "${inactive_openclaw_provider_bin_sha256}"
+            printf 'AGENTOPS_BIND_ADDRESS=127.0.0.1\n'
+            printf 'AGENTOPS_PORT=3001\n'
+            printf 'AGENTOPS_ALLOWED_ORIGINS=http://127.0.0.1:3001\n'
+            printf 'AGENTOPS_ENTITLEMENT_CONTROL_PLANE_URL=http://127.0.0.1:3001\n'
+            printf 'AGENTOPS_ENTITLEMENT_CONTROL_PLANE_ORIGIN=http://127.0.0.1:3001\n'
+            printf 'AGENTOPS_ENTITLEMENT_OPERATOR_USERNAME=owner\n'
+            printf 'AGENTOPS_POSTGRES_DATABASE=agentops\n'
+            printf 'AGENTOPS_POSTGRES_MIGRATOR_USER=agentops_migrator\n'
+            printf 'AGENTOPS_POSTGRES_RUNTIME_USER=agentops_runtime\n'
+            printf 'AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_USER=agentops_entitlement_admin\n'
+            printf 'AGENTOPS_POSTGRES_MIGRATOR_PASSWORD_FILE=%s\n' \
+              "${secrets_dir}/postgres-migrator-password"
+            printf 'AGENTOPS_POSTGRES_RUNTIME_PASSWORD_FILE=%s\n' \
+              "${secrets_dir}/postgres-runtime-password"
+            printf 'AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_PASSWORD_FILE=%s\n' \
+              "${secrets_dir}/postgres-entitlement-admin-password"
+            printf 'AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD_FILE=%s\n' \
+              "${secrets_dir}/entitlement-operator-password"
+            printf 'AGENTOPS_HUMAN_SESSION_HMAC_KEY_FILE=%s\n' \
+              "${secrets_dir}/human-session-hmac-key"
+          } > "${env_file}"
+          chmod 600 "${env_file}"
+
+          {
+            printf 'AGENTOPS_BYOC_ROOT=%s\n' "${byoc_root}"
+            printf 'AGENTOPS_BYOC_ENV_FILE=%s\n' "${env_file}"
+            printf 'AGENTOPS_BYOC_COMPOSE_FILE=deploy/byoc/compose.yaml\n'
+            printf 'AGENTOPS_BYOC_BACKUP_BUNDLE=%s\n' "${backup_bundle}"
+            printf 'AGENTOPS_BYOC_IMAGE=%s\n' "${source_image_tag}"
+            printf 'AGENTOPS_RESTORE_DATABASE=%s\n' "${restore_database}"
+            printf 'AGENTOPS_RESTORE_KEEP=false\n'
+            printf 'AGENTOPS_BYOC_LIFECYCLE_STATE_DIR=%s\n' "${lifecycle_state_dir}"
+            printf 'AGENTOPS_BYOC_CUSTOMER_RELEASE_ROOT=%s\n' "${customer_release_root}"
+            printf 'AGENTOPS_BYOC_SOURCE_IMAGE_TAG=%s\n' "${source_image_tag}"
+            printf 'AGENTOPS_BYOC_TARGET_IMAGE_TAG=%s\n' "${target_image_tag}"
+            printf 'AGENTOPS_BYOC_REGISTRY_CONTAINER=%s\n' "${registry_container}"
+            printf 'AGENTOPS_BYOC_AUTHORITY_ID=%s\n' "${authority_id}"
+            printf 'AGENTOPS_BYOC_POST_APPLY_PROBE_ID=%s\n' "${probe_id}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Start ephemeral local image registry
+        run: |
+          set -euo pipefail
+          docker run \
+            --detach \
+            --name "${AGENTOPS_BYOC_REGISTRY_CONTAINER}" \
+            --publish 127.0.0.1:5000:5000 \
+            registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --retry 20 \
+            --retry-all-errors \
+            --retry-delay 1 \
+            http://127.0.0.1:5000/v2/ > /dev/null
+
+      - name: Validate Compose model without exposing configuration
+        run: |
+          set -euo pipefail
+          docker compose \
+            --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+            -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+            config --quiet
+
+          services="$(
+            docker compose \
+              --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+              -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+              config --services
+          )"
+          if grep -Eiq '(^|[-_])(python|sqlite)([-_]|$)' <<< "${services}"; then
+            echo "unexpected Python or SQLite service in commercial BYOC topology" >&2
+            exit 1
+          fi
+
+      - name: Build and publish two exact-source immutable images
+        run: |
+          set -euo pipefail
+          failure_stage="initialize"
+          trap 'status=$?; echo "::error title=BYOC image publication failed::stage=${failure_stage}"; exit "${status}"' ERR
+          source_identity="source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          target_identity="target-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          failure_stage="build_source"
+          DOCKER_DEFAULT_PLATFORM=linux/amd64 \
+          AGENTOPS_IMAGE="${AGENTOPS_BYOC_SOURCE_IMAGE_TAG}" \
+          AGENTOPS_BUILD_IDENTITY="${source_identity}" \
+          AGENTOPS_SOURCE_REVISION="${GITHUB_SHA}" \
+          timeout 20m docker compose \
+            --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+            -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+            build --pull migrate
+          failure_stage="push_source"
+          docker push "${AGENTOPS_BYOC_SOURCE_IMAGE_TAG}" > /dev/null
+
+          failure_stage="build_target"
+          DOCKER_DEFAULT_PLATFORM=linux/amd64 \
+          AGENTOPS_IMAGE="${AGENTOPS_BYOC_TARGET_IMAGE_TAG}" \
+          AGENTOPS_BUILD_IDENTITY="${target_identity}" \
+          AGENTOPS_SOURCE_REVISION="${GITHUB_SHA}" \
+          timeout 20m docker compose \
+            --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+            -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+            build migrate
+          failure_stage="push_target"
+          docker push "${AGENTOPS_BYOC_TARGET_IMAGE_TAG}" > /dev/null
+
+          image_repository="localhost:5000/agentops-mis-byoc"
+          registry_manifest_digest() {
+            local tag="$1"
+            curl \
+              --fail \
+              --silent \
+              --show-error \
+              --head \
+              --header 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+              "http://127.0.0.1:5000/v2/agentops-mis-byoc/manifests/${tag}" |
+              awk 'tolower($1) == "docker-content-digest:" { gsub("\r", "", $2); print $2 }'
+          }
+          failure_stage="resolve_source_digest"
+          source_manifest_digest="$(
+            registry_manifest_digest \
+              "source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          )"
+          failure_stage="resolve_target_digest"
+          target_manifest_digest="$(
+            registry_manifest_digest \
+              "target-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          )"
+          test "$(printf '%s\n' "${source_manifest_digest}" | wc -l | tr -d ' ')" = "1"
+          test "$(printf '%s\n' "${target_manifest_digest}" | wc -l | tr -d ' ')" = "1"
+          [[ "${source_manifest_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${target_manifest_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          source_digest="${image_repository}@${source_manifest_digest}"
+          target_digest="${image_repository}@${target_manifest_digest}"
+          test "${source_digest}" != "${target_digest}"
+          failure_stage="pull_immutable_images"
+          docker pull "${source_digest}" > /dev/null
+          docker pull "${target_digest}" > /dev/null
+
+          failure_stage="verify_image_identity"
+          source_image_id="$(docker image inspect --format '{{.Id}}' "${source_digest}")"
+          target_image_id="$(docker image inspect --format '{{.Id}}' "${target_digest}")"
+          test "${source_image_id}" != "${target_image_id}"
+          test "$(docker image inspect --format '{{json .RootFS.Layers}}' "${source_digest}")" = \
+            "$(docker image inspect --format '{{json .RootFS.Layers}}' "${target_digest}")"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${source_digest}")" = \
+            "${GITHUB_SHA}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${target_digest}")" = \
+            "${GITHUB_SHA}"
+          test "$(docker image inspect --format '{{index .Config.Labels "io.agentops.byoc.build-identity"}}' "${source_digest}")" = \
+            "${source_identity}"
+          test "$(docker image inspect --format '{{index .Config.Labels "io.agentops.byoc.build-identity"}}' "${target_digest}")" = \
+            "${target_identity}"
+          test "$(docker image inspect --format '{{.Os}}' "${source_digest}")" = "linux"
+          test "$(docker image inspect --format '{{.Os}}' "${target_digest}")" = "linux"
+          test "$(docker image inspect --format '{{.Architecture}}' "${source_digest}")" = "amd64"
+          test "$(docker image inspect --format '{{.Architecture}}' "${target_digest}")" = "amd64"
+
+          temporary_env="${AGENTOPS_BYOC_ENV_FILE}.next"
+          awk -v image="${source_digest}" '
+            /^AGENTOPS_IMAGE=/ { print "AGENTOPS_IMAGE=" image; next }
+            { print }
+          ' "${AGENTOPS_BYOC_ENV_FILE}" > "${temporary_env}"
+          chmod 600 "${temporary_env}"
+          mv "${temporary_env}" "${AGENTOPS_BYOC_ENV_FILE}"
+
+          {
+            printf 'AGENTOPS_BYOC_SOURCE_IMAGE=%s\n' "${source_digest}"
+            printf 'AGENTOPS_BYOC_TARGET_IMAGE=%s\n' "${target_digest}"
+            printf 'AGENTOPS_BYOC_SOURCE_IMAGE_ID=%s\n' "${source_image_id}"
+            printf 'AGENTOPS_BYOC_TARGET_IMAGE_ID=%s\n' "${target_image_id}"
+          } >> "${GITHUB_ENV}"
+          trap - ERR
+
+      - name: Build and verify source-free customer release bundle
+        run: |
+          set -euo pipefail
+          release_receipt="${RUNNER_TEMP}/agentops-byoc-release-bundle.json"
+          node deploy/byoc/build-release-bundle.mjs build \
+            --output "${AGENTOPS_BYOC_CUSTOMER_RELEASE_ROOT}" \
+            --image "${AGENTOPS_BYOC_SOURCE_IMAGE}" \
+            --source-revision "${GITHUB_SHA}" > "${release_receipt}"
+          node deploy/byoc/build-release-bundle.mjs \
+            verify "${AGENTOPS_BYOC_CUSTOMER_RELEASE_ROOT}" > /dev/null
+          "${AGENTOPS_BYOC_CUSTOMER_RELEASE_ROOT}/install.sh" \
+            --verify-only > /dev/null
+          jq -e --arg source "${GITHUB_SHA}" '
+            .ok == true
+            and .contract == "agentops_byoc_release_bundle_v1"
+            and .source_revision == $source
+            and .image_digest_verified == true
+            and .credentials_omitted == true
+            and .application_source_omitted == true
+          ' "${release_receipt}" > /dev/null
+
+          test ! -e "${AGENTOPS_BYOC_CUSTOMER_RELEASE_ROOT}/.git"
+          if find "${AGENTOPS_BYOC_CUSTOMER_RELEASE_ROOT}" -type f \
+            \( -name Dockerfile -o -name package.json -o -name package-lock.json \
+               -o -name server.py \) -print -quit | grep -q .
+          then
+            echo "customer release bundle contains application source or build input" >&2
+            exit 1
+          fi
+
+          release_compose="${AGENTOPS_BYOC_CUSTOMER_RELEASE_ROOT}/deploy/byoc/compose.yaml"
+          docker compose \
+            --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+            -f "${release_compose}" \
+            config --quiet
+          default_services="$(
+            docker compose \
+              --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+              -f "${release_compose}" \
+              config --services | sort
+          )"
+          test "${default_services}" = $'control-plane\nmigrate\npostgres'
+          admin_profile_services="$(
+            docker compose \
+              --profile entitlement-admin \
+              --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+              -f "${release_compose}" \
+              config --services | sort
+          )"
+          test "${admin_profile_services}" = \
+            $'control-plane\nentitlement-admin\nmigrate\npostgres'
+          {
+            printf 'AGENTOPS_BYOC_RELEASE_ROOT=%s\n' \
+              "${AGENTOPS_BYOC_CUSTOMER_RELEASE_ROOT}"
+            printf 'AGENTOPS_BYOC_COMPOSE_FILE=%s\n' "${release_compose}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Start clean BYOC control plane from source digest
+        run: |
+          set -euo pipefail
+          timeout 10m docker compose \
+            --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+            -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+            up --detach --no-build --wait --wait-timeout 300 control-plane
+
+      - name: Verify real health and production boundary
+        run: |
+          set -euo pipefail
+          health_receipt="${RUNNER_TEMP}/agentops-byoc-health.json"
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --retry 20 \
+            --retry-all-errors \
+            --retry-delay 2 \
+            --output "${health_receipt}" \
+            http://127.0.0.1:3001/api/mis/health
+
+          jq -e '
+            .ok == true
+            and .status == "ready"
+            and .control_plane == "typescript_postgres"
+            and (.schema_contract | type == "string" and length > 0)
+            and .schema_ready == true
+            and (.schema_fingerprint_contract | type == "string" and length > 0)
+            and .schema_fingerprint_verified == true
+            and .python_proxy_performed == false
+            and .sqlite_used == false
+            and .credentials_omitted == true
+          ' "${health_receipt}" > /dev/null
+
+          docker compose \
+            --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+            -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+            exec -T control-plane sh -ceu '
+              test "$AGENTOPS_DEPLOYMENT_MODE" = production
+              test "$AGENTOPS_CONTROL_PLANE_MODE" = postgres
+              test -z "${AGENTOPS_POSTGRES_MIGRATOR_HOST:-}"
+              test ! -e /opt/agentops/server.py
+            '
+
+          running_services="$(
+            docker compose \
+              --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+              -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+              ps --services --status running |
+              sort
+          )"
+          test "${running_services}" = $'control-plane\npostgres'
+          echo "::notice title=BYOC production boundary::TypeScript/PostgreSQL health, manifest, schema fingerprint, restricted runtime startup, and absence of a Python/SQLite service path verified."
+
+      - name: Create and verify committed backup bundle
+        run: |
+          set -euo pipefail
+          backup_receipt="${RUNNER_TEMP}/agentops-byoc-backup.json"
+          timeout 5m "${AGENTOPS_BYOC_RELEASE_ROOT}/deploy/byoc/backup.sh" \
+            "${AGENTOPS_BYOC_BACKUP_BUNDLE}" > "${backup_receipt}"
+          jq -e '
+            .ok == true
+            and .contract == "agentops_byoc_backup_v2"
+            and .bundle_committed == true
+            and .backup_created == true
+            and .checksum_created == true
+            and .credentials_omitted == true
+          ' "${backup_receipt}" > /dev/null
+          test -s "${AGENTOPS_BYOC_BACKUP_BUNDLE}/database.dump"
+          test -s "${AGENTOPS_BYOC_BACKUP_BUNDLE}/SHA256SUMS"
+          test "$(
+            cat "${AGENTOPS_BYOC_BACKUP_BUNDLE}/COMMITTED"
+          )" = "agentops_byoc_backup_bundle_v2"
+
+      - name: Run isolated restore and role-boundary drill
+        run: |
+          set -euo pipefail
+          restore_receipt="${RUNNER_TEMP}/agentops-byoc-restore.json"
+          timeout 10m "${AGENTOPS_BYOC_RELEASE_ROOT}/deploy/byoc/restore-drill.sh" \
+            "${AGENTOPS_BYOC_BACKUP_BUNDLE}" > "${restore_receipt}"
+          jq -e '
+            .ok == true
+            and .contract == "agentops_byoc_restore_drill_v4"
+            and .checksum_verified == true
+            and .restore_provisioning_completed == true
+            and .migration_manifest_verified == true
+            and .schema_fingerprint_verified == true
+            and .runtime_role_boundary_verified == true
+            and .entitlement_admin_role_boundary_verified == true
+            and .function_owner_boundary_verified == true
+            and .isolated_role_dsns_file_backed == true
+            and .production_overwritten == false
+            and .restore_database_kept == false
+            and .cleanup_confirmed == true
+            and .credentials_omitted == true
+          ' "${restore_receipt}" > /dev/null
+
+          remaining="$(
+            docker compose \
+              --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+              -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+              exec -T \
+              -e "AGENTOPS_RESTORE_DATABASE=${AGENTOPS_RESTORE_DATABASE}" \
+              postgres sh -ceu '
+                psql \
+                  --username "$POSTGRES_USER" \
+                  --dbname "$POSTGRES_DB" \
+                  --tuples-only \
+                  --no-align \
+                  --set=restore_database="$AGENTOPS_RESTORE_DATABASE"
+              ' <<'SQL'
+          SELECT count(*) FROM pg_database WHERE datname = :'restore_database';
+          SQL
+          )"
+          test "${remaining}" = "0"
+          echo "::notice title=BYOC restore drill::Committed backup restored into an isolated database; migration, fingerprint, runtime/admin/function-owner boundaries, file-backed role DSNs, and cleanup verified."
+
+      - name: Run real same-schema retained-data lifecycle
+        run: |
+          set -euo pipefail
+          # Contract markers: retained-data-lifecycle.mjs plan; retained-data-lifecycle.mjs apply; retained-data-lifecycle.mjs rollback.
+          report_lifecycle_failure() {
+            status=$?
+            trap - EXIT
+            if [[ "${status}" -ne 0 ]]; then
+              for receipt in \
+                "${RUNNER_TEMP}/agentops-byoc-lifecycle-plan.json" \
+                "${RUNNER_TEMP}/agentops-byoc-lifecycle-apply.json" \
+                "${RUNNER_TEMP}/agentops-byoc-lifecycle-status.json" \
+                "${RUNNER_TEMP}/agentops-byoc-lifecycle-rollback.json" \
+                "${RUNNER_TEMP}/agentops-byoc-lifecycle-postconditions.json"
+              do
+                if [[ -f "${receipt}" && ! -L "${receipt}" ]]; then
+                  jq -c '{
+                    contract,
+                    ok,
+                    operation,
+                    error_code,
+                    failure_stage,
+                    state_promoted,
+                    authority_retained,
+                    post_apply_probe_removed,
+                    source_image_restored,
+                    volume_identity_retained,
+                    cluster_identity_retained,
+                    final_health_verified,
+                    final_schema_readiness_verified,
+                    credentials_omitted,
+                    image_identifiers_omitted,
+                    database_identifiers_omitted,
+                    sql_omitted,
+                    row_data_omitted
+                  }' "${receipt}" >&2 || true
+                fi
+              done
+            fi
+            exit "${status}"
+          }
+          trap report_lifecycle_failure EXIT
+          audit_log_count() {
+            local audit_id="$1"
+            docker compose \
+              --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+              -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+              exec -T \
+              -e "ACCEPTANCE_AUDIT_ID=${audit_id}" \
+              postgres sh -ceu \
+              'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --tuples-only --no-align --set=audit_id="$ACCEPTANCE_AUDIT_ID"' <<'SQL'
+          SELECT count(*) FROM audit_logs WHERE audit_id=:'audit_id';
+          SQL
+          }
+          lifecycle_dir="${AGENTOPS_BYOC_LIFECYCLE_STATE_DIR}"
+          install -d -m 700 "${lifecycle_dir}"
+
+          volume_name="$(
+            docker volume ls \
+              --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+              --filter "label=com.docker.compose.volume=agentops_postgres_data" \
+              --format '{{.Name}}'
+          )"
+          test -n "${volume_name}"
+          test "$(printf '%s\n' "${volume_name}" | wc -l | tr -d ' ')" = "1"
+          volume_identity_before="$(
+            docker volume inspect \
+              --format '{{.Name}}|{{.Mountpoint}}|{{.CreatedAt}}' \
+              "${volume_name}"
+          )"
+          cluster_identifier_before="$(
+            docker compose \
+              --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+              -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+              exec -T postgres sh -ceu \
+              'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --tuples-only --no-align --command "SELECT system_identifier FROM pg_control_system()"'
+          )"
+          test -n "${cluster_identifier_before}"
+
+          docker compose \
+            --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+            -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+            exec -T \
+            -e "ACCEPTANCE_AUTHORITY_ID=${AGENTOPS_BYOC_AUTHORITY_ID}" \
+            postgres sh -ceu \
+            'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --set=ON_ERROR_STOP=1 --set=authority_id="$ACCEPTANCE_AUTHORITY_ID"' <<'SQL'
+          INSERT INTO audit_logs(
+            audit_id,actor_type,actor_id,action,entity_type,entity_id,
+            metadata_json,created_at
+          ) VALUES (
+            :'authority_id','system','byoc-compose-acceptance',
+            'same_schema_lifecycle_authority','acceptance',:'authority_id',
+            '{"authority":"pre_backup"}','2026-07-31T00:00:00.000Z'
+          );
+          SQL
+
+          plan_receipt="${RUNNER_TEMP}/agentops-byoc-lifecycle-plan.json"
+          timeout 5m "${AGENTOPS_BYOC_RELEASE_ROOT}/deploy/byoc/retained-data-lifecycle.mjs" plan \
+            --to-image "${AGENTOPS_BYOC_TARGET_IMAGE}" > "${plan_receipt}"
+          jq -e \
+            --arg source_image "${AGENTOPS_BYOC_SOURCE_IMAGE}" \
+            --arg source_id "${AGENTOPS_BYOC_SOURCE_IMAGE_ID}" \
+            --arg target_image "${AGENTOPS_BYOC_TARGET_IMAGE}" \
+            --arg target_id "${AGENTOPS_BYOC_TARGET_IMAGE_ID}" '
+              .ok == true
+              and .operation == "plan"
+              and .phase == "planned"
+              and .from_image_reference == $source_image
+              and .from_image_id == $source_id
+              and .to_image_reference == $target_image
+              and .to_image_id == $target_id
+              and .from_schema_contract == .to_schema_contract
+              and .active_run_count == 0
+              and .apply_blocked == false
+              and .authority_database_bound == true
+            ' "${plan_receipt}" > /dev/null
+          operation_id="$(jq -er '.operation_id' "${plan_receipt}")"
+
+          apply_receipt="${RUNNER_TEMP}/agentops-byoc-lifecycle-apply.json"
+          timeout 20m "${AGENTOPS_BYOC_RELEASE_ROOT}/deploy/byoc/retained-data-lifecycle.mjs" apply \
+            --plan-id "${operation_id}" > "${apply_receipt}"
+          jq -e \
+            --arg operation_id "${operation_id}" \
+            --arg target_id "${AGENTOPS_BYOC_TARGET_IMAGE_ID}" '
+              .ok == true
+              and .operation == "apply"
+              and .operation_id == $operation_id
+              and .phase == "applied"
+              and .image_id == $target_id
+              and .backup_commit_marker == "agentops_byoc_backup_bundle_v2"
+              and .active_run_preflight_passed == true
+              and .configuration_preflight_passed == true
+            ' "${apply_receipt}" > /dev/null
+
+          control_plane_id="$(
+            docker compose \
+              --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+              -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+              ps -q control-plane
+          )"
+          test "$(docker inspect --format '{{.Image}}' "${control_plane_id}")" = \
+            "${AGENTOPS_BYOC_TARGET_IMAGE_ID}"
+
+          authority_after_apply="$(audit_log_count "${AGENTOPS_BYOC_AUTHORITY_ID}")"
+          test "${authority_after_apply}" = "1"
+
+          docker compose \
+            --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+            -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+            exec -T \
+            -e "ACCEPTANCE_PROBE_ID=${AGENTOPS_BYOC_POST_APPLY_PROBE_ID}" \
+            postgres sh -ceu \
+            'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --set=ON_ERROR_STOP=1 --set=probe_id="$ACCEPTANCE_PROBE_ID"' <<'SQL'
+          INSERT INTO audit_logs(
+            audit_id,actor_type,actor_id,action,entity_type,entity_id,
+            metadata_json,created_at
+          ) VALUES (
+            :'probe_id','system','byoc-compose-acceptance',
+            'same_schema_lifecycle_post_apply_probe','acceptance',:'probe_id',
+            '{"authority":"post_apply_only"}','2026-07-31T00:01:00.000Z'
+          );
+          SQL
+
+          status_receipt="${RUNNER_TEMP}/agentops-byoc-lifecycle-status.json"
+          "${AGENTOPS_BYOC_RELEASE_ROOT}/deploy/byoc/retained-data-lifecycle.mjs" status > "${status_receipt}"
+          jq -e \
+            --arg operation_id "${operation_id}" \
+            --arg target_id "${AGENTOPS_BYOC_TARGET_IMAGE_ID}" '
+              .ok == true
+              and .operation == "status"
+              and .state_present == true
+              and .operation_locked == false
+              and .state.operation.operation_id == $operation_id
+              and .state.operation.phase == "applied"
+              and .state.installation.image_id == $target_id
+            ' "${status_receipt}" > /dev/null
+
+          rollback_receipt="${RUNNER_TEMP}/agentops-byoc-lifecycle-rollback.json"
+          timeout 20m "${AGENTOPS_BYOC_RELEASE_ROOT}/deploy/byoc/retained-data-lifecycle.mjs" rollback \
+            --confirm-restore-from-backup "${operation_id}" > "${rollback_receipt}"
+          jq -e \
+            --arg operation_id "${operation_id}" \
+            --arg source_id "${AGENTOPS_BYOC_SOURCE_IMAGE_ID}" '
+              .ok == true
+              and .operation == "rollback"
+              and .operation_id == $operation_id
+              and .phase == "rolled_back"
+              and .image_id == $source_id
+              and .backup_restore_authoritative == true
+              and .down_migration_performed == false
+              and .explicit_confirmation_verified == true
+              and .quarantine_removed == true
+              and .quarantine_cleanup_pending == false
+            ' "${rollback_receipt}" > /dev/null
+
+          authority_after_rollback="$(
+            audit_log_count "${AGENTOPS_BYOC_AUTHORITY_ID}" || true
+          )"
+          probe_after_rollback="$(
+            audit_log_count "${AGENTOPS_BYOC_POST_APPLY_PROBE_ID}" || true
+          )"
+          authority_retained=false
+          post_apply_probe_removed=false
+          if [[ "${authority_after_rollback}" = "1" ]]; then
+            authority_retained=true
+          fi
+          if [[ "${probe_after_rollback}" = "0" ]]; then
+            post_apply_probe_removed=true
+          fi
+
+          final_control_plane_id="$(
+            docker compose \
+              --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+              -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+              ps -q control-plane || true
+          )"
+          final_control_plane_image="$(
+            if [[ -n "${final_control_plane_id}" ]]; then
+              docker inspect \
+                --format '{{.Image}}' \
+                "${final_control_plane_id}" 2>/dev/null || true
+            fi
+          )"
+          final_volume_identity="$(
+            docker volume inspect \
+              --format '{{.Name}}|{{.Mountpoint}}|{{.CreatedAt}}' \
+              "${volume_name}" 2>/dev/null || true
+          )"
+          final_cluster_identifier="$(
+            docker compose \
+              --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+              -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+              exec -T postgres sh -ceu \
+              'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-psqlrc --tuples-only --no-align --command "SELECT system_identifier FROM pg_control_system()"' \
+              2>/dev/null || true
+          )"
+          source_image_restored=false
+          volume_identity_retained=false
+          cluster_identity_retained=false
+          if [[ "${final_control_plane_image}" = "${AGENTOPS_BYOC_SOURCE_IMAGE_ID}" ]]; then
+            source_image_restored=true
+          fi
+          if [[ "${final_volume_identity}" = "${volume_identity_before}" ]]; then
+            volume_identity_retained=true
+          fi
+          if [[ "${final_cluster_identifier}" = "${cluster_identifier_before}" ]]; then
+            cluster_identity_retained=true
+          fi
+
+          final_health="${RUNNER_TEMP}/agentops-byoc-lifecycle-final-health.json"
+          final_health_verified=false
+          if curl \
+              --fail \
+              --silent \
+              --show-error \
+              --retry 20 \
+              --retry-all-errors \
+              --retry-delay 2 \
+              --output "${final_health}" \
+              http://127.0.0.1:3001/api/mis/health \
+            && jq -e '
+              .ok == true
+              and .status == "ready"
+              and .control_plane == "typescript_postgres"
+              and .schema_ready == true
+              and .schema_fingerprint_verified == true
+              and .python_proxy_performed == false
+              and .sqlite_used == false
+              and .credentials_omitted == true
+            ' "${final_health}" > /dev/null
+          then
+            final_health_verified=true
+          fi
+
+          final_schema_readiness="${RUNNER_TEMP}/agentops-byoc-lifecycle-final-schema-readiness.json"
+          final_schema_readiness_verified=false
+          if docker compose \
+              --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+              -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+              exec -T control-plane \
+              node /usr/local/lib/agentops/node-secret-entrypoint.mjs \
+              --postgres-runtime \
+              -- \
+              npm run check:postgres-schema --silent \
+              > "${final_schema_readiness}" \
+              2>/dev/null \
+            && jq -e '
+              .contract == "agentops_postgres_schema_readiness_v1"
+              and .ok == true
+              and .operation == "check"
+              and .schema_fingerprint_verified == true
+              and .database_role_boundary_verified == true
+              and .credentials_omitted == true
+            ' "${final_schema_readiness}" > /dev/null
+          then
+            final_schema_readiness_verified=true
+          fi
+
+          postcondition_receipt="${RUNNER_TEMP}/agentops-byoc-lifecycle-postconditions.json"
+          jq -n \
+            --argjson authority_retained "${authority_retained}" \
+            --argjson post_apply_probe_removed "${post_apply_probe_removed}" \
+            --argjson source_image_restored "${source_image_restored}" \
+            --argjson volume_identity_retained "${volume_identity_retained}" \
+            --argjson cluster_identity_retained "${cluster_identity_retained}" \
+            --argjson final_health_verified "${final_health_verified}" \
+            --argjson final_schema_readiness_verified "${final_schema_readiness_verified}" '
+              {
+                contract: "agentops_byoc_retained_data_lifecycle_postconditions_v1",
+                ok: (
+                  $authority_retained
+                  and $post_apply_probe_removed
+                  and $source_image_restored
+                  and $volume_identity_retained
+                  and $cluster_identity_retained
+                  and $final_health_verified
+                  and $final_schema_readiness_verified
+                ),
+                operation: "rollback_postconditions",
+                authority_retained: $authority_retained,
+                post_apply_probe_removed: $post_apply_probe_removed,
+                source_image_restored: $source_image_restored,
+                volume_identity_retained: $volume_identity_retained,
+                cluster_identity_retained: $cluster_identity_retained,
+                final_health_verified: $final_health_verified,
+                final_schema_readiness_verified:
+                  $final_schema_readiness_verified,
+                credentials_omitted: true,
+                image_identifiers_omitted: true,
+                database_identifiers_omitted: true,
+                sql_omitted: true,
+                row_data_omitted: true
+              }
+            ' > "${postcondition_receipt}"
+          jq -c . "${postcondition_receipt}"
+          jq -e '.ok == true' "${postcondition_receipt}" > /dev/null
+
+          echo "::notice title=BYOC same-schema lifecycle::Two immutable exact-source image digests with identical rootfs layers and distinct image IDs completed real plan/apply/backup-authoritative rollback on one retained PostgreSQL volume; pre-backup authority survived, the post-apply probe disappeared, source image/readiness/role boundaries recovered, and no volume reset occurred."
+
+      - name: Record verified scope
+        run: |
+          cat >> "${GITHUB_STEP_SUMMARY}" <<'EOF'
+          ## BYOC Docker Compose acceptance
+
+          Verified on an ephemeral Ubuntu runner:
+
+          - source-side immutable image publication followed by a source-excluded,
+            checksum-verified release payload and Compose startup;
+          - production TypeScript/PostgreSQL health and schema fingerprint;
+          - committed PostgreSQL backup bundle;
+          - isolated restore provisioning, runtime/admin/function-owner boundaries, and cleanup.
+          - real same-schema image `plan`/`apply`/backup-authoritative `rollback`;
+          - one retained PostgreSQL volume and cluster identity across the lifecycle;
+          - pre-backup authority retained and post-apply-only data removed by rollback;
+          - exact source image, health, Schema readiness, and role boundaries restored.
+
+          This acceptance uses two immutable images built from the exact same source and
+          identical rootfs layers, with distinct OCI build-identity labels and image IDs.
+          It does not validate image upgrade or rollback across Schema versions; the
+          forward Schema upgrade gate remains open.
+          EOF
+
+      - name: Show bounded diagnostics on failure
+        if: failure()
+        run: |
+          if [[ -n "${AGENTOPS_BYOC_ENV_FILE:-}" && -f "${AGENTOPS_BYOC_ENV_FILE}" ]]; then
+            docker compose \
+              --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+              -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+              ps --all || true
+
+            diagnostics="$(
+              docker compose \
+                --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+                -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+                logs --no-color --tail 200 control-plane 2>/dev/null |
+                grep -Eo \
+                  'byoc_secret_preflight_failed:[a-z0-9_]+|"error_code":"[a-z0-9_]+"' |
+                sort -u || true
+            )"
+            if [[ -n "${diagnostics}" ]]; then
+              printf '%s\n' "${diagnostics}"
+            else
+              echo "No allowlisted control-plane error code was emitted."
+            fi
+          fi
+
+      - name: Remove containers, acceptance volume, images, registry, and secrets
+        if: always()
+        run: |
+          set +e
+          cleanup_status=0
+          if [[ -n "${AGENTOPS_BYOC_ENV_FILE:-}" && -f "${AGENTOPS_BYOC_ENV_FILE}" ]]; then
+            timeout 5m docker compose \
+              --env-file "${AGENTOPS_BYOC_ENV_FILE}" \
+              -f "${AGENTOPS_BYOC_COMPOSE_FILE}" \
+              down --volumes --remove-orphans --rmi local ||
+              cleanup_status=$?
+          fi
+          for image in \
+            "${AGENTOPS_BYOC_SOURCE_IMAGE:-}" \
+            "${AGENTOPS_BYOC_TARGET_IMAGE:-}" \
+            "${AGENTOPS_BYOC_SOURCE_IMAGE_TAG:-}" \
+            "${AGENTOPS_BYOC_TARGET_IMAGE_TAG:-}"
+          do
+            if [[ -n "${image}" ]] && \
+              docker image inspect "${image}" > /dev/null 2>&1
+            then
+              docker image rm --force "${image}" > /dev/null ||
+                cleanup_status=$?
+            fi
+          done
+          registry_container="${AGENTOPS_BYOC_REGISTRY_CONTAINER:-agentops-byoc-registry-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
+          if docker container inspect "${registry_container}" > /dev/null 2>&1; then
+            docker container rm --force "${registry_container}" > /dev/null ||
+              cleanup_status=$?
+          fi
+          fallback_byoc_root="${RUNNER_TEMP}/agentops-byoc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          rm -rf -- "${AGENTOPS_BYOC_ROOT:-${fallback_byoc_root}}" ||
+            cleanup_status=$?
+          rm -f -- \
+            "${RUNNER_TEMP}/agentops-byoc-health.json" \
+            "${RUNNER_TEMP}/agentops-byoc-backup.json" \
+            "${RUNNER_TEMP}/agentops-byoc-restore.json" \
+            "${RUNNER_TEMP}/agentops-byoc-lifecycle-plan.json" \
+            "${RUNNER_TEMP}/agentops-byoc-lifecycle-apply.json" \
+            "${RUNNER_TEMP}/agentops-byoc-lifecycle-status.json" \
+            "${RUNNER_TEMP}/agentops-byoc-lifecycle-rollback.json" \
+            "${RUNNER_TEMP}/agentops-byoc-lifecycle-final-health.json" \
+            "${RUNNER_TEMP}/agentops-byoc-lifecycle-final-schema-readiness.json" \
+            "${RUNNER_TEMP}/agentops-byoc-lifecycle-postconditions.json" ||
+            cleanup_status=$?
+          exit "${cleanup_status}"
