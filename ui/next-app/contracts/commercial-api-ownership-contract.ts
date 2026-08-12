@@ -128,6 +128,98 @@ function importedLocalName(
   return matches[0][0];
 }
 
+function bindingIdentifiers(name: ts.BindingName): ts.Identifier[] {
+  if (ts.isIdentifier(name)) return [name];
+  return name.elements.flatMap((element) =>
+    ts.isOmittedExpression(element) ? [] : bindingIdentifiers(element.name));
+}
+
+function runtimeBindingIdentifiers(file: ts.SourceFile) {
+  const bindings: ts.Identifier[] = [];
+  walk(file, (node) => {
+    if (ts.isVariableDeclaration(node) || ts.isParameter(node)) {
+      bindings.push(...bindingIdentifiers(node.name));
+    } else if (
+      (ts.isFunctionDeclaration(node)
+        || ts.isFunctionExpression(node)
+        || ts.isClassDeclaration(node)
+        || ts.isClassExpression(node))
+      && node.name
+    ) {
+      bindings.push(node.name);
+    } else if (ts.isCatchClause(node) && node.variableDeclaration) {
+      bindings.push(...bindingIdentifiers(node.variableDeclaration.name));
+    }
+  });
+  return bindings;
+}
+
+function assertImportedBindingUnshadowed(file: ts.SourceFile, localName: string) {
+  const shadow = runtimeBindingIdentifiers(file).find((binding) => binding.text === localName);
+  assert(
+    !shadow,
+    `${file.fileName}:${shadow ? file.getLineAndCharacterOfPosition(shadow.getStart()).line + 1 : 0}: imported binding ${localName} is shadowed`,
+  );
+}
+
+function catchAllSyntaxFindings(file: ts.SourceFile) {
+  const allowedModules = new Set([
+    "next/server",
+    "@/server/controlPlane/config",
+    "@/server/controlPlane/proxy",
+  ]);
+  const unreviewedImports: string[] = [];
+  let importEquals = false;
+  let directNetworkCapability = false;
+  let environmentAccess = false;
+  let dynamicCodeOrImport = false;
+  for (const statement of file.statements) {
+    if (ts.isImportEqualsDeclaration(statement)) {
+      importEquals = true;
+      dynamicCodeOrImport = true;
+    }
+    if (
+      ts.isImportDeclaration(statement)
+      && ts.isStringLiteral(statement.moduleSpecifier)
+      && !allowedModules.has(statement.moduleSpecifier.text)
+    ) unreviewedImports.push(statement.moduleSpecifier.text);
+  }
+  walk(file, (node) => {
+    if (
+      (ts.isIdentifier(node) && [
+        "fetch",
+        "WebSocket",
+        "XMLHttpRequest",
+        "globalThis",
+        "global",
+        "Reflect",
+      ].includes(node.text))
+      || (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "URL")
+    ) directNetworkCapability = true;
+    if (ts.isIdentifier(node) && node.text === "process") environmentAccess = true;
+    if (
+      (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword)
+      || (ts.isIdentifier(node) && ["require", "eval", "Function"].includes(node.text))
+      || (
+        ts.isPropertyAccessExpression(node)
+        && ["constructor", "__proto__", "prototype"].includes(node.name.text)
+      )
+      || (
+        ts.isElementAccessExpression(node)
+        && ts.isStringLiteralLike(node.argumentExpression)
+        && ["constructor", "__proto__", "prototype"].includes(node.argumentExpression.text)
+      )
+    ) dynamicCodeOrImport = true;
+  });
+  return {
+    directNetworkCapability,
+    dynamicCodeOrImport,
+    environmentAccess,
+    importEquals,
+    unreviewedImports,
+  };
+}
+
 function callsNamed(node: ts.Node, name: string) {
   let found = false;
   walk(node, (candidate) => {
@@ -237,6 +329,41 @@ function assertTrustedGuardBindingFailsClosed() {
     ) === "freeLocalAllowed",
     "canonical guard import aliases must retain their module binding",
   );
+
+  const shadowedImport = ts.createSourceFile(
+    "shadowed-import.ts",
+    `import { legacyPythonProxyAllowed } from "@/server/controlPlane/config";
+    function probe() {
+      const legacyPythonProxyAllowed = () => true;
+      return legacyPythonProxyAllowed();
+    }`,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  let shadowRejected = false;
+  try {
+    assertImportedBindingUnshadowed(shadowedImport, "legacyPythonProxyAllowed");
+  } catch (error) {
+    shadowRejected = /imported binding legacyPythonProxyAllowed is shadowed/.test(
+      String(error),
+    );
+  }
+  assert(shadowRejected, "canonical imported guard shadowing must fail closed");
+
+  const computedCapabilities = ts.createSourceFile(
+    "computed-capabilities.ts",
+    `const one = globalThis["fetch"];
+    const two = Reflect.get(globalThis, "process")["env"];
+    import net = require("node:net");`,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const findings = catchAllSyntaxFindings(computedCapabilities);
+  assert(findings.directNetworkCapability, "computed global network capability must be detected");
+  assert(findings.importEquals, "import-equals capability must be detected");
+  assert(findings.dynamicCodeOrImport, "require capability must be detected");
 }
 
 function negatedGuardName(expression: ts.Expression): string | undefined {
@@ -373,6 +500,7 @@ function assertProxyHelperFailsClosed() {
     new Set(["./config"]),
     "legacyPythonProxyAllowed",
   );
+  assertImportedBindingUnshadowed(parsed.file, legacyGuard);
   assert(
     negatedGuardName(guard.expression) === legacyGuard,
     `${PROXY_FILE}: first guard must require the canonical Free Local mode predicate`,
@@ -401,35 +529,17 @@ function assertCatchAllFailsClosed() {
     new Set(["@/server/controlPlane/config"]),
     "legacyPythonProxyAllowed",
   );
-  const allowedModules = new Set([
-    "next/server",
-    "@/server/controlPlane/config",
-    "@/server/controlPlane/proxy",
-  ]);
-  for (const statement of parsed.file.statements) {
-    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
-    assert(
-      allowedModules.has(statement.moduleSpecifier.text),
-      `${CATCH_ALL_FILE}: unreviewed import capability ${statement.moduleSpecifier.text}`,
-    );
-  }
-  let directNetworkCapability = false;
-  let environmentAccess = false;
-  let dynamicCodeOrImport = false;
-  walk(parsed.file, (node) => {
-    if (
-      (ts.isIdentifier(node) && ["fetch", "WebSocket", "XMLHttpRequest"].includes(node.text))
-      || (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "URL")
-    ) directNetworkCapability = true;
-    if (ts.isIdentifier(node) && node.text === "process") environmentAccess = true;
-    if (
-      (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword)
-      || (ts.isIdentifier(node) && ["require", "eval", "Function"].includes(node.text))
-    ) dynamicCodeOrImport = true;
-  });
-  assert(!directNetworkCapability, `${CATCH_ALL_FILE}: catch-all cannot own network globals or URL construction`);
-  assert(!environmentAccess, `${CATCH_ALL_FILE}: catch-all cannot access process state`);
-  assert(!dynamicCodeOrImport, `${CATCH_ALL_FILE}: catch-all cannot dynamically obtain capabilities`);
+  assertImportedBindingUnshadowed(parsed.file, proxyBinding);
+  assertImportedBindingUnshadowed(parsed.file, legacyGuard);
+  const findings = catchAllSyntaxFindings(parsed.file);
+  assert(!findings.importEquals, `${CATCH_ALL_FILE}: import-equals capabilities are forbidden`);
+  assert(
+    findings.unreviewedImports.length === 0,
+    `${CATCH_ALL_FILE}: unreviewed import capability ${findings.unreviewedImports.join(", ")}`,
+  );
+  assert(!findings.directNetworkCapability, `${CATCH_ALL_FILE}: catch-all cannot own network globals or URL construction`);
+  assert(!findings.environmentAccess, `${CATCH_ALL_FILE}: catch-all cannot access process state`);
+  assert(!findings.dynamicCodeOrImport, `${CATCH_ALL_FILE}: catch-all cannot dynamically obtain capabilities`);
   const declaration = functionNamed(parsed.file, "proxy");
   const statements = declaration.body!.statements;
   const transportIndex = statements.findIndex((statement) => {
@@ -478,6 +588,9 @@ function assertProxyCallOwnership() {
     const proxyBindings = new Set(
       [...proxyImports].filter(([, imported]) => imported === "proxyControlPlaneRequest").map(([local]) => local),
     );
+    for (const binding of proxyBindings) {
+      assertImportedBindingUnshadowed(parsed.file, binding);
+    }
     const calls: ts.CallExpression[] = [];
     walk(parsed.file, (node) => {
       const name = directCallName(node);
