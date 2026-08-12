@@ -28,6 +28,14 @@ launcher emits `R` only after its isolation sequence and marks the descriptor
 or `RE` cannot produce a receipt. This proves neither root-fd path confinement
 nor a real runtime launch, so it does not change any finding or claim below.
 
+A native `openat2` resolver primitive is now packaged and tested separately. It
+rejects traversal, symlinks, proc magiclinks, and mount crossing below an
+inherited root directory fd. It currently reports
+`resolved_fd_handoff_verified=false` and closes the resolved file descriptors;
+the runner and launcher do not consume them yet. PATH-01 through PATH-04
+therefore remain open until the resolved executable/entrypoint identity is
+carried without pathname reopening into the actual launch sequence.
+
 ## 2. Current Path Trace
 
 The manifest contract uses this metadata:

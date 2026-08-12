@@ -46,6 +46,17 @@ receipt. This closes the earlier gap where a child-process spawn event could be
 mistaken for completed launcher isolation, but remains contract evidence until
 the exact-image Linux acceptance passes.
 
+The A07 image also packages a native `openat2` resolver foundation. Its Linux
+contract requires a root-owned inherited directory fd and independently checks
+`RESOLVE_IN_ROOT` and `RESOLVE_BENEATH` identity while denying symlinks, magic
+links, and mount crossings. The primitive currently closes the resolved fd and
+does not hand it to the launcher, so `runtime_path_toctou_closed=false` remains
+mandatory. The production Executor service now performs preflight internally;
+caller-supplied preflight and owner/cgroup inspection dependencies are rejected.
+Client disconnect and shutdown propagate cancellation to the runner. Timeout,
+cancellation, and output overflow return control before pipe EOF so cgroup-wide
+cleanup cannot be held hostage by a detached descendant retaining a pipe.
+
 The exact A07 foundation image and native launcher contract have passed Linux
 CI, but the signed runtime path audit in
 `docs/OPENCLAW_A07_SIGNED_RUNTIME_PATH_AUDIT.md` identifies unresolved

@@ -26,6 +26,13 @@ assert.match(
   dockerfile,
   /COPY --from=runtime-launcher-build --chmod=0555 \/agentops-openclaw-runtime-launcher \/usr\/local\/bin\/agentops-openclaw-runtime-launcher/,
 );
+assert.match(dockerfile, /FROM peercred-build AS runtime-path-resolver-build/);
+assert.match(dockerfile, /COPY deploy\/byoc\/openclaw-runtime-path-resolver\.c/);
+assert.match(
+  dockerfile,
+  /COPY --from=runtime-path-resolver-build --chmod=0555 \/agentops-openclaw-runtime-path-resolver \/usr\/local\/bin\/agentops-openclaw-runtime-path-resolver/,
+);
+assert.match(dockerfile, /deploy\/byoc\/openclaw-runtime-path-resolver-contract\.mjs/);
 assert.match(dockerfile, /install -d -o 0 -g 2200 -m 0700 \/var\/lib\/agentops-openclaw\/replay/);
 for (const moduleName of [
   "openclaw-cgroup-v2.mjs",
@@ -122,6 +129,9 @@ process.stdout.write(`${JSON.stringify({
   executor_capabilities: ["SETUID", "SETGID", "KILL"],
   delegated_cgroup_path_exact: true,
   persistent_replay_journal_present: true,
+  native_openat2_resolver_foundation_packaged: true,
+  resolved_fd_handoff_verified: false,
+  runtime_path_toctou_closed: false,
   external_provider_egress_operator_attestation_required: true,
   real_typescript_worker_entrypoint_configured: true,
   candidate_source_only: true,

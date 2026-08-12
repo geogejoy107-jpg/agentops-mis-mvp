@@ -2,12 +2,17 @@
 
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync } from "node:crypto";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import {
   buildExecutorDispatch,
   canonicalExecutorProtocolBytes,
 } from "./openclaw-executor-protocol.mjs";
 import { verifyCanonicalExecutorReceipt } from "./openclaw-executor-receipt.mjs";
-import { runExecutorDispatchForTest } from "./openclaw-executor-runner.mjs";
+import {
+  runExecutorDispatchForTest,
+  waitForExecutorChildForTest,
+} from "./openclaw-executor-runner.mjs";
 
 const digest = (character) => character.repeat(64);
 const bootId = "12345678-1234-4123-8123-123456789abc";
@@ -304,6 +309,76 @@ const wire = Buffer.concat([success.private_response_bytes, success.receipt_byte
 assert.equal(wire.includes(rawPrompt), false);
 assert.equal(wire.includes(rawResponse), false);
 
+function hangingChild() {
+  const child = new EventEmitter();
+  child.pid = 2_147_483_647;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.stdio = [null, child.stdout, child.stderr, null, null, new PassThrough()];
+  queueMicrotask(() => child.emit("spawn"));
+  return child;
+}
+
+const deadlineChild = hangingChild();
+const deadlineResult = await Promise.race([
+  waitForExecutorChildForTest(
+    deadlineChild,
+    "100",
+    () => ({ boot_id: bootId, now_boottime_ns: "100" }),
+  ),
+  new Promise((_, reject) => setTimeout(() => reject(new Error("deadline_wait_unbounded")), 250)),
+]);
+assert.equal(deadlineResult.timedOut, true);
+assert.equal(deadlineResult.spawned, true);
+
+const abortController = new AbortController();
+const abortChild = hangingChild();
+const abortResultPromise = waitForExecutorChildForTest(
+  abortChild,
+  "1000000000",
+  () => ({ boot_id: bootId, now_boottime_ns: "0" }),
+  abortController.signal,
+);
+queueMicrotask(() => abortController.abort());
+const abortResult = await Promise.race([
+  abortResultPromise,
+  new Promise((_, reject) => setTimeout(() => reject(new Error("abort_wait_unbounded")), 250)),
+]);
+assert.equal(abortResult.aborted, true);
+assert.equal(abortResult.spawned, true);
+
+const overflowChild = hangingChild();
+const overflowPromise = waitForExecutorChildForTest(
+  overflowChild,
+  "1000000000",
+  () => ({ boot_id: bootId, now_boottime_ns: "0" }),
+  undefined,
+  4,
+);
+queueMicrotask(() => overflowChild.stdout.write("12345"));
+const overflowResult = await Promise.race([
+  overflowPromise,
+  new Promise((_, reject) => setTimeout(() => reject(new Error("overflow_wait_unbounded")), 250)),
+]);
+assert.equal(overflowResult.outputTooLarge, true);
+assert.equal(overflowResult.spawned, true);
+
+const preAborted = fixture();
+const preAbortController = new AbortController();
+preAbortController.abort();
+await assert.rejects(
+  () => runExecutorDispatchForTest(
+    canonicalExecutorProtocolBytes(dispatch("req-pre-aborted")),
+    preAborted.configuration,
+    preAborted.preflight,
+    preAborted.dependencies,
+    { signal: preAbortController.signal },
+  ),
+  /executor_runner_aborted/,
+);
+assert.equal(preAborted.journal.events.length, 0);
+assert.equal(preAborted.observations().spawnCalls, 0);
+
 delete process.env.NODE_ENV;
 await assert.rejects(
   () => runExecutorDispatchForTest(
@@ -321,6 +396,8 @@ process.stdout.write(`${JSON.stringify({
   success_and_tamper_covered: true,
   timeout_and_spawn_failure_marked_uncertain_without_receipt: true,
   missing_and_forged_launcher_milestones_rejected_without_receipt: true,
+  timeout_abort_and_output_overflow_return_before_pipe_close: true,
+  cancellation_before_reservation_omits_dispatch: true,
   replay_and_crash_window_no_double_dispatch: true,
   prompt_stdin_only_and_argv_fails_closed: true,
   raw_prompt_and_response_not_persisted: true,

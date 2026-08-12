@@ -69,6 +69,10 @@ function safeClock(clock) {
   return clock;
 }
 
+function assertNotAborted(signal) {
+  if (signal?.aborted) fail("executor_runner_aborted");
+}
+
 function assertPreflight(configuration, preflight) {
   if (!configuration || !preflight) fail("executor_runner_preflight_required");
   for (const name of ["launcherPath", "runtimeRoot", "executorImageDigest", "runtimeImageDigest", "receiptKeyId"]) {
@@ -166,7 +170,7 @@ function defaultLauncherIdentity(configuration) {
   }
 }
 
-function defaultSpawnLauncher(configuration, preflight, handles, stdinBytes) {
+function defaultSpawnLauncher(configuration, preflight, handles, stdinBytes, signal) {
   const argv = assertPromptTransport(preflight.manifest).map((item, index) => (
     index > 0 && item.startsWith("/")
       ? manifestAbsolutePath(configuration.runtimeRoot, item)
@@ -181,6 +185,7 @@ function defaultSpawnLauncher(configuration, preflight, handles, stdinBytes) {
   ], {
     detached: true,
     env: { LANG: "C", PATH: "/usr/bin:/bin" },
+    signal,
     stdio: ["pipe", "pipe", "pipe", handles.execFd, handles.cgroupFd, "pipe"],
     windowsHide: true,
   });
@@ -189,7 +194,7 @@ function defaultSpawnLauncher(configuration, preflight, handles, stdinBytes) {
   return child;
 }
 
-function childResult(child, deadlineNs, clock, maximum = MAX_PROVIDER_RESPONSE_BYTES) {
+function childResult(child, deadlineNs, clock, signal, maximum = MAX_PROVIDER_RESPONSE_BYTES) {
   return new Promise((resolveResult) => {
     const stdout = [];
     const status = [];
@@ -197,41 +202,54 @@ function childResult(child, deadlineNs, clock, maximum = MAX_PROVIDER_RESPONSE_B
     let settled = false;
     let spawned = false;
     let timedOut = false;
+    let aborted = false;
     let timer;
+    const statusStream = child.stdio?.[5];
+    const snapshot = (overrides = {}) => ({
+      code: null,
+      signal: null,
+      spawned,
+      stdout: Buffer.concat(stdout),
+      timedOut,
+      aborted,
+      outputTooLarge: bytes > maximum,
+      launcherStatus: Buffer.concat(status).toString("ascii"),
+      ...overrides,
+    });
     const finish = (value) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abortExecution);
       resolveResult(value);
     };
+    const stopExecution = (reason) => {
+      if (settled) return;
+      if (reason === "timeout") timedOut = true;
+      if (reason === "abort") aborted = true;
+      try { process.kill(-child.pid, "SIGKILL"); } catch {}
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      statusStream?.destroy();
+      finish(snapshot());
+    };
+    const abortExecution = () => stopExecution("abort");
     child.once("spawn", () => { spawned = true; });
     child.once("error", (error) => finish({ spawned, spawnError: error }));
     child.stdout?.on("data", (chunk) => {
       bytes += chunk.byteLength;
       if (bytes <= maximum) stdout.push(Buffer.from(chunk));
-      else {
-        timedOut = false;
-        try { process.kill(-child.pid, "SIGKILL"); } catch {}
-      }
+      else stopExecution("output");
     });
     child.stderr?.resume();
-    child.stdio?.[5]?.on("data", (chunk) => status.push(Buffer.from(chunk)));
+    statusStream?.on("data", (chunk) => status.push(Buffer.from(chunk)));
     const remaining = BigInt(deadlineNs) - BigInt(clock().now_boottime_ns);
     const timeoutMs = Number(remaining > 0n ? (remaining + 999_999n) / 1_000_000n : 0n);
-    timer = setTimeout(() => {
-      timedOut = true;
-      try { process.kill(-child.pid, "SIGKILL"); } catch {}
-    }, Math.max(0, timeoutMs));
+    timer = setTimeout(() => stopExecution("timeout"), Math.max(0, timeoutMs));
     timer.unref?.();
-    child.once("close", (code, signal) => finish({
-      code,
-      signal,
-      spawned,
-      stdout: Buffer.concat(stdout),
-      timedOut,
-      outputTooLarge: bytes > maximum,
-      launcherStatus: Buffer.concat(status).toString("ascii"),
-    }));
+    child.once("close", (code, childSignal) => finish(snapshot({ code, signal: childSignal })));
+    if (signal?.aborted) abortExecution();
+    else signal?.addEventListener("abort", abortExecution, { once: true });
   });
 }
 
@@ -374,13 +392,13 @@ function defaultDependencies() {
     killAndRemoveCgroup: killAndRemoveRequestCgroup,
     openExecutionFiles: defaultOpenExecutionFiles,
     spawnLauncher: defaultSpawnLauncher,
-    waitForChild: (child, deadline, clock) => childResult(child, deadline, clock),
+    waitForChild: (child, deadline, clock, signal) => childResult(child, deadline, clock, signal),
     launcherIdentity: defaultLauncherIdentity,
     closeFd: closeSync,
   };
 }
 
-async function runExecutorDispatchWithDependencies(dispatchBytesValue, configuration, preflight, injected) {
+async function runExecutorDispatchWithDependencies(dispatchBytesValue, configuration, preflight, injected, options = {}) {
   assertPreflight(configuration, preflight);
   const dependencies = { ...defaultDependencies(), ...injected };
   const initialClock = safeClock(dependencies.clock());
@@ -388,6 +406,7 @@ async function runExecutorDispatchWithDependencies(dispatchBytesValue, configura
   const dispatch = parseCanonicalExecutorDispatch(dispatchBytes, initialClock);
   assertDispatchBindings(dispatch, preflight, initialClock);
   assertPromptTransport(preflight.manifest);
+  assertNotAborted(options.signal);
 
   const journalRequestBytes = canonicalExecutorRequestBytes(dispatch.request);
   await preflight.journal.reserve(journalRequestBytes, initialClock);
@@ -412,6 +431,7 @@ async function runExecutorDispatchWithDependencies(dispatchBytesValue, configura
     handles = await dependencies.openExecutionFiles(configuration, preflight, cgroup);
     const dispatchClock = safeClock(dependencies.clock());
     assertDispatchBindings(dispatch, preflight, dispatchClock);
+    assertNotAborted(options.signal);
     try {
       await preflight.journal.markDispatched(dispatch.request.request_id, dispatchClock);
     } catch (error) {
@@ -424,12 +444,20 @@ async function runExecutorDispatchWithDependencies(dispatchBytesValue, configura
       throw error;
     }
     dispatched = true;
+    assertNotAborted(options.signal);
     const stdinBytes = canonicalExecutorProtocolBytes(dispatch.provider_request);
-    child = await dependencies.spawnLauncher(configuration, preflight, handles, stdinBytes);
+    child = await dependencies.spawnLauncher(
+      configuration,
+      preflight,
+      handles,
+      stdinBytes,
+      options.signal,
+    );
     result = await dependencies.waitForChild(
       child,
       dispatch.request.deadline_boottime_ns,
       dependencies.clock,
+      options.signal,
     );
     result = { ...result, pid: result.pid ?? child?.pid ?? null };
     if (
@@ -546,11 +574,16 @@ async function runExecutorDispatchWithDependencies(dispatchBytesValue, configura
   });
 }
 
-export async function runExecutorDispatch(dispatchBytesValue, configuration, preflight) {
-  return runExecutorDispatchWithDependencies(dispatchBytesValue, configuration, preflight, {});
+export async function runExecutorDispatch(dispatchBytesValue, configuration, preflight, options = {}) {
+  return runExecutorDispatchWithDependencies(dispatchBytesValue, configuration, preflight, {}, options);
 }
 
-export async function runExecutorDispatchForTest(dispatchBytesValue, configuration, preflight, dependencies) {
+export async function runExecutorDispatchForTest(dispatchBytesValue, configuration, preflight, dependencies, options = {}) {
   if (process.env.NODE_ENV !== "test") fail("executor_runner_test_dependencies_forbidden");
-  return runExecutorDispatchWithDependencies(dispatchBytesValue, configuration, preflight, dependencies);
+  return runExecutorDispatchWithDependencies(dispatchBytesValue, configuration, preflight, dependencies, options);
+}
+
+export function waitForExecutorChildForTest(child, deadlineNs, clock, signal, maximum) {
+  if (process.env.NODE_ENV !== "test") fail("executor_runner_test_dependencies_forbidden");
+  return childResult(child, deadlineNs, clock, signal, maximum);
 }

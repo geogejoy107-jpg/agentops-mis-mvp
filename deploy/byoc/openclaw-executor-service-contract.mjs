@@ -22,6 +22,8 @@ import {
   inspectExecutorLauncher,
   loadExecutorConfiguration,
   parseRuntimeManifestTrustRoots,
+  preflightExecutor,
+  startExecutorService,
   startExecutorServiceForTest,
 } from "./openclaw-executor-service.mjs";
 
@@ -121,6 +123,26 @@ assert.match(source, /MAX_EXECUTE_BYTES/);
 assert.match(source, /runtime_receipt_verified: false/);
 assert.doesNotMatch(source, /runtime_receipt_verified: true/);
 
+const fakePreflight = Object.freeze({ contract: true });
+const fakeExpectedOwner = Object.freeze({ expectedOwner: { uid: process.getuid(), gid: process.getgid() } });
+const fakeInspectCgroup = Object.freeze({ inspectCgroup: () => ({ contract: true }) });
+for (const injected of [fakePreflight, fakeExpectedOwner, fakeInspectCgroup]) {
+  await assert.rejects(
+    () => startExecutorService(configuration, injected),
+    /executor_service_dependencies_forbidden/,
+  );
+}
+await assert.rejects(
+  () => startExecutorService(configuration, fakePreflight, { runDispatch: async () => ({}) }),
+  /executor_service_dependencies_forbidden/,
+);
+for (const injected of [fakeExpectedOwner, fakeInspectCgroup]) {
+  await assert.rejects(
+    () => preflightExecutor(configuration, injected),
+    /executor_preflight_dependencies_forbidden/,
+  );
+}
+
 const serviceRoot = mkdtempSync(path.join(os.tmpdir(), "agentops-executor-service-contract-"));
 const socketRoot = path.join(serviceRoot, "socket");
 const socketPath = path.join(socketRoot, "executor.sock");
@@ -131,19 +153,37 @@ chmodSync(socketRoot, 0o700);
 let mode = "success";
 let runCalls = 0;
 let releaseSlow = null;
+let cancellationRunsStarted = 0;
+let cancellationSignalsObserved = 0;
 const privateResponseBytes = Buffer.from('{"schema":"agentops_openclaw_executor_private_response_v2"}', "utf8");
-const runDispatch = async () => {
+const runDispatch = async (_body, _configuration, _preflight, options = {}) => {
   runCalls += 1;
+  assert.equal(options.signal instanceof AbortSignal, true);
   if (mode === "slow") {
     await new Promise((resolveSlow) => { releaseSlow = resolveSlow; });
+  }
+  if (mode === "cancel") {
+    cancellationRunsStarted += 1;
+    await new Promise((resolveCancellation, rejectCancellation) => {
+      if (options.signal.aborted) {
+        cancellationSignalsObserved += 1;
+        rejectCancellation(new Error("contract_dispatch_aborted"));
+        return;
+      }
+      options.signal.addEventListener("abort", () => {
+        cancellationSignalsObserved += 1;
+        rejectCancellation(new Error("contract_dispatch_aborted"));
+      }, { once: true });
+    });
   }
   if (mode === "failed") return { provider_response: null };
   return { private_response_bytes: privateResponseBytes };
 };
 
-function callService({ method = "POST", body = Buffer.from("{}"), headers = {} } = {}) {
-  return new Promise((resolveCall, rejectCall) => {
-    const client = request({
+function openServiceCall({ method = "POST", body = Buffer.from("{}"), headers = {} } = {}) {
+  let client;
+  const result = new Promise((resolveCall) => {
+    client = request({
       socketPath,
       method,
       path: method === "GET" ? "/health" : "/v1/execute",
@@ -155,7 +195,7 @@ function callService({ method = "POST", body = Buffer.from("{}"), headers = {} }
     }, (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
-      response.once("error", rejectCall);
+      response.once("error", (error) => resolveCall({ clientError: error.code || "UNKNOWN" }));
       response.once("end", () => {
         const bytes = Buffer.concat(chunks);
         let parsed = null;
@@ -163,9 +203,14 @@ function callService({ method = "POST", body = Buffer.from("{}"), headers = {} }
         resolveCall({ status: response.statusCode, bytes, body: parsed });
       });
     });
-    client.once("error", rejectCall);
+    client.once("error", (error) => resolveCall({ clientError: error.code || "UNKNOWN" }));
     client.end(method === "POST" ? body : undefined);
   });
+  return { client, result };
+}
+
+function callService(options) {
+  return openServiceCall(options).result;
 }
 
 let service = null;
@@ -230,6 +275,22 @@ try {
   assert.equal(oversized.status, 413);
   assert.equal(oversized.body.error, "RequestTooLarge");
   assert.equal(runCalls, 3);
+
+  mode = "cancel";
+  const cancelled = openServiceCall();
+  while (cancellationRunsStarted < 1) await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+  cancelled.client.destroy();
+  await cancelled.result;
+  while (cancellationSignalsObserved < 1) await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+  while (service.state.activeRequest !== null) await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+
+  const shutdownCall = openServiceCall();
+  while (cancellationRunsStarted < 2) await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+  const shutdown = service.shutdown();
+  await shutdownCall.result;
+  await shutdown;
+  assert.equal(cancellationSignalsObserved, 2);
+  assert.equal(service.state.activeRequest, null);
 } finally {
   if (service) await service.shutdown();
   assert.equal(existsSync(socketPath), false);
@@ -243,9 +304,14 @@ console.log(JSON.stringify({
   signed_manifest_and_exact_tree_preflight_present: true,
   cgroup_delegation_preflight_present: true,
   crash_recovery_preflight_present: true,
+  production_preflight_is_internal_and_noninjectable: true,
+  production_owner_and_cgroup_inspection_noninjectable: true,
+  test_factory_environment_guard_verified: true,
   bounded_execute_body_verified: true,
   execute_route_runner_integration_verified: true,
   single_flight_verified: true,
+  client_disconnect_cancels_active_dispatch: true,
+  shutdown_cancels_active_dispatch: true,
   failure_response_redacted: true,
   socket_shutdown_cleanup_verified: true,
   health_ready: true,

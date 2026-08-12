@@ -199,10 +199,8 @@ export function parseRuntimeManifestTrustRoots(bytes) {
   return new Map(parsedEntries);
 }
 
-export async function preflightExecutor(configuration, {
-  expectedOwner = { uid: 0, gid: 2200 },
-  inspectCgroup = inspectDelegatedCgroupRoot,
-} = {}) {
+export async function preflightExecutor(configuration) {
+  if (arguments.length !== 1) fail("executor_preflight_dependencies_forbidden");
   inspectExecutorLauncher(configuration.launcherPath);
   const policyBytes = readSecureFile(configuration.cgroupPolicyPath);
   const policy = validateOpenClawCgroupPolicy(parseCanonicalJson(policyBytes, "executor_cgroup_policy_invalid"));
@@ -238,8 +236,10 @@ export async function preflightExecutor(configuration, {
     fail("executor_receipt_private_key_invalid");
   }
   if (receiptKey.asymmetricKeyType !== "ed25519") fail("executor_receipt_private_key_invalid");
-  const delegation = inspectCgroup({ root: configuration.cgroupRoot });
-  const journal = await ExecutorReplayJournal.open(configuration.journalRoot, { expectedOwner });
+  const delegation = inspectDelegatedCgroupRoot({ root: configuration.cgroupRoot });
+  const journal = await ExecutorReplayJournal.open(configuration.journalRoot, {
+    expectedOwner: { uid: 0, gid: 2200 },
+  });
   const clock = readLinuxBootClock();
   const recovery = await journal.recover(clock);
   return Object.freeze({
@@ -257,6 +257,7 @@ export async function preflightExecutor(configuration, {
 }
 
 function writeJson(response, status, value) {
+  if (response.destroyed || response.writableEnded) return;
   const bytes = Buffer.from(`${JSON.stringify(value)}\n`, "utf8");
   response.writeHead(status, {
     "content-type": "application/json",
@@ -378,13 +379,22 @@ async function startExecutorServiceWithDependencies(configuration, preflight, de
         writeJson(response, 415, { schema: "agentops_openclaw_executor_error_v1", error: "ContentTypeUnsupported" });
         return;
       }
-      const slot = { request, response };
+      const abortController = new AbortController();
+      const slot = { abortController, request, response, responseFinished: false };
+      const abortIncomplete = () => {
+        if (!slot.responseFinished && !abortController.signal.aborted) abortController.abort();
+      };
+      request.once("aborted", abortIncomplete);
+      response.once("finish", () => { slot.responseFinished = true; });
+      response.once("close", abortIncomplete);
       state.activeRequest = slot;
       try {
         const body = await readExecuteBody(request, response);
         if (body === null || response.headersSent || response.destroyed) return;
         try {
-          const result = await runDispatch(body, configuration, preflight);
+          const result = await runDispatch(body, configuration, preflight, {
+            signal: abortController.signal,
+          });
           if (!Buffer.isBuffer(result?.private_response_bytes)) {
             writeJson(response, 502, {
               schema: "agentops_openclaw_executor_error_v1",
@@ -425,6 +435,7 @@ async function startExecutorServiceWithDependencies(configuration, preflight, de
   const shutdown = () => {
     if (shutdownPromise) return shutdownPromise;
     state.shuttingDown = true;
+    state.activeRequest?.abortController.abort();
     shutdownPromise = new Promise((resolveShutdown) => {
       server.close(() => {
         try { unlinkSync(configuration.socketPath); } catch (error) {
@@ -438,7 +449,9 @@ async function startExecutorServiceWithDependencies(configuration, preflight, de
   return { server, preflight, state, shutdown };
 }
 
-export async function startExecutorService(configuration, preflight) {
+export async function startExecutorService(configuration) {
+  if (arguments.length !== 1) fail("executor_service_dependencies_forbidden");
+  const preflight = await preflightExecutor(configuration);
   return startExecutorServiceWithDependencies(configuration, preflight, {});
 }
 
@@ -451,8 +464,7 @@ async function main() {
   if (process.env.NODE_ENV !== "production") fail("executor_production_mode_required");
   if (process.getuid?.() !== 0 || process.getgid?.() !== 2200) fail("executor_root_identity_required");
   const configuration = loadExecutorConfiguration();
-  const preflight = await preflightExecutor(configuration);
-  const service = await startExecutorService(configuration, preflight);
+  const service = await startExecutorService(configuration);
   const shutdown = () => service.shutdown().then(() => process.exit(0));
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);

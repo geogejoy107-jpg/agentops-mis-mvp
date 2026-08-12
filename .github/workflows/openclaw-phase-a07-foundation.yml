@@ -50,6 +50,7 @@ jobs:
           node deploy/byoc/openclaw-executor-protocol-contract.mjs
           node deploy/byoc/openclaw-executor-receipt-contract.mjs
           node deploy/byoc/openclaw-executor-runner-contract.mjs
+          node deploy/byoc/openclaw-runtime-path-resolver-contract.mjs --source-audit-only
           node deploy/byoc/openclaw-executor-service-contract.mjs
           node deploy/byoc/openclaw-boundary-supervisor-contract.mjs
           node deploy/byoc/openclaw-broker-contract.mjs
@@ -79,6 +80,34 @@ jobs:
             and .hostile_runtime_isolation_verified == false
           ' "${receipt}" >/dev/null
 
+      - name: Run Linux openat2 path resolver contract
+        run: |
+          set -euo pipefail
+          image="agentops-a07-path-resolver-test:${GITHUB_SHA}"
+          docker build --pull --target runtime-path-resolver-build \
+            --file deploy/byoc/Dockerfile --tag "${image}" .
+          receipt="${RUNNER_TEMP}/a07-path-resolver-foundation.json"
+          docker run --rm --read-only --network none \
+            --tmpfs /tmp:rw,exec,nosuid,nodev,size=64m,mode=1777 \
+            --volume "${GITHUB_WORKSPACE}:/workspace:ro" \
+            --workdir /workspace \
+            "${image}" \
+            node deploy/byoc/openclaw-runtime-path-resolver-contract.mjs \
+            > "${receipt}"
+          jq -e '
+            .ok == true
+            and .linux_native_hardened_compile_verified == true
+            and .linux_openat2_positive_verified == true
+            and .traversal_rejection_verified == true
+            and .symlink_rejection_verified == true
+            and .proc_magiclink_rejection_verified == true
+            and .mount_crossing_rejection_verified == true
+            and .resolved_fd_handoff_verified == false
+            and .runtime_path_toctou_closed == false
+            and .runtime_receipt_verified == false
+            and .hostile_runtime_isolation_verified == false
+          ' "${receipt}" >/dev/null
+
       - name: Build exact candidate image
         run: |
           set -euo pipefail
@@ -91,6 +120,7 @@ jobs:
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image}")" = "${GITHUB_SHA}"
           docker run --rm --entrypoint /bin/sh "${image}" -c '
             test -x /usr/local/bin/agentops-openclaw-runtime-launcher
+            test -x /usr/local/bin/agentops-openclaw-runtime-path-resolver
             test -r /usr/local/lib/agentops/openclaw-executor-runner.mjs
             test -r /usr/local/lib/agentops/openclaw-executor-receipt.mjs
             ! command -v cc
