@@ -16,9 +16,9 @@ receipts.
 | Lane | Current exact object | Author tests | Independent decision | Integration admission |
 | --- | --- | --- | --- | --- |
 | C0 Shared Runtime | staged diff `ad58468f5a529f163b0fe1bbd69f5103538f14971889cdbdff7590e55d2006ba`, index tree `d08bb6bc583bafd4b9f66ccd1a0ecfbb1792d58c` | Python 3.11/3.14 shared suite 94/94 with `jsonschema`; UI production build passed | PENDING | DENIED until exact non-author PASS |
-| C1 Research | failed base candidate `b6fb216661215eb524c1ed3ff1c24453c474f46e`; replacement in progress | PENDING on replacement | PENDING | DENIED |
+| C1 Research | `343cae665e2634d5a990920e8cffa9595cbac152` | Python 3.11/3.14 87/87 reported by author | RUNNING | DENIED until exact non-author PASS |
 | C2 Career | failed candidate `2eb0d6699aedb83ab8fb67658aebdbaf2ed3b422`; replacement in progress | PENDING on replacement | prior exact review FAIL | DENIED |
-| C3 Quant | failed candidate `cd77b3ba2355c19fb8bf87e1fdf6ceaf99cc6d10`; replacement in progress | PENDING on replacement | prior exact review FAIL | DENIED |
+| C3 Quant | `3361ed4063208e0044cdf621db45884a017e9e38` | Python 3.11/3.14 63/63 and shared schema 26/26 reported by author | RUNNING | DENIED until exact non-author PASS |
 
 No implementation candidate is currently eligible to merge into integration.
 
