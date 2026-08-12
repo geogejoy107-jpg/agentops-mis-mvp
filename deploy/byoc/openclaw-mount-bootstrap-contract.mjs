@@ -94,6 +94,7 @@ function sourceAudit() {
   assert.match(sourceText, /MOUNT_ATTR_NODEV \| MOUNT_ATTR_NOEXEC/);
   assert.match(sourceText, /mount_point_in_tree/);
   assert.equal((sourceText.match(/SYS_mount_setattr/g) || []).length, 2);
+  assert.match(sourceText, /MS_PRIVATE \| \(recursive_bind \? MS_REC : 0UL\)/);
   assert.match(sourceText, /open\("\/proc\/self\/mountinfo", O_RDONLY \| O_CLOEXEC \| O_NOFOLLOW\)/);
   assert.match(sourceText, /config_mount_id != workspace_mount_id/);
   for (const option of ["ro", "nosuid", "nodev", "noexec"]) {
@@ -104,6 +105,8 @@ function sourceAudit() {
   assert.match(sourceText, /PR_CAP_AMBIENT_LOWER/);
   assert.match(sourceText, /PR_CAPBSET_DROP/);
   assert.match(sourceText, /SYS_capset/);
+  assert.match(sourceText, /capability <= CAP_LAST_CAP/);
+  assert.match(sourceText, /retained_capability\(capability\)/);
   for (const capability of ["CAP_SETUID", "CAP_SETGID", "CAP_SYS_CHROOT", "CAP_KILL"]) {
     assert.match(sourceText, new RegExp(capability));
   }
@@ -325,15 +328,15 @@ int main(int argc, char **argv) {
     if (!options_verified(CONFIG_TARGET, 0) || !options_verified(WORKSPACE_TARGET, 1)) return 20;
     header.version = _LINUX_CAPABILITY_VERSION_3;
     if (syscall(SYS_capget, &header, data) != 0) return 12;
-    if (bit(data, CAP_SYS_ADMIN, 0) || bit(data, CAP_SYS_ADMIN, 1) || bit(data, CAP_SYS_ADMIN, 2)
-        || bit(data, CAP_SETPCAP, 0) || bit(data, CAP_SETPCAP, 1) || bit(data, CAP_SETPCAP, 2)) return 13;
-    if (prctl(PR_CAPBSET_READ, CAP_SYS_ADMIN, 0L, 0L, 0L) != 0
-        || prctl(PR_CAPBSET_READ, CAP_SETPCAP, 0L, 0L, 0L) != 0) return 14;
-    if (prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_IS_SET, CAP_SYS_ADMIN, 0L, 0L) != 0
-        || prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_IS_SET, CAP_SETPCAP, 0L, 0L) != 0) return 15;
-    for (index = 0; index < sizeof(retained) / sizeof(retained[0]); index += 1) {
-        if (!bit(data, retained[index], 0) || !bit(data, retained[index], 1)
-            || prctl(PR_CAPBSET_READ, retained[index], 0L, 0L, 0L) != 1) return 16;
+    for (int capability = 0; capability <= CAP_LAST_CAP; capability += 1) {
+        int expected = 0;
+        for (index = 0; index < sizeof(retained) / sizeof(retained[0]); index += 1) {
+            if (capability == retained[index]) expected = 1;
+        }
+        if (bit(data, capability, 0) != expected || bit(data, capability, 1) != expected
+            || bit(data, capability, 2) != 0
+            || prctl(PR_CAPBSET_READ, capability, 0L, 0L, 0L) != expected
+            || prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_IS_SET, capability, 0L, 0L) != 0) return 16;
     }
     if (prctl(PR_GET_NO_NEW_PRIVS, 0L, 0L, 0L, 0L) != 1) return 17;
     output = fopen("/tmp/agentops-mount-bootstrap-probe-result", "w");

@@ -227,6 +227,9 @@ static int harden_mount(const char *target, int recursive_bind) {
     if (mount(target, target, NULL, bind_flags, NULL) < 0) {
         return -1;
     }
+    if (mount(NULL, target, NULL, MS_PRIVATE | (recursive_bind ? MS_REC : 0UL), NULL) < 0) {
+        return -1;
+    }
     if (syscall(
         SYS_mount_setattr,
         AT_FDCWD,
@@ -456,16 +459,19 @@ static void clear_capability_bit(struct __user_cap_data_struct data[2], int capa
     data[index].inheritable &= mask;
 }
 
-static int drop_mount_capability(void) {
+static int retained_capability(int capability) {
+    return capability == CAP_SETUID
+        || capability == CAP_SETGID
+        || capability == CAP_SYS_CHROOT
+        || capability == CAP_KILL;
+}
+
+static int reduce_to_launcher_capabilities(void) {
     static const int retained_capabilities[] = {
         CAP_SETUID,
         CAP_SETGID,
         CAP_SYS_CHROOT,
         CAP_KILL,
-    };
-    static const int removed_capabilities[] = {
-        CAP_SYS_ADMIN,
-        CAP_SETPCAP,
     };
     struct __user_cap_header_struct header;
     struct __user_cap_data_struct data[2];
@@ -486,21 +492,26 @@ static int drop_mount_capability(void) {
             return -1;
         }
     }
-    for (index = 0; index < sizeof(removed_capabilities) / sizeof(removed_capabilities[0]); index += 1) {
-        int capability = removed_capabilities[index];
-        if (!capability_bit_set(data, capability, 0)
-            || !capability_bit_set(data, capability, 1)) {
-            return -1;
-        }
+    if (!capability_bit_set(data, CAP_SYS_ADMIN, 0)
+        || !capability_bit_set(data, CAP_SYS_ADMIN, 1)
+        || !capability_bit_set(data, CAP_SETPCAP, 0)
+        || !capability_bit_set(data, CAP_SETPCAP, 1)) {
+        return -1;
+    }
+    for (int capability = 0; capability <= CAP_LAST_CAP; capability += 1) {
         if (prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_LOWER, capability, 0L, 0L) < 0
             && errno != EINVAL) {
             return -1;
         }
-        if (prctl(PR_CAPBSET_DROP, capability, 0L, 0L, 0L) < 0) {
-            return -1;
+        if (!retained_capability(capability)) {
+            if (prctl(PR_CAPBSET_DROP, capability, 0L, 0L, 0L) < 0) {
+                return -1;
+            }
+            clear_capability_bit(data, capability);
         }
-        clear_capability_bit(data, capability);
     }
+    data[0].inheritable = 0U;
+    data[1].inheritable = 0U;
     if (syscall(SYS_capset, &header, data) < 0) {
         return -1;
     }
@@ -508,13 +519,13 @@ static int drop_mount_capability(void) {
     if (syscall(SYS_capget, &header, data) < 0) {
         return -1;
     }
-    for (index = 0; index < sizeof(removed_capabilities) / sizeof(removed_capabilities[0]); index += 1) {
-        int capability = removed_capabilities[index];
+    for (int capability = 0; capability <= CAP_LAST_CAP; capability += 1) {
+        int retained = retained_capability(capability);
         errno = 0;
-        if (capability_bit_set(data, capability, 0)
-            || capability_bit_set(data, capability, 1)
+        if (capability_bit_set(data, capability, 0) != retained
+            || capability_bit_set(data, capability, 1) != retained
             || capability_bit_set(data, capability, 2)
-            || prctl(PR_CAPBSET_READ, capability, 0L, 0L, 0L) != 0
+            || prctl(PR_CAPBSET_READ, capability, 0L, 0L, 0L) != retained
             || prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_IS_SET, capability, 0L, 0L) != 0) {
             return -1;
         }
@@ -570,7 +581,7 @@ int main(int argc, char **argv) {
         fixed_error("mount_bootstrap_mount_verification_failed");
         return 70;
     }
-    if (drop_mount_capability() < 0) {
+    if (reduce_to_launcher_capabilities() < 0) {
         fixed_error("mount_bootstrap_capability_drop_failed");
         return 70;
     }
