@@ -220,13 +220,17 @@ for(const name of fs.readdirSync("/proc")){if(!/^\d+$/.test(name)||Number(name)=
 if(matches.length!==1)process.exit(3);process.stdout.write(JSON.stringify(matches[0]));
 `;
 
+const backendExecuteRequestCountProbe = String.raw`
+const http=require("node:http");const socket=process.argv[1];const req=http.request({socketPath:socket,path:"/health",method:"GET",headers:{connection:"close"}},res=>{const chunks=[];let size=0;res.on("data",chunk=>{size+=chunk.length;if(size>8192)req.destroy();else chunks.push(chunk)});res.on("end",()=>{try{const value=JSON.parse(Buffer.concat(chunks).toString("utf8"));const count=value.execute_requests_received;if(res.statusCode!==200||!Number.isSafeInteger(count)||count<0)process.exit(3);process.stdout.write(JSON.stringify({count}))}catch{process.exit(4)}})});req.setTimeout(2000,()=>req.destroy());req.on("error",()=>process.exit(2));req.end();
+`;
+
 const socketMetadataProbe = String.raw`
 const fs=require("node:fs");const path=process.argv[1];const uid=Number(process.argv[2]);const gid=Number(process.argv[3]);try{const value=fs.lstatSync(path);if(!value.isSocket()||value.uid!==uid||value.gid!==gid||(value.mode&0o777)!==0o660)process.exit(3)}catch{process.exit(4)}
 `;
 
 const wrongPeerProbe = String.raw`
 const net=require("node:net");const socket=process.argv[1];let received=0;let connected=false;const client=net.createConnection({path:socket});
-client.once("connect",()=>{connected=true;client.write("POST /v1/execute HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: 4096\r\nConnection: keep-alive\r\n\r\n{");process.stdout.write("READY\n")});
+client.once("connect",()=>{connected=true;client.write("POST /v1/execute HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: 4096\r\nConnection: keep-alive\r\n\r\n{",()=>process.stdout.write("READY\n"))});
 client.on("data",chunk=>{received+=chunk.length});client.on("error",()=>{});setTimeout(()=>{client.destroy();process.stdout.write(JSON.stringify({connected,received_bytes:received})+"\n");process.exit(0)},2500);
 `;
 
@@ -246,6 +250,22 @@ function backendProcessState(container, marker) {
   return value;
 }
 
+function backendExecuteRequestCount(container, socket) {
+  const output = docker([
+    "exec",
+    container,
+    "node",
+    "-e",
+    backendExecuteRequestCountProbe,
+    socket,
+  ], { code: "backend_execute_request_count_probe_failed" });
+  const value = JSON.parse(output);
+  if (!Number.isSafeInteger(value.count) || value.count < 0) {
+    fail("backend_execute_request_count_probe_invalid");
+  }
+  return value.count;
+}
+
 async function runWrongPeerAttack({
   name,
   image,
@@ -255,8 +275,10 @@ async function runWrongPeerAttack({
   socket,
   backendContainer,
   backendMarker,
+  backendSocket,
 }) {
   const baseline = backendProcessState(backendContainer, backendMarker);
+  const executeRequestsBefore = backendExecuteRequestCount(backendContainer, backendSocket);
   const child = spawn("docker", [
     "run",
     "--name", name,
@@ -290,11 +312,9 @@ async function runWrongPeerAttack({
     };
     poll();
   });
-  let maximumFds = baseline.fds;
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const observed = backendProcessState(backendContainer, backendMarker);
     if (observed.pid !== baseline.pid) fail("backend_process_identity_changed");
-    maximumFds = Math.max(maximumFds, observed.fds);
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
   }
   if (await exited !== 0) fail("wrong_peer_attacker_failed");
@@ -304,17 +324,16 @@ async function runWrongPeerAttack({
     fail("wrong_peer_rejection_invalid");
   }
   const after = backendProcessState(backendContainer, backendMarker);
-  if (
-    after.pid !== baseline.pid
-    || maximumFds !== baseline.fds
-    || after.fds !== baseline.fds
-  ) fail("wrong_peer_backend_connection_observed");
+  const executeRequestsAfter = backendExecuteRequestCount(backendContainer, backendSocket);
+  if (after.pid !== baseline.pid || executeRequestsAfter !== executeRequestsBefore) {
+    fail("wrong_peer_backend_request_observed");
+  }
   return {
     connected: true,
     receivedBytes: 0,
     backendProcessIdentityUnchanged: true,
-    backendFdBaseline: baseline.fds,
-    backendFdMaximum: maximumFds,
+    backendExecuteRequestsBefore: executeRequestsBefore,
+    backendExecuteRequestsAfter: executeRequestsAfter,
   };
 }
 
@@ -557,6 +576,7 @@ async function main() {
       socket: PUBLIC_SOCKET,
       backendContainer: broker,
       backendMarker: "openclaw-broker-entrypoint.mjs",
+      backendSocket: "/run/agentops-openclaw-broker-backend/broker.sock",
     });
     const privateAttack = await runWrongPeerAttack({
       name: privateAttacker,
@@ -567,9 +587,30 @@ async function main() {
       socket: PRIVATE_SOCKET,
       backendContainer: executor,
       backendMarker: "openclaw-provider-entrypoint.mjs",
+      backendSocket: "/run/agentops-openclaw-provider-backend/provider.sock",
     });
+    const brokerExecuteRequestsBeforeRoundTrip = backendExecuteRequestCount(
+      broker,
+      "/run/agentops-openclaw-broker-backend/broker.sock",
+    );
+    const providerExecuteRequestsBeforeRoundTrip = backendExecuteRequestCount(
+      executor,
+      "/run/agentops-openclaw-provider-backend/provider.sock",
+    );
     const protocol = execJson(worker, protocolProbe);
     if (!protocol.ok) fail("a04_a05_round_trip_failed");
+    const brokerExecuteRequestsAfterRoundTrip = backendExecuteRequestCount(
+      broker,
+      "/run/agentops-openclaw-broker-backend/broker.sock",
+    );
+    const providerExecuteRequestsAfterRoundTrip = backendExecuteRequestCount(
+      executor,
+      "/run/agentops-openclaw-provider-backend/provider.sock",
+    );
+    if (
+      brokerExecuteRequestsAfterRoundTrip !== brokerExecuteRequestsBeforeRoundTrip + 1
+      || providerExecuteRequestsAfterRoundTrip !== providerExecuteRequestsBeforeRoundTrip + 1
+    ) fail("allowed_round_trip_backend_execute_counter_invalid");
 
     receipt = {
       ok: true,
@@ -602,10 +643,11 @@ async function main() {
       wrong_private_peer_response_bytes_received: privateAttack.receivedBytes,
       public_backend_process_identity_unchanged: publicAttack.backendProcessIdentityUnchanged,
       private_backend_process_identity_unchanged: privateAttack.backendProcessIdentityUnchanged,
-      public_backend_fd_delta:
-        publicAttack.backendFdMaximum - publicAttack.backendFdBaseline,
-      private_backend_fd_delta:
-        privateAttack.backendFdMaximum - privateAttack.backendFdBaseline,
+      public_backend_execute_request_delta:
+        publicAttack.backendExecuteRequestsAfter - publicAttack.backendExecuteRequestsBefore,
+      private_backend_execute_request_delta:
+        privateAttack.backendExecuteRequestsAfter - privateAttack.backendExecuteRequestsBefore,
+      allowed_round_trip_backend_execute_counters_verified: true,
       public_wrong_uid_rejected_before_backend_connection: true,
       private_wrong_uid_rejected_before_backend_connection: true,
       peercred_check_precedes_upstream_connect_contract_verified: true,

@@ -623,7 +623,11 @@ async function prepareSocket(configuration) {
 
 export async function startProviderService(configuration = loadConfiguration()) {
   await prepareSocket(configuration);
-  const state = { activeRequest: null, shuttingDown: false };
+  const state = {
+    activeRequest: null,
+    executeRequestsReceived: 0,
+    shuttingDown: false,
+  };
   const server = createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/health") {
       writeJson(res, state.shuttingDown ? 503 : 200, {
@@ -631,6 +635,7 @@ export async function startProviderService(configuration = loadConfiguration()) 
         ok: !state.shuttingDown,
         ready: !state.shuttingDown,
         busy: state.activeRequest !== null,
+        execute_requests_received: state.executeRequestsReceived,
       });
       return;
     }
@@ -639,6 +644,7 @@ export async function startProviderService(configuration = loadConfiguration()) 
       boundaryError(res, 404, "RouteNotFound");
       return;
     }
+    state.executeRequestsReceived += 1;
     if (state.shuttingDown || state.activeRequest) {
       req.resume();
       boundaryError(res, 503, "ProviderBusy");

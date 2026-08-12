@@ -55,6 +55,8 @@ COPY --chmod=0555 \
     deploy/byoc/openclaw-provider-entrypoint.mjs \
     deploy/byoc/openclaw-provider-healthcheck.mjs \
     deploy/byoc/openclaw-provider-contract.mjs \
+    deploy/byoc/openclaw-runtime-receipt.mjs \
+    deploy/byoc/openclaw-runtime-receipt-contract.mjs \
     deploy/byoc/worker-entrypoint.mjs \
     deploy/byoc/worker-healthcheck.mjs \
     deploy/byoc/worker-service-contract.mjs \

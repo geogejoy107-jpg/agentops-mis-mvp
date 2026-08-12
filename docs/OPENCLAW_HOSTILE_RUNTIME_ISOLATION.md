@@ -5,12 +5,18 @@ release remains on the two-service A01/A02 topology. The three-service A03
 candidate in `deploy/byoc/compose.openclaw-phase-a03.yaml` passed its exact-image
 Linux path-isolation gate at source commit
 `6c37c47e16f6a4e4327372960c58144744af5721`. That proves the bounded A03 mount
-and DAC claims only. The source-only A04/A05 successor lives in
-`deploy/byoc/compose.openclaw-phase-a04-a05.yaml` and adds Linux `SO_PEERCRED`
-gates in front of both Node.js protocol services. It earns no A04/A05 claim
-until its own exact-image Linux attack workflow passes. Neither candidate is the
-default customer topology, and this document is not evidence that the complete
+and DAC claims only. The A04/A05 successor in
+`deploy/byoc/compose.openclaw-phase-a04-a05.yaml` passed two independent
+exact-image Linux public/private `SO_PEERCRED` wrong-uid attack workflows at
+source commit `84f959f7cac93b0f0e07317433cbcf278e251b0b`. That earns only the
+bounded A04/A05 peer-credential claims. Neither candidate is the default
+customer topology, and this document is not evidence that the complete
 hostile-runtime boundary is implemented.
+
+The A06 successor replaces the attack acceptance's incidental backend file
+descriptor sampling with monotonic `/v1/execute` request counters. This keeps
+the wrong-uid gate fail-closed while preventing the operational healthcheck's
+legitimate backend connection from being misclassified as an attack bypass.
 
 ## 1. Security Claims At The Current Baseline
 
@@ -35,9 +41,10 @@ The current two-service topology must not claim hostile-runtime isolation.
 Until Phase A passes every mandatory acceptance below, the default release's
 maximum claim is credential separation between the Worker and the current
 provider container. The A03 exact-image evidence additionally proves Worker
-mount/path separation for that candidate. The A04/A05 candidate may set the
-individual public and private peer-credential fields only after active Linux
-wrong-uid probes pass. Both candidates must keep
+mount/path separation for that candidate. The A04/A05 exact-image evidence may
+set the individual public and private peer-credential fields because its active
+Linux wrong-uid probes passed at the exact source commit cited above. Both
+candidates must keep
 `runtime_receipt_verified=false` and `hostile_runtime_isolation_verified=false`.
 The A03 receipt must additionally keep `so_peercred_verified=false`.
 The A04/A05 Compose healthcheck is an operational startup-ordering check only.
@@ -46,6 +53,13 @@ this interim topology, so the check is not an independent security authority
 against a runtime that has already compromised that uid. Receipts must keep
 `healthcheck_security_boundary_verified=false`; A06 and later identity/runtime
 separation must close that gap before any complete hostile-runtime claim.
+The source-only A06 receipt primitive validates canonical Ed25519 envelopes,
+pinned Executor keys, bounded candidate request/result/isolation bindings, and
+an in-process receipt-id/nonce replay-cache contract. It is not wired to a root
+Executor, persistent replay store, or uid `1200` runtime yet, so its
+contracts must keep `runtime_receipt_verified=false` and
+`real_runtime_process_spawned=false` until exact-image Linux execution proves
+the signer key, runtime identity, cgroup cleanup, and Broker verification path.
 Even after Phase A passes, the release metadata must state:
 
 ```text

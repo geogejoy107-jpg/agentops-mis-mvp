@@ -218,12 +218,15 @@ try {
   assert.equal(health.body.a03_mount_path_separation_only, true);
   assert.equal(health.body.public_private_socket_paths_distinct, true);
   assert.equal(health.body.private_socket_identity_verified, true);
+  assert.equal(health.body.execute_requests_received, 0);
   assert.equal(health.body.so_peercred_verified, false);
   assert.equal(health.body.full_hostile_runtime_isolation_verified, false);
 
   const successRequest = executionRequest("success");
   const successBytes = Buffer.from(`{\n  "timeout_seconds": ${successRequest.timeout_seconds},\n  "prompt_hash": "${successRequest.prompt_hash}",\n  "prompt": "${successRequest.prompt}",\n  "agent_name": "${successRequest.agent_name}",\n  "schema": "${successRequest.schema}"\n}`);
   const success = await call({ body: successBytes });
+  const healthAfterSuccess = await call({ method: "GET", path: "/health", body: Buffer.alloc(0) });
+  assert.equal(healthAfterSuccess.body.execute_requests_received, 1);
   assert.equal(success.status, 200);
   assert.deepEqual(success.body, {
     schema: "executor-test-response-v1",

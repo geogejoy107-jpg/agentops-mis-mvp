@@ -296,8 +296,9 @@ dsn_root="$(mktemp -d -t agentops-postgres-dsn.XXXXXX)"
 chmod 700 "$dsn_root"
 dsn_file="$dsn_root/postgres.dsn"
 trap 'rm -f "$receipt"; rm -rf "$dsn_root"' EXIT
-chmod 600 "$dsn_file"
+umask 077
 printf '%s\n' 'postgresql://<user>:<password>@127.0.0.1:<port>/<database>' > "$dsn_file"
+chmod 600 "$dsn_file"
 
 python3 scripts/nextjs_postgres_real_worker_human_review_smoke.py \
   --postgres-dsn-file "$dsn_file" \

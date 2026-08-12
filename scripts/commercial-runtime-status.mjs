@@ -175,6 +175,19 @@ function githubJson(arguments_, error = "runtime_status_github_response_invalid"
   }
 }
 
+function githubReadJson(arguments_, error = "runtime_status_github_response_invalid") {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return JSON.parse(gh(arguments_));
+    } catch {
+      if (attempt < 2) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250 * (attempt + 1));
+      }
+    }
+  }
+  fail(error);
+}
+
 function statusDescription(runtime, digest) {
   return `Real ${runtime} runtime receipt sha256:${digest}`;
 }
@@ -249,7 +262,7 @@ function publish(repo, sha, digest) {
 
 function verify(repo, sha, expectedPublisher) {
   const publisher = login(expectedPublisher);
-  const statuses = githubJson([
+  const statuses = githubReadJson([
     "api", `repos/${repo}/commits/${sha}/statuses?per_page=100`,
   ]);
   if (!Array.isArray(statuses)) fail("runtime_status_github_response_invalid");
@@ -274,7 +287,7 @@ function verify(repo, sha, expectedPublisher) {
     sharedDigest = digestMatch[2];
     contexts[context] = "success";
   }
-  const comment = githubJson(["api", `repos/${repo}/comments/${sharedTarget.id}`]);
+  const comment = githubReadJson(["api", `repos/${repo}/comments/${sharedTarget.id}`]);
   if (
     String(comment?.user?.login || "").toLowerCase() !== publisher.toLowerCase()
     || String(comment?.commit_id || "").toLowerCase() !== sha
