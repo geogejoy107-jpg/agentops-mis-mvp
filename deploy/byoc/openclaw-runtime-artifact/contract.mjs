@@ -74,7 +74,7 @@ assert.match(dockerfile, /^ARG NODE_IMAGE$/m);
 assert.match(dockerfile, /^FROM \$\{NODE_IMAGE\}$/m);
 assert.doesNotMatch(dockerfile, /^ARG NODE_IMAGE=/m);
 assert.match(dockerfile, /npm ci --ignore-scripts --omit=dev --no-audit --no-fund/);
-assert.match(dockerfile, /node -p 'require\("openclaw\/package\.json"\)\.version'/);
+assert.match(dockerfile, /node -p 'JSON\.parse\(require\("fs"\)\.readFileSync\("node_modules\/openclaw\/package\.json", "utf8"\)\)\.version'/);
 assert.match(dockerfile, /COPY --chown=0:0 --chmod=0555 deploy\/byoc\/openclaw-stdin-provider\.mjs/);
 assert.match(dockerfile, /ENTRYPOINT \["\/usr\/local\/bin\/node", "\/opt\/agentops\/openclaw-adapter\/openclaw-stdin-provider\.mjs"\]/);
 assert.doesNotMatch(dockerfile, /npm install\s+-g|COPY\s+\/usr|\.npmrc|ARG\s+.*(?:TOKEN|KEY|SECRET)|ENV\s+.*(?:TOKEN|KEY|SECRET)/i);

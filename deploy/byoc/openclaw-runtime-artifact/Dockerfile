@@ -10,7 +10,7 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm ci --ignore-scripts --omit=dev --no-audit --no-fund \
     && npm cache clean --force \
     && test "$(node --version)" = "v22.23.2" \
-    && test "$(node -p 'require("openclaw/package.json").version')" = "2026.5.4"
+    && test "$(node -p 'JSON.parse(require("fs").readFileSync("node_modules/openclaw/package.json", "utf8")).version')" = "2026.5.4"
 
 COPY --chown=0:0 --chmod=0555 deploy/byoc/openclaw-stdin-provider.mjs \
     /opt/agentops/openclaw-adapter/openclaw-stdin-provider.mjs
