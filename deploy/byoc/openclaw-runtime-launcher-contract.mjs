@@ -446,7 +446,6 @@ try {
   const withArg = (index, value) => valid.map((item, current) => current === index ? value : item);
   for (const invalid of [
     valid.slice(0, 13),
-    [...valid.slice(0, 13), "--extra", "value", "--", "/runtime-probe", "identity"],
     withArg(1, "--gid"),
     withArg(2, "01200"),
     withArg(4, "1201"),
@@ -460,6 +459,10 @@ try {
     const rejected = spawnSync(binary, invalid, { encoding: "utf8", env: {} });
     assert.equal(rejected.status, 64, `${rejected.stdout}${rejected.stderr}`);
   }
+
+  const invalidGuestArgv0 = launchWithFd(["--extra", "value", "--", "/runtime-probe", "identity"]);
+  assert.equal(invalidGuestArgv0.status, 65, `${invalidGuestArgv0.stdout}${invalidGuestArgv0.stderr}`);
+  assert.equal(invalidGuestArgv0.stderr, "runtime_launcher_guest_executable_invalid\n");
 
   const missingFd = spawnSync(binary, launcherArgs(63), { encoding: "utf8", env: {} });
   assert.equal(missingFd.status, 65, `${missingFd.stdout}${missingFd.stderr}`);
