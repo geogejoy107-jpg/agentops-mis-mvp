@@ -49,13 +49,29 @@ the exact-image Linux acceptance passes.
 The A07 image also packages a native `openat2` resolver foundation. Its Linux
 contract requires a root-owned inherited directory fd and independently checks
 `RESOLVE_IN_ROOT` and `RESOLVE_BENEATH` identity while denying symlinks, magic
-links, and mount crossings. The primitive currently closes the resolved fd and
-does not hand it to the launcher, so `runtime_path_toctou_closed=false` remains
-mandatory. The production Executor service now performs preflight internally;
-caller-supplied preflight and owner/cgroup inspection dependencies are rejected.
+links, and mount crossings. That standalone diagnostic still closes its resolved
+fds and reports no handoff claim. The launcher now embeds the same guarded
+lookup and compares it to the inherited executable fd, but the signed manifest
+v2 is not yet consumed by the service, so `runtime_path_toctou_closed=false`
+remains mandatory. The production Executor service now performs preflight
+internally; caller-supplied preflight and owner/cgroup inspection dependencies
+are rejected.
 Client disconnect and shutdown propagate cancellation to the runner. Timeout,
 cancellation, and output overflow return control before pipe EOF so cgroup-wide
 cleanup cannot be held hostage by a detached descendant retaining a pipe.
+
+The next guest-root handoff slice is now wired in source: the TypeScript runner
+opens both the runtime root and executable, passes them as inherited fds while
+preserving guest argv, and the launcher re-resolves argv[0] with `openat2`,
+compares device/inode identity, then performs `fchdir`, `chroot`, and `chdir`
+before dropping to uid/gid 1200, clearing the effective, permitted, inheritable,
+and ambient capability vectors, and calling `execveat`.
+The A07 Compose candidate grants only the additional `SYS_CHROOT` capability to
+the root Executor; it is cleared before runtime execution. A strict privileged
+Linux contract covers the positive handoff plus outside-executable, traversal,
+and invalid-root attacks. Until that exact-head job passes and the signed
+manifest v2 is consumed by the production service, handoff and TOCTOU claims
+remain false.
 
 OpenClaw 2026.5.4 still exposes the agent prompt only as CLI
 `--message <text>`; that CLI remains forbidden. A checked-in Node adapter now
@@ -330,7 +346,10 @@ For every request the Executor performs this exact fail-closed sequence:
    record is written.
 
 Executor PID 1 runs as `0:2200`, with `no-new-privileges` and only Linux
-capabilities `SETUID`, `SETGID`, and `KILL`. Its root filesystem is read-only;
+capabilities `SETUID`, `SETGID`, `SYS_CHROOT`, and `KILL`. The launcher clears
+the runtime process's effective, permitted, inheritable, and ambient vectors;
+the current contract does not claim that it clears the capability bounding set.
+Its root filesystem is read-only;
 `/tmp` and runtime state are bounded `noexec,nosuid,nodev` tmpfs mounts. Directory
 ownership must be supplied by image build or tmpfs mount options so `CHOWN`,
 `DAC_OVERRIDE`, `SYS_ADMIN`, `SYS_PTRACE`, and `NET_ADMIN` are not needed.

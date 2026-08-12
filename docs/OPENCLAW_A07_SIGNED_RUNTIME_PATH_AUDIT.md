@@ -34,9 +34,12 @@ A native `openat2` resolver primitive is now packaged and tested separately. It
 rejects traversal, symlinks, proc magiclinks, and mount crossing below an
 inherited root directory fd. It currently reports
 `resolved_fd_handoff_verified=false` and closes the resolved file descriptors;
-the runner and launcher do not consume them yet. PATH-01 through PATH-04
-therefore remain open until the resolved executable/entrypoint identity is
-carried without pathname reopening into the actual launch sequence.
+the diagnostic itself therefore remains non-claim evidence. The runner and
+launcher now have a separate integrated source path that retains root and
+executable fds, compares executable identity with `openat2`, enters the guest
+root, and preserves guest argv into `execveat`. PATH-01 through PATH-04 remain
+release blockers until the exact-head Linux contract passes and the production
+service consumes signed manifest v2 plus a content-addressed immutable root.
 
 The stdin adapter removes the prompt-argv blocker without weakening the runner
 gate. It calls OpenClaw's public `agentCommand` export and passed an
@@ -235,7 +238,8 @@ root. This is the target architecture, not an optional follow-up:
 
 1. Build a complete signed guest root containing Node, its ELF interpreter,
    shared libraries, CA material, entrypoint, modules, and package metadata.
-2. Declare mutable mount points for state and workspace in the signed policy.
+2. Declare mutable mount points for read-only config/workspace plus writable
+   state/tmp in the signed policy.
    Verify each nested mount by mount id, filesystem type, flags, owner, and mode,
    while excluding its mutable contents from the immutable file manifest.
 3. Pass a pinned guest-root fd and executable fd to the native launcher.
@@ -284,7 +288,7 @@ Full guest-root closure additionally changes:
 - `deploy/byoc/openclaw-runtime-launcher-contract.mjs`: real root-only guest-root
   execution, decoy-root, loader, module, uid/gid, capability, and fd tests.
 - runtime manifest and Compose policy: complete rootfs and explicit nested mount
-  declarations for mutable state/workspace.
+  declarations for read-only config/workspace and writable state/tmp.
 
 ## 7. Linux Acceptance Assertions
 

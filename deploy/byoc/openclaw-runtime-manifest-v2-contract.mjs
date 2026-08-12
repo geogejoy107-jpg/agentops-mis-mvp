@@ -48,6 +48,7 @@ function fixture(overrides = {}) {
       { kind: "workspace_directory", path: "/opt/agentops-worker/workspace", read_only: true },
       { kind: "state_directory", path: "/run/openclaw-state", read_only: false },
       { kind: "config_file", path: "/run/secrets/openclaw_config", read_only: true },
+      { kind: "temp_directory", path: "/tmp", read_only: false },
     ],
     oci_image: {
       digest: `sha256:${digest("c")}`,
@@ -134,7 +135,7 @@ for (const [body, pattern] of [
   [fixture({ entrypoint: "/opt/agentops/openclaw-adapter/../escape.mjs" }), /runtime_manifest_v2_entrypoint_invalid/],
   [fixture({ entrypoint: "/opt/agentops/\ud800/escape.mjs" }), /runtime_manifest_v2_entrypoint_invalid/],
   [fixture({ environment_name_allowlist: ["LANG", "LANG", "OPENCLAW_STATE_DIR", "OPENCLAW_WORKSPACE", "PATH"] }), /runtime_manifest_v2_environment_name_allowlist_invalid/],
-  [fixture({ mutable_mounts: [fixture().mutable_mounts[0], fixture().mutable_mounts[0], fixture().mutable_mounts[2]] }), /runtime_manifest_v2_mutable_mount_kind_duplicate|runtime_manifest_v2_mutable_mounts_order_invalid/],
+  [fixture({ mutable_mounts: [fixture().mutable_mounts[0], fixture().mutable_mounts[0], fixture().mutable_mounts[2], fixture().mutable_mounts[3]] }), /runtime_manifest_v2_mutable_mount_kind_duplicate|runtime_manifest_v2_mutable_mounts_order_invalid/],
   [fixture({ mutable_mounts: fixture().mutable_mounts.map((mount) => mount.kind === "config_file" ? { ...mount, read_only: false } : mount) }), /runtime_manifest_v2_mutable_mount_read_only_invalid/],
   [fixture({ argv: [{ kind: "guest_path", value: "/usr/local/bin/node" }, { kind: "guest_path", value: "/opt/agentops/openclaw-adapter/other.mjs" }] }), /runtime_manifest_v2_argv_runtime_binding_invalid/],
   [fixture({ argv: [...fixture().argv, { kind: "opaque", value: "../escape" }] }), /runtime_manifest_v2_argv_opaque_invalid/],
@@ -148,6 +149,7 @@ rejectsBody(fixture({
     { kind: "config_file", path: "/run", read_only: true },
     { kind: "workspace_directory", path: "/run-escape", read_only: true },
     { kind: "state_directory", path: "/run/state", read_only: false },
+    { kind: "temp_directory", path: "/tmp", read_only: false },
   ],
 }), /runtime_manifest_v2_mutable_mounts_overlap_invalid/);
 

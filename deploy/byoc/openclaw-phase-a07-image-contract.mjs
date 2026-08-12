@@ -78,7 +78,7 @@ assert.doesNotMatch(broker, /agentops-provider\/openclaw|openclaw_config|signing
 
 assert.match(executor, /user: "0:2200"/);
 assert.match(executor, /cap_drop: \[ALL\]/);
-assert.match(executor, /cap_add:\s*\n\s+- SETUID\s*\n\s+- SETGID\s*\n\s+- KILL/);
+assert.match(executor, /cap_add:\s*\n\s+- SETUID\s*\n\s+- SETGID\s*\n\s+- SYS_CHROOT\s*\n\s+- KILL/);
 assert.match(executor, /no-new-privileges:true/);
 assert.match(executor, /read_only: true/);
 assert.match(executor, /openclaw-boundary-supervisor\.mjs/);
@@ -89,7 +89,8 @@ assert.match(executor, /agentops-openclaw-provider-backend:rw,noexec,nosuid,node
 assert.match(executor, /AGENTOPS_A07_REPLAY_JOURNAL_PATH:[^\n]*pre-provisioned root:2200 mode 0700 directory/);
 assert.match(executor, /target: \/var\/lib\/agentops-openclaw\/replay\s*\n\s*read_only: false\s*\n\s*bind:\s*\n\s*create_host_path: false/);
 assert.match(executor, /source: \/sys\/fs\/cgroup\/agentops-openclaw-executor\s*\n\s*target: \/sys\/fs\/cgroup\/agentops-openclaw-executor\s*\n\s*read_only: false/);
-assert.match(executor, /\/run\/openclaw-state:rw,noexec,nosuid,nodev,size=32m,mode=0700,uid=1200,gid=1200/);
+assert.match(executor, /\/opt\/agentops-provider\/openclaw\/run\/openclaw-state:rw,noexec,nosuid,nodev,size=32m,mode=0700,uid=1200,gid=1200/);
+assert.match(executor, /\/opt\/agentops-provider\/openclaw\/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777,uid=1200,gid=1200/);
 assert.match(executor, /phase_a07_private_socket:\/run\/agentops-openclaw-private:rw/);
 assert.match(executor, /networks:\s*\n\s+- provider-egress/);
 assert.equal((executor.match(/create_host_path: false/g) || []).length, 10);
@@ -97,8 +98,8 @@ assert.doesNotMatch(executor, /control-plane|agentops-openclaw-public/);
 
 for (const target of [
   "/opt/agentops-provider/openclaw",
-  "/opt/agentops-worker/workspace",
-  "/run/secrets/openclaw_config",
+  "/opt/agentops-provider/openclaw/opt/agentops-worker/workspace",
+  "/opt/agentops-provider/openclaw/run/secrets/openclaw_config",
   "/run/manifests/openclaw-runtime-manifest.json",
   "/run/manifests/openclaw-runtime-manifest-trust-roots.json",
   "/run/secrets/openclaw_receipt_signing_key",
@@ -126,7 +127,7 @@ process.stdout.write(`${JSON.stringify({
   executor_uid: 0,
   executor_gid: 2200,
   runtime_uid: 1200,
-  executor_capabilities: ["SETUID", "SETGID", "KILL"],
+  executor_capabilities: ["SETUID", "SETGID", "SYS_CHROOT", "KILL"],
   delegated_cgroup_path_exact: true,
   persistent_replay_journal_present: true,
   native_openat2_resolver_foundation_packaged: true,

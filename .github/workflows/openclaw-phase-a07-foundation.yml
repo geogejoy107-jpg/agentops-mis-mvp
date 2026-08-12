@@ -12,6 +12,7 @@ on:
       - "deploy/byoc/openclaw-cgroup-v2*.mjs"
       - "deploy/byoc/openclaw-executor-*.mjs"
       - "deploy/byoc/openclaw-runtime-launcher*"
+      - "deploy/byoc/openclaw-runtime-guest-root*.mjs"
       - "deploy/byoc/openclaw-runtime-artifact/**"
       - "deploy/byoc/openclaw-runtime-manifest*.mjs"
       - "deploy/byoc/openclaw-stdin-provider*.mjs"
@@ -56,6 +57,7 @@ jobs:
           node deploy/byoc/openclaw-executor-runner-contract.mjs
           node deploy/byoc/openclaw-stdin-provider-contract.mjs
           node deploy/byoc/openclaw-runtime-path-resolver-contract.mjs --source-audit-only
+          node deploy/byoc/openclaw-runtime-guest-root-contract.mjs
           node deploy/byoc/openclaw-executor-service-contract.mjs
           node deploy/byoc/openclaw-boundary-supervisor-contract.mjs
           node deploy/byoc/openclaw-broker-contract.mjs
@@ -76,6 +78,7 @@ jobs:
             --tag "${image}" .
           test "$(docker image inspect --format '{{.Architecture}}' "${image}")" = "amd64"
           docker run --rm --read-only --network none \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777,uid=1200,gid=1200 \
             --workdir /opt/openclaw \
             --entrypoint /usr/local/bin/node \
             "${image}" --input-type=module -e '
@@ -117,6 +120,35 @@ jobs:
             and .runtime_receipt_verified == false
             and .hostile_runtime_isolation_verified == false
           ' "${receipt}" >/dev/null
+
+          guest_root_receipt="${RUNNER_TEMP}/a07-launcher-guest-root.json"
+          docker run --rm --read-only --network none --privileged --cgroupns private \
+            --tmpfs /tmp:rw,exec,nosuid,nodev,size=128m,mode=1777 \
+            --volume "${GITHUB_WORKSPACE}:/workspace:ro" \
+            --workdir /workspace \
+            "${image}" \
+            /bin/sh -ec '
+              mkdir /sys/fs/cgroup/agentops-guest-root-contract
+              AGENTOPS_TEST_CGROUP_PROCS_PATH=/sys/fs/cgroup/agentops-guest-root-contract/cgroup.procs \
+                node deploy/byoc/openclaw-runtime-guest-root-contract.mjs --require-integrated
+            ' > "${guest_root_receipt}"
+          jq -e '
+            .ok == true
+            and .source_integration_detected == true
+            and .inherited_guest_root_fd_verified == true
+            and .invalid_guest_root_fd_rejected == true
+            and .executable_fd_within_guest_root_verified == true
+            and .executable_path_toctou_closed_verified == true
+            and .escaping_guest_argv0_rejected == true
+            and .guest_argv_preserved_verified == true
+            and .fchdir_chroot_chdir_verified == true
+            and .runtime_uid_gid_1200_verified == true
+            and .runtime_capability_vectors_cleared_verified == true
+            and .capability_bounding_set_cleared_verified == false
+            and .launcher_guest_root_handoff_verified == true
+            and .runtime_path_toctou_closed == false
+            and .hostile_runtime_isolation_verified == false
+          ' "${guest_root_receipt}" >/dev/null
 
       - name: Run Linux openat2 path resolver contract
         run: |

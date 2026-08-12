@@ -3,7 +3,9 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import { PassThrough } from "node:stream";
+import { fileURLToPath } from "node:url";
 import {
   buildExecutorDispatch,
   canonicalExecutorProtocolBytes,
@@ -24,6 +26,15 @@ const policySha256 = digest("2");
 const seccompSha256 = digest("3");
 const previousNodeEnvironment = process.env.NODE_ENV;
 process.env.NODE_ENV = "test";
+const runnerSource = readFileSync(fileURLToPath(new URL("./openclaw-executor-runner.mjs", import.meta.url)), "utf8");
+
+assert.match(runnerSource, /constants\.O_DIRECTORY \| constants\.O_NOFOLLOW \| constants\.O_CLOEXEC/);
+assert.match(runnerSource, /return \{ execFd, rootFd, cgroupFd \}/);
+assert.match(runnerSource, /const argv = assertPromptTransport\(preflight\.manifest\);/);
+assert.match(runnerSource, /"--root-fd", "4"/);
+assert.match(runnerSource, /handles\.execFd, handles\.rootFd, handles\.cgroupFd, "pipe"/);
+assert.match(runnerSource, /child\.stdio\?\.\[6\]/);
+assert.match(runnerSource, /handles\?\.execFd, handles\?\.rootFd, handles\?\.cgroupFd/);
 
 function providerResponse(overrides = {}) {
   return {
@@ -402,6 +413,7 @@ process.stdout.write(`${JSON.stringify({
   prompt_stdin_only_and_argv_fails_closed: true,
   raw_prompt_and_response_not_persisted: true,
   canonical_signed_executor_receipt_verified: true,
+  guest_root_fd_handoff_source_audited: true,
   real_linux_cgroupfs_acceptance_performed: false,
   real_runtime_process_spawned: false,
   provider_call_verified: false,

@@ -125,13 +125,18 @@ function manifestAbsolutePath(runtimeRoot, virtualPath) {
 }
 
 function defaultOpenExecutionFiles(configuration, preflight, cgroup) {
-  const executablePath = manifestAbsolutePath(configuration.runtimeRoot, preflight.manifest.runtime_executable);
-  const execFd = openSync(
-    executablePath,
-    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_CLOEXEC,
+  const rootFd = openSync(
+    configuration.runtimeRoot,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_CLOEXEC,
   );
+  const executablePath = manifestAbsolutePath(configuration.runtimeRoot, preflight.manifest.runtime_executable);
+  let execFd;
   let cgroupFd;
   try {
+    execFd = openSync(
+      executablePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_CLOEXEC,
+    );
     const metadata = fstatSync(execFd);
     const relativePath = preflight.manifest.runtime_executable.slice(1);
     const expected = preflight.manifest.files?.find((item) => item.path === relativePath);
@@ -150,10 +155,11 @@ function defaultOpenExecutionFiles(configuration, preflight, cgroup) {
       constants.O_WRONLY | constants.O_NOFOLLOW | constants.O_CLOEXEC,
     );
   } catch (error) {
-    closeSync(execFd);
+    if (Number.isSafeInteger(execFd)) closeSync(execFd);
+    closeSync(rootFd);
     throw error;
   }
-  return { execFd, cgroupFd };
+  return { execFd, rootFd, cgroupFd };
 }
 
 function defaultLauncherIdentity(configuration) {
@@ -171,22 +177,19 @@ function defaultLauncherIdentity(configuration) {
 }
 
 function defaultSpawnLauncher(configuration, preflight, handles, stdinBytes, signal) {
-  const argv = assertPromptTransport(preflight.manifest).map((item, index) => (
-    index > 0 && item.startsWith("/")
-      ? manifestAbsolutePath(configuration.runtimeRoot, item)
-      : item
-  ));
+  const argv = assertPromptTransport(preflight.manifest);
   const child = spawn(configuration.launcherPath, [
     "--uid", "1200", "--gid", "1200",
     "--exec-fd", "3",
-    "--cgroup-procs-fd", "4",
-    "--status-fd", "5",
+    "--root-fd", "4",
+    "--cgroup-procs-fd", "5",
+    "--status-fd", "6",
     "--", ...argv,
   ], {
     detached: true,
     env: { LANG: "C", PATH: "/usr/bin:/bin" },
     signal,
-    stdio: ["pipe", "pipe", "pipe", handles.execFd, handles.cgroupFd, "pipe"],
+    stdio: ["pipe", "pipe", "pipe", handles.execFd, handles.rootFd, handles.cgroupFd, "pipe"],
     windowsHide: true,
   });
   child.stdin.once("error", () => {});
@@ -204,7 +207,7 @@ function childResult(child, deadlineNs, clock, signal, maximum = MAX_PROVIDER_RE
     let timedOut = false;
     let aborted = false;
     let timer;
-    const statusStream = child.stdio?.[5];
+    const statusStream = child.stdio?.[6];
     const snapshot = (overrides = {}) => ({
       code: null,
       signal: null,
@@ -493,7 +496,7 @@ async function runExecutorDispatchWithDependencies(dispatchBytesValue, configura
     }
     if (deferredError === null) result = { ...result, spawnError: result.spawnError ?? error };
   } finally {
-    for (const fd of [handles?.execFd, handles?.cgroupFd]) {
+    for (const fd of [handles?.execFd, handles?.rootFd, handles?.cgroupFd]) {
       if (Number.isSafeInteger(fd)) {
         try { dependencies.closeFd(fd); } catch {}
       }

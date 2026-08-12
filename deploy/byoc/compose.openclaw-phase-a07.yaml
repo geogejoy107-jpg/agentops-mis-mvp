@@ -100,6 +100,7 @@ services:
     cap_add:
       - SETUID
       - SETGID
+      - SYS_CHROOT
       - KILL
     security_opt:
       - no-new-privileges:true
@@ -108,7 +109,8 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=0,gid=2200
       - /run/agentops-openclaw-provider-backend:rw,noexec,nosuid,nodev,size=2m,mode=0700,uid=0,gid=2200
-      - /run/openclaw-state:rw,noexec,nosuid,nodev,size=32m,mode=0700,uid=1200,gid=1200
+      - /opt/agentops-provider/openclaw/run/openclaw-state:rw,noexec,nosuid,nodev,size=32m,mode=0700,uid=1200,gid=1200
+      - /opt/agentops-provider/openclaw/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777,uid=1200,gid=1200
     entrypoint: [node, /usr/local/lib/agentops/openclaw-boundary-supervisor.mjs]
     environment:
       NODE_ENV: production
@@ -159,13 +161,13 @@ services:
           create_host_path: false
       - type: bind
         source: ${AGENTOPS_A07_CONFIG_PATH:?set AGENTOPS_A07_CONFIG_PATH}
-        target: /run/secrets/openclaw_config
+        target: /opt/agentops-provider/openclaw/run/secrets/openclaw_config
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${AGENTOPS_A07_WORKSPACE_PATH:?set AGENTOPS_A07_WORKSPACE_PATH}
-        target: /opt/agentops-worker/workspace
+        target: /opt/agentops-provider/openclaw/opt/agentops-worker/workspace
         read_only: true
         bind:
           create_host_path: false

@@ -23,6 +23,10 @@ RUN find /opt/openclaw /opt/agentops -xdev -type d -exec chmod 0555 {} + \
     && groupadd --gid 1200 agentops-runtime \
     && useradd --uid 1200 --gid 1200 --home-dir /run/openclaw-state \
       --no-create-home --shell /usr/sbin/nologin agentops-runtime \
+    && install -d -o 1200 -g 1200 -m 0700 /run/openclaw-state \
+    && install -d -o 0 -g 0 -m 0555 /run/secrets \
+      /opt/agentops-worker /opt/agentops-worker/workspace \
+    && install -o 0 -g 0 -m 0400 /dev/null /run/secrets/openclaw_config \
     && find / -xdev -type f -perm /6000 -exec chmod a-s {} + \
     && test -z "$(find / -xdev -type f -perm /6000 -print -quit)" \
     && test -f /opt/openclaw/node_modules/openclaw/dist/plugin-sdk/agent-runtime.js

@@ -93,6 +93,7 @@ const SUPPORTED_ARCHES = Object.freeze(new Set(["amd64", "arm64"]));
 const REQUIRED_MOUNT_POLICY = Object.freeze({
   config_file: true,
   state_directory: false,
+  temp_directory: false,
   workspace_directory: true,
 });
 
@@ -270,7 +271,7 @@ function validateImmutableRoots(value) {
 }
 
 function validateMutableMounts(value) {
-  if (!Array.isArray(value) || value.length !== 3) fail("runtime_manifest_v2_mutable_mounts_invalid");
+  if (!Array.isArray(value) || value.length !== 4) fail("runtime_manifest_v2_mutable_mounts_invalid");
   const seenKinds = new Set();
   let previousPath = null;
   const mounts = value.map((item) => {

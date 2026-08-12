@@ -79,6 +79,9 @@ assert.match(dockerfile, /COPY --chown=0:0 --chmod=0555 deploy\/byoc\/openclaw-s
 assert.match(dockerfile, /ENTRYPOINT \["\/usr\/local\/bin\/node", "\/opt\/agentops\/openclaw-adapter\/openclaw-stdin-provider\.mjs"\]/);
 assert.doesNotMatch(dockerfile, /npm install\s+-g|COPY\s+\/usr|\.npmrc|ARG\s+.*(?:TOKEN|KEY|SECRET)|ENV\s+.*(?:TOKEN|KEY|SECRET)/i);
 assert.match(dockerfile, /useradd --uid 1200 --gid 1200 --home-dir \/run\/openclaw-state/);
+assert.match(dockerfile, /install -d -o 1200 -g 1200 -m 0700 \/run\/openclaw-state/);
+assert.match(dockerfile, /\/opt\/agentops-worker \/opt\/agentops-worker\/workspace/);
+assert.match(dockerfile, /install -o 0 -g 0 -m 0400 \/dev\/null \/run\/secrets\/openclaw_config/);
 assert.match(dockerfile, /find \/ -xdev -type f -perm \/6000 -exec chmod a-s/);
 
 assert.match(adapter, /import\("openclaw\/plugin-sdk\/agent-runtime"\)/);

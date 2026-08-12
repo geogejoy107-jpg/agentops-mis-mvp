@@ -12,6 +12,7 @@
 #include <linux/capability.h>
 #include <linux/filter.h>
 #include <linux/magic.h>
+#include <linux/openat2.h>
 #include <linux/seccomp.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -32,6 +33,11 @@
 #define RUNTIME_GID ((gid_t)1200)
 #define SOCKET_TYPE_MASK 0x0fU
 #define DENIED_ERRNO EPERM
+#define MAX_OPEN_RETRIES 8
+#define COMMON_RESOLVE_FLAGS \
+    (RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV)
+#define IN_ROOT_RESOLVE_FLAGS (RESOLVE_IN_ROOT | COMMON_RESOLVE_FLAGS)
+#define BENEATH_RESOLVE_FLAGS (RESOLVE_BENEATH | COMMON_RESOLVE_FLAGS)
 
 #if defined(__x86_64__)
 #define EXPECTED_AUDIT_ARCH AUDIT_ARCH_X86_64
@@ -47,6 +53,10 @@
 
 #ifndef SYS_execveat
 #define SYS_execveat __NR_execveat
+#endif
+
+#ifndef SYS_openat2
+#define SYS_openat2 __NR_openat2
 #endif
 
 #define DENY_SYSCALL(number) \
@@ -83,6 +93,7 @@ static int validate_arguments(
     int argc,
     char **argv,
     int *exec_fd,
+    int *root_fd,
     int *cgroup_procs_fd,
     int *status_fd,
     char ***child_argv
@@ -90,39 +101,48 @@ static int validate_arguments(
     unsigned long uid_value;
     unsigned long gid_value;
     unsigned long fd_value;
+    unsigned long root_fd_value;
     unsigned long cgroup_fd_value;
     unsigned long status_fd_value;
 
-    if (argc < 13
+    if (argc < 15
         || strcmp(argv[1], "--uid") != 0
         || strcmp(argv[3], "--gid") != 0
         || strcmp(argv[5], "--exec-fd") != 0
-        || strcmp(argv[7], "--cgroup-procs-fd") != 0
-        || strcmp(argv[9], "--status-fd") != 0
-        || strcmp(argv[11], "--") != 0
-        || argv[12][0] == '\0'
+        || strcmp(argv[7], "--root-fd") != 0
+        || strcmp(argv[9], "--cgroup-procs-fd") != 0
+        || strcmp(argv[11], "--status-fd") != 0
+        || strcmp(argv[13], "--") != 0
+        || argv[14][0] == '\0'
         || parse_decimal(argv[2], &uid_value) < 0
         || parse_decimal(argv[4], &gid_value) < 0
         || parse_decimal(argv[6], &fd_value) < 0
-        || parse_decimal(argv[8], &cgroup_fd_value) < 0
-        || parse_decimal(argv[10], &status_fd_value) < 0
+        || parse_decimal(argv[8], &root_fd_value) < 0
+        || parse_decimal(argv[10], &cgroup_fd_value) < 0
+        || parse_decimal(argv[12], &status_fd_value) < 0
         || uid_value != (unsigned long)RUNTIME_UID
         || gid_value != (unsigned long)RUNTIME_GID
         || fd_value < 3UL
         || fd_value > (unsigned long)INT_MAX
+        || root_fd_value < 3UL
+        || root_fd_value > (unsigned long)INT_MAX
         || cgroup_fd_value < 3UL
         || cgroup_fd_value > (unsigned long)INT_MAX
         || status_fd_value < 3UL
         || status_fd_value > (unsigned long)INT_MAX
+        || root_fd_value == fd_value
         || cgroup_fd_value == fd_value
+        || cgroup_fd_value == root_fd_value
         || status_fd_value == fd_value
+        || status_fd_value == root_fd_value
         || status_fd_value == cgroup_fd_value) {
         return -1;
     }
     *exec_fd = (int)fd_value;
+    *root_fd = (int)root_fd_value;
     *cgroup_procs_fd = (int)cgroup_fd_value;
     *status_fd = (int)status_fd_value;
-    *child_argv = &argv[12];
+    *child_argv = &argv[14];
     return 0;
 }
 
@@ -208,6 +228,118 @@ static int validate_executable_fd(int exec_fd) {
         return -1;
     }
     if (fcntl(exec_fd, F_SETFD, descriptor_flags | FD_CLOEXEC) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int validate_root_fd(int root_fd) {
+    struct stat metadata;
+    int open_flags;
+
+    open_flags = fcntl(root_fd, F_GETFL);
+    if (open_flags < 0
+        || (open_flags & O_ACCMODE) != O_RDONLY
+        || fstat(root_fd, &metadata) < 0
+        || !S_ISDIR(metadata.st_mode)
+        || metadata.st_uid != (uid_t)0
+        || (metadata.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int validate_guest_path(const char *value) {
+    const char *component;
+    size_t length;
+
+    if (value == NULL || value[0] != '/' || value[1] == '\0') {
+        return -1;
+    }
+    length = strnlen(value, (size_t)PATH_MAX + 1U);
+    if (length == 0U
+        || length >= (size_t)PATH_MAX
+        || value[length - 1U] == '/'
+        || strchr(value, '\\') != NULL) {
+        return -1;
+    }
+    component = value + 1;
+    while (*component != '\0') {
+        const char *separator = strchr(component, '/');
+        size_t component_length = separator == NULL
+            ? strlen(component)
+            : (size_t)(separator - component);
+        if (component_length == 0U
+            || (component_length == 1U && component[0] == '.')
+            || (component_length == 2U && component[0] == '.' && component[1] == '.')) {
+            return -1;
+        }
+        if (separator == NULL) {
+            break;
+        }
+        component = separator + 1;
+    }
+    return 0;
+}
+
+static int guarded_openat2(int root_fd, const char *path_value, uint64_t resolve_flags) {
+    struct open_how how;
+    int attempt;
+
+    memset(&how, 0, sizeof(how));
+    how.flags = (uint64_t)(O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    how.resolve = resolve_flags;
+    for (attempt = 0; attempt < MAX_OPEN_RETRIES; attempt += 1) {
+        int opened_fd = (int)syscall(SYS_openat2, root_fd, path_value, &how, sizeof(how));
+        if (opened_fd >= 0 || errno != EAGAIN) {
+            return opened_fd;
+        }
+    }
+    errno = EAGAIN;
+    return -1;
+}
+
+static int validate_executable_below_root(int root_fd, int exec_fd, const char *guest_path) {
+    struct stat executable_metadata;
+    struct stat in_root_metadata;
+    struct stat beneath_metadata;
+    int in_root_fd;
+    int beneath_fd;
+    int valid = -1;
+
+    if (validate_guest_path(guest_path) < 0 || fstat(exec_fd, &executable_metadata) < 0) {
+        return -1;
+    }
+    in_root_fd = guarded_openat2(root_fd, guest_path, IN_ROOT_RESOLVE_FLAGS);
+    if (in_root_fd < 0) {
+        return -1;
+    }
+    beneath_fd = guarded_openat2(root_fd, guest_path + 1, BENEATH_RESOLVE_FLAGS);
+    if (beneath_fd < 0) {
+        (void)close(in_root_fd);
+        return -1;
+    }
+    if (fstat(in_root_fd, &in_root_metadata) == 0
+        && fstat(beneath_fd, &beneath_metadata) == 0
+        && S_ISREG(in_root_metadata.st_mode)
+        && (in_root_metadata.st_mode & 0111) != 0
+        && in_root_metadata.st_dev == beneath_metadata.st_dev
+        && in_root_metadata.st_ino == beneath_metadata.st_ino
+        && in_root_metadata.st_dev == executable_metadata.st_dev
+        && in_root_metadata.st_ino == executable_metadata.st_ino) {
+        valid = 0;
+    }
+    if (close(beneath_fd) < 0 || close(in_root_fd) < 0) {
+        return -1;
+    }
+    return valid;
+}
+
+static int enter_guest_root(int root_fd) {
+    if (fchdir(root_fd) < 0
+        || chroot(".") < 0
+        || chdir("/") < 0
+        || close(root_fd) < 0) {
         return -1;
     }
     return 0;
@@ -340,6 +472,7 @@ static int execute_fd(int exec_fd, char **child_argv) {
 
 int main(int argc, char **argv) {
     int exec_fd;
+    int root_fd;
     int cgroup_procs_fd;
     int status_fd;
     char **child_argv;
@@ -348,12 +481,20 @@ int main(int argc, char **argv) {
         fixed_error("runtime_launcher_root_required");
         return 77;
     }
-    if (validate_arguments(argc, argv, &exec_fd, &cgroup_procs_fd, &status_fd, &child_argv) < 0) {
+    if (validate_arguments(argc, argv, &exec_fd, &root_fd, &cgroup_procs_fd, &status_fd, &child_argv) < 0) {
         fixed_error("runtime_launcher_arguments_invalid");
         return 64;
     }
     if (validate_executable_fd(exec_fd) < 0) {
         fixed_error("runtime_launcher_exec_fd_invalid");
+        return 65;
+    }
+    if (validate_root_fd(root_fd) < 0) {
+        fixed_error("runtime_launcher_root_fd_invalid");
+        return 65;
+    }
+    if (validate_executable_below_root(root_fd, exec_fd, child_argv[0]) < 0) {
+        fixed_error("runtime_launcher_guest_executable_invalid");
         return 65;
     }
     if (validate_status_fd(status_fd) < 0) {
@@ -366,6 +507,10 @@ int main(int argc, char **argv) {
     }
     if (reset_signal_state() < 0) {
         fixed_error("runtime_launcher_signal_reset_failed");
+        return 70;
+    }
+    if (enter_guest_root(root_fd) < 0) {
+        fixed_error("runtime_launcher_guest_root_entry_failed");
         return 70;
     }
     if (setgroups(0, NULL) < 0
