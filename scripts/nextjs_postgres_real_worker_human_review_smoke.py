@@ -2475,7 +2475,7 @@ def main() -> int:
         adapter = None
         bootstrapped = run_npm(
             npm,
-            runtime_dsn,
+            migrator_dsn,
             [
                 "bootstrap:owner",
                 "--",

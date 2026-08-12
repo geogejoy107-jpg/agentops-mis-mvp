@@ -245,6 +245,8 @@ jobs:
             and .worker_container_started == true
             and .worker_health_verified == true
             and .no_task_receipt_verified == true
+            and .network_egress_disabled == true
+            and .agent_token_authorization_verified == true
             and .provider_connections == 0
             and .provider_call_performed == false
             and .token_in_argv == false

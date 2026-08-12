@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -21,6 +21,7 @@ const suffix = `${process.pid}-${randomBytes(5).toString("hex")}`;
 const stubName = `agentops-worker-stub-${suffix}`;
 const workerName = `agentops-worker-under-test-${suffix}`;
 const token = `acceptance-agent-token-${randomBytes(32).toString("hex")}`;
+const tokenSha256 = createHash("sha256").update(token).digest("hex");
 
 function fail(code) {
   const error = new Error(code);
@@ -36,14 +37,14 @@ function option(name) {
   return process.argv[index + 1];
 }
 
-function docker(arguments_, acceptedStatuses = [0]) {
+function docker(arguments_, acceptedStatuses = [0], failureCode = "docker_command_failed") {
   const result = spawnSync("docker", arguments_, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 30_000,
   });
   if (!acceptedStatuses.includes(result.status ?? -1)) {
-    fail("docker_command_failed");
+    fail(failureCode);
   }
   return result.stdout;
 }
@@ -64,6 +65,7 @@ function waitFor(name, probe, timeoutMs) {
     const running = docker(
       ["inspect", "--format", "{{.State.Running}}", name],
       [0, 1],
+      "acceptance_container_inspect_failed",
     ).trim();
     if (running === "false") fail("acceptance_container_exited_early");
     sleep(500);
@@ -82,6 +84,7 @@ function jsonLines(value) {
 }
 
 const stubProgram = String.raw`
+const crypto = require("node:crypto");
 const http = require("node:http");
 const net = require("node:net");
 const state = { requests: [], provider_connections: 0 };
@@ -99,7 +102,9 @@ http.createServer(async (request, response) => {
   state.requests.push({
     method: request.method,
     path: String(request.url || "").split("?", 1)[0],
-    authorization_present: /^Bearer [^ ]{16,}$/.test(String(request.headers.authorization || "")),
+    authorization_matches: crypto.createHash("sha256").update(
+      String(request.headers.authorization || "").replace(/^Bearer /, ""),
+    ).digest("hex") === process.env.EXPECTED_TOKEN_SHA256,
     body_bytes: bodyBytes,
     token_omitted: true,
   });
@@ -141,7 +146,11 @@ try {
   }
 
   const image = manifest.image;
-  const imageInspection = JSON.parse(docker(["image", "inspect", image]))[0];
+  const imageInspection = JSON.parse(docker(
+    ["image", "inspect", image],
+    [0],
+    "acceptance_image_inspect_failed",
+  ))[0];
   assert.equal(imageInspection.Os, "linux");
   assert.equal(imageInspection.Architecture, "amd64");
   assert.equal(
@@ -156,16 +165,18 @@ try {
   docker([
     "run", "--detach", "--name", stubName,
     "--platform", "linux/amd64",
+    "--network", "none",
     "--read-only", "--cap-drop", "ALL",
     "--security-opt", "no-new-privileges:true",
     "--tmpfs", "/tmp:rw,noexec,nosuid,size=1m",
+    "--env", `EXPECTED_TOKEN_SHA256=${tokenSha256}`,
     "--entrypoint", "node", image, "-e", stubProgram,
-  ]);
+  ], [0], "acceptance_stub_start_failed");
   waitFor(stubName, () => {
     const output = docker([
       "exec", stubName, "node", "-e",
       "fetch('http://127.0.0.1:18765/__acceptance__').then(r=>r.text()).then(console.log)",
-    ]);
+    ], [0], "acceptance_stub_probe_failed");
     return JSON.parse(output);
   }, 20_000);
 
@@ -196,9 +207,13 @@ try {
     "--env", "HERMES_MAX_TOKENS=64",
     "--entrypoint", "node", image,
     "/usr/local/lib/agentops/worker-entrypoint.mjs",
-  ]);
+  ], [0], "acceptance_worker_start_failed");
 
-  receipt = waitFor(workerName, () => jsonLines(docker(["logs", workerName])).find((item) =>
+  receipt = waitFor(workerName, () => jsonLines(docker(
+    ["logs", workerName],
+    [0],
+    "acceptance_worker_logs_failed",
+  )).find((item) =>
     item.contract === "agentops_byoc_typescript_worker_receipt_v1"
     && item.ok === true
     && item.processed === false
@@ -212,20 +227,32 @@ try {
     const output = docker([
       "exec", workerName, "node", "-e",
       "process.stdout.write(require('node:fs').readFileSync('/run/agentops-worker/health.json','utf8'))",
-    ]);
+    ], [0], "acceptance_worker_health_read_failed");
     const candidate = JSON.parse(output);
     return candidate.status === "ready" ? candidate : null;
   }, 60_000);
   const healthRaw = JSON.stringify(health);
   assert.equal(health.token_omitted, true);
-  docker(["exec", workerName, "node", "/usr/local/lib/agentops/worker-healthcheck.mjs"]);
+  docker(
+    ["exec", workerName, "node", "/usr/local/lib/agentops/worker-healthcheck.mjs"],
+    [0],
+    "acceptance_worker_healthcheck_failed",
+  );
 
   const processArgv = JSON.parse(docker([
     "exec", workerName, "node", "-e",
     "const f=require('node:fs');const rows=f.readdirSync('/proc').filter(x=>/^\\d+$/.test(x)).flatMap(x=>{try{return [f.readFileSync('/proc/'+x+'/cmdline').toString('utf8').split('\\0').filter(Boolean)]}catch{return []}});process.stdout.write(JSON.stringify(rows))",
-  ]));
-  const inspection = docker(["inspect", workerName]);
-  const logs = docker(["logs", workerName]);
+  ], [0], "acceptance_worker_argv_probe_failed"));
+  const inspection = docker(
+    ["inspect", workerName],
+    [0],
+    "acceptance_worker_inspect_failed",
+  );
+  const logs = docker(
+    ["logs", workerName],
+    [0],
+    "acceptance_worker_logs_failed",
+  );
   for (const exposed of [healthRaw, JSON.stringify(processArgv), inspection, logs]) {
     if (exposed.includes(token)) fail("agent_token_exposed_by_container");
   }
@@ -233,12 +260,12 @@ try {
   const stubState = JSON.parse(docker([
     "exec", stubName, "node", "-e",
     "fetch('http://127.0.0.1:18765/__acceptance__').then(r=>r.text()).then(console.log)",
-  ]));
+  ], [0], "acceptance_stub_state_read_failed"));
   assert.equal(stubState.provider_connections, 0);
   assert.ok(stubState.requests.some((item) =>
     item.method === "GET"
     && item.path === "/api/mis/agent-gateway/tasks/pull"
-    && item.authorization_present === true
+    && item.authorization_matches === true
     && item.token_omitted === true
   ));
   assert.ok(stubState.requests.every((item) => [
@@ -255,6 +282,8 @@ try {
     worker_container_started: true,
     worker_health_verified: true,
     no_task_receipt_verified: true,
+    network_egress_disabled: true,
+    agent_token_authorization_verified: true,
     provider_connections: 0,
     provider_call_performed: false,
     token_in_argv: false,
@@ -269,7 +298,7 @@ try {
   process.stderr.write(`${code}\n`);
   process.exitCode = 1;
 } finally {
-  docker(["rm", "--force", workerName], [0, 1]);
-  docker(["rm", "--force", stubName], [0, 1]);
+  spawnSync("docker", ["rm", "--force", workerName], { stdio: "ignore" });
+  spawnSync("docker", ["rm", "--force", stubName], { stdio: "ignore" });
   rmSync(root, { recursive: true, force: true });
 }

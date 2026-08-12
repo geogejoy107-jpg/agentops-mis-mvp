@@ -520,6 +520,11 @@ async function sourceBoundaryContract() {
   assert.match(realAcceptanceSource, /next_artifact_identity_verified/);
   assert.match(
     realAcceptanceSource,
+    /bootstrapped = run_npm\(\s*npm,\s*migrator_dsn,\s*\[\s*"bootstrap:owner"/,
+  );
+  assert.match(realAcceptanceSource, /"AGENTOPS_POSTGRES_DSN": runtime_dsn/);
+  assert.match(
+    realAcceptanceSource,
     /next_runtime_mutable_artifact_paths_omitted/,
   );
   assert.match(realAcceptanceSource, /"--estimated-cost-usd"/);

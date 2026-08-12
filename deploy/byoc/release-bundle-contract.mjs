@@ -160,6 +160,8 @@ function assertStaticCustomerBoundary() {
     || !workerContainerAcceptance.includes("agentops_byoc_typescript_worker_container_v1")
     || !workerContainerAcceptance.includes("provider_connections")
     || !workerContainerAcceptance.includes("agent_token_exposed_by_container")
+    || !workerContainerAcceptance.includes('"--network", "none"')
+    || !workerContainerAcceptance.includes("authorization_matches")
     || !workerContainerAcceptance.includes("org.opencontainers.image.revision")
   ) {
     fail("release_worker_boundary_invalid");
@@ -225,6 +227,8 @@ function assertStaticCustomerBoundary() {
     || !consumer.includes("/deploy/byoc/worker-container-acceptance.mjs")
     || !consumer.includes('and .contract == "agentops_byoc_typescript_worker_container_v1"')
     || !consumer.includes("and .provider_connections == 0")
+    || !consumer.includes("and .network_egress_disabled == true")
+    || !consumer.includes("and .agent_token_authorization_verified == true")
     || !consumer.includes("and .token_in_argv == false")
   ) {
     fail("release_consumer_contract_missing");
