@@ -160,8 +160,8 @@ async function run() {
 
   try {
     const child = spawn(
-      "npm",
-      ["run", "--silent", "bootstrap:owner", "--", ...arguments_],
+      process.execPath,
+      ["--import", "tsx", "scripts/bootstrap-owner.ts", ...arguments_],
       { env: childEnvironment, stdio: "inherit" },
     );
     const forwardedSignals = ["SIGINT", "SIGTERM", "SIGHUP"];

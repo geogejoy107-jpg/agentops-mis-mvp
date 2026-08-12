@@ -28,6 +28,9 @@ try {
     join(moduleDirectory, "owner-bootstrap-entrypoint.mjs"),
     "utf8",
   );
+  const packageManifest = JSON.parse(
+    readFileSync(join(repositoryRoot, "ui/next-app/package.json"), "utf8"),
+  );
   const operator = readFileSync(join(moduleDirectory, "owner-init.sh"), "utf8");
 
   assert.match(compose, /owner-bootstrap:\n[\s\S]*profiles: \[owner-bootstrap\]/);
@@ -42,7 +45,10 @@ try {
   assert.doesNotMatch(ownerService, /human_session_hmac_key/);
   assert.match(dockerfile, /owner-bootstrap-entrypoint\.mjs/);
   assert.match(helper, /PGPASSFILE/);
-  assert.match(helper, /\["run", "--silent", "bootstrap:owner", "--"/);
+  assert.match(helper, /process\.execPath/);
+  assert.match(helper, /\["--import", "tsx", "scripts\/bootstrap-owner\.ts"/);
+  assert.doesNotMatch(helper, /spawn\(\s*"npm"/);
+  assert.equal(typeof packageManifest.dependencies?.tsx, "string");
   assert.doesNotMatch(helper, /childEnvironment\.PGPASSWORD\s*=/);
   assert.match(helper, /delete childEnvironment\.AGENTOPS_POSTGRES_MIGRATOR_PASSWORD_FILE/);
   assert.match(operator, /set \+x/);

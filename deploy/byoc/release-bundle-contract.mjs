@@ -128,7 +128,9 @@ function assertStaticCustomerBoundary() {
     || !ownerOperator.includes("set +x")
     || /openssl|rand\b/.test(ownerOperator)
     || !ownerEntrypoint.includes("PGPASSFILE")
-    || !ownerEntrypoint.includes('["run", "--silent", "bootstrap:owner", "--"')
+    || !ownerEntrypoint.includes("process.execPath")
+    || !ownerEntrypoint.includes('["--import", "tsx", "scripts/bootstrap-owner.ts"')
+    || /spawn\(\s*"npm"/.test(ownerEntrypoint)
     || ownerEntrypoint.includes("childEnvironment.PGPASSWORD =")
   ) {
     fail("release_owner_bootstrap_boundary_invalid");
