@@ -87,6 +87,7 @@ for (const moduleName of [
   "openclaw-executor-protocol.mjs",
   "openclaw-executor-receipt.mjs",
   "openclaw-executor-runner.mjs",
+  "openclaw-executor-healthcheck.mjs",
   "openclaw-executor-service.mjs",
   "openclaw-runtime-manifest.mjs",
   "openclaw-runtime-manifest-v2.mjs",
@@ -134,6 +135,7 @@ assert.match(executor, /cap_add:\s*\n\s+- SETUID\s*\n\s+- SETGID\s*\n\s+- SYS_CH
 assert.match(executor, /no-new-privileges:true/);
 assert.match(executor, /read_only: true/);
 assert.match(executor, /entrypoint: \[\/usr\/local\/bin\/agentops-openclaw-mount-bootstrap\]/);
+assert.match(executor, /healthcheck:\s*\n\s+test: \[CMD, node, \/usr\/local\/lib\/agentops\/openclaw-executor-healthcheck\.mjs\]/);
 assert.match(executor, /AGENTOPS_OPENCLAW_BOUNDARY_ROLE: root-executor/);
 assert.match(executor, /OPENCLAW_EXECUTOR_IMAGE_REFERENCE: \$\{AGENTOPS_A07_IMAGE:/);
 assert.doesNotMatch(executor, /AGENTOPS_A07_IMAGE_DIGEST/);

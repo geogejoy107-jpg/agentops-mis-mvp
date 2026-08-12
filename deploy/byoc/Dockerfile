@@ -87,6 +87,7 @@ COPY --chmod=0555 \
     deploy/byoc/openclaw-executor-receipt-contract.mjs \
     deploy/byoc/openclaw-executor-runner.mjs \
     deploy/byoc/openclaw-executor-runner-contract.mjs \
+    deploy/byoc/openclaw-executor-healthcheck.mjs \
     deploy/byoc/openclaw-executor-service.mjs \
     deploy/byoc/openclaw-executor-service-contract.mjs \
     deploy/byoc/openclaw-peercred-gate-contract.mjs \

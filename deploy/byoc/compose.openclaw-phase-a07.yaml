@@ -196,11 +196,7 @@ services:
         bind:
           create_host_path: false
     healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - const s=require('node:fs').lstatSync('/run/agentops-openclaw-private/executor.sock');if(!s.isSocket()||s.uid!==0||s.gid!==2200||(s.mode&0o777)!==0o660)process.exit(1)
+      test: [CMD, node, /usr/local/lib/agentops/openclaw-executor-healthcheck.mjs]
       interval: 1s
       timeout: 2s
       retries: 30
